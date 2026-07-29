@@ -212,6 +212,17 @@ def builtin_name_temporal():
             name,
             ClassValue(name=name, bases=(), record=BlockValue(())),
         )
+    # ``object`` owns one closed class-member roster.  Construct its distinct
+    # receiver at the sole builtin registry door so an arbitrary ClassValue
+    # cannot borrow that authority from a matching spelling.
+    from sugar_lift_py_tests.floor.builtin_class_member_value import (
+        BuiltinObjectClassValue,
+    )
+
+    temporal = temporal.bind_value(
+        "object",
+        BuiltinObjectClassValue(name="object", bases=(), record=BlockValue(())),
+    )
     for name in sorted(builtin_constant_names()):
         temporal = temporal.bind_value(
             name,
