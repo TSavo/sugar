@@ -829,6 +829,70 @@ def test_module_prefix_constructs_one_subscript_delete_statement(
     assert isinstance(exits.exits[0], Completed)
 
 
+def test_stdlib_makecodes_return_is_rebound_before_exact_slice_delete() -> None:
+    """The real ``re._constants`` prefix deletes from its returned ListValue."""
+    from sugar_lift_py_tests.floor import CallSiteValue, ListValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    module = graph.modules["re._constants"]
+    parsed = ast.parse(module.source)
+    delete = next(
+        statement
+        for statement in parsed.body
+        if isinstance(statement, ast.Delete) and statement.lineno == 124
+    )
+    next_statement = next(
+        statement for statement in parsed.body if statement.lineno > delete.lineno
+    )
+    assignment = next(
+        statement
+        for statement in parsed.body
+        if isinstance(statement, ast.Assign)
+        and statement.lineno == 75
+        and isinstance(statement.value, ast.Call)
+    )
+    expected_count = len(assignment.value.args) - 2
+
+    exits = manager_construction._module_prefix_outcome(
+        module, next_statement, graph=graph
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    opcodes = completed.value.context.temporal.value_if_bound("OPCODES")
+    assert type(opcodes) is ListValue
+    assert not isinstance(opcodes, CallSiteValue)
+    assert len(opcodes.elements) == expected_count
+
+
+def test_bodyless_call_result_cannot_be_promoted_to_delete_list(tmp_path: Path) -> None:
+    """Lying twin: an unresolved return stays loud at the exact delete owner."""
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.panic import SugarNotWritten
+
+    source = "OPCODES = external()\ndel OPCODES[-2:]\nafter = 1\n"
+    dist = _dist(
+        tmp_path,
+        name="bodyless-delete-pkg",
+        files={"bodyless_delete_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "bodyless_delete_pkg"
+    ]
+    locus = ast.parse(source).body[-1]
+
+    with pytest.raises(SugarNotWritten) as raised:
+        manager_construction._module_prefix_outcome(module, locus)
+
+    assert raised.value.owner == "SubscriptDeleteEffectSugar._delete"
+    assert raised.value.observed == (
+        "undischarged subscript delete over runtime-selected receiver"
+    )
+
+
 def test_module_prefix_execution_publishes_exact_decorator_result(
     tmp_path: Path,
 ) -> None:
