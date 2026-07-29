@@ -240,6 +240,20 @@ def test_attribute_only_unpack_is_not_minted_as_a_binding_pattern(
     assert source_file.unit.target_pattern_construction_count == 0
 
 
+def test_mixed_attribute_unpack_is_not_a_lexical_target_pattern(tmp_path: Path):
+    path = tmp_path / "mixed_store_target.py"
+    path.write_text(
+        "class Holder:\n"
+        "    def bind(self, func, args, kwds):\n"
+        "        self.func, self.args, self.kwds = func, args, kwds\n"
+    )
+    source_file = SourceFile.from_path(path)
+    assignment = next(node for node in source_file.nodes() if node.kind == "Assign")
+
+    assert assignment.target_patterns == ()
+    assert source_file.unit.target_pattern_construction_count == 0
+
+
 def test_legacy_reharvest_manifestations_are_retired():
     source = Path(nodes.__file__).read_text()
     offenders = tuple(
