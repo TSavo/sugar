@@ -381,12 +381,15 @@ def module_name_for_path(root: Path, path: Path) -> str:
     return ".".join(parts)
 
 
-def _import_from_module(current: str, node: Node) -> str | None:
+def _import_from_module(
+    current: str, node: Node, *, current_is_package: bool
+) -> str | None:
     if node.level == 0:
         return node.module
     package = current.split(".")
-    # A non-__init__ module's package excludes its final component.
-    if package:
+    # A non-package module's package excludes its final component.  An
+    # authenticated ``__init__.py`` already names the package itself.
+    if package and not current_is_package:
         package.pop()
     ascend = node.level - 1
     if ascend > len(package):
@@ -432,12 +435,14 @@ class _Pass:
         *,
         source_cid: str,
         module_name: str,
+        module_is_package: bool,
         module_identities: dict[str, dict[str, Any]],
         module_state: State | None = None,
         analyze_nested: bool = True,
     ):
         self.source_cid = source_cid
         self.module_name = module_name
+        self.module_is_package = module_is_package
         self.module_identities = module_identities
         self.rows: list[dict[str, Any]] = []
         self.outcomes: dict[tuple[int, int, int, int], str] = {}
@@ -457,6 +462,7 @@ class _Pass:
         transfer = _Pass(
             source_cid=self.source_cid,
             module_name=self.module_name,
+            module_is_package=self.module_is_package,
             module_identities=self.module_identities,
             module_state=self.module_state,
             analyze_nested=False,
@@ -694,7 +700,11 @@ class _Pass:
     def statement(self, node: Statement, state: State, scope: Node) -> State:
         state = dict(state)
         if node.kind == "ImportFrom":
-            module = _import_from_module(self.module_name, node)
+            module = _import_from_module(
+                self.module_name,
+                node,
+                current_is_package=self.module_is_package,
+            )
             if module is None:
                 return state
             for alias in node.names:
@@ -992,11 +1002,13 @@ def _final_module_state(
     module: Module,
     source_cid: str,
     module_name: str,
+    module_is_package: bool,
     module_identities: dict[str, dict[str, Any]],
 ) -> State:
     prepass = _Pass(
         source_cid=source_cid,
         module_name=module_name,
+        module_is_package=module_is_package,
         module_identities=module_identities,
         analyze_nested=False,
     )
@@ -1146,11 +1158,13 @@ def _run_lexical_import_pass(
         module=module,
         source_cid=source_cid,
         module_name=module_name,
+        module_is_package=path.name == "__init__.py",
         module_identities=identities,
     )
     runner = _Pass(
         source_cid=source_cid,
         module_name=module_name,
+        module_is_package=path.name == "__init__.py",
         module_identities=identities,
         module_state=module_state,
     )
@@ -1207,11 +1221,13 @@ def import_bound_name_targets(
         module=module,
         source_cid=source_cid,
         module_name=module_name,
+        module_is_package=Path(module.unit.filename).name == "__init__.py",
         module_identities=identities,
     )
     runner = _Pass(
         source_cid=source_cid,
         module_name=module_name,
+        module_is_package=Path(module.unit.filename).name == "__init__.py",
         module_identities=identities,
         module_state=module_state,
     )

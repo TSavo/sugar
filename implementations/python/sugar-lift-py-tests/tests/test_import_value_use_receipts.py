@@ -63,6 +63,31 @@ def test_value_use_receipt_changes_when_source_moves(tmp_path: Path) -> None:
     )
 
 
+def test_package_init_relative_import_owns_exact_member_value_use(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "renamed_package"
+    package.mkdir()
+    path = package / "__init__.py"
+    source, source_cid = _write(
+        path,
+        "from . import helper\n\nclass C:\n    A = B = helper.FLAG\n",
+    )
+
+    receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+
+    member = tuple(
+        receipt
+        for receipt in receipts
+        if receipt.target_symbol == "python:renamed_package.helper.FLAG"
+    )
+    assert len(member) == 1
+    assert member[0].use["exportedMemberPath"] == ["FLAG"]
+    assert _site_key(member[0]) == (4, 12, 4, 23)
+
+
 def test_non_imported_name_gets_no_value_use_receipt(tmp_path: Path) -> None:
     path = tmp_path / "local.py"
     source, source_cid = _write(
