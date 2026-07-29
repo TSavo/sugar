@@ -55,6 +55,25 @@ def test_backend_module_construction_owns_a_stable_receipt_cid(
     )
 
 
+def test_backend_module_construction_receipt_discriminates_foreign_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    truthful = _tree(tmp_path, monkeypatch)
+    foreign_path = Path("foreign_decorated_module.py")
+    foreign_path.write_text(
+        "def replace(raw):\n    return raw\n\n"
+        "@replace\nclass Original:\n    token = 8\n",
+        encoding="utf-8",
+    )
+    foreign = SourceFile.from_path(
+        foreign_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+
+    assert truthful.unit.source_cid != foreign.unit.source_cid
+    assert truthful.construction_event_receipt_cid != foreign.construction_event_receipt_cid
+
+
 def test_class_definition_carries_ordered_decorator_sugars_and_occurrences(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -105,11 +124,29 @@ def _install(root: Path) -> importlib.metadata.Distribution:
         "class Original:\n"
         "    stale = 1\n"
         "\n"
+        "@replace\n"
+        "class Unreachable:\n"
+        "    stale = 2\n"
+        "\n"
+        "def shadowed(value):\n"
+        "    Original = value\n"
+        "    return isinstance(value, Original)\n"
+        "\n"
         "def worker(value):\n"
         "    return isinstance(value, Original)\n"
         "\n"
+        "def misleading(value):\n"
+        "    global Unreachable\n"
+        "    Unreachable = value\n"
+        "    def nested():\n"
+        "        return Unreachable\n"
+        "    return value\n"
+        "\n"
         "def selected(value):\n"
-        "    return worker(value)\n",
+        "    def unrelated(frame: FrameType):\n"
+        "        return frame\n"
+        "    marker = int(misleading(value))\n"
+        "    return worker(marker)\n",
         encoding="utf-8",
     )
     metadata = root / "decorated_dist-1.0.dist-info"
@@ -133,6 +170,145 @@ def _install(root: Path) -> importlib.metadata.Distribution:
     sys.modules.pop("decorated_pkg", None)
     sys.modules.pop("decorated_pkg.implementation", None)
     return importlib.metadata.Distribution.at(metadata)
+
+
+def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
+    package = root / "admission_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from admission_pkg.implementation import body_selected, selected\n",
+        encoding="utf-8",
+    )
+    (package / "implementation.py").write_text(
+        "from types import FrameType\n"
+        "\n"
+        "class Dependency:\n"
+        "    token = 7\n"
+        "\n"
+        "def retain(raw):\n"
+        "    int\n"
+        "    FrameType\n"
+        "    Dependency\n"
+        "    return raw\n"
+        "\n"
+        "def locally_shadowed_retain(raw):\n"
+        "    Dependency = raw\n"
+        "    int\n"
+        "    FrameType\n"
+        "    return raw\n"
+        "\n"
+        "@locally_shadowed_retain\n"
+        "@retain\n"
+        "class Decorated:\n"
+        "    token = 11\n"
+        "\n"
+        "@retain\n"
+        "class BodyOnly:\n"
+        "    token = 17\n"
+        "\n"
+        "def global_worker(value):\n"
+        "    int\n"
+        "    FrameType\n"
+        "    Decorated\n"
+        "    def nested(header: BodyOnly = BodyOnly):\n"
+        "        return BodyOnly\n"
+        "    return value\n"
+        "\n"
+        "def shadowed_worker(value):\n"
+        "    Decorated = value\n"
+        "    int\n"
+        "    FrameType\n"
+        "    return value\n"
+        "\n"
+        "def body_worker(value):\n"
+        "    def nested():\n"
+        "        return BodyOnly\n"
+        "    return value\n"
+        "\n"
+        "def body_selected(value):\n"
+        "    return body_worker(value)\n"
+        "\n"
+        "def selected(value):\n"
+        "    global_worker(value)\n"
+        "    return shadowed_worker(value)\n",
+        encoding="utf-8",
+    )
+    metadata = root / "admission_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: admission-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    (metadata / "top_level.txt").write_text("admission_pkg\n", encoding="utf-8")
+    recorded = (
+        "admission_pkg/__init__.py",
+        "admission_pkg/implementation.py",
+        "admission_dist-1.0.dist-info/METADATA",
+        "admission_dist-1.0.dist-info/top_level.txt",
+        "admission_dist-1.0.dist-info/RECORD",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for item in recorded:
+            writer.writerow((item, "", ""))
+    sys.modules.pop("admission_pkg", None)
+    sys.modules.pop("admission_pkg.implementation", None)
+    return importlib.metadata.Distribution.at(metadata)
+
+
+def test_reachable_decorated_class_admission_filters_before_symtable_contact(
+    tmp_path: Path,
+) -> None:
+    distribution = _install_admission_fixture(tmp_path)
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    consumer = tmp_path / "consumer.py"
+    source = "import admission_pkg\nadmission_pkg.selected(1)\n"
+    consumer.write_text(source, encoding="utf-8")
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    receipts, _ = authenticated_import_use_receipts(
+        tmp_path,
+        consumer,
+        source,
+        blake3_512_of(source.encode("utf-8")),
+        module_identities={},
+    )
+    session = SourceResolutionSession()
+    resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+
+    projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
+
+    assert isinstance(projected, tuple)
+    frame, target = projected
+    assert target.name == "selected"
+    assert tuple(binding.name for binding in frame.decorated_class_bindings) == (
+        "Decorated",
+        "BodyOnly",
+    )
+    body_source = "import admission_pkg\nadmission_pkg.body_selected(1)\n"
+    body_consumer = tmp_path / "body_consumer.py"
+    body_consumer.write_text(body_source, encoding="utf-8")
+    body_receipts, _ = authenticated_import_use_receipts(
+        tmp_path,
+        body_consumer,
+        body_source,
+        blake3_512_of(body_source.encode("utf-8")),
+        module_identities={},
+    )
+    body_session = SourceResolutionSession()
+    body_resolved = resolve_import_binding(
+        body_receipts[0], graph=graph, session=body_session
+    )
+    body_projected = resolve_source_visible_frame(
+        body_resolved, graph=graph, session=body_session
+    )
+    assert isinstance(body_projected, tuple)
+    body_frame, _ = body_projected
+    assert all(
+        binding.name != "BodyOnly"
+        for binding in body_frame.decorated_class_bindings
+    )
 
 
 def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
@@ -171,3 +347,25 @@ def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
     assert binding.value.publication is binding.publication
     assert binding.value.published_floor is binding.publication.final_class
     assert binding.publication.final_class is not binding.publication.raw_class
+    original = next(
+        item
+        for item in target.unit.constructed_module.root.body
+        if isinstance(item, ClassDef) and item.name == "Original"
+    )
+    sugar = original.sugar()
+    assert binding.publication.binding_occurrence == sugar.binding_target_occurrence
+    assert len(binding.publication.decorator_applications) == 2
+    first, second = binding.publication.decorator_applications
+    assert first.occurrence == sugar.decorator_occurrences[1]
+    assert second.occurrence == sugar.decorator_occurrences[0]
+    assert first.input_floor is binding.publication.raw_class
+    assert second.input_floor is first.output_floor
+    assert second.output_floor is binding.publication.final_class
+    assert binding.publication.final_class.class_name == "Replacement"
+    assert tuple(
+        field.name for field in binding.publication.final_class.class_fields
+    ) == ("token",)
+    assert binding.publication.raw_class.class_name == "Original"
+    assert tuple(field.name for field in binding.publication.raw_class.class_fields) == (
+        "stale",
+    )

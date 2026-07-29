@@ -260,6 +260,34 @@ def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
     assert field.value.body is None
 
 
+def test_class_body_chained_assign_constructs_each_exact_binding(monkeypatch) -> None:
+    """One class-body Assign publishes every parser-owned Name target in order."""
+    source = _source_file(
+        "class RenamedFlags:\n    long_name = short = provider.member\n"
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    sugar = class_node.sugar()
+    attribute = sugar.fields[0].value_sugar
+    calls = []
+
+    def complete_attribute(self, ctx=None):
+        assert self is attribute
+        calls.append((self, ctx))
+        return Complete(TermValue(7))
+
+    monkeypatch.setattr(type(attribute), "desugar", complete_attribute)
+
+    value = sugar.desugar().value
+
+    assert tuple(field.name for field in value.class_fields) == (
+        "long_name",
+        "short",
+    )
+    assert value.class_fields[0].value is value.class_fields[1].value
+    assert value.class_fields[0].value == TermValue(7)
+    assert calls == [(attribute, None)]
+
+
 def test_yield_from_only_function_allocates_a_generator_not_an_eager_call() -> None:
     """TRUTHFUL FACE: `yield from` owns the suspension boundary just as `yield` does.
 

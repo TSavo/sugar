@@ -21,6 +21,7 @@ class ConstructedClassFieldV1:
     name: str
     definition_fragment_cid: str
     value_sugar: object = field(compare=False)
+    evaluation_group_cid: str | None = None
 
 
 @dataclass(frozen=True)
