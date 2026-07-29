@@ -496,6 +496,60 @@ def test_real_option_context_published_ref_selects_source_resource_at_constructi
     assert resource.exit.native_definition_coordinate == exit_definition
 
 
+def test_real_option_context_executes_its_source_body_and_exit():
+    """The installed pandas With runs its own body through the resource exit."""
+    import platform
+    import sys
+
+    import pandas
+
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    assert sys.executable == "/usr/local/bin/python"
+    assert platform.python_version() == "3.12.13"
+    assert pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
+    print(f"sys.executable={sys.executable}")
+    print(f"sys.version={sys.version}")
+    print(f"pandas.__file__={pandas.__file__}")
+
+    corpus = authenticated_pandas_corpus()
+    root = corpus.root.parent
+    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = open_source_file_for_construction(
+        path, root=root, construction_context=context, populate_derived=False
+    )
+    populate_source_derived_resource_refs(tree, root=root, path=path)
+    with_node = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 25
+    )
+    receiver = next(
+        coordinate
+        for coordinate in context.source_manager_provider_calls
+        if coordinate.start_line == 25
+    )
+    enter_definition = context.contract_refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_ENTER
+    )
+    exit_definition = context.contract_refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_EXIT
+    )
+
+    resource = with_node.sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert resource.body
+    assert resource.enter.native_definition_coordinate == enter_definition
+    assert resource.exit.native_definition_coordinate == exit_definition
+
+    outcome = resource.desugar()
+
+    assert any(isinstance(face, Completed) for face in outcome.exits)
+
+
 @pytest.mark.parametrize("manager_name", ("borrowed_state", "temporary_setting"))
 def test_renamed_source_generator_resources_use_the_same_closed_factory_arm(
     tmp_path: Path, manager_name: str
