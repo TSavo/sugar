@@ -622,27 +622,18 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         else_obligation_cid = else_obligation["elseExhaustionObligationCid"]
 
     post_records = []
-    # THE EXIT ROUTES, NAMED BY THE PRODUCER (#6336 family).
+    # THE COMPLETED-STATE ROUTES, NAMED BY THE PRODUCER.
     #
-    # A loop leaves exactly one way, and this tuple is the loop saying which
-    # ways exist. `BodyFallthrough` is deliberately absent and must stay absent:
-    # it is the LATCH input (`loop_construction.py` requires the latch
-    # obligation's input face to be exactly that kind), i.e. the loop-back edge,
-    # not an exit route. Stamping it as a third exit member would assert an
-    # exclusion between the loop-back edge and the two real exits that nobody
-    # established -- and, because a family admits only when it is COMPLETE,
-    # would cost the two genuine exit arms the admission they legitimately earn.
+    # Post-binding projects the carried state through every completed producer
+    # route, including `BodyFallthrough`: it is the internal latch input, not an
+    # outward exit, but it is still a distinct completed state whose exact
+    # guard/state/coordinate testimony must survive the projection.  The root's
+    # break/exhaustion obligations remain the separate outward denominator.
     #
-    # `exitPartitionArity` is that count carried on the wire so a downstream
-    # projection reads a DECLARED family size instead of counting whatever
-    # happened to arrive. A dropped post-binding record then makes the family
-    # short of its declared size, and the projection refuses loudly rather than
-    # certifying a partial partition as exhaustive.
-    completed_post_kinds = (
-        ("BreakExit", "NormalExhaustion")
-        if "BreakExit" in face_snapshots
-        else ("NormalExhaustion",)
-    )
+    # `exitPartitionArity` is the legacy wire field carrying that producer-owned
+    # completed-route count.  It is deliberately not derived from the outward
+    # obligation roster and not recounted from whatever projection arrived.
+    completed_post_kinds = tuple(kind for kind, _guard in completed_specs)
     exit_partition_arity = len(completed_post_kinds)
     for completion_kind in completed_post_kinds:
         face, state_record, _snapshot = (

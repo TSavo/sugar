@@ -148,6 +148,10 @@ def project_loop_post_binding(
         and record["bindingCoordinateCid"] == binding_coordinate.cid
     ]
     post_face_cids = {record["completedFaceCid"] for record in post_records}
+    if len(post_face_cids) != len(post_records):
+        raise BindingStateWireGap(
+            "loop post-binding projection repeats one completed route"
+        )
     # The DECLARED size of this loop occurrence's exit family. Read off the
     # producer's own records, never counted from what arrived: counting would
     # make a dropped face silently re-read as a smaller complete partition,
@@ -160,16 +164,23 @@ def project_loop_post_binding(
             f"binding coordinate: observed {sorted(declared)}"
         )
     exit_partition_arity = declared.pop() if declared else None
+    completed_by_cid = {face.cid: face for face in construction.completed_faces}
     projected_faces = []
-    for face in construction.completed_faces:
-        if face.cid not in post_face_cids:
-            continue
-        record = records.get(face.cid)
+    for post_record in post_records:
+        face_cid = post_record["completedFaceCid"]
+        face = completed_by_cid.get(face_cid)
+        if face is None:
+            raise BindingStateWireGap("post-binding face missing from loop graph")
+        record = records.get(face_cid)
         if record is None:
             raise BindingStateWireGap("completed face missing from loop graph")
         if record["targetCid"] != target_cid:
             raise BindingStateWireGap("loop projected binding target mismatch")
         state_cid = record["stateCid"]
+        if post_record["projectedStateCid"] != state_cid:
+            raise BindingStateWireGap(
+                "loop post-binding projected state does not match completed route"
+            )
         snapshot = runtime_states.get(state_cid)
         if snapshot is None:
             raise BindingStateWireGap(
@@ -184,17 +195,27 @@ def project_loop_post_binding(
             raise BindingStateWireGap(
                 f"completed face {face.cid} has {len(matches)} entries for binding coordinate"
             )
+        live_guard = None if live_guards is None else live_guards.get(
+            record["guardFormulaCid"]
+        )
+        if live_guards is not None:
+            if live_guard is None:
+                raise BindingStateWireGap(
+                    "completed face has no authenticated live guard formula"
+                )
+            from .live_loop_construction import _formula_cid
+
+            if _formula_cid(live_guard) != record["guardFormulaCid"]:
+                raise BindingStateWireGap(
+                    "completed face live guard formula does not match producer testimony"
+                )
         projected_faces.append(
             LoopProjectedCompletedFace(
                 target_cid=target_cid,
                 completion_kind=face.completion_kind,
                 guard_formula_cid=record["guardFormulaCid"],
                 state=matches[0].state,
-                guard_formula=(
-                    None
-                    if live_guards is None
-                    else live_guards.get(record["guardFormulaCid"])
-                ),
+                guard_formula=live_guard,
                 exit_partition_arity=exit_partition_arity,
             )
         )
