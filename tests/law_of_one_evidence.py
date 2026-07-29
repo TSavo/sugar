@@ -28,6 +28,8 @@ class OwnerCallPathEvidence:
     constructor_calls: tuple[EvidenceSite, ...]
     dynamic_calls: tuple[EvidenceSite, ...]
     forwarders: tuple[EvidenceSite, ...]
+    audited_forwarders: tuple[EvidenceSite, ...]
+    unauthorized_source_constructors: tuple[EvidenceSite, ...]
     adapter_overrides: tuple[EvidenceSite, ...]
     discovered_calls: int
     audited_calls: int
@@ -141,10 +143,15 @@ class LawOfOneEvidence:
         assert owner.constructor_calls
         assert owner.canonical_call in owner.constructor_calls
         assert owner.dynamic_calls == ()
-        assert owner.forwarders == ()
+        assert owner.forwarders
+        assert owner.forwarders == owner.audited_forwarders
+        assert owner.unauthorized_source_constructors == ()
         assert owner.adapter_overrides == ()
         assert owner.discovered_calls == owner.audited_calls > 0
-        assert owner.canonical_call.lexical_owner == (
+        assert (
+            *owner.canonical_call.lexical_owner,
+            owner.canonical_call.symbol,
+        ) == (
             *owner.canonical_source_file_entry.lexical_owner,
             owner.canonical_source_file_entry.symbol,
         )

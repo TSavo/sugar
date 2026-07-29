@@ -502,6 +502,11 @@ def audit_law_of_one(
         edge for edge in graph.calls
         if source_file_symbol is not None and source_file_symbol in edge.targets
     ]
+    audited_door_edges = [
+        edge
+        for edge in door_edges
+        if not edge.dynamic and set(edge.targets) == {source_file_symbol}
+    ]
     projection_edges = [
         edge for edge in graph.calls
         if any(target.path.resolve() == projection_file and target.line == projection_line for target in edge.targets)
@@ -546,25 +551,43 @@ def audit_law_of_one(
             )
         )
     canonical_owner_symbols = set(init_symbols)
-    door_target_symbols = {
-        symbol for symbol in (source_file_symbol, *backend_door_symbols)
-        if symbol is not None
-    }
+    canonical_edge = from_path_construction_edges[0]
     forwarder_edges = tuple(
         edge
-        for edge in graph.calls
+        for edge in door_edges
         if edge.caller not in canonical_owner_symbols
-        and set(edge.targets) & door_target_symbols
-        and edge != from_path_construction_edges[0]
+        and edge != canonical_edge
     )
-    forwarders = [
+
+    def carries_identity_argument(edge: object) -> bool:
+        tree = parsed[edge.path]
+        return any(
+            isinstance(node, ast.Call)
+            and node.lineno == edge.line
+            and ast.unparse(node.func) == edge.expression
+            and bool(node.args)
+            for node in ast.walk(tree)
+        )
+
+    audited_forwarder_edges = tuple(
+        edge
+        for edge in forwarder_edges
+        if edge in audited_door_edges and carries_identity_argument(edge)
+    )
+    forwarders = tuple(
         EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
         for edge in forwarder_edges
-    ]
+    )
+    audited_forwarders = tuple(
+        EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
+        for edge in audited_forwarder_edges
+    )
+    unauthorized_source_constructors = tuple(
+        site for site in forwarders if site not in set(audited_forwarders)
+    )
     assert len(owner_defs) == 1
     assert door_calls
     assert len(projection_calls) > 0
-    canonical_edge = from_path_construction_edges[0]
     canonical_call = EvidenceSite(
         canonical_edge.path,
         canonical_edge.line,
@@ -1155,10 +1178,12 @@ def audit_law_of_one(
                 for edge in relevant_dynamic
                 if edge.caller in {from_path_symbol, *init_symbols}
             ),
-            forwarders=tuple(forwarders),
+            forwarders=forwarders,
+            audited_forwarders=audited_forwarders,
+            unauthorized_source_constructors=unauthorized_source_constructors,
             adapter_overrides=tuple(overrides),
             discovered_calls=len(door_edges),
-            audited_calls=len(door_edges),
+            audited_calls=len(audited_door_edges),
         ),
         source_file_surfaces=SourceFileSurfaceEvidence(
             oracle_intake=source_entry,
