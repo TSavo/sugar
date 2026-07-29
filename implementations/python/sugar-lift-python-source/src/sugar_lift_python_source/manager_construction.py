@@ -181,6 +181,11 @@ class _ModuleClassDefinitionBindingSugar:
 
     definition: ClassDef
     module_construction_receipt_cid: str
+    source_file: object | None = field(default=None, compare=False)
+    module: object | None = field(default=None, compare=False)
+    session: object | None = field(default=None, compare=False)
+    construction_context: object | None = field(default=None, compare=False)
+    dependency_graphs: object | None = field(default=None, compare=False)
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor import ClassDefinitionValue
@@ -197,6 +202,22 @@ class _ModuleClassDefinitionBindingSugar:
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
+        if self.source_file is not None:
+            _seat_import_value_use_receipts(
+                source_file=self.source_file,
+                module=self.module,
+                target=self.definition,
+                session=self.session,
+                context=self.construction_context,
+                dependency_graphs=self.dependency_graphs,
+            )
+            _enroll_imported_decorator_frames(
+                module=self.module,
+                definition=self.definition,
+                context=self.construction_context,
+                session=self.session,
+                dependency_graphs=self.dependency_graphs,
+            )
         sugar = self.definition.sugar()
         outcome = sugar.desugar(ctx)
 
@@ -400,6 +421,13 @@ def _enroll_imported_decorator_frames(
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
     from sugar_source_tree.panic import BackendDefect
 
+    imported_factory_decorators = tuple(
+        decorator
+        for decorator in definition.decorators
+        if isinstance(decorator, Call) and isinstance(decorator.func, Attribute)
+    )
+    if not imported_factory_decorators:
+        return
     decorator_receipts, _ = authenticated_import_use_receipts(
         Path("."),
         Path(module.source_seat),
@@ -424,11 +452,7 @@ def _enroll_imported_decorator_frames(
                 fix="repair lexical call receipt enrollment uniqueness",
             )
         receipts_by_span[receipt_span] = receipt
-    for decorator in definition.decorators:
-        if not isinstance(decorator, Call) or not isinstance(
-            decorator.func, Attribute
-        ):
-            continue
+    for decorator in imported_factory_decorators:
         span = decorator.line_col_span()
         receipt = receipts_by_span.get(
             (span.start_line, span.start_col, span.end_line, span.end_col)
@@ -531,22 +555,6 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     if graph is not None:
         session = session_or_new(session)
         dependency_graphs[module.module_name.split(".", 1)[0]] = graph
-        for definition in prefix_classes:
-            _seat_import_value_use_receipts(
-                source_file=source_file,
-                module=module,
-                target=definition,
-                session=session,
-                context=construction_context,
-                dependency_graphs=dependency_graphs,
-            )
-            _enroll_imported_decorator_frames(
-                module=module,
-                definition=definition,
-                context=construction_context,
-                session=session,
-                dependency_graphs=dependency_graphs,
-            )
 
     sugars = tuple(
         (
@@ -555,7 +563,13 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
             else InertSugar(site=statement.fragment)
             if isinstance(statement, AsyncFunctionDef)
             else _ModuleClassDefinitionBindingSugar(
-                statement, source_file.construction_event_receipt_cid
+                statement,
+                source_file.construction_event_receipt_cid,
+                source_file if graph is not None else None,
+                module if graph is not None else None,
+                session,
+                construction_context if graph is not None else None,
+                dependency_graphs if graph is not None else None,
             )
             if isinstance(statement, ClassDef)
             else statement.sugar()
