@@ -11,6 +11,7 @@ from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.source_call_frame import (
     BoundSourceCallActualsV1,
+    MutableGlobalBindingV1,
     SourceCallBindingGap,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -122,6 +123,24 @@ def test_binder_refuses_wholly_foreign_binding_roster() -> None:
         replace(frame, formal_coordinates=foreign.formal_coordinates).bind_actuals(
             (TermValue(1), TermValue(2)), ()
         )
+
+
+def test_frame_refuses_mutable_global_binding_from_foreign_source() -> None:
+    frame = _frame()
+    foreign = _frame(name="other", filename="foreign_mutable_global.py")
+    occurrence = foreign.owner.fragment.seal()
+    binding = MutableGlobalBindingV1(
+        source_cid=foreign.source_identity_cid,
+        binding_occurrence=occurrence,
+        name="REGISTRY",
+        kind="dict",
+        term={"kind": "test-mutable-global-term"},
+        line=foreign.owner.lineno,
+        col=foreign.owner.col_offset,
+    )
+
+    with pytest.raises(SourceCallBindingGap, match="mutable global binding source"):
+        replace(frame, mutable_global_bindings=(binding,))
 
 
 def test_binder_refuses_stale_binding_coordinate_cid() -> None:
