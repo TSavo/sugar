@@ -2863,6 +2863,7 @@ class FunctionDef(Statement):
             AssertStepV1,
             ImportFromStepV1,
             ImportStepV1,
+            WhileStepV1,
             FinallyStepV1,
             ForStepV1,
             IfStepV1,
@@ -3001,6 +3002,31 @@ class FunctionDef(Statement):
             if isinstance(statement, Import) and not self._owns_yield((statement,)):
                 from sugar_lift_py_tests.context_manager_resolution import (
                     SourceFragmentCoordinateV1,
+                )
+            if isinstance(statement, While) and not statement.orelse:
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    SourceFragmentCoordinateV1,
+                )
+
+                body_steps = branch_steps(statement.body)
+                guard = statement.test.sugar()
+                if body_steps is None or not isinstance(guard, ConstructedTermSugar):
+                    return absent_step
+                span = statement.line_col_span()
+                return _GeneratorNamedStepV1(
+                    WhileStepV1(
+                        guard=guard,
+                        body_steps=body_steps,
+                        fragment_cid=statement.fragment.seal().cid,
+                        coordinate=SourceFragmentCoordinateV1(
+                            statement.unit.source_cid,
+                            span.start_line,
+                            span.start_col,
+                            span.end_line,
+                            span.end_col,
+                        ),
+                        occurrence=statement.fragment,
+                    )
                 )
 
                 span = statement.line_col_span()

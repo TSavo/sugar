@@ -316,6 +316,42 @@ class ImportStepV1:
 
 
 @dataclass(frozen=True)
+class WhileStepV1:
+    """Authenticated generator while with a nameable body and no else."""
+
+    guard: ConstructedTermSugar
+    body_steps: tuple
+    fragment_cid: str
+    coordinate: object
+    occurrence: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+
+        _require_constructed_term(self.guard, owner="WhileStepV1.guard")
+        try:
+            span = self.occurrence.line_col_span
+            observed = SourceFragmentCoordinateV1(
+                self.occurrence.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+        except (AttributeError, TypeError) as exc:
+            raise TypeError(
+                "WhileStepV1 requires an authenticated while occurrence"
+            ) from exc
+        if observed != self.coordinate:
+            raise TypeError(
+                "WhileStepV1 while occurrence does not match its "
+                "authenticated coordinate"
+            )
+
+
+@dataclass(frozen=True)
 class FinallyStepV1:
     """Cleanup suite as ConstructedTermSugar payloads only.
 
@@ -509,6 +545,7 @@ GeneratorStepV1 = (
     | AssertStepV1
     | ImportFromStepV1
     | ImportStepV1
+    | WhileStepV1
     | FinallyStepV1
     | ForStepV1
     | RaiseStepV1
@@ -663,6 +700,17 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
         return {
             "kind": "import",
             "coordinate": step.coordinate.wire(),
+        }
+    if isinstance(step, WhileStepV1):
+        return {
+            "kind": "while",
+            "fragmentCid": step.fragment_cid,
+            "coordinate": step.coordinate.wire(),
+            "guard": _generator_value_testimony(step.guard, owner=owner),
+            "bodySteps": [
+                _generator_step_testimony(item, owner=owner)
+                for item in step.body_steps
+            ],
         }
     if isinstance(step, FinallyStepV1):
         return {
@@ -1081,6 +1129,21 @@ class GeneratorConstructionV1:
                 )
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
+        if isinstance(step, WhileStepV1):
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            guard_outcome = self._guard_truth(step.guard)
+            if isinstance(guard_outcome, Incomplete):
+                return ExitSet.halted(guard_outcome.effect, state=self)
+            if not isinstance(guard_outcome, Complete):
+                return self._gap(requested, "While guard is not ground")
+            decided = self._decide_guard(guard_outcome.value)
+            if decided is False:
+                machine = replace(self, cursor=self.cursor + 1)
+                return machine._transition(requested)
+            if decided is True:
+                return self._spliced((*step.body_steps, step))._transition(requested)
+            return self._gap(requested, "While guard is not ground")
         if isinstance(step, RaiseStepV1):
             from sugar_lift_py_tests.outcome import Incomplete
 
