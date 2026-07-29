@@ -563,7 +563,7 @@ def test_module_prefix_constructs_one_subscript_delete_statement(
     from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_python_source import manager_construction
 
-    source = "del [1, 2, 3][-2:]\nresult = 1\n"
+    source = "values = [1, 2, 3]\ndel values[-2:]\nresult = values\n"
     dist = _dist(
         tmp_path,
         name="module-delete-prefix-pkg",
