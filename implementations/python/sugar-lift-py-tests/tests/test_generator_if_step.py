@@ -217,13 +217,19 @@ def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
             Completed(completed_guard, TrueBoolLiteralSugar(site="guard:true")),
         )
     )
-    monkeypatch.setattr(
-        GeneratorConstructionV1,
-        "_guard_truth",
-        lambda self, guard: guard_outcome,
-    )
+    guard = TrueBoolLiteralSugar(site="guard")
+
+    def guard_truth(self, value):
+        del self
+        if value is guard:
+            return guard_outcome
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(value)
+
+    monkeypatch.setattr(GeneratorConstructionV1, "_guard_truth", guard_truth)
     step = IfStepV1(
-        TrueBoolLiteralSugar(site="guard"),
+        guard,
         (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
         (),
         "frag",
