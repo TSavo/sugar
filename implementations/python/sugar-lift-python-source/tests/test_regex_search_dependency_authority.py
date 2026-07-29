@@ -137,6 +137,51 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     )
     assert relation.resolution_kind == warnings[0].resolution_kind
     assert relation.resolved_object_cid == warnings[0].resolved_object_cid
+    context = frame.owner.unit.construction_context
+    assert context is not None
+    value_site = warnings_value.use["useSite"]
+    value_span = (
+        value_site["startLine"],
+        value_site["startCol"],
+        value_site["endLine"],
+        value_site["endCol"],
+    )
+    assert frame.owner.unit.import_value_use_resolution(value_span) is None
+    parked_before = dict(context.opaque_source_call_obligations)
+    unrelated_rows = {
+        key: row
+        for key, row in context.source_import_value_receipts_by_site.items()
+        if row is not warnings_value
+    }
+    assert unrelated_rows
+    assert context.opaque_source_call_obligations == parked_before
+
+    # The identical authenticated value receipt, when owned as a standalone
+    # value occurrence rather than the Call.func subtree, follows ordinary
+    # value seating and cannot borrow the parked Call's refusal.
+    standalone = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    standalone_value = next(
+        node
+        for node in standalone.nodes()
+        if isinstance(node, Attribute)
+        and node.line_col_span().start_line == value_span[0]
+        and node.line_col_span().start_col == value_span[1]
+        and node.line_col_span().end_line == value_span[2]
+        and node.line_col_span().end_col == value_span[3]
+    )
+    _seat_import_value_use_receipts(
+        source_file=standalone,
+        module=module,
+        target=standalone_value,
+        session=SourceResolutionSession(enabled=False),
+        context=context,
+        dependency_graphs={"re": graph},
+    )
+    assert standalone.unit.import_value_use_resolution(value_span) is warnings_value
+    assert context.opaque_source_call_obligations == parked_before
     wrong_kind = (
         "call-graph-cycle"
         if warnings[0].resolution_kind != "call-graph-cycle"
@@ -147,6 +192,12 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     with pytest.raises(ValueError, match="cross-wired"):
         replace(
             warnings[0], resolved_object_cid="blake3-512:" + "6" * 128
+        )
+    with pytest.raises(ValueError, match="producer authority"):
+        replace(
+            relation,
+            call_coordinate=relation.callee_coordinate,
+            callee_coordinate=relation.call_coordinate,
         )
     for change in (
         {"source_cid": "blake3-512:" + "0" * 128},
@@ -164,6 +215,11 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     ):
         with pytest.raises(ValueError, match="producer authority"):
             replace(relation, **change)
+    assert {
+        key: row
+        for key, row in context.source_import_value_receipts_by_site.items()
+        if row is not warnings_value
+    } == unrelated_rows
 
 
 def test_duplicate_identical_call_receipt_is_loud_before_pairing(
