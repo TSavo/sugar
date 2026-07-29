@@ -595,6 +595,119 @@ def test_module_prefix_publishes_exact_async_definition_without_running_body(
     assert dormant.definition.fragment.span.end == 62
 
 
+def test_module_prefix_refuses_synchronous_async_function_application(
+    tmp_path: Path,
+) -> None:
+    """Calling an async definition cannot reuse synchronous source-frame meaning."""
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.nodes import Call
+    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "async def produce(value):\n"
+        "    return value\n"
+        "result = produce(7)\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="async-module-call-pkg",
+        files={"async_module_call_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "async_module_call_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    callable_floor = completed.value.context.temporal.value_if_bound("produce")
+    tree = SourceFile.from_path(
+        tmp_path / "async_module_call_pkg/__init__.py",
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    occurrence = manager_construction._call_coordinate(call)
+
+    with pytest.raises(SugarNotWritten) as raised:
+        CallableApplication(
+            (TermValue(7),),
+            (),
+            call.fragment,
+            owner="async module call test",
+            call_occurrence=occurrence,
+        ).apply(callable_floor, completed.value.context)
+
+    assert raised.value.owner == "module function definition application"
+    assert raised.value.blame.source_cid == module.source_cid
+    assert raised.value.observed == (
+        "AsyncFunctionDef reached the synchronous module callable floor"
+    )
+    assert raised.value.requested == "an authenticated coroutine-construction Floor"
+
+
+def test_module_prefix_sync_function_application_remains_completed(
+    tmp_path: Path,
+) -> None:
+    """Truthful twin: an ordinary FunctionDef keeps synchronous frame application."""
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.nodes import Call
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "def produce(value):\n"
+        "    return value\n"
+        "result = produce(7)\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="sync-module-call-pkg",
+        files={"sync_module_call_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "sync_module_call_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    callable_floor = completed.value.context.temporal.value_if_bound("produce")
+    tree = SourceFile.from_path(
+        tmp_path / "sync_module_call_pkg/__init__.py",
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    occurrence = manager_construction._call_coordinate(call)
+
+    result = CallableApplication(
+        (TermValue(7),),
+        (),
+        call.fragment,
+        owner="sync module call test",
+        call_occurrence=occurrence,
+    ).apply(callable_floor, completed.value.context)
+
+    assert isinstance(result, Complete)
+    assert type(result.value) is TermValue
+    assert result.value.value == 7
+
+
 def test_module_prefix_refuses_decorated_async_definition_before_completion(
     tmp_path: Path,
 ) -> None:
