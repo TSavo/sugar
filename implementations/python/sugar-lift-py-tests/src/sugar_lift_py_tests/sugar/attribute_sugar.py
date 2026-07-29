@@ -92,6 +92,63 @@ class AttributeSugar(ConstructedTermSugar):
                 owner="authenticated attribute receiver",
                 project_callsite=False,
             )
+
+        # Class-definition construction can cache this sugar before its
+        # receipt-backed import member is seated.  At reduction, consume only
+        # the exact full-Attribute occurrence row minted by the lexical import
+        # producer; absent/resolved rows retain the ordinary Floor law below.
+        from sugar_source_tree.fragment import SourceFragment
+
+        if type(site) is SourceFragment:
+            span = site.line_col_span()
+            receipt = site.unit.import_value_use_resolution(
+                (span.start_line, span.start_col, span.end_line, span.end_col)
+            )
+            from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+            if type(receipt) is AuthenticatedImportUseV1:
+                receipt.revalidate()
+                use_site = receipt.use["useSite"]
+                exported_path = tuple(receipt.use["exportedMemberPath"])
+                if (
+                    receipt.source_cid != site.unit.source_cid
+                    or use_site.get("sourceCid") != site.unit.source_cid
+                    or (
+                        use_site.get("startLine"),
+                        use_site.get("startCol"),
+                        use_site.get("endLine"),
+                        use_site.get("endCol"),
+                    )
+                    != (span.start_line, span.start_col, span.end_line, span.end_col)
+                    or not exported_path
+                    or exported_path[-1] != name
+                ):
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        blame=site,
+                        owner="AttributeSugar.project_attribute",
+                        observed="import member receipt does not own this Attribute",
+                        requested="same-source exact member-use occurrence testimony",
+                        fix="transport the lexical import-value receipt unchanged",
+                    )
+                target = receipt.target_symbol
+                if not target.startswith("python:"):
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        blame=site,
+                        owner="AttributeSugar.project_attribute",
+                        observed=f"target_symbol={target!r}",
+                        requested="authenticated python: import target symbol",
+                        fix="preserve the receipt targetSymbol unchanged",
+                    )
+                from sugar_lift_py_tests.floor.import_member_value import (
+                    ImportMemberValue,
+                )
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(ImportMemberValue(target.removeprefix("python:")))
         return receiver.attribute(name, site)
 
     def desugar(self, ctx: object = None) -> Outcome:
