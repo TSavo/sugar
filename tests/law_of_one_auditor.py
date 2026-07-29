@@ -960,11 +960,6 @@ def audit_law_of_one(
         )
     ]
     constructions.extend(EvidenceSite(e.path, e.line, e.caller.lexical, e.caller.name) for e in opaque_edges)
-    function_owners = {
-        binding.owner
-        for binding in graph.bindings
-        if binding.kind in {"parameter", "default-parameter", "classmethod"}
-    }
     opaque_bindings = tuple(
         binding
         for binding in graph.bindings
@@ -978,14 +973,12 @@ def audit_law_of_one(
             aliases.append(site)
         elif binding.kind == "reexport":
             reexports.append(site)
-        if (
-            binding.owner not in function_owners
-            and any(
-                read.owner != binding.owner
-                and read.name == binding.name
-                and set(read.producers) & opaque_symbols
-                for read in graph.reads
-            )
+        storage_member = binding.name.rsplit(".", 1)[-1]
+        if binding.kind == "storage-write" and any(
+            read.line > binding.line
+            and read.name == storage_member
+            and set(read.producers) & opaque_symbols
+            for read in graph.reads
         ):
             caches.append(site)
     for symbol in opaque_symbols:

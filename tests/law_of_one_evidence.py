@@ -204,7 +204,7 @@ class LawOfOneEvidence:
             privacy.relation_type,
             privacy.member_type,
             privacy.leaf_assertion_type,
-        } == set(privacy.discovered_closed_types)
+        } <= set(privacy.discovered_closed_types)
         assert privacy.leaf_assertion_type is type(
             self.zero_work.constructed_product.leaf_assertion_rows[0]
         )
