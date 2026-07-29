@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -165,3 +167,51 @@ def test_regexflag_receipt_transports_across_exact_parser_owned_units() -> None:
     exact_rows = context.source_import_value_receipts_by_site
     assert len(exact_rows) > 1
     assert all(key[0] == module.source_seat for key in exact_rows)
+
+
+def test_regexflag_cached_class_sugar_retains_manager_context_product() -> None:
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    module = graph.modules["re"]
+    manager_context = TreeConstructionContextV1.for_source_call_construction()
+    foreign_context = TreeConstructionContextV1.for_source_call_construction()
+    foreign = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=foreign_context,
+    )
+    manager = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=manager_context,
+    )
+
+    def regex_flag(source_file: SourceFile) -> ClassDef:
+        return next(
+            node
+            for node in source_file.root.body
+            if isinstance(node, ClassDef) and node.name == "RegexFlag"
+        )
+
+    foreign_class = regex_flag(foreign)
+    foreign_sugar = foreign_class.sugar()
+    object.__setattr__(
+        manager.unit, "construction_cache", foreign.unit.construction_cache
+    )
+    manager_class = replace(foreign_class, unit=manager.unit)
+    _seat_import_value_use_receipts(
+        source_file=manager,
+        module=module,
+        target=manager_class,
+        session=SourceResolutionSession(enabled=False),
+        context=manager_context,
+        dependency_graphs={"re": graph},
+    )
+    manager_sugar = manager_class.sugar()
+    assert manager_sugar is not foreign_sugar
+    manager_sugar = regex_flag(manager).sugar()
+    ascii_field = next(field for field in manager_sugar.fields if field.name == "ASCII")
+    outcome = ascii_field.value_sugar.desugar()
+
+    assert type(outcome.value) is ImportMemberValue
+    assert not foreign_context.source_import_value_receipts_by_site
+    assert outcome.value.receipt in manager_context.source_import_value_receipts[
+        (module.module_name, module.source_seat, module.source_cid)
+    ]

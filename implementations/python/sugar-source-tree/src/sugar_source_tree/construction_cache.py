@@ -192,9 +192,16 @@ class ConstructionCache:
         ref: object,
         reporter: object,
         control_context: object,
+        construction_context: object = None,
     ) -> tuple:
         loop_targets = getattr(control_context, "loop_targets", ())
         exception_slots = getattr(control_context, "exception_slots", ())
-        computed = (id(ref), id(reporter), loop_targets, exception_slots)
+        computed = (
+            id(ref),
+            id(reporter),
+            id(construction_context),
+            loop_targets,
+            exception_slots,
+        )
         self._pinned[computed] = ref
         return computed
