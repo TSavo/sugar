@@ -1139,13 +1139,53 @@ class GeneratorConstructionV1:
             value = self._reduce_value(step.value, requested)
             if isinstance(value, GeneratorTransitionGapV1):
                 return value
-            binding = GeneratorAssignBindingV1(step.name, value, step.fragment_cid)
-            machine = replace(
-                self,
-                cursor=self.cursor + 1,
-                binding_state=(*self.binding_state, binding),
+
+            def transition_assign(resolved_value):
+                binding = GeneratorAssignBindingV1(
+                    step.name, resolved_value, step.fragment_cid
+                )
+                machine = replace(
+                    self,
+                    cursor=self.cursor + 1,
+                    binding_state=(*self.binding_state, binding),
+                )
+                return machine._transition(requested)
+
+            def continue_assign(resolved_value):
+                from sugar_lift_py_tests.caller_parameter_contract import (
+                    NativeOperationExitCarrierV1,
+                )
+                from sugar_lift_py_tests.outcome import Complete, Incomplete
+                from sugar_source_tree.panic import SugarNotWritten
+
+                result = transition_assign(resolved_value)
+                if isinstance(result, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=step,
+                        observed=result.observed,
+                        requested=result.requested,
+                        fix=(
+                            "implement that next transition before deferred "
+                            "normalization"
+                        ),
+                    )
+                if isinstance(
+                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
+                ):
+                    return result
+                return Complete(result)
+
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
             )
-            return machine._transition(requested)
+            from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+
+            if isinstance(value, NativeOperationExitCarrierV1):
+                return value.and_then(continue_assign)
+            if isinstance(value, (Incomplete, ExitSet)):
+                return outcome_to_exitset(value).and_then(continue_assign)
+            return transition_assign(value)
         if isinstance(step, AttributeAssignStepV1):
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
@@ -1283,7 +1323,38 @@ class GeneratorConstructionV1:
             value = self._reduce_value(step.value, requested)
             if isinstance(value, GeneratorTransitionGapV1):
                 return value
-            return GeneratorTerminationV1(value, self.binding_state)
+
+            def transition_return(resolved_value):
+                return GeneratorTerminationV1(resolved_value, self.binding_state)
+
+            def continue_return(resolved_value):
+                from sugar_lift_py_tests.outcome import Complete
+                from sugar_source_tree.panic import SugarNotWritten
+
+                result = transition_return(resolved_value)
+                if isinstance(result, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=step,
+                        observed=result.observed,
+                        requested=result.requested,
+                        fix=(
+                            "implement that next transition before deferred "
+                            "normalization"
+                        ),
+                    )
+                return Complete(result)
+
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+            from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+
+            if isinstance(value, NativeOperationExitCarrierV1):
+                return value.and_then(continue_return)
+            if isinstance(value, (Incomplete, ExitSet)):
+                return outcome_to_exitset(value).and_then(continue_return)
+            return transition_return(value)
         value = self._reduce_value(step.value, requested)
         if isinstance(value, GeneratorTransitionGapV1):
             return value
@@ -1293,7 +1364,38 @@ class GeneratorConstructionV1:
             cursor=self.cursor + 1,
             suspended_resume_coordinate=resume_coordinate,
         )
-        return YieldEffect(value, resume_coordinate, machine)
+
+        def transition_yield(resolved_value):
+            return YieldEffect(resolved_value, resume_coordinate, machine)
+
+        def continue_yield(resolved_value):
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_source_tree.panic import SugarNotWritten
+
+            result = transition_yield(resolved_value)
+            if isinstance(result, GeneratorTransitionGapV1):
+                raise SugarNotWritten(
+                    owner="GeneratorConstructionV1.transition",
+                    blame=step,
+                    observed=result.observed,
+                    requested=result.requested,
+                    fix=(
+                        "implement that next transition before deferred "
+                        "normalization"
+                    ),
+                )
+            return Complete(result)
+
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+
+        if isinstance(value, NativeOperationExitCarrierV1):
+            return value.and_then(continue_yield)
+        if isinstance(value, (Incomplete, ExitSet)):
+            return outcome_to_exitset(value).and_then(continue_yield)
+        return transition_yield(value)
 
     def _transition_for(self, step: ForStepV1, requested: str):
         from sugar_lift_py_tests.operations import IteratorOperation
@@ -1722,7 +1824,10 @@ class GeneratorConstructionV1:
     def _reduce_value(self, value: object, requested: str):
         if value is None:
             return None
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -1736,6 +1841,8 @@ class GeneratorConstructionV1:
             return self._gap(requested, str(observed))
         if isinstance(outcome, Complete):
             return outcome.value
+        if isinstance(outcome, (Incomplete, ExitSet, NativeOperationExitCarrierV1)):
+            return outcome
         return self._gap(requested, type(outcome).__name__)
 
     def _reduce_finally(self, step: FinallyStepV1) -> ExitSet:
