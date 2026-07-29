@@ -351,6 +351,9 @@ class SourceUnit:
     # unit only (source_cid match). Never foreign LineTable spans.
     _import_value_use_resolutions: object = field(init=False, default=None)
     _constructed_module: object = field(init=False, default=None, repr=False)
+    _retained_lexical_call_rows: dict = field(
+        init=False, default_factory=dict, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -375,6 +378,29 @@ class SourceUnit:
         object.__setattr__(self, "_import_bound_name_targets", None)
         object.__setattr__(self, "_import_value_use_resolutions", {})
         object.__setattr__(self, "_constructed_module", None)
+        object.__setattr__(self, "_retained_lexical_call_rows", {})
+
+    def lexical_call_rows_for(self, call: "Call") -> tuple[object, ...]:
+        retained = self._retained_lexical_call_rows.get(call.ref)
+        if retained is not None:
+            return retained
+        return tuple(
+            row
+            for row in self.constructed_module.lexical_call_rows
+            if row.call_occurrence_identity is call.ref
+        )
+
+    def retain_lexical_call_row(self, source: "Call", rewritten: "Call") -> None:
+        rows = self.lexical_call_rows_for(source)
+        if not rows or type(source) is not type(rewritten):
+            raise BackendDefect(
+                blame=rewritten.fragment,
+                owner="SourceUnit.retain_lexical_call_row",
+                observed="missing or foreign lexical call row",
+                requested="one source-owned Call row",
+                fix="retain the original row through the authenticated rewrite",
+            )
+        self._retained_lexical_call_rows[rewritten.ref] = rows
 
     @property
     def constructed_module(self) -> object:
@@ -813,6 +839,31 @@ class SourceUnit:
             ):
                 return None
 
+            # Nested definitions are owned by the containing function, not by
+            # module_direct_bindings.  Resolve only an earlier same-name
+            # definition in this exact lexical body; foreign scopes and
+            # post-call definitions remain loud.
+            owner_span = owner.line_col_span()
+            nested = [
+                candidate
+                for candidate in self.function_nodes
+                if candidate.name == call.func.id
+                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                >= (owner_span.start_line, owner_span.start_col)
+                and (candidate.line_col_span().end_line, candidate.line_col_span().end_col)
+                <= (owner_span.end_line, owner_span.end_col)
+                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                < (span.start_line, span.start_col)
+            ]
+            if nested:
+                return max(
+                    nested,
+                    key=lambda item: (
+                        item.line_col_span().start_line,
+                        item.line_col_span().start_col,
+                    ),
+                )
+
         bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
         if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
             return None
@@ -843,6 +894,34 @@ class SourceUnit:
         """
         if not isinstance(call.func, Name) or self.typed_module is None:
             return None
+        lexical_rows = self.lexical_call_rows_for(call)
+        if len(lexical_rows) > 1:
+            from .panic import backend_defect
+
+            backend_defect(
+                blame=call.fragment,
+                owner="SourceUnit.source_function_definition_for_call",
+                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
+                requested="zero or one authenticated lexical call row",
+                fix="repair Backend.materialize_module lexical call enrollment",
+            )
+        if lexical_rows:
+            row = lexical_rows[0]
+            definition = row.definition_occurrence
+            if row.source_cid != self.source_cid or not isinstance(
+                definition, (FunctionDef, AsyncFunctionDef)
+            ):
+                from .panic import backend_defect
+
+                backend_defect(
+                    blame=call.fragment,
+                    owner="SourceUnit.source_function_definition_for_call",
+                    observed="foreign or malformed lexical call row",
+                    requested="this SourceUnit's exact typed function definition",
+                    fix="repair Backend.materialize_module lexical call testimony",
+                )
+            return definition
+
         span = call.line_col_span()
         containing = []
         for candidate in self.function_nodes:
@@ -2792,11 +2871,23 @@ class FunctionDef(Statement):
 
         substituted_body, _ = self._substitute_body(self.body, formal_scope)
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
+        lexical_definitions = tuple(
+            row.definition_occurrence
+            for row in self.unit.constructed_module.lexical_call_rows
+        )
         body = SourceVisibleFunctionBodySugar(
             (
                 ()
                 if generator_steps is not None
-                else tuple(statement.sugar() for statement in substituted_body)
+                else tuple(
+                    substituted.sugar()
+                    for original, substituted in zip(
+                        self.body, substituted_body, strict=True
+                    )
+                    if not any(
+                        original is definition for definition in lexical_definitions
+                    )
+                )
             ),
             self.fragment,
         )
@@ -2836,6 +2927,16 @@ class FunctionDef(Statement):
                     statement.fragment.seal().cid for statement in substituted_body
                 )
             ),
+        )
+
+    def lacks_captured_binding_testimony(self) -> bool:
+        """Whether CPython classifies a closure binding we cannot yet seat."""
+        table = self.unit.function_symtable(
+            self.name, self.line_col_span().start_line
+        )
+        return any(
+            symbol.is_free() or symbol.is_nonlocal()
+            for symbol in table.get_symbols()
         )
 
     def _source_visible_body(self, scope):
@@ -3523,6 +3624,7 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             FunctionUniverseSugar,
         )
+
 
         # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
         # function while it substitutes+constructs, so the engine log's
@@ -9169,6 +9271,16 @@ class Compare(Expression):
 
 
 class Call(Expression):
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        rewritten = super().substitute(scope)
+        if (
+            rewritten is not self
+            and isinstance(rewritten, Call)
+            and self.unit.lexical_call_rows_for(self)
+        ):
+            self.unit.retain_lexical_call_row(self, rewritten)
+        return rewritten
+
     func: Expression
     args: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
@@ -9308,6 +9420,39 @@ class Call(Expression):
         elif isinstance(context, TreeConstructionContextV1):
             assert coordinate is not None
             source_call_resolution = context.source_call_resolutions.get(coordinate)
+        lexical_rows = self.unit.lexical_call_rows_for(self)
+        if len(lexical_rows) > 1:
+            from .panic import backend_defect
+
+            backend_defect(
+                blame=self.fragment,
+                owner="Call._construct_sugar",
+                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
+                requested="zero or one sealed lexical call row",
+                fix="repair lexical call enrollment before constructing the source frame",
+        )
+        lexical_row = lexical_rows[0] if lexical_rows else None
+        if lexical_row is not None:
+            function_definition = lexical_row.definition_occurrence
+            if (
+                lexical_row.source_cid != self.unit.source_cid
+                or not isinstance(function_definition, (FunctionDef, AsyncFunctionDef))
+                or lexical_row.definition_occurrence_identity
+                is not function_definition.ref
+                or lexical_row.lexical_scope_identity
+                is not lexical_row.lexical_scope.ref
+            ):
+                from .panic import backend_defect
+
+                backend_defect(
+                    blame=self.fragment,
+                    owner="Call._construct_sugar",
+                    observed="foreign or malformed lexical source-call row",
+                    requested="this source unit's exact call, definition, and lexical scope",
+                    fix="repair lexical call enrollment before constructing the source frame",
+                )
+            if source_call_frame is None:
+                source_call_frame = function_definition.source_visible_call_frame()
         if source_call_resolution is not None:
             from sugar_lift_py_tests.source_call_resolution import (
                 SourceCallPreconstructionGapV1,
@@ -9336,9 +9481,12 @@ class Call(Expression):
                     fix="emit one typed source-call ref or gap at the exact use site",
                 )
             if (
+                lexical_row is None
+                and (
                 source_call_frame is None
                 or source_call_frame.frame_cid
                 != source_call_resolution.source_call_frame_cid
+                )
             ):
                 from sugar_source_tree.panic import BackendDefect
 
@@ -9399,6 +9547,17 @@ class Call(Expression):
                 site=self.fragment,
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
+                source_call_frame_table=(
+                    context.source_call_frames if lexical_row is not None else None
+                ),
+                source_call_frame_coordinate=(
+                    coordinate if lexical_row is not None else None
+                ),
+                expected_source_call_frame_owner=(
+                    lexical_row.definition_occurrence_identity
+                    if lexical_row is not None
+                    else None
+                ),
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
@@ -9454,21 +9613,71 @@ class Call(Expression):
 
             source_call_frame = None
             formal_function_sugar = None
+            formal_coordinates = ()
             formal_coordinate_cids = ()
-            function_definition = self.unit.source_function_definition_for_call(self)
+            lexical_rows = self.unit.lexical_call_rows_for(self)
+            if len(lexical_rows) > 1:
+                from .panic import backend_defect
+
+                backend_defect(
+                    blame=self.fragment,
+                    owner="Call._construct_sugar",
+                    observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
+                    requested="zero or one sealed lexical call row",
+                    fix="repair lexical call enrollment before constructing the source frame",
+                )
+            lexical_row = lexical_rows[0] if lexical_rows else None
+            if lexical_row is not None:
+                function_definition = lexical_row.definition_occurrence
+                if (
+                    lexical_row.source_cid != self.unit.source_cid
+                    or not isinstance(
+                        function_definition, (FunctionDef, AsyncFunctionDef)
+                    )
+                    or lexical_row.definition_occurrence_identity
+                    is not function_definition.ref
+                    or lexical_row.lexical_scope_identity
+                    is not lexical_row.lexical_scope.ref
+                ):
+                    from .panic import backend_defect
+
+                    backend_defect(
+                        blame=self.fragment,
+                        owner="Call._construct_sugar",
+                        observed="foreign or malformed lexical source-call row",
+                        requested="this source unit's exact call, definition, and lexical scope",
+                        fix="repair lexical call enrollment before constructing the source frame",
+                    )
+            else:
+                function_definition = self.unit.source_function_definition_for_call(self)
             if function_definition is not None:
                 formal_function_sugar = function_definition.sugar()
                 formal_coordinates = function_definition.formal_coordinates()
                 formal_coordinate_cids = tuple(
                     coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
-                pending = formal_function_sugar.desugar(None)
-                from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+                if lexical_row is not None:
+                    if source_call_frame is not None:
+                        if source_call_frame.owner is not lexical_row.definition_occurrence:
+                            from .panic import backend_defect
 
-                if isinstance(pending, NativeOperationExitCarrierV1):
-                    source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
-                        formal_coordinates, pending
-                    )
+                            backend_defect(
+                                blame=self.fragment,
+                                owner="Call._construct_sugar",
+                                observed="seated source frame has foreign lexical owner",
+                                requested="the lexical row's authenticated scope owner",
+                                fix="retain the seated frame or keep the call loud",
+                            )
+                    else:
+                        source_call_frame = function_definition.source_visible_call_frame()
+                elif source_call_frame is None:
+                    pending = formal_function_sugar.desugar(None)
+                    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+                    if isinstance(pending, NativeOperationExitCarrierV1):
+                        source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
+                            formal_coordinates, pending
+                        )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
@@ -9503,6 +9712,10 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
+                expected_definition_ref=(
+                    None if function_definition is None else function_definition.ref
+                ),
+                native_operation_formal_coordinates=tuple(formal_coordinates),
             )
         if isinstance(self.func, Attribute):
             # Lexical import binding is the ONLY door to a closed callee

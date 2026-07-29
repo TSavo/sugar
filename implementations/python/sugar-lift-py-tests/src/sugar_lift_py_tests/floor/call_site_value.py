@@ -1139,6 +1139,8 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
             actuals = self.bound_native_actuals_by_coordinate
+            if actuals is None and self.bound_source_actuals is not None:
+                outcome = self.bound_source_actuals.project_native_carrier(outcome)
             if actuals is not None:
                 outcome = outcome.discharge(actuals)
         # ConstructionPanic is BaseException and process-terminal: dig must not convert
@@ -1272,7 +1274,7 @@ class CallSiteValue(FloorValue):
         )
         return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
 
-    def producer_outcome(self, ctx: Any = None):
+    def producer_outcome(self, ctx: Any = None, *, carrier_actuals: dict | None = None):
         """Publish authenticated source-body halts at the Call expression.
 
         A completed source body still denotes this ordinary call coordinate;
@@ -1289,9 +1291,9 @@ class CallSiteValue(FloorValue):
             return Complete(self)
 
         outcome = self.reduce_source_outcome(ctx)
-        return self.project_producer_outcome(outcome)
+        return self.project_producer_outcome(outcome, carrier_actuals=carrier_actuals)
 
-    def project_producer_outcome(self, outcome):
+    def project_producer_outcome(self, outcome, *, carrier_actuals: dict | None = None):
         """Project a source-authenticated callee outcome onto this Call node."""
 
         from dataclasses import replace
@@ -1309,9 +1311,22 @@ class CallSiteValue(FloorValue):
             return Complete(self)
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
-            actuals = self.bound_native_actuals_by_coordinate
+            if self.bound_source_actuals is not None:
+                outcome = self.bound_source_actuals.project_native_carrier(outcome)
+                actuals = None
+            else:
+                actuals = self.bound_native_actuals_by_coordinate
             if actuals is None:
-                return outcome
+                if not isinstance(outcome, NativeOperationExitCarrierV1):
+                    return outcome
+                from sugar_source_tree.panic import SugarNotWritten
+                raise SugarNotWritten(
+                    owner="CallSiteValue.project_producer_outcome",
+                    blame=self.target_name,
+                    observed="late native carrier lacks bound source testimony",
+                    requested="the producer-owned source bind result",
+                    fix="retain the carrier at its producer boundary",
+                )
             outcome = outcome.discharge(actuals)
         exits = outcome_to_exitset(outcome)
         return ExitSet(

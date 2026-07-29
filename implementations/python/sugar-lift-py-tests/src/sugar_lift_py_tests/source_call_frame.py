@@ -134,12 +134,57 @@ class BoundSourceCallActualsV1:
 
     @property
     def by_native_formal_coordinate(self) -> dict[str, object]:
+        if not self.native_formal_coordinates:
+            return {}
         return {
             coordinate.coordinate_cid: actual
             for coordinate, actual in zip(
                 self.native_formal_coordinates, self.actuals, strict=True
             )
         }
+
+    def project_native_carrier(self, carrier):
+        """Discharge a late carrier using this frame's retained bind result."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        if not isinstance(carrier, NativeOperationExitCarrierV1):
+            raise SourceCallBindingGap(
+                "native projection requires a native operation carrier"
+            )
+        projected = {}
+        for demanded_cid, stored_coordinate in zip(
+            carrier.demand.operand_coordinate_cids,
+            carrier.coordinates,
+            strict=True,
+        ):
+            if demanded_cid is None:
+                if stored_coordinate is not None:
+                    raise SourceCallBindingGap(
+                        "native carrier has coordinate testimony without a demand"
+                    )
+                continue
+            _reauthenticate_native_coordinates((stored_coordinate,))
+            ordinal = stored_coordinate.ordinal
+            if (
+                stored_coordinate.coordinate_cid != demanded_cid
+                or ordinal >= len(self.pairs)
+            ):
+                raise SourceCallBindingGap(
+                    "native carrier demand is foreign to the retained source frame"
+                )
+            pair = self.pairs[ordinal]
+            if (
+                pair.coordinate.projection_path != ("formal", ordinal)
+                or pair.coordinate.binding_site["source_cid"]
+                != stored_coordinate.owner_source_identity_cid
+            ):
+                raise SourceCallBindingGap(
+                    "native carrier demand is cross-wired to a source formal slot"
+                )
+            projected[demanded_cid] = pair.actual
+        return carrier.discharge(projected)
 
 
 @dataclass(frozen=True)
