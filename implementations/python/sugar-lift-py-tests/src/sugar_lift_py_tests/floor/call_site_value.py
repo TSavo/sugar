@@ -1140,10 +1140,7 @@ class CallSiteValue(FloorValue):
         if isinstance(outcome, NativeOperationExitCarrierV1):
             actuals = self.bound_native_actuals_by_coordinate
             if actuals is None and self.bound_source_actuals is not None:
-                actuals = {
-                    pair.coordinate.cid: pair.actual
-                    for pair in self.bound_source_actuals.pairs
-                }
+                actuals = self.bound_source_actuals.by_native_formal_coordinate
             if actuals is not None:
                 outcome = outcome.discharge(actuals)
         # ConstructionPanic is BaseException and process-terminal: dig must not convert
@@ -1316,10 +1313,7 @@ class CallSiteValue(FloorValue):
         if isinstance(outcome, NativeOperationExitCarrierV1):
             actuals = self.bound_native_actuals_by_coordinate
             if actuals is None and self.bound_source_actuals is not None:
-                actuals = {
-                    pair.coordinate.cid: pair.actual
-                    for pair in self.bound_source_actuals.pairs
-                }
+                actuals = self.bound_source_actuals.by_native_formal_coordinate
             if actuals is None:
                 return outcome
             outcome = outcome.discharge(actuals)
