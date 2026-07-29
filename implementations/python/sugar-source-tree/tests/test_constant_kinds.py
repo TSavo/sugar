@@ -8,9 +8,14 @@ whitelist and fold table, so it lifts too -- this is not a new vocabulary
 decision, it mirrors vocabulary already agreed elsewhere in the kit.
 """
 
+from dataclasses import replace
 import tempfile
 
+import pytest
+
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.sugar.bytes_literal_sugar import BytesLiteralSugar
+from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_source_tree.tree import SourceFile
 
 
@@ -37,6 +42,29 @@ def test_bytes_literal_discriminates_on_content():
     ab = _return_value('def A():\n    return b"ab"\n')
     ac = _return_value('def A():\n    return b"ac"\n')
     assert ab != ac
+
+
+def test_bytes_literal_is_an_authenticated_call_operand():
+    function = _fn('def A():\n    return sink(b"ab")\n')
+    call = next(node for node in function.walk() if node.kind == "Call")
+
+    constructed = call.sugar()
+
+    assert isinstance(constructed, CallSiteSugar)
+    assert isinstance(constructed.args[0], BytesLiteralSugar)
+    constructed.args[0].to_term(owner="bytes call operand")
+    with pytest.raises(
+        TypeError,
+        match="requires an authenticated source occurrence for BytesLiteralSugar",
+    ):
+        replace(constructed.args[0], site=object()).to_term(owner="foreign bytes")
+
+    integer_call = next(
+        node
+        for node in _fn("def A():\n    return sink(1)\n").walk()
+        if node.kind == "Call"
+    )
+    assert isinstance(integer_call.sugar(), CallSiteSugar)
 
 
 def test_ellipsis_literal_lifts_to_canonical_py_ellipsis_term():

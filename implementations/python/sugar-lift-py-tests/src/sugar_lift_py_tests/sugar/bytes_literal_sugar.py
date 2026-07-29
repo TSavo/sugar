@@ -4,12 +4,12 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.bytes_value import BytesValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 @dataclass(frozen=True)
-class BytesLiteralSugar(Sugar):
+class BytesLiteralSugar(ConstructedTermSugar):
     """A `bytes` literal (`b"..."`). A leaf: it holds its value and no child
     sugars, and it desugars to the BytesValue floor -- which stands as the
     vendor-canonical ``python:bytes(<hex String const>)`` term already
@@ -32,3 +32,15 @@ class BytesLiteralSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # the bytes stand as a floor value
         return Complete(BytesValue(self.value))
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:bytes-literal-construction",
+            (
+                self.occurrence_term(owner=owner),
+                BytesValue(self.value).to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
+        )
