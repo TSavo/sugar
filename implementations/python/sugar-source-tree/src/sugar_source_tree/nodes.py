@@ -9393,8 +9393,9 @@ class Call(Expression):
                 observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
                 requested="zero or one sealed lexical call row",
                 fix="repair lexical call enrollment before constructing the source frame",
-            )
+        )
         lexical_row = lexical_rows[0] if lexical_rows else None
+        retained_lexical_row = self.ref in self.unit._retained_lexical_call_rows
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
             if (
@@ -9405,6 +9406,8 @@ class Call(Expression):
                 or lexical_row.lexical_scope_identity
                 is not lexical_row.lexical_scope.ref
                 or (
+                    retained_lexical_row
+                    and
                     source_call_frame is not None
                     and source_call_frame.owner is not lexical_row.lexical_scope
                 )
@@ -9418,7 +9421,8 @@ class Call(Expression):
                     requested="this source unit's exact call, definition, and lexical scope",
                     fix="repair lexical call enrollment before constructing the source frame",
                 )
-            source_call_frame = function_definition.source_visible_call_frame()
+            if source_call_frame is None:
+                source_call_frame = function_definition.source_visible_call_frame()
         if source_call_resolution is not None:
             from sugar_lift_py_tests.source_call_resolution import (
                 SourceCallPreconstructionGapV1,
@@ -9613,7 +9617,7 @@ class Call(Expression):
                 )
                 if lexical_row is not None:
                     if source_call_frame is not None:
-                        if source_call_frame.owner is not lexical_row.lexical_scope:
+                        if source_call_frame.owner is not lexical_row.definition_occurrence:
                             from .panic import backend_defect
 
                             backend_defect(
