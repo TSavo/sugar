@@ -1786,35 +1786,13 @@ def _construct_reachable_decorated_class_bindings(
             context=context,
             dependency_graphs=dependency_graphs,
         )
-    for definition in module_definitions:
-        if definition not in class_dependencies:
-            continue
-        outcome = definition.sugar().desugar(ctx)
-        if not isinstance(outcome, Complete):
-            raise SugarNotWritten(
-                owner="manager_construction decorated class dependency",
-                blame=definition.fragment,
-                observed="decorator class dependency reduced nonlinearly",
-                requested="one completed source class Floor",
-                fix="sequence module definition effects before decorator execution",
-            )
-        temporal = temporal.bind_value(definition.name, outcome.value)
-    ctx = replace(ctx, temporal=temporal, module_temporal=temporal)
 
-    result = []
-    for definition in reached:
-        # A reached imported Attribute decorator factory is an exact source
-        # call, not an opaque bodyless CallSiteValue.  Enroll only decorator
-        # Call coordinates owned by this reached ClassDef and authenticated by
-        # the lexical call receipt at that exact occurrence.
+    def enroll_imported_decorator_frames(definition: ClassDef) -> None:
         from pathlib import Path
         from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
         decorator_receipts, _ = authenticated_import_use_receipts(
-            Path("."),
-            Path(module.source_seat),
-            module.source,
-            module.source_cid,
+            Path("."), Path(module.source_seat), module.source, module.source_cid,
             module_identities={},
         )
         receipts_by_span = {
@@ -1872,6 +1850,26 @@ def _construct_reachable_decorated_class_bindings(
             except SourceCallBindingGap:
                 continue
             _install_source_call_frame(context, decorator, decorator_frame)
+
+    for definition in receipt_owned_classes:
+        enroll_imported_decorator_frames(definition)
+    for definition in module_definitions:
+        if definition not in class_dependencies:
+            continue
+        outcome = definition.sugar().desugar(ctx)
+        if not isinstance(outcome, Complete):
+            raise SugarNotWritten(
+                owner="manager_construction decorated class dependency",
+                blame=definition.fragment,
+                observed="decorator class dependency reduced nonlinearly",
+                requested="one completed source class Floor",
+                fix="sequence module definition effects before decorator execution",
+            )
+        temporal = temporal.bind_value(definition.name, outcome.value)
+    ctx = replace(ctx, temporal=temporal, module_temporal=temporal)
+
+    result = []
+    for definition in reached:
         sugar = definition.sugar()
         raw_outcome = sugar.desugar(ctx)
         if not isinstance(raw_outcome, Complete):
@@ -1900,8 +1898,6 @@ def _construct_reachable_decorated_class_bindings(
             tuple(zip(decorator_floors, sugar.decorator_occurrences, strict=True))
         ):
             from sugar_lift_py_tests.floor import CallSiteValue
-            print("FLOOR_TRACE", type(callable_floor), getattr(callable_floor, "body", "NA"), getattr(callable_floor, "source_call_frame_cid", "NA"))
-
             if (
                 type(callable_floor) is CallSiteValue
                 and callable_floor.body is not None
