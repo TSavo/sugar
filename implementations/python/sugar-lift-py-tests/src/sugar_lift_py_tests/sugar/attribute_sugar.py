@@ -100,7 +100,7 @@ class AttributeSugar(ConstructedTermSugar):
         from sugar_source_tree.fragment import SourceFragment
 
         if type(site) is SourceFragment:
-            span = site.line_col_span()
+            span = site.line_col_span
             receipt = site.unit.import_value_use_resolution(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
