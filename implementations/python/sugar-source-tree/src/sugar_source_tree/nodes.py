@@ -9232,6 +9232,12 @@ class Compare(Expression):
 
 
 class Call(Expression):
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        rewritten = super().substitute(scope)
+        if rewritten is not self and isinstance(rewritten, Call):
+            self.unit.retain_lexical_call_row(self, rewritten)
+        return rewritten
+
     func: Expression
     args: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
@@ -9371,12 +9377,7 @@ class Call(Expression):
         elif isinstance(context, TreeConstructionContextV1):
             assert coordinate is not None
             source_call_resolution = context.source_call_resolutions.get(coordinate)
-        lexical_rows = tuple(
-            row
-            for row in self.unit.constructed_module.lexical_call_rows
-            if row.call_occurrence is self
-            or row.call_occurrence_identity is self.ref
-        )
+        lexical_rows = self.unit.lexical_call_rows_for(self)
         if len(lexical_rows) > 1:
             from .panic import backend_defect
 
@@ -9562,12 +9563,7 @@ class Call(Expression):
             formal_function_sugar = None
             formal_coordinates = ()
             formal_coordinate_cids = ()
-            lexical_rows = tuple(
-                row
-                for row in self.unit.constructed_module.lexical_call_rows
-                if row.call_occurrence is self
-                or row.call_occurrence_identity is self.ref
-            )
+            lexical_rows = self.unit.lexical_call_rows_for(self)
             if len(lexical_rows) > 1:
                 from .panic import backend_defect
 
