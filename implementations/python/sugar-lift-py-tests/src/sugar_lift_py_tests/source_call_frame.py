@@ -204,6 +204,11 @@ class SourceVisibleCallFrameV1:
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if any(
+            binding.source_cid != self.source_identity_cid
+            for binding in self.mutable_global_bindings
+        ):
+            raise SourceCallBindingGap("foreign mutable-global source")
         preimage = {
             "kind": "source-visible-call-frame",
             "schemaVersion": "1",
