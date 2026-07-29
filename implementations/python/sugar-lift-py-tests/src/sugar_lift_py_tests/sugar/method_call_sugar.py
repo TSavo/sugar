@@ -184,6 +184,20 @@ class MethodCallSugar(ConstructedTermSugar):
                 requested="authenticated constructed receiver matching the method frame",
                 fix="preserve receiver identity or keep authenticated dispatch loud",
             )
+        if not kw_values:
+            from sugar_lift_py_tests.operations.method_call_operation import (
+                MethodCallOperation,
+            )
+
+            return receiver.call_method_with(
+                MethodCallOperation(
+                    name=self.name,
+                    arguments=positional,
+                    owner="MethodCallSugar",
+                    blame=self.site,
+                ),
+                ctx,
+            )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
