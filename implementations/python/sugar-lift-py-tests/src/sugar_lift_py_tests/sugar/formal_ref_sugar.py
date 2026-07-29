@@ -37,7 +37,11 @@ class FormalRefSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
+        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        if temporal is not None:
+            bound = temporal.value_if_bound(self.coordinate.coordinate_cid)
+            if bound is not None:
+                return Complete(bound)
         return Complete(
             SymbolicValue(
                 make_var(self.coordinate.declared_name),

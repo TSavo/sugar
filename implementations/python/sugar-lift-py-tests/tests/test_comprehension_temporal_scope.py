@@ -205,18 +205,22 @@ def test_finite_comprehensions_transport_exact_constructed_objects_in_order():
         "    def __init__(self, index, name):\n"
         "        self.index = index\n"
         "        self.name = name\n"
-        "def build():\n"
-        "    items = [Item(index, name) for index, name in [(0, 2), (1, 1)]]\n"
+        "def build(*names):\n"
+        "    items = [Item(index, name) for index, name in enumerate(names)]\n"
         "    return {item.name: item for item in items}\n"
+        "build(2, 1)\n"
     )
-    function = next(
-        node for node in _source_file(source).functions() if node.name == "build"
-    )
-
-    outcome = function.sugar().desugar(None)
+    call = tuple(
+        node
+        for node in _source_file(source).nodes()
+        if node.kind == "Call" and node.func.kind == "Name" and node.func.id == "build"
+    )[-1]
+    outcome = call.sugar().desugar(None)
 
     assert isinstance(outcome, Complete)
-    returned = outcome.value.record.statements[0].value
+    returned = outcome.value.project_operation_receiver(
+        None, owner="finite-comprehension-transport-test"
+    )
     assert isinstance(returned, DictValue)
     assert tuple(key.value for key, _ in returned.entries) == (2, 1)
     objects = tuple(value for _, value in returned.entries)

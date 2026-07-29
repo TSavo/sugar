@@ -8951,7 +8951,11 @@ class ListComp(Expression):
             changed["generators"] = new_gens
         if de:
             changed["elt"] = new_elt
-        return self if not changed else rewrite(self, **changed)
+        if not changed:
+            return self
+        rewritten = rewrite(self, **changed)
+        self.unit.retain_target_patterns(self, rewritten)
+        return rewritten
 
     def _try_unroll_to_display(self, scope):
         """The List display this comprehension dissolves to, or None. One
@@ -9980,6 +9984,7 @@ class Call(Expression):
                 formal_coordinate_cids = tuple(
                     coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
+                source_call_frame = function_definition.source_visible_call_frame()
                 if lexical_row is not None:
                     if source_call_frame is not None:
                         if source_call_frame.owner is not lexical_row.definition_occurrence:

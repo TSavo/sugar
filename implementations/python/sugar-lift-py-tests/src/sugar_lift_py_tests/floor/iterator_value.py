@@ -39,6 +39,19 @@ class ListIteratorValue(FloorValue):
     def denotes_value(self) -> bool:
         return True
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:list_iterator",
+            (
+                ctor("array", tuple(value.to_term(owner=owner) for value in self.elements)),
+                TermValue(self.index).to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
+        )
+
     def setattr(self, name, value, site):
         del name, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit

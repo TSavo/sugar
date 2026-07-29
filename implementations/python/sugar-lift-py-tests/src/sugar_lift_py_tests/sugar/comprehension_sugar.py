@@ -196,6 +196,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.dict_value import DictValue
         from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.iterator_value import (
+            ListIteratorValue,
+            TupleIteratorValue,
+        )
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.ir import (
             PrimitiveSort,
@@ -208,6 +212,8 @@ class ComprehensionSugar(ConstructedTermSugar):
         members = None
         if isinstance(iterable, (TupleValue, ListValue)):
             members = iterable.elements
+        elif isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):
+            members = iterable.elements[iterable.index :]
         elif isinstance(iterable, ComprehensionValue) and iterable.finite_elements is not None:
             members = iterable.finite_elements
         if members is None:

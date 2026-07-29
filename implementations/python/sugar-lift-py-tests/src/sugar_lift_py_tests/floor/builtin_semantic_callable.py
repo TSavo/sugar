@@ -48,6 +48,8 @@ class BuiltinSemanticCallable(FloorValue):
             return self._isinstance(operation)
         if self.operation == "python.len":
             return self._len(operation)
+        if self.operation == "python.enumerate.construct":
+            return self._enumerate(operation)
         if self.operation != "python.issubclass":
             return super().callable_application_with(operation, None)
         if len(operation.arguments) != 2 or operation.keyword_names:
@@ -118,6 +120,38 @@ class BuiltinSemanticCallable(FloorValue):
                 fix="project finite containers before len or keep the call loud",
             )
         return length(operation.site)
+
+    def _enumerate(self, operation):
+        """Construct the exact finite iterator for an authenticated sequence."""
+        if operation.keyword_names or len(operation.arguments) != 1:
+            return super().callable_application_with(operation, None)
+        from sugar_lift_py_tests.floor import (
+            ComprehensionValue,
+            ListIteratorValue,
+            ListValue,
+            TermValue,
+            TupleValue,
+        )
+        from sugar_lift_py_tests.outcome import Complete
+
+        source = operation.arguments[0]
+        if isinstance(source, (ListValue, TupleValue)):
+            elements = source.elements
+        elif (
+            isinstance(source, ComprehensionValue)
+            and source.finite_elements is not None
+        ):
+            elements = source.finite_elements
+        else:
+            return super().callable_application_with(operation, None)
+        return Complete(
+            ListIteratorValue(
+                tuple(
+                    TupleValue((TermValue(index), value))
+                    for index, value in enumerate(elements)
+                )
+            )
+        )
 
     def _isinstance(self, operation):
         """Exact ``isinstance(obj, classinfo)`` over authenticated floors.
