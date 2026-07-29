@@ -21,7 +21,10 @@ from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValu
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
-from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+from sugar_lift_py_tests.sugar.function_universe_sugar import (
+    _ReducedBlock,
+    reduce_block_to_exitset,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -177,3 +180,25 @@ def test_equal_state_reenrollment_retains_original_testimony() -> None:
     )
 
     assert retained.pre_effect_state is original
+
+
+def test_outer_reducer_appends_to_already_enrolled_carrier_without_reseating():
+    pending, _ = _pending_and_receiver()
+    original = pending.pre_effect_state
+    before = len(pending.continuations)
+
+    class _AlreadyEnrolled:
+        def desugar(self, ctx=None):
+            del ctx
+            return pending
+
+    class _Prefix:
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(TermValue(41))
+
+    reduced = reduce_block_to_exitset((_Prefix(), _AlreadyEnrolled()))
+
+    assert type(reduced) is NativeOperationExitCarrierV1
+    assert reduced.pre_effect_state is original
+    assert len(reduced.continuations) == before + 1

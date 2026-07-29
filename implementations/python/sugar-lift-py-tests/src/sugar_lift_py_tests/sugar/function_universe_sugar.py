@@ -336,6 +336,12 @@ def reduce_block_to_exitset(
                 # Retain the ordinary statement projection as a continuation;
                 # discharge will feed its Completed face through this exact
                 # block seam, while its Halted face bypasses the tail.
+                if outcome.pre_effect_state is not None:
+                    # A nested source reduction already enrolled the state at
+                    # its own reducer boundary.  This outer block contributes
+                    # only its captured continuation; reseating the outer
+                    # prefix would overwrite the operation's effect locus.
+                    return outcome.and_then(project)
                 return outcome.and_then(
                     project,
                     pre_effect_state=ReducerPreEffectStateV1._from_reducer(state),
