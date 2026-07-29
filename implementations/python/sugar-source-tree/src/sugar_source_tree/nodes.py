@@ -2859,6 +2859,7 @@ class FunctionDef(Statement):
             return None
         from sugar_lift_py_tests.generator_construction import (
             AssignStepV1,
+            AttributeAssignStepV1,
             FinallyStepV1,
             ForStepV1,
             IfStepV1,
@@ -2954,6 +2955,23 @@ class FunctionDef(Statement):
                         statement.targets[0].id,
                         statement.value.sugar(),
                         statement.fragment.seal().cid,
+                    )
+                )
+            if (
+                isinstance(statement, Assign)
+                and not self._owns_yield((statement,))
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], Attribute)
+            ):
+                target = statement.targets[0]
+                return _GeneratorNamedStepV1(
+                    AttributeAssignStepV1(
+                        receiver=target.value.sugar(),
+                        attr=target.attr,
+                        value=statement.value.sugar(),
+                        fragment_cid=statement.fragment.seal().cid,
+                        target_cid=target.fragment.seal().cid,
+                        occurrence=target.fragment,
                     )
                 )
             if (

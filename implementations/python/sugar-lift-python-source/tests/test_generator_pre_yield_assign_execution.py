@@ -7,27 +7,103 @@ content-stable testimony.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 import tempfile
+
+import pytest
 
 from sugar_lift_py_tests.floor import NoneValue, TermValue
 from sugar_lift_py_tests.generator_construction import (
     AssignStepV1,
+    AttributeAssignStepV1,
     GeneratorAssignBindingV1,
     GeneratorConstructionV1,
     YieldEffect,
     YieldStepV1,
 )
+from sugar_lift_py_tests.outcome import Complete, Halted
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import cid_of_json
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
 
 def _steps(source: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".py", delete=False, dir=Path.cwd()
+    ) as handle:
         handle.write(source)
         path = handle.name
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(
+        SourceFile(workspace_path_source(path, root=str(Path.cwd()))).functions()
+    )
     return function._source_visible_generator_steps_from(function.body)
+
+
+@dataclass(frozen=True)
+class _CountingValue(ConstructedTermSugar):
+    value: object
+    label: str
+    events: list[str] = field(compare=False, repr=False)
+    site: object = field(compare=False, repr=False)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        self.events.append(self.label)
+        return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        return self.value.to_term(owner=owner)
+
+
+def test_generator_attribute_assign_executes_once_at_exact_target_occurrence():
+    steps = _steps(
+        "def g(holder):\n"
+        "    holder.hidden = True\n"
+        "    yield holder\n"
+    )
+    assign = steps[0]
+    assert isinstance(assign, AttributeAssignStepV1)
+    assert assign.attr == "hidden"
+    assert assign.occurrence.seal().cid == assign.target_cid
+
+    events: list[str] = []
+    instrumented = replace(
+        assign,
+        value=_CountingValue(NoneValue(), "rhs", events, assign.value.site),
+        receiver=_CountingValue(NoneValue(), "target", events, assign.receiver.site),
+    )
+    outcome = GeneratorConstructionV1.allocate(
+        allocation_coordinate="enter:attribute-assign",
+        frame_coordinate="frame:attribute-assign",
+        binding_state=(),
+        steps=(instrumented,),
+    ).resume()
+    assert events == ["rhs", "target"]
+    assert len(outcome.exits) == 1
+    assert isinstance(outcome.exits[0], Halted)
+
+
+def test_generator_attribute_assign_rejects_foreign_target_occurrence():
+    truthful = _steps(
+        "def g(holder):\n"
+        "    holder.hidden = True\n"
+        "    yield holder\n"
+    )[0]
+    foreign = _steps(
+        "def h(other):\n"
+        "    other.hidden = True\n"
+        "    yield other\n"
+    )[0]
+    assert isinstance(truthful, AttributeAssignStepV1)
+    assert isinstance(foreign, AttributeAssignStepV1)
+    with pytest.raises(TypeError, match="target occurrence does not match"):
+        replace(truthful, occurrence=foreign.occurrence)
 
 
 def test_config_setter_pre_yield_assign_executes_before_yield():
