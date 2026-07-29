@@ -354,6 +354,10 @@ class GuardedValue(FloorValue):
     def subscript(self, index, site):
         return self._map("subscript", index, site)
 
+    def subscript_with_occurrence(self, index, site, occurrence):
+        """Distribute one authenticated Subscript occurrence to both arms."""
+        return self._map("subscript_with_occurrence", index, site, occurrence)
+
     def attribute(self, name, site):
         """Distribute attribute projection over both branch faces.
 
