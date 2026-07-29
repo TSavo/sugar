@@ -144,11 +144,11 @@ class AttributeSugar(ConstructedTermSugar):
                         fix="preserve the receipt targetSymbol unchanged",
                     )
                 from sugar_lift_py_tests.floor.import_member_value import (
-                    ImportMemberValue,
+                    _mint_import_member_value,
                 )
                 from sugar_lift_py_tests.outcome import Complete
 
-                return Complete(ImportMemberValue.mint(receipt))
+                return Complete(_mint_import_member_value(receipt))
         return receiver.attribute(name, site)
 
     def desugar(self, ctx: object = None) -> Outcome:

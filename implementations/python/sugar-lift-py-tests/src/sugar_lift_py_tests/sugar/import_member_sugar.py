@@ -28,14 +28,18 @@ class ImportMemberSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
-        from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+        from sugar_lift_py_tests.floor.import_member_value import (
+            _mint_import_member_value,
+        )
 
-        value = ImportMemberValue.mint(self.receipt)
+        value = _mint_import_member_value(self.receipt)
         if value.qualified_name != self.qualified_name:
             raise ValueError("ImportMemberSugar receipt target mismatch")
         return Complete(value)
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+        from sugar_lift_py_tests.floor.import_member_value import (
+            _mint_import_member_value,
+        )
 
-        return ImportMemberValue.mint(self.receipt).to_term(owner=owner)
+        return _mint_import_member_value(self.receipt).to_term(owner=owner)

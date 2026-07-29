@@ -16,7 +16,7 @@ from .floor_value import FloorValue
 _IMPORT_MEMBER_AUTHORITY = object()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class ImportMemberValue(FloorValue):
     """Source-authenticated ``module.attr[.attr…]`` export coordinate."""
 
@@ -27,27 +27,6 @@ class ImportMemberValue(FloorValue):
     exported_member_path: tuple[str, ...]
     receipt: object = field(compare=False, repr=False)
     _authority: object = field(default=None, compare=False, repr=False)
-
-    @classmethod
-    def mint(cls, receipt):
-        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
-
-        if type(receipt) is not AuthenticatedImportUseV1:
-            raise TypeError("ImportMemberValue requires exact authenticated receipt")
-        receipt.revalidate()
-        target = receipt.target_symbol
-        path = tuple(receipt.use["exportedMemberPath"])
-        if not target.startswith("python:") or not path:
-            raise ValueError("ImportMemberValue receipt has no imported member path")
-        return cls(
-            target.removeprefix("python:"),
-            receipt.source_cid,
-            receipt.import_binding.cid,
-            receipt.use["cid"],
-            path,
-            receipt,
-            _IMPORT_MEMBER_AUTHORITY,
-        )
 
     def __post_init__(self):
         from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
@@ -99,3 +78,29 @@ class ImportMemberValue(FloorValue):
             "python:exception_type_identity",
             [str_const("import"), str_const(self.qualified_name)],
         )
+
+
+def _mint_import_member_value(receipt) -> ImportMemberValue:
+    """The sole producer door for an exact authenticated imported value."""
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+    if type(receipt) is not AuthenticatedImportUseV1:
+        raise TypeError("ImportMemberValue requires exact authenticated receipt")
+    receipt.revalidate()
+    target = receipt.target_symbol
+    path = tuple(receipt.use["exportedMemberPath"])
+    if not target.startswith("python:") or not path:
+        raise ValueError("ImportMemberValue receipt has no imported member path")
+    value = object.__new__(ImportMemberValue)
+    for name, item in (
+        ("qualified_name", target.removeprefix("python:")),
+        ("source_cid", receipt.source_cid),
+        ("import_binding_cid", receipt.import_binding.cid),
+        ("use_cid", receipt.use["cid"]),
+        ("exported_member_path", path),
+        ("receipt", receipt),
+        ("_authority", _IMPORT_MEMBER_AUTHORITY),
+    ):
+        object.__setattr__(value, name, item)
+    value.__post_init__()
+    return value
