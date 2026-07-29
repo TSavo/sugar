@@ -45,7 +45,15 @@ class CallSiteSugar(ConstructedTermSugar):
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
-    source_call_frame: Any = dataclass_field(default=None, compare=False)
+    # Live reducer/frame machinery is an execution handle, not constructed
+    # semantic content. Stable frame/call/contract coordinates below carry the
+    # authenticated construction authority; serializing this object would walk
+    # private reducer continuations and invent identities for closures.
+    source_call_frame: Any = dataclass_field(
+        default=None,
+        compare=False,
+        metadata={"constructed_value": False},
+    )
     source_call_frame_table: Any = dataclass_field(default=None, compare=False)
     source_call_frame_coordinate: Any = dataclass_field(default=None, compare=False)
     expected_source_call_frame_owner: Any = dataclass_field(

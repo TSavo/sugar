@@ -33,7 +33,7 @@ These twins pin what the form must NOT lose and must NOT merge:
   * V1 and V2 never share an identity namespace.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 
 import pytest
@@ -167,6 +167,18 @@ def test_callsite_definition_authority_is_a_source_node_not_backend_handle(tmp_p
 
     assert sugar.expected_definition is helper
     _constructed_preimage(sugar)
+
+
+def test_explicit_execution_handle_field_is_not_constructed_value_content():
+    @dataclass(frozen=True)
+    class WithExecutionHandle:
+        meaning: str
+        continuation: object = field(metadata={"constructed_value": False})
+
+    left = _constructed_preimage(WithExecutionHandle("same", lambda: "left"))
+    right = _constructed_preimage(WithExecutionHandle("same", lambda: "right"))
+
+    assert left == right
 
 
 # ---------------------------------------------------------------------------

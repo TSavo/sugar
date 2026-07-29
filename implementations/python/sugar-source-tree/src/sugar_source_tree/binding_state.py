@@ -1149,7 +1149,11 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
         if params is not None and params.frozen:
             return (
                 _cv2_type_tag(value),
-                [(field.name, getattr(value, field.name)) for field in fields(value)],
+                [
+                    (field.name, getattr(value, field.name))
+                    for field in fields(value)
+                    if field.metadata.get("constructed_value", True)
+                ],
             )
         raise ConstructedValueCategoryGap(
             f"{_cv2_type_tag(value)} is a MUTABLE dataclass: its content can "
