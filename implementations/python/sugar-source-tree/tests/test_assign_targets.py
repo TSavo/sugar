@@ -14,6 +14,7 @@ import pytest
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree import nodes
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -212,6 +213,35 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     assert halted.state.entries == ()
     assert halted.state.fall_through == ()
     assert halted.state.transforms == ()
+
+
+def test_target_rewrite_does_not_carry_the_original_assign_pattern(monkeypatch):
+    function = _fn(
+        "def A(left, right):\n"
+        "    a, b = left\n"
+        "    c, d = right\n"
+    )
+    assignments = tuple(node for node in function.walk() if node.kind == "Assign")
+    original, foreign = assignments
+    original_pattern, = original.target_patterns
+    before = function.unit.target_pattern_construction_count
+
+    monkeypatch.setattr(
+        nodes,
+        "_substituted_unpack_store_leaves",
+        lambda statement, target, scope: foreign.targets[0],
+    )
+    rewritten = original.substitute({"left": foreign.value})
+
+    assert rewritten.targets[0].ref is foreign.targets[0].ref
+    assert rewritten.target_patterns == ()
+    with pytest.raises(nodes.TargetPatternConstructionGapV1) as refused:
+        function.unit.require_target_pattern(rewritten, rewritten.targets[0])
+    assert refused.value.reason == "foreign-target-occurrence"
+    assert refused.value.consumer_occurrence is rewritten
+    assert refused.value.target_occurrence is rewritten.targets[0]
+    assert original.target_patterns[0] is original_pattern
+    assert function.unit.target_pattern_construction_count == before
 
 
 def test_display_rhs_arity_mismatch_is_still_a_refusal_not_an_effect():

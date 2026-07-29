@@ -4399,7 +4399,7 @@ class Assign(Statement):
         if not changes:
             return self
         rewritten = rewrite(self, **changes)
-        if self.unit.target_patterns_for(self):
+        if "targets" not in changes and self.unit.target_patterns_for(self):
             self.unit.retain_target_patterns(self, rewritten)
         return rewritten
 
