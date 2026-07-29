@@ -3589,6 +3589,23 @@ class FunctionDef(Statement):
             FunctionUniverseSugar,
         )
 
+        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
+        free_names = tuple(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_free() or symbol.is_nonlocal()
+        )
+        if free_names:
+            from .panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="FunctionDef._construct_sugar",
+                blame=self.fragment,
+                observed=f"closure bindings lack producer coordinates: {free_names!r}",
+                requested="captured binding coordinate testimony",
+                fix="enroll producer-owned closure actuals before binary dispatch",
+            )
+
         # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
         # function while it substitutes+constructs, so the engine log's
         # heartbeat testifies exactly which function a slow lift is inside --
@@ -9404,10 +9421,6 @@ class Call(Expression):
                 is not function_definition.ref
                 or lexical_row.lexical_scope_identity
                 is not lexical_row.lexical_scope.ref
-                or (
-                    source_call_frame is not None
-                    and source_call_frame.owner is not function_definition
-                )
             ):
                 from .panic import backend_defect
 
@@ -9505,15 +9518,27 @@ class Call(Expression):
                     name=self.func.attr,
                     args=tuple(a.sugar() for a in self.args),
                     site=self.fragment,
-                    keywords=keyword_sugars,
-                    source_call_frame=bound_frame,
-                )
+                keywords=keyword_sugars,
+                source_call_frame=bound_frame,
+                expected_definition_ref=bound_frame.owner.ref,
+            )
             return CallSiteSugar(
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
+                source_call_frame_table=(
+                    context.source_call_frames if lexical_row is not None else None
+                ),
+                source_call_frame_coordinate=(
+                    coordinate if lexical_row is not None else None
+                ),
+                expected_source_call_frame_owner=(
+                    lexical_row.definition_occurrence
+                    if lexical_row is not None
+                    else None
+                ),
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
