@@ -83,9 +83,72 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     assert isinstance(target, FunctionDef)
     assert target.name == "search"
     assert frame.owner is target
-    assert frame.body is target.body
+    assert frame.body.site.node is target
     assert frame.definition_site.source_cid == module.source_cid
     assert frame.definition_site.source_cid == resolved.definition.source_cid
+    obligations = tuple(
+        frame.owner.unit.construction_context.opaque_source_call_obligations.values()
+    )
+    warnings = tuple(
+        item
+        for item in obligations
+        if item.target_name == "python:warnings.warn"
+    )
+    assert len(warnings) == 1
+    relation = warnings[0].import_call_value_subsumption
+    assert relation is not None
+    calls, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    values, _ = authenticated_import_value_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    warnings_call = next(
+        item
+        for item in calls
+        if item.target_symbol == "python:warnings.warn"
+        and item.use["useSite"]["startLine"] == 302
+    )
+    warnings_value = next(
+        item
+        for item in values
+        if item.target_symbol == "python:warnings.warn"
+        and item.use["useSite"]["startLine"] == 302
+    )
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    assert relation.call_use_cid == warnings_call.use["cid"]
+    assert relation.value_use_cid == warnings_value.use["cid"]
+    assert relation.import_binding_cid == warnings_call.import_binding.cid
+    assert relation.target_symbol == warnings_call.target_symbol
+    assert relation.exported_member_path == tuple(
+        warnings_value.use["exportedMemberPath"]
+    )
+    assert relation.module_identity_cid == cid_of_json(
+        warnings_call.import_binding.value["target"]["moduleIdentity"]
+    )
+    for change in (
+        {"source_cid": "blake3-512:" + "0" * 128},
+        {"module_identity_cid": "blake3-512:" + "1" * 128},
+        {"import_binding_cid": "blake3-512:" + "2" * 128},
+        {"target_symbol": "python:warnings.other"},
+        {"exported_member_path": ("other",)},
+        {"call_use_cid": "blake3-512:" + "3" * 128},
+        {"value_use_cid": "blake3-512:" + "4" * 128},
+        {"call_coordinate": relation.callee_coordinate},
+        {"callee_coordinate": relation.call_coordinate},
+        {"relation_cid": "blake3-512:" + "5" * 128},
+    ):
+        with pytest.raises(ValueError, match="producer authority"):
+            replace(relation, **change)
 
 
 def test_alias_import_search_resolves_the_same_exact_stdlib_definition(

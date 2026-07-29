@@ -207,10 +207,10 @@ def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
 
 
 @pytest.mark.parametrize("binding", ("import re", "import re as regex"))
-def test_module_import_attribute_call_reaches_authenticated_stdlib_frame_gap(
+def test_module_import_attribute_call_preserves_authenticated_stdlib_frame(
     tmp_path, binding
 ):
-    """The exact call receipt admits the graph; its internal gap stays loud."""
+    """The exact call/value pair parks the inner call and preserves the frame."""
     local = "re" if binding == "import re" else "regex"
     graph, resolved, _, _ = _resolved(
         tmp_path,
@@ -219,12 +219,12 @@ def test_module_import_attribute_call_reaches_authenticated_stdlib_frame_gap(
         f"    return {local}.search('', expected)\n",
     )
 
-    from sugar_lift_python_source.manager_construction import ImportValueUseSeatingGap
+    projected = resolve_source_visible_frame(resolved, graph=graph)
 
-    with pytest.raises(
-        ImportValueUseSeatingGap, match="resolution-ambiguous-static-export"
-    ):
-        resolve_source_visible_frame(resolved, graph=graph)
+    assert isinstance(projected, tuple)
+    frame, target = projected
+    assert frame.owner is target
+    assert target.name == "make_guard"
 
 
 def test_source_call_coordinate_rejects_conflicting_testimony():

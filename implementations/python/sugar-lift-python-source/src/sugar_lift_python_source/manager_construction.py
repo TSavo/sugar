@@ -1184,7 +1184,10 @@ def _resolve_source_visible_frame_uncached(
     # without reconstructing either binding from the callee spelling.
     from pathlib import Path
 
-    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_use_receipts,
+        authenticated_import_value_use_receipts,
+    )
 
     reachable_calls = {
         (
@@ -1206,8 +1209,16 @@ def _resolve_source_visible_frame_uncached(
             module.source_cid,
             module_identities={},
         )
+        value_receipts, _ = authenticated_import_value_use_receipts(
+            Path("."),
+            module_path,
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
     else:
         import_receipts = ()
+        value_receipts = ()
     for receipt in import_receipts:
         raw_site = receipt.use["useSite"]
         call = reachable_calls.get(
@@ -1220,6 +1231,48 @@ def _resolve_source_visible_frame_uncached(
         )
         if call is None:
             continue
+        receipt.revalidate()
+        callee_coordinate = _call_callee_coordinate(call)
+        matching_values = tuple(
+            value
+            for value in value_receipts
+            if value.source_cid == receipt.source_cid
+            and value.target_symbol == receipt.target_symbol
+            and value.import_binding.cid == receipt.import_binding.cid
+            and value.use["useSite"]
+            == {
+                "sourceCid": callee_coordinate.source_cid,
+                "startLine": callee_coordinate.start_line,
+                "startCol": callee_coordinate.start_col,
+                "endLine": callee_coordinate.end_line,
+                "endCol": callee_coordinate.end_col,
+            }
+        )
+        if len(matching_values) > 1:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="manager_construction imported call receipt pairing",
+                observed="multiple value-use receipts claim one imported callee",
+                requested="one exact call/value receipt pair",
+                fix="repair lexical import-use enrollment uniqueness",
+            )
+        if matching_values:
+            matching_values[0].revalidate()
+        subsumption = None
+        if matching_values:
+            from sugar_lift_py_tests.context_manager_resolution import (
+                _mint_import_call_value_subsumption,
+            )
+            value = matching_values[0]
+            subsumption = _mint_import_call_value_subsumption(
+                call_receipt=receipt,
+                value_receipt=value,
+                call_coordinate=_call_coordinate(call),
+                callee_coordinate=callee_coordinate,
+            )
+        obligation_kwargs = {"import_call_value_subsumption": subsumption}
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
@@ -1239,6 +1292,7 @@ def _resolve_source_visible_frame_uncached(
                         receipt.target_symbol,
                         resolved.cid,
                         resolution_kind="call-target-source-absent",
+                        **obligation_kwargs,
                     ),
                 )
                 continue
@@ -1255,6 +1309,7 @@ def _resolve_source_visible_frame_uncached(
                     receipt.target_symbol,
                     resolved.cid,
                     resolution_kind="call-target-source-absent",
+                    **obligation_kwargs,
                 ),
             )
             continue
@@ -1278,6 +1333,7 @@ def _resolve_source_visible_frame_uncached(
                     receipt.target_symbol,
                     resolved.cid,
                     resolution_kind="call-target-export-unresolved",
+                    **obligation_kwargs,
                 ),
             )
             del exc
@@ -1296,6 +1352,7 @@ def _resolve_source_visible_frame_uncached(
                     receipt.target_symbol,
                     resolved.cid,
                     resolution_kind=kind,
+                    **obligation_kwargs,
                 ),
             )
             continue
@@ -1877,6 +1934,21 @@ def _call_coordinate(call: Call):
     )
 
 
+def _call_callee_coordinate(call: Call):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    span = call.func.line_col_span()
+    return SourceFragmentCoordinateV1(
+        call.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+
+
 def _seat_import_value_use_receipts(
     *,
     source_file,
@@ -1927,6 +1999,16 @@ def _seat_import_value_use_receipts(
         module.source_cid,
         module_identities={},
     )
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    call_receipts, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    calls_by_cid = {receipt.use["cid"]: receipt for receipt in call_receipts}
     owned_spans = [target.line_col_span()]
     owned_spans.extend(
         decorator.line_col_span()
@@ -1971,9 +2053,80 @@ def _seat_import_value_use_receipts(
         ):
             continue
         receipt.revalidate()
-        unit.seat_import_value_use_resolution(
-            span_key, receipt, source_cid=module.source_cid
-        )
+        paired_obligations = []
+        for obligation in context.opaque_source_call_obligations.values():
+            relation = obligation.import_call_value_subsumption
+            if relation is None or relation.value_use_cid != receipt.use["cid"]:
+                continue
+            call_receipt = calls_by_cid.get(relation.call_use_cid)
+            if call_receipt is None:
+                raise ImportValueUseSeatingGap(
+                    "missing-call-receipt",
+                    "subsumption relation cites no authenticated call receipt",
+                )
+            call_receipt.revalidate()
+            from sugar_lift_python_source.canonical import cid_of_json
+
+            identity = call_receipt.import_binding.value["target"]["moduleIdentity"]
+            call_site = call_receipt.use["useSite"]
+            value_site = receipt.use["useSite"]
+            expected = (
+                relation.source_cid == module.source_cid == receipt.source_cid
+                and relation.module_identity_cid == cid_of_json(identity)
+                and relation.import_binding_cid
+                == call_receipt.import_binding.cid
+                == receipt.import_binding.cid
+                and relation.target_symbol
+                == call_receipt.target_symbol
+                == receipt.target_symbol
+                and relation.exported_member_path
+                == tuple(receipt.use["exportedMemberPath"])
+                and relation.call_use_cid == call_receipt.use["cid"]
+                and relation.value_use_cid == receipt.use["cid"]
+                and (
+                    relation.call_coordinate.start_line,
+                    relation.call_coordinate.start_col,
+                    relation.call_coordinate.end_line,
+                    relation.call_coordinate.end_col,
+                )
+                == (
+                    call_site["startLine"],
+                    call_site["startCol"],
+                    call_site["endLine"],
+                    call_site["endCol"],
+                )
+                and relation.callee_coordinate.wire() == value_site
+                and relation.callee_coordinate == coordinate
+                and relation.call_coordinate == obligation.coordinate
+            )
+            if not expected:
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=coordinate,
+                    owner="manager_construction import call/value receipt subsumption",
+                    observed="parked call/value relation disagrees with authenticated receipts",
+                    requested="byte-identical one-to-one imported call/value relation",
+                    fix="re-mint the relation from the exact lexical call and value receipts",
+                )
+            paired_obligations.append(obligation)
+        paired_obligations = tuple(paired_obligations)
+        if len(paired_obligations) > 1:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=coordinate,
+                owner="manager_construction import call/value receipt subsumption",
+                observed="multiple parked calls claim one imported value occurrence",
+                requested="one exact parked call/value receipt relation",
+                fix="repair call receipt uniqueness before value seating",
+            )
+
+        def seat_receipt() -> None:
+            unit.seat_import_value_use_resolution(
+                span_key, receipt, source_cid=module.source_cid
+            )
+
         identity = receipt.import_binding.value["target"]["moduleIdentity"]
         if identity["kind"] == "authenticated-python-module":
             dependency_module = identity["moduleName"]
@@ -1992,6 +2145,7 @@ def _seat_import_value_use_receipts(
             # An absent graph carries no source authority.  Leave the exact
             # import-use coordinate unseated; any consumer that needs it stays
             # typed-loud at its ordinary resolution door.
+            seat_receipt()
             continue
         binding_target = receipt.import_binding.value["target"]
         if (
@@ -2002,6 +2156,7 @@ def _seat_import_value_use_receipts(
             # is not a callable definition to seat on this SourceUnit.  Its
             # attributed member carries its own later receipt and exact use
             # coordinate; only that member may become a source call frame.
+            seat_receipt()
             continue
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
@@ -2013,11 +2168,21 @@ def _seat_import_value_use_receipts(
                 # ordinary consumer remains typed-loud if execution reaches
                 # it; unrelated construction must not turn that absence into
                 # module-wide refusal.
+                seat_receipt()
+                continue
+            if imported.kind == "ambiguous-static-export" and len(
+                paired_obligations
+            ) == 1:
+                # The exact call receipt already owns this callable occurrence
+                # and remains parked/loud at the full Call coordinate.  Its
+                # duplicate Attribute value receipt is deliberately unseated;
+                # no candidate definition or runtime branch is selected.
                 continue
             raise ImportValueUseSeatingGap(
                 f"resolution-{imported.kind}",
                 "authenticated value-use receipt did not resolve",
             )
+        seat_receipt()
         context.source_import_value_resolutions[coordinate] = imported
         unit.seat_import_value_use_resolution(
             span_key, imported, source_cid=module.source_cid
