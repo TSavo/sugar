@@ -358,6 +358,19 @@ class CallSiteSugar(ConstructedTermSugar):
             return callsite.project_producer_outcome(pending)
         if self.formal_function_sugar is not None:
             pending = self.formal_function_sugar.desugar(ctx)
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+            if isinstance(pending, NativeOperationExitCarrierV1):
+                actuals = (
+                    None
+                    if native_operation_actuals is None
+                    else native_operation_actuals.by_formal_coordinate
+                )
+                if actuals is None and bound_source_actuals is not None:
+                    actuals = bound_source_actuals.by_native_formal_coordinate
+                if actuals is not None:
+                    pending = pending.discharge(actuals)
             return callsite.project_producer_outcome(pending)
         return callsite.producer_outcome(ctx)
 
