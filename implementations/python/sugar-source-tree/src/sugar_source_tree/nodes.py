@@ -351,6 +351,9 @@ class SourceUnit:
     # unit only (source_cid match). Never foreign LineTable spans.
     _import_value_use_resolutions: object = field(init=False, default=None)
     _constructed_module: object = field(init=False, default=None, repr=False)
+    _retained_lexical_call_rows: dict = field(
+        init=False, default_factory=dict, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -372,18 +375,24 @@ class SourceUnit:
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
         object.__setattr__(self, "_exception_type_identity_cache", {})
+        object.__setattr__(self, "_import_bound_name_targets", None)
+        object.__setattr__(self, "_import_value_use_resolutions", {})
+        object.__setattr__(self, "_constructed_module", None)
+        object.__setattr__(self, "_retained_lexical_call_rows", {})
 
     def lexical_call_rows_for(self, call: "Call") -> tuple[object, ...]:
-        rows = tuple(
-            row for row in self.constructed_module.lexical_call_rows
+        retained = self._retained_lexical_call_rows.get(call.ref)
+        if retained is not None:
+            return retained
+        return tuple(
+            row
+            for row in self.constructed_module.lexical_call_rows
             if row.call_occurrence_identity is call.ref
         )
-        retained = getattr(self, "_retained_lexical_call_rows", {})
-        return rows + tuple(retained.get(call.ref, ()))
 
     def retain_lexical_call_row(self, source: "Call", rewritten: "Call") -> None:
         rows = self.lexical_call_rows_for(source)
-        if len(rows) != 1 or type(source) is not type(rewritten):
+        if not rows or type(source) is not type(rewritten):
             raise BackendDefect(
                 blame=rewritten.fragment,
                 owner="SourceUnit.retain_lexical_call_row",
@@ -391,14 +400,7 @@ class SourceUnit:
                 requested="one source-owned Call row",
                 fix="retain the original row through the authenticated rewrite",
             )
-        table = getattr(self, "_retained_lexical_call_rows", None)
-        if table is None:
-            table = {}
-            object.__setattr__(self, "_retained_lexical_call_rows", table)
-        table[rewritten.ref] = rows
-        object.__setattr__(self, "_import_bound_name_targets", None)
-        object.__setattr__(self, "_import_value_use_resolutions", {})
-        object.__setattr__(self, "_constructed_module", None)
+        self._retained_lexical_call_rows[rewritten.ref] = rows
 
     @property
     def constructed_module(self) -> object:
@@ -9234,7 +9236,11 @@ class Compare(Expression):
 class Call(Expression):
     def substitute(self, scope: "dict[str, Node]") -> "Node":
         rewritten = super().substitute(scope)
-        if rewritten is not self and isinstance(rewritten, Call):
+        if (
+            rewritten is not self
+            and isinstance(rewritten, Call)
+            and self.unit.lexical_call_rows_for(self)
+        ):
             self.unit.retain_lexical_call_row(self, rewritten)
         return rewritten
 
@@ -9393,7 +9399,6 @@ class Call(Expression):
             function_definition = lexical_row.definition_occurrence
             if (
                 lexical_row.source_cid != self.unit.source_cid
-                or lexical_row.call_occurrence_identity is not self.ref
                 or not isinstance(function_definition, (FunctionDef, AsyncFunctionDef))
                 or lexical_row.definition_occurrence_identity
                 is not function_definition.ref
@@ -9579,7 +9584,6 @@ class Call(Expression):
                 function_definition = lexical_row.definition_occurrence
                 if (
                     lexical_row.source_cid != self.unit.source_cid
-                    or lexical_row.call_occurrence_identity is not self.ref
                     or not isinstance(
                         function_definition, (FunctionDef, AsyncFunctionDef)
                     )
