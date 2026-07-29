@@ -16,6 +16,8 @@ perturbed.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
@@ -36,6 +38,7 @@ from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
     BindingCoordinateRefSugar,
 )
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+from sugar_lift_py_tests.sugar.starred_sugar import StarredSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -129,6 +132,13 @@ def test_opaque_source_call_obligation_precedes_spread_selection() -> None:
     opaque = opaque_call.sugar()
 
     assert isinstance(opaque, CallSiteSugar)
+    assert isinstance(opaque.args[0], StarredSugar)
+    opaque.args[0].to_term(owner="authenticated opaque spread")
+    with pytest.raises(
+        TypeError,
+        match="requires an authenticated source occurrence for StarredSugar",
+    ):
+        replace(opaque.args[0], site=object()).to_term(owner="foreign spread")
     assert opaque.contract_resolution_gap == "opaque-call-target:func"
     with pytest.raises(SugarNotWritten) as raised:
         opaque.desugar()
