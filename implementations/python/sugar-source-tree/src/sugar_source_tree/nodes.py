@@ -6506,18 +6506,41 @@ class If(Statement):
         re-walk of the branches (the re-read was 2^nesting on real code)."""
         from .shadow import rewrite
 
+        expected_slot = branch_result_slot(self.test)
+        stored_slot_id = getattr(self, "branch_result_slot_id", None)
+        authenticated_slot_id = getattr(
+            self, "authenticated_branch_result_slot_id", None
+        )
+        retained_slot = (
+            stored_slot_id is not None or authenticated_slot_id is not None
+        )
+        if retained_slot and (
+            stored_slot_id != expected_slot.slot_id
+            or authenticated_slot_id != expected_slot.slot_id
+        ):
+            backend_defect(
+                blame=self.fragment,
+                owner="If.substitute",
+                observed="If retained a foreign branch-result slot",
+                requested="the stored and authenticated slot for this exact If.test",
+                fix="preserve the one slot minted by the first ordinary substitution",
+            )
+
         changed = {}
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        slot = branch_result_slot(self.test)
+        slot = expected_slot
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
-        node = self._rewrite_with_slot(changed, slot, authenticated_slot=slot)
+        if retained_slot:
+            node = self if not changed else rewrite(self, **changed)
+        else:
+            node = self._rewrite_with_slot(changed, slot, authenticated_slot=slot)
 
         names = set(then_net) | set(else_net)
         phis = []
