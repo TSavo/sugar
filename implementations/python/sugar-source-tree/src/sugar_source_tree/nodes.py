@@ -10669,6 +10669,7 @@ class Attribute(Expression):
             qualified_name = qualified_name[len("python:") :]
             return ImportMemberSugar(
                 qualified_name=qualified_name,
+                receipt=receipt,
                 site=self.fragment,
             )
 
