@@ -2862,6 +2862,7 @@ class FunctionDef(Statement):
             AttributeAssignStepV1,
             AssertStepV1,
             ImportFromStepV1,
+            ImportStepV1,
             FinallyStepV1,
             ForStepV1,
             IfStepV1,
@@ -2996,6 +2997,25 @@ class FunctionDef(Statement):
             if isinstance(statement, ImportFrom) and not self._owns_yield((statement,)):
                 from sugar_lift_py_tests.context_manager_resolution import (
                     SourceFragmentCoordinateV1,
+                )
+            if isinstance(statement, Import) and not self._owns_yield((statement,)):
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    SourceFragmentCoordinateV1,
+                )
+
+                span = statement.line_col_span()
+                return _GeneratorNamedStepV1(
+                    ImportStepV1(
+                        import_sugar=statement.sugar(),
+                        coordinate=SourceFragmentCoordinateV1(
+                            statement.unit.source_cid,
+                            span.start_line,
+                            span.start_col,
+                            span.end_line,
+                            span.end_col,
+                        ),
+                        occurrence=statement.fragment,
+                    )
                 )
 
                 span = statement.line_col_span()

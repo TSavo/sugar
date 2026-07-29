@@ -280,6 +280,42 @@ class ImportFromStepV1:
 
 
 @dataclass(frozen=True)
+class ImportStepV1:
+    """Authenticated source import statement with inert meaning."""
+
+    import_sugar: object
+    coordinate: object
+    occurrence: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        if not isinstance(self.import_sugar, InertSugar):
+            raise TypeError("ImportStepV1 requires InertSugar")
+        try:
+            span = self.occurrence.line_col_span
+            observed = SourceFragmentCoordinateV1(
+                self.occurrence.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+        except (AttributeError, TypeError) as exc:
+            raise TypeError(
+                "ImportStepV1 requires an authenticated import occurrence"
+            ) from exc
+        if observed != self.coordinate:
+            raise TypeError(
+                "ImportStepV1 import occurrence does not match its "
+                "authenticated coordinate"
+            )
+
+
+@dataclass(frozen=True)
 class FinallyStepV1:
     """Cleanup suite as ConstructedTermSugar payloads only.
 
@@ -472,6 +508,7 @@ GeneratorStepV1 = (
     | AttributeAssignStepV1
     | AssertStepV1
     | ImportFromStepV1
+    | ImportStepV1
     | FinallyStepV1
     | ForStepV1
     | RaiseStepV1
@@ -620,6 +657,11 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
     if isinstance(step, ImportFromStepV1):
         return {
             "kind": "import-from",
+            "coordinate": step.coordinate.wire(),
+        }
+    if isinstance(step, ImportStepV1):
+        return {
+            "kind": "import",
             "coordinate": step.coordinate.wire(),
         }
     if isinstance(step, FinallyStepV1):
@@ -1026,6 +1068,16 @@ class GeneratorConstructionV1:
             if not isinstance(outcome, Complete):
                 return self._gap(
                     requested, f"import-from returned {type(outcome).__name__}"
+                )
+            machine = replace(self, cursor=self.cursor + 1)
+            return machine._transition(requested)
+        if isinstance(step, ImportStepV1):
+            from sugar_lift_py_tests.outcome import Complete
+
+            outcome = step.import_sugar.desugar(self._guard_evaluation_context())
+            if not isinstance(outcome, Complete):
+                return self._gap(
+                    requested, f"import returned {type(outcome).__name__}"
                 )
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
