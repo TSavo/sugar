@@ -1771,6 +1771,14 @@ def _construct_reachable_decorated_class_bindings(
     for definition in module_definitions:
         if definition not in class_dependencies:
             continue
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=definition,
+            session=session,
+            context=context,
+            dependency_graphs=dependency_graphs,
+        )
         outcome = definition.sugar().desugar(ctx)
         if not isinstance(outcome, Complete):
             raise SugarNotWritten(
@@ -1785,6 +1793,19 @@ def _construct_reachable_decorated_class_bindings(
 
     result = []
     for definition in reached:
+        # Decorated publication reduces the class body in this exact context,
+        # after ordinary frame preparation may already have cached its field
+        # AttributeSugar.  Seat the lexical value-use receipts owned by this
+        # ClassDef before that reduction so the full Attribute occurrence—not
+        # receiver/member spelling—authorizes ImportMemberValue projection.
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=definition,
+            session=session,
+            context=context,
+            dependency_graphs=dependency_graphs,
+        )
         sugar = definition.sugar()
         raw_outcome = sugar.desugar(ctx)
         if not isinstance(raw_outcome, Complete):
