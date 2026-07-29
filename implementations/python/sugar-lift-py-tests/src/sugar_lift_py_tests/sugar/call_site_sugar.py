@@ -328,6 +328,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
                 )
+            ctx = _with_frame_mutable_globals(ctx, self.source_call_frame)
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
@@ -551,3 +552,29 @@ class CallSiteSugar(ConstructedTermSugar):
                 term, reference.contract_cid, reference.member_cid, callsite
             )
         )
+
+
+def _with_frame_mutable_globals(ctx, frame):
+    bindings = frame.mutable_global_bindings
+    if not bindings:
+        return ctx
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    if ctx is None:
+        ctx = ReduceContext.root(owner="CallSiteSugar mutable module globals")
+    module_temporal = ctx.module_temporal or TemporalContext.empty()
+    temporal = ctx.temporal
+    for binding in bindings:
+        value = MutableGlobalValue(
+            name=binding.name,
+            kind=binding.kind,
+            pin_source_cid=binding.source_cid,
+            binding_memento=binding.binding_occurrence,
+        )
+        module_temporal = module_temporal.bind_value(binding.name, value)
+        temporal = temporal.bind_value(binding.name, value)
+    return replace(ctx, temporal=temporal, module_temporal=module_temporal)
