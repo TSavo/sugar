@@ -7,7 +7,8 @@ from dataclasses import dataclass, replace
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import CallSiteValue, TermValue
+from sugar_lift_py_tests.floor import CallSiteValue, FloorValue, TermValue
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, true_guard
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -17,7 +18,7 @@ from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 
 @dataclass
 class _CountingCompletion(ConstructedTermSugar):
-    value: TermValue
+    value: FloorValue
     reductions: int = 0
 
     @classmethod
@@ -34,8 +35,8 @@ class _CountingCompletion(ConstructedTermSugar):
         return ctor("test:retained-source-body", ())
 
 
-def _retained_source_call():
-    original = TermValue(7)
+def _retained_source_call(original: FloorValue | None = None):
+    original = TermValue(7) if original is None else original
     body = _CountingCompletion(original)
     source_call = CallSiteValue(
         target_name="source_value",
@@ -130,6 +131,33 @@ def test_legacy_operation_projection_paths_consume_retained_value_without_reduct
     assert body.reductions == 1
 
 
+def test_retained_force_floor_consumes_testimony_without_second_reduction() -> None:
+    """force_floor is a retained-value consumer after producer publication."""
+    retained, body, original = _retained_source_call()
+
+    projected = retained.force_floor(None, owner="retained force floor")
+
+    assert projected is original
+    assert body.reductions == 1
+
+
+def test_retained_nested_callsite_preserves_existing_recursion_refusal() -> None:
+    """A retained nested call is recursively forced, never returned as opaque."""
+    nested = CallSiteValue(
+        target_name="source_value",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:source_value", ()),
+        body=None,
+    )
+    retained, body, _ = _retained_source_call(nested)
+
+    with pytest.raises(ConstructionPanic, match="recursive callsite value demand"):
+        retained.force_floor(None, owner="retained nested force floor")
+
+    assert body.reductions == 1
+
+
 def test_malformed_non_none_retention_is_exact_type_loud() -> None:
     """A non-None lookalike cannot satisfy the private retention consumer."""
     retained, body, _ = _retained_source_call()
@@ -144,6 +172,8 @@ def test_malformed_non_none_retention_is_exact_type_loud() -> None:
         malformed.project_operation_receiver(None, owner="legacy operation actual")
     with pytest.raises(BackendDefect, match="retained|producer"):
         malformed._dig_floor_or_none(None, owner="legacy force floor")
+    with pytest.raises(BackendDefect, match="retained|producer"):
+        malformed.force_floor(None, owner="retained force floor")
     assert body.reductions == 1
 
 
