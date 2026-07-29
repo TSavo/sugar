@@ -1165,6 +1165,8 @@ def _cv2_leaf(value: object) -> Any:
     from sugar_source_tree.fragment import SourceFragment, SourceMemento
     from types import MethodType
 
+    if value is Ellipsis:
+        return {"ellipsis": True}
     if value is None:
         return {"null": None}
     if isinstance(value, Enum):
