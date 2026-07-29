@@ -122,6 +122,24 @@ def _opaque_gap(root: Path, *, factory_source: str, support_source: str):
     return raised.value
 
 
+def test_constructed_call_actual_rejects_foreign_source_occurrence(tmp_path):
+    left_path = tmp_path / "left.py"
+    right_path = tmp_path / "right.py"
+    left_path.write_text("consume(23)\n", encoding="utf-8")
+    right_path.write_text("consume(0x17)\n", encoding="utf-8")
+    left = SourceFile.from_path(left_path)
+    right = SourceFile.from_path(right_path)
+    left_literal = next(item for item in left.nodes() if isinstance(item, Constant))
+    right_literal = next(item for item in right.nodes() if isinstance(item, Constant))
+    value = TermValue(23)
+    foreign_testimony = ConstructedValueTestimonyV1.mint(
+        right_literal.fragment, _term_content_cid(value.to_term(owner="test"))
+    )
+
+    with pytest.raises(ValueError, match="foreign source occurrence"):
+        ConstructedCallActualV1(left_literal, value, foreign_testimony)
+
+
 _CROSS_MODULE_CLASS_FACTORY = (
     "from arbitrary.support import ScopedSlot\n"
     "\n"
