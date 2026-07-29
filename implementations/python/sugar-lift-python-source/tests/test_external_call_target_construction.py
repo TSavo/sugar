@@ -140,6 +140,21 @@ def test_constructed_call_actual_rejects_foreign_source_occurrence(tmp_path):
         ConstructedCallActualV1(left_literal, value, foreign_testimony)
 
 
+def test_constructed_call_actual_rejects_same_source_wrong_occurrence(tmp_path):
+    path = tmp_path / "repeated.py"
+    path.write_text("consume(23)\nconsume(23)\n", encoding="utf-8")
+    source = SourceFile.from_path(path)
+    literals = tuple(item for item in source.nodes() if isinstance(item, Constant))
+    assert len(literals) == 2
+    value = TermValue(23)
+    wrong_occurrence = ConstructedValueTestimonyV1.mint(
+        literals[1].fragment, _term_content_cid(value.to_term(owner="test"))
+    )
+
+    with pytest.raises(ValueError, match="foreign source occurrence"):
+        ConstructedCallActualV1(literals[0], value, wrong_occurrence)
+
+
 _CROSS_MODULE_CLASS_FACTORY = (
     "from arbitrary.support import ScopedSlot\n"
     "\n"

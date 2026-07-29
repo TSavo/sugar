@@ -138,6 +138,9 @@ def _decode_binding_entry(raw: Any) -> tuple[str, dict[str, Any]]:
                 "kind",
                 "schemaVersion",
                 "sourceFragmentCid",
+                "sourceIdentityCid",
+                "sourceStart",
+                "sourceEnd",
                 "semanticValueCid",
                 "constructedValueTestimonyCid",
             },
@@ -153,6 +156,16 @@ def _decode_binding_entry(raw: Any) -> tuple[str, dict[str, Any]]:
             "constructedValueTestimonyCid",
             "ConstructedValueTestimonyV1",
         )
+        _require_cid(testimony["sourceIdentityCid"], "sourceIdentityCid")
+        if (
+            not isinstance(testimony["sourceStart"], int)
+            or isinstance(testimony["sourceStart"], bool)
+            or not isinstance(testimony["sourceEnd"], int)
+            or isinstance(testimony["sourceEnd"], bool)
+            or testimony["sourceStart"] < 0
+            or testimony["sourceEnd"] <= testimony["sourceStart"]
+        ):
+            raise LoopWireError("malformed source occurrence span")
     elif kind == "unbound":
         state = _exact(state, {"kind", "causeFragmentCid"}, "unbound BindingStateV1")
         _require_cid(state["causeFragmentCid"], "causeFragmentCid")

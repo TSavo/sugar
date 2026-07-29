@@ -137,6 +137,9 @@ class BindingCoordinateV1:
 @dataclass(frozen=True)
 class ConstructedValueTestimonyV1:
     source_fragment_cid: str
+    source_identity_cid: str
+    source_start: int
+    source_end: int
     semantic_value_cid: str
     cid: str
 
@@ -149,6 +152,9 @@ class ConstructedValueTestimonyV1:
             "kind": "constructed-value-testimony",
             "schemaVersion": "1",
             "sourceFragmentCid": self.source_fragment_cid,
+            "sourceIdentityCid": self.source_identity_cid,
+            "sourceStart": self.source_start,
+            "sourceEnd": self.source_end,
             "semanticValueCid": self.semantic_value_cid,
         }
 
@@ -164,10 +170,16 @@ class ConstructedValueTestimonyV1:
             "kind": "constructed-value-testimony",
             "schemaVersion": "1",
             "sourceFragmentCid": source_fragment.seal().cid,
+            "sourceIdentityCid": source_fragment.source_cid,
+            "sourceStart": source_fragment.span.start,
+            "sourceEnd": source_fragment.span.end,
             "semanticValueCid": semantic_value_cid,
         }
         return cls(
             preimage["sourceFragmentCid"],
+            preimage["sourceIdentityCid"],
+            preimage["sourceStart"],
+            preimage["sourceEnd"],
             semantic_value_cid,
             cid_of_json(preimage),
         )
@@ -180,6 +192,9 @@ class ConstructedValueTestimonyV1:
                 "kind",
                 "schemaVersion",
                 "sourceFragmentCid",
+                "sourceIdentityCid",
+                "sourceStart",
+                "sourceEnd",
                 "semanticValueCid",
                 "constructedValueTestimonyCid",
             },
@@ -188,6 +203,16 @@ class ConstructedValueTestimonyV1:
         if raw["kind"] != "constructed-value-testimony" or raw["schemaVersion"] != "1":
             raise BindingProvenanceGap("unsupported ConstructedValueTestimonyV1")
         _cid(raw["sourceFragmentCid"], "sourceFragmentCid")
+        _cid(raw["sourceIdentityCid"], "sourceIdentityCid")
+        if (
+            not isinstance(raw["sourceStart"], int)
+            or isinstance(raw["sourceStart"], bool)
+            or not isinstance(raw["sourceEnd"], int)
+            or isinstance(raw["sourceEnd"], bool)
+            or raw["sourceStart"] < 0
+            or raw["sourceEnd"] <= raw["sourceStart"]
+        ):
+            raise BindingProvenanceGap("malformed source occurrence span")
         _cid(raw["semanticValueCid"], "semanticValueCid")
         observed = _cid(
             raw["constructedValueTestimonyCid"], "constructedValueTestimonyCid"
@@ -202,7 +227,14 @@ class ConstructedValueTestimonyV1:
         }
         if cid_of_json(preimage) != observed:
             raise BindingProvenanceGap("constructed testimony CID mismatch")
-        result = cls(raw["sourceFragmentCid"], raw["semanticValueCid"], observed)
+        result = cls(
+            raw["sourceFragmentCid"],
+            raw["sourceIdentityCid"],
+            raw["sourceStart"],
+            raw["sourceEnd"],
+            raw["semanticValueCid"],
+            observed,
+        )
         cls._interned[observed] = result
         return result
 
