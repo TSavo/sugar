@@ -375,9 +375,13 @@ class CallSiteSugar(ConstructedTermSugar):
         produced = callsite.producer_outcome(
             ctx,
             carrier_actuals=(
-                None
-                if native_operation_actuals is None
-                else native_operation_actuals.by_formal_coordinate
+                native_operation_actuals.by_formal_coordinate
+                if native_operation_actuals is not None
+                else (
+                    None
+                    if bound_source_actuals is None
+                    else bound_source_actuals.by_native_formal_coordinate
+                )
             ),
         )
         from sugar_lift_py_tests.caller_parameter_contract import (
