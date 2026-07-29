@@ -630,6 +630,67 @@ def test_module_prefix_refuses_decorated_async_definition_before_completion(
     assert raised.value.observed == "decorated AsyncFunctionDef has no completed publication"
 
 
+def test_module_async_function_application_stays_typed_loud_while_plain_function_applies(
+    tmp_path: Path,
+) -> None:
+    """Publication does not authorize synchronous execution of an async frame."""
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.panic import SugarNotWritten
+
+    source = (
+        "async def async_target():\n"
+        "    return 1\n"
+        "def plain_target():\n"
+        "    return 1\n"
+        "def build():\n"
+        "    return async_target\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="async-call-application-pkg",
+        files={"async_call_application_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "async_call_application_pkg"
+    ]
+    published = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+    async_callable = published.exits[0].value.context.temporal.value_if_bound(
+        "async_target"
+    )
+    with pytest.raises(SugarNotWritten) as raised:
+        CallableApplication((), (), async_callable.definition.fragment).apply(
+            async_callable, None
+        )
+    assert raised.value.owner == "module function definition application"
+    assert "AsyncFunctionDef" in raised.value.observed
+
+    plain_module = DependencyArtifactGraph.authenticate(
+        _dist(
+            tmp_path / "plain",
+            name="plain-call-application-pkg",
+            files={
+                "plain_call_application_pkg/__init__.py": source.replace(
+                    "return async_target", "return plain_target"
+                )
+            },
+        )
+    ).modules["plain_call_application_pkg"]
+    plain_published = manager_construction._module_prefix_outcome(
+        plain_module, ast.parse(source).body[-1]
+    )
+    plain_callable = plain_published.exits[0].value.context.temporal.value_if_bound(
+        "plain_target"
+    )
+    applied = CallableApplication(
+        (), (), plain_callable.definition.fragment
+    ).apply(plain_callable, None)
+    assert isinstance(applied, Complete)
+
+
 def test_module_prefix_constructs_one_subscript_delete_statement(
     tmp_path: Path,
 ) -> None:

@@ -159,6 +159,16 @@ class _ModuleFunctionDefinitionCallableV1(FloorValue):
         )
 
     def callable_application_with(self, operation, ctx):
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if isinstance(self.definition, AsyncFunctionDef):
+            raise SugarNotWritten(
+                owner="module function definition application",
+                blame=operation.site,
+                observed="AsyncFunctionDef reached the synchronous module callable floor",
+                requested="an authenticated coroutine-construction Floor",
+                fix="publish and consume a dedicated async callable owner before application",
+            )
         return _ModuleSourceFrameCallableV1(
             self.definition.name,
             self.definition.source_visible_call_frame(),
