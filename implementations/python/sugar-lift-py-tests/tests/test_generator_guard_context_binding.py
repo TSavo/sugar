@@ -17,7 +17,7 @@ from dataclasses import replace
 import pytest
 
 from sugar_lift_py_tests.claim.sugar_catalog import SugarCatalog
-from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -195,7 +195,7 @@ def test_production_positional_bind_actuals_floor_reaches_guard_by_identity() ->
     assert bound_floors.actuals[0] is true_arg
     assert isinstance(bound_floors.actuals[0], FloorValue)
 
-    caller = FactoryBuildContext(filename="prod.py", catalog=SugarCatalog())
+    caller = ReduceContext.root(owner="production-positional-guard")
     sugar = CallSiteSugar(
         target_name="option_context",
         args=(true_arg,),
@@ -245,7 +245,7 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
         source_call_frame=frame,
     )
     outcome = sugar.desugar(
-        FactoryBuildContext(filename="prod_kw.py", catalog=SugarCatalog())
+        ReduceContext.root(owner="production-keyword-guard")
     )
     assert isinstance(outcome, Complete)
     machine = outcome.value
@@ -292,14 +292,11 @@ def test_caller_with_temporal_is_extended_not_replaced() -> None:
     _fn, param, entry = _formal_entry(truth=True)
     floor = TrueBoolLiteralSugar(site=param.fragment)
     marker = TrueBoolLiteralSugar(site="caller-marker")
-    caller = FactoryBuildContext(
-        filename="caller.py",
-        catalog=SugarCatalog(),
-        temporal=TemporalContext().bind_value("caller_marker", marker),
+    caller = ReduceContext.root(owner="caller-temporal").with_temporal(
+        TemporalContext().bind_value("caller_marker", marker)
     )
     machine = _machine(entry=entry, floor=floor, ctx=caller)
     ctx = machine._guard_evaluation_context()
-    assert ctx.filename == "caller.py"
     assert ctx.temporal.value_if_bound("caller_marker") is marker
     assert ctx.temporal.value_if_bound(entry.coordinate.cid) is floor
 

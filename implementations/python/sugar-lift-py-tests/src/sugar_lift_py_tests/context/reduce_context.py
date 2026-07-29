@@ -5,7 +5,11 @@ import json
 import logging
 from typing import Any
 
-from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context.sink_protocols import (
+    AuditSink,
+    ExternalBridgeSink,
+    ProofSink,
+)
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
@@ -16,9 +20,9 @@ class ReduceContext:
     global_names: frozenset[str] = field(default_factory=frozenset)
     nonlocal_names: frozenset[str] = field(default_factory=frozenset)
     source_oracle: Any = None
-    proof_sink: Any = None
+    proof_sink: ProofSink | None = None
     report_sink: Any = None
-    construction_audit_sink: Any = None
+    construction_audit_sink: AuditSink | None = None
     operation_log: list[tuple[str, str, str]] = field(default_factory=list)
     module_rewrite_log: list[Any] = field(default_factory=list)
     prefer_ground_module_bindings: bool = False
@@ -27,11 +31,11 @@ class ReduceContext:
     # A bridge without its enqueued dig is a dangling uninterpreted symbol, a false
     # discharge. None when no driver is draining (a plain reduce).
     dig_sink: Any = None
-    # Optional external-bridge recorder (same field on FactoryBuildContext).
+    # Optional external-bridge recorder carried by the reduction context.
     # CallSugar.ExternalBridgeStrategy reads this during body dig reduce; missing
     # the attribute crashed the numpy/pandas package audit as unstructured exit=2
     # after opaque body dig started reducing vendor-bridged bodies.
-    external_bridge_sink: Any = None
+    external_bridge_sink: ExternalBridgeSink | None = None
     in_flight_effects: tuple[tuple[str, object], ...] = ()
     observed_effects: tuple[tuple[str, object], ...] = ()
 
@@ -48,7 +52,7 @@ class ReduceContext:
 
     @classmethod
     def derived(
-        cls, source: "FactoryBuildContext | ReduceContext", *, owner: str
+        cls, source: "ReduceContext", *, owner: str
     ) -> "ReduceContext":
         """Front door for reduction that carries an existing temporal context."""
         return cls(

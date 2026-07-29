@@ -149,7 +149,7 @@ class TryStarSugar(Sugar):
                         base_ctx, slot_id, matched, blame=self.site
                     )
                     if slot_id is not None:
-                        # Shared typed surface (ReduceContext / FactoryBuildContext).
+                        # Shared typed ReduceContext surface.
                         handler_ctx = handler_ctx.with_observed_effect(
                             slot_id, matched
                         )

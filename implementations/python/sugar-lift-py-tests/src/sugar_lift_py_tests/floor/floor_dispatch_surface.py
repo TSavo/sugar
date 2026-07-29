@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.ir import Formula
     from sugar_lift_py_tests.operations.add_operation import AddOperation
     from sugar_lift_py_tests.operations.async_context_manager_operation import (
@@ -126,7 +126,7 @@ FLOOR_OPERATION_METHOD_NAMES = (
 
 class AddFloor(Protocol):
     def add_with(
-        self, operation: AddOperation, ctx: FactoryBuildContext | None
+        self, operation: AddOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -134,19 +134,19 @@ class AsyncContextManagerFloor(Protocol):
     def async_context_manager_with(
         self,
         operation: AsyncContextManagerOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class AsyncIteratorFloor(Protocol):
     def async_iter_with(
-        self, operation: AsyncIteratorOperation, ctx: FactoryBuildContext | None
+        self, operation: AsyncIteratorOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class AsyncNextFloor(Protocol):
     def async_next_with(
-        self, operation: AsyncNextOperation, ctx: FactoryBuildContext | None
+        self, operation: AsyncNextOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -154,25 +154,25 @@ class AttributeAssignFloor(Protocol):
     def attribute_assign_with(
         self,
         operation: AttributeMutationOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class AttributeDeleteFloor(Protocol):
     def attribute_delete_with(
-        self, operation: AttributeDeleteOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeDeleteOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class AttributeLookupFloor(Protocol):
     def attribute_with(
-        self, operation: AttributeLookupOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeLookupOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class AwaitFloor(Protocol):
     def await_with(
-        self, operation: AwaitOperation, ctx: FactoryBuildContext | None
+        self, operation: AwaitOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -180,13 +180,13 @@ class BinaryOperatorFloor(Protocol):
     def binary_operator_with(
         self,
         operation: BinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class BitwiseFloor(Protocol):
     def bitwise_with(
-        self, operation: BitwiseOperation, ctx: FactoryBuildContext | None
+        self, operation: BitwiseOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -194,13 +194,13 @@ class CallableApplicationFloor(Protocol):
     def callable_application_with(
         self,
         operation: CallableApplication,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class MethodCallFloor(Protocol):
     def call_method_with(
-        self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
+        self, operation: MethodCallOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -208,43 +208,43 @@ class SequenceConstructionFloor(Protocol):
     def construct_sequence_with(
         self,
         operation: SequenceConstructionOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class ContainsFloor(Protocol):
     def contains_with(
-        self, operation: ContainsOperation, ctx: FactoryBuildContext | None
+        self, operation: ContainsOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class ContextManagerFloor(Protocol):
     def context_manager_with(
-        self, operation: ContextManagerOperation, ctx: FactoryBuildContext | None
+        self, operation: ContextManagerOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class DelItemFloor(Protocol):
     def delitem_with(
-        self, operation: DelItemOperation, ctx: FactoryBuildContext | None
+        self, operation: DelItemOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class DescriptorFloor(Protocol):
     def descriptor_with(
-        self, operation: DescriptorOperation, ctx: FactoryBuildContext | None
+        self, operation: DescriptorOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class FormatValueFloor(Protocol):
     def format_value_with(
-        self, operation: FormatValueOperation, ctx: FactoryBuildContext | None
+        self, operation: FormatValueOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class ControlFlowGuardFloor(Protocol):
     def guard_with(
-        self, operation: ControlFlowGuardOperation, ctx: FactoryBuildContext | None
+        self, operation: ControlFlowGuardOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -252,7 +252,7 @@ class InplaceBinaryOperatorFloor(Protocol):
     def inplace_binary_operator_with(
         self,
         operation: InplaceBinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
@@ -260,13 +260,13 @@ class MapFloor(Protocol):
     def map_with(
         self,
         operation: CallableMapOperation | MapOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class MaterializeFloor(Protocol):
     def materialize_with(
-        self, operation: MaterializeOperation, ctx: FactoryBuildContext | None
+        self, operation: MaterializeOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -274,25 +274,25 @@ class FinallyFallthroughFloor(Protocol):
     def merge_finally_with(
         self,
         operation: FinallyFallthroughOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class DictMissingFloor(Protocol):
     def missing_with(
-        self, operation: DictMissingOperation, ctx: FactoryBuildContext | None
+        self, operation: DictMissingOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class IteratorFloor(Protocol):
     def iter_with(
-        self, operation: IteratorOperation, ctx: FactoryBuildContext | None
+        self, operation: IteratorOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class NextFloor(Protocol):
     def next_with(
-        self, operation: NextOperation, ctx: FactoryBuildContext | None
+        self, operation: NextOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
@@ -300,7 +300,7 @@ class CallsiteProjectionFloor(Protocol):
     def project_callsite_with(
         self,
         operation: CallsiteProjectionOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Formula | None: ...
 
 
@@ -308,7 +308,7 @@ class SequenceProjectionFloor(Protocol):
     def project_sequence_with(
         self,
         operation: SequenceProjectionOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
@@ -316,37 +316,37 @@ class ReflectedBinaryOperatorFloor(Protocol):
     def reflected_binary_operator_with(
         self,
         operation: ReflectedBinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome: ...
 
 
 class RouteRaisesFloor(Protocol):
     def route_raises_with(
-        self, operation: RouteRaisesOperation, ctx: FactoryBuildContext | None
+        self, operation: RouteRaisesOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class SetItemFloor(Protocol):
     def setitem_with(
-        self, operation: SetItemOperation, ctx: FactoryBuildContext | None
+        self, operation: SetItemOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class StrCoercionFloor(Protocol):
     def str_with(
-        self, operation: StrCoercionOperation, ctx: FactoryBuildContext | None
+        self, operation: StrCoercionOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class SubscriptFloor(Protocol):
     def subscript_with(
-        self, operation: SubscriptOperation, ctx: FactoryBuildContext | None
+        self, operation: SubscriptOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 
 class UnaryOperatorFloor(Protocol):
     def unary_operator_with(
-        self, operation: UnaryOperatorOperation, ctx: FactoryBuildContext | None
+        self, operation: UnaryOperatorOperation, ctx: ReduceContext | None
     ) -> Outcome: ...
 
 

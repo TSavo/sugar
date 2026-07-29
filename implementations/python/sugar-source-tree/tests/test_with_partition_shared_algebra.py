@@ -850,10 +850,9 @@ def test_assertion_with_threads_the_reduction_context_through_manager_and_body(
     already-ground fixtures, not for general source-derived bindings.
     """
     _resource, boundary = _both_arms(tmp_path, stem="context")
-    from sugar_lift_py_tests.claim import SugarCatalog
-    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.context import ReduceContext
 
-    marker = FactoryBuildContext("context.py", SugarCatalog())
+    marker = ReduceContext.root(owner="with-partition-shared-algebra")
     observed = []
 
     manager_type = type(boundary.manager)

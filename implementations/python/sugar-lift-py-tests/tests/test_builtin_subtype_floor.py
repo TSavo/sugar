@@ -136,8 +136,7 @@ def test_shadowed_issubclass_does_not_inherit_builtin_semantics():
 def test_named_call_dispatches_through_authenticated_temporal_floor():
     from dataclasses import dataclass
 
-    from sugar_lift_py_tests.context import FactoryBuildContext
-    from sugar_lift_py_tests.claim import SugarCatalog
+    from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -158,6 +157,6 @@ def test_named_call_dispatches_through_authenticated_temporal_floor():
     leaf = _class("Leaf", base)
     outcome = CallSiteSugar(
         "issubclass", (ValueSugar(leaf), ValueSugar(base)), "site"
-    ).desugar(FactoryBuildContext("test.py", SugarCatalog()))
+    ).desugar(ReduceContext.root(owner="named-call-dispatch"))
 
     assert isinstance(outcome.value, TrueBoolLiteralSugar)

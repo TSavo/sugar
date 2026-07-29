@@ -16,7 +16,7 @@ def bind_in_flight_effect(ctx, slot_id: str, effect, *, blame: object):
             blame=blame,
             owner="bind_in_flight_effect",
             observed="reduction context cannot carry authenticated in-flight effects",
-            requested="the shared ReduceContext/FactoryBuildContext effect slot",
+            requested="the ReduceContext effect slot",
             fix="route handler reduction through the one effect context",
         )
     return binder(slot_id, effect)

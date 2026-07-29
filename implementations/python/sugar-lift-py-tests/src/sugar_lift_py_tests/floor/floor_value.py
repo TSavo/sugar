@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from .floor_dispatch_surface import FLOOR_OPERATION_METHOD_NAMES
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.ir import Formula, Term
     from sugar_lift_py_tests.operations.add_operation import AddOperation
     from sugar_lift_py_tests.operations.async_context_manager_operation import (
@@ -277,7 +277,7 @@ class FloorValue:
         return ()
 
     def add_with(
-        self, operation: AddOperation, ctx: FactoryBuildContext | None
+        self, operation: AddOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "add_with")
@@ -285,19 +285,19 @@ class FloorValue:
     def async_context_manager_with(
         self,
         operation: AsyncContextManagerOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "async_context_manager_with")
 
     def async_iter_with(
-        self, operation: AsyncIteratorOperation, ctx: FactoryBuildContext | None
+        self, operation: AsyncIteratorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "async_iter_with")
 
     def async_next_with(
-        self, operation: AsyncNextOperation, ctx: FactoryBuildContext | None
+        self, operation: AsyncNextOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "async_next_with")
@@ -305,37 +305,37 @@ class FloorValue:
     def attribute_assign_with(
         self,
         operation: AttributeMutationOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "attribute_assign_with")
 
     def attribute_delete_with(
-        self, operation: AttributeDeleteOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeDeleteOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "attribute_delete_with")
 
     def attribute_with(
-        self, operation: AttributeLookupOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeLookupOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "attribute_with")
 
     def await_with(
-        self, operation: AwaitOperation, ctx: FactoryBuildContext | None
+        self, operation: AwaitOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "await_with")
 
     def binary_operator_with(
-        self, operation: BinaryOperatorOperation, ctx: FactoryBuildContext | None
+        self, operation: BinaryOperatorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "binary_operator_with")
 
     def bitwise_with(
-        self, operation: BitwiseOperation, ctx: FactoryBuildContext | None
+        self, operation: BitwiseOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "bitwise_with")
@@ -343,13 +343,13 @@ class FloorValue:
     def callable_application_with(
         self,
         operation: CallableApplication,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "callable_application_with")
 
     def call_method_with(
-        self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
+        self, operation: MethodCallOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "call_method_with")
@@ -357,43 +357,43 @@ class FloorValue:
     def construct_sequence_with(
         self,
         operation: SequenceConstructionOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "construct_sequence_with")
 
     def contains_with(
-        self, operation: ContainsOperation, ctx: FactoryBuildContext | None
+        self, operation: ContainsOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "contains_with")
 
     def context_manager_with(
-        self, operation: ContextManagerOperation, ctx: FactoryBuildContext | None
+        self, operation: ContextManagerOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "context_manager_with")
 
     def delitem_with(
-        self, operation: DelItemOperation, ctx: FactoryBuildContext | None
+        self, operation: DelItemOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "delitem_with")
 
     def descriptor_with(
-        self, operation: DescriptorOperation, ctx: FactoryBuildContext | None
+        self, operation: DescriptorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "descriptor_with")
 
     def format_value_with(
-        self, operation: FormatValueOperation, ctx: FactoryBuildContext | None
+        self, operation: FormatValueOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "format_value_with")
 
     def guard_with(
-        self, operation: ControlFlowGuardOperation, ctx: FactoryBuildContext | None
+        self, operation: ControlFlowGuardOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "guard_with")
@@ -401,20 +401,20 @@ class FloorValue:
     def inplace_binary_operator_with(
         self,
         operation: InplaceBinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         return operation.inplace_default(self, ctx)
 
     def map_with(
         self,
         operation: CallableMapOperation | MapOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "map_with")
 
     def materialize_with(
-        self, operation: MaterializeOperation, ctx: FactoryBuildContext | None
+        self, operation: MaterializeOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "materialize_with")
@@ -452,25 +452,25 @@ class FloorValue:
     def merge_finally_with(
         self,
         operation: FinallyFallthroughOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "merge_finally_with")
 
     def missing_with(
-        self, operation: DictMissingOperation, ctx: FactoryBuildContext | None
+        self, operation: DictMissingOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "missing_with")
 
     def iter_with(
-        self, operation: IteratorOperation, ctx: FactoryBuildContext | None
+        self, operation: IteratorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "iter_with")
 
     def next_with(
-        self, operation: NextOperation, ctx: FactoryBuildContext | None
+        self, operation: NextOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "next_with")
@@ -478,14 +478,14 @@ class FloorValue:
     def project_callsite_with(
         self,
         operation: CallsiteProjectionOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Formula | None:
         return operation.project_unknown(self, ctx)
 
     def project_sequence_with(
         self,
         operation: SequenceProjectionOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "project_sequence_with")
@@ -493,7 +493,7 @@ class FloorValue:
     def reflected_binary_operator_with(
         self,
         operation: ReflectedBinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(
@@ -501,31 +501,31 @@ class FloorValue:
         )
 
     def route_raises_with(
-        self, operation: RouteRaisesOperation, ctx: FactoryBuildContext | None
+        self, operation: RouteRaisesOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "route_raises_with")
 
     def setitem_with(
-        self, operation: SetItemOperation, ctx: FactoryBuildContext | None
+        self, operation: SetItemOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "setitem_with")
 
     def str_with(
-        self, operation: StrCoercionOperation, ctx: FactoryBuildContext | None
+        self, operation: StrCoercionOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "str_with")
 
     def subscript_with(
-        self, operation: SubscriptOperation, ctx: FactoryBuildContext | None
+        self, operation: SubscriptOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "subscript_with")
 
     def unary_operator_with(
-        self, operation: UnaryOperatorOperation, ctx: FactoryBuildContext | None
+        self, operation: UnaryOperatorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "unary_operator_with")

@@ -8,7 +8,7 @@ from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.operations.attribute_delete_operation import (
         AttributeDeleteOperation,
     )
@@ -135,7 +135,7 @@ class ObjectValue(FloorValue):
         )
 
     def attribute_with(
-        self, operation: AttributeLookupOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeLookupOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.attribute_object(self, ctx)
 
@@ -357,17 +357,17 @@ class ObjectValue(FloorValue):
         return tuple(sorted(names))
 
     def attribute_assign_with(
-        self, operation: AttributeMutationOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeMutationOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.assign_object(self, ctx)
 
     def attribute_delete_with(
-        self, operation: AttributeDeleteOperation, ctx: FactoryBuildContext | None
+        self, operation: AttributeDeleteOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.delete_object(self, ctx)
 
     def call_method_with(
-        self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
+        self, operation: MethodCallOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return self.call_method_value(
             operation.name,
@@ -378,12 +378,12 @@ class ObjectValue(FloorValue):
         )
 
     def descriptor_with(
-        self, operation: DescriptorOperation, ctx: FactoryBuildContext | None
+        self, operation: DescriptorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.descriptor_object(self, ctx)
 
     def contains_with(
-        self, operation: ContainsOperation, ctx: FactoryBuildContext | None
+        self, operation: ContainsOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self.call_method_value(
@@ -394,34 +394,34 @@ class ObjectValue(FloorValue):
         )
 
     def context_manager_with(
-        self, operation: ContextManagerOperation, ctx: FactoryBuildContext | None
+        self, operation: ContextManagerOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.context_object(self, ctx)
 
     def async_context_manager_with(
         self,
         operation: AsyncContextManagerOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         return operation.async_context_object(self, ctx)
 
     def await_with(
-        self, operation: AwaitOperation, ctx: FactoryBuildContext | None
+        self, operation: AwaitOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.await_object(self, ctx)
 
     def async_iter_with(
-        self, operation: AsyncIteratorOperation, ctx: FactoryBuildContext | None
+        self, operation: AsyncIteratorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.async_iter_object(self, ctx)
 
     def async_next_with(
-        self, operation: AsyncNextOperation, ctx: FactoryBuildContext | None
+        self, operation: AsyncNextOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.async_next_object(self, ctx)
 
     def iter_with(
-        self, operation: IteratorOperation, ctx: FactoryBuildContext | None
+        self, operation: IteratorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         """``iter(obj)`` is the constructor-bound ``__iter__`` data-model method."""
         del ctx
@@ -433,7 +433,7 @@ class ObjectValue(FloorValue):
         )
 
     def next_with(
-        self, operation: NextOperation, ctx: FactoryBuildContext | None
+        self, operation: NextOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         return self.call_method_value(
@@ -444,32 +444,32 @@ class ObjectValue(FloorValue):
         )
 
     def subscript_with(
-        self, operation: SubscriptOperation, ctx: FactoryBuildContext | None
+        self, operation: SubscriptOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.subscript_object(self, ctx)
 
     def setitem_with(
-        self, operation: SetItemOperation, ctx: FactoryBuildContext | None
+        self, operation: SetItemOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.setitem_object(self, ctx)
 
     def delitem_with(
-        self, operation: DelItemOperation, ctx: FactoryBuildContext | None
+        self, operation: DelItemOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.delitem_object(self, ctx)
 
     def missing_with(
-        self, operation: DictMissingOperation, ctx: FactoryBuildContext | None
+        self, operation: DictMissingOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.missing_object(self, ctx)
 
     def str_with(
-        self, operation: StrCoercionOperation, ctx: FactoryBuildContext | None
+        self, operation: StrCoercionOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.str_object(self, ctx)
 
     def bitwise_with(
-        self, operation: BitwiseOperation, ctx: FactoryBuildContext | None
+        self, operation: BitwiseOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         method_name = _BITWISE_DUNDER_METHODS.get(operation.operator)
@@ -492,14 +492,14 @@ class ObjectValue(FloorValue):
         )
 
     def project_sequence_with(
-        self, operation: SequenceProjectionOperation, ctx: FactoryBuildContext | None
+        self, operation: SequenceProjectionOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.project_object(self, ctx)
 
     def binary_operator_with(
         self,
         operation: BinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
@@ -536,7 +536,7 @@ class ObjectValue(FloorValue):
     def reflected_binary_operator_with(
         self,
         operation: ReflectedBinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         method_name = _REFLECTED_BINARY_DUNDER_METHODS.get(operation.operator)
@@ -561,7 +561,7 @@ class ObjectValue(FloorValue):
     def inplace_binary_operator_with(
         self,
         operation: InplaceBinaryOperatorOperation,
-        ctx: FactoryBuildContext | None,
+        ctx: ReduceContext | None,
     ) -> Outcome:
         del ctx
         method_name = _INPLACE_BINARY_DUNDER_METHODS.get(operation.operator)
@@ -584,7 +584,7 @@ class ObjectValue(FloorValue):
         )
 
     def unary_operator_with(
-        self, operation: UnaryOperatorOperation, ctx: FactoryBuildContext | None
+        self, operation: UnaryOperatorOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         method_name = _UNARY_DUNDER_METHODS.get(operation.operator)
