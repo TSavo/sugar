@@ -69,3 +69,42 @@ def test_honest_path_source_triple_mints_receipts(tmp_path: Path) -> None:
         assert receipt.source_cid == source_cid
         assert blake3_512_of(receipt.source.encode("utf-8")) == receipt.source_cid
     del locus
+
+
+def test_multisegment_import_call_keeps_exact_call_demand_and_site(tmp_path: Path):
+    path = tmp_path / "consumer.py"
+    path.write_text("import os\nvalue = os.path.dirname('x')\n", encoding="utf-8")
+    source, _, source_cid = path_source(str(path))
+
+    receipts, outcomes = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+
+    assert outcomes == {(2, 8, 2, 28): "authenticated-import-use"}
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt.target_symbol == "python:os.path.dirname"
+    assert receipt.demand["kind"] == "call-contract-demand"
+    assert receipt.use["useSite"] == {
+        "sourceCid": source_cid,
+        "startLine": 2,
+        "startCol": 8,
+        "endLine": 2,
+        "endCol": 28,
+    }
+
+
+def test_shadowed_multisegment_head_cannot_mint_call_demand(tmp_path: Path):
+    path = tmp_path / "consumer.py"
+    path.write_text(
+        "import os\ndef use(os):\n    return os.path.dirname('x')\n",
+        encoding="utf-8",
+    )
+    source, _, source_cid = path_source(str(path))
+
+    receipts, outcomes = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+
+    assert not receipts
+    assert tuple(outcomes.values()) == ("shadowed-non-import",)
