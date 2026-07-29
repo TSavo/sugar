@@ -177,7 +177,19 @@ class CallSiteSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         if self.source_call_frame is not None and self.expected_definition_ref is not None:
             from sugar_source_tree.panic import SugarNotWritten
-            if self.source_call_frame.owner.ref is not self.expected_definition_ref:
+            from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+
+            if isinstance(
+                self.expected_definition_ref, (FunctionDef, AsyncFunctionDef)
+            ):
+                owner_matches = (
+                    self.source_call_frame.owner is self.expected_definition_ref
+                )
+            else:
+                owner_matches = (
+                    self.source_call_frame.owner.ref is self.expected_definition_ref
+                )
+            if not owner_matches:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,

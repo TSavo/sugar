@@ -384,6 +384,7 @@ class ConstructionTestimonyReporterV1:
         "_delegate",
         "_by_node_shape",
         "_failed_by_node_shape",
+        "_materialized_by_ref",
         "_trace_builder",
     )
 
@@ -396,10 +397,16 @@ class ConstructionTestimonyReporterV1:
         # could not be testified re-raises the SAME typed panic, and re-raising
         # adds no roll-call mass: the gap was testified once, when it happened.
         self._failed_by_node_shape: dict[str, BaseException] = {}
+        self._materialized_by_ref: dict[object, Node] = {}
         self._trace_builder = trace_builder
 
     def register(self, node: Node) -> None:
+        self._materialized_by_ref[node.ref] = node
         self._delegate.register(node)
+
+    def materialized_node_for_ref(self, ref: object) -> Node | None:
+        """The typed occurrence registered for ``ref`` in this exact roll."""
+        return self._materialized_by_ref.get(ref)
 
     def present_fact(self, node: Node) -> None:
         self._delegate.present_fact(node)
@@ -411,6 +418,35 @@ class ConstructionTestimonyReporterV1:
         self._delegate.report_gap(node, panic)
 
     def present_construction(self, node: Node, value: object) -> None:
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_source_tree.nodes import Call, FunctionDef, AsyncFunctionDef
+
+        if (
+            isinstance(node, Call)
+            and isinstance(value, CallSiteSugar)
+            and value.expected_definition_ref is not None
+        ):
+            definition = value.expected_definition_ref
+            resolved_definition = node.unit.source_function_definition_for_call(node)
+            if (
+                not isinstance(definition, (FunctionDef, AsyncFunctionDef))
+                or definition.ref not in self._materialized_by_ref
+                or node.ref not in self._materialized_by_ref
+                or definition.unit.source_cid != node.unit.source_cid
+                or not isinstance(
+                    resolved_definition, (FunctionDef, AsyncFunctionDef)
+                )
+                or resolved_definition.ref is not definition.ref
+                or resolved_definition.line_col_span() != definition.line_col_span()
+            ):
+                self._testimony_gap(
+                    node,
+                    value,
+                    "constructed value",
+                    ValueError(
+                        "source call definition is not this call's exact typed occurrence"
+                    ),
+                )
         try:
             node_shape_cid = node_construction_shape_cid(node)
         except (TypeError, ValueError) as cause:

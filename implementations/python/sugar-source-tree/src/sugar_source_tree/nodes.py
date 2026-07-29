@@ -2426,7 +2426,9 @@ class Node(Typed):
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
             try:
-                result = self._construct_sugar()
+                result = self._project_constructed_value_for_testimony(
+                    self._construct_sugar()
+                )
                 # Testimony projection is INSIDE the discharge, not after it.
                 # A constructed value whose testimony cannot be content-
                 # addressed raises ConstructedValueTestimonyNotWritten here, so
@@ -2443,6 +2445,10 @@ class Node(Typed):
             self.reporter.present_fact(self)
             cache.sugar_results[key] = result
             return result
+
+    def _project_constructed_value_for_testimony(self, value: object) -> object:
+        """Project parser machinery before constructed-value testimony."""
+        return value
 
     def _construct_sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
@@ -9640,6 +9646,25 @@ class Call(Expression):
                 if isinstance(node, ObjectPlaceStateV1):
                     seen[node.object_identity_cid] = node
         return tuple(seen.values())
+
+    def _project_constructed_value_for_testimony(self, value: object) -> object:
+        """Replace a parser definition handle with this roll's typed occurrence."""
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        if not isinstance(value, CallSiteSugar):
+            return value
+        definition_ref = value.expected_definition_ref
+        if definition_ref is None or isinstance(
+            definition_ref, (FunctionDef, AsyncFunctionDef)
+        ):
+            return value
+        lookup = getattr(self.reporter, "materialized_node_for_ref", None)
+        if lookup is None:
+            return value
+        definition = lookup(definition_ref)
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+            return value
+        return replace(value, expected_definition_ref=definition)
 
     def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
