@@ -336,10 +336,39 @@ class TupleValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        # Concrete tuple + integer index is fully decided. A known non-integer
-        # is TypeError; an index with undecided runtime semantics stays loud.
+        # Concrete tuple + ground slice/integer index is fully decided. A known
+        # non-index is TypeError; undecided runtime semantics stay loud.
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete
+
+        if type(index) is SliceValue:
+            bounds = (index.lower, index.upper, index.step)
+            if all(
+                bound is None
+                or (type(bound) is TermValue and type(bound.value) is int)
+                for bound in bounds
+            ):
+                lower, upper, step = (
+                    bound.value if type(bound) is TermValue else None
+                    for bound in bounds
+                )
+                if step == 0:
+                    from sugar_lift_py_tests.floor.ground_exit import (
+                        ground_exceptional_exit,
+                    )
+
+                    return ground_exceptional_exit(
+                        exception_name="ValueError",
+                        site=site,
+                        owner="TupleValue.subscript",
+                    )
+                return Complete(
+                    TupleValue(tuple(self.elements[slice(lower, upper, step)]))
+                )
+            return self.undecided_subscript(
+                index, site, owner="TupleValue.subscript"
+            )
 
         if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
