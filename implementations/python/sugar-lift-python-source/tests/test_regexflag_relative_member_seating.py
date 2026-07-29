@@ -215,3 +215,73 @@ def test_regexflag_cached_class_sugar_retains_manager_context_product() -> None:
     assert outcome.value.receipt in manager_context.source_import_value_receipts[
         (module.module_name, module.source_seat, module.source_cid)
     ]
+
+
+def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    module = graph.modules["re"]
+    external_context = TreeConstructionContextV1.for_source_call_construction()
+    unit_context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=unit_context,
+    )
+    regex_flag = next(
+        node
+        for node in source_file.root.body
+        if isinstance(node, ClassDef) and node.name == "RegexFlag"
+    )
+
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=regex_flag,
+        session=SourceResolutionSession(enabled=False),
+        context=external_context,
+        dependency_graphs={"re": graph},
+    )
+
+    member = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Attribute)
+        and node.attr == "SRE_FLAG_ASCII"
+        and node.line_col_span().start_line == 145
+    )
+    outcome = member.sugar().desugar()
+    roster_key = (module.module_name, module.source_seat, module.source_cid)
+    span = member.line_col_span()
+    site_key = (
+        source_file.unit.filename,
+        module.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+
+    assert type(outcome.value) is ImportMemberValue
+    assert outcome.value.receipt is unit_context.source_import_value_receipts_by_site[
+        site_key
+    ]
+    assert outcome.value.receipt in unit_context.source_import_value_receipts[
+        roster_key
+    ]
+    assert len(unit_context.source_import_value_receipts_by_site) > 1
+    assert not external_context.source_import_value_receipts
+    assert not external_context.source_import_value_receipts_by_site
+    assert not external_context.source_import_value_resolutions
+
+    foreign = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=external_context,
+    )
+    foreign_member = next(
+        node
+        for node in foreign.nodes()
+        if isinstance(node, Attribute)
+        and node.attr == "SRE_FLAG_ASCII"
+        and node.line_col_span().start_line == 145
+    )
+    with pytest.raises(SugarNotWritten, match="SymbolicValue.attribute"):
+        foreign_member.sugar().desugar()

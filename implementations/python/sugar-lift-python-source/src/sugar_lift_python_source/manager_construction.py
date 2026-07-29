@@ -2286,6 +2286,20 @@ def _seat_import_value_use_receipts(
     from sugar_lift_python_source.canonical import blake3_512_of
 
     unit = source_file.unit
+    unit_context = unit.construction_context
+    if type(unit_context) is not TreeConstructionContextV1:
+        from sugar_source_tree.panic import BackendDefect
+
+        raise BackendDefect(
+            blame=unit,
+            owner="manager_construction._seat_import_value_use_receipts",
+            observed="target SourceUnit has no exact construction context",
+            requested="the exact SourceUnit-owned TreeConstructionContextV1",
+            fix="construct the target SourceUnit with its manager-owned context",
+        )
+    # The target SourceUnit owns the context consumed by AttributeSugar.  A
+    # caller's distinct context has no authority to receive this unit's rows.
+    context = unit_context
     # Path-source law: refuse dual-door / mismatched CID loudly at mint.
     expected_cid = blake3_512_of(module.source.encode("utf-8"))
     if module.source_cid != expected_cid or unit.source_cid != module.source_cid:
