@@ -350,6 +350,7 @@ class SourceUnit:
     # Final-checked import value-use resolutions at exact use sites of this
     # unit only (source_cid match). Never foreign LineTable spans.
     _import_value_use_resolutions: object = field(init=False, default=None)
+    _constructed_module: object = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -373,6 +374,21 @@ class SourceUnit:
         object.__setattr__(self, "_exception_type_identity_cache", {})
         object.__setattr__(self, "_import_bound_name_targets", None)
         object.__setattr__(self, "_import_value_use_resolutions", {})
+        object.__setattr__(self, "_constructed_module", None)
+
+    @property
+    def constructed_module(self) -> object:
+        if self._constructed_module is None:
+            from .panic import BackendDefect
+
+            raise BackendDefect(
+                blame=self.filename,
+                owner="SourceUnit.constructed_module",
+                observed="module producer never ran",
+                requested="the product from Backend.materialize_module",
+                fix="construct this SourceUnit only through SourceFile",
+            )
+        return self._constructed_module
 
     def import_bound_name_target(
         self, span: Tuple[int, int, int, int]
@@ -934,7 +950,9 @@ class SourceUnit:
             return {
                 node.id
                 for target in targets
-                for node in target.walk()
+                for node in (
+                    (target,) if isinstance(target, Name) else target.walk()
+                )
                 if isinstance(node, Name)
             }
         if statement.kind in ("Import", "ImportFrom"):
@@ -2333,7 +2351,16 @@ class Node(Typed):
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(child for _, _, child in reversed(list(node.children())))
+            children = []
+            for field_name in type(node)._child_fields:
+                value = getattr(node, field_name)
+                if value is None:
+                    continue
+                if isinstance(value, Node):
+                    children.append(value)
+                else:
+                    children.extend(child for child in value if child is not None)
+            stack.extend(reversed(children))
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.kind} [{self.span.start},{self.span.end})>"
