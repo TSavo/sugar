@@ -55,6 +55,33 @@ def test_class_constructor_binds_its_initializer_parameter_roster(tmp_path) -> N
     )
 
 
+def test_class_constructor_rejects_same_arity_foreign_initializer_roster(
+    tmp_path,
+) -> None:
+    path = tmp_path / "foreign_initializer.py"
+    path.write_text(
+        "class Left:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n\n"
+        "class Right:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n",
+        encoding="utf-8",
+    )
+    source = SourceFile.from_path(path)
+    classes = {
+        node.name: node for node in source.nodes() if isinstance(node, ClassDef)
+    }
+    left = classes["Left"].source_visible_constructor_frame()
+    right = classes["Right"].source_visible_constructor_frame()
+    wrong_roster = replace(
+        left, formal_declaration_sites=right.formal_declaration_sites
+    )
+
+    with pytest.raises(SourceCallBindingGap, match="foreign declaration site"):
+        wrong_roster.bind_actuals((TermValue(11),), ())
+
+
 def test_inherited_exception_constructor_retains_vararg_roster(tmp_path) -> None:
     path = tmp_path / "exception_frame.py"
     path.write_text("class Raised(Exception):\n    pass\n", encoding="utf-8")

@@ -151,6 +151,8 @@ class SourceVisibleCallFrameV1:
     definition_fragment_cid: str
     parameters: tuple[str, ...]
     formal_coordinates: tuple[BindingCoordinateV1, ...]
+    formal_declaration_sites: tuple[dict, ...]
+    formal_projection_paths: tuple[tuple[str | int, ...], ...]
     parameter_kinds: tuple[str, ...]
     default_sugars: tuple[object | None, ...] = field(compare=False)
     default_nodes: tuple[object | None, ...] = field(compare=False)
@@ -163,37 +165,11 @@ class SourceVisibleCallFrameV1:
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
-    formal_declaration_sites: tuple[dict, ...] = field(
-        default=(), compare=False, repr=False
-    )
-    formal_projection_paths: tuple[tuple[str | int, ...], ...] = field(
-        default=(), compare=False, repr=False
-    )
     generator_steps: tuple | None = field(default=None, compare=False, repr=False)
     generator_step_fragment_cids: tuple[str, ...] = ()
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
-        # The frame retains the producer-owned declaration roster once.  A
-        # FunctionDef frame's rows come from its params; a ClassDef constructor
-        # frame's rows are the initializer params already selected by the class
-        # producer (with the receiver omitted).  Consumers never rediscover the
-        # initializer or construct a second frame.
-        if not self.formal_declaration_sites:
-            object.__setattr__(
-                self,
-                "formal_declaration_sites",
-                tuple(coordinate.binding_site for coordinate in self.formal_coordinates),
-            )
-        if not self.formal_projection_paths:
-            object.__setattr__(
-                self,
-                "formal_projection_paths",
-                tuple(
-                    coordinate.projection_path
-                    for coordinate in self.formal_coordinates
-                ),
-            )
         preimage = {
             "kind": "source-visible-call-frame",
             "schemaVersion": "1",
