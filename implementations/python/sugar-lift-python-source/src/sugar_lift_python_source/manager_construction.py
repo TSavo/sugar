@@ -1216,6 +1216,9 @@ def _resolve_source_visible_frame_uncached(
             module.source_cid,
             module_identities={},
         )
+        value_receipts = context.source_import_value_receipts.setdefault(
+            module.source_cid, tuple(value_receipts)
+        )
     else:
         import_receipts = ()
         value_receipts = ()
@@ -2296,13 +2299,17 @@ def _seat_import_value_use_receipts(
             fix="refuse dual-door repair; re-mint module via path_source",
         )
     # No ValueError swallow: authenticated mint refuses tamper/mismatch loud.
-    receipts, _ = authenticated_import_value_use_receipts(
-        Path("."),
-        Path(module.source_seat),
-        module.source,
-        module.source_cid,
-        module_identities={},
-    )
+    receipts = context.source_import_value_receipts.get(module.source_cid)
+    if receipts is None:
+        minted, _ = authenticated_import_value_use_receipts(
+            Path("."),
+            Path(module.source_seat),
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
+        receipts = tuple(minted)
+        context.source_import_value_receipts[module.source_cid] = receipts
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
     call_receipts, _ = authenticated_import_use_receipts(
