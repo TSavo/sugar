@@ -35,7 +35,7 @@ def test_builtin_class_member_coordinate_constructs_real_class_field(
 
     assert type(outcome) is Complete
     assert type(outcome.value) is ClassDefinitionValue
-    fields = {field.name: field.value for field in outcome.value.fields}
+    fields = {field.name: field.value for field in outcome.value.class_fields}
     assert tuple(fields) == ("carried",)
     assert type(fields["carried"]) is not SymbolicValue
 
