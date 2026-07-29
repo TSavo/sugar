@@ -163,11 +163,37 @@ class SourceVisibleCallFrameV1:
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
+    formal_declaration_sites: tuple[dict, ...] = field(
+        default=(), compare=False, repr=False
+    )
+    formal_projection_paths: tuple[tuple[str | int, ...], ...] = field(
+        default=(), compare=False, repr=False
+    )
     generator_steps: tuple | None = field(default=None, compare=False, repr=False)
     generator_step_fragment_cids: tuple[str, ...] = ()
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
+        # The frame retains the producer-owned declaration roster once.  A
+        # FunctionDef frame's rows come from its params; a ClassDef constructor
+        # frame's rows are the initializer params already selected by the class
+        # producer (with the receiver omitted).  Consumers never rediscover the
+        # initializer or construct a second frame.
+        if not self.formal_declaration_sites:
+            object.__setattr__(
+                self,
+                "formal_declaration_sites",
+                tuple(coordinate.binding_site for coordinate in self.formal_coordinates),
+            )
+        if not self.formal_projection_paths:
+            object.__setattr__(
+                self,
+                "formal_projection_paths",
+                tuple(
+                    coordinate.projection_path
+                    for coordinate in self.formal_coordinates
+                ),
+            )
         preimage = {
             "kind": "source-visible-call-frame",
             "schemaVersion": "1",
@@ -176,6 +202,10 @@ class SourceVisibleCallFrameV1:
             "definitionFragmentCid": self.definition_fragment_cid,
             "parameters": list(self.parameters),
             "formalCoordinates": [item.wire() for item in self.formal_coordinates],
+            "formalDeclarationSites": list(self.formal_declaration_sites),
+            "formalProjectionPaths": [
+                list(path) for path in self.formal_projection_paths
+            ],
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
@@ -287,9 +317,11 @@ class SourceVisibleCallFrameV1:
         cids = tuple(coordinate.cid for coordinate in coordinates)
         if len(set(cids)) != len(cids):
             raise SourceCallBindingGap("formal coordinate roster contains a duplicate")
-        if any(
-            coordinate.projection_path != ("formal", index)
-            for index, coordinate in enumerate(coordinates)
+        if len(self.formal_projection_paths) != len(coordinates) or any(
+            coordinate.projection_path != expected
+            for coordinate, expected in zip(
+                coordinates, self.formal_projection_paths, strict=True
+            )
         ):
             raise SourceCallBindingGap("formal coordinate roster is reordered")
         if any(
@@ -299,11 +331,11 @@ class SourceVisibleCallFrameV1:
             raise SourceCallBindingGap(
                 "formal coordinate roster has a foreign scope owner"
             )
-        owner_parameters = tuple(self.owner.params)
-        if len(owner_parameters) != len(coordinates) or any(
-            coordinate.binding_site != parameter.fragment.seal().to_dict()
-            for coordinate, parameter in zip(
-                coordinates, owner_parameters, strict=True
+        declaration_sites = self.formal_declaration_sites
+        if len(declaration_sites) != len(coordinates) or any(
+            coordinate.binding_site != declaration_site
+            for coordinate, declaration_site in zip(
+                coordinates, declaration_sites, strict=True
             )
         ):
             raise SourceCallBindingGap(
@@ -313,6 +345,7 @@ class SourceVisibleCallFrameV1:
         native = self.native_operation_formal_coordinates
         if not native:
             return
+        owner_parameters = tuple(self.owner.params)
         _reauthenticate_native_coordinates(native)
         native_cids = tuple(coordinate.coordinate_cid for coordinate in native)
         expected_kinds = {
