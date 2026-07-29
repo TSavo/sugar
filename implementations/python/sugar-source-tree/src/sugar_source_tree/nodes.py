@@ -1056,6 +1056,8 @@ class SourceUnit:
         definition: "ClassDef",
     ) -> bool:
         """Whether ordinary attribute storage/lookup is source-constructed."""
+        if definition._authenticated_new_constructor_shape() is not None:
+            return True
         forbidden_methods = {
             "__new__",
             "__getattr__",
@@ -3915,6 +3917,60 @@ class ClassDef(Statement):
             return None
         return decorator.id
 
+    def _authenticated_new_constructor_shape(self):
+        """One source-owned ``__new__`` allocation followed by field stores."""
+        constructors = tuple(
+            item
+            for item in self.body
+            if isinstance(item, FunctionDef) and item.name == "__new__"
+        )
+        if len(constructors) != 1 or any(
+            isinstance(item, FunctionDef) and item.name == "__init__"
+            for item in self.body
+        ):
+            return None
+        constructor = constructors[0]
+        if len(constructor.params) < 2 or len(constructor.body) < 3:
+            return None
+        allocation = constructor.body[0]
+        returned = constructor.body[-1]
+        if (
+            not isinstance(allocation, Assign)
+            or len(allocation.targets) != 1
+            or not isinstance(allocation.targets[0], Name)
+            or not isinstance(returned, Return)
+            or not isinstance(returned.value, Name)
+            or returned.value.id != allocation.targets[0].id
+            or not isinstance(allocation.value, Call)
+            or allocation.value.keywords
+            or len(allocation.value.args) < 1
+            or not isinstance(allocation.value.func, Attribute)
+            or allocation.value.func.attr != "__new__"
+            or not isinstance(allocation.value.func.value, Call)
+        ):
+            return None
+        super_call = allocation.value.func.value
+        class_param = constructor.params[0]
+        if (
+            not isinstance(super_call.func, Name)
+            or super_call.func.id != "super"
+            or super_call.keywords
+            or len(super_call.args) != 2
+            or not isinstance(super_call.args[0], Name)
+            or super_call.args[0].id != self.name
+            or not isinstance(super_call.args[1], Name)
+            or super_call.args[1].id != class_param.name
+            or not isinstance(allocation.value.args[0], Name)
+            or allocation.value.args[0].id != class_param.name
+        ):
+            return None
+        bindings = (self.unit.module_direct_bindings or {}).get(self.name, ())
+        if len(bindings) != 1 or bindings[0] is not self:
+            return None
+        if (self.unit.module_direct_bindings or {}).get("super"):
+            return None
+        return constructor, allocation.targets[0], constructor.body[1:-1]
+
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
         the type params then bind for the bases, keywords, and body. The body is
@@ -4177,6 +4233,10 @@ class ClassDef(Statement):
             ),
             None,
         )
+        new_shape = self._authenticated_new_constructor_shape()
+        constructor = initializer if initializer is not None else (
+            None if new_shape is None else new_shape[0]
+        )
         owner_cid = self.fragment.seal().cid
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
@@ -4214,7 +4274,7 @@ class ClassDef(Statement):
                 body=self._source_visible_body({}),
                 owner=self,
             )
-        params = () if initializer is None else initializer.params[1:]
+        params = () if constructor is None else constructor.params[1:]
         coordinates = tuple(
             BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
             for index, param in enumerate(params)
@@ -4341,6 +4401,32 @@ class ClassDef(Statement):
                 **scope,
             }
             initializer_body = initializer._source_visible_body(initializer_scope)
+        else:
+            new_shape = self._authenticated_new_constructor_shape()
+            if new_shape is not None:
+                from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+                    SourceVisibleFunctionBodySugar,
+                )
+
+                constructor, receiver_target, field_body = new_shape
+                coordinate = BindingCoordinateV1.mint(
+                    self.fragment.seal().cid,
+                    receiver_target.fragment,
+                    ("receiver", 0),
+                )
+                receiver = self._make_constructed_receiver_ref(coordinate.cid)
+                receiver_coordinate_cid = coordinate.cid
+                constructor_scope = {
+                    receiver_target.id: BindingEntryV1(coordinate, receiver, None),
+                    **scope,
+                }
+                substituted_body, _ = constructor._substitute_body(
+                    field_body, constructor_scope
+                )
+                initializer_body = SourceVisibleFunctionBodySugar(
+                    tuple(statement.sugar() for statement in substituted_body),
+                    constructor.fragment,
+                )
         return ClassConstructorBodySugar(
             definition=self.sugar(),
             initializer_body=initializer_body,

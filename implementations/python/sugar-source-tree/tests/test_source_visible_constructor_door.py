@@ -207,6 +207,50 @@ def test_repeated_initializer_uses_the_last_class_binding() -> None:
     }
 
 
+def test_source_visible_new_constructor_retains_exact_instance_field() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedToken(int):\n"
+        "    def __new__(cls, value, label):\n"
+        "        self = super(RenamedToken, cls).__new__(cls, value)\n"
+        "        self.label = label\n"
+        "        return self\n\n"
+        "RenamedToken(7, 'seven')\n",
+        context=context,
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    receiver = (
+        call.sugar()
+        .desugar()
+        .value.force_floor(None, owner="source-visible-new", project_callsite=False)
+    )
+
+    assert receiver.class_name == "RenamedToken"
+    assert receiver.attribute("label", call.fragment).value == StringValue("seven")
+    assert class_node.source_visible_constructor_frame().owner is class_node
+
+
+def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedToken(int):\n"
+        "    def __new__(cls, value, label):\n"
+        "        self = super(RenamedToken, cls).__new__(cls, value)\n"
+        "        self.label = label\n"
+        "        return value\n\n"
+        "RenamedToken(7, 'seven')\n",
+        context=context,
+    )
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    coordinate = call.sugar().desugar().value
+
+    assert isinstance(coordinate, CallSiteValue)
+    assert coordinate.body is None
+
+
 def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
