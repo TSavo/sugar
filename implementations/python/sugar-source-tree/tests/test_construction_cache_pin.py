@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import gc
+import weakref
+
 from sugar_source_tree.construction_cache import ConstructionCache
 
 
@@ -30,3 +33,28 @@ def test_cache_pins_keyed_refs_against_id_reuse():
     assert other_key != key
     assert cache._pinned[other_key] is other
     assert cache._pinned[key] is ref  # first still pinned, unaffected
+
+
+def test_cache_pins_non_none_construction_context_and_keeps_none_shape():
+    cache = ConstructionCache()
+    reporter = object()
+    control = _Ctx()
+    ref = object()
+    context = _Ctx()
+    context_ref = weakref.ref(context)
+    key = cache.key(ref, reporter, control, context)
+    cache.fields[key] = {"receipt": "context-a"}
+
+    del context
+    gc.collect()
+
+    assert context_ref() is not None
+    assert cache._pinned[key] == (ref, context_ref())
+    foreign = _Ctx()
+    foreign_key = cache.key(ref, reporter, control, foreign)
+    assert foreign_key != key
+    assert cache.fields.get(foreign_key) is None
+
+    none_key = cache.key(ref, reporter, control)
+    assert none_key == (id(ref), id(reporter), id(None), (), ())
+    assert cache._pinned[none_key] is ref

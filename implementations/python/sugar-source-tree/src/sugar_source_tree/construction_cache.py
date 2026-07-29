@@ -178,7 +178,10 @@ class ConstructionCache:
         # the coordinate rule -- the reporter testifies each coordinate once,
         # whether it answers present or absent.
         self.sugar_panics: dict[tuple, BaseException] = {}
-        # key -> ref. The cache key embeds ``id(ref)``, and shadow refs minted
+        # key -> ref, or (ref, construction_context). The cache key embeds
+        # both live identities; pin every non-None participant so neither ID
+        # can be recycled underneath a retained row.
+        # Shadow refs minted
         # during substitution are transient: once a rewritten shadow is GC'd its
         # address is reused by the NEXT shadow (e.g. one loop-unroll iteration's
         # `x == 0` after the previous iteration's), which would then collide on
@@ -203,5 +206,7 @@ class ConstructionCache:
             loop_targets,
             exception_slots,
         )
-        self._pinned[computed] = ref
+        self._pinned[computed] = (
+            ref if construction_context is None else (ref, construction_context)
+        )
         return computed
