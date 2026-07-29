@@ -41,6 +41,34 @@ class ComprehensionValue(GuardStableValue):
         del owner
         return self.term
 
+    def length(self, site):
+        """Project length only for the authenticated list-comprehension ctor."""
+        from sugar_lift_py_tests.ir import _Ctor
+
+        if type(self.term) is not _Ctor or self.term.name != "py.listcomp":
+            return super().length(site)
+
+        from sugar_lift_py_tests.outcome import Complete
+
+        if self.finite_elements is not None:
+            from sugar_lift_py_tests.floor.term_value import TermValue
+
+            return Complete(TermValue(len(self.finite_elements)))
+
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+
+        return Complete(
+            CallSiteValue(
+                target_name="len",
+                arg_values=(self,),
+                parameters=(),
+                term=ctor("call:len", (self.term,), symbol_kind="builtin"),
+                body=None,
+                site=site,
+            )
+        )
+
     def project_sequence_with(self, operation, ctx):
         """`a, b = <comprehension>` -- the comprehension owns the cardinality.
 
