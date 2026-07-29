@@ -506,10 +506,8 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-        index_term = floor_to_term(index, owner="CallSiteValue.setitem index")
-        value_term = floor_to_term(value, owner="CallSiteValue.setitem value")
+        index_term = index.to_term(owner="CallSiteValue.setitem index")
+        value_term = value.to_term(owner="CallSiteValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",
@@ -598,9 +596,7 @@ class CallSiteValue(FloorValue):
 
         def list_append_coordinate(prior):
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-            value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
+            value_term = value.to_term(owner="CallSiteValue.append_with value")
             return Complete(
                 CallSiteValue(
                     target_name="list.append",
@@ -742,9 +738,7 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-        index_term = floor_to_term(index, owner="CallSiteValue.delitem index")
+        index_term = index.to_term(owner="CallSiteValue.delitem index")
         return Complete(
             CallSiteValue(
                 target_name="delitem",
