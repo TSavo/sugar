@@ -843,6 +843,38 @@ class SourceUnit:
         """
         if not isinstance(call.func, Name) or self.typed_module is None:
             return None
+        lexical_rows = tuple(
+            row
+            for row in self.constructed_module.lexical_call_rows
+            if row.call_occurrence is call
+        )
+        if len(lexical_rows) > 1:
+            from .panic import backend_defect
+
+            backend_defect(
+                blame=call.fragment,
+                owner="SourceUnit.source_function_definition_for_call",
+                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
+                requested="zero or one authenticated lexical call row",
+                fix="repair Backend.materialize_module lexical call enrollment",
+            )
+        if lexical_rows:
+            row = lexical_rows[0]
+            definition = row.definition_occurrence
+            if row.source_cid != self.source_cid or not isinstance(
+                definition, (FunctionDef, AsyncFunctionDef)
+            ):
+                from .panic import backend_defect
+
+                backend_defect(
+                    blame=call.fragment,
+                    owner="SourceUnit.source_function_definition_for_call",
+                    observed="foreign or malformed lexical call row",
+                    requested="this SourceUnit's exact typed function definition",
+                    fix="repair Backend.materialize_module lexical call testimony",
+                )
+            return definition
+
         span = call.line_col_span()
         containing = []
         for candidate in self.function_nodes:
