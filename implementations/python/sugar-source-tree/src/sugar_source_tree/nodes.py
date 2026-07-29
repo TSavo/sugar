@@ -525,6 +525,7 @@ class SourceUnit:
                     (target, ("targets", target_index))
                     for target_index, target in enumerate(consumer.targets)
                     if isinstance(target, (Tuple_, List))
+                    and self._is_binding_target_pattern(target)
                 )
             elif isinstance(consumer, For):
                 targets = ((consumer.target, ("target",)),)
@@ -556,6 +557,20 @@ class SourceUnit:
         object.__setattr__(self, "target_pattern_construction_count", constructed_count)
         # Identity keys include spans against the bound module; drop stale rows.
         object.__setattr__(self, "_exception_type_identity_cache", {})
+
+    @staticmethod
+    def _is_binding_target_pattern(target) -> bool:
+        """True only when every leaf is a lexical binding occurrence."""
+        if isinstance(target, Name):
+            return True
+        if isinstance(target, Starred):
+            return SourceUnit._is_binding_target_pattern(target.value)
+        if isinstance(target, (Tuple_, List)):
+            return all(
+                SourceUnit._is_binding_target_pattern(child)
+                for child in target.elts
+            )
+        return False
 
     def _construct_target_pattern(
         self, consumer, target, prefix
