@@ -51,6 +51,7 @@ from .canonical import cid_of_json
 from .dependency_artifact import (
     DependencyArtifactGraph,
     ResolvedPythonObjectV1,
+    ResolvedPythonValueV1,
     resolve_import_binding,
 )
 from .resolution_session import SourceResolutionSession, session_or_new
@@ -1063,6 +1064,27 @@ def _resolve_source_visible_frame_uncached(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
     )
+    from sugar_lift_python_source.value_pins import scan_module_value_pins
+    from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
+
+    pin_scan = scan_module_value_pins(
+        source_file.root, source=module.source, source_path=module.source_seat
+    )
+    mutable_global_bindings = tuple(
+        MutableGlobalBindingV1(
+            source_cid=pin.source_cid,
+            binding_occurrence=pin.binding_occurrence,
+            name=pin.name,
+            kind=pin.kind,
+            term=pin.term,
+            line=pin.line,
+            col=pin.col,
+        )
+        for pin in pin_scan.mutable_global_pins
+    )
+
+    def with_mutable_globals(frame):
+        return replace(frame, mutable_global_bindings=mutable_global_bindings)
     dependency_graphs = dict(dependency_graphs or {})
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
     definitions = tuple(
@@ -1117,7 +1139,7 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
-        frame = target.source_visible_call_frame()
+        frame = with_mutable_globals(target.source_visible_call_frame())
         if frame.parameters and frame.parameters[0] == "self":
             frame = replace(
                 frame,
@@ -1447,7 +1469,21 @@ def _resolve_source_visible_frame_uncached(
                     nested = external_frames.get(call.func.id)
                 if nested is not None:
                     _install_source_call_frame(context, call, nested)
-            frames[function.name] = function.source_visible_call_frame()
+            # Each reachable sibling owns its own exact import-value uses.
+            # Seat those authenticated coordinates before its body answers the
+            # construction roll; seating only the exported target leaves
+            # sibling helper bodies permanently memoized without testimony.
+            _seat_import_value_use_receipts(
+                source_file=source_file,
+                module=module,
+                target=function,
+                session=session,
+                context=context,
+                dependency_graphs=dependency_graphs,
+            )
+            frames[function.name] = with_mutable_globals(
+                function.source_visible_call_frame()
+            )
             pending.remove(function)
             progressed = True
         if not progressed:
@@ -1919,6 +1955,7 @@ def _seat_import_value_use_receipts(
         )
         for span in owned_spans
     )
+    value_authenticated_top_levels: set[str] = set()
     for receipt in receipts:
         if receipt.source_cid != module.source_cid:
             raise ImportValueUseSeatingGap(
@@ -1964,11 +2001,22 @@ def _seat_import_value_use_receipts(
         # Only the receipt's authenticated module identity selects among the
         # pre-authenticated graphs carried by this publication.
         dependency_graph = dependency_graphs.get(top_level)
+        authenticated_for_value = top_level in value_authenticated_top_levels
         if dependency_graph is None:
-            # An absent graph carries no source authority.  Leave the exact
-            # import-use coordinate unseated; any consumer that needs it stays
-            # typed-loud at its ordinary resolution door.
-            continue
+            from .dependency_artifact import (
+                DependencyArtifactAuthenticationError,
+                authenticate_dependency_top_level,
+            )
+
+            try:
+                dependency_graph = authenticate_dependency_top_level(top_level)
+            except DependencyArtifactAuthenticationError:
+                # Authentication failure carries no source authority. The
+                # exact consumer remains loud; no import execution fallback.
+                continue
+            dependency_graphs[top_level] = dependency_graph
+            value_authenticated_top_levels.add(top_level)
+            authenticated_for_value = True
         binding_target = receipt.import_binding.value["target"]
         if (
             binding_target["exportedPath"] == []
@@ -1982,8 +2030,17 @@ def _seat_import_value_use_receipts(
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
-        if not isinstance(imported, ResolvedPythonObjectV1):
-            if imported.kind in {"dynamic-export", "static-export-absent"}:
+        if not isinstance(imported, (ResolvedPythonObjectV1, ResolvedPythonValueV1)):
+            if authenticated_for_value:
+                # This extra graph was opened solely to seek non-callable value
+                # testimony. A different resolution gap is not reclassified
+                # as a frame-publication failure by that optional value query.
+                continue
+            if imported.kind in {
+                "dynamic-export",
+                "static-export-absent",
+                "target-outside-binding",
+            }:
                 # Honest open-world value exports carry no definition
                 # coordinate to seat. Leave the exact use unresolved so its
                 # ordinary consumer remains typed-loud if execution reaches

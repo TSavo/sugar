@@ -5,8 +5,43 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.binding_provenance import BoundBindingStateV1
 from sugar_source_tree.binding_state import BindingEntryV1
+from sugar_source_tree.fragment import SourceMemento
 
 from .context_manager_resolution import SourceFragmentCoordinateV1
+
+
+@dataclass(frozen=True)
+class MutableGlobalBindingV1:
+    source_cid: str
+    binding_occurrence: SourceMemento
+    name: str
+    kind: str
+    term: object = field(compare=False)
+    line: int
+    col: int
+    cid: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.source_cid.startswith("blake3-512:"):
+            raise ValueError("mutable global binding requires authenticated source CID")
+        if (
+            not isinstance(self.binding_occurrence, SourceMemento)
+            or self.binding_occurrence.source_cid != self.source_cid
+        ):
+            raise ValueError("mutable global binding occurrence/source CID mismatch")
+        if not self.name or self.kind not in {"dict", "list", "set"}:
+            raise ValueError("mutable global binding requires a closed mutable kind")
+        object.__setattr__(self, "cid", cid_of_json({
+            "kind": "mutable-global-binding",
+            "schemaVersion": "1",
+            "sourceCid": self.source_cid,
+            "bindingOccurrence": self.binding_occurrence.to_dict(),
+            "name": self.name,
+            "mutableKind": self.kind,
+            "term": self.term,
+            "line": self.line,
+            "col": self.col,
+        }))
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
@@ -103,6 +138,7 @@ class BoundSourceCallActualsV1:
     actuals: tuple
     formal_coordinates: tuple[BindingCoordinateV1, ...]
     native_formal_coordinates: tuple = ()
+    runtime_pairs: tuple[BoundFormalActualV1, ...] = ()
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
@@ -113,6 +149,14 @@ class BoundSourceCallActualsV1:
             raise SourceCallBindingGap("bound actual coordinate arity mismatch")
         _reauthenticate_binding_coordinates(self.formal_coordinates)
         _reauthenticate_native_coordinates(self.native_formal_coordinates)
+        if not self.runtime_pairs:
+            object.__setattr__(self, "runtime_pairs", self.pairs)
+        runtime_coordinates = tuple(pair.coordinate for pair in self.runtime_pairs)
+        _reauthenticate_binding_coordinates(runtime_coordinates)
+        if tuple(self.runtime_pairs[:actual_count]) != self.pairs:
+            raise SourceCallBindingGap(
+                "runtime binding testimony must begin with the formal roster"
+            )
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, BoundSourceCallActualsV1):
@@ -167,6 +211,9 @@ class SourceVisibleCallFrameV1:
     )
     generator_steps: tuple | None = field(default=None, compare=False, repr=False)
     generator_step_fragment_cids: tuple[str, ...] = ()
+    mutable_global_bindings: tuple[MutableGlobalBindingV1, ...] = field(
+        default=(), compare=False
+    )
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -185,6 +232,9 @@ class SourceVisibleCallFrameV1:
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
+            "mutableGlobalBindingCids": [
+                item.cid for item in self.mutable_global_bindings
+            ],
         }
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
 
@@ -225,6 +275,7 @@ class SourceVisibleCallFrameV1:
                 raise SourceCallBindingGap("duplicate keyword actual")
             named[key] = value
         bound = []
+        projected_pairs = []
         for index, (name, kind, default) in enumerate(
             zip(
                 self.parameters,
@@ -234,14 +285,32 @@ class SourceVisibleCallFrameV1:
             )
         ):
             if kind == "vararg":
-                bound.append(TupleValue(tuple(remaining)))
+                values = tuple(remaining)
+                bound.append(TupleValue(values))
+                projected_pairs.extend(
+                    BoundFormalActualV1(
+                        self.formal_coordinates[index].project("variadic", ordinal),
+                        value,
+                    )
+                    for ordinal, value in enumerate(values)
+                )
                 remaining.clear()
                 continue
             if kind == "kwarg":
+                values = tuple(named.values())
                 bound.append(
                     DictValue(
                         tuple((StringValue(key), value) for key, value in named.items())
                     )
+                )
+                projected_pairs.extend(
+                    BoundFormalActualV1(
+                        self.formal_coordinates[index].project(
+                            "variadic-keyword", ordinal
+                        ),
+                        value,
+                    )
+                    for ordinal, value in enumerate(values)
                 )
                 named.clear()
                 continue
@@ -268,10 +337,18 @@ class SourceVisibleCallFrameV1:
             bound.append(value)
         if remaining or named:
             raise SourceCallBindingGap("unconsumed call actual")
+        actuals = tuple(bound)
         return BoundSourceCallActualsV1(
-            tuple(bound),
+            actuals,
             self.formal_coordinates,
             self.native_operation_formal_coordinates,
+            tuple(
+                BoundFormalActualV1(coordinate, actual)
+                for coordinate, actual in zip(
+                    self.formal_coordinates, actuals, strict=True
+                )
+            )
+            + tuple(projected_pairs),
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:
@@ -300,8 +377,15 @@ class SourceVisibleCallFrameV1:
             )
         ):
             raise SourceCallBindingGap("formal coordinate roster is reordered")
+        scope_owner_cid = cid_of_json(
+            {
+                "kind": "binding-scope-owner",
+                "schemaVersion": "1",
+                "source": owner_fragment.seal().to_dict(),
+            }
+        )
         if any(
-            coordinate.scope_owner_cid != self.definition_fragment_cid
+            coordinate.scope_owner_cid != scope_owner_cid
             for coordinate in coordinates
         ):
             raise SourceCallBindingGap(
