@@ -9668,6 +9668,9 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
+                expected_definition_ref=(
+                    None if function_definition is None else function_definition.ref
+                ),
                 native_operation_formal_coordinates=tuple(formal_coordinates),
             )
         if isinstance(self.func, Attribute):

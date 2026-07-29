@@ -46,6 +46,7 @@ class CallSiteSugar(ConstructedTermSugar):
     source_call_frame: Any = dataclass_field(default=None, compare=False)
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+    expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
     native_operation_formal_coordinates: tuple = dataclass_field(default=(), compare=False)
 
     def __post_init__(self) -> None:
@@ -138,6 +139,16 @@ class CallSiteSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.source_call_frame is not None and self.expected_definition_ref is not None:
+            from sugar_source_tree.panic import SugarNotWritten
+            if self.source_call_frame.owner.ref is not self.expected_definition_ref:
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    blame=self.site,
+                    observed="cached source frame has foreign definition owner",
+                    requested="authenticated lexical definition owner",
+                    fix="retain the seated frame or keep the call loud",
+                )
         if self.contract_resolution_gap is not None:
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
