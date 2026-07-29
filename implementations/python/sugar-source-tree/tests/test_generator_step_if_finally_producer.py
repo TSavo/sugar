@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.claim.sugar_catalog import SugarCatalog
-from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -111,7 +111,7 @@ def _production_machine(source: str, actual: ConstructedTermSugar):
         args=(actual,),
         site=call.fragment,
         source_call_frame=frame,
-    ).desugar(FactoryBuildContext(filename="manager.py", catalog=SugarCatalog()))
+    ).desugar(ReduceContext.root(owner="generator-step-if-finally"))
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, GeneratorConstructionV1)
     return outcome.value

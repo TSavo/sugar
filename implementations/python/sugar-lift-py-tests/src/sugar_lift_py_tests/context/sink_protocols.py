@@ -17,7 +17,7 @@ __all__ = [
 class AuditSink(Protocol):
     """The audit-row carrier: `factory.build` appends one row per selection.
 
-    `audit_sink` and `construction_audit_sink` on `FactoryBuildContext`, and
+    `construction_audit_sink` on `ReduceContext`, and
     `construction_audit_sink` on `ReduceContext`, are all this shape: a list-like
     collector, never read back by the lifter. Callers append `FactoryAuditDto`
     TypedDicts, plain dicts, or (pre-`.to_json()`) `ConstructionAuditRow` values

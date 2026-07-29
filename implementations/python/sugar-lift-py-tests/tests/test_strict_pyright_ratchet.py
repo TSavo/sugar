@@ -3,7 +3,7 @@
 pyrightconfig.json runs the repo in basic mode; that ratchet lives in
 test_type_checker_ratchet.py. This is a SEPARATE, narrower lane: it re-runs
 pyright in STRICT mode scoped to exactly the files #3657's priority list named
-as closeable-but-loose (FloorDispatchSurface/FloorValue, FactoryBuildContext, the SugarBody/FactoryBuildResult edge, and the two DTOs that
+as closeable-but-loose (FloorDispatchSurface/FloorValue, the SugarBody/FactoryBuildResult edge, and the two DTOs that
 close their dict[str, Any] fallback lanes). Whole-repo strict is not the ask;
 these six-plus-two files ARE PR1-4's fixes, so R starts at 0 for all of them.
 
@@ -12,7 +12,6 @@ SugarBody-generic-dispatch debt there, a reportUnknownVariableType on a
 SugarBody[Unknown] local at the ObjectMethodValue.body seam, pinned at its
 measured baseline of 1. #3657 item 6 closed that debt by parametrizing
 ObjectMethodValue.body and CallSiteValue.body as SugarBody[Any] (matching
-FactoryBuildContext.build_body's declared SugarBody[Any] return and
 FactoryBuildResult.sugar's Any membrane), so the pin ratchets to 0 with the
 rest of the frontier.
 """
@@ -33,7 +32,6 @@ SRC = ROOT / "src" / "sugar_lift_py_tests"
 # lift-report/source-memento DTOs #3661 (PR4) closed the dict[str, Any]
 # fallback on.
 STRICT_TARGETS: dict[str, Path] = {
-    "context/factory_build_context.py": SRC / "context" / "factory_build_context.py",
     "sugar_body/sugar_body.py": SRC / "sugar_body" / "sugar_body.py",
     "floor/floor_value.py": SRC / "floor" / "floor_value.py",
     "floor/floor_dispatch_surface.py": SRC / "floor" / "floor_dispatch_surface.py",
@@ -46,7 +44,6 @@ STRICT_TARGETS: dict[str, Path] = {
 }
 
 EXPECTED_STRICT_ERRORS: dict[str, int] = {
-    "context/factory_build_context.py": 0,
     "sugar_body/sugar_body.py": 0,
     "floor/floor_value.py": 0,
     "floor/floor_dispatch_surface.py": 0,

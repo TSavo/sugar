@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, NoReturn, cast
 from .guard_stable_value import GuardStableValue
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.operations.method_call_operation import (
         MethodCallOperation,
     )
@@ -524,7 +524,7 @@ class StringValue(GuardStableValue):
         return operation.project_literal(self, ctx)
 
     def call_method_with(
-        self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
+        self, operation: MethodCallOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
         if operation.name == "__int__" and not operation.arguments:

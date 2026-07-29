@@ -12,19 +12,16 @@ from sugar_lift_py_tests.context import (
     OperationRecorder,
     ProofSink,
 )
-from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context import ReduceContext
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_factory_build_context_sink_fields_are_typed_protocols() -> None:
-    annotations = FactoryBuildContext.__annotations__
-    assert annotations["audit_sink"] == "AuditSink | None"
+def test_reduce_context_sink_fields_are_typed_protocols() -> None:
+    annotations = ReduceContext.__annotations__
     assert annotations["construction_audit_sink"] == "AuditSink | None"
     assert annotations["proof_sink"] == "ProofSink | None"
     assert annotations["external_bridge_sink"] == "ExternalBridgeSink | None"
-    assert annotations["record_operation"] == "OperationRecorder | None"
-    assert annotations["building"] == "frozenset[str]"
 
 
 def test_bare_object_satisfies_no_sink_protocol_at_runtime() -> None:
@@ -60,18 +57,17 @@ def test_planted_wrong_signature_audit_sink_reds_pyright(tmp_path: Path) -> None
     planted.write_text(
         "\n".join(
             (
-                "from sugar_lift_py_tests.context import FactoryBuildContext",
-                "from sugar_lift_py_tests.claim import SugarCatalog",
+                "from sugar_lift_py_tests.context import ReduceContext",
+                "from sugar_lift_py_tests.temporal import TemporalContext",
                 "",
                 "class WrongAuditSink:",
                 "    def append(self, row: int) -> str:",
                 "        return str(row)",
                 "",
-                "def build(catalog: SugarCatalog) -> FactoryBuildContext:",
-                "    return FactoryBuildContext(",
-                "        filename='planted.py',",
-                "        catalog=catalog,",
-                "        audit_sink=WrongAuditSink(),",
+                "def build() -> ReduceContext:",
+                "    return ReduceContext(",
+                "        temporal=TemporalContext.empty(),",
+                "        construction_audit_sink=WrongAuditSink(),",
                 "    )",
                 "",
             )
@@ -104,59 +100,6 @@ def test_planted_wrong_signature_audit_sink_reds_pyright(tmp_path: Path) -> None
     )
     assert "WrongAuditSink" in diagnostics
     assert "AuditSink" in diagnostics
-
-
-def test_planted_wrong_signature_operation_recorder_reds_pyright(
-    tmp_path: Path,
-) -> None:
-    planted = tmp_path / "planted_wrong_operation_recorder.py"
-    planted.write_text(
-        "\n".join(
-            (
-                "from sugar_lift_py_tests.context import FactoryBuildContext",
-                "from sugar_lift_py_tests.claim import SugarCatalog",
-                "",
-                "def wrong_recorder(owner: str, method_name: str) -> None:",
-                "    pass",
-                "",
-                "def build(catalog: SugarCatalog) -> FactoryBuildContext:",
-                "    return FactoryBuildContext(",
-                "        filename='planted.py',",
-                "        catalog=catalog,",
-                "        record_operation=wrong_recorder,",
-                "    )",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pyright",
-            "--project",
-            str(ROOT / "pyrightconfig.json"),
-            "--outputjson",
-            str(planted),
-        ],
-        cwd=ROOT,
-        env={**os.environ, "PYTHONPATH": _with_src_on_pythonpath()},
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-
-    assert proc.returncode == 1, proc.stdout + proc.stderr
-    payload = json.loads(proc.stdout)
-    diagnostics = "\n".join(
-        item["message"] for item in payload.get("generalDiagnostics", ())
-    )
-    assert "record_operation" in diagnostics
-    assert "OperationRecorder" in diagnostics
-    assert "Missing keyword parameter" in diagnostics
 
 
 def _with_src_on_pythonpath() -> str:

@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarCatalog
-from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import ObjectValue, ReceiverFieldStoreValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Completed
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
@@ -35,11 +34,9 @@ def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
     """A completed ``self.x = value`` owns the later ``self.x`` projection."""
     receiver = ObjectValue("Renamed", (), identity="receiver-1")
     stored = TermValue(17)
-    context = FactoryBuildContext(
-        "test.py",
-        SugarCatalog(),
-        temporal=FactoryBuildContext("test.py", SugarCatalog())
-        .temporal.bind_value("self", receiver),
+    context = ReduceContext.root(owner="receiver-field-store").with_temporal(
+        ReduceContext.root(owner="receiver-field-store-seed")
+        .temporal.bind_value("self", receiver)
     )
 
     exits = reduce_block_to_exitset(

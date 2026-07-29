@@ -15,7 +15,7 @@ from .floor_value import FloorValue
 class ObjectMethodValue(FloorValue):
     name: str
     parameters: tuple[str, ...]
-    # build_body returns SugarBody[Any] (FactoryBuildContext.build_body); Any
+    # build_body returns SugarBody[Any]; Any
     # is the open membrane here, matching FactoryBuildResult.sugar, since a
     # method body's reduction shape varies with the SugarRole it was built
     # under and is not known at this seam.

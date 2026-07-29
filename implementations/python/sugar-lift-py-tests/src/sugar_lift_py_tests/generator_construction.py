@@ -1153,7 +1153,7 @@ class GeneratorConstructionV1:
         post-assign names already reduced on this machine.
 
         When a caller ``reduction_context`` was carried into allocate it **must**
-        expose ``with_temporal`` (FactoryBuildContext / ReduceContext); the
+        expose ``with_temporal`` through ``ReduceContext``; the
         typed surface is required — no hasattr/dataclass probe ladder.  The
         binder-only shell is only for explicitly context-free test allocate
         (``reduction_context=None``).  BindingCoordinateRefSugar.desugar remains
