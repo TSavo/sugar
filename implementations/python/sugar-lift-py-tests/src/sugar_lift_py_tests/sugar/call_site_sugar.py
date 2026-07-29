@@ -372,7 +372,19 @@ class CallSiteSugar(ConstructedTermSugar):
                 if actuals is not None:
                     pending = pending.discharge(actuals)
             return callsite.project_producer_outcome(pending)
-        return callsite.producer_outcome(ctx)
+        produced = callsite.producer_outcome(ctx)
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        if isinstance(produced, NativeOperationExitCarrierV1):
+            actuals = (
+                None
+                if bound_source_actuals is None
+                else bound_source_actuals.by_native_formal_coordinate
+            )
+            if actuals is not None:
+                produced = produced.discharge(actuals)
+        return produced
 
     def _collect_bridged(self, positional: tuple) -> Outcome:
         from sugar_lift_py_tests.floor.bridged_contract_value import (
