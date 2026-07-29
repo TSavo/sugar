@@ -3969,7 +3969,26 @@ class ClassDef(Statement):
             return None
         if (self.unit.module_direct_bindings or {}).get("super"):
             return None
-        return constructor, allocation.targets[0], constructor.body[1:-1]
+        field_body = constructor.body[1:-1]
+        receiver_name = allocation.targets[0].id
+        formal_names = {param.name for param in constructor.params[1:]}
+        field_names = []
+        for statement in field_body:
+            if (
+                not isinstance(statement, Assign)
+                or len(statement.targets) != 1
+                or not isinstance(statement.targets[0], Attribute)
+                or not isinstance(statement.targets[0].value, Name)
+                or statement.targets[0].value.id != receiver_name
+                or not isinstance(statement.value, Name)
+                or statement.value.id not in formal_names
+                or statement.targets[0].attr != statement.value.id
+            ):
+                return None
+            field_names.append(statement.targets[0].attr)
+        if len(field_names) != len(set(field_names)):
+            return None
+        return constructor, allocation.targets[0], field_body
 
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
