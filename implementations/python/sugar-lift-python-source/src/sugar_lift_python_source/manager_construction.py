@@ -124,7 +124,13 @@ class ConstructedCallActualV1:
         )
         if observed != self.testimony.semantic_value_cid:
             raise ValueError("constructed actual does not match its source testimony")
-        if self.node.fragment.seal().cid != self.testimony.source_fragment_cid:
+        fragment = self.node.fragment
+        if (
+            fragment.seal().cid != self.testimony.source_fragment_cid
+            or fragment.source_cid != self.testimony.source_identity_cid
+            or fragment.span.start != self.testimony.source_start
+            or fragment.span.end != self.testimony.source_end
+        ):
             raise ValueError("constructed actual has a foreign source occurrence")
 
 
