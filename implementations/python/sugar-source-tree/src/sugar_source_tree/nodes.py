@@ -4352,7 +4352,10 @@ class Assign(Statement):
                 changes["targets"] = (new_target,)
         if not changes:
             return self
-        return rewrite(self, **changes)
+        rewritten = rewrite(self, **changes)
+        if self.unit.target_patterns_for(self):
+            self.unit.retain_target_patterns(self, rewritten)
+        return rewritten
 
     def _destructured_binding(self):
         # Destructure only an already-constructed Tuple/List display.  This is
