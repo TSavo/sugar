@@ -24,14 +24,18 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, StringValue, TermValue
+from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     InertStepV1,
     OpaqueStepV1,
     ReturnStepV1,
+    YieldEffect,
     YieldStepV1,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, partition
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
@@ -39,6 +43,7 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
     EnteredGeneratorManagerStateV1,
     GeneratorBackedManagerProtocolV1,
+    _project_generator_enter_result,
     construct_generator_backed_protocol,
 )
 from sugar_source_tree.panic import SugarNotWritten
@@ -122,6 +127,210 @@ def test_enter_bound_generator_construction_refuses_foreign_frame():
 
     with pytest.raises(SugarNotWritten, match="frame coordinate"):
         protocol.enter_resource_outcome_for(foreign)
+
+
+def test_enter_bound_generator_sequences_mixed_yield_and_halt_faces():
+    true_face, false_face = partition("mixed-enter-guard")
+    effect = RaiseEffect(
+        exception_name="RenamedError",
+        blame="mixed-enter",
+        occurrence="mixed-enter:halt",
+    )
+    state = TermValue("pre-enter-state")
+    pending = ()
+
+    class MixedGuardSugar(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            from sugar_lift_py_tests.ir import atomic
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return ExitSet(
+                (
+                    Completed(
+                        atomic("mixed-enter-completed", []),
+                        TrueBoolLiteralSugar(site="mixed-enter:true"),
+                        frozenset({true_face}),
+                        (),
+                    ),
+                    Halted(
+                        atomic("mixed-enter-halted", []),
+                        effect,
+                        state,
+                        frozenset({false_face}),
+                        pending,
+                    ),
+                )
+            )
+
+        def to_term(self, *, owner: str):
+            from sugar_lift_py_tests.ir import ctor
+
+            return ctor("mixed-enter-guard", (), symbol_kind="predicate")
+
+    from sugar_lift_py_tests.generator_construction import IfStepV1
+
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:mixed-enter",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(
+            IfStepV1(
+                MixedGuardSugar(),
+                (YieldStepV1(IntLiteralSugar(31, site="yield:31")),),
+                (),
+                "mixed-enter:if",
+            ),
+            ReturnStepV1(None),
+        ),
+    )
+
+    outcome = protocol.enter_resource_outcome_for(machine)
+
+    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
+    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, EnteredGeneratorManagerStateV1)
+    assert completed[0].value.enter_value == TermValue(31)
+    assert len(halted) == 1
+    assert halted[0].effect is effect
+    assert halted[0].state is state
+    assert halted[0].faces == frozenset({false_face})
+    assert halted[0].pending_contracts is pending
+
+
+def test_enter_projector_resumes_guarded_branch_machines_once():
+    from sugar_lift_py_tests.ir import atomic
+
+    guard = atomic("guarded-enter-yields", [])
+    protocol = _protocol()
+    true_machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter:true",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(41, site="yield:41")),),
+    )
+    false_machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter:false",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(43, site="yield:43")),),
+    )
+    result = GuardedValue(
+        guard,
+        true_machine,
+        false_machine,
+    )
+
+    outcome = _project_generator_enter_result(protocol, true_machine, result)
+
+    assert isinstance(outcome, ExitSet)
+    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
+    assert len(completed) == 2
+    assert {face.value.enter_value for face in completed} == {
+        TermValue(41),
+        TermValue(43),
+    }
+    assert all(
+        isinstance(face.value, EnteredGeneratorManagerStateV1)
+        for face in completed
+    )
+    assert true_machine.cursor == 0
+    assert false_machine.cursor == 0
+    assert all(face.value.machine.cursor == 1 for face in completed)
+
+
+def test_enter_projector_distributes_guarded_yield_effect_arms_secondarily():
+    from sugar_lift_py_tests.ir import atomic
+
+    guard = atomic("guarded-enter-direct-yields", [])
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-direct",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(53, site="yield:53")),),
+    )
+    true_effect = machine.resume()
+    false_machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-direct:false",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(59, site="yield:59")),),
+    )
+    false_effect = false_machine.resume()
+    assert isinstance(true_effect, YieldEffect)
+    assert isinstance(false_effect, YieldEffect)
+    result = GuardedValue(
+        guard,
+        true_effect,
+        false_effect,
+    )
+
+    outcome = _project_generator_enter_result(protocol, machine, result)
+
+    assert isinstance(outcome, ExitSet)
+    assert {
+        face.value.enter_value
+        for face in outcome.exits
+        if isinstance(face, Completed)
+    } == {TermValue(53), TermValue(59)}
+
+
+def test_enter_projector_refuses_foreign_guarded_branch_machine():
+    from sugar_lift_py_tests.ir import atomic
+
+    guard = atomic("guarded-enter-foreign-machine", [])
+    protocol = _protocol()
+    local = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter:local",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(61, site="yield:61")),),
+    )
+    foreign = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter:foreign",
+        frame_coordinate=cid_of_json({"frame": "foreign-guarded-arm"}),
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(67, site="yield:67")),),
+    )
+
+    with pytest.raises(SugarNotWritten, match="frame coordinate"):
+        _project_generator_enter_result(
+            protocol,
+            local,
+            GuardedValue(guard, local, foreign),
+        )
+
+
+def test_enter_projector_keeps_unsupported_guarded_arm_loud():
+    from sugar_lift_py_tests.ir import atomic
+
+    guard = atomic("guarded-enter-bad-arm", [])
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-bad-arm",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(47, site="yield:47")),),
+    )
+    good_effect = machine.resume()
+    assert isinstance(good_effect, YieldEffect)
+    result = GuardedValue(
+        guard,
+        good_effect,
+        TermValue("not-a-generator-transition"),
+    )
+
+    with pytest.raises(SugarNotWritten, match="YieldEffect"):
+        _project_generator_enter_result(protocol, machine, result)
 
 
 def test_exit_outcome_for_resumes_exact_entered_machine_once():
