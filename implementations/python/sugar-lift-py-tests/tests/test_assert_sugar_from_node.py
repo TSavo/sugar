@@ -65,6 +65,18 @@ def test_assert_with_message_builds_and_carries_message_provenance():
     assert outcome.value.site.memento().to_rpc()["assertMessage"] == "'boom'"
 
 
+def test_assert_support_retains_its_own_occurrence_not_a_foreign_site():
+    left = _assert_node("assert 1 == 1, 'left'\n")
+    right = _assert_node("assert 1 == 1, 'right'\n")
+
+    left_support = left.sugar().desugar().value
+    right_support = right.sugar().desugar().value
+
+    assert left_support.site == left.fragment
+    assert right_support.site == right.fragment
+    assert left_support.site != right_support.site
+
+
 def test_assert_message_is_not_reduced_on_the_success_path():
     node = _assert_node("assert 1 == 1, (yield 2)\n")
 

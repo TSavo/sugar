@@ -181,7 +181,7 @@ class FloorValue:
         from sugar_lift_py_tests.floor.support_value import SupportValue
         from sugar_lift_py_tests.outcome import Complete
 
-        return Complete(SupportValue())
+        return Complete(SupportValue(site=None))
 
     def answer(self, ctx=None):
         # Default: a binding stands as itself (NameSugar asks; the value answers).
