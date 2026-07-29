@@ -12,10 +12,12 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ComprehensionValue,
+    FloorValue,
+    GuardedValue,
     TermValue,
     TupleCoordinateValue,
 )
-from sugar_lift_py_tests.ir import _term_content_cid, ctor, make_var
+from sugar_lift_py_tests.ir import _term_content_cid, atomic, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.nodes import Call, Subscript
 from sugar_source_tree.panic import SugarNotWritten
@@ -233,3 +235,49 @@ def test_tuple_coordinate_rejects_all_reminted_testimony(tmp_path: Path) -> None
         replace(sliced, coordinate_cid=cid_of_json({"reminted": True}))
     with pytest.raises(SugarNotWritten):
         constructed.subscript(TermValue(0), subscript.fragment)
+
+
+def test_guarded_tuple_slice_preserves_exact_occurrence_in_both_arms(
+    tmp_path: Path,
+) -> None:
+    call, subscript = _nodes(_tree(tmp_path, "guarded-slice.py"))
+    ctx = _context("guarded-tuple-slice")
+    receiver = _value(call.sugar().desugar(ctx))
+    index = _value(subscript.sugar().index.desugar(ctx))
+    occurrence = _coordinate(subscript)
+    guard = atomic("tuple_slice_guard", ())
+
+    outcome = GuardedValue(guard, receiver, receiver).subscript_with_occurrence(
+        index, subscript.fragment, occurrence
+    )
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GuardedValue)
+    assert outcome.value.guard == guard
+    assert outcome.value.when_true.use_occurrence is occurrence
+    assert outcome.value.when_false.use_occurrence is occurrence
+    assert outcome.value.when_true.coordinate_cid == outcome.value.when_false.coordinate_cid
+
+
+def test_guarded_subscript_preserves_foreign_occurrence_refusal(
+    tmp_path: Path,
+) -> None:
+    call, subscript = _nodes(_tree(tmp_path, "guarded-foreign.py"))
+    ctx = _context("guarded-tuple-slice-foreign")
+    receiver = _value(call.sugar().desugar(ctx))
+    index = _value(subscript.sugar().index.desugar(ctx))
+    foreign_occurrence = replace(
+        _coordinate(subscript), source_cid="blake3-512:" + "d" * 128
+    )
+    guarded = GuardedValue(
+        atomic("foreign_slice_guard", ()), receiver, receiver
+    )
+
+    with pytest.raises(SugarNotWritten) as raised:
+        guarded.subscript_with_occurrence(
+            index, subscript.fragment, foreign_occurrence
+        )
+
+    assert raised.value.owner == "TupleCoordinateValue.subscript"
+    assert raised.value.observed == "slice use occurrence outside tuple source"
+    assert raised.value.requested == "same-source authenticated slice occurrence"

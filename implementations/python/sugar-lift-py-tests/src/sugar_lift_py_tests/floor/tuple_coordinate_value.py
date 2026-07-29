@@ -234,6 +234,14 @@ class TupleCoordinateValue(FloorValue):
                 requested="exact SourceFragmentCoordinateV1 for tuple slice",
                 fix="transport the Subscript occurrence without reconstruction",
             )
+        if occurrence.source_cid != self.call_occurrence.source_cid:
+            raise SugarNotWritten(
+                blame=site,
+                owner="TupleCoordinateValue.subscript",
+                observed="slice use occurrence outside tuple source",
+                requested="same-source authenticated slice occurrence",
+                fix="transport the producer-minted Subscript occurrence unchanged",
+            )
         return Complete(
             self._from_slice(source=self, index=index, use_occurrence=occurrence)
         )
