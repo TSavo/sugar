@@ -9,6 +9,7 @@ value.  No AST-scan fallback, first-candidate, or spelling resolver.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,49 @@ def test_package_init_relative_import_owns_exact_member_value_use(
     assert len(member) == 1
     assert member[0].use["exportedMemberPath"] == ["FLAG"]
     assert _site_key(member[0]) == (4, 12, 4, 23)
+
+
+def test_package_relative_member_receipts_refuse_cross_package_substitution(
+    tmp_path: Path,
+) -> None:
+    receipts = []
+    for package_name in ("first_package", "second_package"):
+        package = tmp_path / package_name
+        package.mkdir()
+        path = package / "__init__.py"
+        source, source_cid = _write(
+            path, "from . import helper\nvalue = helper.FLAG\n"
+        )
+        rows, _ = authenticated_import_value_use_receipts(
+            tmp_path, path, source, source_cid, module_identities={}
+        )
+        receipts.append(next(row for row in rows if row.use["exportedMemberPath"]))
+
+    first, second = receipts
+    assert first.target_symbol == "python:first_package.helper.FLAG"
+    assert second.target_symbol == "python:second_package.helper.FLAG"
+    assert first.import_binding.cid != second.import_binding.cid
+    assert first.use["cid"] != second.use["cid"]
+    with pytest.raises(ValueError, match="cites another binding"):
+        replace(first, import_binding=second.import_binding)
+
+
+def test_non_init_module_relative_import_keeps_parent_package(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "sibling_control"
+    package.mkdir()
+    path = package / "consumer.py"
+    source, source_cid = _write(
+        path, "from . import helper\nvalue = helper.FLAG\n"
+    )
+
+    rows, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+    member = tuple(row for row in rows if row.use["exportedMemberPath"])
+    assert len(member) == 1
+    assert member[0].target_symbol == "python:sibling_control.helper.FLAG"
 
 
 def test_non_imported_name_gets_no_value_use_receipt(tmp_path: Path) -> None:
