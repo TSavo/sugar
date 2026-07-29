@@ -70,8 +70,12 @@ def _consumer(root: Path, source: str):
     return path, source_file, context
 
 
-def _frame_for_box_expected(tmp_path: Path, helpers: str):
-    distribution = _distribution(tmp_path, helpers)
+def _frame_for_box_expected(
+    tmp_path: Path,
+    helpers: str,
+    types: str = "class ArrayType:\n    pass\n",
+):
+    distribution = _distribution(tmp_path, helpers, types)
     path, source_file, context = _consumer(
         tmp_path,
         "from unprivileged import box_expected, ArrayType\n"
@@ -96,6 +100,31 @@ def _frame_for_box_expected(tmp_path: Path, helpers: str):
         context.source_call_resolutions[coordinate], SourceCallPreconstructionRefV1
     )
     return context.source_call_frames[coordinate]
+
+
+def test_sibling_dynamic_import_use_does_not_block_selected_runtime_frame(
+    tmp_path: Path,
+) -> None:
+    """Truthful: only the authenticated selected definition owns frame uses."""
+    frame = _frame_for_box_expected(
+        tmp_path,
+        "from unprivileged.types import ArrayType, F\n"
+        "def unrelated(value):\n"
+        "    return F\n"
+        "def box_expected(expected, box_cls=None):\n"
+        "    return expected if box_cls is None else box_cls\n",
+        "class ArrayType:\n"
+        "    pass\n"
+        "def choose_type():\n"
+        "    return object()\n"
+        "F = choose_type()\n",
+    )
+
+    assert frame.owner.name == "box_expected"
+    assert all(
+        resolved.definition.name != "F"
+        for resolved in frame.owner.unit._import_value_use_resolutions.values()
+    )
 
 
 def test_frame_seats_import_value_use_receipts_on_own_unit(tmp_path: Path) -> None:

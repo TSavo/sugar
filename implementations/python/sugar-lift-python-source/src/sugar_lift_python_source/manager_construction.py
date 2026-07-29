@@ -1065,16 +1065,6 @@ def _resolve_source_visible_frame_uncached(
     )
     dependency_graphs = dict(dependency_graphs or {})
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
-    # Seat final-checked import value-use receipts into THIS frame's SourceUnit
-    # before any construction.  Identity operands (e.g. ``pd.array``) bind via
-    # authenticated definition coordinates on this unit — never cross-unit spans.
-    _seat_import_value_use_receipts(
-        source_file=source_file,
-        module=module,
-        session=session,
-        context=context,
-        dependency_graphs=dependency_graphs,
-    )
     definitions = tuple(
         item
         for item in source_file.root.body
@@ -1106,6 +1096,18 @@ def _resolve_source_visible_frame_uncached(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "resolved definition coordinate"
         )
+    # Seat final-checked import value-use receipts owned by THIS resolved
+    # definition before constructing its frame. Identity operands bind via
+    # authenticated coordinates on this unit; unrelated sibling definitions
+    # never acquire authority merely by sharing the module source.
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=target,
+        session=session,
+        context=context,
+        dependency_graphs=dependency_graphs,
+    )
     # Nested method export: project its ordinary frame without requiring the
     # enclosing class to be the export target. Leading ``self`` is the bound
     # instance for ``name = Class()`` callables and is not supplied by the
@@ -1859,11 +1861,12 @@ def _seat_import_value_use_receipts(
     *,
     source_file,
     module,
+    target: Node,
     session: SourceResolutionSession,
     context: TreeConstructionContextV1,
     dependency_graphs: dict[str, DependencyArtifactGraph],
 ) -> None:
-    """Seat authenticated value-use receipts on this frame unit only.
+    """Seat authenticated value-use receipts owned by this exact frame target.
 
     Receipts are minted once via ``authenticated_import_value_use_receipts``
     (source-CID authenticated; dual-door / mismatch raises).  Resolution uses
@@ -1904,6 +1907,18 @@ def _seat_import_value_use_receipts(
         module.source_cid,
         module_identities={},
     )
+    owned_spans = [target.line_col_span()]
+    owned_spans.extend(
+        decorator.line_col_span()
+        for decorator in getattr(target, "decorators", ())
+    )
+    owned_ranges = tuple(
+        (
+            (span.start_line, span.start_col),
+            (span.end_line, span.end_col),
+        )
+        for span in owned_spans
+    )
     for receipt in receipts:
         if receipt.source_cid != module.source_cid:
             raise ImportValueUseSeatingGap(
@@ -1929,6 +1944,12 @@ def _seat_import_value_use_receipts(
             site["endLine"],
             site["endCol"],
         )
+        use_start = (site["startLine"], site["startCol"])
+        use_end = (site["endLine"], site["endCol"])
+        if not any(
+            start <= use_start and use_end <= end for start, end in owned_ranges
+        ):
+            continue
         identity = receipt.import_binding.value["target"]["moduleIdentity"]
         if identity["kind"] == "authenticated-python-module":
             dependency_module = identity["moduleName"]
@@ -1962,6 +1983,13 @@ def _seat_import_value_use_receipts(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
+            if imported.kind in {"dynamic-export", "static-export-absent"}:
+                # Honest open-world value exports carry no definition
+                # coordinate to seat. Leave the exact use unresolved so its
+                # ordinary consumer remains typed-loud if execution reaches
+                # it; unrelated construction must not turn that absence into
+                # module-wide refusal.
+                continue
             raise ImportValueUseSeatingGap(
                 f"resolution-{imported.kind}",
                 "authenticated value-use receipt did not resolve",

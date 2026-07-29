@@ -738,10 +738,21 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             ],
         }
     if isinstance(step, RaiseStepV1):
+        from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+
+        if not isinstance(step.raise_sugar, RaiseSugar):
+            raise TypeError(
+                f"{owner} requires RaiseSugar for RaiseStepV1, got "
+                f"{type(step.raise_sugar).__name__}"
+            )
         return {
             "kind": "raise",
             "fragmentCid": step.fragment_cid,
-            "raiseSugar": _generator_value_testimony(step.raise_sugar, owner=owner),
+            "exception": _generator_value_testimony(
+                step.raise_sugar.exception, owner=owner
+            ),
+            "cause": _generator_value_testimony(step.raise_sugar.cause, owner=owner),
+            "inFlightSlot": step.raise_sugar.in_flight_slot,
         }
     if isinstance(step, TermStepV1):
         return {

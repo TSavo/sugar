@@ -154,6 +154,22 @@ def test_pre_yield_if_with_raise_is_raise_step_inside_if() -> None:
     assert isinstance(steps[1], YieldStepV1)
 
 
+def test_raise_step_has_canonical_generator_construction_testimony() -> None:
+    steps = _steps(
+        "def g(c):\n"
+        "    if c:\n"
+        "        raise ValueError('boom')\n"
+        "    yield 1\n"
+    )
+
+    preimage = _machine(steps).construction_term_preimage()
+
+    raise_row = preimage["steps"][0]["thenSteps"][0]
+    assert raise_row["kind"] == "raise"
+    assert raise_row["exception"]["kind"] == "term-cid"
+    assert raise_row["cause"] == {"kind": "null"}
+
+
 # -- the three transition arms -----------------------------------------------
 
 

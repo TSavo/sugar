@@ -6,7 +6,7 @@ from types import MappingProxyType
 import pytest
 
 from sugar_lift_py_tests.call_contract_resolution import ResolvedCallContractRefV1
-from sugar_lift_py_tests.ir import PrimitiveSort, str_const
+from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
 from sugar_lift_py_tests.generator_construction import YieldStepV1
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
@@ -242,6 +242,23 @@ def test_changed_resolved_contract_authority_changes_call_term():
     assert _call(contract=_contract("a")).to_term(
         owner="first-contract"
     ) != _call(contract=_contract("b")).to_term(owner="second-contract")
+
+
+def test_exception_definition_term_is_canonical_call_authority():
+    first = replace(
+        _call(),
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity", (str_const("first"),)
+        ),
+    )
+    second = replace(
+        first,
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity", (str_const("second"),)
+        ),
+    )
+
+    assert first.to_term(owner="first") != second.to_term(owner="second")
 
 
 @pytest.mark.parametrize(
