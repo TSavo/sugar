@@ -572,6 +572,8 @@ def _root(raw: Any) -> dict[str, Any]:
             raise LoopWireError(f"{field} must be an array")
         for cid in raw[field]:
             _require_cid(cid, field)
+    if len(raw["completedFaceCids"]) != len(set(raw["completedFaceCids"])):
+        raise LoopWireError("duplicate completedFaceCids")
     _validate_seal(raw, "loopConstructionCid", "LoopConstructionV1")
     return raw
 

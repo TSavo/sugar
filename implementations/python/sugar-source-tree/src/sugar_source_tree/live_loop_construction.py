@@ -682,7 +682,15 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             "exhaustionExitObligationCid": exhaustion["exhaustionExitObligationCid"],
             "elseBodyCid": else_body_cid,
             "elseExhaustionObligationCid": else_obligation_cid,
-            "completedFaceCids": [face["completedFaceCid"] for face in face_records],
+            # A no-op loop ``else`` can seal to the SAME NormalExhaustion face
+            # as the pre-else exhaustion input.  The CID is the face identity;
+            # enrolling it twice would counterfeit a third route in the closed
+            # root roster even though the producer declared only break and
+            # exhaustion exits.  Conserve exact product identity in first
+            # construction order, just as the record store below does.
+            "completedFaceCids": list(
+                dict.fromkeys(face["completedFaceCid"] for face in face_records)
+            ),
             "outwardHaltedFaceCids": outward_face_cids,
             "postBindingObligationCids": post_records,
         },

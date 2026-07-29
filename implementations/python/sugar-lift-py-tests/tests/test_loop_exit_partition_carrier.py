@@ -480,6 +480,41 @@ def test_the_real_wire_declares_two_exit_routes(tmp_path):
     decode_loop_construction_v1(graph)  # the real decoder accepts it
 
 
+def test_loop_else_that_preserves_carried_binding_enrolls_each_face_once(tmp_path):
+    """A no-op else must not duplicate its identical exhaustion face CID."""
+    source = """\
+def compute(items, seed):
+    carried = seed
+    for item in items:
+        carried = item
+        if item.done:
+            break
+    else:
+        pass
+    return carried
+"""
+
+    graph = None
+    from sugar_source_tree import loop_recurrence as module
+
+    original = module.project_loop_post_binding
+
+    def capture(*, construction, **kwargs):
+        nonlocal graph
+        graph = construction.wire_graph()
+        return original(construction=construction, **kwargs)
+
+    module.project_loop_post_binding = capture
+    try:
+        _desugar_all(_write(tmp_path, source))
+    finally:
+        module.project_loop_post_binding = original
+
+    assert graph is not None
+    face_cids = graph["root"]["completedFaceCids"]
+    assert len(face_cids) == len(set(face_cids))
+
+
 def _with_producer_records(tmp_path, rewrite):
     """Run the fixture with one rewrite applied to preimages BEFORE they seal.
 
