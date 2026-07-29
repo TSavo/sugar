@@ -552,11 +552,7 @@ def enter_bound_generator_resource_outcome(
     del ctx
     from sugar_lift_py_tests.generator_construction import (
         GeneratorConstructionV1,
-        GeneratorTerminationV1,
-        GeneratorTransitionGapV1,
-        YieldEffect,
     )
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
     if type(machine) is not GeneratorConstructionV1:
@@ -578,7 +574,53 @@ def enter_bound_generator_resource_outcome(
             ),
             fix="pass the manager call's authenticated generator construction",
         )
-    result = machine.resume()
+    return _project_generator_enter_result(protocol, machine, machine.resume())
+
+
+def _project_generator_enter_result(protocol, machine, result):
+    """Project one completed resume value into the existing enter state law."""
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorConstructionV1,
+        GeneratorTerminationV1,
+        GeneratorTransitionGapV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome import Complete, ExitSet, outcome_to_exitset
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if isinstance(result, ExitSet):
+        return result.and_then(
+            lambda value: _project_generator_enter_result(protocol, machine, value)
+        )
+    if isinstance(result, GuardedValue):
+        def project_arm(arm):
+            if type(arm) is GeneratorConstructionV1:
+                if arm.frame_coordinate != protocol.generator_frame_cid:
+                    raise SugarNotWritten(
+                        blame=protocol.exit_face_id,
+                        owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+                        observed=(
+                            "guarded branch machine has foreign frame coordinate "
+                            f"{arm.frame_coordinate}"
+                        ),
+                        requested=(
+                            "exact guarded GeneratorConstructionV1 frame coordinate "
+                            f"{protocol.generator_frame_cid}"
+                        ),
+                        fix="retain the authenticated branch machine from transition",
+                    )
+                return _project_generator_enter_result(protocol, arm, arm.resume())
+            return _project_generator_enter_result(protocol, machine, arm)
+
+        return outcome_to_exitset(project_arm(result.when_true)).guarded(
+            result.guard
+        ).union(
+            outcome_to_exitset(project_arm(result.when_false)).guarded(
+                not_(result.guard)
+            )
+        )
     if isinstance(result, YieldEffect):
         enter_value = _floor_enter_value(result.value)
         # Per-protocol enter ordinal distinguishes successive enters that
