@@ -636,11 +636,11 @@ class _Pass:
         if node.func.kind == "Name":
             local_name = node.func.id
             exported_path: tuple[str, ...] = ()
-        elif node.func.kind == "Attribute" and node.func.value.kind == "Name":
-            local_name = node.func.value.id
-            exported_path = (node.func.attr,)
         else:
-            return
+            parsed = self._attribute_export_path(node.func)
+            if parsed is None:
+                return
+            local_name, exported_path = parsed
         reaching = state.get(local_name, frozenset({_UNBOUND}))
         imports = {value for value in reaching if isinstance(value, _ImportDef)}
         nonimports = reaching - imports

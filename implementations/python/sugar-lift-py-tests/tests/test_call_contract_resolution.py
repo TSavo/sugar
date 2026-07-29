@@ -332,6 +332,32 @@ def test_import_binding_authenticates_alias_and_module_identity(tmp_path):
     assert rows[0]["importBindingCid"] != rows[1]["importBindingCid"]
 
 
+def test_imported_attribute_chain_call_keeps_exact_use_site_and_shadowing(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "import os\n"
+        "truth = os.path.dirname('value')\n"
+        "def shadowed(os):\n"
+        "    return os.path.dirname('value')\n"
+    )
+    source, _filename, source_cid = path_source(str(consumer))
+    rows, outcomes = authenticated_import_uses(
+        tmp_path, consumer, source, source_cid
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["targetSymbol"] == "python:os.path.dirname"
+    assert rows[0]["kind"] == "call-contract-demand"
+    assert rows[0]["authenticatedImportUse"]["useSite"] == rows[0]["useSite"]
+    assert rows[0]["authenticatedImportUse"]["importBindingCid"] == rows[0][
+        "importBindingCid"
+    ]
+    assert "shadowed-non-import" in outcomes.values()
+
+
 def test_import_binding_is_lexical_and_shadowing_never_inherits_import(tmp_path):
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_lift_py_tests.import_binding import authenticated_import_uses
