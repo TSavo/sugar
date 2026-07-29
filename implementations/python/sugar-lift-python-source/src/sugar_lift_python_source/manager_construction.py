@@ -2481,7 +2481,11 @@ def _seat_import_value_use_receipts(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
-            if imported.kind in {"dynamic-export", "static-export-absent"}:
+            if imported.kind in {
+                "dynamic-export",
+                "static-export-absent",
+                "reexport-cycle",
+            }:
                 # Honest open-world value exports carry no definition
                 # coordinate to seat. Leave the exact use unresolved so its
                 # ordinary consumer remains typed-loud if execution reaches
