@@ -2,16 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 
 
 @dataclass(frozen=True)
-class AuthenticatedExceptionTypeSugar(Sugar):
-    value: Sugar
+class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
+    value: ConstructedTermSugar
     identity: object
     mro: tuple | None = None
     site: object = dataclass_field(compare=False, default=None)
     class_value: object | None = dataclass_field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(
+            self.value, owner="AuthenticatedExceptionTypeSugar.value"
+        )
 
     @classmethod
     def witnesses(cls):
@@ -22,6 +30,19 @@ class AuthenticatedExceptionTypeSugar(Sugar):
             owner_sugar="AuthenticatedExceptionTypeSugar",
             truthful="def f(x):\n    return x\n",
             lying="def f(x):\n    return 0\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:authenticated-exception-type-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.identity,
+                self.value.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx=None):
