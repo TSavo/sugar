@@ -370,7 +370,10 @@ class CallSiteSugar(ConstructedTermSugar):
                 # BindingCoordinateRefs match this frame's formal coordinates,
                 # not the caller's inlined formal nodes.
                 declaration_frame = owner.source_visible_call_frame()
-                if declaration_frame.frame_cid != source_call_frame.frame_cid:
+                if (
+                    declaration_frame.frame_cid
+                    != source_call_frame.declaration_frame_cid
+                ):
                     from sugar_source_tree.panic import BackendDefect
 
                     raise BackendDefect(

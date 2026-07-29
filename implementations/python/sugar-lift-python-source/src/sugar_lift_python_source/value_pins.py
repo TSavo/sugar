@@ -108,6 +108,8 @@ class ValuePin:
 
 @dataclass(frozen=True)
 class MutableGlobalPin:
+    source_cid: str
+    binding_occurrence: "SourceMemento"
     name: str
     kind: str
     term: Json
@@ -150,6 +152,7 @@ class _Candidate:
     line: int
     confession: str | None
     col: int = 0
+    binding_occurrence: "SourceMemento | None" = None
 
 
 def scan_module_value_pins(
@@ -189,8 +192,12 @@ def scan_module_value_pins(
             scan.boundaries.append(_pin_boundary(candidate, exc.reason))
             mutable_kind = _direct_mutable_kind(candidate.value)
             if mutable_kind is not None:
+                if candidate.binding_occurrence is None:
+                    raise AssertionError("mutable global candidate lost binding occurrence")
                 scan.mutable_global_pins.append(
                     MutableGlobalPin(
+                        source_cid=tree.unit.source_cid,
+                        binding_occurrence=candidate.binding_occurrence,
                         name=candidate.name,
                         kind=mutable_kind,
                         term=mutable_global_pin_term(candidate.name, mutable_kind),
@@ -486,6 +493,7 @@ def _collect_candidates(tree: typed.Module) -> dict[str, _Candidate]:
             line=stmt.lineno,
             confession=confession,
             col=name_node.col_offset,
+            binding_occurrence=name_node.fragment.seal(),
         )
     # A duplicated candidate name surfaces through the binding-event scan
     # (two assignment events), so the first occurrence remains the candidate
