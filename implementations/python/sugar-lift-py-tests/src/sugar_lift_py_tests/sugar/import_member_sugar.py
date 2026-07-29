@@ -12,8 +12,22 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 class ImportMemberSugar(ConstructedTermSugar):
     """``import M as h; h.a.b`` as the closed coordinate ``M.a.b``."""
 
-    qualified_name: str
+    authenticated_use: object
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+        from sugar_source_tree.panic import BackendDefect
+
+        if type(self.authenticated_use) is not AuthenticatedImportUseV1:
+            raise BackendDefect(
+                owner="ImportMemberSugar",
+                blame=self.site,
+                observed=type(self.authenticated_use).__name__,
+                requested="exact AuthenticatedImportUseV1",
+                fix="carry the lexical import-value receipt into member construction",
+            )
+        self.authenticated_use.revalidate()
 
     @classmethod
     def witnesses(cls):
@@ -29,9 +43,11 @@ class ImportMemberSugar(ConstructedTermSugar):
         del ctx
         from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 
-        return Complete(ImportMemberValue(self.qualified_name))
+        return Complete(ImportMemberValue._from_authenticated_use(self.authenticated_use))
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 
-        return ImportMemberValue(self.qualified_name).to_term(owner=owner)
+        return ImportMemberValue._from_authenticated_use(
+            self.authenticated_use
+        ).to_term(owner=owner)

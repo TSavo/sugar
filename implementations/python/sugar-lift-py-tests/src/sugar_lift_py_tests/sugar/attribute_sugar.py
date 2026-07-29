@@ -143,12 +143,11 @@ class AttributeSugar(ConstructedTermSugar):
                         requested="authenticated python: import target symbol",
                         fix="preserve the receipt targetSymbol unchanged",
                     )
-                from sugar_lift_py_tests.floor.import_member_value import (
-                    ImportMemberValue,
+                from sugar_lift_py_tests.sugar.import_member_sugar import (
+                    ImportMemberSugar,
                 )
-                from sugar_lift_py_tests.outcome import Complete
 
-                return Complete(ImportMemberValue(target.removeprefix("python:")))
+                return ImportMemberSugar(receipt, site).desugar(ctx)
         return receiver.attribute(name, site)
 
     def desugar(self, ctx: object = None) -> Outcome:

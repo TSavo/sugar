@@ -10666,9 +10666,8 @@ class Attribute(Expression):
                     requested="authenticated python: import target symbol",
                     fix="preserve the lexical receipt targetSymbol unchanged",
                 )
-            qualified_name = qualified_name[len("python:") :]
             return ImportMemberSugar(
-                qualified_name=qualified_name,
+                authenticated_use=receipt,
                 site=self.fragment,
             )
 
