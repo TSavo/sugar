@@ -104,6 +104,19 @@ class AttributeSugar(ConstructedTermSugar):
             receipt = site.unit.import_value_use_resolution(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
+            if receipt is None:
+                context = site.unit.construction_context
+                if context is not None:
+                    receipt = context.source_import_value_receipts_by_site.get(
+                        (
+                            site.unit.filename,
+                            site.unit.source_cid,
+                            span.start_line,
+                            span.start_col,
+                            span.end_line,
+                            span.end_col,
+                        )
+                    )
             from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
             if type(receipt) is AuthenticatedImportUseV1:

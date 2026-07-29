@@ -2451,6 +2451,25 @@ def _seat_import_value_use_receipts(
             )
 
         def seat_receipt() -> None:
+            transport_key = (
+                unit.filename,
+                module.source_cid,
+                *span_key,
+            )
+            transported = context.source_import_value_receipts_by_site.get(
+                transport_key
+            )
+            if transported is not None and transported is not receipt:
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=coordinate,
+                    owner="manager_construction import value receipt transport",
+                    observed="conflicting receipt at exact module/use occurrence",
+                    requested="one producer-owned receipt object per exact site",
+                    fix="preserve receipt identity across parser-owned SourceUnits",
+                )
+            context.source_import_value_receipts_by_site[transport_key] = receipt
             unit.seat_import_value_use_resolution(
                 span_key, receipt, source_cid=module.source_cid
             )

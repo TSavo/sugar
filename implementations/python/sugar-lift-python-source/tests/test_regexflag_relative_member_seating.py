@@ -113,3 +113,55 @@ def test_regexflag_relative_member_missing_foreign_and_crosswired_receipts_refus
             receipt,
             source_cid="blake3-512:" + "0" * 128,
         )
+
+
+def test_regexflag_receipt_transports_across_exact_parser_owned_units() -> None:
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    module = graph.modules["re"]
+    context = TreeConstructionContextV1.for_source_call_construction()
+    first = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    second = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    renamed = SourceFile(
+        (module.source, "renamed/__init__.py", module.source_cid),
+        construction_context=context,
+    )
+    regex_flag = next(
+        node
+        for node in first.root.body
+        if isinstance(node, ClassDef) and node.name == "RegexFlag"
+    )
+    _seat_import_value_use_receipts(
+        source_file=first,
+        module=module,
+        target=regex_flag,
+        session=SourceResolutionSession(enabled=False),
+        context=context,
+        dependency_graphs={"re": graph},
+    )
+
+    def ascii_member(source_file: SourceFile) -> Attribute:
+        return next(
+            node
+            for node in source_file.nodes()
+            if isinstance(node, Attribute)
+            and node.attr == "SRE_FLAG_ASCII"
+            and node.line_col_span().start_line == 145
+        )
+
+    first_value = ascii_member(first).sugar().desugar().value
+    second_value = ascii_member(second).sugar().desugar().value
+
+    assert type(first_value) is ImportMemberValue
+    assert type(second_value) is ImportMemberValue
+    assert second_value.receipt is first_value.receipt
+    with pytest.raises(SugarNotWritten, match="SymbolicValue.attribute"):
+        ascii_member(renamed).sugar().desugar()
+    exact_rows = context.source_import_value_receipts_by_site
+    assert len(exact_rows) > 1
+    assert all(key[0] == module.source_seat for key in exact_rows)
