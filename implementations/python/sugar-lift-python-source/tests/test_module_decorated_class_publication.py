@@ -17,7 +17,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_source_tree.nodes import ClassDef
+from sugar_source_tree.nodes import ClassDef, SourceUnit
 from sugar_source_tree.tree import SourceFile
 
 
@@ -160,6 +160,130 @@ def _install(root: Path) -> importlib.metadata.Distribution:
     sys.modules.pop("decorated_pkg", None)
     sys.modules.pop("decorated_pkg.implementation", None)
     return importlib.metadata.Distribution.at(metadata)
+
+
+def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
+    package = root / "admission_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from admission_pkg.implementation import selected\n", encoding="utf-8"
+    )
+    (package / "implementation.py").write_text(
+        "from types import FrameType\n"
+        "\n"
+        "class Dependency:\n"
+        "    token = 7\n"
+        "\n"
+        "def retain(raw):\n"
+        "    int\n"
+        "    FrameType\n"
+        "    Dependency\n"
+        "    return raw\n"
+        "\n"
+        "def locally_shadowed_retain(raw):\n"
+        "    Dependency = raw\n"
+        "    int\n"
+        "    FrameType\n"
+        "    return raw\n"
+        "\n"
+        "@locally_shadowed_retain\n"
+        "@retain\n"
+        "class Decorated:\n"
+        "    token = 11\n"
+        "\n"
+        "def global_worker(value):\n"
+        "    int\n"
+        "    FrameType\n"
+        "    Decorated\n"
+        "    return value\n"
+        "\n"
+        "def shadowed_worker(value):\n"
+        "    Decorated = value\n"
+        "    int\n"
+        "    FrameType\n"
+        "    return value\n"
+        "\n"
+        "def selected(value):\n"
+        "    global_worker(value)\n"
+        "    return shadowed_worker(value)\n",
+        encoding="utf-8",
+    )
+    metadata = root / "admission_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: admission-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    (metadata / "top_level.txt").write_text("admission_pkg\n", encoding="utf-8")
+    recorded = (
+        "admission_pkg/__init__.py",
+        "admission_pkg/implementation.py",
+        "admission_dist-1.0.dist-info/METADATA",
+        "admission_dist-1.0.dist-info/top_level.txt",
+        "admission_dist-1.0.dist-info/RECORD",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for item in recorded:
+            writer.writerow((item, "", ""))
+    sys.modules.pop("admission_pkg", None)
+    sys.modules.pop("admission_pkg.implementation", None)
+    return importlib.metadata.Distribution.at(metadata)
+
+
+def test_reachable_decorated_class_admission_filters_before_symtable_contact(
+    tmp_path: Path, monkeypatch
+) -> None:
+    distribution = _install_admission_fixture(tmp_path)
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    consumer = tmp_path / "consumer.py"
+    source = "import admission_pkg\nadmission_pkg.selected(1)\n"
+    consumer.write_text(source, encoding="utf-8")
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    receipts, _ = authenticated_import_use_receipts(
+        tmp_path,
+        consumer,
+        source,
+        blake3_512_of(source.encode("utf-8")),
+        module_identities={},
+    )
+    session = SourceResolutionSession()
+    resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+
+    contacted: list[tuple[str, str]] = []
+    original_function_symtable = SourceUnit.function_symtable
+
+    class _ObservedSymtable:
+        def __init__(self, owner: str, table) -> None:
+            self._owner = owner
+            self._table = table
+
+        def lookup(self, name: str):
+            contacted.append((self._owner, name))
+            return self._table.lookup(name)
+
+    def observed_function_symtable(self, name: str, lineno: int):
+        return _ObservedSymtable(
+            name, original_function_symtable(self, name, lineno)
+        )
+
+    monkeypatch.setattr(SourceUnit, "function_symtable", observed_function_symtable)
+
+    projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
+
+    assert isinstance(projected, tuple)
+    frame, target = projected
+    assert target.name == "selected"
+    assert tuple(binding.name for binding in frame.decorated_class_bindings) == (
+        "Decorated",
+    )
+    assert ("global_worker", "Decorated") in contacted
+    assert ("shadowed_worker", "Decorated") in contacted
+    assert ("retain", "Dependency") in contacted
+    assert ("locally_shadowed_retain", "Dependency") in contacted
+    assert all(name not in {"int", "FrameType"} for _, name in contacted)
 
 
 def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
