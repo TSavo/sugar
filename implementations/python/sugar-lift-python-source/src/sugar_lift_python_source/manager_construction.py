@@ -142,6 +142,29 @@ class _ModuleSourceFrameCallableV1(FloorValue):
 
 
 @dataclass(frozen=True)
+class _ModuleFunctionDefinitionCallableV1(FloorValue):
+    """An exact module FunctionDef whose body is constructed only when called."""
+
+    definition: FunctionDef
+
+    def to_term(self, *, owner):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:module-function-definition-callable",
+            [str_const(self.definition.fragment.seal().cid)],
+            symbol_kind="coordinate",
+        )
+
+    def callable_application_with(self, operation, ctx):
+        return _ModuleSourceFrameCallableV1(
+            self.definition.name,
+            self.definition.source_visible_call_frame(),
+        ).callable_application_with(operation, ctx)
+
+
+@dataclass(frozen=True)
 class _ModuleFunctionDefinitionBindingSugar:
     definition: FunctionDef
 
@@ -161,10 +184,7 @@ class _ModuleFunctionDefinitionBindingSugar:
         return Complete(
             ScopeRebind(
                 self.definition.name,
-                _ModuleSourceFrameCallableV1(
-                    self.definition.name,
-                    self.definition.source_visible_call_frame(),
-                ),
+                _ModuleFunctionDefinitionCallableV1(self.definition),
             )
         )
 
