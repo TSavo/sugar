@@ -2860,6 +2860,7 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.generator_construction import (
             AssignStepV1,
             AttributeAssignStepV1,
+            AssertStepV1,
             FinallyStepV1,
             ForStepV1,
             IfStepV1,
@@ -2985,6 +2986,26 @@ class FunctionDef(Statement):
                         statement.target.id,
                         statement.value.sugar(),
                         statement.fragment.seal().cid,
+                    )
+                )
+            if isinstance(statement, Assert) and not self._owns_yield((statement,)):
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    SourceFragmentCoordinateV1,
+                )
+
+                span = statement.line_col_span()
+                return _GeneratorNamedStepV1(
+                    AssertStepV1(
+                        assert_sugar=statement.sugar(),
+                        assert_cid=statement.fragment.seal().cid,
+                        assert_coordinate=SourceFragmentCoordinateV1(
+                            statement.unit.source_cid,
+                            span.start_line,
+                            span.start_col,
+                            span.end_line,
+                            span.end_col,
+                        ),
+                        occurrence=statement.fragment,
                     )
                 )
             if isinstance(statement, If):
