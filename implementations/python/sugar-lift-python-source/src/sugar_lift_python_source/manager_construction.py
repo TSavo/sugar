@@ -26,6 +26,7 @@ from sugar_source_tree.binding_state import BindingEntryV1
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
+    AsyncFunctionDef,
     Attribute,
     AugAssign,
     Call,
@@ -143,9 +144,9 @@ class _ModuleSourceFrameCallableV1(FloorValue):
 
 @dataclass(frozen=True)
 class _ModuleFunctionDefinitionCallableV1(FloorValue):
-    """An exact module FunctionDef whose body is constructed only when called."""
+    """An exact module function definition constructed only when called."""
 
-    definition: FunctionDef
+    definition: FunctionDef | AsyncFunctionDef
 
     def to_term(self, *, owner):
         del owner
@@ -166,7 +167,7 @@ class _ModuleFunctionDefinitionCallableV1(FloorValue):
 
 @dataclass(frozen=True)
 class _ModuleFunctionDefinitionBindingSugar:
-    definition: FunctionDef
+    definition: FunctionDef | AsyncFunctionDef
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
@@ -174,10 +175,11 @@ class _ModuleFunctionDefinitionBindingSugar:
         from sugar_source_tree.panic import SugarNotWritten
 
         if self.definition.decorators:
+            definition_kind = type(self.definition).__name__
             raise SugarNotWritten(
                 owner="module function definition execution",
                 blame=self.definition.fragment,
-                observed="decorated FunctionDef has no completed publication",
+                observed=f"decorated {definition_kind} has no completed publication",
                 requested="the exact final decorated function Floor",
                 fix="execute and authenticate the function decorator chain",
             )
@@ -587,9 +589,7 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     sugars = tuple(
         (
             _ModuleFunctionDefinitionBindingSugar(statement)
-            if isinstance(statement, FunctionDef)
-            else InertSugar(site=statement.fragment)
-            if isinstance(statement, AsyncFunctionDef)
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef))
             else _ModuleClassDefinitionBindingSugar(
                 statement, source_file.construction_event_receipt_cid
             )
