@@ -4942,6 +4942,10 @@ class Assign(Statement):
         """
         from .shadow import rewrite
 
+        mapping_pop = self._mapping_pop_assignment(scope)
+        if mapping_pop is not None:
+            return mapping_pop
+
         new_value, changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if changed else {}
         if len(self.targets) == 1 and isinstance(
@@ -4960,6 +4964,66 @@ class Assign(Statement):
         if self.unit.target_patterns_for(self):
             self.unit.retain_target_patterns(self, rewritten)
         return rewritten
+
+    def _mapping_pop_assignment(self, scope):
+        """Split ``result = mapping.pop(key, default)`` into two SSA bindings.
+
+        Python's operation has two products: the expression result and the
+        receiver's post-mutation state.  Both are derived from the same source
+        occurrence and threaded by the shadow tree; neither is reconstructed
+        from a later spelling of the receiver.
+        """
+        if not (
+            len(self.targets) == 1
+            and isinstance(self.targets[0], Name)
+            and isinstance(self.value, Call)
+            and not self.value.keywords
+            and len(self.value.args) == 2
+            and isinstance(self.value.func, Attribute)
+            and self.value.func.attr == "pop"
+            and isinstance(self.value.func.value, Name)
+        ):
+            return None
+        receiver_name = self.value.func.value.id
+        receiver = self.value.func.value.substitute(scope)
+        if _has_authenticated_source_method(receiver, "pop"):
+            return None
+
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        key = self.value.args[0].substitute(scope)
+        default = self.value.args[1].substitute(scope)
+
+        def projection(kind):
+            return materialize(
+                self.unit,
+                ShadowNode(
+                    kind,
+                    self.span,
+                    (
+                        ("receiver", Child(_handle_of(receiver))),
+                        ("key", Child(_handle_of(key))),
+                        ("default", Child(_handle_of(default))),
+                    ),
+                ),
+                self.reporter,
+            )
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "MappingPopAssignStatement",
+                self.span,
+                (
+                    ("target_name", Leaf(self.targets[0].id)),
+                    ("receiver_name", Leaf(receiver_name)),
+                    ("result", Child(_handle_of(projection("MappingPopResult")))),
+                    ("post_state", Child(_handle_of(projection("MappingPopState")))),
+                ),
+            ),
+            self.reporter,
+        )
 
     def _destructured_binding(self):
         # Destructure only an already-constructed Tuple/List display.  This is
@@ -8753,6 +8817,34 @@ class MappingPopStatement(DictSetDefaultAppendStatement):
     """Shadow statement for completed ``mapping.pop(key, default)`` state."""
 
 
+class MappingPopAssignStatement(Statement):
+    """One pop occurrence exporting its result and receiver post-state."""
+
+    target_name: str
+    receiver_name: str
+    result: Expression
+    post_state: Expression
+    _child_fields = ("result", "post_state")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def substitution_binding(self, scope):
+        del scope
+        return {
+            self.target_name: self.result,
+            self.receiver_name: self.post_state,
+        }
+
+    def _construct_sugar(self):
+        # The shadow projections own the operation.  This statement only
+        # publishes them into the temporal rewrite and states no second call.
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
+
 class Pass(Statement):
     pass
 
@@ -11388,6 +11480,22 @@ class MappingPopState(Expression):
         )
 
         return MappingPopStateSugar(
+            receiver=self.receiver.sugar(),
+            key=self.key.sugar(),
+            default=self.default.sugar(),
+            site=self.fragment,
+        )
+
+
+class MappingPopResult(MappingPopState):
+    """Shadow expression result of inherited ``mapping.pop(key, default)``."""
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import (
+            MappingPopResultSugar,
+        )
+
+        return MappingPopResultSugar(
             receiver=self.receiver.sugar(),
             key=self.key.sugar(),
             default=self.default.sugar(),

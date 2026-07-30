@@ -11,6 +11,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import MappingPopStateSugar
+from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import MappingPopResultSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -47,6 +48,17 @@ def _pop(receiver, key):
     return outcome.value
 
 
+def _pop_result(receiver, key, default):
+    outcome = MappingPopResultSugar(
+        receiver=_FloorSugar(receiver, [], "receiver"),
+        key=_FloorSugar(key, [], "key"),
+        default=_FloorSugar(default, [], "default"),
+        site="pop-site",
+    ).desugar(None)
+    assert isinstance(outcome, Complete)
+    return outcome.value
+
+
 def test_present_key_is_removed_without_replacing_receiver_identity() -> None:
     receiver = MappingObjectValue(
         "DerivedDict",
@@ -75,6 +87,18 @@ def test_absent_key_with_default_preserves_exact_receiver() -> None:
     )
 
     assert _pop(receiver, StringValue("missing")) is receiver
+
+
+def test_pop_result_is_the_removed_value_not_the_receiver_state() -> None:
+    receiver = MappingObjectValue(
+        "DerivedDict",
+        (),
+        identity="receiver-coordinate",
+        entries=((StringValue("present"), TermValue(2)),),
+    )
+
+    assert _pop_result(receiver, StringValue("present"), TermValue(9)) == TermValue(2)
+    assert _pop_result(receiver, StringValue("missing"), TermValue(9)) == TermValue(9)
 
 
 def test_same_spelling_wrong_key_does_not_remove_an_entry() -> None:
