@@ -273,8 +273,8 @@ def _ends_in_raise(stmts: list[ast.stmt]) -> bool:
     if isinstance(last, ast.Raise):
         return True
     if isinstance(last, ast.If):
-        return _ends_in_raise(last.body) and _ends_in_raise(
-            last.orelse if last.orelse else [ast.Raise()]
+        return bool(last.orelse) and _ends_in_raise(last.body) and _ends_in_raise(
+            last.orelse
         )
     return False
 

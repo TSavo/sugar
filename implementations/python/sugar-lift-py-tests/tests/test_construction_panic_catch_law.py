@@ -53,6 +53,57 @@ def dig():
     assert offenders == []
 
 
+def test_scanner_rejects_conditional_reraise_without_else(tmp_path: Path) -> None:
+    pkg = tmp_path / "sugar_lift_py_tests"
+    pkg.mkdir()
+    (pkg / "bad.py").write_text(
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def dig(flag):
+    try:
+        raise ConstructionPanic(None)
+    except ConstructionPanic:
+        if flag:
+            raise
+    return None
+""",
+        encoding="utf-8",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert [(row.path, row.kind) for row in offenders] == [
+        ("bad.py", "construction-panic-catch-outside-membrane")
+    ]
+
+
+def test_scanner_allows_conditional_reraise_with_terminal_else(
+    tmp_path: Path,
+) -> None:
+    pkg = tmp_path / "sugar_lift_py_tests"
+    pkg.mkdir()
+    (pkg / "ok.py").write_text(
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def dig(flag):
+    try:
+        raise ConstructionPanic(None)
+    except ConstructionPanic:
+        if flag:
+            raise
+        else:
+            raise
+""",
+        encoding="utf-8",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert offenders == []
+
+
 def test_scanner_flags_corpus_tooling_catch(tmp_path: Path) -> None:
     package = tmp_path / "src" / "sugar_lift_py_tests"
     package.mkdir(parents=True)
