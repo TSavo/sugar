@@ -87,6 +87,7 @@ class BuiltinSuperValue(FloorValue):
             BuiltinDictClassValue,
         )
         from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import Complete
 
         if (
@@ -96,8 +97,35 @@ class BuiltinSuperValue(FloorValue):
             and not keywords
         ):
             return Complete(NoneValue())
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        if (
+            name == "__setitem__"
+            and isinstance(base, BuiltinDictClassValue)
+            and len(arguments) == 2
+            and not keywords
+        ):
+            from sugar_lift_py_tests.floor.mapping_object_value import (
+                MappingObjectValue,
+            )
+            from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+                ReceiverOwnedMutationResult,
+            )
 
+            if not isinstance(self.receiver, MappingObjectValue):
+                construction_panic_gap(
+                    owner="BuiltinSuperValue.call_method_value",
+                    blame=blame,
+                    observed=type(self.receiver).__name__,
+                    requested="authenticated mapping receiver for dict.__setitem__",
+                    fix="preserve the source method receiver through zero-arg super",
+                )
+            key, value = arguments
+            return self.receiver.mapping_builtin_setitem(key, value, blame).and_then(
+                lambda updated: Complete(
+                    ReceiverOwnedMutationResult(
+                        self.receiver, updated, NoneValue()
+                    )
+                )
+            )
         construction_panic_gap(
             owner="BuiltinSuperValue.call_method_value",
             blame=blame,

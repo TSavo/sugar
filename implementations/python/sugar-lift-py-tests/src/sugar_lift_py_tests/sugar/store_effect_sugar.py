@@ -241,7 +241,12 @@ class SubscriptStoreEffectSugar(Sugar):
                 ),
                 fix="attach the three-operand carrier seam owned by 9883",
             )
-        projected = receiver.setitem(index, value, self.site)
+        source_aware = getattr(receiver, "setitem_with_context", None)
+        projected = (
+            source_aware(index, value, self.site, ctx)
+            if callable(source_aware)
+            else receiver.setitem(index, value, self.site)
+        )
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 

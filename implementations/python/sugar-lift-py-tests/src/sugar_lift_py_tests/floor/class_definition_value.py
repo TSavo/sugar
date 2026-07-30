@@ -246,6 +246,7 @@ class ClassDefinitionValue(GuardStableValue):
             methods=self._object_methods(),
             class_fields=self.class_fields,
             identity=receiver_coordinate_cid or self.class_definition_cid,
+            **({"defining_class": self} if receiver_type is MappingObjectValue else {}),
         )
         if block is None:
             return receiver
@@ -345,6 +346,7 @@ class ClassDefinitionValue(GuardStableValue):
             methods=self._object_methods(),
             class_fields=self.class_fields,
             identity=_term_content_cid(identity_term),
+            **({"defining_class": self} if receiver_type is MappingObjectValue else {}),
         )
 
     def _object_methods(self):
