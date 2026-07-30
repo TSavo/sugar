@@ -12,7 +12,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.outcome import Complete, Completed
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
     ReceiverFieldStoreStateSugar,
 )
@@ -56,7 +56,7 @@ class _ReturnAlias(Sugar):
 
 
 @dataclass(frozen=True)
-class _FixedSugar(Sugar):
+class _FixedSugar(ConstructedTermSugar):
     value: object
 
     @classmethod
@@ -66,6 +66,9 @@ class _FixedSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        return self.value.to_term(owner=owner)
 
 
 def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
