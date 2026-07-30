@@ -81,6 +81,32 @@ def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
                     f"{type(statement).__name__}<{type(statement.value).__name__}>"
                     f"[guards={len(guards)}]"
                 )
+            if isinstance(statement, CallSiteValue):
+                occurrence = getattr(statement, "call_occurrence", None)
+                occurrence_kind = (
+                    type(occurrence).__name__ if occurrence is not None else "None"
+                )
+                return (
+                    f"CallSiteValue<target={statement.target_name!r};"
+                    f"body={type(statement.body).__name__};"
+                    f"occurrence={occurrence_kind};"
+                    f"sourceFrame={statement.source_call_frame_cid!r};"
+                    "retainedCompletion="
+                    f"{statement._retained_source_completion is not None}>"
+                )
+            if type(statement).__name__ == "BranchResultAuthentication":
+                slot = getattr(statement, "slot", None)
+                return (
+                    "BranchResultAuthentication<slot="
+                    f"{getattr(slot, 'slot_id', None)!r};"
+                    f"observed={getattr(statement, 'observed_guard', None)!r}>"
+                )
+            if type(statement).__name__ == "GuardedRaise":
+                effect = getattr(statement, "effect", None)
+                return (
+                    f"GuardedRaise<guards={len(getattr(statement, 'guards', ())) };"
+                    f"effect={type(effect).__name__}>"
+                )
             return type(statement).__name__
 
         shape = (
