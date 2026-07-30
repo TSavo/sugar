@@ -33,7 +33,6 @@ class BuiltinSemanticCallable(FloorValue):
         )
 
     def callable_application_with(self, operation, ctx):
-        del ctx
         if self.operation == "python.set.construct":
             floored = self._construct_set(operation)
             if floored is not None:
@@ -55,6 +54,34 @@ class BuiltinSemanticCallable(FloorValue):
             return self._len(operation)
         if self.operation == "python.enumerate.construct":
             return self._enumerate(operation)
+        if self.operation == "python.super.construct":
+            if operation.arguments or operation.keyword_names:
+                return super().callable_application_with(operation, None)
+            from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            current_class = ctx.temporal.value_if_bound("__class__")
+            receiver = next(
+                (
+                    ctx.temporal.value_if_bound(name)
+                    for name in ("self", "metacls", "cls")
+                    if ctx.temporal.value_if_bound(name) is not None
+                ),
+                None,
+            )
+            if current_class is None or receiver is None:
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="BuiltinSemanticCallable.python.super",
+                    blame=str(operation.site),
+                    observed="missing __class__ cell or first formal receiver",
+                    requested="authenticated zero-argument super context",
+                    fix="carry the defining class and bound first formal into the method body",
+                )
+            return Complete(
+                BuiltinSuperValue(current_class=current_class, receiver=receiver)
+            )
         if self.operation != "python.issubclass":
             return super().callable_application_with(operation, None)
         if len(operation.arguments) != 2 or operation.keyword_names:
@@ -255,7 +282,10 @@ class BuiltinSemanticCallable(FloorValue):
             return Complete(TupleValue(tuple(source.elements)))
         if isinstance(source, DictValue):
             return Complete(TupleValue(tuple(key for key, _ in source.entries)))
-        if isinstance(source, ComprehensionValue) and source.finite_elements is not None:
+        if (
+            isinstance(source, ComprehensionValue)
+            and source.finite_elements is not None
+        ):
             return Complete(TupleValue(tuple(source.finite_elements)))
         if isinstance(source, ComprehensionValue):
             from sugar_lift_py_tests.context_manager_resolution import (

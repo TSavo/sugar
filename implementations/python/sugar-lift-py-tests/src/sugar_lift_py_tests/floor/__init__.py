@@ -19,6 +19,7 @@ from .builtin_exception_class_value import BuiltinExceptionClassValue
 from .builtin_object_class_value import BuiltinObjectClassValue
 from .builtin_dict_class_value import BuiltinDictClassValue
 from .builtin_semantic_callable import BuiltinSemanticCallable
+from .builtin_super_value import BuiltinSuperMethodValue, BuiltinSuperValue
 from .call_site_value import CallSiteValue
 from .class_definition_value import (
     ClassDefinitionValue,
@@ -69,6 +70,7 @@ from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 from .object_value import ObjectValue
 from .mapping_object_value import MappingObjectValue
+from .runtime_class_value import RuntimeClassValue
 from .receiver_field_store_value import ReceiverFieldStoreValue
 from .guarded_receiver_field_store_value import GuardedReceiverFieldStoreValue
 from .receiver_state_partition_value import ReceiverStatePartitionValue
@@ -110,6 +112,8 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BuiltinObjectClassValue,
     BuiltinDictClassValue,
     BuiltinSemanticCallable,
+    BuiltinSuperValue,
+    BuiltinSuperMethodValue,
     CallSiteValue,
     ClassValue,
     ComprehensionValue,
@@ -143,6 +147,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ObjectMethodValue,
     ObjectValue,
     MappingObjectValue,
+    RuntimeClassValue,
     TupleIteratorValue,
     OpaqueOpCallsite,
     PredicateValue,
@@ -189,6 +194,8 @@ __all__ = [
     "BuiltinObjectClassValue",
     "BuiltinDictClassValue",
     "BuiltinSemanticCallable",
+    "BuiltinSuperValue",
+    "BuiltinSuperMethodValue",
     "CallSiteValue",
     "CurriedLoopBody",
     "CurriedLoopScope",
@@ -231,6 +238,7 @@ __all__ = [
     "ObjectMethodValue",
     "ObjectValue",
     "MappingObjectValue",
+    "RuntimeClassValue",
     "TupleIteratorValue",
     "ReceiverFieldStoreValue",
     "GuardedReceiverFieldStoreValue",

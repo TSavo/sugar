@@ -269,6 +269,9 @@ def builtin_name_temporal():
         "enumerate", BuiltinSemanticCallable(operation="python.enumerate.construct")
     )
     temporal = temporal.bind_value(
+        "super", BuiltinSemanticCallable(operation="python.super.construct")
+    )
+    temporal = temporal.bind_value(
         "set", BuiltinSemanticCallable(operation="python.set.construct")
     )
     temporal = temporal.bind_value(
