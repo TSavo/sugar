@@ -24,6 +24,10 @@ class ObjectMethodValue(FloorValue):
     formal_coordinate_cids: tuple[str, ...] = ()
     source_call_frame: object | None = field(default=None, compare=False, repr=False)
     descriptor_kind: str | None = None
+    # Exact lexical owner of this method body.  Inherited methods retain their
+    # defining class rather than being rebound to the runtime receiver class;
+    # this is the authenticated ``__class__`` cell used by zero-arg super().
+    defining_class: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         from sugar_lift_py_tests.sugar.sugar_base import Sugar

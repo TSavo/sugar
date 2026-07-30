@@ -108,6 +108,11 @@ class ObjectValue(FloorValue):
     deleted_instance_fields: tuple[str, ...] = dataclass_field(
         default=(), compare=False
     )
+    # Definition-owned class identity transported by ClassDefinitionValue.
+    # This is never reconstructed from class_name.
+    defining_class: object | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
 
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
@@ -681,6 +686,7 @@ class ObjectValue(FloorValue):
                 source_call_frame_cid=method.source_call_frame_cid,
                 formal_coordinate_cids=method.formal_coordinate_cids,
                 bound_source_actuals=bound_source_actuals,
+                lexical_defining_class=method.defining_class,
             )
             if not any(
                 isinstance(value, (SymbolicValue, CallSiteValue))

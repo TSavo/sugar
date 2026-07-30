@@ -17,8 +17,6 @@ class MappingObjectValue(ObjectValue):
     """
 
     entries: tuple = ()
-    defining_class: object | None = None
-
     def guarded(self, formula):
         """A constructed mapping state contributes no independent control.
 
