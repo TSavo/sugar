@@ -8552,8 +8552,81 @@ class Expr(Statement):
     _child_fields = ("value",)
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """Rewrite children and thread authenticated mutating-call post-state."""
+        rewritten = self._substitute_children(scope)
+        state = self._dict_setdefault_append_state(scope)
+        if state is None:
+            return rewritten
+
+        name, post_state = state
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "DictSetDefaultAppendStatement",
+                rewritten.span,
+                (
+                    ("value", Child(_handle_of(rewritten.value))),
+                    ("receiver_name", Leaf(name)),
+                    ("post_state", Child(_handle_of(post_state))),
+                ),
+            ),
+            self.reporter,
+        )
+
+    def _dict_setdefault_append_state(self, scope):
+        """Recognize ``d.setdefault(k, v).append(x)`` by source structure.
+
+        The method spellings select a Python built-in operation only after the
+        receiver resolves through the ordinary binding map.  The shadow node
+        carries that receiver and every evaluated operand; its Sugar/Floor door
+        later decides whether the receiver is actually a constructed dict.
+        """
+        outer = self.value
+        if (
+            not isinstance(outer, Call)
+            or outer.keywords
+            or len(outer.args) != 1
+            or not isinstance(outer.func, Attribute)
+            or outer.func.attr != "append"
+        ):
+            return None
+        inner = outer.func.value
+        if (
+            not isinstance(inner, Call)
+            or inner.keywords
+            or len(inner.args) != 2
+            or not isinstance(inner.func, Attribute)
+            or inner.func.attr != "setdefault"
+            or not isinstance(inner.func.value, Name)
+        ):
+            return None
+        receiver_name = inner.func.value.id
+        receiver = inner.func.value.substitute(scope)
+        key = inner.args[0].substitute(scope)
+        default = inner.args[1].substitute(scope)
+        appended = outer.args[0].substitute(scope)
+
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        post_state = materialize(
+            self.unit,
+            ShadowNode(
+                "DictSetDefaultAppendState",
+                self.span,
+                (
+                    ("receiver", Child(_handle_of(receiver))),
+                    ("key", Child(_handle_of(key))),
+                    ("default", Child(_handle_of(default))),
+                    ("appended", Child(_handle_of(appended))),
+                ),
+            ),
+            self.reporter,
+        )
+        return receiver_name, post_state
 
     def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
@@ -8563,6 +8636,35 @@ class Expr(Statement):
         )
 
         return ExprStatementSugar(value=self.value.sugar(), site=self.fragment)
+
+
+class DictSetDefaultAppendStatement(Statement):
+    """Shadow statement for ``d.setdefault(k, v).append(x)``.
+
+    This is the rewritten AST statement itself.  Its expression preserves the
+    source occurrence; its post-state is the value bound to ``d`` for the
+    remainder of the block through the ordinary statement-binding protocol.
+    """
+
+    value: Expression
+    receiver_name: str
+    post_state: Expression
+    _child_fields = ("value", "post_state")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def substitution_binding(self, scope):
+        del scope
+        return {self.receiver_name: self.post_state}
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+            ExprStatementSugar,
+        )
+
+        return ExprStatementSugar(self.value.sugar(), self.fragment)
 
 
 class Pass(Statement):
@@ -11149,6 +11251,33 @@ class Starred(Expression):
 
         return StarredSugar(
             value=self.value.sugar(),
+            site=self.fragment,
+        )
+
+
+class DictSetDefaultAppendState(Expression):
+    """Shadow post-state of one authenticated ``setdefault(...).append(...)``."""
+
+    receiver: Expression
+    key: Expression
+    default: Expression
+    appended: Expression
+    _child_fields = ("receiver", "key", "default", "appended")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.dict_setdefault_append_state_sugar import (
+            DictSetDefaultAppendStateSugar,
+        )
+
+        return DictSetDefaultAppendStateSugar(
+            receiver=self.receiver.sugar(),
+            key=self.key.sugar(),
+            default=self.default.sugar(),
+            appended=self.appended.sugar(),
             site=self.fragment,
         )
 

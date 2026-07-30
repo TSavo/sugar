@@ -199,6 +199,18 @@ class SymbolicValue(FloorValue):
 
         return Complete(PredicateValue(py_truthy(self.term), site))
 
+    def guarded(self, formula):
+        """Keep one symbolic value coordinate unchanged beneath control.
+
+        A bare symbolic value is support, not a branch-local binding or a fact:
+        it contributes no invariant/postcondition and has no absent peer from
+        which a ``GuardedValue`` could be constructed.  The enclosing ExitSet
+        owns the control guard.  Changing this value's term would instead mint
+        a second identity for the same source value under another path.
+        """
+        del formula
+        return self
+
     def is_identical(self, other, site):
         from sugar_lift_py_tests.ir import _ConstStr, _Ctor
 

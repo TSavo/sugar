@@ -3,8 +3,10 @@
 from sugar_lift_py_tests.callable_application import CallableApplication
 from sugar_lift_py_tests.floor import (
     BuiltinSemanticCallable,
+    DictValue,
     TupleValue,
 )
+from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -71,6 +73,33 @@ def test_tuple_construct_from_tuple_value_is_identity():
     assert isinstance(result, Complete)
     assert isinstance(result.value, TupleValue)
     assert result.value.elements == source.elements
+
+
+def test_dict_items_then_dict_construct_preserves_exact_entries():
+    temporal = builtin_name_temporal()
+    source = DictValue(((StringValue("key"), TermValue(3)),))
+    items = source.call_method_value(
+        "items", (), owner="test", blame="site"
+    )
+    assert isinstance(items, Complete)
+
+    dict_fn = temporal.value_if_bound("dict")
+    assert isinstance(dict_fn, BuiltinSemanticCallable)
+    result = dict_fn.callable_application_with(
+        CallableApplication((items.value,), (), "site"), None
+    )
+    assert isinstance(result, Complete)
+    assert result.value == source
+
+
+def test_constructed_dict_support_rides_under_control_without_new_identity():
+    from sugar_lift_py_tests.ir import atomic
+
+    source = DictValue(((StringValue("key"), TermValue(3)),))
+    assert source.guarded(atomic("left", ())) is source
+    assert source.guarded(atomic("right", ())) is source
+    assert source.inv_contribution() == ()
+    assert source.post_contribution() == ()
 
 
 def test_ground_term_value_equality_folds():

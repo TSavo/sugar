@@ -152,7 +152,6 @@ class _ModuleSourceFrameCallableV1(FloorValue):
     def callable_application_with(self, operation, ctx):
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
         if operation.keyword_names:
@@ -187,26 +186,16 @@ class _ModuleSourceFrameCallableV1(FloorValue):
             bound_source_actuals=bound,
         )
         produced = call.producer_outcome(ctx)
-        if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
-            raise SugarNotWritten(
-                owner="module definition source callable",
-                blame=operation.site,
-                observed="source decorator produced a nonlinear outcome",
-                requested="one completed retained source-call coordinate",
-                fix="sequence decorator effects before module publication",
+        # Projection is a continuation over the producer ExitSet.  Completed
+        # faces project their retained source return; halted faces remain owned
+        # by the source call with their guards and effects unchanged.  Requiring
+        # ``Complete`` here used to discard Python's authenticated nonlinear
+        # control at the exact metaclass publication boundary.
+        return produced.and_then(
+            lambda value: value.project_operation_receiver_outcome(
+                ctx, owner="module definition source callable"
             )
-        projected = produced.value.project_operation_receiver_outcome(
-            ctx, owner="module definition source callable"
         )
-        if not isinstance(projected, Complete):
-            raise SugarNotWritten(
-                owner="module definition source callable",
-                blame=operation.site,
-                observed="source decorator return projected nonlinearly",
-                requested="one completed decorator result Floor",
-                fix="sequence decorator return effects before publication",
-            )
-        return projected
 
 
 @dataclass(frozen=True)
@@ -455,38 +444,34 @@ class _ModuleClassDefinitionBindingSugar:
                     owner="module metaclass application",
                     call_occurrence=occurrence,
                 ).apply(callable_floor, ctx)
-                if not isinstance(applied, Complete):
-                    raise SugarNotWritten(
-                        owner="module definition execution",
-                        blame=keyword.value.fragment,
-                        observed="metaclass application reduced nonlinearly",
-                        requested="one completed published class Floor",
-                        fix="sequence metaclass effects before module publication",
+                def publish_metaclass_result(result):
+                    final_class = _project_metaclass_final_class(
+                        result, blame=keyword.value.fragment
                     )
-                final_class = _project_metaclass_final_class(
-                    applied.value, blame=keyword.value.fragment
-                )
-                publication = _mint_metaclass_class_publication(
-                    source_cid=self.definition.unit.source_cid,
-                    definition=_call_coordinate(self.definition),
-                    binding_occurrence=sugar.binding_target_occurrence,
-                    metaclass_occurrence=occurrence,
-                    raw_class=value,
-                    metaclass_floor=metaclass_floor,
-                    metaclass_callable=callable_floor,
-                    class_name_floor=class_name_floor,
-                    bases_floor=bases_floor,
-                    namespace_floor=namespace_floor,
-                    final_class=final_class,
-                    module_construction_receipt_cid=(
-                        self.module_construction_receipt_cid
-                    ),
-                )
-                return Complete(
-                    ScopeRebind(
-                        self.definition.name, MetaclassClassValue(publication)
+                    publication = _mint_metaclass_class_publication(
+                        source_cid=self.definition.unit.source_cid,
+                        definition=_call_coordinate(self.definition),
+                        binding_occurrence=sugar.binding_target_occurrence,
+                        metaclass_occurrence=occurrence,
+                        raw_class=value,
+                        metaclass_floor=metaclass_floor,
+                        metaclass_callable=callable_floor,
+                        class_name_floor=class_name_floor,
+                        bases_floor=bases_floor,
+                        namespace_floor=namespace_floor,
+                        final_class=final_class,
+                        module_construction_receipt_cid=(
+                            self.module_construction_receipt_cid
+                        ),
                     )
-                )
+                    return Complete(
+                        ScopeRebind(
+                            self.definition.name,
+                            MetaclassClassValue(publication),
+                        )
+                    )
+
+                return applied.and_then(publish_metaclass_result)
             if not sugar.decorator_sugars:
                 return Complete(ScopeRebind(self.definition.name, value))
             decorator_floors = []

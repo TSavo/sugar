@@ -44,6 +44,11 @@ class BuiltinSemanticCallable(FloorValue):
             if floored is not None:
                 return floored
             return self._unhandled_construct(operation, "tuple")
+        if self.operation == "python.dict.construct":
+            floored = self._construct_dict(operation)
+            if floored is not None:
+                return floored
+            return self._unhandled_construct(operation, "dict")
         if self.operation == "python.isinstance":
             return self._isinstance(operation)
         if self.operation == "python.len":
@@ -269,6 +274,27 @@ class BuiltinSemanticCallable(FloorValue):
                     )
                 )
         return None
+
+    def _construct_dict(self, operation):
+        """Construct ``dict`` from an authenticated mapping or pair iterable."""
+        from sugar_lift_py_tests.floor import DictValue, ListValue, TupleValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        if operation.keyword_names or len(operation.arguments) > 1:
+            return None
+        if not operation.arguments:
+            return Complete(DictValue(()))
+        source = operation.arguments[0]
+        if isinstance(source, DictValue):
+            return Complete(source)
+        if not isinstance(source, (ListValue, TupleValue)):
+            return None
+        entries = []
+        for item in source.elements:
+            if not isinstance(item, (ListValue, TupleValue)) or len(item.elements) != 2:
+                return None
+            entries.append(tuple(item.elements))
+        return Complete(DictValue(tuple(entries)))
 
     def test_python_type(self, value, site):
         """Constructor builtins that are also types answer isinstance tests.

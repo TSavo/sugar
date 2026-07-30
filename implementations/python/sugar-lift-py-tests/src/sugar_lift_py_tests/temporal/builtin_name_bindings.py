@@ -268,5 +268,8 @@ def builtin_name_temporal():
     temporal = temporal.bind_value(
         "tuple", BuiltinSemanticCallable(operation="python.tuple.construct")
     )
+    temporal = temporal.bind_value(
+        "dict", BuiltinSemanticCallable(operation="python.dict.construct")
+    )
     _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal

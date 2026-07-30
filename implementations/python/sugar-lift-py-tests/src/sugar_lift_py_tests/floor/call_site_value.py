@@ -330,6 +330,29 @@ class CallSiteValue(FloorValue):
         del formula
         return self
 
+    def callable_application_with(self, operation, ctx):
+        """Apply the authenticated value returned by a source-backed call.
+
+        Decorator factories commonly return another callable.  The call
+        occurrence remains the producer coordinate, but Python applies the
+        returned floor.  Opaque or self-recursive projection stays loud rather
+        than treating the call spelling as callable authority.
+        """
+        projected = self.force_floor(
+            ctx, owner="CallSiteValue.callable_application_with"
+        )
+        if projected is self:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="CallSiteValue.callable_application_with",
+                blame=operation.site,
+                observed="source call projected to its own call coordinate",
+                requested="authenticated returned callable Floor",
+                fix="retain the factory return or keep decorator application loud",
+            )
+        return operation.apply(projected, ctx)
+
     def truth(self, site):
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
         # Ground (lift-time-decidable) coordinates must construct, never mint
