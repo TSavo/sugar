@@ -319,7 +319,7 @@ class NativeOperationDemandV1:
         )
 
 
-def _ast_minted_native_operator_constants() -> frozenset[str]:
+def _typed_minted_native_operator_constants() -> frozenset[str]:
     """String ``operator=`` kwargs that feed native-operation carrier mints.
 
     Discovers:
@@ -336,8 +336,9 @@ def _ast_minted_native_operator_constants() -> frozenset[str]:
     term coordinates ``"+"``) are excluded — those are term spellings, not
     carrier operator names.
     """
-    import ast
     from pathlib import Path
+    from sugar_source_tree.nodes import Call, Constant
+    from sugar_source_tree.tree import SourceFile
 
     package_root = Path(__file__).resolve().parent
     found: set[str] = set()
@@ -345,19 +346,20 @@ def _ast_minted_native_operator_constants() -> frozenset[str]:
         if path.name == "caller_parameter_contract.py":
             # This module defines projectors and mint plumbing, not producers.
             continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        source_file = SourceFile.from_path(path)
+        registered = (
+            source_file.constructed_module.construction_event_receipt
+            .registered_occurrences
+        )
+        for node in registered:
+            if not isinstance(node, Call):
                 continue
             for keyword in node.keywords:
                 if keyword.arg != "operator":
                     continue
                 value = keyword.value
                 if not (
-                    isinstance(value, ast.Constant) and isinstance(value.value, str)
+                    isinstance(value, Constant) and isinstance(value.value, str)
                 ):
                     continue
                 name = value.value
@@ -373,7 +375,8 @@ def production_native_operation_operators() -> frozenset[str]:
 
     Sources (union — each is a real mint path, not a guess):
 
-    * AST string constants on ``NativeOperationExitCarrierV1.mint(operator=...)``
+    * typed source string constants on
+      ``NativeOperationExitCarrierV1.mint(operator=...)``
     * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
     * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
     * contracted store operators whose producers pin the mint shape for this
@@ -398,7 +401,7 @@ def production_native_operation_operators() -> frozenset[str]:
 
     contracted_inplace_operators = production_augassign_inplace_operators()
     return (
-        _ast_minted_native_operator_constants()
+        _typed_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
         | frozenset(COMPARE_METHODS.values())
         | contracted_store_operators
