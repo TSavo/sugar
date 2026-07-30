@@ -135,6 +135,12 @@ class CallSiteValue(FloorValue):
     runtime_dispatch_receiver: FloorValue | None = dataclass_field(
         default=None, compare=False
     )
+    # Definition-owned class cell for a source method body.  Runtime receiver
+    # type is deliberately insufficient: inherited methods must bind the class
+    # that defined the body for zero-argument ``super()``.
+    lexical_defining_class: FloorValue | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
     # Authority to treat this call result as an exception instance.  This is
     # issued only for ``type(caught_exception)(...)``: the coordinate names the
     # genuinely runtime-selected exception class.  Ordinary call-result shapes
@@ -1393,6 +1399,16 @@ class CallSiteValue(FloorValue):
             self.arg_values,
             self.formal_coordinate_cids,
         )
+        if self.lexical_defining_class is not None:
+            from sugar_lift_py_tests.temporal import curry_temporal
+
+            reduce_ctx = curry_temporal(
+                reduce_ctx,
+                ("__class__",),
+                (self.lexical_defining_class,),
+                owner="CallSiteValue lexical class cell",
+                blame=self.target_name,
+            )
         return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
 
     def producer_outcome(self, ctx: Any = None, *, carrier_actuals: dict | None = None):

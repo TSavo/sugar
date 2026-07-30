@@ -17,7 +17,6 @@ class MappingObjectValue(ObjectValue):
     """
 
     entries: tuple = ()
-
     def guarded(self, formula):
         """A constructed mapping state contributes no independent control.
 
@@ -48,6 +47,50 @@ class MappingObjectValue(ObjectValue):
         return DictValue(self.entries).subscript(index, site)
 
     def setitem(self, index, value, site):
+        if self.has_method("__setitem__"):
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="MappingObjectValue.setitem",
+                blame=site,
+                observed="source-defined __setitem__ without reduction context",
+                requested="setitem_with_context through the ordinary store producer",
+                fix="thread the caller context; zero-arg super requires its __class__ cell",
+            )
+        return self.mapping_builtin_setitem(index, value, site)
+
+    def setitem_with_context(self, index, value, site, ctx):
+        if not self.has_method("__setitem__"):
+            return self.mapping_builtin_setitem(index, value, site)
+        if self.defining_class is None:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="MappingObjectValue.setitem_with_context",
+                blame=site,
+                observed="mapping receiver lacks defining class",
+                requested="authenticated source class for __setitem__ dispatch",
+                fix="transport the class definition into its constructed receiver",
+            )
+        method_ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(
+                "__class__", self.defining_class, blame=f"{self.class_name}.__setitem__"
+            )
+        )
+        return super().call_method_value(
+                "__setitem__",
+                (index, value),
+                owner="MappingObjectValue.setitem",
+                blame=site,
+                ctx=method_ctx,
+            ).and_then(
+                lambda callsite: callsite.reduce_source_outcome(method_ctx).and_then(
+                    self._project_setitem_receiver
+                )
+            )
+
+    def mapping_builtin_setitem(self, index, value, site):
+        """Apply authenticated builtin-dict storage without source redispatch."""
         from sugar_lift_py_tests.outcome import Complete
 
         return (
@@ -57,6 +100,32 @@ class MappingObjectValue(ObjectValue):
                 lambda updated: Complete(self.mapping_with_entries(updated.entries))
             )
         )
+
+    def _project_setitem_receiver(self, value):
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+            ReceiverOwnedMutationResult,
+        )
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import Complete
+
+        entries = value.statements if isinstance(value, BlockValue) else (value,)
+        mutations = tuple(
+            entry
+            for entry in entries
+            if isinstance(entry, ReceiverOwnedMutationResult)
+            and type(entry.receiver_before) is type(self)
+            and entry.receiver_before.identity == self.identity
+        )
+        if len(mutations) != 1:
+            construction_panic_gap(
+                owner="MappingObjectValue.setitem",
+                blame=self.identity,
+                observed=f"{len(mutations)} receiver-owned mutation results",
+                requested="one authenticated __setitem__ receiver transition",
+                fix="preserve the source __setitem__ body mutation or keep loud",
+            )
+        return Complete(mutations[0].receiver_after)
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.outcome import Complete
@@ -84,8 +153,12 @@ class MappingObjectValue(ObjectValue):
         if required_frame is None and not keywords:
             if name == "__getitem__" and len(arguments) == 1:
                 return self.subscript(arguments[0], blame)
-            if name == "__setitem__" and len(arguments) == 2:
-                return self.setitem(arguments[0], arguments[1], blame)
+            if (
+                name == "__setitem__"
+                and len(arguments) == 2
+                and not self.has_method("__setitem__")
+            ):
+                return self.mapping_builtin_setitem(arguments[0], arguments[1], blame)
             if name == "__delitem__" and len(arguments) == 1:
                 return self.delitem(arguments[0], blame)
             if (

@@ -246,6 +246,7 @@ class ClassDefinitionValue(GuardStableValue):
             methods=self._object_methods(),
             class_fields=self.class_fields,
             identity=receiver_coordinate_cid or self.class_definition_cid,
+            defining_class=self,
         )
         if block is None:
             return receiver
@@ -345,6 +346,7 @@ class ClassDefinitionValue(GuardStableValue):
             methods=self._object_methods(),
             class_fields=self.class_fields,
             identity=_term_content_cid(identity_term),
+            defining_class=self,
         )
 
     def _object_methods(self):
@@ -354,8 +356,11 @@ class ClassDefinitionValue(GuardStableValue):
         # tail before this class's methods.  A base method is retained with its
         # original authenticated source frame; nothing is reconstructed here.
         inherited = tuple(
-            method for base in reversed(self._c3_tail()) for method in base.methods
+            (base, method)
+            for base in reversed(self._c3_tail())
+            for method in base.methods
         )
+        owned = (*inherited, *((self, method) for method in self.methods))
         return tuple(
             ObjectMethodValue(
                 method.name,
@@ -368,8 +373,9 @@ class ClassDefinitionValue(GuardStableValue):
                 ),
                 method.source_call_frame,
                 method.descriptor_kind,
+                defining_class=defining_class,
             )
-            for method in (*inherited, *self.methods)
+            for defining_class, method in owned
         )
 
     def _c3_tail(self) -> tuple["ClassDefinitionValue", ...]:
