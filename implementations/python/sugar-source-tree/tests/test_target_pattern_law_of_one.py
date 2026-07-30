@@ -7,6 +7,8 @@ import re
 
 import pytest
 
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_source_tree import nodes
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.tree import SourceFile
@@ -40,6 +42,16 @@ def two_loops(left_items, right_items):
 """
 
 
+def _open_source_file(path: Path, root: Path) -> SourceFile:
+    return open_source_file_for_construction(
+        path,
+        root=root,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(
+            workspace_root=str(root)
+        ),
+    )
+
+
 EXPECTED = {
     ("Assign", 2, 0): (("a", ("targets", 0, 0)), ("b", ("targets", 0, 1, 0)), ("c", ("targets", 0, 1, 1, "star"))),
     ("For", 3, 0): (("a", ("target", 0)), ("b", ("target", 1, 0)), ("c", ("target", 1, 1, "star"))),
@@ -55,7 +67,7 @@ EXPECTED = {
 def _source_file(tmp_path: Path, name: str = "target_patterns.py") -> SourceFile:
     path = tmp_path / name
     path.write_text(SOURCE)
-    return SourceFile.from_path(path)
+    return _open_source_file(path, tmp_path)
 
 
 def _products(source_file: SourceFile):
@@ -114,7 +126,7 @@ def test_ordinary_nested_star_consumers_construct_exact_patterns_once(tmp_path: 
 
     live_path = tmp_path / "live.py"
     live_path.write_text(LIVE_SOURCE)
-    live_file = SourceFile.from_path(live_path)
+    live_file = _open_source_file(live_path, tmp_path)
     live_function, = tuple(live_file.functions())
     live_loop = next(node for node in live_function.walk() if node.kind == "For")
     live_pattern, = live_loop.target_patterns
@@ -176,7 +188,7 @@ def test_target_pattern_rejects_wrong_occurrence_and_order(tmp_path: Path):
 def test_same_unit_foreign_for_cannot_claim_local_target(tmp_path: Path):
     path = tmp_path / "two_loops.py"
     path.write_text(TWO_LOOPS_SOURCE)
-    source_file = SourceFile.from_path(path)
+    source_file = _open_source_file(path, tmp_path)
     function, = tuple(source_file.functions())
     loops = tuple(node for node in function.walk() if node.kind == "For")
     assert len(loops) == 2
@@ -207,7 +219,7 @@ def test_assign_rhs_rewrite_retains_its_authenticated_target_pattern(
         "    root, leaf = split(key)\n"
         "    return root[leaf]\n"
     )
-    source_file = SourceFile.from_path(path)
+    source_file = _open_source_file(path, tmp_path)
     function, = tuple(source_file.functions())
     original = next(
         node
@@ -235,7 +247,7 @@ def test_attribute_only_unpack_is_not_minted_as_a_binding_pattern(
         "        self.left, self.right = left, right\n"
     )
 
-    source_file = SourceFile.from_path(path)
+    source_file = _open_source_file(path, tmp_path)
 
     assert source_file.unit.target_pattern_construction_count == 0
 
@@ -247,7 +259,7 @@ def test_mixed_attribute_unpack_is_not_a_lexical_target_pattern(tmp_path: Path):
         "    def bind(self, func, args, kwds):\n"
         "        self.func, self.args, self.kwds = func, args, kwds\n"
     )
-    source_file = SourceFile.from_path(path)
+    source_file = _open_source_file(path, tmp_path)
     assignment = next(node for node in source_file.nodes() if node.kind == "Assign")
 
     assert assignment.target_patterns == ()
