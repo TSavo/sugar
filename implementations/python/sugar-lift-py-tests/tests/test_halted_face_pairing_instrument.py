@@ -10,10 +10,11 @@ from pathlib import Path
 import pytest
 
 import sugar_lift_py_tests.outcome.exit_set as owner
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
-from sugar_source_tree.tree import SourceFile
 
 
 DEPENDENT_AXIS_STATUS = {
@@ -44,7 +45,13 @@ def _paired_gate(axis: str, tmp_path: Path | None = None):
 def _reduced(tmp_path: Path, stem: str, text: str):
     path = tmp_path / f"{stem}.py"
     path.write_text(text, encoding="utf-8")
-    source = SourceFile.from_path(path)
+    source = open_source_file_for_construction(
+        path,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(
+            workspace_root=str(tmp_path)
+        ),
+    )
     functions = tuple(source.functions())
     (function,) = functions
     return source, function, reduce_block_to_exitset(function.sugar().statements, None)

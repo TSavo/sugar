@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue
 from sugar_lift_py_tests.outcome import Complete, ExitSet
-from sugar_source_tree.tree import SourceFile
 
 
 def _outcome(tmp_path, source: str):
     path = tmp_path / "while_return_else.py"
     path.write_text(source, encoding="utf-8")
-    function = next(SourceFile.from_path(path).functions())
+    function = next(
+        open_source_file_for_construction(
+            path,
+            root=tmp_path,
+            construction_context=TreeConstructionContextV1.for_source_call_construction(
+                workspace_root=str(tmp_path)
+            ),
+        ).functions()
+    )
     return function.sugar().desugar()
 
 
