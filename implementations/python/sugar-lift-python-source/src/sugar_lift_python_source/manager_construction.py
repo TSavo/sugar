@@ -143,6 +143,7 @@ class _ModuleSourceFrameCallableV1(FloorValue):
 
     callable_name: str
     frame: object
+    defining_class: object | None = None
 
     def to_term(self, *, owner):
         del owner
@@ -187,7 +188,16 @@ class _ModuleSourceFrameCallableV1(FloorValue):
             ),
             bound_source_actuals=bound,
         )
-        produced = call.producer_outcome(ctx)
+        call_ctx = ctx
+        if self.defining_class is not None:
+            call_ctx = ctx.with_temporal(
+                ctx.temporal.bind_value(
+                    "__class__",
+                    self.defining_class,
+                    blame=f"{self.callable_name} defining class",
+                )
+            )
+        produced = call.producer_outcome(call_ctx)
         # Projection is a continuation over the producer ExitSet.  Completed
         # faces project their retained source return; halted faces remain owned
         # by the source call with their guards and effects unchanged.  Requiring
@@ -431,7 +441,9 @@ class _ModuleClassDefinitionBindingSugar:
                     )
                 constructor = constructors[0]
                 callable_floor = _ModuleSourceFrameCallableV1(
-                    constructor.name, constructor.source_call_frame
+                    constructor.name,
+                    constructor.source_call_frame,
+                    defining_class=metaclass_floor,
                 )
                 class_name_floor = StringValue(self.definition.name)
                 bases_floor = TupleValue(tuple(value.base_classes))
@@ -503,7 +515,9 @@ class _ModuleClassDefinitionBindingSugar:
                     return apply_new(fallback_namespace)
                 prepare = preparers[0]
                 prepare_callable = _ModuleSourceFrameCallableV1(
-                    prepare.name, prepare.source_call_frame
+                    prepare.name,
+                    prepare.source_call_frame,
+                    defining_class=metaclass_floor,
                 )
                 prepared = CallableApplication(
                     (metaclass_floor, class_name_floor, bases_floor),

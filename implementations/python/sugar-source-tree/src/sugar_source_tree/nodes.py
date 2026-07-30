@@ -159,7 +159,7 @@ class ControlConstructionContextV1:
                 observed="bare raise has no authenticated in-flight exception slot",
                 requested="an enclosing except handler effect-slot coordinate",
                 fix="construct bare raise only inside the handler that owns its effect",
-            )
+        )
         return self.exception_slots[-1]
 
 
@@ -8039,7 +8039,7 @@ class Try(Statement):
                 )
             else:
                 include = True
-            if include:
+            if include and self._block_has_completed_fallthrough(handler.body):
                 completion_nets.append(handler_net)
 
         merged = self._merge_completion_nets(
@@ -8233,6 +8233,27 @@ class Try(Statement):
                     exception_mro=right[1],
                 )
         return None
+
+    def _block_has_completed_fallthrough(self, statements) -> bool:
+        """Whether one source path reaches the statement after this block.
+
+        Completion-state merging must exclude handlers that unconditionally
+        leave by ``raise`` or ``return``. Including such a handler invents a
+        fallthrough edge and erases bindings carried by the real completed
+        try-body edge (for example ``enum_class`` after ``type.__new__``).
+        """
+        for statement in statements:
+            if isinstance(statement, (Raise, Return, Break, Continue)):
+                return False
+            if isinstance(statement, If):
+                if not statement.orelse:
+                    continue
+                if not (
+                    self._block_has_completed_fallthrough(statement.body)
+                    or self._block_has_completed_fallthrough(statement.orelse)
+                ):
+                    return False
+        return True
 
     def _merge_completion_nets(
         self,
@@ -10119,7 +10140,7 @@ class Call(Expression):
                 observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
                 requested="zero or one sealed lexical call row",
                 fix="repair lexical call enrollment before constructing the source frame",
-        )
+            )
         lexical_row = lexical_rows[0] if lexical_rows else None
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence

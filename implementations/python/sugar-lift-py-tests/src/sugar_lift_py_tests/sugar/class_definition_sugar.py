@@ -108,11 +108,20 @@ class ClassDefinitionSugar(Sugar):
         base_values = []
         for base in self.base_sugars:
             outcome = base.desugar(ctx)
-            from sugar_lift_py_tests.floor import BuiltinDictClassValue
+            from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
 
             if isinstance(outcome, Complete) and isinstance(
                 outcome.value, (ClassDefinitionValue, BuiltinDictClassValue)
             ):
+                base_values.append(outcome.value)
+            elif (
+                isinstance(outcome, Complete)
+                and type(outcome.value) is ClassValue
+                and outcome.value.name == "type"
+            ):
+                # ``type`` is an exact Python builtin class binding. Retaining
+                # it is what lets zero-argument super in a source metaclass
+                # select type.__new__; no other generic ClassValue is admitted.
                 base_values.append(outcome.value)
             # HEAD omitted unenrolled bases from this roster.  This increment
             # evaluates them only to discover the exact BuiltinDictClassValue;

@@ -269,6 +269,37 @@ class SpreadCallSugar(ConstructedTermSugar):
         return self.callee.desugar(ctx).and_then(after_callee)
 
     def _finish(self, callee_value, values, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.floor import BuiltinSuperMethodValue
+
+        if isinstance(callee_value, BuiltinSuperMethodValue):
+            if any(role == "star" for role, _, _ in self.arguments):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="SpreadCallSugar._finish",
+                    blame=self.site,
+                    observed="starred positional actual to selected super method",
+                    requested="an exact positional roster",
+                    fix="project the starred operand exactly or keep the call loud",
+                )
+            positional = tuple(
+                value
+                for (role, _name, _), value in zip(self.arguments, values)
+                if role == "positional"
+            )
+            keywords = tuple(
+                (("**" if role == "double-star" else name), value)
+                for (role, name, _), value in zip(self.arguments, values)
+                if role in {"keyword", "double-star"}
+            )
+            return callee_value.receiver.call_method_value(
+                callee_value.name,
+                positional,
+                owner="SpreadCallSugar._finish",
+                blame=self.site,
+                ctx=ctx,
+                keywords=keywords,
+            )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 

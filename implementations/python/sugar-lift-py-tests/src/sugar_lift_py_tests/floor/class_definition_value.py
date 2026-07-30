@@ -115,7 +115,12 @@ class ClassDefinitionValue(GuardStableValue):
             ),
             bound_source_actuals=bound,
         )
-        outcome = call.reduce_source_outcome(ctx)
+        method_ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(
+                "__class__", self, blame=f"{self.class_name}.__init__"
+            )
+        )
+        outcome = call.reduce_source_outcome(method_ctx)
 
         def project(value):
             block = value if isinstance(value, BlockValue) else BlockValue((value,))
@@ -175,7 +180,12 @@ class ClassDefinitionValue(GuardStableValue):
             ),
             bound_source_actuals=bound,
         )
-        return call.producer_outcome(ctx)
+        method_ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(
+                "__class__", self, blame=f"{self.class_name}.{name}"
+            )
+        )
+        return call.producer_outcome(method_ctx)
 
     def to_term(self, *, owner: str):
         del owner
