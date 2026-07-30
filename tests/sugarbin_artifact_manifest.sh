@@ -88,8 +88,9 @@ chmod +x "$tmp/target/release/sugar-ir-smt-lib"
 build_dirs="$(find "$tmp/cache/.build" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 [[ "$build_dirs" == 1 ]] || { echo "binary misses used $build_dirs Cargo target families" >&2; exit 1; }
 python3 - "$tmp/target/release/sugar.sugarbin.json" <<'PY'
-import json, sys
-with open(sys.argv[1]) as f: data = json.load(f)
+import json, pathlib, stat, sys
+manifest = pathlib.Path(sys.argv[1])
+with manifest.open() as f: data = json.load(f)
 required = {"schema", "binary", "package", "sourceStamp", "buildIdentity", "platform",
             "targetTriple", "profile", "features", "rustc", "cargo", "sha256", "built", "executed"}
 assert set(data) == required
@@ -100,6 +101,10 @@ assert data["cargo"].startswith("cargo 1.96.0")
 assert "\nrelease: 1.96.0\n" in data["cargo"]
 assert "\nhost: x86_64-unknown-linux-gnu\n" in data["cargo"]
 assert data["built"] is True and data["executed"] is False
+assert stat.S_IMODE(manifest.stat().st_mode) == 0o644, (
+    "an immutable manifest is shared across runner identities and must be "
+    f"peer-readable, got {stat.S_IMODE(manifest.stat().st_mode):04o}"
+)
 PY
 
 # A valid manifest is a cache hit, but cache hits skip compilation only.
@@ -123,7 +128,7 @@ grep -Fq 'artifact checksum mismatch' "$tmp/corrupt.err"
 
 # Separate shelf identity directories are coalesced into one truthful run PATH.
 python3 - "$tmp/target/release" "$tmp/cache" <<'PY'
-import json, pathlib, shutil, sys
+import json, os, pathlib, shutil, sys
 target, cache = map(pathlib.Path, sys.argv[1:])
 for binary in ("sugar", "sugar-ir-smt-lib"):
     manifest = target / f"{binary}.sugarbin.json"
@@ -133,9 +138,30 @@ for binary in ("sugar", "sugar-ir-smt-lib"):
     cell.mkdir(parents=True)
     shutil.copy2(target / binary, cell / binary)
     shutil.copy2(manifest, cell / f"{binary}.sugarbin.json")
+    os.chmod(cell / f"{binary}.sugarbin.json", 0o600)
     (target / binary).unlink()
     manifest.unlink()
 PY
+# A private manifest may be readable by its creating identity (and by root),
+# but it is not a valid resident of the host-shared cache. The broker must
+# refuse the lying face by mode before a privileged caller can bless it as a
+# cache hit that the next runner identity cannot read.
+set +e
+private_cache_refusal="$(
+  SUGAR_BINARY_ALLOW_BUILD=0 "$repo/bin/sugarbin" --bin sugar 2>&1 >/dev/null
+)"
+private_cache_status=$?
+set -e
+[[ "$private_cache_status" != 0 ]] || {
+  echo 'a private shared-cache manifest was accepted by its creating identity' >&2
+  exit 1
+}
+grep -Fq 'crime=private-shared-cache-cell' <<<"$private_cache_refusal" || {
+  echo 'a private shared-cache manifest did not refuse by name' >&2
+  printf '%s\n' "$private_cache_refusal" >&2
+  exit 1
+}
+find "$tmp/cache" -type f -name '*.sugarbin.json' -exec chmod 0644 {} +
 cat >"$tmp/bin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 1

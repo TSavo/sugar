@@ -5,7 +5,13 @@ repo="${1:?usage: sugarbin_python_demand_table_fixture.sh REPO_ROOT}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-mkdir -p "$tmp/corpus/pkg" "$tmp/seed-shelf" "$tmp/partial-shelf" "$tmp/race-shelf"
+mkdir -p \
+  "$tmp/corpus/pkg" \
+  "$tmp/seed-shelf" \
+  "$tmp/private-shelf" \
+  "$tmp/blocked-shelf" \
+  "$tmp/partial-shelf" \
+  "$tmp/race-shelf"
 printf 'alpha = 1\n' >"$tmp/corpus/pkg/a.py"
 printf 'beta = 2\n' >"$tmp/corpus/pkg/b.py"
 printf '{"rows":["publisher-a"]}\n' >"$tmp/table-a.json"
@@ -85,6 +91,98 @@ grep -Fq 'required=cpython-3.12.13 requested=cpython-3.14.4' "$tmp/wrong-runtime
 # its compressed payload in a separate shelf. Pull must refuse that incomplete
 # cell without materializing a placeholder into the destination.
 publish "$tmp/seed-shelf" "$tmp/table-a.json"
+
+# Truthful shared-permission face. The publisher and consumer may be root,
+# uid 1001 in a runner container, or uid 1000 over SSH. Structural directories
+# therefore remain writable by the next identity, while immutable cell bytes
+# are world-readable and never need to be rewritten.
+python3 - "$tmp/seed-shelf" <<'PY'
+import pathlib
+import stat
+import sys
+
+shelf = pathlib.Path(sys.argv[1]).resolve()
+metadata = list(shelf.rglob("*.metadata.json"))
+assert len(metadata) == 1, metadata
+cell = metadata[0].parent
+stamp_parent = cell.parent
+
+current = shelf
+while True:
+    mode = stat.S_IMODE(current.stat().st_mode)
+    assert mode == 0o777, (
+        f"shared shelf structure must be writable by the next identity: "
+        f"{current} mode={mode:04o}"
+    )
+    if current == stamp_parent:
+        break
+    relative = stamp_parent.relative_to(current)
+    current = current / relative.parts[0]
+
+incoming = stamp_parent / ".incoming"
+assert stat.S_IMODE(incoming.stat().st_mode) == 0o777
+assert stat.S_IMODE(cell.stat().st_mode) == 0o755
+for artifact in cell.iterdir():
+    assert artifact.is_file(), artifact
+    mode = stat.S_IMODE(artifact.stat().st_mode)
+    assert mode == 0o644, f"immutable shelf byte is not peer-readable: {artifact} mode={mode:04o}"
+PY
+
+# Lying shared-permission face. A privileged creator can read a private cell,
+# but accepting it would manufacture a warm-shelf hit that uid 1001 cannot
+# reproduce. The broker must reject the resident by its shared mode contract.
+cp -R "$tmp/seed-shelf/." "$tmp/private-shelf/"
+private_cell="$(
+  find "$tmp/private-shelf" -type f -name '*.metadata.json' -exec dirname {} \;
+)"
+chmod 0700 "$private_cell"
+find "$private_cell" -type f -exec chmod 0600 {} +
+set +e
+pull "$tmp/private-shelf" "$tmp/private-pull.json" 2>"$tmp/private.err"
+private_status=$?
+set -e
+[[ "$private_status" != 0 ]] || {
+  echo 'a private filesystem-shelf cell was accepted by its creating identity' >&2
+  exit 1
+}
+grep -Fq 'crime=private-filesystem-shelf-cell' "$tmp/private.err" || {
+  echo 'a private filesystem-shelf cell did not refuse by name' >&2
+  cat "$tmp/private.err" >&2
+  exit 1
+}
+[[ ! -e "$tmp/private-pull.json" ]] || {
+  echo 'a private filesystem-shelf cell materialized output' >&2
+  exit 1
+}
+
+# Staging refusal face. In bash, errexit is disabled inside a function invoked
+# by an `if`/`||` caller; an unchecked failed mktemp therefore assigns tmp=""
+# and turns "$tmp/$name.gz" into a write under "/". Pin the real blocked
+# staging shape and require refusal before any derived root path is attempted.
+seed_incoming="$(find "$tmp/seed-shelf" -type d -name .incoming -print -quit)"
+relative_incoming="${seed_incoming#"$tmp/seed-shelf/"}"
+blocked_incoming="$tmp/blocked-shelf/$relative_incoming"
+mkdir -p "$(dirname "$blocked_incoming")"
+: >"$blocked_incoming"
+set +e
+publish "$tmp/blocked-shelf" "$tmp/table-a.json" 2>"$tmp/blocked.err"
+blocked_status=$?
+set -e
+[[ "$blocked_status" != 0 ]] || {
+  echo 'an uncreatable filesystem-shelf staging directory reported success' >&2
+  exit 1
+}
+grep -Fq 'crime=uncreatable-filesystem-shelf-staging' "$tmp/blocked.err" || {
+  echo 'an uncreatable filesystem-shelf staging directory did not refuse by name' >&2
+  cat "$tmp/blocked.err" >&2
+  exit 1
+}
+if grep -Fq '/python-demand-table.gz' "$tmp/blocked.err"; then
+  echo 'failed shelf staging fell through to a derived write under /' >&2
+  cat "$tmp/blocked.err" >&2
+  exit 1
+fi
+
 cp -R "$tmp/seed-shelf/." "$tmp/partial-shelf/"
 payload_count="$(find "$tmp/partial-shelf" -type f -name '*.gz' | wc -l | tr -d ' ')"
 [[ "$payload_count" == 1 ]] || {
