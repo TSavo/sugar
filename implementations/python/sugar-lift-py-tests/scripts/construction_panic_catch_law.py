@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """R_construction_panic_catches_outside_audit — permanent floor.
 
-``ConstructionPanic`` is a sanctioned typed construction gap. Two membranes
+``ConstructionPanic`` is a sanctioned typed construction gap. Five membranes
 may catch it without pure re-raise:
 
-1. **Audit enumeration** — ``audit_only/collect_construction_gaps.py`` holds
-   the panic to emit a loud red ``AuditOnlyGap`` row.
+1. **Audit enumeration** — ``audit_only/collect_construction_gaps.py``,
+   ``scripts/desugar_repro.py``, ``scripts/exit_set_arm_census.py``, and
+   ``scripts/stablezero_classify.py`` hold the panic only to emit their named
+   loud-red gap/residual rows.
 2. **Production typed-gap classification** — ``scripts/_production_lift_child.py``
    marks the file ``typed-gap`` for the zero-tolerance floors so kit-domain
    construction panics are not misclassified as bare Python exceptions.
@@ -49,6 +51,9 @@ class PanicCatchOffender(NamedTuple):
 _SANCTIONED_CATCH_MEMBRANES = frozenset(
     {
         "audit_only/collect_construction_gaps.py",
+        "desugar_repro.py",
+        "exit_set_arm_census.py",
+        "stablezero_classify.py",
         "scripts/_production_lift_child.py",
         "_production_lift_child.py",
     }
@@ -257,9 +262,9 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
                     kind="construction-panic-catch-outside-membrane",
                     note=(
                         "except ConstructionPanic outside sanctioned membranes "
-                        "must not continue; only audit enumeration "
-                        "(collect_construction_gaps) or production typed-gap "
-                        "classification (_production_lift_child) may hold it"
+                        "must not continue; only the named per-file audit "
+                        "enumerators or production typed-gap classification "
+                        "(_production_lift_child) may hold it"
                     ),
                 )
             )

@@ -81,6 +81,51 @@ def audit():
     ]
 
 
+def test_scanner_allows_only_named_zero_tolerance_audit_membranes(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "src" / "sugar_lift_py_tests"
+    package.mkdir(parents=True)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    membrane = """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def audit():
+    try:
+        raise ConstructionPanic(None)
+    except ConstructionPanic as panic:
+        return {"status": "ConstructionPanic", "testimony": str(panic)}
+"""
+    for name in (
+        "desugar_repro.py",
+        "exit_set_arm_census.py",
+        "stablezero_classify.py",
+    ):
+        (scripts / name).write_text(membrane, encoding="utf-8")
+    (scripts / "desugar_repro_copy.py").write_text(
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def audit():
+    try:
+        raise ConstructionPanic(None)
+    except ConstructionPanic:
+        return None
+""",
+        encoding="utf-8",
+    )
+
+    offenders = _SCANNER.scan_repository(tmp_path)
+
+    assert [(row.path, row.kind) for row in offenders] == [
+        (
+            "scripts/desugar_repro_copy.py",
+            "construction-panic-catch-outside-membrane",
+        )
+    ]
+
+
 def test_current_repository_construction_panic_catch_law() -> None:
     """R_construction_panic_catches_outside_audit > 0 ⇒ red until production soft catches die."""
     offenders = _SCANNER.scan_repository(_KIT)

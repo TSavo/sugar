@@ -29,6 +29,9 @@ from __future__ import annotations
 import contextlib
 import inspect
 
+import pytest
+
+import sugar_lift_py_tests.generator_entry_refusal as generator_entry_refusal
 from sugar_lift_py_tests.generator_entry_refusal import (
     observed_entry_refusal,
 )
@@ -74,6 +77,39 @@ def test_the_observation_records_the_runtime_it_was_read_from() -> None:
 def test_the_observation_is_minted_once() -> None:
     """It is a property of the interpreter, not of a call site."""
     assert observed_entry_refusal() is observed_entry_refusal()
+
+
+def test_construction_panic_cannot_be_recorded_as_vendor_refusal(monkeypatch) -> None:
+    """LYING TWIN: a kit gap is not testimony about CPython's conversion."""
+    from sugar_lift_py_tests.gap.panic import (
+        ConstructionPanic,
+        construction_panic_gap,
+    )
+
+    @contextlib.contextmanager
+    def panic_instead_of_vendor_refusal():
+        construction_panic_gap(
+            owner="generator-entry-test",
+            blame="generator.py:1:0",
+            observed="missing generator construction",
+            requested="vendor entry refusal",
+            fix="repair generator construction",
+        )
+        yield  # pragma: no cover - construction panic is process-terminal
+
+    observed_entry_refusal.cache_clear()
+    monkeypatch.setattr(
+        generator_entry_refusal,
+        "_a_generator_that_never_yields",
+        panic_instead_of_vendor_refusal,
+    )
+    try:
+        with pytest.raises(ConstructionPanic) as caught:
+            observed_entry_refusal()
+    finally:
+        observed_entry_refusal.cache_clear()
+
+    assert caught.value.info.owner == "generator-entry-test"
 
 
 # -- lying twin: any other spelling must flip --------------------------------

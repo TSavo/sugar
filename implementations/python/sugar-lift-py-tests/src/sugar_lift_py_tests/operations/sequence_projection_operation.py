@@ -224,7 +224,7 @@ class SequenceProjectionOperation:
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-        from sugar_lift_py_tests.gap.panic import ConstructionPanic, construction_panic
+        from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
         relation = "not enough" if members < self.arity else "too many"
@@ -235,20 +235,16 @@ class SequenceProjectionOperation:
         # Only fragments (or objects answering the RuntimeEffectSite protocol)
         # may mint a ground exit.  Strings and synthetic loci stay the gap.
         if hasattr(self.blame, "filename") and hasattr(self.blame, "line"):
-            try:
-                projected = ground_exceptional_exit(
-                    exception_name="ValueError",
-                    site=self.blame,
-                    owner=f"{self.owner}.arity_mismatch",
-                )
-            except ConstructionPanic:
-                projected = None
-            else:
-                if isinstance(projected, Complete) and isinstance(
-                    projected.value, RaiseValue
-                ):
-                    return Incomplete(projected.value.effect)
-                return projected
+            projected = ground_exceptional_exit(
+                exception_name="ValueError",
+                site=self.blame,
+                owner=f"{self.owner}.arity_mismatch",
+            )
+            if isinstance(projected, Complete) and isinstance(
+                projected.value, RaiseValue
+            ):
+                return Incomplete(projected.value.effect)
+            return projected
         construction_panic(
             ConstructionGap(
                 owner=self.owner,

@@ -668,3 +668,29 @@ def test_positional_roster_has_no_string_keys() -> None:
     assert not hasattr(out.value, "bindings")
     assert out.value.occurrence is site
     assert out.value.demand_cid == op.demand_cid()
+
+
+def test_positional_ground_exit_panic_propagates_without_reconstruction() -> None:
+    """LYING TWIN: a source-looking half-locus remains the ground-door gap."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.operations.positional_unpack_operation import (
+        PositionalUnpackOperation,
+    )
+
+    class HalfFragment:
+        filename = "pkg/mod.py"
+        line = 1
+
+    operation = PositionalUnpackOperation(
+        fixed_prefix=2,
+        fixed_suffix=0,
+        has_star=False,
+        owner="positional-half-fragment",
+        blame=HalfFragment(),
+    )
+
+    with pytest.raises(ConstructionPanic) as raised:
+        operation.submit(ListValue((TermValue(1),)), None)
+
+    assert raised.value.info.owner == "positional-half-fragment.arity_mismatch"
+    assert "locus stating no source fragment" in raised.value.info.observed

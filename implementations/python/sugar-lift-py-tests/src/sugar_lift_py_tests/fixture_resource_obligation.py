@@ -87,7 +87,6 @@ class FixtureSuppliedResourceObligationV1:
 class FixtureResourceOutcome(str, Enum):
     AUTHENTICATED_EXCEPTIONAL_EXIT = "authenticated-exceptional-exit"
     NAMED_REFUSAL = "named-refusal"
-    CONSTRUCTION_PANIC = "construction-panic"
 
 
 @dataclass(frozen=True)
@@ -102,16 +101,15 @@ def classify_fixture_resource_outcome(
     binding: BindingEntryV1,
     evaluator: Callable[[], object],
 ) -> FixtureResourceAttribution:
-    """Classify one formal-bound resource into the closed three-way result.
+    """Classify one formal-bound resource into the closed two-way result.
 
     Discharging the binding is necessary but not sufficient.  Satisfaction
     requires a positive authenticated exceptional edge from the evaluated
     body; ordinary or empty completion is a named refusal, never success by
-    absence.
+    absence. ConstructionPanic is not a result face and propagates unchanged.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.no_call_body_attribution import (
-        _exceptional_exit_present,
+        _exceptional_exit_effects,
     )
 
     try:
@@ -122,15 +120,8 @@ def classify_fixture_resource_outcome(
             FixtureResourceOutcome.NAMED_REFUSAL,
             refusal.detail,
         )
-    try:
-        evaluated = evaluator()
-    except ConstructionPanic as panic:
-        return FixtureResourceAttribution(
-            obligation.formal_coordinate_cid,
-            FixtureResourceOutcome.CONSTRUCTION_PANIC,
-            panic.info.owner,
-        )
-    if _exceptional_exit_present(evaluated):
+    evaluated = evaluator()
+    if _exceptional_exit_effects(evaluated):
         return FixtureResourceAttribution(
             obligation.formal_coordinate_cid,
             FixtureResourceOutcome.AUTHENTICATED_EXCEPTIONAL_EXIT,

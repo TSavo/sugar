@@ -190,6 +190,49 @@ def test_reconcile_check_can_actually_fail() -> None:
     assert row.reconciles, row.reconcile_detail
 
 
+def test_verdict_probe_construction_panic_is_a_named_non_reconciling_row(
+    monkeypatch,
+) -> None:
+    """LYING TWIN: the audit may hold the panic only as an explicit red row."""
+    import sugar_lift_py_tests.outcome.exit_disposition as disposition_module
+
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    real_effect = disposition_module.exit_disposition_effect
+    calls = 0
+
+    def panic_on_audit_probe(disposition, incoming):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            construction_panic_gap(
+                owner="exit-arm-census.verdict-probe",
+                blame="instrument",
+                observed="probe reached missing construction",
+                requested="verdict testimony",
+                fix="repair the verdict producer",
+            )
+        return real_effect(disposition, incoming)
+
+    monkeypatch.setattr(
+        disposition_module,
+        "exit_disposition_effect",
+        panic_on_audit_probe,
+    )
+    body = _completed_only(1, "body")
+    exit_es = _completed_only(1, "exit")
+
+    with arm_census() as rows:
+        result = body.and_exit(exit_es, disposition=NeverSuppresses())
+
+    assert len(result.exits) == 1
+    (row,) = _rows_for(rows, "and_exit")
+    assert row.verdict_probe_error is not None
+    assert row.verdict_probe_error.startswith("ConstructionPanic:")
+    assert row.reconciles is False
+    assert totals(rows)["and_exit"]["non_reconciling"] == 1
+
+
 def test_instrument_restores_every_patched_method() -> None:
     originals = {
         name: getattr(ExitSet, name)
