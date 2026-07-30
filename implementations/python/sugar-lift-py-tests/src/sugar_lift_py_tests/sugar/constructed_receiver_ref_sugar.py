@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import ObjectValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
 @dataclass(frozen=True)
-class ConstructedReceiverRefSugar(Sugar):
+class ConstructedReceiverRefSugar(ConstructedTermSugar):
     class_name: str
     binding_coordinate_cid: str
     site: object = field(compare=False)
@@ -21,6 +21,19 @@ class ConstructedReceiverRefSugar(Sugar):
             sugar_name=cls.__name__,
             floor_name="ObjectValue",
             reason="a class call constructs its receiver from the authenticated class definition",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:constructed-receiver-ref",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.class_name),
+                str_const(self.binding_coordinate_cid),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

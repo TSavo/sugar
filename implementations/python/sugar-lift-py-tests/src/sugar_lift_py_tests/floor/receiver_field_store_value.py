@@ -33,9 +33,15 @@ class ReceiverFieldStoreValue(FloorValue):
             ctx = ReduceContext.root(owner="ReceiverFieldStoreValue")
         updated = self.receiver.with_field_store(self.attr, self.value)
         temporal = ctx.temporal
+        identity = self.receiver.identity
         matched = False
         for binding in ctx.temporal.bindings:
-            if binding.value is self.receiver:
+            candidate = binding.value
+            if (
+                isinstance(candidate, ObjectValue)
+                and type(candidate) is type(self.receiver)
+                and candidate.identity == identity
+            ):
                 temporal = temporal.bind_value(
                     binding.name, updated, blame=binding.blame
                 )
