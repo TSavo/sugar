@@ -49,13 +49,15 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
             lambda receiver: self.key.desugar(ctx).and_then(
                 lambda key: self.default.desugar(ctx).and_then(
                     lambda default: self.appended.desugar(ctx).and_then(
-                        lambda appended: self._apply(receiver, key, default, appended)
+                        lambda appended: self._apply(
+                            receiver, key, default, appended, ctx
+                        )
                     )
                 )
             )
         )
 
-    def _apply(self, receiver, key, default, appended):
+    def _apply(self, receiver, key, default, appended, ctx):
         from sugar_lift_py_tests.floor.dict_value import DictValue
         from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
         from sugar_lift_py_tests.floor.string_value import StringValue
@@ -92,6 +94,9 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
         appended_outcome = selected.append_with(appended, self.site)
 
         def with_appended(appended_value):
+            setitem_with_context = getattr(updated, "setitem_with_context", None)
+            if setitem_with_context is not None:
+                return setitem_with_context(key, appended_value, self.site, ctx)
             return updated.setitem(key, appended_value, self.site)
 
         return appended_outcome.and_then(with_appended)

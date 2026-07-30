@@ -51,13 +51,15 @@ def _source_method_outcome(receiver, context, key="member", value=7):
     assert isinstance(selected.value, CallSiteValue), (
         "a source __setitem__ override must be selected before builtin dict mutation"
     )
-    return selected.value.producer_outcome(context)
+    return receiver.setitem_with_context(
+        StringValue(key), TermValue(value), "setitem-site", context
+    )
 
 
 def _mutation_products(outcome):
     assert isinstance(outcome, Complete)
     result = getattr(outcome.value, "result", None)
-    receiver = getattr(outcome.value, "receiver", None)
+    receiver = getattr(outcome.value, "receiver_after", None)
     assert isinstance(result, NoneValue)
     assert isinstance(receiver, MappingObjectValue)
     return result, receiver
@@ -90,7 +92,8 @@ def test_source_setitem_runs_then_super_returns_none_with_updated_receiver() -> 
     )
 
     outcome = _source_method_outcome(receiver, context)
-    _result, updated = _mutation_products(outcome)
+    assert isinstance(outcome, Complete)
+    updated = outcome.value
 
     assert updated.identity == receiver.identity
     assert updated.entries == ((StringValue("member"), TermValue(7)),)
@@ -165,4 +168,3 @@ def test_type_new_consumes_the_post_setitem_namespace_not_its_pre_state() -> Non
         (StringValue("_member_map_"), TermValue(7)),
     )
     assert class_dict.value.entries != namespace.entries
-
