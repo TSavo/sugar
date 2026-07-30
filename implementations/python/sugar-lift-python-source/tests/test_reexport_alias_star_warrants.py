@@ -829,6 +829,35 @@ def test_module_prefix_constructs_one_subscript_delete_statement(
     assert isinstance(exits.exits[0], Completed)
 
 
+def test_module_prefix_chained_names_share_one_rhs_value(tmp_path: Path) -> None:
+    """``left = right = RHS`` evaluates once and binds one resulting Floor."""
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = "left = right = None\nresult = left\n"
+    dist = _dist(
+        tmp_path,
+        name="module-chained-assignment-pkg",
+        files={"module_chained_assignment_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_chained_assignment_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    left = completed.value.context.temporal.value_if_bound("left")
+    right = completed.value.context.temporal.value_if_bound("right")
+    assert type(left) is NoneValue
+    assert right is left
+
+
 def test_stdlib_makecodes_return_is_rebound_before_exact_slice_delete() -> None:
     """The real ``re._constants`` prefix deletes from its returned ListValue."""
     from sugar_lift_py_tests.floor import CallSiteValue, ListValue
@@ -1187,8 +1216,8 @@ def test_empty_prefix_licenses_first_statement_definition(tmp_path: Path) -> Non
     assert result.definition.name == "build"
 
 
-def test_prefix_multi_face_if_refuses_as_named_dynamic_export(tmp_path: Path) -> None:
-    """Unresolved multi-face prefix stays a named gap — never AST-admitted."""
+def test_prefix_equal_multi_face_if_preserves_completed_fallthrough(tmp_path: Path) -> None:
+    """Two unresolved faces with the same state still prove fallthrough."""
     dist = _dist(
         tmp_path,
         name="face-pkg",
@@ -1209,6 +1238,31 @@ def test_prefix_multi_face_if_refuses_as_named_dynamic_export(tmp_path: Path) ->
         _call_demand(tmp_path, "import face_pkg\nface_pkg.build(1)\n"),
         graph=graph,
     )
+    assert isinstance(result, ResolvedPythonObjectV1)
+
+
+def test_prefix_branch_owned_export_stays_named_dynamic(tmp_path: Path) -> None:
+    """A binding owned by only one unresolved face is never promoted."""
+    dist = _dist(
+        tmp_path,
+        name="branch-face-pkg",
+        files={
+            "branch_face_pkg/__init__.py": (
+                "flag = unknown\n"
+                "if flag:\n"
+                "    from branch_face_pkg.implementation import build\n"
+                "else:\n"
+                "    pass\n"
+            ),
+            "branch_face_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import branch_face_pkg\nbranch_face_pkg.build(1)\n"),
+        graph=graph,
+    )
+
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "dynamic-export"
 
