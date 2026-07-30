@@ -649,6 +649,31 @@ class StringValue(GuardStableValue):
             fix=f"add StringValue method floor for `{operation.name}`",
         )
 
+    def call_named_method(
+        self, name, arguments, *, owner, blame, ctx=None, keywords=()
+    ):
+        """Apply an already-authenticated native ``str`` method floor.
+
+        MethodCallSugar owns the source occurrence and this exact StringValue
+        owns native string semantics.  A method name alone grants nothing:
+        unsupported methods and non-ground argument types return ``None`` so
+        the ordinary call coordinate remains loud.
+        """
+        del ctx
+        if keywords:
+            return None
+        from types import SimpleNamespace
+
+        return _fold_string_method(
+            self,
+            SimpleNamespace(
+                name=name,
+                arguments=tuple(arguments),
+                owner=owner,
+                blame=blame,
+            ),
+        )
+
     def contains_with(self, operation, ctx):
         return operation.contains_string(self, ctx)
 
@@ -720,6 +745,29 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
             # Opaque / symbolic chars: mint call:strip(self, chars), never invent.
             return opaque_coordinate()
         return None
+
+    if name in {"startswith", "endswith"} and 1 <= len(args) <= 3:
+        prefix = args[0]
+        if not isinstance(prefix, StringValue):
+            return None
+        bounds = []
+        for value in args[1:]:
+            if not isinstance(value, TermValue) or type(value.value) is not int:
+                return None
+            bounds.append(value.value)
+        result = getattr(receiver.value, name)(prefix.value, *bounds)
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=operation.blame)
+            if result
+            else FalseBoolLiteralSugar(site=operation.blame)
+        )
 
     if name == "join" and len(args) == 1:
         iterable = args[0]

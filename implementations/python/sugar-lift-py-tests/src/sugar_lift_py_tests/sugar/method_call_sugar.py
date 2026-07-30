@@ -176,6 +176,18 @@ class MethodCallSugar(ConstructedTermSugar):
                 keywords=kw_values,
                 required_frame=self.source_call_frame,
             )
+        call_named_method = getattr(receiver, "call_named_method", None)
+        if callable(call_named_method):
+            native = call_named_method(
+                self.name,
+                positional,
+                owner="MethodCallSugar",
+                blame=self.site,
+                ctx=ctx,
+                keywords=kw_values,
+            )
+            if native is not None:
+                return native
         if self.source_call_frame is not None:
             from sugar_source_tree.panic import SugarNotWritten
 
