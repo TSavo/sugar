@@ -46,7 +46,11 @@ def _ground_atomic_truth(formula):
         _ConstStr,
     )
 
-    if not isinstance(formula, _Atomic) or formula.name != "=" or len(formula.args) != 2:
+    if (
+        not isinstance(formula, _Atomic)
+        or formula.name != "="
+        or len(formula.args) != 2
+    ):
         return None
     left, right = formula.args
     const_types = (_ConstInt, _ConstReal, _ConstBool, _ConstStr)
@@ -144,7 +148,6 @@ class IfSugar(Sugar):
             branch_result_guard,
         )
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-        from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import partition as _partition
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -205,7 +208,14 @@ class IfSugar(Sugar):
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a
         # halt on one face coexists with the complementary Completed exit.
-        not_formula = not_(formula)
+        # Preserve the canonical complementary face.  In particular, the
+        # selected else arm of a ground-false condition is guarded by true,
+        # not by the merely equivalent ``not(not(true))`` spelling.  Return
+        # projection is testimony-sensitive and must not mistake that spelling
+        # artifact for ambiguous control.
+        from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+        not_formula = complement_guard(formula)
         # This If OWNS the split, so it mints the partition and stamps each
         # branch with its face. Downstream factoring reads the exclusion off
         # the arms as testimony instead of re-proving it from guard spelling,

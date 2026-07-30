@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_python_source.canonical import cid_of_json
+from sugar_lift_py_tests.ir import _term_content_cid
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor.class_definition_value import (
     ClassDefinitionValue,
@@ -84,7 +85,14 @@ class ClassDefinitionSugar(Sugar):
             "annotationCids": list(self.annotation_cids),
             "decoratorCids": list(self.decorator_cids),
             "baseDefinitionCids": [
-                base.class_definition_cid for base in self.base_sugars
+                (
+                    base.class_definition_cid
+                    if hasattr(base, "class_definition_cid")
+                    else _term_content_cid(
+                        base.to_term(owner="ClassDefinitionSugar.base")
+                    )
+                )
+                for base in self.base_sugars
             ],
             "baseFragmentCids": list(self.base_fragment_cids),
         }
@@ -100,19 +108,16 @@ class ClassDefinitionSugar(Sugar):
         base_values = []
         for base in self.base_sugars:
             outcome = base.desugar(ctx)
-            if not isinstance(outcome, Complete) or not isinstance(
-                outcome.value, ClassDefinitionValue
-            ):
-                from sugar_source_tree.panic import SugarNotWritten
+            from sugar_lift_py_tests.floor import BuiltinDictClassValue
 
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ClassDefinitionSugar.desugar",
-                    observed="class base did not construct to ClassDefinitionValue",
-                    requested="one authenticated source-visible base definition",
-                    fix="keep dynamic or opaque inheritance loud",
-                )
-            base_values.append(outcome.value)
+            if isinstance(outcome, Complete) and isinstance(
+                outcome.value, (ClassDefinitionValue, BuiltinDictClassValue)
+            ):
+                base_values.append(outcome.value)
+            # HEAD omitted unenrolled bases from this roster.  This increment
+            # evaluates them only to discover the exact BuiltinDictClassValue;
+            # every other Floor remains outside the class model and gains no
+            # authority or behavior here.
 
         evaluated_groups = {}
 

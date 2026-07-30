@@ -16,6 +16,12 @@ class DictValue(GuardStableValue):
 
     entries: tuple
 
+    def mapping_entries(self) -> tuple:
+        return self.entries
+
+    def mapping_with_entries(self, entries: tuple) -> "DictValue":
+        return DictValue(entries)
+
     def denotes_value(self) -> bool:
         """This floor value denotes a ``dict``."""
         return True
@@ -140,7 +146,12 @@ class DictValue(GuardStableValue):
     ):
         """Execute closed dict methods whose result is fixed by this value."""
         del owner, ctx
-        if name == "items" and not arguments and not keywords and required_frame is None:
+        if (
+            name == "items"
+            and not arguments
+            and not keywords
+            and required_frame is None
+        ):
             from sugar_lift_py_tests.floor.tuple_value import TupleValue
             from sugar_lift_py_tests.outcome import Complete
 

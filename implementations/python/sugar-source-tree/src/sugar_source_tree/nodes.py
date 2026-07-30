@@ -278,9 +278,7 @@ def _mint_target_pattern_receipt(
         "leaf_node_shape_cids": tuple(
             node_construction_shape_cid(leaf) for leaf in leaves
         ),
-        "binding_coordinate_cids": tuple(
-            coordinate.cid for coordinate in coordinates
-        ),
+        "binding_coordinate_cids": tuple(coordinate.cid for coordinate in coordinates),
     }
     value = object.__new__(TargetPatternReceiptV1)
     for name, field_value in values.items():
@@ -316,7 +314,6 @@ class TargetPatternV1:
         default=None, init=False, compare=False, repr=False
     )
 
-
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(leaf.id for leaf in self.leaves)
@@ -348,7 +345,8 @@ class TargetPatternV1:
             ):
                 return None
             starred = [
-                index for index, child in enumerate(target.elts)
+                index
+                for index, child in enumerate(target.elts)
                 if isinstance(child, Starred)
             ]
             if len(starred) > 1:
@@ -583,7 +581,9 @@ class SourceUnit:
         if (
             not isinstance(span, tuple)
             or len(span) != 4
-            or not all(isinstance(part, int) and not isinstance(part, bool) for part in span)
+            or not all(
+                isinstance(part, int) and not isinstance(part, bool) for part in span
+            )
         ):
             raise BackendDefect(
                 blame=span,
@@ -751,11 +751,7 @@ class SourceUnit:
             owned = tuple(
                 pattern
                 for target, prefix in targets
-                if (
-                    pattern := self._construct_target_pattern(
-                        consumer, target, prefix
-                    )
-                )
+                if (pattern := self._construct_target_pattern(consumer, target, prefix))
                 is not None
             )
             if owned:
@@ -779,8 +775,7 @@ class SourceUnit:
             return SourceUnit._is_binding_target_pattern(target.value)
         if isinstance(target, (Tuple_, List)):
             return all(
-                SourceUnit._is_binding_target_pattern(child)
-                for child in target.elts
+                SourceUnit._is_binding_target_pattern(child) for child in target.elts
             )
         return False
 
@@ -898,9 +893,7 @@ class SourceUnit:
             )
         from .binding_provenance import BindingCoordinateV1
 
-        for observed, expected in zip(
-            coordinates, pattern.coordinates, strict=True
-        ):
+        for observed, expected in zip(coordinates, pattern.coordinates, strict=True):
             if observed is not expected and any(
                 observed is owned for owned in pattern.coordinates
             ):
@@ -1065,11 +1058,20 @@ class SourceUnit:
                 candidate
                 for candidate in self.function_nodes
                 if candidate.name == call.func.id
-                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                and (
+                    candidate.line_col_span().start_line,
+                    candidate.line_col_span().start_col,
+                )
                 >= (owner_span.start_line, owner_span.start_col)
-                and (candidate.line_col_span().end_line, candidate.line_col_span().end_col)
+                and (
+                    candidate.line_col_span().end_line,
+                    candidate.line_col_span().end_col,
+                )
                 <= (owner_span.end_line, owner_span.end_col)
-                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                and (
+                    candidate.line_col_span().start_line,
+                    candidate.line_col_span().start_col,
+                )
                 < (span.start_line, span.start_col)
             ]
             if nested:
@@ -1248,9 +1250,7 @@ class SourceUnit:
             return {
                 node.id
                 for target in targets
-                for node in (
-                    (target,) if isinstance(target, Name) else target.walk()
-                )
+                for node in ((target,) if isinstance(target, Name) else target.walk())
                 if isinstance(node, Name)
             }
         if statement.kind in ("Import", "ImportFrom"):
@@ -3108,9 +3108,7 @@ class FunctionDef(Statement):
         filtered_body = tuple(
             statement
             for statement in self.body
-            if all(
-                statement is not row.definition_occurrence for row in lexical_rows
-            )
+            if all(statement is not row.definition_occurrence for row in lexical_rows)
         )
         substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
@@ -3162,12 +3160,9 @@ class FunctionDef(Statement):
 
     def lacks_captured_binding_testimony(self) -> bool:
         """Whether CPython classifies a closure binding we cannot yet seat."""
-        table = self.unit.function_symtable(
-            self.name, self.line_col_span().start_line
-        )
+        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         return any(
-            symbol.is_free() or symbol.is_nonlocal()
-            for symbol in table.get_symbols()
+            symbol.is_free() or symbol.is_nonlocal() for symbol in table.get_symbols()
         )
 
     def _source_visible_body(self, scope):
@@ -3856,7 +3851,6 @@ class FunctionDef(Statement):
             FunctionUniverseSugar,
         )
 
-
         # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
         # function while it substitutes+constructs, so the engine log's
         # heartbeat testifies exactly which function a slow lift is inside --
@@ -4021,7 +4015,10 @@ class ClassDef(Statement):
     )
 
     def __post_init__(self):
-        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+        if (
+            not isinstance(self.binding_target, Name)
+            or self.binding_target.id != self.name
+        ):
             from sugar_source_tree.panic import BackendDefect
 
             raise BackendDefect(
@@ -4157,7 +4154,10 @@ class ClassDef(Statement):
         Instantiation/receiver fields remain a typed coordinate gap in the
         resulting floor value.  No class body is interpreted beside this door.
         """
-        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+        if (
+            not isinstance(self.binding_target, Name)
+            or self.binding_target.id != self.name
+        ):
             from sugar_source_tree.panic import BackendDefect
 
             raise BackendDefect(
@@ -4330,9 +4330,13 @@ class ClassDef(Statement):
                 if context is not None
                 else None
             )
-            base_sugars = (
-                () if table is None else table.get(self.fragment.seal().cid, ())
-            )
+            enrolled = () if table is None else table.get(self.fragment.seal().cid, ())
+            # A source-base table carries already-authenticated local class
+            # definitions.  Otherwise retain each ordinary base expression as
+            # Sugar so desugaring evaluates it through the temporal floor.
+            # Dropping an unenrolled builtin base here erased ``dict`` from
+            # ``class _EnumDict(dict)`` and fabricated a plain-object receiver.
+            base_sugars = enrolled or tuple(base.sugar() for base in self.bases)
         return ClassDefinitionSugar(
             class_name=self.name,
             source_identity_cid=self.unit.source_cid,
@@ -4387,8 +4391,10 @@ class ClassDef(Statement):
             None,
         )
         new_shape = self._authenticated_new_constructor_shape()
-        constructor = initializer if initializer is not None else (
-            None if new_shape is None else new_shape[0]
+        constructor = (
+            initializer
+            if initializer is not None
+            else (None if new_shape is None else new_shape[0])
         )
         constructed_new_method = None
         new_definitions = tuple(
@@ -4907,6 +4913,14 @@ def _receiver_field_projection_binding(statement, target, scope):
         value=statement.value,
     )
     return {_RECEIVER_FIELD_PROJECTIONS: projections}
+
+
+def _has_authenticated_source_method(receiver, name: str) -> bool:
+    """Whether this exact constructed receiver carries a source override."""
+    if not isinstance(receiver, ObjectPlaceStateV1):
+        return False
+    value = receiver.constructed_value
+    return bool(getattr(value, "has_method", lambda _name: False)(name))
 
 
 class Assign(Statement):
@@ -6054,9 +6068,7 @@ class For(Statement):
             with reduction_span(sugar="For.symbolic", role="temporal", site=where):
                 bound = set(
                     self.unit.require_target_pattern(self, self.target).names
-                ) | For._stmts_bound_names(
-                    self.body
-                )
+                ) | For._stmts_bound_names(self.body)
                 bs = (
                     {k: v for k, v in scope.items() if k not in bound}
                     if bound
@@ -6511,9 +6523,7 @@ class If(Statement):
         authenticated_slot_id = getattr(
             self, "authenticated_branch_result_slot_id", None
         )
-        retained_slot = (
-            stored_slot_id is not None or authenticated_slot_id is not None
-        )
+        retained_slot = stored_slot_id is not None or authenticated_slot_id is not None
         if retained_slot and (
             stored_slot_id != expected_slot.slot_id
             or authenticated_slot_id != expected_slot.slot_id
@@ -7114,7 +7124,9 @@ class With(Statement):
         if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
 
-        published_generator_resource = self._published_generator_resource_testimony(item)
+        published_generator_resource = self._published_generator_resource_testimony(
+            item
+        )
         generator_manager = self._generator_manager_sugar(item)
         if generator_manager is not None and published_generator_resource is None:
             from sugar_lift_py_tests.sugar.generator_with_sugar import (
@@ -7193,9 +7205,7 @@ class With(Statement):
                         ManagerRefSugar,
                     )
 
-                    receiver = ManagerRefSugar(
-                        slot_id=manager_slot, site=self.fragment
-                    )
+                    receiver = ManagerRefSugar(slot_id=manager_slot, site=self.fragment)
                     enter_sugar = MethodCallSugar(
                         receiver=receiver,
                         name="__enter__",
@@ -8605,6 +8615,8 @@ class Expr(Statement):
             return None
         receiver_name = inner.func.value.id
         receiver = inner.func.value.substitute(scope)
+        if _has_authenticated_source_method(receiver, "setdefault"):
+            return None
         key = inner.args[0].substitute(scope)
         default = inner.args[1].substitute(scope)
         appended = outer.args[0].substitute(scope)
@@ -8664,7 +8676,12 @@ class DictSetDefaultAppendStatement(Statement):
             ExprStatementSugar,
         )
 
-        return ExprStatementSugar(self.value.sugar(), self.fragment)
+        # The shadow statement IS the mutation.  Re-running ``self.value``
+        # here would execute the original method-call spelling in parallel
+        # with the authenticated post-state and demand a second setdefault
+        # authority.  Its post-state sugar evaluates receiver/key/default/
+        # appended exactly once and owns the resulting receiver mutation.
+        return ExprStatementSugar(self.post_state.sugar(), self.fragment)
 
 
 class Pass(Statement):
@@ -9243,9 +9260,9 @@ class ListComp(Expression):
         target = gen.target
         results = []
         for element in elements:
-            bindings = self.unit.require_target_pattern(
-                self, target
-            ).bindings_for(element)
+            bindings = self.unit.require_target_pattern(self, target).bindings_for(
+                element
+            )
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -9506,9 +9523,9 @@ class SetComp(Expression):
         results = []
         seen = set()
         for element in elements:
-            bindings = self.unit.require_target_pattern(
-                self, gen.target
-            ).bindings_for(element)
+            bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
+                element
+            )
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -9599,9 +9616,9 @@ class DictComp(Expression):
         pairs = []
         key_indexes = {}
         for element in elements:
-            bindings = self.unit.require_target_pattern(
-                self, gen.target
-            ).bindings_for(element)
+            bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
+                element
+            )
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -9921,9 +9938,7 @@ class Call(Expression):
                 isinstance(producer_definition, (FunctionDef, AsyncFunctionDef))
                 and producer_definition.ref is definition_ref
             ):
-                retain = getattr(
-                    self.reporter, "retain_registered_node_from", None
-                )
+                retain = getattr(self.reporter, "retain_registered_node_from", None)
                 if retain is not None:
                     definition = retain(
                         producer_definition, producer_definition.reporter
@@ -10056,7 +10071,7 @@ class Call(Expression):
                 observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
                 requested="zero or one sealed lexical call row",
                 fix="repair lexical call enrollment before constructing the source frame",
-        )
+            )
         lexical_row = lexical_rows[0] if lexical_rows else None
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
@@ -10106,13 +10121,10 @@ class Call(Expression):
                     requested="closed source-call preconstruction result",
                     fix="emit one typed source-call ref or gap at the exact use site",
                 )
-            if (
-                lexical_row is None
-                and (
+            if lexical_row is None and (
                 source_call_frame is None
                 or source_call_frame.frame_cid
                 != source_call_resolution.source_call_frame_cid
-                )
             ):
                 from sugar_source_tree.panic import BackendDefect
 
@@ -10277,7 +10289,9 @@ class Call(Expression):
                         fix="repair lexical call enrollment before constructing the source frame",
                     )
             else:
-                function_definition = self.unit.source_function_definition_for_call(self)
+                function_definition = self.unit.source_function_definition_for_call(
+                    self
+                )
             if function_definition is not None:
                 formal_function_sugar = function_definition.sugar()
                 formal_coordinates = function_definition.formal_coordinates()
@@ -10287,7 +10301,10 @@ class Call(Expression):
                 source_call_frame = function_definition.source_visible_call_frame()
                 if lexical_row is not None:
                     if source_call_frame is not None:
-                        if source_call_frame.owner is not lexical_row.definition_occurrence:
+                        if (
+                            source_call_frame.owner
+                            is not lexical_row.definition_occurrence
+                        ):
                             from .panic import backend_defect
 
                             backend_defect(
@@ -10298,7 +10315,9 @@ class Call(Expression):
                                 fix="retain the seated frame or keep the call loud",
                             )
                     else:
-                        source_call_frame = function_definition.source_visible_call_frame()
+                        source_call_frame = (
+                            function_definition.source_visible_call_frame()
+                        )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None

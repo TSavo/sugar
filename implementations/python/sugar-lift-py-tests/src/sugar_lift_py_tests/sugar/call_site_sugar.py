@@ -48,13 +48,15 @@ class CallSiteSugar(ConstructedTermSugar):
     source_call_frame: Any = dataclass_field(default=None, compare=False)
     source_call_frame_table: Any = dataclass_field(default=None, compare=False)
     source_call_frame_coordinate: Any = dataclass_field(default=None, compare=False)
-    expected_source_call_frame_owner: Any = dataclass_field(
-        default=None, compare=False
-    )
+    expected_source_call_frame_owner: Any = dataclass_field(default=None, compare=False)
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
-    expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
-    native_operation_formal_coordinates: tuple = dataclass_field(default=(), compare=False)
+    expected_definition_ref: object | None = dataclass_field(
+        default=None, compare=False
+    )
+    native_operation_formal_coordinates: tuple = dataclass_field(
+        default=(), compare=False
+    )
     call_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
         default=None, compare=False
     )
@@ -64,9 +66,10 @@ class CallSiteSugar(ConstructedTermSugar):
             require_constructed_term_sugar(argument, owner="CallSiteSugar.args")
         for _name, argument in self.keywords:
             require_constructed_term_sugar(argument, owner="CallSiteSugar.keywords")
-        if self.call_occurrence is not None and type(
-            self.call_occurrence
-        ) is not SourceFragmentCoordinateV1:
+        if (
+            self.call_occurrence is not None
+            and type(self.call_occurrence) is not SourceFragmentCoordinateV1
+        ):
             raise TypeError(
                 "CallSiteSugar.call_occurrence must be SourceFragmentCoordinateV1"
             )
@@ -119,7 +122,15 @@ class CallSiteSugar(ConstructedTermSugar):
 
                 if not isinstance(
                     self.exception_type_coordinate,
-                    (_Ctor, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Var, _Lambda),
+                    (
+                        _Ctor,
+                        _ConstInt,
+                        _ConstStr,
+                        _ConstBool,
+                        _ConstReal,
+                        _Var,
+                        _Lambda,
+                    ),
                 ):
                     raise TypeError(
                         f"{owner} requires authenticated exception definition "
@@ -175,7 +186,10 @@ class CallSiteSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        if self.source_call_frame is not None and self.expected_definition_ref is not None:
+        if (
+            self.source_call_frame is not None
+            and self.expected_definition_ref is not None
+        ):
             from sugar_source_tree.panic import SugarNotWritten
             from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
 
@@ -183,8 +197,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 self.expected_definition_ref, (FunctionDef, AsyncFunctionDef)
             ):
                 owner_matches = (
-                    self.source_call_frame.owner.ref
-                    is self.expected_definition_ref.ref
+                    self.source_call_frame.owner.ref is self.expected_definition_ref.ref
                 )
             else:
                 owner_matches = (
@@ -198,25 +211,37 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="authenticated lexical definition owner",
                     fix="retain the seated frame or keep the call loud",
                 )
-            owner = self.source_call_frame.owner
-            table = self.source_call_frame.owner.unit.function_symtable(
-                owner.name, owner.line_col_span().start_line
-            )
-            free_names = tuple(
-                symbol.get_name()
-                for symbol in table.get_symbols()
-                if symbol.is_free() or symbol.is_nonlocal()
-            )
-            if free_names and not getattr(
-                self.source_call_frame, "captured_binding_coordinates", ()
+            # Closure testimony belongs to function frames.  A class
+            # constructor frame is owned by ClassDef and has a class symtable,
+            # not a function symtable named after the class.  Asking the
+            # function-only lookup for it turns an authenticated constructor
+            # into a SourceTreePanic before its existing binder can run.
+            if isinstance(
+                owner := self.source_call_frame.owner, (FunctionDef, AsyncFunctionDef)
             ):
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed=f"closure bindings lack producer coordinates: {free_names!r}",
-                    requested="captured binding coordinate testimony",
-                    fix="enroll producer-owned closure actuals before body reduction",
+                table = owner.unit.function_symtable(
+                    owner.name, owner.line_col_span().start_line
                 )
+                free_names = tuple(
+                    symbol.get_name()
+                    for symbol in table.get_symbols()
+                    if symbol.is_free() or symbol.is_nonlocal()
+                )
+                if free_names and not getattr(
+                    self.source_call_frame, "captured_binding_coordinates", ()
+                ):
+                    raise SugarNotWritten(
+                        owner="CallSiteSugar.desugar",
+                        blame=self.site,
+                        observed=(
+                            "closure bindings lack producer coordinates: "
+                            f"{free_names!r}"
+                        ),
+                        requested="captured binding coordinate testimony",
+                        fix=(
+                            "enroll producer-owned closure actuals before body reduction"
+                        ),
+                    )
         if self.contract_resolution_gap is not None:
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
@@ -262,10 +287,18 @@ class CallSiteSugar(ConstructedTermSugar):
             )
         if ctx is not None:
             from sugar_lift_py_tests.callable_application import CallableApplication
-            from sugar_lift_py_tests.floor import BuiltinSemanticCallable
+            from sugar_lift_py_tests.floor import (
+                BuiltinSemanticCallable,
+                ClassDefinitionValue,
+            )
 
             receiver = ctx.temporal.value_if_bound(self.target_name)
-            if isinstance(receiver, BuiltinSemanticCallable):
+            if isinstance(receiver, BuiltinSemanticCallable) or (
+                isinstance(receiver, ClassDefinitionValue)
+                and self.source_call_frame is None
+                and not positional
+                and not kw_values
+            ):
                 return receiver.callable_application_with(
                     CallableApplication(
                         positional + tuple(value for _, value in kw_values),
@@ -322,9 +355,10 @@ class CallSiteSugar(ConstructedTermSugar):
             )
 
             closure_owner = source_call_frame.owner
-            if isinstance(
-                closure_owner, (SourceFunctionDef, SourceAsyncFunctionDef)
-            ) and closure_owner.lacks_captured_binding_testimony():
+            if (
+                isinstance(closure_owner, (SourceFunctionDef, SourceAsyncFunctionDef))
+                and closure_owner.lacks_captured_binding_testimony()
+            ):
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
@@ -447,9 +481,7 @@ class CallSiteSugar(ConstructedTermSugar):
             target_name=self.target_name,
             arg_values=positional + tuple(value for _, value in kw_values),
             parameters=(
-                source_call_frame.parameters
-                if source_call_frame is not None
-                else ()
+                source_call_frame.parameters if source_call_frame is not None else ()
             ),
             term=term,
             body=source_body,
@@ -494,6 +526,7 @@ class CallSiteSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
+
             if isinstance(pending, NativeOperationExitCarrierV1):
                 actuals = (
                     None
