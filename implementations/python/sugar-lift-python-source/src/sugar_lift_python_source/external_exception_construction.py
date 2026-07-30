@@ -432,7 +432,8 @@ def _returned_module_parameter(
     module = graph.modules.get(resolved.module_name)
     if module is None or module.source_cid != resolved.source_cid:
         return None
-    tree = SourceFile((module.source, module.source_seat, module.source_cid)).root
+    source_file = SourceFile((module.source, module.source_seat, module.source_cid))
+    tree = source_file.root
     function = next(
         (
             node
@@ -455,7 +456,34 @@ def _returned_module_parameter(
     }
     projected: dict[str, str] = {}
     returned_names: set[str] = set()
-    for statement in function.body:
+    registered = (
+        source_file.constructed_module.construction_event_receipt.registered_occurrences
+    )
+    function_span = function.span
+    nested_function_spans = tuple(
+        node.span
+        for node in registered
+        if (
+            node is not function
+            and isinstance(node, (FunctionDef, AsyncFunctionDef))
+            and function_span.start <= node.span.start
+            and node.span.end <= function_span.end
+        )
+    )
+    owned_occurrences = (
+        node
+        for node in registered
+        if (
+            node is not function
+            and function_span.start <= node.span.start
+            and node.span.end <= function_span.end
+            and not any(
+                nested.start <= node.span.start and node.span.end <= nested.end
+                for nested in nested_function_spans
+            )
+        )
+    )
+    for statement in owned_occurrences:
         if isinstance(statement, Assign) and len(statement.targets) == 1:
             target = statement.targets[0]
             value = statement.value
