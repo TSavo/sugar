@@ -68,7 +68,7 @@ def observed_entry_refusal() -> GeneratorEntryRefusalV1:
     try:
         with _a_generator_that_never_yields():  # pragma: no branch
             pass
-    except BaseException as raised:  # noqa: BLE001 - the vendor names the type
+    except Exception as raised:  # the vendor conversion raises RuntimeError
         return GeneratorEntryRefusalV1(
             runtime=PythonRuntimeIdentity.current(),
             exception_name=type(raised).__name__,

@@ -263,6 +263,26 @@ def test_decidable_arity_mismatch_stays_loud(members, names, relation) -> None:
     assert str(len(names)) in info.observed
 
 
+def test_ground_exit_construction_panic_propagates_without_reconstruction() -> None:
+    """LYING TWIN: a fragment-shaped half-locus cannot mint a cited exit."""
+
+    class HalfFragment:
+        filename = "pkg/mod.py"
+        line = 1
+
+    operation = SequenceProjectionOperation(
+        target_names=("a", "b"),
+        owner="sequence-half-fragment",
+        blame=HalfFragment(),
+    )
+
+    with pytest.raises(ConstructionPanic) as raised:
+        operation.submit(TupleLiteralValue((TermValue(1),)), None)
+
+    assert raised.value.info.owner == "sequence-half-fragment.arity_mismatch"
+    assert "locus stating no source fragment" in raised.value.info.observed
+
+
 # ---------------------------------------------------------------------------
 # Law 7 -- an unwritten floor stays loud, and names the frontier.
 # ---------------------------------------------------------------------------

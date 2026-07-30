@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from sugar_lift_py_tests.gap.info import ConstructionGap
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
 _SCRIPT = (
     Path(__file__).parents[1] / "scripts" / "desugar_repro.py"
@@ -34,15 +36,27 @@ class _Function:
         return type("Span", (), {"start_line": 7})()
 
 
-def test_desugar_one_counts_success_and_construction_panic_as_completed_attempts():
+def test_desugar_one_emits_named_construction_panic_residual_row():
     clean = _MOD._desugar_one(_Function(object()), name="clean")
     panic = _MOD._desugar_one(
-        _Function(BaseException("construction panic")),
+        _Function(
+            ConstructionPanic(
+                ConstructionGap(
+                    owner="desugar-repro-test",
+                    blame="fixture.py:1:0",
+                    observed="missing construction",
+                    requested="source-owned construction",
+                    fix="implement the producer",
+                )
+            )
+        ),
         name="panic",
     )
 
     assert clean["status"] == "clean"
-    assert panic["status"] == "BaseException"
+    assert panic["status"] == "ConstructionPanic"
+    assert "desugar-repro-test" in panic["detail"]
+    assert panic["origin"]
     assert clean["timedOut"] is False
     assert panic["timedOut"] is False
 

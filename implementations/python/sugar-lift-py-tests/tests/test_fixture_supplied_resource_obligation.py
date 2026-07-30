@@ -240,8 +240,11 @@ def test_population_outcomes_require_a_positive_authenticated_exceptional_exit()
     assert absent.detail == "positive-authenticated-exceptional-exit-absent"
 
 
-def test_population_keeps_construction_panic_separate_from_named_refusal():
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+def test_population_reraises_construction_panic_instead_of_attributing_success():
+    from sugar_lift_py_tests.gap.panic import (
+        ConstructionPanic,
+        construction_panic_gap,
+    )
 
     obligation, entry = _authenticated_obligation_and_entry()
 
@@ -254,11 +257,11 @@ def test_population_keeps_construction_panic_separate_from_named_refusal():
             fix="implement the producer",
         )
 
-    result = classify_fixture_resource_outcome(obligation, entry, panic)
+    with pytest.raises(ConstructionPanic) as caught:
+        classify_fixture_resource_outcome(obligation, entry, panic)
 
-    assert result.outcome is FixtureResourceOutcome.CONSTRUCTION_PANIC
-    assert result.coordinate == obligation.formal_coordinate_cid
-    assert result.detail == "fixture-resource-test"
+    assert caught.value.info.owner == "fixture-resource-test"
+    assert caught.value.info.blame == "fixture.py:2:4"
 
 
 def test_authenticated_pandas_303_temp_file_population_is_partitioned_by_formal():
