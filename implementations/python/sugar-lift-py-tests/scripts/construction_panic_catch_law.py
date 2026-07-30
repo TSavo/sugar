@@ -21,8 +21,9 @@ catch). Production construction, dig, floors, and reports must never convert
 ConstructionPanic into Incomplete or silence.
 
 Exit 1 while R > 0. Missing roots and source read/parse failures are separate
-``auditor_errors`` and also exit red. No baseline. No allowlist of production
-soft continues beyond the two named membranes.
+``auditor_errors`` and also exit red. No baseline. A named membrane is
+authorized only at its exact path, enclosing function, caught type, and handler
+body; a filename alone never suppresses inspection.
 """
 
 from __future__ import annotations
@@ -46,19 +47,6 @@ class PanicCatchOffender(NamedTuple):
     note: str
 
 
-# Paths relative to the scanned package root (src/sugar_lift_py_tests) OR
-# relative to the kit root when the scanner walks scripts/ too.
-_SANCTIONED_CATCH_MEMBRANES = frozenset(
-    {
-        "audit_only/collect_construction_gaps.py",
-        "desugar_repro.py",
-        "exit_set_arm_census.py",
-        "stablezero_classify.py",
-        "scripts/_production_lift_child.py",
-        "_production_lift_child.py",
-    }
-)
-
 _SOFT_AFTER_CATCH = frozenset(
     {
         "None",
@@ -73,10 +61,174 @@ _SOFT_AFTER_CATCH = frozenset(
 )
 
 
-def _is_sanctioned_catch_membrane(rel: str) -> bool:
-    return rel in _SANCTIONED_CATCH_MEMBRANES or rel.endswith(
-        "/_production_lift_child.py"
+def _canonical_handler(source: str) -> str:
+    """Return the location-free AST testimony for one readable handler."""
+    tree = ast.parse("try:\n    pass\n" + source)
+    try_node = tree.body[0]
+    assert isinstance(try_node, ast.Try)
+    assert len(try_node.handlers) == 1
+    return ast.dump(try_node.handlers[0], include_attributes=False)
+
+
+def _canonical_statement(source: str) -> str:
+    tree = ast.parse(source)
+    assert len(tree.body) == 1
+    return ast.dump(tree.body[0], include_attributes=False)
+
+
+# These are source-shape witnesses, not filename exemptions. Any new statement,
+# caught type, binding name, or fabricated return changes the handler AST and
+# makes the law red until the membrane itself is explicitly reviewed.
+_SANCTIONED_HANDLER_SHAPES = {
+    (
+        "audit_only/collect_construction_gaps.py",
+        "collect_construction_gaps",
+    ): frozenset(
+        {
+            _canonical_handler(
+                """
+except ConstructionPanic as panic:
+    gaps.append(gap_from_construction_panic(label, panic))
+"""
+            )
+        }
+    ),
+    (
+        "audit_only/collect_construction_gaps.py",
+        "collect_construction_panic",
+    ): frozenset(
+        {
+            _canonical_handler(
+                """
+except ConstructionPanic as panic:
+    return None, gap_from_construction_panic(label, panic)
+"""
+            )
+        }
+    ),
+    ("desugar_repro.py", "_desugar_one"): frozenset(
+        {
+            _canonical_handler(
+                """
+except BaseException as exc:
+    status = type(exc).__name__
+    detail = str(exc)
+    origin = [
+        f"{frame.filename}:{frame.lineno} {frame.name}"
+        for frame in traceback.extract_tb(exc.__traceback__)[-6:]
+    ]
+"""
+            )
+        }
+    ),
+    ("exit_set_arm_census.py", "patched_and_exit"): frozenset(
+        {
+            _canonical_handler(
+                """
+except BaseException as exc:
+    row.verdict_probe_error = f"{type(exc).__name__}: {exc}"
+    row.check()
+    return result
+"""
+            )
+        }
+    ),
+    ("stablezero_classify.py", "classify"): frozenset(
+        {
+            _canonical_handler(
+                """
+except ConstructionPanic as panic:
+    row["status"] = "ConstructionPanic"
+    row["testimony"] = _testimony(panic)
+"""
+            ),
+            _canonical_handler(
+                """
+except BaseException as error:
+    row["status"] = f"raised:{type(error).__name__}"
+    row["testimony"] = _testimony(error)
+"""
+            ),
+        }
+    ),
+    ("_production_lift_child.py", "production_lift_testimony"): frozenset(
+        {
+            _canonical_handler(
+                """
+except BaseException as error:
+    row = _typed_construction_row(error)
+    if row is None:
+        raise
+    gaps.append(row)
+    return {
+        "kind": _TERMINAL_KIND,
+        "outcome": OUTCOME_TYPED_GAP,
+        "file": rel,
+        "typed_gap_count": len(gaps),
+        "typed_gaps": gaps,
+    }
+"""
+            ),
+            _canonical_handler(
+                """
+except BaseException as error:
+    row = _typed_construction_row(error)
+    if row is None:
+        raise
+    gaps.append(row)
+"""
+            ),
+        }
+    ),
+}
+
+_SANCTIONED_ISINSTANCE_SHAPES = {
+    ("_production_lift_child.py", "_typed_construction_row"): frozenset(
+        {
+            _canonical_statement(
+                """
+if isinstance(error, ConstructionPanic):
+    return _construction_panic_row(error)
+"""
+            )
+        }
     )
+}
+
+
+def _enclosing_function_name(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> str | None:
+    parent = parents.get(node)
+    while parent is not None:
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return parent.name
+        parent = parents.get(parent)
+    return None
+
+
+def _is_sanctioned_handler(
+    rel: str,
+    handler: ast.ExceptHandler,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    function_name = _enclosing_function_name(handler, parents)
+    if function_name is None:
+        return False
+    shapes = _SANCTIONED_HANDLER_SHAPES.get((rel, function_name), frozenset())
+    return ast.dump(handler, include_attributes=False) in shapes
+
+
+def _is_sanctioned_isinstance(
+    rel: str,
+    node: ast.If,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    function_name = _enclosing_function_name(node, parents)
+    if function_name is None:
+        return False
+    shapes = _SANCTIONED_ISINSTANCE_SHAPES.get((rel, function_name), frozenset())
+    return ast.dump(node, include_attributes=False) in shapes
 
 
 def _handler_names(handler: ast.ExceptHandler) -> set[str]:
@@ -220,8 +372,6 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
         ]
     for path in paths:
         rel = path.relative_to(resolved_root).as_posix()
-        if _is_sanctioned_catch_membrane(rel):
-            continue
         try:
             source = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as error:
@@ -246,10 +396,17 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
                 )
             )
             continue
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
             if not _catches_construction_panic(node):
+                continue
+            if _is_sanctioned_handler(rel, node, parents):
                 continue
             if _pure_reraise(node):
                 # pure re-raise is process-terminal — not a soft membrane
@@ -293,6 +450,8 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
                 == "ConstructionPanic"
                 for call in calls
             ):
+                continue
+            if _is_sanctioned_isinstance(rel, node, parents):
                 continue
             body_text = ast.unparse(node)
             if (
