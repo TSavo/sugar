@@ -49,7 +49,9 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
             lambda receiver: self.key.desugar(ctx).and_then(
                 lambda key: self.default.desugar(ctx).and_then(
                     lambda default: self.appended.desugar(ctx).and_then(
-                        lambda appended: self._apply(receiver, key, default, appended)
+                        lambda appended: self._apply(
+                            receiver, key, default, appended
+                        )
                     )
                 )
             )
@@ -57,12 +59,11 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
 
     def _apply(self, receiver, key, default, appended):
         from sugar_lift_py_tests.floor.dict_value import DictValue
-        from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-        if not isinstance(receiver, (DictValue, MappingObjectValue)):
+        if not isinstance(receiver, DictValue):
             construction_panic_gap(
                 owner="DictSetDefaultAppendStateSugar",
                 blame=self.site,
@@ -81,13 +82,12 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
 
         selected = default
         updated = receiver
-        entries = receiver.mapping_entries()
-        for existing_key, existing_value in entries:
+        for existing_key, existing_value in receiver.entries:
             if type(existing_key) is type(key) and existing_key.value == key.value:
                 selected = existing_value
                 break
         else:
-            updated = receiver.mapping_with_entries((*entries, (key, default)))
+            updated = DictValue((*receiver.entries, (key, default)))
 
         appended_outcome = selected.append_with(appended, self.site)
 

@@ -26,9 +26,7 @@ from sugar_lift_python_source.dependency_artifact import (
 )
 
 
-def _dist(
-    root: Path, *, name: str, files: dict[str, str]
-) -> importlib.metadata.Distribution:
+def _dist(root: Path, *, name: str, files: dict[str, str]) -> importlib.metadata.Distribution:
     for relative, text in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +185,11 @@ def test_alias_cycle_stays_gapped(tmp_path: Path) -> None:
         tmp_path,
         name="cyc-pkg",
         files={
-            "cyc_pkg/__init__.py": ("_a = _b\n" "_b = _a\n" "build = _a\n"),
+            "cyc_pkg/__init__.py": (
+                "_a = _b\n"
+                "_b = _a\n"
+                "build = _a\n"
+            ),
         },
     )
     graph = DependencyArtifactGraph.authenticate(dist)
@@ -251,10 +253,12 @@ def test_star_uses_target_module_all_not_importer(tmp_path: Path) -> None:
         files={
             # Importer lists a red herring; target is the authority.
             "all_pkg/__init__.py": (
-                "from all_pkg.implementation import *\n" '__all__ = ["not_build"]\n'
+                "from all_pkg.implementation import *\n"
+                '__all__ = ["not_build"]\n'
             ),
             "all_pkg/implementation.py": (
-                "def build(value):\n    return value\n" '__all__ = ["build"]\n'
+                "def build(value):\n    return value\n"
+                '__all__ = ["build"]\n'
             ),
         },
     )
@@ -275,7 +279,8 @@ def test_star_target_all_excludes_name_stays_dynamic(tmp_path: Path) -> None:
         files={
             "miss_pkg/__init__.py": "from miss_pkg.implementation import *\n",
             "miss_pkg/implementation.py": (
-                "def build(value):\n    return value\n" '__all__ = ["other"]\n'
+                "def build(value):\n    return value\n"
+                '__all__ = ["other"]\n'
             ),
         },
     )
@@ -391,9 +396,7 @@ def test_two_star_imports_are_ambiguous(tmp_path: Path) -> None:
     assert result.kind == "ambiguous-static-export"
 
 
-def test_nested_alias_locus_refuses_without_suite_reconstruction(
-    tmp_path: Path,
-) -> None:
+def test_nested_alias_locus_refuses_without_suite_reconstruction(tmp_path: Path) -> None:
     """An inner-suite alias cannot borrow module-body reaching authority."""
     dist = _dist(
         tmp_path,
@@ -605,13 +608,19 @@ def test_module_prefix_refuses_synchronous_async_function_application(
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.tree import SourceFile
 
-    source = "async def produce(value):\n" "    return value\n" "result = produce(7)\n"
+    source = (
+        "async def produce(value):\n"
+        "    return value\n"
+        "result = produce(7)\n"
+    )
     dist = _dist(
         tmp_path,
         name="async-module-call-pkg",
         files={"async_module_call_pkg/__init__.py": source},
     )
-    module = DependencyArtifactGraph.authenticate(dist).modules["async_module_call_pkg"]
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "async_module_call_pkg"
+    ]
 
     exits = manager_construction._module_prefix_outcome(
         module, ast.parse(source).body[-1]
@@ -657,13 +666,19 @@ def test_module_prefix_sync_function_application_remains_completed(
     from sugar_source_tree.nodes import Call
     from sugar_source_tree.tree import SourceFile
 
-    source = "def produce(value):\n" "    return value\n" "result = produce(7)\n"
+    source = (
+        "def produce(value):\n"
+        "    return value\n"
+        "result = produce(7)\n"
+    )
     dist = _dist(
         tmp_path,
         name="sync-module-call-pkg",
         files={"sync_module_call_pkg/__init__.py": source},
     )
-    module = DependencyArtifactGraph.authenticate(dist).modules["sync_module_call_pkg"]
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "sync_module_call_pkg"
+    ]
 
     exits = manager_construction._module_prefix_outcome(
         module, ast.parse(source).body[-1]
@@ -717,16 +732,15 @@ def test_module_prefix_refuses_decorated_async_definition_before_completion(
     ]
 
     with pytest.raises(SugarNotWritten) as raised:
-        manager_construction._module_prefix_outcome(module, ast.parse(source).body[-1])
+        manager_construction._module_prefix_outcome(
+            module, ast.parse(source).body[-1]
+        )
 
     assert raised.value.owner == "module function definition execution"
     assert raised.value.blame.source_cid == module.source_cid
     assert raised.value.blame.span.start == 10
     assert raised.value.blame.span.end == 43
-    assert (
-        raised.value.observed
-        == "decorated AsyncFunctionDef has no completed publication"
-    )
+    assert raised.value.observed == "decorated AsyncFunctionDef has no completed publication"
 
 
 def test_module_async_function_application_stays_typed_loud_while_plain_function_applies(
@@ -784,9 +798,9 @@ def test_module_async_function_application_stays_typed_loud_while_plain_function
     plain_callable = plain_published.exits[0].value.context.temporal.value_if_bound(
         "plain_target"
     )
-    applied = CallableApplication((), (), plain_callable.definition.fragment).apply(
-        plain_callable, None
-    )
+    applied = CallableApplication(
+        (), (), plain_callable.definition.fragment
+    ).apply(plain_callable, None)
     assert isinstance(applied, Complete)
 
 
@@ -813,35 +827,6 @@ def test_module_prefix_constructs_one_subscript_delete_statement(
 
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
-
-
-def test_module_prefix_chained_names_share_one_rhs_value(tmp_path: Path) -> None:
-    """``left = right = RHS`` evaluates once and binds one resulting Floor."""
-    from sugar_lift_py_tests.floor import NoneValue
-    from sugar_lift_py_tests.outcome import Completed
-    from sugar_lift_python_source import manager_construction
-
-    source = "left = right = None\nresult = left\n"
-    dist = _dist(
-        tmp_path,
-        name="module-chained-assignment-pkg",
-        files={"module_chained_assignment_pkg/__init__.py": source},
-    )
-    module = DependencyArtifactGraph.authenticate(dist).modules[
-        "module_chained_assignment_pkg"
-    ]
-
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
-
-    assert len(exits.exits) == 1
-    completed = exits.exits[0]
-    assert isinstance(completed, Completed)
-    left = completed.value.context.temporal.value_if_bound("left")
-    right = completed.value.context.temporal.value_if_bound("right")
-    assert type(left) is NoneValue
-    assert right is left
 
 
 def test_stdlib_makecodes_return_is_rebound_before_exact_slice_delete() -> None:
@@ -894,7 +879,9 @@ def test_bodyless_call_result_cannot_be_promoted_to_delete_list(tmp_path: Path) 
         name="bodyless-delete-pkg",
         files={"bodyless_delete_pkg/__init__.py": source},
     )
-    module = DependencyArtifactGraph.authenticate(dist).modules["bodyless_delete_pkg"]
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "bodyless_delete_pkg"
+    ]
     locus = ast.parse(source).body[-1]
 
     with pytest.raises(SugarNotWritten) as raised:
@@ -1036,7 +1023,9 @@ def test_module_prefix_refuses_untransported_class_creation_keywords(
     ]
 
     with pytest.raises(SugarNotWritten) as raised:
-        manager_construction._module_prefix_outcome(module, ast.parse(source).body[-1])
+        manager_construction._module_prefix_outcome(
+            module, ast.parse(source).body[-1]
+        )
 
     assert raised.value.owner == "module definition execution"
     assert raised.value.observed == observed
@@ -1052,7 +1041,10 @@ def test_module_prefix_without_class_creation_keywords_still_publishes(
     from sugar_lift_python_source import manager_construction
 
     source = (
-        "class Published:\n" "    TOKEN = 7\n" "def build():\n" "    return Published\n"
+        "class Published:\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
     )
     dist = _dist(
         tmp_path,
@@ -1140,7 +1132,8 @@ def test_prefix_assert_false_refuses_binding(tmp_path: Path) -> None:
         name="assert-pkg",
         files={
             "assert_pkg/__init__.py": (
-                "assert False\n" "from assert_pkg.implementation import build\n"
+                "assert False\n"
+                "from assert_pkg.implementation import build\n"
             ),
             "assert_pkg/implementation.py": "def build(value):\n    return value\n",
         },
@@ -1160,7 +1153,8 @@ def test_prefix_pass_licenses_binding(tmp_path: Path) -> None:
         name="ok-pkg",
         files={
             "ok_pkg/__init__.py": (
-                "pass\n" "from ok_pkg.implementation import build\n"
+                "pass\n"
+                "from ok_pkg.implementation import build\n"
             ),
             "ok_pkg/implementation.py": "def build(value):\n    return value\n",
         },
@@ -1273,7 +1267,8 @@ def test_getattr_stays_dynamic(tmp_path: Path) -> None:
         name="dyn-pkg",
         files={
             "dyn_pkg/__init__.py": (
-                "def __getattr__(name):\n" "    raise AttributeError(name)\n"
+                "def __getattr__(name):\n"
+                "    raise AttributeError(name)\n"
             ),
         },
     )

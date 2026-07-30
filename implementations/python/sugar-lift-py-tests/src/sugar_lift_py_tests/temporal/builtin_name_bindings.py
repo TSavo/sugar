@@ -110,75 +110,75 @@ _EMPTY_BUILTIN_TEMPORAL = None
 # empty ancestry is a decided answer standing in for vendor testimony; this is
 # the testimony.
 BUILTIN_EXCEPTION_BASES: dict[str, tuple[str, ...]] = {
-    "ArithmeticError": ("Exception",),
-    "AssertionError": ("Exception",),
-    "AttributeError": ("Exception",),
+    "ArithmeticError": ('Exception',),
+    "AssertionError": ('Exception',),
+    "AttributeError": ('Exception',),
     "BaseException": (),
-    "BaseExceptionGroup": ("BaseException",),
-    "BlockingIOError": ("OSError",),
-    "BrokenPipeError": ("ConnectionError",),
-    "BufferError": ("Exception",),
-    "BytesWarning": ("Warning",),
-    "ChildProcessError": ("OSError",),
-    "ConnectionAbortedError": ("ConnectionError",),
-    "ConnectionError": ("OSError",),
-    "ConnectionRefusedError": ("ConnectionError",),
-    "ConnectionResetError": ("ConnectionError",),
-    "DeprecationWarning": ("Warning",),
-    "EOFError": ("Exception",),
-    "EncodingWarning": ("Warning",),
-    "EnvironmentError": ("Exception",),
-    "Exception": ("BaseException",),
-    "ExceptionGroup": ("BaseExceptionGroup", "Exception"),
-    "FileExistsError": ("OSError",),
-    "FileNotFoundError": ("OSError",),
-    "FloatingPointError": ("ArithmeticError",),
-    "FutureWarning": ("Warning",),
-    "GeneratorExit": ("BaseException",),
-    "IOError": ("Exception",),
-    "ImportError": ("Exception",),
-    "ImportWarning": ("Warning",),
-    "IndentationError": ("SyntaxError",),
-    "IndexError": ("LookupError",),
-    "InterruptedError": ("OSError",),
-    "IsADirectoryError": ("OSError",),
-    "KeyError": ("LookupError",),
-    "KeyboardInterrupt": ("BaseException",),
-    "LookupError": ("Exception",),
-    "MemoryError": ("Exception",),
-    "ModuleNotFoundError": ("ImportError",),
-    "NameError": ("Exception",),
-    "NotADirectoryError": ("OSError",),
-    "NotImplementedError": ("RuntimeError",),
-    "OSError": ("Exception",),
-    "OverflowError": ("ArithmeticError",),
-    "PendingDeprecationWarning": ("Warning",),
-    "PermissionError": ("OSError",),
-    "ProcessLookupError": ("OSError",),
-    "RecursionError": ("RuntimeError",),
-    "ReferenceError": ("Exception",),
-    "ResourceWarning": ("Warning",),
-    "RuntimeError": ("Exception",),
-    "RuntimeWarning": ("Warning",),
-    "StopAsyncIteration": ("Exception",),
-    "StopIteration": ("Exception",),
-    "SyntaxError": ("Exception",),
-    "SyntaxWarning": ("Warning",),
-    "SystemError": ("Exception",),
-    "SystemExit": ("BaseException",),
-    "TabError": ("IndentationError",),
-    "TimeoutError": ("OSError",),
-    "TypeError": ("Exception",),
-    "UnboundLocalError": ("NameError",),
-    "UnicodeDecodeError": ("UnicodeError",),
-    "UnicodeEncodeError": ("UnicodeError",),
-    "UnicodeError": ("ValueError",),
-    "UnicodeTranslateError": ("UnicodeError",),
-    "UnicodeWarning": ("Warning",),
-    "UserWarning": ("Warning",),
-    "ValueError": ("Exception",),
-    "Warning": ("Exception",),
-    "ZeroDivisionError": ("ArithmeticError",),
+    "BaseExceptionGroup": ('BaseException',),
+    "BlockingIOError": ('OSError',),
+    "BrokenPipeError": ('ConnectionError',),
+    "BufferError": ('Exception',),
+    "BytesWarning": ('Warning',),
+    "ChildProcessError": ('OSError',),
+    "ConnectionAbortedError": ('ConnectionError',),
+    "ConnectionError": ('OSError',),
+    "ConnectionRefusedError": ('ConnectionError',),
+    "ConnectionResetError": ('ConnectionError',),
+    "DeprecationWarning": ('Warning',),
+    "EOFError": ('Exception',),
+    "EncodingWarning": ('Warning',),
+    "EnvironmentError": ('Exception',),
+    "Exception": ('BaseException',),
+    "ExceptionGroup": ('BaseExceptionGroup', 'Exception'),
+    "FileExistsError": ('OSError',),
+    "FileNotFoundError": ('OSError',),
+    "FloatingPointError": ('ArithmeticError',),
+    "FutureWarning": ('Warning',),
+    "GeneratorExit": ('BaseException',),
+    "IOError": ('Exception',),
+    "ImportError": ('Exception',),
+    "ImportWarning": ('Warning',),
+    "IndentationError": ('SyntaxError',),
+    "IndexError": ('LookupError',),
+    "InterruptedError": ('OSError',),
+    "IsADirectoryError": ('OSError',),
+    "KeyError": ('LookupError',),
+    "KeyboardInterrupt": ('BaseException',),
+    "LookupError": ('Exception',),
+    "MemoryError": ('Exception',),
+    "ModuleNotFoundError": ('ImportError',),
+    "NameError": ('Exception',),
+    "NotADirectoryError": ('OSError',),
+    "NotImplementedError": ('RuntimeError',),
+    "OSError": ('Exception',),
+    "OverflowError": ('ArithmeticError',),
+    "PendingDeprecationWarning": ('Warning',),
+    "PermissionError": ('OSError',),
+    "ProcessLookupError": ('OSError',),
+    "RecursionError": ('RuntimeError',),
+    "ReferenceError": ('Exception',),
+    "ResourceWarning": ('Warning',),
+    "RuntimeError": ('Exception',),
+    "RuntimeWarning": ('Warning',),
+    "StopAsyncIteration": ('Exception',),
+    "StopIteration": ('Exception',),
+    "SyntaxError": ('Exception',),
+    "SyntaxWarning": ('Warning',),
+    "SystemError": ('Exception',),
+    "SystemExit": ('BaseException',),
+    "TabError": ('IndentationError',),
+    "TimeoutError": ('OSError',),
+    "TypeError": ('Exception',),
+    "UnboundLocalError": ('NameError',),
+    "UnicodeDecodeError": ('UnicodeError',),
+    "UnicodeEncodeError": ('UnicodeError',),
+    "UnicodeError": ('ValueError',),
+    "UnicodeTranslateError": ('UnicodeError',),
+    "UnicodeWarning": ('Warning',),
+    "UserWarning": ('Warning',),
+    "ValueError": ('Exception',),
+    "Warning": ('Exception',),
+    "ZeroDivisionError": ('ArithmeticError',),
 }
 
 
@@ -197,7 +197,6 @@ def builtin_name_temporal():
     from sugar_lift_py_tests.floor import (
         BlockValue,
         BuiltinExceptionClassValue,
-        BuiltinDictClassValue,
         BuiltinObjectClassValue,
         BuiltinSemanticCallable,
         ClassValue,
@@ -223,13 +222,6 @@ def builtin_name_temporal():
         "object",
         BuiltinObjectClassValue(name="object", bases=(), record=BlockValue(())),
     )
-    # ``dict`` is a builtin class with receiver-state semantics, not merely a
-    # callable coordinate.  Its distinct Floor type is what source subclasses
-    # authenticate and transport; downstream code never admits by spelling.
-    temporal = temporal.bind_value(
-        "dict",
-        BuiltinDictClassValue(operation="python.dict.construct"),
-    )
     for name in sorted(builtin_constant_names()):
         temporal = temporal.bind_value(
             name,
@@ -247,7 +239,9 @@ def builtin_name_temporal():
         existing = exception_values.get(name)
         if existing is not None:
             return existing
-        bases = tuple(exception_value(base) for base in BUILTIN_EXCEPTION_BASES[name])
+        bases = tuple(
+            exception_value(base) for base in BUILTIN_EXCEPTION_BASES[name]
+        )
         value = BuiltinExceptionClassValue(
             name=name, bases=bases, record=BlockValue(())
         )
@@ -273,6 +267,9 @@ def builtin_name_temporal():
     )
     temporal = temporal.bind_value(
         "tuple", BuiltinSemanticCallable(operation="python.tuple.construct")
+    )
+    temporal = temporal.bind_value(
+        "dict", BuiltinSemanticCallable(operation="python.dict.construct")
     )
     _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal

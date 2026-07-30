@@ -1,25 +1,12 @@
 """The shadow AST threads the post-state of ``dict.setdefault`` chains."""
 
-from dataclasses import dataclass, field
-
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.floor import (
-    CallSiteValue,
-    ListValue,
-    MappingObjectValue,
-    ObjectField,
-    StringValue,
-    TermValue,
-)
+from sugar_lift_py_tests.floor import CallSiteValue, ListValue, StringValue, TermValue
 from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.sugar.dict_setdefault_append_state_sugar import (
-    DictSetDefaultAppendStateSugar,
-)
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import (
     Call,
     DictSetDefaultAppendState,
@@ -27,26 +14,6 @@ from sugar_source_tree.nodes import (
     FunctionDef,
 )
 from sugar_source_tree.tree import SourceFile
-
-
-@dataclass(frozen=True)
-class _FloorSugar(ConstructedTermSugar):
-    value: object
-    evaluations: list[str] = field(compare=False)
-    label: str
-    site: object = field(default="test", compare=False)
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx=None):
-        del ctx
-        self.evaluations.append(self.label)
-        return Complete(self.value)
-
-    def to_term(self, *, owner):
-        return self.value.to_term(owner=owner)
 
 
 def _project_return(source: str):
@@ -58,7 +25,8 @@ def _project_return(source: str):
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     substituted = function.substitute({})
     assert any(
-        isinstance(node, DictSetDefaultAppendStatement) for node in substituted.walk()
+        isinstance(node, DictSetDefaultAppendStatement)
+        for node in substituted.walk()
     )
     assert any(
         isinstance(node, DictSetDefaultAppendState) for node in substituted.walk()
@@ -104,56 +72,3 @@ def test_existing_key_wins_over_default_before_append() -> None:
     )
     assert projected == ListValue((TermValue(1), TermValue(2)))
     assert projected != ListValue((TermValue(9), TermValue(2)))
-
-
-def test_authenticated_dict_subclass_keeps_receiver_identity_and_fields() -> None:
-    order: list[str] = []
-    receiver = MappingObjectValue(
-        "DerivedDict",
-        (ObjectField("source_field", TermValue(7)),),
-        identity="receiver-coordinate",
-    )
-    sugar = DictSetDefaultAppendStateSugar(
-        receiver=_FloorSugar(receiver, order, "receiver"),
-        key=_FloorSugar(StringValue("members"), order, "key"),
-        default=_FloorSugar(ListValue(()), order, "default"),
-        appended=_FloorSugar(StringValue("member"), order, "appended"),
-        site="mutation-site",
-    )
-
-    outcome = sugar.desugar(None)
-
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.identity == "receiver-coordinate"
-    assert outcome.value.fields == receiver.fields
-    assert outcome.value.entries == (
-        (StringValue("members"), ListValue((StringValue("member"),))),
-    )
-    assert order == ["receiver", "key", "default", "appended"]
-
-
-def test_authenticated_dict_subclass_setdefault_uses_existing_value() -> None:
-    order: list[str] = []
-    receiver = MappingObjectValue(
-        "DerivedDict",
-        (),
-        identity="receiver-coordinate",
-        entries=((StringValue("members"), ListValue((TermValue(1),))),),
-    )
-    sugar = DictSetDefaultAppendStateSugar(
-        receiver=_FloorSugar(receiver, order, "receiver"),
-        key=_FloorSugar(StringValue("members"), order, "key"),
-        default=_FloorSugar(ListValue((TermValue(99),)), order, "default"),
-        appended=_FloorSugar(TermValue(2), order, "appended"),
-        site="mutation-site",
-    )
-
-    outcome = sugar.desugar(None)
-
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.entries == (
-        (StringValue("members"), ListValue((TermValue(1), TermValue(2)))),
-    )
-    assert order == ["receiver", "key", "default", "appended"]
