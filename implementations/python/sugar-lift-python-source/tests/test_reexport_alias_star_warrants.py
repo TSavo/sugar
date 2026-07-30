@@ -829,6 +829,99 @@ def test_module_prefix_constructs_one_subscript_delete_statement(
     assert isinstance(exits.exits[0], Completed)
 
 
+def test_module_prefix_chained_names_share_one_rhs_value(tmp_path: Path) -> None:
+    """``left = right = RHS`` evaluates once and binds one resulting Floor."""
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = "left = right = None\nresult = left\n"
+    dist = _dist(
+        tmp_path,
+        name="module-chained-assignment-pkg",
+        files={"module_chained_assignment_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_chained_assignment_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    left = completed.value.context.temporal.value_if_bound("left")
+    right = completed.value.context.temporal.value_if_bound("right")
+    assert type(left) is NoneValue
+    assert right is left
+
+
+def test_stdlib_makecodes_return_is_rebound_before_exact_slice_delete() -> None:
+    """The real ``re._constants`` prefix deletes from its returned ListValue."""
+    from sugar_lift_py_tests.floor import CallSiteValue, ListValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    module = graph.modules["re._constants"]
+    parsed = ast.parse(module.source)
+    delete = next(
+        statement
+        for statement in parsed.body
+        if isinstance(statement, ast.Delete) and statement.lineno == 124
+    )
+    next_statement = next(
+        statement for statement in parsed.body if statement.lineno > delete.lineno
+    )
+    assignment = next(
+        statement
+        for statement in parsed.body
+        if isinstance(statement, ast.Assign)
+        and statement.lineno == 75
+        and isinstance(statement.value, ast.Call)
+    )
+    expected_count = len(assignment.value.args) - 2
+
+    exits = manager_construction._module_prefix_outcome(
+        module, next_statement, graph=graph
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    opcodes = completed.value.context.temporal.value_if_bound("OPCODES")
+    assert type(opcodes) is ListValue
+    assert not isinstance(opcodes, CallSiteValue)
+    assert len(opcodes.elements) == expected_count
+
+
+def test_bodyless_call_result_cannot_be_promoted_to_delete_list(tmp_path: Path) -> None:
+    """Lying twin: an unresolved return stays loud at the exact delete owner."""
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.panic import SugarNotWritten
+
+    source = "OPCODES = external()\ndel OPCODES[-2:]\nafter = 1\n"
+    dist = _dist(
+        tmp_path,
+        name="bodyless-delete-pkg",
+        files={"bodyless_delete_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "bodyless_delete_pkg"
+    ]
+    locus = ast.parse(source).body[-1]
+
+    with pytest.raises(SugarNotWritten) as raised:
+        manager_construction._module_prefix_outcome(module, locus)
+
+    assert raised.value.owner == "SubscriptDeleteEffectSugar._delete"
+    assert raised.value.observed == (
+        "undischarged subscript delete over runtime-selected receiver"
+    )
+
+
 def test_module_prefix_execution_publishes_exact_decorator_result(
     tmp_path: Path,
 ) -> None:
@@ -1123,8 +1216,8 @@ def test_empty_prefix_licenses_first_statement_definition(tmp_path: Path) -> Non
     assert result.definition.name == "build"
 
 
-def test_prefix_multi_face_if_refuses_as_named_dynamic_export(tmp_path: Path) -> None:
-    """Unresolved multi-face prefix stays a named gap — never AST-admitted."""
+def test_prefix_equal_multi_face_if_preserves_completed_fallthrough(tmp_path: Path) -> None:
+    """Two unresolved faces with the same state still prove fallthrough."""
     dist = _dist(
         tmp_path,
         name="face-pkg",
@@ -1145,6 +1238,31 @@ def test_prefix_multi_face_if_refuses_as_named_dynamic_export(tmp_path: Path) ->
         _call_demand(tmp_path, "import face_pkg\nface_pkg.build(1)\n"),
         graph=graph,
     )
+    assert isinstance(result, ResolvedPythonObjectV1)
+
+
+def test_prefix_branch_owned_export_stays_named_dynamic(tmp_path: Path) -> None:
+    """A binding owned by only one unresolved face is never promoted."""
+    dist = _dist(
+        tmp_path,
+        name="branch-face-pkg",
+        files={
+            "branch_face_pkg/__init__.py": (
+                "flag = unknown\n"
+                "if flag:\n"
+                "    from branch_face_pkg.implementation import build\n"
+                "else:\n"
+                "    pass\n"
+            ),
+            "branch_face_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import branch_face_pkg\nbranch_face_pkg.build(1)\n"),
+        graph=graph,
+    )
+
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "dynamic-export"
 

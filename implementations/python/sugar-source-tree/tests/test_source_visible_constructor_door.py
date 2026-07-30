@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -8,6 +10,8 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
     DictValue,
+    ObjectValue,
+    ReceiverFieldStoreValue,
     ReturnValue,
     StringValue,
     TermValue,
@@ -21,6 +25,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
 )
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -207,6 +212,205 @@ def test_repeated_initializer_uses_the_last_class_binding() -> None:
     }
 
 
+def test_source_visible_new_constructor_retains_exact_instance_field() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedToken(int):\n"
+        "    def __new__(cls, value, label):\n"
+        "        self = super(RenamedToken, cls).__new__(cls, value)\n"
+        "        self.label = label\n"
+        "        return self\n\n"
+        "RenamedToken(7, 'seven')\n",
+        context=context,
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    receiver = (
+        call.sugar()
+        .desugar()
+        .value.force_floor(None, owner="source-visible-new", project_callsite=False)
+    )
+
+    assert receiver.class_name == "RenamedToken"
+    assert receiver.attribute("label", call.fragment).value == StringValue("seven")
+    assert class_node.source_visible_constructor_frame().owner is class_node
+
+
+def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedToken(int):\n"
+        "    def __new__(cls, value, label):\n"
+        "        self = super(RenamedToken, cls).__new__(cls, value)\n"
+        "        self.label = label\n"
+        "        return value\n\n"
+        "RenamedToken(7, 'seven')\n",
+        context=context,
+    )
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    coordinate = call.sugar().desugar().value
+
+    assert isinstance(coordinate, CallSiteValue)
+    assert coordinate.body is None
+
+
+def test_source_visible_new_constructor_retains_exact_bound_name_field() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class NamedIntConstant(int):\n"
+        "    def __new__(cls, value, name):\n"
+        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
+        "        self.name = name\n"
+        "        return self\n\n"
+        "NamedIntConstant(7, 'seven')\n",
+        context=context,
+    )
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    receiver = (
+        call.sugar()
+        .desugar()
+        .value.force_floor(None, owner="named-int-field-store", project_callsite=False)
+    )
+
+    assert isinstance(receiver, ObjectValue)
+    assert tuple((field.name, field.value) for field in receiver.fields) == (
+        ("name", StringValue("seven")),
+    )
+
+
+def test_new_receiver_field_store_refuses_foreign_receiver_identity() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class NamedIntConstant(int):\n"
+        "    def __new__(cls, value, name):\n"
+        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
+        "        self.name = name\n"
+        "        return self\n",
+        context=context,
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    class_value = class_node.sugar().desugar().value
+    receiver_coordinate = (
+        class_node.source_visible_constructor_frame().body.receiver_coordinate_cid
+    )
+    foreign = ObjectValue("NamedIntConstant", (), identity="foreign-receiver")
+    block = BlockValue(
+        (ReceiverFieldStoreValue(foreign, "name", StringValue("seven")),)
+    )
+
+    with pytest.raises(SugarNotWritten) as raised:
+        class_value.construct_receiver_state_from_block(block, receiver_coordinate)
+
+    assert raised.value.owner == "ClassDefinitionValue.construct_receiver_state"
+    assert raised.value.observed == "receiver coordinate mismatch"
+
+
+@pytest.mark.parametrize(
+    "return_body",
+    (
+        "",
+        "        if value:\n            return self\n",
+    ),
+    ids=("missing-return", "noncompleted-return"),
+)
+def test_source_visible_new_constructor_refuses_uncompleted_return(
+    return_body: str,
+) -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class NamedIntConstant(int):\n"
+        "    def __new__(cls, value, name):\n"
+        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
+        "        self.name = name\n"
+        f"{return_body}\n"
+        "NamedIntConstant(7, 'seven')\n",
+        context=context,
+    )
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    coordinate = call.sugar().desugar().value
+
+    assert isinstance(coordinate, CallSiteValue)
+    assert coordinate.body is None
+
+
+@pytest.mark.parametrize(
+    "field_body",
+    (
+        "        self.name = name\n        self.name = name\n",
+        "        self.label = name\n",
+    ),
+    ids=("duplicate-name-field", "wrong-field"),
+)
+def test_source_visible_new_constructor_refuses_nonexact_field_roster(
+    field_body: str,
+) -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class NamedIntConstant(int):\n"
+        "    def __new__(cls, value, name):\n"
+        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
+        f"{field_body}"
+        "        return self\n\n"
+        "NamedIntConstant(7, 'seven')\n",
+        context=context,
+    )
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+
+    coordinate = call.sugar().desugar().value
+
+    assert isinstance(coordinate, CallSiteValue)
+    assert coordinate.body is None
+def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
+    """The class producer carries its exact ``__new__`` testimony to the body."""
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class First:\n"
+        "    def __new__(cls, value):\n"
+        "        return cls\n\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n\n"
+        "class Second:\n"
+        "    def __new__(cls, value):\n"
+        "        return cls\n\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n",
+        context=context,
+    )
+    classes = {
+        node.name: node for node in source.nodes() if isinstance(node, ClassDef)
+    }
+    first_new = next(
+        item
+        for item in classes["First"].body
+        if isinstance(item, FunctionDef) and item.name == "__new__"
+    )
+    second_new = next(
+        item
+        for item in classes["Second"].body
+        if isinstance(item, FunctionDef) and item.name == "__new__"
+    )
+
+    first_frame = classes["First"].source_visible_constructor_frame()
+    second_frame = classes["Second"].source_visible_constructor_frame()
+
+    testimony = first_frame.constructed_new_method
+    assert testimony.name == "__new__"
+    assert testimony.definition_fragment_cid == first_new.fragment.seal().cid
+    assert testimony.source_call_frame.definition_site == _coordinate(first_new)
+    assert (
+        testimony.source_call_frame.frame_cid
+        == first_new.source_visible_call_frame().frame_cid
+    )
+    assert first_frame.body.constructed_new_method is testimony
+    assert (
+        second_frame.constructed_new_method.source_call_frame.definition_site
+        == _coordinate(second_new)
+    )
+    assert second_frame.constructed_new_method is not testimony
 def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(

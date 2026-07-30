@@ -52,6 +52,8 @@ class ComprehensionGeneratorSugar:
     binding_coordinate_cid: str
     iterable: ConstructedTermSugar
     filters: tuple[ConstructedTermSugar, ...]
+    target_coordinates: tuple = dataclass_field(default=(), compare=False)
+    target_pattern: object | None = dataclass_field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(
@@ -60,6 +62,16 @@ class ComprehensionGeneratorSugar:
         for filter_sugar in self.filters:
             require_constructed_term_sugar(
                 filter_sugar, owner="ComprehensionGeneratorSugar.filters"
+            )
+        if self.target_pattern is not None:
+            from sugar_source_tree.nodes import TargetPatternV1
+
+            if type(self.target_pattern) is not TargetPatternV1:
+                raise TypeError(
+                    "destructured comprehension target requires its exact TargetPatternV1"
+                )
+            self.target_pattern.source_unit.require_target_pattern_coordinates(
+                self.target_pattern, self.target_coordinates
             )
 
     def to_term(self, *, owner: str):
@@ -172,7 +184,6 @@ class ComprehensionSugar(ConstructedTermSugar):
             index == 0
             and len(self.generators) == 1
             and not generator.filters
-            and self.key is None
         ):
             finite = self._finite_map(generator, iterable, ctx)
             if finite is not None:
@@ -183,7 +194,12 @@ class ComprehensionSugar(ConstructedTermSugar):
 
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+        from sugar_lift_py_tests.floor.dict_value import DictValue
         from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.iterator_value import (
+            ListIteratorValue,
+            TupleIteratorValue,
+        )
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.ir import (
             PrimitiveSort,
@@ -196,13 +212,14 @@ class ComprehensionSugar(ConstructedTermSugar):
         members = None
         if isinstance(iterable, (TupleValue, ListValue)):
             members = iterable.elements
+        elif isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):
+            members = iterable.elements[iterable.index :]
         elif isinstance(iterable, ComprehensionValue) and iterable.finite_elements is not None:
             members = iterable.finite_elements
         if members is None:
             return None
         target = generator.target
-        if target.source_name is None or target.coordinates is not None:
-            # Destructured targets need unpack projection; stay symbolic.
+        if target.coordinates is not None and generator.target_pattern is None:
             return None
         if ctx is None or not hasattr(ctx, "temporal"):
             return None
@@ -212,6 +229,8 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         def project(index, projected):
             if index == len(members):
+                if self.key is not None:
+                    return Complete(DictValue(tuple(projected)))
                 if projected:
                     element_term = projected[0].to_term(owner=owner)
                 else:
@@ -239,18 +258,59 @@ class ComprehensionSugar(ConstructedTermSugar):
                     ComprehensionValue(term, finite_elements=tuple(projected))
                 )
 
-            member = members[index]
-            temporal = ctx.temporal.bind_value(
-                generator.binding_coordinate_cid, member
+            member = members[index].project_operation_receiver(
+                ctx, owner="ComprehensionSugar finite iterable member"
             )
-            if target.source_name is not None:
+            temporal = ctx.temporal.bind_value(generator.binding_coordinate_cid, member)
+            if target.coordinates is not None:
+                from sugar_lift_py_tests.operations.positional_unpack_operation import (
+                    PositionalUnpackOperation,
+                    UnpackMemberRoster,
+                )
+
+                leaves = _target_leaves(target)
+                unpacked = PositionalUnpackOperation(
+                    fixed_prefix=len(leaves),
+                    fixed_suffix=0,
+                    has_star=False,
+                    owner="ComprehensionSugar._finite_map.target",
+                    blame=self.site,
+                ).submit(member, ctx)
+                if not isinstance(unpacked, Complete) or not isinstance(
+                    unpacked.value, UnpackMemberRoster
+                ):
+                    return unpacked
+                for leaf, coordinate, value in zip(
+                    leaves,
+                    generator.target_coordinates,
+                    unpacked.value.members,
+                    strict=True,
+                ):
+                    temporal = temporal.bind_value(coordinate.cid, value)
+                    temporal = temporal.bind_value(leaf.source_name, value)
+            elif target.source_name is not None:
                 temporal = temporal.bind_value(target.source_name, member)
             try:
                 inner_ctx = replace(ctx, temporal=temporal)
             except TypeError:
                 return None
+            if self.key is not None:
+                return self.key.desugar(inner_ctx).and_then(
+                    lambda key: self.element.desugar(inner_ctx).and_then(
+                        lambda value: project(index + 1, (*projected, (key, value)))
+                    )
+                )
             return self.element.desugar(inner_ctx).and_then(
-                lambda value: project(index + 1, (*projected, value))
+                lambda value: project(
+                    index + 1,
+                    (
+                        *projected,
+                        value.project_operation_receiver(
+                            inner_ctx,
+                            owner="ComprehensionSugar finite constructed element",
+                        ),
+                    ),
+                )
             )
 
         # Outcome.and_then owns terminal/guarded propagation. ``None`` is the
@@ -378,6 +438,13 @@ def _projection(element, index: int, arity: int):
         [element, num(index), num(arity)],
         symbol_kind="coordinate",
     )
+
+
+def _target_leaves(target: ComprehensionTargetSugar) -> tuple[ComprehensionTargetSugar, ...]:
+    if target.source_name is not None:
+        return (target,)
+    assert target.coordinates is not None
+    return tuple(leaf for child in target.coordinates for leaf in _target_leaves(child))
 
 
 def _bind_target(target: ComprehensionTargetSugar, element, body):

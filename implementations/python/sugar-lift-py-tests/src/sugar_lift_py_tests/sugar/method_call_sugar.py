@@ -162,10 +162,12 @@ class MethodCallSugar(ConstructedTermSugar):
                     ctx,
                 )
             )
-        from sugar_lift_py_tests.floor import ObjectValue
-
-        if isinstance(receiver, ObjectValue):
-            return receiver.call_method_value(
+        call_method_value = getattr(receiver, "call_method_value", None)
+        supports_closed_method = getattr(receiver, "supports_closed_method", None)
+        if callable(call_method_value) and (
+            not callable(supports_closed_method) or supports_closed_method(self.name)
+        ):
+            return call_method_value(
                 self.name,
                 positional,
                 owner="MethodCallSugar",

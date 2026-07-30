@@ -11,6 +11,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 from .floor_value import FloorValue
+from .source_return_projection import (
+    project_authenticated_source_return as _project_authenticated_source_return,
+)
 
 _FORCE_FLOOR_BUDGET = 64
 _NESTED_DIG_DEMAND_BUDGET = 8
@@ -119,6 +122,7 @@ class CallSiteValue(FloorValue):
     body: SugarBody[Any] | FunctionBodyUniverse | None
     keyword_names: tuple[str, ...] = dataclass_field(default=(), compare=False)
     site: object = dataclass_field(default=None, compare=False)
+    call_occurrence: object | None = dataclass_field(default=None, compare=False)
     # A callee contract may cite the Python type object returned by this call.
     # Absent that citation, Python must execute the call to know whether its
     # result is a valid isinstance type operand.
@@ -325,6 +329,29 @@ class CallSiteValue(FloorValue):
         """
         del formula
         return self
+
+    def callable_application_with(self, operation, ctx):
+        """Apply the authenticated value returned by a source-backed call.
+
+        Decorator factories commonly return another callable.  The call
+        occurrence remains the producer coordinate, but Python applies the
+        returned floor.  Opaque or self-recursive projection stays loud rather
+        than treating the call spelling as callable authority.
+        """
+        projected = self.force_floor(
+            ctx, owner="CallSiteValue.callable_application_with"
+        )
+        if projected is self:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="CallSiteValue.callable_application_with",
+                blame=operation.site,
+                observed="source call projected to its own call coordinate",
+                requested="authenticated returned callable Floor",
+                fix="retain the factory return or keep decorator application loud",
+            )
+        return operation.apply(projected, ctx)
 
     def truth(self, site):
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
@@ -1609,80 +1636,6 @@ def _force_floor_gap(
         gap_locus=GapLocus.PROJECTION,
     )
     construction_panic(info)
-
-
-def _project_authenticated_source_return(value: FloorValue) -> FloorValue:
-    """Project the sole returned Floor from an authenticated source body.
-
-    A source-call dig has already authenticated and reduced its enrolled body
-    before reaching this function.  Only the body's exact, non-fall-through
-    single-return shape owns a scalar projection.  Multi-path bodies remain a
-    ``BlockValue`` so their guards and alternatives cannot be fabricated away.
-    """
-    from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
-    from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-    from sugar_lift_py_tests.floor.guarded_loop_control import GuardedLoopControl
-    from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
-    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
-    from sugar_lift_py_tests.floor.loop_control_value import LoopControlValue
-    from sugar_lift_py_tests.floor.raise_value import RaiseValue
-    from sugar_lift_py_tests.floor.return_value import ReturnValue
-    from sugar_lift_py_tests.outcome import Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
-
-    returns = (
-        tuple(
-            statement
-            for statement in value.statements
-            if isinstance(statement, (ReturnValue, GuardedReturn))
-        )
-        if isinstance(value, BlockValue)
-        else ()
-    )
-    control_exits = (
-        tuple(
-            statement
-            for statement in value.statements
-            if isinstance(
-                statement,
-                (
-                    ExceptionalExitValue,
-                    GuardedFaces,
-                    GuardedLoopControl,
-                    GuardedRaise,
-                    Incomplete,
-                    LoopControlValue,
-                    RaiseValue,
-                ),
-            )
-        )
-        if isinstance(value, BlockValue)
-        else ()
-    )
-    if (
-        isinstance(value, BlockValue)
-        and (
-            not value.fall_through
-            or all(guard == false_guard() for guard in value.fall_through)
-        )
-        and len(returns) == 1
-        and not control_exits
-        and isinstance(returns[0], ReturnValue)
-        and isinstance(returns[0].value, FloorValue)
-    ):
-        return returns[0].value
-    if (
-        isinstance(value, BlockValue)
-        and len(returns) == 1
-        and not control_exits
-        and isinstance(returns[0], GuardedReturn)
-        and returns[0].guards
-        and all(guard == true_guard() for guard in returns[0].guards)
-        and isinstance(returns[0].value, FloorValue)
-    ):
-        return returns[0].value
-    return value
 
 
 def _ctx_with_curried_args(

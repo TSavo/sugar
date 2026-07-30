@@ -202,6 +202,105 @@ class TargetPatternConstructionGapV1(TypeError):
         self.actual_coordinates = actual_coordinates
 
 
+_TARGET_PATTERN_RECEIPT_AUTHORITY = object()
+
+
+@dataclass(frozen=True, init=False)
+class TargetPatternReceiptV1:
+    """Closed semantic testimony minted with the completed module roster."""
+
+    source_cid: str
+    consumer_occurrence_cid: str
+    consumer_node_shape_cid: str
+    target_occurrence_cid: str
+    target_node_shape_cid: str
+    leaf_occurrence_cids: tuple[str, ...]
+    leaf_node_shape_cids: tuple[str, ...]
+    binding_coordinate_cids: tuple[str, ...]
+    cid: str
+    _authority: object = field(default=None, init=False, compare=False, repr=False)
+
+    @property
+    def preimage(self) -> dict[str, object]:
+        return {
+            "kind": "target-pattern-receipt",
+            "schemaVersion": "1",
+            "sourceCid": self.source_cid,
+            "consumerOccurrenceCid": self.consumer_occurrence_cid,
+            "consumerNodeShapeCid": self.consumer_node_shape_cid,
+            "targetOccurrenceCid": self.target_occurrence_cid,
+            "targetNodeShapeCid": self.target_node_shape_cid,
+            "leafOccurrenceCids": list(self.leaf_occurrence_cids),
+            "leafNodeShapeCids": list(self.leaf_node_shape_cids),
+            "bindingCoordinateCids": list(self.binding_coordinate_cids),
+        }
+
+    def __post_init__(self) -> None:
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        if self._authority is not _TARGET_PATTERN_RECEIPT_AUTHORITY:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-receipt-not-producer-minted",
+                consumer_occurrence=self.consumer_occurrence_cid,
+                target_occurrence=self.target_occurrence_cid,
+            )
+        if (
+            not self.source_cid
+            or not self.consumer_occurrence_cid
+            or not self.consumer_node_shape_cid
+            or not self.target_occurrence_cid
+            or not self.target_node_shape_cid
+            or not self.leaf_occurrence_cids
+            or len(self.leaf_occurrence_cids) != len(self.leaf_node_shape_cids)
+            or len(self.leaf_occurrence_cids) != len(self.binding_coordinate_cids)
+            or cid_of_json(self.preimage) != self.cid
+        ):
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-receipt-preimage-mismatch",
+                consumer_occurrence=self.consumer_occurrence_cid,
+                target_occurrence=self.target_occurrence_cid,
+            )
+
+
+def _mint_target_pattern_receipt(
+    *, source_unit, consumer_occurrence, target_occurrence, leaves, coordinates
+) -> TargetPatternReceiptV1:
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_source_tree.binding_state import node_construction_shape_cid
+
+    values = {
+        "source_cid": source_unit.source_cid,
+        "consumer_occurrence_cid": consumer_occurrence.fragment.seal().cid,
+        "consumer_node_shape_cid": node_construction_shape_cid(consumer_occurrence),
+        "target_occurrence_cid": target_occurrence.fragment.seal().cid,
+        "target_node_shape_cid": node_construction_shape_cid(target_occurrence),
+        "leaf_occurrence_cids": tuple(leaf.fragment.seal().cid for leaf in leaves),
+        "leaf_node_shape_cids": tuple(
+            node_construction_shape_cid(leaf) for leaf in leaves
+        ),
+        "binding_coordinate_cids": tuple(coordinate.cid for coordinate in coordinates),
+    }
+    value = object.__new__(TargetPatternReceiptV1)
+    for name, field_value in values.items():
+        object.__setattr__(value, name, field_value)
+    preimage = {
+        "kind": "target-pattern-receipt",
+        "schemaVersion": "1",
+        "sourceCid": values["source_cid"],
+        "consumerOccurrenceCid": values["consumer_occurrence_cid"],
+        "consumerNodeShapeCid": values["consumer_node_shape_cid"],
+        "targetOccurrenceCid": values["target_occurrence_cid"],
+        "targetNodeShapeCid": values["target_node_shape_cid"],
+        "leafOccurrenceCids": list(values["leaf_occurrence_cids"]),
+        "leafNodeShapeCids": list(values["leaf_node_shape_cids"]),
+        "bindingCoordinateCids": list(values["binding_coordinate_cids"]),
+    }
+    object.__setattr__(value, "cid", cid_of_json(preimage))
+    object.__setattr__(value, "_authority", _TARGET_PATTERN_RECEIPT_AUTHORITY)
+    value.__post_init__()
+    return value
+
+
 @dataclass(frozen=True)
 class TargetPatternV1:
     """One eager, occurrence-owned destructuring projection."""
@@ -211,6 +310,9 @@ class TargetPatternV1:
     target_occurrence: "Node"
     leaves: tuple["Name", ...]
     coordinates: tuple[object, ...]
+    receipt: TargetPatternReceiptV1 | None = field(
+        default=None, init=False, compare=False, repr=False
+    )
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -243,7 +345,8 @@ class TargetPatternV1:
             ):
                 return None
             starred = [
-                index for index, child in enumerate(target.elts)
+                index
+                for index, child in enumerate(target.elts)
                 if isinstance(child, Starred)
             ]
             if len(starred) > 1:
@@ -288,6 +391,23 @@ class TargetPatternV1:
             return result
 
         return project(self.target_occurrence, element)
+
+
+def _mint_target_pattern(
+    *, source_unit, consumer_occurrence, target_occurrence, leaves, coordinates
+) -> TargetPatternV1:
+    receipt = _mint_target_pattern_receipt(
+        source_unit=source_unit,
+        consumer_occurrence=consumer_occurrence,
+        target_occurrence=target_occurrence,
+        leaves=leaves,
+        coordinates=coordinates,
+    )
+    value = TargetPatternV1(
+        source_unit, consumer_occurrence, target_occurrence, leaves, coordinates
+    )
+    object.__setattr__(value, "receipt", receipt)
+    return value
 
 
 def _ordered_binding_keys(names):
@@ -461,7 +581,9 @@ class SourceUnit:
         if (
             not isinstance(span, tuple)
             or len(span) != 4
-            or not all(isinstance(part, int) and not isinstance(part, bool) for part in span)
+            or not all(
+                isinstance(part, int) and not isinstance(part, bool) for part in span
+            )
         ):
             raise BackendDefect(
                 blame=span,
@@ -629,11 +751,7 @@ class SourceUnit:
             owned = tuple(
                 pattern
                 for target, prefix in targets
-                if (
-                    pattern := self._construct_target_pattern(
-                        consumer, target, prefix
-                    )
-                )
+                if (pattern := self._construct_target_pattern(consumer, target, prefix))
                 is not None
             )
             if owned:
@@ -657,8 +775,7 @@ class SourceUnit:
             return SourceUnit._is_binding_target_pattern(target.value)
         if isinstance(target, (Tuple_, List)):
             return all(
-                SourceUnit._is_binding_target_pattern(child)
-                for child in target.elts
+                SourceUnit._is_binding_target_pattern(child) for child in target.elts
             )
         return False
 
@@ -708,7 +825,13 @@ class SourceUnit:
             )
             for leaf, path in ordered
         )
-        return TargetPatternV1(self, consumer, target, leaves, coordinates)
+        return _mint_target_pattern(
+            source_unit=self,
+            consumer_occurrence=consumer,
+            target_occurrence=target,
+            leaves=leaves,
+            coordinates=coordinates,
+        )
 
     def target_patterns_for(self, consumer: "Node") -> tuple[TargetPatternV1, ...]:
         patterns = self._target_patterns_by_consumer
@@ -770,9 +893,7 @@ class SourceUnit:
             )
         from .binding_provenance import BindingCoordinateV1
 
-        for observed, expected in zip(
-            coordinates, pattern.coordinates, strict=True
-        ):
+        for observed, expected in zip(coordinates, pattern.coordinates, strict=True):
             if observed is not expected and any(
                 observed is owned for owned in pattern.coordinates
             ):
@@ -937,11 +1058,20 @@ class SourceUnit:
                 candidate
                 for candidate in self.function_nodes
                 if candidate.name == call.func.id
-                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                and (
+                    candidate.line_col_span().start_line,
+                    candidate.line_col_span().start_col,
+                )
                 >= (owner_span.start_line, owner_span.start_col)
-                and (candidate.line_col_span().end_line, candidate.line_col_span().end_col)
+                and (
+                    candidate.line_col_span().end_line,
+                    candidate.line_col_span().end_col,
+                )
                 <= (owner_span.end_line, owner_span.end_col)
-                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                and (
+                    candidate.line_col_span().start_line,
+                    candidate.line_col_span().start_col,
+                )
                 < (span.start_line, span.start_col)
             ]
             if nested:
@@ -1056,6 +1186,8 @@ class SourceUnit:
         definition: "ClassDef",
     ) -> bool:
         """Whether ordinary attribute storage/lookup is source-constructed."""
+        if definition._authenticated_new_constructor_shape() is not None:
+            return True
         forbidden_methods = {
             "__new__",
             "__getattr__",
@@ -1118,9 +1250,7 @@ class SourceUnit:
             return {
                 node.id
                 for target in targets
-                for node in (
-                    (target,) if isinstance(target, Name) else target.walk()
-                )
+                for node in ((target,) if isinstance(target, Name) else target.walk())
                 if isinstance(node, Name)
             }
         if statement.kind in ("Import", "ImportFrom"):
@@ -2424,7 +2554,9 @@ class Node(Typed):
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
             try:
-                result = self._construct_sugar()
+                result = self._project_constructed_value_for_testimony(
+                    self._construct_sugar()
+                )
                 # Testimony projection is INSIDE the discharge, not after it.
                 # A constructed value whose testimony cannot be content-
                 # addressed raises ConstructedValueTestimonyNotWritten here, so
@@ -2441,6 +2573,10 @@ class Node(Typed):
             self.reporter.present_fact(self)
             cache.sugar_results[key] = result
             return result
+
+    def _project_constructed_value_for_testimony(self, value: object) -> object:
+        """Project parser machinery before constructed-value testimony."""
+        return value
 
     def _construct_sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
@@ -2972,9 +3108,7 @@ class FunctionDef(Statement):
         filtered_body = tuple(
             statement
             for statement in self.body
-            if all(
-                statement is not row.definition_occurrence for row in lexical_rows
-            )
+            if all(statement is not row.definition_occurrence for row in lexical_rows)
         )
         substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
@@ -3026,12 +3160,9 @@ class FunctionDef(Statement):
 
     def lacks_captured_binding_testimony(self) -> bool:
         """Whether CPython classifies a closure binding we cannot yet seat."""
-        table = self.unit.function_symtable(
-            self.name, self.line_col_span().start_line
-        )
+        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         return any(
-            symbol.is_free() or symbol.is_nonlocal()
-            for symbol in table.get_symbols()
+            symbol.is_free() or symbol.is_nonlocal() for symbol in table.get_symbols()
         )
 
     def _source_visible_body(self, scope):
@@ -3720,7 +3851,6 @@ class FunctionDef(Statement):
             FunctionUniverseSugar,
         )
 
-
         # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
         # function while it substitutes+constructs, so the engine log's
         # heartbeat testifies exactly which function a slow lift is inside --
@@ -3885,7 +4015,10 @@ class ClassDef(Statement):
     )
 
     def __post_init__(self):
-        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+        if (
+            not isinstance(self.binding_target, Name)
+            or self.binding_target.id != self.name
+        ):
             from sugar_source_tree.panic import BackendDefect
 
             raise BackendDefect(
@@ -3914,6 +4047,79 @@ class ClassDef(Statement):
         if bindings:
             return None
         return decorator.id
+
+    def _authenticated_new_constructor_shape(self):
+        """One source-owned ``__new__`` allocation followed by field stores."""
+        constructors = tuple(
+            item
+            for item in self.body
+            if isinstance(item, FunctionDef) and item.name == "__new__"
+        )
+        if len(constructors) != 1 or any(
+            isinstance(item, FunctionDef) and item.name == "__init__"
+            for item in self.body
+        ):
+            return None
+        constructor = constructors[0]
+        if len(constructor.params) < 2 or len(constructor.body) < 3:
+            return None
+        allocation = constructor.body[0]
+        returned = constructor.body[-1]
+        if (
+            not isinstance(allocation, Assign)
+            or len(allocation.targets) != 1
+            or not isinstance(allocation.targets[0], Name)
+            or not isinstance(returned, Return)
+            or not isinstance(returned.value, Name)
+            or returned.value.id != allocation.targets[0].id
+            or not isinstance(allocation.value, Call)
+            or allocation.value.keywords
+            or len(allocation.value.args) < 1
+            or not isinstance(allocation.value.func, Attribute)
+            or allocation.value.func.attr != "__new__"
+            or not isinstance(allocation.value.func.value, Call)
+        ):
+            return None
+        super_call = allocation.value.func.value
+        class_param = constructor.params[0]
+        if (
+            not isinstance(super_call.func, Name)
+            or super_call.func.id != "super"
+            or super_call.keywords
+            or len(super_call.args) != 2
+            or not isinstance(super_call.args[0], Name)
+            or super_call.args[0].id != self.name
+            or not isinstance(super_call.args[1], Name)
+            or super_call.args[1].id != class_param.name
+            or not isinstance(allocation.value.args[0], Name)
+            or allocation.value.args[0].id != class_param.name
+        ):
+            return None
+        bindings = (self.unit.module_direct_bindings or {}).get(self.name, ())
+        if len(bindings) != 1 or bindings[0] is not self:
+            return None
+        if (self.unit.module_direct_bindings or {}).get("super"):
+            return None
+        field_body = constructor.body[1:-1]
+        receiver_name = allocation.targets[0].id
+        formal_names = {param.name for param in constructor.params[1:]}
+        field_names = []
+        for statement in field_body:
+            if (
+                not isinstance(statement, Assign)
+                or len(statement.targets) != 1
+                or not isinstance(statement.targets[0], Attribute)
+                or not isinstance(statement.targets[0].value, Name)
+                or statement.targets[0].value.id != receiver_name
+                or not isinstance(statement.value, Name)
+                or statement.value.id not in formal_names
+                or statement.targets[0].attr != statement.value.id
+            ):
+                return None
+            field_names.append(statement.targets[0].attr)
+        if len(field_names) != len(set(field_names)):
+            return None
+        return constructor, allocation.targets[0], field_body
 
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
@@ -3948,7 +4154,10 @@ class ClassDef(Statement):
         Instantiation/receiver fields remain a typed coordinate gap in the
         resulting floor value.  No class body is interpreted beside this door.
         """
-        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+        if (
+            not isinstance(self.binding_target, Name)
+            or self.binding_target.id != self.name
+        ):
             from sugar_source_tree.panic import BackendDefect
 
             raise BackendDefect(
@@ -4121,9 +4330,13 @@ class ClassDef(Statement):
                 if context is not None
                 else None
             )
-            base_sugars = (
-                () if table is None else table.get(self.fragment.seal().cid, ())
-            )
+            enrolled = () if table is None else table.get(self.fragment.seal().cid, ())
+            # A source-base table carries already-authenticated local class
+            # definitions.  Otherwise retain each ordinary base expression as
+            # Sugar so desugaring evaluates it through the temporal floor.
+            # Dropping an unenrolled builtin base here erased ``dict`` from
+            # ``class _EnumDict(dict)`` and fabricated a plain-object receiver.
+            base_sugars = enrolled or tuple(base.sugar() for base in self.bases)
         return ClassDefinitionSugar(
             class_name=self.name,
             source_identity_cid=self.unit.source_cid,
@@ -4177,6 +4390,29 @@ class ClassDef(Statement):
             ),
             None,
         )
+        new_shape = self._authenticated_new_constructor_shape()
+        constructor = (
+            initializer
+            if initializer is not None
+            else (None if new_shape is None else new_shape[0])
+        )
+        constructed_new_method = None
+        new_definitions = tuple(
+            item
+            for item in self.body
+            if isinstance(item, FunctionDef) and item.name == "__new__"
+        )
+        if len(new_definitions) == 1:
+            from sugar_lift_py_tests.floor import ConstructedClassMethodV1
+
+            new_definition = new_definitions[0]
+            constructed_new_method = ConstructedClassMethodV1(
+                new_definition.name,
+                new_definition.fragment.seal().cid,
+                new_definition.sugar(),
+                new_definition.source_visible_call_frame(),
+                self._method_descriptor_kind(new_definition),
+            )
         owner_cid = self.fragment.seal().cid
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
@@ -4211,10 +4447,13 @@ class ClassDef(Statement):
                 default_nodes=(None,),
                 default_fragments=(None,),
                 default_fragment_cids=(None,),
-                body=self._source_visible_body({}),
+                body=self._source_visible_body(
+                    {}, constructed_new_method=constructed_new_method
+                ),
                 owner=self,
+                constructed_new_method=constructed_new_method,
             )
-        params = () if initializer is None else initializer.params[1:]
+        params = () if constructor is None else constructor.params[1:]
         coordinates = tuple(
             BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
             for index, param in enumerate(params)
@@ -4249,8 +4488,11 @@ class ClassDef(Statement):
                 param.default.fragment.seal().cid if param.default is not None else None
                 for param in params
             ),
-            body=self._source_visible_body(formal_scope),
+            body=self._source_visible_body(
+                formal_scope, constructed_new_method=constructed_new_method
+            ),
             owner=self,
+            constructed_new_method=constructed_new_method,
         )
 
     def _inherits_default_exception_constructor(self) -> bool:
@@ -4308,7 +4550,7 @@ class ClassDef(Statement):
             self.reporter,
         )
 
-    def _source_visible_body(self, scope):
+    def _source_visible_body(self, scope, *, constructed_new_method=None):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
         )
@@ -4341,11 +4583,38 @@ class ClassDef(Statement):
                 **scope,
             }
             initializer_body = initializer._source_visible_body(initializer_scope)
+        else:
+            new_shape = self._authenticated_new_constructor_shape()
+            if new_shape is not None:
+                from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+                    SourceVisibleFunctionBodySugar,
+                )
+
+                constructor, receiver_target, field_body = new_shape
+                coordinate = BindingCoordinateV1.mint(
+                    self.fragment.seal().cid,
+                    receiver_target.fragment,
+                    ("receiver", 0),
+                )
+                receiver = self._make_constructed_receiver_ref(coordinate.cid)
+                receiver_coordinate_cid = coordinate.cid
+                constructor_scope = {
+                    receiver_target.id: BindingEntryV1(coordinate, receiver, None),
+                    **scope,
+                }
+                substituted_body, _ = constructor._substitute_body(
+                    field_body, constructor_scope
+                )
+                initializer_body = SourceVisibleFunctionBodySugar(
+                    tuple(statement.sugar() for statement in substituted_body),
+                    constructor.fragment,
+                )
         return ClassConstructorBodySugar(
             definition=self.sugar(),
             initializer_body=initializer_body,
             receiver_coordinate_cid=receiver_coordinate_cid,
             site=self.fragment,
+            constructed_new_method=constructed_new_method,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):
@@ -4644,6 +4913,14 @@ def _receiver_field_projection_binding(statement, target, scope):
         value=statement.value,
     )
     return {_RECEIVER_FIELD_PROJECTIONS: projections}
+
+
+def _has_authenticated_source_method(receiver, name: str) -> bool:
+    """Whether this exact constructed receiver carries a source override."""
+    if not isinstance(receiver, ObjectPlaceStateV1):
+        return False
+    value = receiver.constructed_value
+    return bool(getattr(value, "has_method", lambda _name: False)(name))
 
 
 class Assign(Statement):
@@ -5791,9 +6068,7 @@ class For(Statement):
             with reduction_span(sugar="For.symbolic", role="temporal", site=where):
                 bound = set(
                     self.unit.require_target_pattern(self, self.target).names
-                ) | For._stmts_bound_names(
-                    self.body
-                )
+                ) | For._stmts_bound_names(self.body)
                 bs = (
                     {k: v for k, v in scope.items() if k not in bound}
                     if bound
@@ -6243,18 +6518,39 @@ class If(Statement):
         re-walk of the branches (the re-read was 2^nesting on real code)."""
         from .shadow import rewrite
 
+        expected_slot = branch_result_slot(self.test)
+        stored_slot_id = getattr(self, "branch_result_slot_id", None)
+        authenticated_slot_id = getattr(
+            self, "authenticated_branch_result_slot_id", None
+        )
+        retained_slot = stored_slot_id is not None or authenticated_slot_id is not None
+        if retained_slot and (
+            stored_slot_id != expected_slot.slot_id
+            or authenticated_slot_id != expected_slot.slot_id
+        ):
+            backend_defect(
+                blame=self.fragment,
+                owner="If.substitute",
+                observed="If retained a foreign branch-result slot",
+                requested="the stored and authenticated slot for this exact If.test",
+                fix="preserve the one slot minted by the first ordinary substitution",
+            )
+
         changed = {}
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        slot = branch_result_slot(self.test)
+        slot = expected_slot
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
-        node = self._rewrite_with_slot(changed, slot, authenticated_slot=slot)
+        if retained_slot:
+            node = self if not changed else rewrite(self, **changed)
+        else:
+            node = self._rewrite_with_slot(changed, slot, authenticated_slot=slot)
 
         names = set(then_net) | set(else_net)
         phis = []
@@ -6828,7 +7124,9 @@ class With(Statement):
         if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
 
-        published_generator_resource = self._published_generator_resource_testimony(item)
+        published_generator_resource = self._published_generator_resource_testimony(
+            item
+        )
         generator_manager = self._generator_manager_sugar(item)
         if generator_manager is not None and published_generator_resource is None:
             from sugar_lift_py_tests.sugar.generator_with_sugar import (
@@ -6907,9 +7205,7 @@ class With(Statement):
                         ManagerRefSugar,
                     )
 
-                    receiver = ManagerRefSugar(
-                        slot_id=manager_slot, site=self.fragment
-                    )
+                    receiver = ManagerRefSugar(slot_id=manager_slot, site=self.fragment)
                     enter_sugar = MethodCallSugar(
                         receiver=receiver,
                         name="__enter__",
@@ -8266,8 +8562,127 @@ class Expr(Statement):
     _child_fields = ("value",)
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """Rewrite children and thread authenticated mutating-call post-state."""
+        rewritten = self._substitute_children(scope)
+        state = self._dict_setdefault_append_state(scope)
+        statement_kind = "DictSetDefaultAppendStatement"
+        if state is None:
+            state = self._mapping_pop_state(scope)
+            statement_kind = "MappingPopStatement"
+        if state is None:
+            return rewritten
+
+        name, post_state = state
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                statement_kind,
+                rewritten.span,
+                (
+                    ("value", Child(_handle_of(rewritten.value))),
+                    ("receiver_name", Leaf(name)),
+                    ("post_state", Child(_handle_of(post_state))),
+                ),
+            ),
+            self.reporter,
+        )
+
+    def _dict_setdefault_append_state(self, scope):
+        """Recognize ``d.setdefault(k, v).append(x)`` by source structure.
+
+        The method spellings select a Python built-in operation only after the
+        receiver resolves through the ordinary binding map.  The shadow node
+        carries that receiver and every evaluated operand; its Sugar/Floor door
+        later decides whether the receiver is actually a constructed dict.
+        """
+        outer = self.value
+        if (
+            not isinstance(outer, Call)
+            or outer.keywords
+            or len(outer.args) != 1
+            or not isinstance(outer.func, Attribute)
+            or outer.func.attr != "append"
+        ):
+            return None
+        inner = outer.func.value
+        if (
+            not isinstance(inner, Call)
+            or inner.keywords
+            or len(inner.args) != 2
+            or not isinstance(inner.func, Attribute)
+            or inner.func.attr != "setdefault"
+            or not isinstance(inner.func.value, Name)
+        ):
+            return None
+        receiver_name = inner.func.value.id
+        receiver = inner.func.value.substitute(scope)
+        if _has_authenticated_source_method(receiver, "setdefault"):
+            return None
+        key = inner.args[0].substitute(scope)
+        default = inner.args[1].substitute(scope)
+        appended = outer.args[0].substitute(scope)
+
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        post_state = materialize(
+            self.unit,
+            ShadowNode(
+                "DictSetDefaultAppendState",
+                self.span,
+                (
+                    ("receiver", Child(_handle_of(receiver))),
+                    ("key", Child(_handle_of(key))),
+                    ("default", Child(_handle_of(default))),
+                    ("appended", Child(_handle_of(appended))),
+                ),
+            ),
+            self.reporter,
+        )
+        return receiver_name, post_state
+
+    def _mapping_pop_state(self, scope):
+        """Recognize one inherited ``dict.pop(key, default)`` mutation.
+
+        The two-argument form has one completed post-state whether or not the
+        key exists.  One-argument ``pop`` can raise and remains on the ordinary
+        method-call path until its exceptional ExitSet is represented.
+        """
+        call = self.value
+        if (
+            not isinstance(call, Call)
+            or call.keywords
+            or len(call.args) != 2
+            or not isinstance(call.func, Attribute)
+            or call.func.attr != "pop"
+            or not isinstance(call.func.value, Name)
+        ):
+            return None
+        receiver_name = call.func.value.id
+        receiver = call.func.value.substitute(scope)
+        if _has_authenticated_source_method(receiver, "pop"):
+            return None
+
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        post_state = materialize(
+            self.unit,
+            ShadowNode(
+                "MappingPopState",
+                self.span,
+                (
+                    ("receiver", Child(_handle_of(receiver))),
+                    ("key", Child(_handle_of(call.args[0].substitute(scope)))),
+                    ("default", Child(_handle_of(call.args[1].substitute(scope)))),
+                ),
+            ),
+            self.reporter,
+        )
+        return receiver_name, post_state
 
     def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
@@ -8277,6 +8692,44 @@ class Expr(Statement):
         )
 
         return ExprStatementSugar(value=self.value.sugar(), site=self.fragment)
+
+
+class DictSetDefaultAppendStatement(Statement):
+    """Shadow statement for ``d.setdefault(k, v).append(x)``.
+
+    This is the rewritten AST statement itself.  Its expression preserves the
+    source occurrence; its post-state is the value bound to ``d`` for the
+    remainder of the block through the ordinary statement-binding protocol.
+    """
+
+    value: Expression
+    receiver_name: str
+    post_state: Expression
+    _child_fields = ("value", "post_state")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def substitution_binding(self, scope):
+        del scope
+        return {self.receiver_name: self.post_state}
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+            ExprStatementSugar,
+        )
+
+        # The shadow statement IS the mutation.  Re-running ``self.value``
+        # here would execute the original method-call spelling in parallel
+        # with the authenticated post-state and demand a second setdefault
+        # authority.  Its post-state sugar evaluates receiver/key/default/
+        # appended exactly once and owns the resulting receiver mutation.
+        return ExprStatementSugar(self.post_state.sugar(), self.fragment)
+
+
+class MappingPopStatement(DictSetDefaultAppendStatement):
+    """Shadow statement for completed ``mapping.pop(key, default)`` state."""
 
 
 class Pass(Statement):
@@ -8822,7 +9275,11 @@ class ListComp(Expression):
             changed["generators"] = new_gens
         if de:
             changed["elt"] = new_elt
-        return self if not changed else rewrite(self, **changed)
+        if not changed:
+            return self
+        rewritten = rewrite(self, **changed)
+        self.unit.retain_target_patterns(self, rewritten)
+        return rewritten
 
     def _try_unroll_to_display(self, scope):
         """The List display this comprehension dissolves to, or None. One
@@ -8851,9 +9308,9 @@ class ListComp(Expression):
         target = gen.target
         results = []
         for element in elements:
-            bindings = self.unit.require_target_pattern(
-                self, target
-            ).bindings_for(element)
+            bindings = self.unit.require_target_pattern(self, target).bindings_for(
+                element
+            )
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -9019,6 +9476,20 @@ class ListComp(Expression):
             target = ListComp._comprehension_target(self, gen.target)
             if target is None:
                 return None
+            target_pattern = None
+            target_coordinates = ()
+            if target.coordinates is not None:
+                matching_patterns = tuple(
+                    pattern
+                    for pattern in self.unit.target_patterns_for(self)
+                    if pattern.target_occurrence.ref is gen.target.ref
+                )
+                if len(matching_patterns) == 1:
+                    target_pattern = matching_patterns[0]
+                    target_coordinates = target_pattern.target_coordinates
+                    self.unit.require_target_pattern_coordinates(
+                        target_pattern, target_coordinates
+                    )
             specs.append(
                 ComprehensionGeneratorSugar(
                     target=target,
@@ -9029,6 +9500,8 @@ class ListComp(Expression):
                     ).cid,
                     iterable=gen.iter.sugar(),
                     filters=tuple(guard.sugar() for guard in gen.ifs),
+                    target_coordinates=target_coordinates,
+                    target_pattern=target_pattern,
                 )
             )
         return tuple(specs)
@@ -9098,9 +9571,9 @@ class SetComp(Expression):
         results = []
         seen = set()
         for element in elements:
-            bindings = self.unit.require_target_pattern(
-                self, gen.target
-            ).bindings_for(element)
+            bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
+                element
+            )
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -9191,9 +9664,9 @@ class DictComp(Expression):
         pairs = []
         key_indexes = {}
         for element in elements:
-            bindings = self.unit.require_target_pattern(
-                self, gen.target
-            ).bindings_for(element)
+            bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
+                element
+            )
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -9492,6 +9965,43 @@ class Call(Expression):
                     seen[node.object_identity_cid] = node
         return tuple(seen.values())
 
+    def _project_constructed_value_for_testimony(self, value: object) -> object:
+        """Replace a parser definition handle with this roll's typed occurrence."""
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        if not isinstance(value, CallSiteSugar):
+            return value
+        definition_ref = value.expected_definition_ref
+        if definition_ref is None or isinstance(
+            definition_ref, (FunctionDef, AsyncFunctionDef)
+        ):
+            return value
+        lookup = getattr(self.reporter, "materialized_node_for_ref", None)
+        if lookup is None:
+            return value
+        definition = lookup(definition_ref)
+        if definition is None and value.source_call_frame is not None:
+            producer_definition = value.source_call_frame.owner
+            if (
+                isinstance(producer_definition, (FunctionDef, AsyncFunctionDef))
+                and producer_definition.ref is definition_ref
+            ):
+                retain = getattr(self.reporter, "retain_registered_node_from", None)
+                if retain is not None:
+                    definition = retain(
+                        producer_definition, producer_definition.reporter
+                    )
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+            return value
+        source_call_frame = value.source_call_frame
+        if source_call_frame is not None:
+            source_call_frame = replace(source_call_frame, owner=definition)
+        return replace(
+            value,
+            expected_definition_ref=definition,
+            source_call_frame=source_call_frame,
+        )
+
     def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
         `<name>(<args>)` -> CallSiteSugar, the call-site coordinate (THE DIG
@@ -9659,13 +10169,10 @@ class Call(Expression):
                     requested="closed source-call preconstruction result",
                     fix="emit one typed source-call ref or gap at the exact use site",
                 )
-            if (
-                lexical_row is None
-                and (
+            if lexical_row is None and (
                 source_call_frame is None
                 or source_call_frame.frame_cid
                 != source_call_resolution.source_call_frame_cid
-                )
             ):
                 from sugar_source_tree.panic import BackendDefect
 
@@ -9724,6 +10231,7 @@ class Call(Expression):
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                call_occurrence=coordinate,
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
                 source_call_frame_table=(
@@ -9737,6 +10245,7 @@ class Call(Expression):
                     if lexical_row is not None
                     else None
                 ),
+                expected_definition_ref=bound_frame.owner.ref,
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
@@ -9828,16 +10337,22 @@ class Call(Expression):
                         fix="repair lexical call enrollment before constructing the source frame",
                     )
             else:
-                function_definition = self.unit.source_function_definition_for_call(self)
+                function_definition = self.unit.source_function_definition_for_call(
+                    self
+                )
             if function_definition is not None:
                 formal_function_sugar = function_definition.sugar()
                 formal_coordinates = function_definition.formal_coordinates()
                 formal_coordinate_cids = tuple(
                     coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
+                source_call_frame = function_definition.source_visible_call_frame()
                 if lexical_row is not None:
                     if source_call_frame is not None:
-                        if source_call_frame.owner is not lexical_row.definition_occurrence:
+                        if (
+                            source_call_frame.owner
+                            is not lexical_row.definition_occurrence
+                        ):
                             from .panic import backend_defect
 
                             backend_defect(
@@ -9848,7 +10363,9 @@ class Call(Expression):
                                 fix="retain the seated frame or keep the call loud",
                             )
                     else:
-                        source_call_frame = function_definition.source_visible_call_frame()
+                        source_call_frame = (
+                            function_definition.source_visible_call_frame()
+                        )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
@@ -10801,6 +11318,58 @@ class Starred(Expression):
 
         return StarredSugar(
             value=self.value.sugar(),
+            site=self.fragment,
+        )
+
+
+class DictSetDefaultAppendState(Expression):
+    """Shadow post-state of one authenticated ``setdefault(...).append(...)``."""
+
+    receiver: Expression
+    key: Expression
+    default: Expression
+    appended: Expression
+    _child_fields = ("receiver", "key", "default", "appended")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.dict_setdefault_append_state_sugar import (
+            DictSetDefaultAppendStateSugar,
+        )
+
+        return DictSetDefaultAppendStateSugar(
+            receiver=self.receiver.sugar(),
+            key=self.key.sugar(),
+            default=self.default.sugar(),
+            appended=self.appended.sugar(),
+            site=self.fragment,
+        )
+
+
+class MappingPopState(Expression):
+    """Shadow post-state of inherited ``dict.pop(key, default)``."""
+
+    receiver: Expression
+    key: Expression
+    default: Expression
+    _child_fields = ("receiver", "key", "default")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import (
+            MappingPopStateSugar,
+        )
+
+        return MappingPopStateSugar(
+            receiver=self.receiver.sugar(),
+            key=self.key.sugar(),
+            default=self.default.sugar(),
             site=self.fragment,
         )
 

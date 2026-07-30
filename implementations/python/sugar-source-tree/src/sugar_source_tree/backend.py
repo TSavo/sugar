@@ -451,6 +451,46 @@ class _BackendConstructionEventReceiptV1(_SealedBackendRelation):
     _tamper_message = "sealed construction event receipt"
 
 
+def _validated_construction_event_receipt_cid(value: object) -> str | None:
+    """Project one producer-sealed module event to its immutable CID."""
+    if type(value) is not _BackendConstructionEventReceiptV1:
+        return None
+    token = value._owner_token
+    if not isinstance(token, _PrivateSeal) or token.owner_type is not type(value):
+        return None
+    visible = value._visible_fields()
+    if tuple(visible) != tuple(token.preimage):
+        return None
+    for name, expected in token.preimage.items():
+        actual = visible[name]
+        if (
+            actual is not expected
+            if not isinstance(expected, (str, int, float, tuple, type(None)))
+            else actual != expected
+        ):
+            return None
+    registered = value.registered_occurrences
+    if not registered:
+        return None
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    expected_cid = cid_of_json(
+        {
+            "kind": "backend-module-construction-receipt",
+            "schemaVersion": "1",
+            "sourceCid": value.source_cid,
+            "backendFingerprint": value.backend_fingerprint,
+            "rootMemento": registered[0].fragment.seal().to_dict(),
+            "constructedNodeMementoCids": [
+                node.fragment.seal().cid for node in registered
+            ],
+        }
+    )
+    if expected_cid != value.construction_event_receipt_cid:
+        return None
+    return value.construction_event_receipt_cid
+
+
 @dataclass(init=False)
 class _ConstructedModuleV1(_SealedBackendRelation):
     """The private, atomic result of the sole backend module construction."""

@@ -65,6 +65,78 @@ class ImportValueUseSeatingGap(ValueError):
         super().__init__(f"{kind}: {detail}")
 
 
+def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
+    """Select the sole authenticated returned class for module publication."""
+    from sugar_lift_py_tests.floor.source_return_projection import (
+        project_authenticated_source_return,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    final_class = project_authenticated_source_return(value)
+    if isinstance(final_class, BlockValue) or not isinstance(final_class, FloorValue):
+
+        def describe(statement):
+            if isinstance(statement, (ReturnValue, GuardedReturn)):
+                guards = getattr(statement, "guards", ())
+                return (
+                    f"{type(statement).__name__}<{type(statement.value).__name__}>"
+                    f"[guards={len(guards)}]"
+                )
+            if isinstance(statement, CallSiteValue):
+                occurrence = getattr(statement, "call_occurrence", None)
+                occurrence_kind = (
+                    type(occurrence).__name__ if occurrence is not None else "None"
+                )
+                return (
+                    f"CallSiteValue<target={statement.target_name!r};"
+                    f"body={type(statement.body).__name__};"
+                    f"occurrence={occurrence_kind};"
+                    f"sourceFrame={statement.source_call_frame_cid!r};"
+                    "retainedCompletion="
+                    f"{statement._retained_source_completion is not None}>"
+                )
+            if type(statement).__name__ == "BranchResultAuthentication":
+                slot = getattr(statement, "slot", None)
+                return (
+                    "BranchResultAuthentication<slot="
+                    f"{getattr(slot, 'slot_id', None)!r};"
+                    f"observed={getattr(statement, 'observed_guard', None)!r}>"
+                )
+            if type(statement).__name__ == "GuardedRaise":
+                effect = getattr(statement, "effect", None)
+                return (
+                    f"GuardedRaise<guards={len(getattr(statement, 'guards', ())) };"
+                    f"effect={type(effect).__name__}>"
+                )
+            return type(statement).__name__
+
+        shape = (
+            (
+            "BlockValue["
+            + ",".join(describe(statement) for statement in final_class.statements)
+            + "]"
+            + f"; canFallThrough={final_class.can_fall_through}"
+            + f"; fallThroughGuards={len(final_class.fall_through)}"
+            )
+            if isinstance(final_class, BlockValue)
+            else type(final_class).__name__
+        )
+        raise SugarNotWritten(
+            owner="module definition execution",
+            blame=blame,
+            observed=(
+                "metaclass application has no unique authenticated returned class Floor; "
+                f"shape={shape}"
+            ),
+            requested="one non-block returned class Floor",
+            fix=(
+                "preserve multi-return, guarded, fall-through, raise, and halted "
+                "metaclass bodies as typed loud"
+            ),
+        )
+    return final_class
+
+
 @dataclass(frozen=True)
 class _ModuleSourceFrameCallableV1(FloorValue):
     """Exact module FunctionDef callable used during definition execution."""
@@ -85,7 +157,6 @@ class _ModuleSourceFrameCallableV1(FloorValue):
     def callable_application_with(self, operation, ctx):
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
         if operation.keyword_names:
@@ -105,10 +176,7 @@ class _ModuleSourceFrameCallableV1(FloorValue):
                 "call:module-source-frame",
                 [
                     self.to_term(owner=self.callable_name),
-                    *(
-                        item.to_term(owner=self.callable_name)
-                        for item in bound.actuals
-                    ),
+                    *(item.to_term(owner=self.callable_name) for item in bound.actuals),
                 ],
             ),
             self.frame.body,
@@ -120,26 +188,16 @@ class _ModuleSourceFrameCallableV1(FloorValue):
             bound_source_actuals=bound,
         )
         produced = call.producer_outcome(ctx)
-        if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
-            raise SugarNotWritten(
-                owner="module definition source callable",
-                blame=operation.site,
-                observed="source decorator produced a nonlinear outcome",
-                requested="one completed retained source-call coordinate",
-                fix="sequence decorator effects before module publication",
+        # Projection is a continuation over the producer ExitSet.  Completed
+        # faces project their retained source return; halted faces remain owned
+        # by the source call with their guards and effects unchanged.  Requiring
+        # ``Complete`` here used to discard Python's authenticated nonlinear
+        # control at the exact metaclass publication boundary.
+        return produced.and_then(
+            lambda value: value.project_operation_receiver_outcome(
+                ctx, owner="module definition source callable"
             )
-        projected = produced.value.project_operation_receiver_outcome(
-            ctx, owner="module definition source callable"
         )
-        if not isinstance(projected, Complete):
-            raise SugarNotWritten(
-                owner="module definition source callable",
-                blame=operation.site,
-                observed="source decorator return projected nonlinearly",
-                requested="one completed decorator result Floor",
-                fix="sequence decorator return effects before publication",
-            )
-        return projected
 
 
 @dataclass(frozen=True)
@@ -203,17 +261,64 @@ class _ModuleFunctionDefinitionBindingSugar:
 
 @dataclass(frozen=True)
 class _ModuleNameAssignmentBindingSugar:
-    """Execute one exact module ``Name = RHS`` into prefix temporal state."""
+    """Execute one exact module chained-name assignment into temporal state.
+
+    Python evaluates the RHS once, then binds that same object to every target.
+    Keeping the targets together here preserves both laws; expanding the source
+    into independent assignments would evaluate the RHS more than once.
+    """
 
     statement: Assign
+    targets: tuple[Name, ...]
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor import (
+            CallSiteValue,
+            ComprehensionValue,
+            ListValue,
+        )
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.ir import _Ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        def bind_projected_value(value):
+            if (
+                type(value) is ComprehensionValue
+                and type(value.term) is _Ctor
+                and value.term.name == "py.listcomp"
+                and value.finite_elements is not None
+            ):
+                value = ListValue(tuple(value.finite_elements))
+            return Complete(
+                ScopeRebinds(tuple((target.id, value) for target in self.targets))
+            )
+
+        def bind_completed_value(value):
+            if type(value) is CallSiteValue:
+                return value.project_operation_receiver_outcome(
+                    ctx,
+                    owner="module name assignment source return",
+                ).and_then(bind_projected_value)
+            return bind_projected_value(value)
+
+        return self.statement.value.sugar().desugar(ctx).and_then(bind_completed_value)
+
+
+@dataclass(frozen=True)
+class _ModuleSubscriptDeleteBindingSugar:
+    """Thread one exact module ``del name[index]`` result into its binding."""
+
+    statement: Delete
     target: Name
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
         from sugar_lift_py_tests.outcome import Complete
 
-        return self.statement.value.sugar().desugar(ctx).and_then(
-            lambda value: Complete(ScopeRebind(self.target.id, value))
+        return (
+            self.statement.sugar()
+            .desugar(ctx)
+            .and_then(lambda value: Complete(ScopeRebind(self.target.id, value)))
         )
 
 
@@ -299,9 +404,10 @@ class _ModuleClassDefinitionBindingSugar:
                     )
                 keyword = metaclass_keywords[0]
                 metaclass_outcome = keyword.value.sugar().desugar(ctx)
-                if not isinstance(metaclass_outcome, Complete) or type(
-                    metaclass_outcome.value
-                ) is not ClassDefinitionValue:
+                if (
+                    not isinstance(metaclass_outcome, Complete)
+                    or type(metaclass_outcome.value) is not ClassDefinitionValue
+                ):
                     raise SugarNotWritten(
                         owner="module definition execution",
                         blame=keyword.value.fragment,
@@ -329,54 +435,84 @@ class _ModuleClassDefinitionBindingSugar:
                 )
                 class_name_floor = StringValue(self.definition.name)
                 bases_floor = TupleValue(tuple(value.base_classes))
-                namespace_floor = DictValue(
+                fallback_namespace = DictValue(
                     tuple(
                         (StringValue(field.name), field.value)
                         for field in value.class_fields
                     )
                 )
                 occurrence = _call_coordinate(keyword.value)
-                applied = CallableApplication(
-                    (
-                        metaclass_floor,
-                        class_name_floor,
-                        bases_floor,
-                        namespace_floor,
-                    ),
-                    (),
-                    occurrence,
-                    owner="module metaclass application",
-                    call_occurrence=occurrence,
-                ).apply(callable_floor, ctx)
-                if not isinstance(applied, Complete):
+                preparers = tuple(
+                    method
+                    for method in metaclass_floor.methods
+                    if method.name == "__prepare__"
+                )
+                if len(preparers) > 1:
                     raise SugarNotWritten(
                         owner="module definition execution",
                         blame=keyword.value.fragment,
-                        observed="metaclass application reduced nonlinearly",
-                        requested="one completed published class Floor",
-                        fix="sequence metaclass effects before module publication",
+                        observed=f"metaclass has {len(preparers)} __prepare__ methods",
+                        requested="at most one exact source-visible namespace producer",
+                        fix="preserve unique method-definition testimony",
                     )
-                publication = _mint_metaclass_class_publication(
-                    source_cid=self.definition.unit.source_cid,
-                    definition=_call_coordinate(self.definition),
-                    binding_occurrence=sugar.binding_target_occurrence,
-                    metaclass_occurrence=occurrence,
-                    raw_class=value,
-                    metaclass_floor=metaclass_floor,
-                    metaclass_callable=callable_floor,
-                    class_name_floor=class_name_floor,
-                    bases_floor=bases_floor,
-                    namespace_floor=namespace_floor,
-                    final_class=applied.value,
-                    module_construction_receipt_cid=(
-                        self.module_construction_receipt_cid
-                    ),
+
+                def apply_new(namespace_floor):
+                    applied = CallableApplication(
+                        (
+                            metaclass_floor,
+                            class_name_floor,
+                            bases_floor,
+                            namespace_floor,
+                        ),
+                        (),
+                        occurrence,
+                        owner="module metaclass application",
+                        call_occurrence=occurrence,
+                    ).apply(callable_floor, ctx)
+
+                    def publish_metaclass_result(result):
+                        final_class = _project_metaclass_final_class(
+                            result, blame=keyword.value.fragment
+                        )
+                        publication = _mint_metaclass_class_publication(
+                            source_cid=self.definition.unit.source_cid,
+                            definition=_call_coordinate(self.definition),
+                            binding_occurrence=sugar.binding_target_occurrence,
+                            metaclass_occurrence=occurrence,
+                            raw_class=value,
+                            metaclass_floor=metaclass_floor,
+                            metaclass_callable=callable_floor,
+                            class_name_floor=class_name_floor,
+                            bases_floor=bases_floor,
+                            namespace_floor=namespace_floor,
+                            final_class=final_class,
+                            module_construction_receipt_cid=(
+                                self.module_construction_receipt_cid
+                            ),
+                        )
+                        return Complete(
+                            ScopeRebind(
+                                self.definition.name,
+                                MetaclassClassValue(publication),
+                            )
+                        )
+
+                    return applied.and_then(publish_metaclass_result)
+
+                if not preparers:
+                    return apply_new(fallback_namespace)
+                prepare = preparers[0]
+                prepare_callable = _ModuleSourceFrameCallableV1(
+                    prepare.name, prepare.source_call_frame
                 )
-                return Complete(
-                    ScopeRebind(
-                        self.definition.name, MetaclassClassValue(publication)
-                    )
-                )
+                prepared = CallableApplication(
+                    (metaclass_floor, class_name_floor, bases_floor),
+                    (),
+                    occurrence,
+                    owner="module metaclass namespace preparation",
+                    call_occurrence=occurrence,
+                ).apply(prepare_callable, ctx)
+                return prepared.and_then(apply_new)
             if not sugar.decorator_sugars:
                 return Complete(ScopeRebind(self.definition.name, value))
             decorator_floors = []
@@ -445,9 +581,7 @@ class _ModuleClassDefinitionBindingSugar:
                 raw_class=value,
                 decorator_applications=tuple(applications),
                 final_class=current,
-                module_construction_receipt_cid=(
-                    self.module_construction_receipt_cid
-                ),
+                module_construction_receipt_cid=(self.module_construction_receipt_cid),
             )
             return Complete(
                 ScopeRebind(self.definition.name, DecoratedClassValue(publication))
@@ -491,9 +625,7 @@ def _enroll_imported_decorator_frames(
             )
         receipts_by_span[receipt_span] = receipt
     for decorator in definition.decorators:
-        if not isinstance(decorator, Call) or not isinstance(
-            decorator.func, Attribute
-        ):
+        if not isinstance(decorator, Call) or not isinstance(decorator.func, Attribute):
             continue
         span = decorator.line_col_span()
         receipt = receipts_by_span.get(
@@ -546,15 +678,30 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         reduce_block_to_exitset,
     )
     from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef, Name
+    from sugar_source_tree.binding_state import (
+        ConstructionTestimonyReporterV1,
+        SubstitutionTraceBuilderV1,
+    )
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        Delete,
+        FunctionDef,
+        Name,
+        Subscript,
+    )
+    from sugar_source_tree.reporter import NULL_REPORTER
 
     from .canonical import blake3_512_of
 
     if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
         raise ValueError("module prefix source CID mismatch")
     construction_context = TreeConstructionContextV1.for_source_call_construction()
+    producer_reporter = ConstructionTestimonyReporterV1(
+        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+    )
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
+        reporter=producer_reporter,
         construction_context=construction_context,
     )
     locus_key = (locus.lineno, locus.col_offset)
@@ -589,9 +736,13 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
                 < definition.line_col_span().start_line
             ):
                 bases.append(bindings[0].sugar())
-        definition.unit.construction_context.source_class_bases[
-            definition.fragment.seal().cid
-        ] = tuple(bases)
+        # The table is an all-base positional roster, never a bag of the
+        # source bases we happened to recognize.  Installing a partial row for
+        # ``class X(Local, dict)`` drops ``dict`` before temporal evaluation.
+        if len(bases) == len(definition.bases):
+            definition.unit.construction_context.source_class_bases[
+                definition.fragment.seal().cid
+            ] = tuple(bases)
 
     dependency_graphs = {}
     if graph is not None:
@@ -618,17 +769,36 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         (
             _ModuleFunctionDefinitionBindingSugar(statement)
             if isinstance(statement, (FunctionDef, AsyncFunctionDef))
-            else _ModuleClassDefinitionBindingSugar(
+            else (
+                _ModuleClassDefinitionBindingSugar(
                 statement, source_file.construction_event_receipt_cid
             )
             if isinstance(statement, ClassDef)
-            else _ModuleNameAssignmentBindingSugar(statement, statement.targets[0])
+                else (
+                    _ModuleNameAssignmentBindingSugar(
+                        statement, tuple(statement.targets)
+                    )
             if (
                 isinstance(statement, Assign)
+                        and statement.targets
+                        and all(
+                            isinstance(target, Name) for target in statement.targets
+            )
+                    )
+                    else (
+                        _ModuleSubscriptDeleteBindingSugar(
+                statement, statement.targets[0].value
+            )
+            if (
+                isinstance(statement, Delete)
                 and len(statement.targets) == 1
-                and isinstance(statement.targets[0], Name)
+                and isinstance(statement.targets[0], Subscript)
+                and isinstance(statement.targets[0].value, Name)
             )
             else statement.sugar()
+        )
+                )
+            )
         )
         for statement in prefix
     )
@@ -1594,6 +1764,13 @@ def _resolve_source_visible_frame_uncached(
     dependency_graphs: dict[str, DependencyArtifactGraph] | None,
     session: SourceResolutionSession,
 ) -> tuple[object, Node, object] | ManagerConstructionGapV1:
+    from sugar_source_tree.backend import materialize
+    from sugar_source_tree.binding_state import (
+        ConstructionTestimonyReporterV1,
+        SubstitutionTraceBuilderV1,
+    )
+    from sugar_source_tree.reporter import NULL_REPORTER
+
     # frame_projection: dual-mode factories may nest With only on non-CM
     # branches; soft-require those so call-frame projection can complete.
     context = TreeConstructionContextV1.for_source_call_construction(
@@ -1602,6 +1779,12 @@ def _resolve_source_visible_frame_uncached(
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
+    )
+    producer_reporter = ConstructionTestimonyReporterV1(
+        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+    )
+    producer_root = materialize(
+        source_file.unit, source_file.root.ref, producer_reporter
     )
     from sugar_lift_python_source.value_pins import scan_module_value_pins
     from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
@@ -1624,12 +1807,11 @@ def _resolve_source_visible_frame_uncached(
 
     def with_mutable_globals(frame):
         return replace(frame, mutable_global_bindings=mutable_global_bindings)
+
     dependency_graphs = dict(dependency_graphs or {})
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
     definitions = tuple(
-        item
-        for item in source_file.root.body
-        if isinstance(item, (FunctionDef, ClassDef))
+        item for item in producer_root.body if isinstance(item, (FunctionDef, ClassDef))
     )
     target = next(
         (item for item in definitions if _matches_definition(item, resolved)), None
@@ -1803,6 +1985,7 @@ def _resolve_source_visible_frame_uncached(
             )
         if matching_values:
             matching_values[0].revalidate()
+
         def obligation(relation_kind: str) -> OpaqueSourceCallObligationV1:
             subsumption = None
             if matching_values:
@@ -1825,6 +2008,7 @@ def _resolve_source_visible_frame_uncached(
                 resolution_kind=relation_kind,
                 import_call_value_subsumption=subsumption,
             )
+
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
@@ -2171,7 +2355,10 @@ def _construct_reachable_decorated_class_bindings(
                 bound_source_actuals=bound,
             )
             produced = call.producer_outcome(ctx)
-            if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
+            if (
+                not isinstance(produced, Complete)
+                or type(produced.value) is not CallSiteValue
+            ):
                 raise SugarNotWritten(
                     owner="manager_construction decorated class application",
                     blame=operation.site,
@@ -2295,7 +2482,9 @@ def _construct_reachable_decorated_class_bindings(
             function.name, function.line_col_span().start_line
         )
         for node in owned_lexical_load_occurrences(function):
-            bindings = tuple((function.unit.module_direct_bindings or {}).get(node.id, ()))
+            bindings = tuple(
+                (function.unit.module_direct_bindings or {}).get(node.id, ())
+            )
             if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
                 continue
             candidate = bindings[0]
@@ -2380,6 +2569,7 @@ def _construct_reachable_decorated_class_bindings(
             tuple(zip(decorator_floors, sugar.decorator_occurrences, strict=True))
         ):
             from sugar_lift_py_tests.floor import CallSiteValue
+
             if (
                 type(callable_floor) is CallSiteValue
                 and callable_floor.body is not None
@@ -2569,10 +2759,7 @@ def _reachable_local_definition_names(
                     # field = LocalClass(...) edges are real construction refs.
                     for call in _named_calls_under(item.value):
                         dependencies.append(call.func.id)
-                elif (
-                    isinstance(item, AnnAssign)
-                    and item.value is not None
-                ):
+                elif isinstance(item, AnnAssign) and item.value is not None:
                     for call in _named_calls_under(item.value):
                         dependencies.append(call.func.id)
         else:
@@ -2757,10 +2944,7 @@ def _reachable_attribute_calls(function: FunctionDef):
         node = stack.pop()
         if isinstance(node, (FunctionDef, ClassDef)):
             continue
-        if (
-            isinstance(node, Call)
-            and isinstance(node.func, Attribute)
-        ):
+        if isinstance(node, Call) and isinstance(node.func, Attribute):
             calls.append(node)
         children = [child for _, _, child in node.children()]
         stack.extend(reversed(children))
@@ -2900,9 +3084,7 @@ def _seat_import_value_use_receipts(
             module.source_cid,
             module_identities={},
         )
-        receipts = _retain_import_value_receipt_roster(
-            context, module, tuple(minted)
-        )
+        receipts = _retain_import_value_receipt_roster(context, module, tuple(minted))
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
     call_receipts, _ = authenticated_import_use_receipts(
@@ -2928,8 +3110,7 @@ def _seat_import_value_use_receipts(
         calls_by_cid[cid] = call_receipt
     owned_spans = [target.line_col_span()]
     owned_spans.extend(
-        decorator.line_col_span()
-        for decorator in getattr(target, "decorators", ())
+        decorator.line_col_span() for decorator in getattr(target, "decorators", ())
     )
     owned_ranges = tuple(
         (

@@ -384,6 +384,7 @@ class ConstructionTestimonyReporterV1:
         "_delegate",
         "_by_node_shape",
         "_failed_by_node_shape",
+        "_materialized_by_ref",
         "_trace_builder",
     )
 
@@ -396,10 +397,70 @@ class ConstructionTestimonyReporterV1:
         # could not be testified re-raises the SAME typed panic, and re-raising
         # adds no roll-call mass: the gap was testified once, when it happened.
         self._failed_by_node_shape: dict[str, BaseException] = {}
+        self._materialized_by_ref: dict[object, Node] = {}
         self._trace_builder = trace_builder
 
     def register(self, node: Node) -> None:
+        if node.reporter is not self:
+            # Registration is construction-owned.  A later caller cannot turn
+            # a Node built under another reporter into testimony by replaying
+            # this public protocol method.
+            return
+        existing = self._materialized_by_ref.get(node.ref)
+        if existing is None:
+            # Lazy child access can rematerialize a view for the same backend
+            # ref.  The first constructor contact owns the testimony; a later
+            # view must not replace it.
+            self._materialized_by_ref[node.ref] = node
         self._delegate.register(node)
+
+    def materialized_node_for_ref(self, ref: object) -> Node | None:
+        """The typed occurrence registered for ``ref`` in this exact roll."""
+        return self._materialized_by_ref.get(ref)
+
+    def retain_registered_node_from(
+        self, node: Node, producer: "ConstructionTestimonyReporterV1"
+    ) -> Node:
+        """Retain one exact producer-roll registration in this consumer roll."""
+        registered = (
+            None
+            if type(producer) is not ConstructionTestimonyReporterV1
+            else producer._materialized_by_ref.get(node.ref)
+        )
+        if (
+            registered is not node
+            or not isinstance(registered, type(node))
+            or registered.unit.source_cid != node.unit.source_cid
+            or registered.line_col_span() != node.line_col_span()
+        ):
+            from sugar_source_tree.panic import backend_defect
+
+            backend_defect(
+                blame=node.fragment,
+                owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
+                observed="foreign or absent producer node registration",
+                requested="the producer reporter's exact typed Node/ref registration",
+                fix="retain the producer registration; never remint or search by name/span",
+            )
+        existing = self._materialized_by_ref.get(node.ref)
+        if existing is not None and (
+            not isinstance(existing, type(node))
+            or existing.unit.source_cid != node.unit.source_cid
+            or existing.line_col_span() != node.line_col_span()
+        ):
+            from sugar_source_tree.panic import backend_defect
+
+            backend_defect(
+                blame=node.fragment,
+                owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
+                observed="consumer roll already carries a conflicting Node/ref registration",
+                requested="zero or one exact producer registration per backend ref",
+                fix="preserve materialization identity; never select between duplicate nodes",
+            )
+        if existing is not None:
+            return existing
+        self._materialized_by_ref[node.ref] = registered
+        return registered
 
     def present_fact(self, node: Node) -> None:
         self._delegate.present_fact(node)
@@ -411,6 +472,52 @@ class ConstructionTestimonyReporterV1:
         self._delegate.report_gap(node, panic)
 
     def present_construction(self, node: Node, value: object) -> None:
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_source_tree.nodes import Call, FunctionDef, AsyncFunctionDef
+
+        if (
+            isinstance(node, Call)
+            and isinstance(value, CallSiteSugar)
+            and value.expected_definition_ref is not None
+        ):
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+
+            definition = value.expected_definition_ref
+            resolved_definition = node.unit.source_function_definition_for_call(node)
+            span = node.line_col_span()
+            call_occurrence = SourceFragmentCoordinateV1(
+                node.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            frame = value.source_call_frame
+            if (
+                not isinstance(definition, (FunctionDef, AsyncFunctionDef))
+                or definition.ref not in self._materialized_by_ref
+                or node.ref not in self._materialized_by_ref
+                or definition.unit.source_cid != node.unit.source_cid
+                or not isinstance(
+                    resolved_definition, (FunctionDef, AsyncFunctionDef)
+                )
+                or resolved_definition.fragment.seal()
+                != definition.fragment.seal()
+                or value.call_occurrence != call_occurrence
+                or frame is None
+                or frame.owner.ref is not definition.ref
+                or frame.definition_site.source_cid != node.unit.source_cid
+            ):
+                self._testimony_gap(
+                    node,
+                    value,
+                    "constructed value",
+                    ValueError(
+                        "source call definition is not this call's exact typed occurrence"
+                    ),
+                )
         try:
             node_shape_cid = node_construction_shape_cid(node)
         except (TypeError, ValueError) as cause:
@@ -1056,7 +1163,10 @@ def _cv2_leaf(value: object) -> Any:
     enum type and member tags and never recurses into ``.value``.
     """
     from sugar_source_tree.fragment import SourceFragment, SourceMemento
+    from types import MethodType
 
+    if value is Ellipsis:
+        return {"ellipsis": True}
     if value is None:
         return {"null": None}
     if isinstance(value, Enum):
@@ -1084,7 +1194,50 @@ def _cv2_leaf(value: object) -> Any:
         return {"sourceFragment": value.seal().to_dict()}
     if isinstance(value, SourceMemento):
         return {"sourceMemento": value.to_dict()}
-    from sugar_source_tree.nodes import Node
+    if type(value) is MethodType:
+        from sugar_source_tree.operators import (
+            AUGASSIGN_BINARY_OPERATOR_CLASSES,
+            BinaryOperator,
+        )
+
+        operator = value.__self__
+        operator_type = type(operator)
+        if (
+            operator_type in AUGASSIGN_BINARY_OPERATOR_CLASSES
+            and operator is operator_type.instance()
+            and value.__func__ is BinaryOperator.project_inplace
+        ):
+            return {
+                "sourceOperatorMethod": {
+                    "operatorType": (
+                        f"{operator_type.__module__}.{operator_type.__qualname__}"
+                    ),
+                    "kind": operator.kind,
+                    "symbol": operator.symbol,
+                    "inplaceOperator": operator.inplace_operator,
+                    "method": "BinaryOperator.project_inplace",
+                }
+            }
+    from sugar_source_tree.backend import _validated_construction_event_receipt_cid
+    from sugar_source_tree.nodes import Node, TargetPatternV1
+
+    construction_event_receipt_cid = _validated_construction_event_receipt_cid(
+        value
+    )
+    if construction_event_receipt_cid is not None:
+        return {
+            "backendConstructionEventReceiptCid": construction_event_receipt_cid
+        }
+
+    if type(value) is TargetPatternV1:
+        receipt = value.receipt
+        if receipt is not None and _validated_native_cid(receipt) == receipt.cid:
+            return {
+                "targetPatternReceipt": {
+                    "cid": receipt.cid,
+                    "preimage": receipt.preimage,
+                }
+            }
 
     if isinstance(value, Node):
         # A Node is a tree VIEW, not content. Its content identity is its
@@ -1104,6 +1257,14 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
     arm is a typed gap, never reflection over ``__dict__`` and never
     ``.wire()``.
     """
+    from sugar_source_tree.nodes import TargetPatternV1
+
+    if (
+        type(value) is TargetPatternV1
+        and value.receipt is not None
+        and _validated_native_cid(value.receipt) == value.receipt.cid
+    ):
+        return (_cv2_type_tag(value), [("receipt", value.receipt)])
     if isinstance(value, tuple):
         # Length and position are authenticated: ``at`` is the index, and
         # ``arity`` is encoded, so reordering, duplicating or omitting a child
@@ -1210,6 +1371,14 @@ def constructed_value_cid_v2(value: object) -> str:
     A value reached while it is still being expanded is a CYCLE: a typed gap,
     loudly, never a truncation or a placeholder.
     """
+    from sugar_source_tree.backend import _validated_construction_event_receipt_cid
+
+    construction_event_receipt_cid = _validated_construction_event_receipt_cid(
+        value
+    )
+    if construction_event_receipt_cid is not None:
+        return construction_event_receipt_cid
+
     from .construction_cache import (
         constructed_value_cid_v2_for,
         remember_constructed_value_cid_v2,

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class DictValue(FloorValue):
+class DictValue(GuardStableValue):
     """A dict of reduced (key, value) floor pairs, in source order.
 
     The sugar reduces each key and each value; the floor holds what those
@@ -15,6 +15,12 @@ class DictValue(FloorValue):
     """
 
     entries: tuple
+
+    def mapping_entries(self) -> tuple:
+        return self.entries
+
+    def mapping_with_entries(self, entries: tuple) -> "DictValue":
+        return DictValue(entries)
 
     def denotes_value(self) -> bool:
         """This floor value denotes a ``dict``."""
@@ -42,6 +48,16 @@ class DictValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(TermValue(len(self.entries)))
+
+    def iter_with(self, operation, ctx):
+        """``iter(dict)`` traverses authenticated keys in insertion order."""
+        del operation, ctx
+        from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            ListIteratorValue(tuple(key for key, _value in self.entries), index=0)
+        )
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Project insertion-ordered authenticated keys for slice assignment."""
@@ -126,6 +142,46 @@ class DictValue(FloorValue):
         from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
         return getattr_coordinate(self, name, owner="DictValue.attribute")
+
+    def call_method_value(
+        self,
+        name,
+        arguments,
+        *,
+        owner,
+        blame,
+        ctx=None,
+        keywords=(),
+        required_frame=None,
+    ):
+        """Execute closed dict methods whose result is fixed by this value."""
+        del owner, ctx
+        if (
+            name == "items"
+            and not arguments
+            and not keywords
+            and required_frame is None
+        ):
+            from sugar_lift_py_tests.floor.tuple_value import TupleValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                TupleValue(
+                    tuple(TupleValue((key, value)) for key, value in self.entries)
+                )
+            )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="DictValue.call_method_value",
+            blame=blame,
+            observed=f"dict.{name}",
+            requested="closed source-visible dict method semantics",
+            fix="implement the exact dict method floor or keep the call loud",
+        )
+
+    def supports_closed_method(self, name: str) -> bool:
+        return name == "items"
 
     def setattr(self, name, value, site):
         """Dicts have no instance ``__dict__``; store is AttributeError."""

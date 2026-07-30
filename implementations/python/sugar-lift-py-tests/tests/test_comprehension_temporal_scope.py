@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, replace
 
+import pytest
+
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
@@ -9,7 +11,9 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 )
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    DictValue,
     ListValue,
+    ObjectValue,
     SymbolicValue,
     TermValue,
 )
@@ -23,6 +27,7 @@ from sugar_lift_py_tests.sugar.comprehension_sugar import (
 )
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.tree import SourceFile
+from sugar_source_tree.nodes import TargetPatternConstructionGapV1
 
 
 @dataclass(frozen=True)
@@ -191,3 +196,56 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
     assert mutated_fold.args[1].param_name == "outer"
     assert mutated_fold.args[1].body == make_var("outer")
     assert post.args[0] == outer
+
+
+def test_finite_comprehensions_transport_exact_constructed_objects_in_order():
+    """The second comprehension binds the exact objects built by the first."""
+    source = (
+        "class Item:\n"
+        "    def __init__(self, index, name):\n"
+        "        self.index = index\n"
+        "        self.name = name\n"
+        "def build(*names):\n"
+        "    items = [Item(index, name) for index, name in enumerate(names)]\n"
+        "    return {item.name: item for item in items}\n"
+        "build(2, 1)\n"
+    )
+    call = tuple(
+        node
+        for node in _source_file(source).nodes()
+        if node.kind == "Call" and node.func.kind == "Name" and node.func.id == "build"
+    )[-1]
+    outcome = call.sugar().desugar(None)
+
+    assert isinstance(outcome, Complete)
+    returned = outcome.value.project_operation_receiver(
+        None, owner="finite-comprehension-transport-test"
+    )
+    assert isinstance(returned, DictValue)
+    assert tuple(key.value for key, _ in returned.entries) == (2, 1)
+    objects = tuple(value for _, value in returned.entries)
+    assert all(type(value) is ObjectValue for value in objects)
+    assert tuple(value.fields[0].value.value for value in objects) == (0, 1)
+    assert tuple(value.fields[1].value.value for value in objects) == (2, 1)
+    assert returned.entries[0][1] is objects[0]
+    assert returned.entries[1][1] is objects[1]
+
+
+def test_finite_comprehension_refuses_swapped_tuple_target_coordinates():
+    source = (
+        "def build():\n"
+        "    return [(left, right) for left, right in [(1, 2)]]\n"
+    )
+    source_file = _source_file(source)
+    comprehension = next(
+        node for node in source_file.nodes() if node.kind == "ListComp"
+    ).sugar()
+    generator = comprehension.generators[0]
+
+    with pytest.raises(TargetPatternConstructionGapV1) as rejected:
+        replace(
+            generator,
+            target_coordinates=tuple(reversed(generator.target_coordinates)),
+        )
+
+    assert rejected.value.reason == "target-coordinate-order-mismatch"
