@@ -74,11 +74,28 @@ def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
 
     final_class = project_authenticated_source_return(value)
     if isinstance(final_class, BlockValue) or not isinstance(final_class, FloorValue):
+        def describe(statement):
+            if isinstance(statement, (ReturnValue, GuardedReturn)):
+                guards = getattr(statement, "guards", ())
+                return (
+                    f"{type(statement).__name__}<{type(statement.value).__name__}>"
+                    f"[guards={len(guards)}]"
+                )
+            return type(statement).__name__
+
+        shape = (
+            "BlockValue["
+            + ",".join(describe(statement) for statement in final_class.statements)
+            + "]"
+            + f"; canFallThrough={final_class.can_fall_through}"
+            + f"; fallThroughGuards={len(final_class.fall_through)}"
+        ) if isinstance(final_class, BlockValue) else type(final_class).__name__
         raise SugarNotWritten(
             owner="module definition execution",
             blame=blame,
             observed=(
-                "metaclass application has no unique authenticated returned class Floor"
+                "metaclass application has no unique authenticated returned class Floor; "
+                f"shape={shape}"
             ),
             requested="one non-block returned class Floor",
             fix=(

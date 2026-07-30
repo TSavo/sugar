@@ -98,6 +98,23 @@ def test_raw_block_final_class_controls_remain_loud(lying_final) -> None:
         _project_metaclass_final_class(lying_final, blame="enum.py:712")
 
 
+def test_metaclass_projection_gap_names_the_retained_control_shape() -> None:
+    guarded = GuardedReturn((make_var("undecided"),), TermValue("candidate"))
+    body = BlockValue(
+        (TermValue("testimony"), guarded),
+        fall_through=(make_var("fallthrough"),),
+        can_fall_through=True,
+    )
+
+    with pytest.raises(SugarNotWritten) as caught:
+        _project_metaclass_final_class(body, blame="enum.py:1081:21")
+
+    assert (
+        "shape=BlockValue[TermValue,GuardedReturn<TermValue>[guards=1]]; "
+        "canFallThrough=True; fallThroughGuards=1"
+    ) in str(caught.value)
+
+
 @dataclass(frozen=True)
 class _Coordinate:
     name: str
