@@ -206,3 +206,33 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
     assert outcome.value.identity == receiver.identity
     assert outcome.value.entries == receiver.entries
     assert outcome.value.attribute("owner", "test") == Complete(TermValue(7))
+
+
+def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
+    defining_class = object()
+    receiver = ObjectValue(
+        "Namespace", (), identity="receiver-1", defining_class=defining_class
+    )
+
+    outcome = ReceiverFieldStoreStateSugar(
+        _FixedSugar(receiver), _FixedSugar(TermValue(7)), "owner", "site"
+    ).desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.defining_class is defining_class
+
+
+def test_receiver_field_post_state_does_not_borrow_foreign_class_authority() -> None:
+    own_class = object()
+    foreign_class = object()
+    receiver = ObjectValue(
+        "Namespace", (), identity="receiver-1", defining_class=own_class
+    )
+    foreign = ObjectValue(
+        "Namespace", (), identity="receiver-1", defining_class=foreign_class
+    )
+
+    updated = receiver.with_field_store("owner", TermValue(7))
+
+    assert updated.defining_class is own_class
+    assert updated.defining_class is not foreign.defining_class

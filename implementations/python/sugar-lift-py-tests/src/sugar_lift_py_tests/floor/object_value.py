@@ -261,6 +261,7 @@ class ObjectValue(FloorValue):
             self.identity,
             self.deferred_helper_fields,
             still_deleted,
+            self.defining_class,
         )
 
     def authenticates_plain_attribute_store(self, name: str) -> bool:

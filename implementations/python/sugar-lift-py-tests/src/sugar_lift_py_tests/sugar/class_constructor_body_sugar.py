@@ -46,6 +46,51 @@ class ClassConstructorBodySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        def project_new_return(definition, block):
+            """Return the shadow receiver state produced by source ``__new__``.
+
+            ``ReceiverFieldStoreStateSugar`` updates the immutable receiver in
+            the substituted method body.  Re-scanning that body for the old
+            ReceiverFieldStoreValue statement shape discards the constructed
+            return and recreates the pre-store receiver.  Only the authenticated
+            source ``__new__`` arm may return this value; ``__init__`` keeps its
+            ordinary receiver-construction path below.
+            """
+            if (
+                self.constructed_new_method is None
+                or definition.initializer is not None
+            ):
+                return None
+            from sugar_lift_py_tests.floor import ObjectValue
+            from sugar_lift_py_tests.floor.source_return_projection import (
+                project_authenticated_source_return,
+            )
+
+            returned = project_authenticated_source_return(block)
+            if (
+                returned is block
+                and len(block.statements) == 1
+                and isinstance(block.statements[0], ObjectValue)
+            ):
+                # reduce_body has already projected the sole ReturnValue and
+                # retained its value as the block's only completed statement.
+                returned = block.statements[0]
+            if (
+                isinstance(returned, ObjectValue)
+                and getattr(returned.defining_class, "class_definition_cid", None)
+                == definition.class_definition_cid
+            ):
+                return returned
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassConstructorBodySugar.__new__",
+                observed=type(returned).__name__,
+                requested="the authenticated immutable receiver returned by source __new__",
+                fix="preserve the shadow receiver binding through the source return",
+            )
+
         def construct(value):
             if self.initializer_body is None:
                 return Complete(
@@ -89,11 +134,16 @@ class ClassConstructorBodySugar(Sugar):
                     block = face.value
                     if not isinstance(block, BlockValue):
                         block = BlockValue((block,), can_fall_through=True)
+                    returned = project_new_return(value, block)
                     projected.append(
                         Completed(
                             face.guard,
-                            value.construct_receiver_state_from_block(
-                                block, self.receiver_coordinate_cid
+                            (
+                                returned
+                                if returned is not None
+                                else value.construct_receiver_state_from_block(
+                                    block, self.receiver_coordinate_cid
+                                )
                             ),
                             face.faces,
                             face.pending_contracts,
@@ -121,6 +171,9 @@ class ClassConstructorBodySugar(Sugar):
                     requested="one source-visible runtime initializer implementation",
                     fix="keep overload-only or stub-only constructors typed loud",
                 )
+            returned = project_new_return(value, block)
+            if returned is not None:
+                return Complete(returned)
             return Complete(
                 value.construct_receiver_state_from_block(
                     block, self.receiver_coordinate_cid
