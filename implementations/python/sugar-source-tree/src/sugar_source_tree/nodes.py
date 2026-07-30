@@ -8565,6 +8565,10 @@ class Expr(Statement):
         """Rewrite children and thread authenticated mutating-call post-state."""
         rewritten = self._substitute_children(scope)
         state = self._dict_setdefault_append_state(scope)
+        statement_kind = "DictSetDefaultAppendStatement"
+        if state is None:
+            state = self._mapping_pop_state(scope)
+            statement_kind = "MappingPopStatement"
         if state is None:
             return rewritten
 
@@ -8575,7 +8579,7 @@ class Expr(Statement):
         return materialize(
             self.unit,
             ShadowNode(
-                "DictSetDefaultAppendStatement",
+                statement_kind,
                 rewritten.span,
                 (
                     ("value", Child(_handle_of(rewritten.value))),
@@ -8640,6 +8644,46 @@ class Expr(Statement):
         )
         return receiver_name, post_state
 
+    def _mapping_pop_state(self, scope):
+        """Recognize one inherited ``dict.pop(key, default)`` mutation.
+
+        The two-argument form has one completed post-state whether or not the
+        key exists.  One-argument ``pop`` can raise and remains on the ordinary
+        method-call path until its exceptional ExitSet is represented.
+        """
+        call = self.value
+        if (
+            not isinstance(call, Call)
+            or call.keywords
+            or len(call.args) != 2
+            or not isinstance(call.func, Attribute)
+            or call.func.attr != "pop"
+            or not isinstance(call.func.value, Name)
+        ):
+            return None
+        receiver_name = call.func.value.id
+        receiver = call.func.value.substitute(scope)
+        if _has_authenticated_source_method(receiver, "pop"):
+            return None
+
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        post_state = materialize(
+            self.unit,
+            ShadowNode(
+                "MappingPopState",
+                self.span,
+                (
+                    ("receiver", Child(_handle_of(receiver))),
+                    ("key", Child(_handle_of(call.args[0].substitute(scope)))),
+                    ("default", Child(_handle_of(call.args[1].substitute(scope)))),
+                ),
+            ),
+            self.reporter,
+        )
+        return receiver_name, post_state
+
     def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
         value's sugar. States nothing; an effect in the value rides."""
@@ -8682,6 +8726,10 @@ class DictSetDefaultAppendStatement(Statement):
         # authority.  Its post-state sugar evaluates receiver/key/default/
         # appended exactly once and owns the resulting receiver mutation.
         return ExprStatementSugar(self.post_state.sugar(), self.fragment)
+
+
+class MappingPopStatement(DictSetDefaultAppendStatement):
+    """Shadow statement for completed ``mapping.pop(key, default)`` state."""
 
 
 class Pass(Statement):
@@ -11297,6 +11345,31 @@ class DictSetDefaultAppendState(Expression):
             key=self.key.sugar(),
             default=self.default.sugar(),
             appended=self.appended.sugar(),
+            site=self.fragment,
+        )
+
+
+class MappingPopState(Expression):
+    """Shadow post-state of inherited ``dict.pop(key, default)``."""
+
+    receiver: Expression
+    key: Expression
+    default: Expression
+    _child_fields = ("receiver", "key", "default")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import (
+            MappingPopStateSugar,
+        )
+
+        return MappingPopStateSugar(
+            receiver=self.receiver.sugar(),
+            key=self.key.sugar(),
+            default=self.default.sugar(),
             site=self.fragment,
         )
 

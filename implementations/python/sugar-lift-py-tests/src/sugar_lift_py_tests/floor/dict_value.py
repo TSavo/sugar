@@ -49,6 +49,16 @@ class DictValue(GuardStableValue):
 
         return Complete(TermValue(len(self.entries)))
 
+    def iter_with(self, operation, ctx):
+        """``iter(dict)`` traverses authenticated keys in insertion order."""
+        del operation, ctx
+        from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            ListIteratorValue(tuple(key for key, _value in self.entries), index=0)
+        )
+
     def slice_assign_iterable_with(self, operation, ctx):
         """Project insertion-ordered authenticated keys for slice assignment."""
         del operation, ctx

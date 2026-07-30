@@ -88,6 +88,19 @@ class MappingObjectValue(ObjectValue):
                 return self.setitem(arguments[0], arguments[1], blame)
             if name == "__delitem__" and len(arguments) == 1:
                 return self.delitem(arguments[0], blame)
+            if (
+                name == "get"
+                and len(arguments) in (1, 2)
+                and not self.has_method("get")
+            ):
+                return self._mapping_get(arguments, blame)
+            if name == "items" and not arguments and not self.has_method("items"):
+                from sugar_lift_py_tests.floor.tuple_value import TupleValue
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(
+                    TupleValue(tuple(TupleValue((key, value)) for key, value in self.entries))
+                )
         return super().call_method_value(
             name,
             arguments,
@@ -97,6 +110,36 @@ class MappingObjectValue(ObjectValue):
             keywords=keywords,
             required_frame=required_frame,
         )
+
+    def _mapping_get(self, arguments, blame):
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import _closed_member_equal
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import Complete
+
+        key = arguments[0]
+        default = arguments[1] if len(arguments) == 2 else NoneValue()
+        decisions = tuple(
+            _closed_member_equal(key, candidate) for candidate, _ in self.entries
+        )
+        if any(decision is None for decision in decisions):
+            construction_panic_gap(
+                owner="MappingObjectValue.get",
+                blame=blame,
+                observed="undecidable mapping key equality",
+                requested="one source-decided finite mapping key",
+                fix="construct key equality or keep get typed loud",
+            )
+        matching = tuple(index for index, decision in enumerate(decisions) if decision)
+        if len(matching) > 1:
+            construction_panic_gap(
+                owner="MappingObjectValue.get",
+                blame=blame,
+                observed="duplicate equal keys in constructed mapping",
+                requested="one canonical mapping entry per key",
+                fix="repair mapping construction before get",
+            )
+        return Complete(self.entries[matching[0]][1] if matching else default)
 
     def with_field_store(self, name, value):
         updated = super().with_field_store(name, value)
