@@ -4947,6 +4947,9 @@ class Assign(Statement):
             return mapping_pop
 
         new_value, changed = self._substitute_field(self.value, scope)
+        field_state = self._receiver_field_store_state(scope, new_value)
+        if field_state is not None:
+            return field_state
         changes = {"value": new_value} if changed else {}
         if len(self.targets) == 1 and isinstance(
             self.targets[0], (Attribute, Subscript)
@@ -4964,6 +4967,45 @@ class Assign(Statement):
         if self.unit.target_patterns_for(self):
             self.unit.retain_target_patterns(self, rewritten)
         return rewritten
+
+    def _receiver_field_store_state(self, scope, new_value):
+        """Thread ``name.attr = value`` into later reads of that exact name."""
+        if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
+            return None
+        target = self.targets[0]
+        if not isinstance(target.value, Name) or target.value.id not in scope:
+            return None
+        receiver = target.value.substitute(scope)
+        if not isinstance(receiver, Node):
+            return None
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        post_state = materialize(
+            self.unit,
+            ShadowNode(
+                "ReceiverFieldStoreState",
+                self.span,
+                (
+                    ("receiver", Child(_handle_of(receiver))),
+                    ("value", Child(_handle_of(new_value))),
+                    ("attr", Leaf(target.attr)),
+                ),
+            ),
+            self.reporter,
+        )
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "ReceiverFieldStoreStatement",
+                self.span,
+                (
+                    ("receiver_name", Leaf(target.value.id)),
+                    ("post_state", Child(_handle_of(post_state))),
+                ),
+            ),
+            self.reporter,
+        )
 
     def _mapping_pop_assignment(self, scope):
         """Split ``result = mapping.pop(key, default)`` into two SSA bindings.
@@ -8877,6 +8919,25 @@ class Break(Statement):
         )
 
 
+class ReceiverFieldStoreStatement(Statement):
+    receiver_name: str
+    post_state: Expression
+    _child_fields = ("post_state",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def substitution_binding(self, scope):
+        del scope
+        return {self.receiver_name: self.post_state}
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
+
+        return ExprStatementSugar(self.post_state.sugar(), self.fragment)
+
+
 class Continue(Statement):
     pass
 
@@ -11484,6 +11545,26 @@ class MappingPopState(Expression):
             key=self.key.sugar(),
             default=self.default.sugar(),
             site=self.fragment,
+        )
+
+
+class ReceiverFieldStoreState(Expression):
+    receiver: Expression
+    value: Expression
+    attr: str
+    _child_fields = ("receiver", "value")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
+            ReceiverFieldStoreStateSugar,
+        )
+
+        return ReceiverFieldStoreStateSugar(
+            self.receiver.sugar(), self.value.sugar(), self.attr, self.fragment
         )
 
 
