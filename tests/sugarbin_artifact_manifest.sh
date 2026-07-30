@@ -161,7 +161,34 @@ grep -Fq 'crime=private-shared-cache-cell' <<<"$private_cache_refusal" || {
   printf '%s\n' "$private_cache_refusal" >&2
   exit 1
 }
-find "$tmp/cache" -type f -name '*.sugarbin.json' -exec chmod 0644 {} +
+for cache_cell in "$tmp/cache"/sugar-*; do
+  chmod 0777 "$cache_cell"
+  find "$cache_cell" -maxdepth 1 -type f ! -name '*.sugarbin.json' -exec chmod 0777 {} +
+  find "$cache_cell" -maxdepth 1 -type f -name '*.sugarbin.json' -exec chmod 0666 {} +
+done
+# Peer-readable is insufficient for a content-addressed resident. A second
+# runner must not be able to mutate the directory, executable, or manifest
+# after the creating identity has authenticated its content.
+set +e
+mutable_cache_refusal="$(
+  SUGAR_BINARY_ALLOW_BUILD=0 "$repo/bin/sugarbin" --bin sugar 2>&1 >/dev/null
+)"
+mutable_cache_status=$?
+set -e
+[[ "$mutable_cache_status" != 0 ]] || {
+  echo 'a world-writable shared-cache cell was accepted by its creating identity' >&2
+  exit 1
+}
+grep -Fq 'crime=private-shared-cache-cell' <<<"$mutable_cache_refusal" || {
+  echo 'a world-writable shared-cache cell did not refuse by name' >&2
+  printf '%s\n' "$mutable_cache_refusal" >&2
+  exit 1
+}
+for cache_cell in "$tmp/cache"/sugar-*; do
+  chmod 0755 "$cache_cell"
+  find "$cache_cell" -maxdepth 1 -type f ! -name '*.sugarbin.json' -exec chmod 0755 {} +
+  find "$cache_cell" -maxdepth 1 -type f -name '*.sugarbin.json' -exec chmod 0644 {} +
+done
 cat >"$tmp/bin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 1

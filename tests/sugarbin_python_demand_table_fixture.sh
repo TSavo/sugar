@@ -9,6 +9,7 @@ mkdir -p \
   "$tmp/corpus/pkg" \
   "$tmp/seed-shelf" \
   "$tmp/private-shelf" \
+  "$tmp/mutable-shelf" \
   "$tmp/blocked-shelf" \
   "$tmp/partial-shelf" \
   "$tmp/race-shelf"
@@ -152,6 +153,33 @@ grep -Fq 'crime=private-filesystem-shelf-cell' "$tmp/private.err" || {
 }
 [[ ! -e "$tmp/private-pull.json" ]] || {
   echo 'a private filesystem-shelf cell materialized output' >&2
+  exit 1
+}
+
+# Lying immutability face. Peer read/traverse bits do not make a
+# content-addressed resident immutable: another runner identity can rewrite a
+# 0777 cell or any 0666 byte after the creator has authenticated it.
+cp -R "$tmp/seed-shelf/." "$tmp/mutable-shelf/"
+mutable_cell="$(
+  find "$tmp/mutable-shelf" -type f -name '*.metadata.json' -exec dirname {} \;
+)"
+chmod 0777 "$mutable_cell"
+find "$mutable_cell" -type f -exec chmod 0666 {} +
+set +e
+pull "$tmp/mutable-shelf" "$tmp/mutable-pull.json" 2>"$tmp/mutable.err"
+mutable_status=$?
+set -e
+[[ "$mutable_status" != 0 ]] || {
+  echo 'a world-writable filesystem-shelf cell was accepted by its creating identity' >&2
+  exit 1
+}
+grep -Fq 'crime=private-filesystem-shelf-cell' "$tmp/mutable.err" || {
+  echo 'a world-writable filesystem-shelf cell did not refuse by name' >&2
+  cat "$tmp/mutable.err" >&2
+  exit 1
+}
+[[ ! -e "$tmp/mutable-pull.json" ]] || {
+  echo 'a world-writable filesystem-shelf cell materialized output' >&2
   exit 1
 }
 

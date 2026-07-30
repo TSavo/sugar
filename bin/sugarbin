@@ -769,11 +769,11 @@ try:
 except OSError:
     raise SystemExit(1)
 
-if directory_mode & 0o005 != 0o005:
+if directory_mode != 0o755:
     raise SystemExit(1)
-if candidate_mode & 0o005 != 0o005:
+if candidate_mode != 0o755:
     raise SystemExit(1)
-if manifest_mode & 0o004 != 0o004:
+if manifest_mode != 0o644:
     raise SystemExit(1)
 PY
 }
@@ -1214,9 +1214,9 @@ try:
 except OSError:
     raise SystemExit(1)
 
-if cell_mode & 0o005 != 0o005:
+if cell_mode != 0o755:
     raise SystemExit(1)
-if any(mode & 0o004 != 0o004 for mode in artifact_modes):
+if any(mode != 0o644 for mode in artifact_modes):
     raise SystemExit(1)
 PY
 }
