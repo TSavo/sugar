@@ -20,6 +20,11 @@ from sugar_lift_py_tests.corpus_pin import load_pin, pin_corpus, require_pin
 
 EX_CONFIG = 78
 EX_IOERR = 74
+TERMINAL_ARTIFACTS = (
+    "recensus.json",
+    "measurement-status.txt",
+    "lease-record.json",
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +133,19 @@ def run_census_under_lease(
         "--",
         *census_command(launch),
     ]
+    # The durable coordinate is reused when a killed attempt resumes from its
+    # authenticated checkpoint.  Terminal artifacts are not resumable state:
+    # leaving any of them in place lets a no-output child authenticate a prior
+    # attempt.  Remove only terminals; checkpoint.jsonl remains intact.
+    try:
+        for name in TERMINAL_ARTIFACTS:
+            (launch.output / name).unlink(missing_ok=True)
+    except OSError as error:
+        print(
+            f"CENSUS RESULT REFUSED: cannot reset terminal artifacts: {error}",
+            file=sys.stderr,
+        )
+        return EX_IOERR
     completed = runner(command, check=False, text=True, capture_output=True)
     if completed.stdout:
         print(completed.stdout, end="")
@@ -139,19 +157,39 @@ def run_census_under_lease(
             "CENSUS RESULT REFUSED: lease/census returned without recensus.json",
             file=sys.stderr,
         )
-        return completed.returncode if completed.returncode else EX_IOERR
+        return EX_IOERR
     try:
         payload = json.loads(result.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         print(f"CENSUS RESULT REFUSED: malformed recensus.json: {error}", file=sys.stderr)
-        return completed.returncode if completed.returncode else EX_IOERR
+        return EX_IOERR
     if "done files=" not in (completed.stdout or ""):
         print("CENSUS RESULT REFUSED: completion summary is absent", file=sys.stderr)
-        return completed.returncode if completed.returncode else EX_IOERR
+        return EX_IOERR
+    if payload.get("commit") != launch.commit or payload.get("sourceStamp", {}).get(
+        "commit"
+    ) != launch.commit:
+        print(
+            "CENSUS RESULT REFUSED: result commit/sourceStamp does not match launch",
+            file=sys.stderr,
+        )
+        return EX_IOERR
     denominator = payload.get("denominator", {})
-    if not denominator.get("complete", False):
-        print("CENSUS RESULT REFUSED: denominator is contaminated or incomplete", file=sys.stderr)
-        return completed.returncode if completed.returncode else EX_IOERR
+    denominator_exact = (
+        denominator.get("complete") is True
+        and denominator.get("enrolled") == 1421
+        and denominator.get("terminalRows") == 1421
+        and denominator.get("completed") == 1421
+        and denominator.get("missingFiles") == []
+        and denominator.get("duplicateFiles") == []
+        and denominator.get("malformedRows") == []
+    )
+    if not denominator_exact:
+        print(
+            "CENSUS RESULT REFUSED: denominator is not exact 1421-row conservation",
+            file=sys.stderr,
+        )
+        return EX_IOERR
     return int(completed.returncode)
 
 
