@@ -769,6 +769,19 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
             else FalseBoolLiteralSugar(site=operation.blame)
         )
 
+    if name == "replace" and len(args) in {2, 3}:
+        old, new, *count_arg = args
+        if not isinstance(old, StringValue) or not isinstance(new, StringValue):
+            return opaque_coordinate()
+        if not count_arg:
+            return Complete(StringValue(receiver.value.replace(old.value, new.value)))
+        count = count_arg[0]
+        if not isinstance(count, TermValue) or type(count.value) is not int:
+            return opaque_coordinate()
+        return Complete(
+            StringValue(receiver.value.replace(old.value, new.value, count.value))
+        )
+
     if name == "join" and len(args) == 1:
         iterable = args[0]
         parts = _static_str_parts(iterable)
@@ -781,6 +794,21 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
             return Complete(StringValue(receiver.value.join(parts)))
         # Opaque iterable (vendor columns, symbolic seq): coordinate only.
         return opaque_coordinate()
+
+    if name == "replace":
+        if len(args) not in {2, 3}:
+            return None
+        old, new, *count_arg = args
+        if not isinstance(old, StringValue) or not isinstance(new, StringValue):
+            return opaque_coordinate()
+        if not count_arg:
+            return Complete(StringValue(receiver.value.replace(old.value, new.value)))
+        count = count_arg[0]
+        if not isinstance(count, TermValue) or type(count.value) is not int:
+            return opaque_coordinate()
+        return Complete(
+            StringValue(receiver.value.replace(old.value, new.value, count.value))
+        )
 
     if name == "split":
         if len(args) == 0:
