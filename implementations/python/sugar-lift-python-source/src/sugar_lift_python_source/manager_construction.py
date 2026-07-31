@@ -1867,8 +1867,19 @@ def _resolve_source_visible_frame_uncached(
         for pin in pin_scan.mutable_global_pins
     )
 
-    def with_mutable_globals(frame):
-        return replace(frame, mutable_global_bindings=mutable_global_bindings)
+    module_definitions = tuple(source_file.root.body)
+
+    def with_module_globals(frame, function):
+        source_class_bindings = _construct_reachable_source_class_bindings(
+            target=function,
+            module_definitions=module_definitions,
+            ctx=None,
+        )
+        return replace(
+            frame,
+            mutable_global_bindings=mutable_global_bindings,
+            source_class_bindings=source_class_bindings,
+        )
 
     dependency_graphs = dict(dependency_graphs or {})
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
@@ -1922,7 +1933,7 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
-        frame = with_mutable_globals(target.source_visible_call_frame())
+        frame = with_module_globals(target.source_visible_call_frame(), target)
         if frame.parameters and frame.parameters[0] == "self":
             frame = replace(
                 frame,
@@ -2318,8 +2329,8 @@ def _resolve_source_visible_frame_uncached(
                     context=context,
                     dependency_graphs=dependency_graphs,
                 )
-            frames[function.name] = with_mutable_globals(
-                function.source_visible_call_frame()
+            frames[function.name] = with_module_globals(
+                function.source_visible_call_frame(), function
             )
             pending.remove(function)
             progressed = True
@@ -2332,13 +2343,6 @@ def _resolve_source_visible_frame_uncached(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "ordinary source call frame"
         )
-    source_class_bindings = _construct_reachable_source_class_bindings(
-        target=target,
-        module_definitions=tuple(source_file.root.body),
-        ctx=None,
-    )
-    if source_class_bindings:
-        frame = replace(frame, source_class_bindings=source_class_bindings)
     decorated_class_bindings = _construct_reachable_decorated_class_bindings(
         source_file=source_file,
         module=module,
