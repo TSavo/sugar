@@ -207,6 +207,16 @@ def enrich_source_class_bindings(frame):
     if root is None:
         return frame
     module_classes = tuple(item for item in root.body if isinstance(item, ClassDef))
+    enclosing_classes = tuple(
+        definition
+        for definition in module_classes
+        if any(item is target for item in definition.body)
+    )
+    publication_line = (
+        enclosing_classes[0].line_col_span().start_line
+        if len(enclosing_classes) == 1
+        else target.line_col_span().start_line
+    )
     table = target.unit.function_symtable(
         target.name, target.line_col_span().start_line
     )
@@ -235,7 +245,7 @@ def enrich_source_class_bindings(frame):
                 candidate not in module_classes
                 or candidate.decorators
                 or candidate.line_col_span().start_line
-                >= target.line_col_span().start_line
+                >= publication_line
             ):
                 continue
             try:
