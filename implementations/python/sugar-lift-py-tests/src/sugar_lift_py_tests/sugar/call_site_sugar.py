@@ -420,9 +420,8 @@ class CallSiteSugar(ConstructedTermSugar):
                 # BindingCoordinateRefs match this frame's formal coordinates,
                 # not the caller's inlined formal nodes.
                 declaration_frame = owner.source_visible_call_frame()
-                if (
-                    declaration_frame.frame_cid
-                    != source_call_frame.declaration_frame_cid
+                if not _same_source_declaration(
+                    declaration_frame, source_call_frame
                 ):
                     from sugar_source_tree.panic import BackendDefect
 
@@ -430,7 +429,7 @@ class CallSiteSugar(ConstructedTermSugar):
                         owner="CallSiteSugar.desugar",
                         blame=self.site,
                         observed="declaration/source frame mismatch",
-                        requested="byte-identical authenticated source frame",
+                        requested="the same authenticated source declaration",
                         fix="retain the callee declaration frame across node binding",
                     )
                 source_body = declaration_frame.body
@@ -642,3 +641,10 @@ def _with_frame_mutable_globals(ctx, frame):
         module_temporal = module_temporal.bind_value(binding.name, binding.value)
         temporal = temporal.bind_value(binding.name, binding.value)
     return replace(ctx, temporal=temporal, module_temporal=module_temporal)
+
+
+def _same_source_declaration(left, right) -> bool:
+    """Whether two context-enriched frames preserve one declaration identity."""
+    left_cid = getattr(left, "declaration_frame_cid", None)
+    right_cid = getattr(right, "declaration_frame_cid", None)
+    return left_cid is not None and left_cid == right_cid
