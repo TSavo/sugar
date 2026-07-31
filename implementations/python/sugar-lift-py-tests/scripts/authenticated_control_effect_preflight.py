@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Callable
 
 from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
@@ -15,6 +18,17 @@ from sugar_lift_py_tests.authenticated_pytest import (
 )
 from sugar_lift_py_tests.corpus_pin import load_pin, pin_corpus, require_pin
 
+EX_CONFIG = 78
+EX_IOERR = 74
+
+
+@dataclass(frozen=True)
+class CensusLaunch:
+    commit: str
+    repo: Path
+    corpus_root: Path
+    pin: Path
+    output: Path
 
 def require_launch_coordinates(commit: str, mount_proof: str, output: Path) -> None:
     if len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
@@ -33,8 +47,7 @@ def require_launch_coordinates(commit: str, mount_proof: str, output: Path) -> N
         )
 
 
-def main() -> int:
-    try:
+def authenticate_and_write_preflight() -> CensusLaunch:
         commit = os.environ.get("SUGAR_CENSUS_COMMIT", "")
         mount_proof = os.environ.get("SUGAR_BX_MOUNT_PROOF", "")
         output = Path(os.environ.get("SUGAR_CENSUS_OUTPUT_ROOT", ""))
@@ -49,7 +62,8 @@ def main() -> int:
                 f"pandas corpus enrollment is {corpus.file_count}; required 1421"
             )
         repo = Path(__file__).resolve().parents[4]
-        expected_pin = load_pin(repo / "docs/ledgers/pins/pandas-3.0.3.pin.json")
+        pin_path = repo / "docs/ledgers/pins/pandas-3.0.3.pin.json"
+        expected_pin = load_pin(pin_path)
         observed_pin = pin_corpus(
             corpus.root, distribution="pandas", version=corpus.version
         )
@@ -71,10 +85,91 @@ def main() -> int:
         receipt_path = output / "preflight.json"
         receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         print(receipt_path)
-        return 0
+        return CensusLaunch(commit, repo, corpus.root, pin_path, output)
+
+
+def census_command(launch: CensusLaunch) -> list[str]:
+    script = launch.repo / (
+        "implementations/python/sugar-lift-py-tests/scripts/"
+        "control_effect_recensus.py"
+    )
+    return [
+        sys.executable,
+        str(script),
+        str(launch.corpus_root),
+        "--corpus-root", str(launch.corpus_root),
+        "--corpus-distribution", "pandas",
+        "--corpus-version", "3.0.3",
+        "--require-corpus-pin", str(launch.pin),
+        "--repo", str(launch.repo),
+        "--commit", launch.commit,
+        "--out-dir", str(launch.output),
+        "--json", str(launch.output / "recensus.json"),
+        "--checkpoint-jsonl", str(launch.output / "checkpoint.jsonl"),
+        "--engine-log", str(launch.output / "engine.jsonl"),
+        "--progress", str(launch.output / "progress.log"),
+    ]
+
+
+def run_census_under_lease(
+    launch: CensusLaunch,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> int:
+    lease = launch.repo / "tools/heavy_measurement_lease.py"
+    receipt = launch.output / "lease-record.json"
+    status = launch.output / "measurement-status.txt"
+    command = [
+        sys.executable,
+        str(lease),
+        "--class", "pandas-control-effect",
+        "--record", str(receipt),
+        "--status-file", str(status),
+        "--",
+        *census_command(launch),
+    ]
+    completed = runner(command, check=False, text=True, capture_output=True)
+    if completed.stdout:
+        print(completed.stdout, end="")
+    if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr)
+    result = launch.output / "recensus.json"
+    if not result.is_file():
+        print(
+            "CENSUS RESULT REFUSED: lease/census returned without recensus.json",
+            file=sys.stderr,
+        )
+        return completed.returncode if completed.returncode else EX_IOERR
+    try:
+        payload = json.loads(result.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"CENSUS RESULT REFUSED: malformed recensus.json: {error}", file=sys.stderr)
+        return completed.returncode if completed.returncode else EX_IOERR
+    if "done files=" not in (completed.stdout or ""):
+        print("CENSUS RESULT REFUSED: completion summary is absent", file=sys.stderr)
+        return completed.returncode if completed.returncode else EX_IOERR
+    denominator = payload.get("denominator", {})
+    if not denominator.get("complete", False):
+        print("CENSUS RESULT REFUSED: denominator is contaminated or incomplete", file=sys.stderr)
+        return completed.returncode if completed.returncode else EX_IOERR
+    return int(completed.returncode)
+
+
+def execute(
+    *,
+    authenticate: Callable[[], CensusLaunch] = authenticate_and_write_preflight,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> int:
+    try:
+        launch = authenticate()
     except Exception as error:
         print(f"CENSUS PREFLIGHT REFUSED: {error}", file=sys.stderr)
-        return 78
+        return EX_CONFIG
+    return run_census_under_lease(launch, runner=runner)
+
+
+def main() -> int:
+    return execute()
 
 
 if __name__ == "__main__":
