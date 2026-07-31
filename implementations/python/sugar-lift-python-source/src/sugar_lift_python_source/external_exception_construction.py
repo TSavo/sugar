@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -143,21 +142,20 @@ def _ancestry_labels(
 def _exception_ancestry_names(
     graph: DependencyArtifactGraph, resolved: ResolvedPythonObjectV1
 ) -> tuple[str, ...] | None:
+    from sugar_source_tree.nodes import ClassDef, Name
+    from sugar_source_tree.tree import SourceFile
+
     module = graph.modules.get(resolved.module_name)
     if module is not None and module.source_cid == resolved.source_cid:
-        tree = ast.parse(module.source, filename=module.source_seat)
+        tree = SourceFile((module.source, module.source_seat, module.source_cid)).root
         classes = {
-            node.name: tuple(
-                base.id for base in node.bases if isinstance(base, ast.Name)
-            )
+            node.name: tuple(base.id for base in node.bases if isinstance(base, Name))
             for node in tree.body
-            if isinstance(node, ast.ClassDef)
-            and all(isinstance(base, ast.Name) for base in node.bases)
+            if isinstance(node, ClassDef)
+            and all(isinstance(base, Name) for base in node.bases)
         }
         starts = {
-            node.name: node.lineno
-            for node in tree.body
-            if isinstance(node, ast.ClassDef)
+            node.name: node.lineno for node in tree.body if isinstance(node, ClassDef)
         }
     else:
         recorded = [
@@ -419,15 +417,28 @@ def _returned_module_parameter(
     graph: DependencyArtifactGraph, resolved: ResolvedPythonObjectV1
 ) -> int | None:
     """Parameter projected by a source function as ``sys.modules[param]``."""
+    from sugar_source_tree.nodes import (
+        Assign,
+        AsyncFunctionDef,
+        Attribute,
+        FunctionDef,
+        Import,
+        Name,
+        Return,
+        Subscript,
+    )
+    from sugar_source_tree.tree import SourceFile
+
     module = graph.modules.get(resolved.module_name)
     if module is None or module.source_cid != resolved.source_cid:
         return None
-    tree = ast.parse(module.source, filename=module.source_seat)
+    source_file = SourceFile((module.source, module.source_seat, module.source_cid))
+    tree = source_file.root
     function = next(
         (
             node
             for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if isinstance(node, (FunctionDef, AsyncFunctionDef))
             and node.name == resolved.definition.name
             and node.lineno == resolved.definition.start_line
         ),
@@ -439,36 +450,57 @@ def _returned_module_parameter(
     sys_names = {
         alias.asname or alias.name
         for statement in tree.body
-        if isinstance(statement, ast.Import)
+        if isinstance(statement, Import)
         for alias in statement.names
         if alias.name == "sys"
     }
     projected: dict[str, str] = {}
-    for statement in ast.walk(function):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        value = statement.value
-        if not isinstance(target, ast.Name) or not isinstance(value, ast.Subscript):
-            continue
-        owner = value.value
-        if not (
-            isinstance(owner, ast.Attribute)
-            and owner.attr == "modules"
-            and isinstance(owner.value, ast.Name)
-            and owner.value.id in sys_names
-            and isinstance(value.slice, ast.Name)
-            and value.slice.id in parameters
-        ):
-            continue
-        projected[target.id] = value.slice.id
-    returned = {
-        projected[node.value.id]
-        for node in ast.walk(function)
-        if isinstance(node, ast.Return)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in projected
-    }
+    returned_names: set[str] = set()
+    registered = (
+        source_file.constructed_module.construction_event_receipt.registered_occurrences
+    )
+    function_span = function.span
+    nested_function_spans = tuple(
+        node.span
+        for node in registered
+        if (
+            node is not function
+            and isinstance(node, (FunctionDef, AsyncFunctionDef))
+            and function_span.start <= node.span.start
+            and node.span.end <= function_span.end
+        )
+    )
+    owned_occurrences = (
+        node
+        for node in registered
+        if (
+            node is not function
+            and function_span.start <= node.span.start
+            and node.span.end <= function_span.end
+            and not any(
+                nested.start <= node.span.start and node.span.end <= nested.end
+                for nested in nested_function_spans
+            )
+        )
+    )
+    for statement in owned_occurrences:
+        if isinstance(statement, Assign) and len(statement.targets) == 1:
+            target = statement.targets[0]
+            value = statement.value
+            if isinstance(target, Name) and isinstance(value, Subscript):
+                owner = value.value
+                if (
+                    isinstance(owner, Attribute)
+                    and owner.attr == "modules"
+                    and isinstance(owner.value, Name)
+                    and owner.value.id in sys_names
+                    and isinstance(value.slice_, Name)
+                    and value.slice_.id in parameters
+                ):
+                    projected[target.id] = value.slice_.id
+        if isinstance(statement, Return) and isinstance(statement.value, Name):
+            returned_names.add(statement.value.id)
+    returned = {projected[name] for name in returned_names if name in projected}
     if len(returned) != 1:
         return None
     return parameters.index(next(iter(returned)))

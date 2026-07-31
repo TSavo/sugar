@@ -1,10 +1,11 @@
 """Per-family attribution for assertion bodies whose root is not a Call.
 
 The authenticated runner owns discovery and shared-table transport.  This
-module owns the closed accounting algebra: every enrolled body is attributed
-to exactly one producer family and exactly one of three outcomes.  A named
-``SugarNotWritten`` refusal is accounted semantics, not a failure.  A
-``ConstructionPanic`` remains a separate loud axis.
+module owns the closed accounting algebra: every completed probe is attributed
+to exactly one producer family and one closed outcome. A named
+``SugarNotWritten`` refusal is accounted semantics, not a failure.
+``ConstructionPanic`` never enters this accounting boundary; it remains
+producer-owned and propagates loud.
 """
 
 from __future__ import annotations
@@ -254,7 +255,6 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
 
 
 def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
 
     try:
@@ -268,14 +268,6 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             AttributionOutcome.NAMED_REFUSAL,
             refusal.owner,
         )
-    except ConstructionPanic as panic:
-        return BodyAttribution(
-            probe.body_id,
-            probe.family,
-            AttributionOutcome.CONSTRUCTION_PANIC,
-            panic.info.owner,
-        )
-
     exceptional_effects = _exceptional_exit_effects(outcome)
     if exceptional_effects:
         unnamed = tuple(
@@ -499,8 +491,6 @@ def discover_no_call_body_probes(
     selects the producer family; no manager or vendor spelling selects it or
     grants semantic behavior to a producer.
     """
-    import ast
-
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
@@ -531,17 +521,7 @@ def discover_no_call_body_probes(
         for node_type, family in family_by_type.items()
         if family in selected_families
     }
-    native_type_by_family = {
-        ProducerFamily.SUBSCRIPT: ast.Subscript,
-        ProducerFamily.BINOP: ast.BinOp,
-        ProducerFamily.COMPARE: ast.Compare,
-        ProducerFamily.ATTRIBUTE: ast.Attribute,
-        ProducerFamily.UNARYOP: ast.UnaryOp,
-        ProducerFamily.BOOLOP: ast.BoolOp,
-    }
-    selected_native_types = tuple(
-        native_type_by_family[family] for family in selected_families
-    )
+    selected_root_types = tuple(family_by_type)
     paths_by_cid = {}
     for path in SourceTree(corpus_root).paths():
         paths_by_cid[blake3_512_of(path.read_bytes())] = path
@@ -567,44 +547,20 @@ def discover_no_call_body_probes(
                 f"demand table names source CID absent from authenticated corpus: {source_cid}"
             )
         source = path.read_text(encoding="utf-8")
-        candidate_spans = set()
-        for node in ast.walk(ast.parse(source, filename=str(path))):
-            if not isinstance(node, (ast.With, ast.AsyncWith)):
-                continue
-            if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
-                continue
-            if not isinstance(node.body[0].value, selected_native_types):
-                continue
-            for item in node.items:
-                manager = item.context_expr
-                candidate_spans.add(
-                    (
-                        manager.lineno,
-                        manager.col_offset,
-                        manager.end_lineno,
-                        manager.end_col_offset,
-                    )
-                )
-        demands = [
-            use_site
-            for use_site in demands
-            if (
-                use_site.get("startLine"),
-                use_site.get("startCol"),
-                use_site.get("endLine"),
-                use_site.get("endCol"),
-            )
-            in candidate_spans
-        ]
-        if not demands:
-            continue
         tree = SourceFile(
             (source, str(path), source_cid),
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
         )
         managers_by_span: dict[tuple[int, int, int, int], list[With]] = {}
-        for node in tree.nodes():
+        registered = (
+            tree.constructed_module.construction_event_receipt.registered_occurrences
+        )
+        for node in registered:
             if not isinstance(node, With):
+                continue
+            if len(node.body) != 1 or not isinstance(node.body[0], Expr):
+                continue
+            if not isinstance(node.body[0].value, selected_root_types):
                 continue
             for item in node.items:
                 span = item.context_expr.line_col_span()
@@ -627,6 +583,8 @@ def discover_no_call_body_probes(
                 ),
                 (),
             )
+            if not managers:
+                continue
             if len(managers) != 1:
                 raise AttributionInvariantError(
                     f"assertion demand resolves to {len(managers)} With nodes: {use_site!r}"

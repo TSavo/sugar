@@ -130,14 +130,19 @@ def _install_cython_include_distribution(
     return importlib.metadata.Distribution.at(metadata)
 
 
-def _install_returned_module_gate(root: Path) -> importlib.metadata.Distribution:
+def _install_returned_module_gate(
+    root: Path, *, source: str | None = None
+) -> importlib.metadata.Distribution:
     package = root / "gate_pkg"
     package.mkdir()
     (package / "__init__.py").write_text(
-        "import sys\n"
-        "def load(module_name):\n"
-        "    loaded = sys.modules[module_name]\n"
-        "    return loaded\n",
+        source
+        or (
+            "import sys\n"
+            "def load(module_name):\n"
+            "    loaded = sys.modules[module_name]\n"
+            "    return loaded\n"
+        ),
         encoding="utf-8",
     )
     metadata = root / "gate_dist-1.0.dist-info"
@@ -158,6 +163,40 @@ def _install_returned_module_gate(root: Path) -> importlib.metadata.Distribution
         for path in recorded:
             writer.writerow((path, "", ""))
     return importlib.metadata.Distribution.at(metadata)
+
+
+def _returned_module_testimony(tmp_path: Path, *, gate_source: str | None = None):
+    from sugar_lift_python_source.external_exception_construction import (
+        construct_provider_exception_attribute,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.tree import SourceFile
+
+    provider = _install_stub_defined_distribution(tmp_path)
+    gate = _install_returned_module_gate(tmp_path, source=gate_source)
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "import gate_pkg\n"
+        'provider = gate_pkg.load("provider_pkg")\n'
+        "def expected():\n"
+        "    return provider.ProviderError\n",
+        encoding="utf-8",
+    )
+    tree = SourceFile(path_source(str(consumer)))
+    attribute = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "Attribute" and node.attr == "ProviderError"
+    )
+    return construct_provider_exception_attribute(
+        attribute,
+        root=tmp_path,
+        path=consumer,
+        graph_cache={},
+        session=SourceResolutionSession(),
+        distribution_index={"gate_pkg": gate, "provider_pkg": provider},
+    )
 
 
 def test_stub_defined_provider_exception_resolves_to_its_definition(tmp_path: Path):
@@ -267,43 +306,63 @@ def test_returned_module_binding_constructs_provider_exception_without_vendor_na
     tmp_path: Path,
 ):
     """A source-returned module carries its provider class definition through."""
-    from sugar_lift_python_source.external_exception_construction import (
-        construct_provider_exception_attribute,
-    )
-    from sugar_lift_python_source.resolution_session import SourceResolutionSession
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.tree import SourceFile
-
-    provider = _install_stub_defined_distribution(tmp_path)
-    gate = _install_returned_module_gate(tmp_path)
-    consumer = tmp_path / "consumer.py"
-    consumer.write_text(
-        "import gate_pkg\n"
-        'provider = gate_pkg.load("provider_pkg")\n'
-        "def expected():\n"
-        "    return provider.ProviderError\n",
-        encoding="utf-8",
-    )
-    tree = SourceFile(path_source(str(consumer)))
-    attribute = next(
-        node
-        for node in tree.nodes()
-        if node.kind == "Attribute" and node.attr == "ProviderError"
-    )
-
-    testimony = construct_provider_exception_attribute(
-        attribute,
-        root=tmp_path,
-        path=consumer,
-        graph_cache={},
-        session=SourceResolutionSession(),
-        distribution_index={"gate_pkg": gate, "provider_pkg": provider},
-    )
+    testimony = _returned_module_testimony(tmp_path)
 
     assert testimony is not None
     assert testimony.resolved.definition.name == "ProviderError"
     assert testimony.resolved.module_name == "provider_pkg.lib"
     assert testimony.class_value().name == "provider_pkg.lib.ProviderError"
+
+
+def test_nested_returned_module_binding_preserves_authenticated_projection(
+    tmp_path: Path,
+) -> None:
+    """Truthful: control-flow nesting does not erase the gate's source testimony."""
+    testimony = _returned_module_testimony(
+        tmp_path,
+        gate_source=(
+            "import sys\n"
+            "def load(module_name):\n"
+            "    if module_name:\n"
+            "        loaded = sys.modules[module_name]\n"
+            "        return loaded\n"
+        ),
+    )
+
+    assert testimony is not None, "nested authenticated projection was lost"
+    assert testimony.resolved.definition.name == "ProviderError"
+    assert testimony.resolved.module_name == "provider_pkg.lib"
+
+
+@pytest.mark.parametrize(
+    "gate_source",
+    (
+        (
+            "import sys\n"
+            "def decoy(module_name):\n"
+            "    loaded = sys.modules[module_name]\n"
+            "    return loaded\n"
+            "def load(module_name):\n"
+            "    return None\n"
+        ),
+        (
+            "import sys\n"
+            "def load(module_name):\n"
+            "    def decoy():\n"
+            "        loaded = sys.modules[module_name]\n"
+            "        return loaded\n"
+            "    return None\n"
+        ),
+    ),
+    ids=("sibling-function", "nested-function"),
+)
+def test_returned_module_binding_cannot_borrow_another_function_projection(
+    tmp_path: Path, gate_source: str
+) -> None:
+    """Lying: source coordinates cannot cross sibling or nested ownership."""
+    testimony = _returned_module_testimony(tmp_path, gate_source=gate_source)
+
+    assert testimony is None
 
 
 def _demand(

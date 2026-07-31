@@ -156,14 +156,12 @@ class NativeOperationResolutionV1:
                     blame=str(occurrence.wire()),
                 )
             if not isinstance(effect, RaiseEffect):
-                raise TypeError("exceptional native operation effect must be RaiseEffect")
+                raise TypeError(
+                    "exceptional native operation effect must be RaiseEffect"
+                )
             return ExitSet.halted(
                 effect,
-                state=(
-                    None
-                    if testimony is None
-                    else testimony.state
-                ),
+                state=(None if testimony is None else testimony.state),
             )
         raise SugarNotWritten(
             blame=str(source_node),
@@ -216,6 +214,7 @@ def authenticated_exceptional_resolution_count(resolutions) -> int:
     return sum(
         resolution.is_authenticated_exceptional_exit for resolution in resolutions
     )
+
 
 def _json(value) -> Any:
     return json.loads(encode_jcs(value))
@@ -319,7 +318,7 @@ class NativeOperationDemandV1:
         )
 
 
-def _ast_minted_native_operator_constants() -> frozenset[str]:
+def _typed_minted_native_operator_constants() -> frozenset[str]:
     """String ``operator=`` kwargs that feed native-operation carrier mints.
 
     Discovers:
@@ -336,8 +335,9 @@ def _ast_minted_native_operator_constants() -> frozenset[str]:
     term coordinates ``"+"``) are excluded — those are term spellings, not
     carrier operator names.
     """
-    import ast
     from pathlib import Path
+    from sugar_source_tree.nodes import Call, Constant
+    from sugar_source_tree.tree import SourceFile
 
     package_root = Path(__file__).resolve().parent
     found: set[str] = set()
@@ -345,20 +345,18 @@ def _ast_minted_native_operator_constants() -> frozenset[str]:
         if path.name == "caller_parameter_contract.py":
             # This module defines projectors and mint plumbing, not producers.
             continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        source_file = SourceFile.from_path(path)
+        registered = (
+            source_file.constructed_module.construction_event_receipt.registered_occurrences
+        )
+        for node in registered:
+            if not isinstance(node, Call):
                 continue
             for keyword in node.keywords:
                 if keyword.arg != "operator":
                     continue
                 value = keyword.value
-                if not (
-                    isinstance(value, ast.Constant) and isinstance(value.value, str)
-                ):
+                if not (isinstance(value, Constant) and isinstance(value.value, str)):
                     continue
                 name = value.value
                 # Carrier operators are Floor method names (identifiers), never
@@ -373,7 +371,8 @@ def production_native_operation_operators() -> frozenset[str]:
 
     Sources (union — each is a real mint path, not a guess):
 
-    * AST string constants on ``NativeOperationExitCarrierV1.mint(operator=...)``
+    * typed source string constants on
+      ``NativeOperationExitCarrierV1.mint(operator=...)``
     * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
     * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
     * contracted store operators whose producers pin the mint shape for this
@@ -398,7 +397,7 @@ def production_native_operation_operators() -> frozenset[str]:
 
     contracted_inplace_operators = production_augassign_inplace_operators()
     return (
-        _ast_minted_native_operator_constants()
+        _typed_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
         | frozenset(COMPARE_METHODS.values())
         | contracted_store_operators
@@ -975,8 +974,7 @@ class NativeOperationExitCarrierV1:
                 continue
             if coordinate_cid not in actuals_by_formal_coordinate:
                 return undischarged(
-                    "authenticated caller actual absent for "
-                    f"{coordinate_cid}"
+                    "authenticated caller actual absent for " f"{coordinate_cid}"
                 )
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
 
@@ -1030,6 +1028,7 @@ class NativeOperationExitCarrierV1:
 
         exits = apply_exitset_steps(exits, 0)
         for index, continuation in enumerate(self.continuations, start=1):
+
             def resume(value, *, step=continuation):
                 next_outcome = step(value)
                 if isinstance(next_outcome, NativeOperationExitCarrierV1):
@@ -1045,7 +1044,12 @@ class NativeOperationExitCarrierV1:
         guard = _conjoin_guards(self.guards)
         if guard is not None:
             exits = exits.guarded(guard)
-        for continuing_guard, stopped, continuing_face, stopped_face in self.short_circuits:
+        for (
+            continuing_guard,
+            stopped,
+            continuing_face,
+            stopped_face,
+        ) in self.short_circuits:
             stopping_exits = []
             for exit_ in stopped.exits:
                 if isinstance(exit_, Halted):
@@ -1159,9 +1163,7 @@ def merge_pending(*groups) -> tuple:
             by_candidate[entry.candidate_cid] = (
                 entry
                 if prior is None
-                else replace(
-                    prior, demands=merge_demands(prior.demands, entry.demands)
-                )
+                else replace(prior, demands=merge_demands(prior.demands, entry.demands))
             )
     return tuple(by_candidate[cid] for cid in sorted(by_candidate))
 
@@ -1313,9 +1315,7 @@ class ContractConditionalConstructionV1:
         Nested guards compose by repeated application, innermost first, which
         is the same accumulation `Incomplete.guarded` records positionally.
         """
-        return replace(
-            self.demanded_under(formula), value=self.value.guarded(formula)
-        )
+        return replace(self.demanded_under(formula), value=self.value.guarded(formula))
 
     def contribution(self):
         """One row per demand: the SET collapses back to singletons HERE.

@@ -11,6 +11,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     HISTORICAL_PATH_SHAPE_DIGEST,
     AttributionOutcome,
     AttributionInvariantError,
+    BodyAttribution,
     BodyProbe,
     DemandTableRefusal,
     ProducerFamily,
@@ -180,7 +181,12 @@ def test_unattributable_refusal_escapes_regardless_of_owner_spelling() -> None:
 def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:
     bodies = (
         attribute_body_probe(_probe(ProducerFamily.BINOP, _named_refusal)),
-        attribute_body_probe(_probe(ProducerFamily.BINOP, _construction_panic)),
+        BodyAttribution(
+            "pandas/example.py:1:BinOp",
+            ProducerFamily.BINOP,
+            AttributionOutcome.CONSTRUCTION_PANIC,
+            "producer-construction",
+        ),
         attribute_body_probe(_probe(ProducerFamily.BINOP, _raise_value)),
     )
 
@@ -192,25 +198,26 @@ def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:
     assert summary.construction_panics == 1
 
 
-def test_report_names_every_refusal_coordinate_and_panic_node_owner() -> None:
-    report = attribute_body_probes(
-        (
-            _probe(ProducerFamily.BINOP, _named_refusal),
-            _probe(ProducerFamily.SUBSCRIPT, _construction_panic),
+def test_probe_batch_stops_at_construction_panic_before_following_body() -> None:
+    """A producer panic cannot be collected while later probes keep running."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    reached_following_probe = False
+
+    def following_probe():
+        nonlocal reached_following_probe
+        reached_following_probe = True
+        return _raise_value()
+
+    with pytest.raises(ConstructionPanic, match="producer-construction"):
+        attribute_body_probes(
+            (
+                _probe(ProducerFamily.SUBSCRIPT, _construction_panic),
+                _probe(ProducerFamily.BINOP, following_probe),
+            )
         )
-    )
 
-    rendered = report.render()
-
-    assert (
-        "namedRefusal body=pandas/example.py:1:BinOp "
-        "coordinate=native-producer" in rendered
-    )
-    assert (
-        "constructionPanic body=pandas/example.py:1:Subscript "
-        "node=Subscript owner=producer-construction" in rendered
-    )
-    assert report.construction_panic_count == 1
+    assert reached_following_probe is False
 
 
 def test_report_keeps_all_six_families_separate() -> None:
@@ -230,16 +237,12 @@ def test_report_keeps_all_six_families_separate() -> None:
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
-def test_construction_panic_remains_a_separate_loud_axis() -> None:
-    report = attribute_body_probes(
-        (_probe(ProducerFamily.ATTRIBUTE, _construction_panic),)
-    )
-    row = report.by_family[ProducerFamily.ATTRIBUTE]
-    assert row.authenticated_exceptional_exits == 0
-    assert row.named_refusals == 0
-    assert row.construction_panics == 1
-    assert row.failures == 1
-    assert report.bodies[0].outcome is AttributionOutcome.CONSTRUCTION_PANIC
+def test_construction_panic_propagates_instead_of_becoming_attribution() -> None:
+    """Producer-owned construction failure must halt the attribution run."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic, match="producer-construction"):
+        attribute_body_probes((_probe(ProducerFamily.ATTRIBUTE, _construction_panic),))
 
 
 def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
@@ -267,74 +270,39 @@ def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
     )
 
 
-def test_construction_panics_are_rendered_with_site_and_failing_node_owner() -> None:
-    report = attribute_body_probes(
-        (_probe(ProducerFamily.SUBSCRIPT, _construction_panic),)
-    )
+def test_construction_panic_keeps_producer_owner_not_probe_family() -> None:
+    """Lying twin: a Subscript enrollment cannot steal the panic owner."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-    assert (
-        "constructionPanic body=pandas/example.py:1:Subscript "
-        "node=Subscript owner=producer-construction"
-    ) in report.render()
-    assert report.construction_panic_count == 1
+    with pytest.raises(ConstructionPanic) as raised:
+        attribute_body_probe(_probe(ProducerFamily.SUBSCRIPT, _construction_panic))
 
-
-def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing() -> (
-    None
-):
-    """#6540 + #6541: both loud axes survive one report transaction."""
-    report = attribute_body_probes(
-        (
-            _probe(ProducerFamily.SUBSCRIPT, _construction_panic),
-            _probe(ProducerFamily.BOOLOP, lambda: Complete(object())),
-        )
-    )
-
-    assert len(report.bodies) == 1
-    assert len(report.discrepancies) == 1
-    assert report.construction_panic_count == 1
-    assert report.outcome_total == 1
-    assert report.loud_failure_count == 2
-    assert "constructionPanic body=pandas/example.py:1:Subscript" in report.render()
-    assert (
-        "OUTCOME TOTAL DISCREPANCY enrolled=2 outcomeTotal=1 unaccounted=1"
-        in report.render()
-    )
+    assert raised.value.info.owner == "producer-construction"
 
 
 def test_receiver_call_panic_is_owned_by_call_before_subscript_is_reached() -> None:
     """Lying twin: root shape cannot steal a failure from its receiver Call."""
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-    from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic, construction_panic_gap
 
-    class RaisingCall:
-        def desugar(self, ctx=None):
-            construction_panic_gap(
-                owner="Call",
-                blame="pandas/example.py:1:receiver",
-                observed="receiver call raised before returning a value",
-                requested="a completed receiver before Subscript evaluation",
-                fix="attribute this failing edge to Call",
-            )
-
-    class UnreachedIndex:
-        def desugar(self, ctx=None):
-            raise AssertionError("Subscript index was evaluated after receiver halt")
-
-    expression = SubscriptSugar(
-        receiver=RaisingCall(), index=UnreachedIndex(), site="pandas/example.py:1"
-    )
-    body = attribute_body_probe(
-        BodyProbe(
-            body_id="pandas/example.py:1:Subscript",
-            family=ProducerFamily.SUBSCRIPT,
-            evaluator=expression.desugar,
+    def receiver_call_panic():
+        construction_panic_gap(
+            owner="Call",
+            blame="pandas/example.py:1:receiver",
+            observed="receiver call raised before returning a value",
+            requested="a completed receiver before Subscript evaluation",
+            fix="attribute this failing edge to Call",
         )
-    )
 
-    assert body.family is ProducerFamily.SUBSCRIPT
-    assert body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
-    assert body.detail == "Call"
+    with pytest.raises(ConstructionPanic) as raised:
+        attribute_body_probe(
+            BodyProbe(
+                body_id="pandas/example.py:1:Subscript",
+                family=ProducerFamily.SUBSCRIPT,
+                evaluator=receiver_call_panic,
+            )
+        )
+
+    assert raised.value.info.owner == "Call"
 
 
 def test_receiver_call_exceptional_exit_is_not_claimed_by_root_subscript() -> None:
@@ -458,7 +426,7 @@ def test_population_selection_never_reads_manager_target_symbol() -> None:
     assert "targetSymbol" not in discover_no_call_body_probes.__code__.co_consts
 
 
-def test_discovery_projects_one_family_without_constructing_peer_sources(
+def test_discovery_projects_one_family_through_one_typed_construction_per_source(
     tmp_path, monkeypatch
 ) -> None:
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -510,18 +478,23 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
         )
 
     original = SourceFile.__init__
+    constructed_source_cids = []
 
-    def refuse_peer_construction(self, source, *args, **kwargs):
-        if source[2] == subscript_cid:
-            raise AssertionError("peer producer source was constructed")
+    def record_construction(self, source, *args, **kwargs):
+        constructed_source_cids.append(source[2])
         return original(self, source, *args, **kwargs)
 
-    monkeypatch.setattr(SourceFile, "__init__", refuse_peer_construction)
+    def refuse_second_traversal(self):
+        raise AssertionError("consumer started a second typed traversal")
+
+    monkeypatch.setattr(SourceFile, "__init__", record_construction)
+    monkeypatch.setattr(SourceFile, "nodes", refuse_second_traversal)
     probes = discover_no_call_body_probes(
         {"rows": rows}, package, families=frozenset({ProducerFamily.ATTRIBUTE})
     )
 
     assert [probe.body_id for probe in probes] == ["attribute_body.py:3:Attribute"]
+    assert constructed_source_cids == [rows[0]["useSite"]["sourceCid"], subscript_cid]
 
 
 def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -> None:
