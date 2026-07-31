@@ -1,5 +1,7 @@
 """Recon: source-defined mapping stores use the real method body and receiver state."""
 
+from dataclasses import dataclass
+
 import pytest
 
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -22,6 +24,12 @@ from sugar_lift_py_tests.outcome.exit_set import partition, true_guard
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
+
+
+@dataclass(frozen=True)
+class _Pending:
+    candidate_cid: str
+    demands: tuple = ()
 
 
 def _receiver(method_body: str):
@@ -251,6 +259,88 @@ def test_explicit_partition_with_same_guard_on_both_arms_is_not_complementary():
     with pytest.raises(ConstructionPanic, match="complementary partition"):
         start._project_setitem_receiver(
             ReceiverOwnedMutationResult(start, lying, NoneValue())
+        )
+
+
+def _receiver_partition(guard, yes_value, no_value, owner, pending_prefix):
+    yes, no = partition(owner)
+    return ReceiverStatePartitionValue(
+        ExitSet(
+            (
+                Completed(
+                    guard,
+                    yes_value,
+                    frozenset({yes}),
+                    (_Pending(f"{pending_prefix}-yes"),),
+                ),
+                Completed(
+                    not_(guard),
+                    no_value,
+                    frozenset({no}),
+                    (_Pending(f"{pending_prefix}-no"),),
+                ),
+            )
+        )
+    )
+
+
+def test_equal_partition_transition_preserves_faces_and_pending_contracts():
+    start, middle, end, *_ = _chain_states()
+    guard = atomic("receiver-store", ())
+    current = _receiver_partition(
+        guard, middle, start, "current-receiver", "current"
+    )
+    after = _receiver_partition(guard, end, start, "after-receiver", "after")
+
+    outcome = start._project_setitem_receiver(
+        BlockValue(
+            (
+                ReceiverOwnedMutationResult(start, current, NoneValue()),
+                ReceiverOwnedMutationResult(current, after, NoneValue()),
+            )
+        )
+    )
+
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 2
+    by_guard = {face.guard: face for face in outcome.exits}
+    assert by_guard[guard].value == end
+    assert by_guard[not_(guard)].value == start
+    assert tuple(
+        pending.candidate_cid for pending in by_guard[guard].pending_contracts
+    ) == ("current-yes", "after-yes")
+    assert tuple(
+        pending.candidate_cid
+        for pending in by_guard[not_(guard)].pending_contracts
+    ) == (
+        "current-no",
+        "after-no",
+    )
+    assert len(by_guard[guard].faces) == 2
+    assert len(by_guard[not_(guard)].faces) == 2
+
+
+def test_equal_guard_value_before_with_foreign_partition_provenance_is_loud():
+    start, middle, end, *_ = _chain_states()
+    guard = atomic("receiver-store", ())
+    current = _receiver_partition(
+        guard, middle, start, "current-receiver", "current"
+    )
+    lying_before = _receiver_partition(
+        guard, middle, start, "foreign-receiver", "foreign"
+    )
+    after = _receiver_partition(guard, end, start, "after-receiver", "after")
+
+    with pytest.raises(ConstructionPanic, match="partition provenance"):
+        start._project_setitem_receiver(
+            BlockValue(
+                (
+                    ReceiverOwnedMutationResult(start, current, NoneValue()),
+                    ReceiverOwnedMutationResult(
+                        lying_before, after, NoneValue()
+                    ),
+                )
+            )
         )
 
 

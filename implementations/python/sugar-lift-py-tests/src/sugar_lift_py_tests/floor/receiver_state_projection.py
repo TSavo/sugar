@@ -157,7 +157,37 @@ def project_receiver_owned_mutation_chain(
         current_signature = tuple((face.guard, face.value) for face in current.exits)
         before_signature = tuple((face.guard, face.value) for face in before.exits)
         if current_signature == before_signature:
-            current = after
+            current_provenance = tuple(
+                (face.faces, face.pending_contracts) for face in current.exits
+            )
+            before_provenance = tuple(
+                (face.faces, face.pending_contracts) for face in before.exits
+            )
+            if current_provenance != before_provenance:
+                loud(
+                    f"foreign receiver partition provenance at position {position}",
+                    "receiver_before carrying the exact current faces and obligations",
+                    (
+                        "retain the producer-owned partition relation; equal guards and "
+                        "values cannot authorize dropping its testimony"
+                    ),
+                )
+            current = validate_live(
+                ExitSet(
+                    tuple(
+                        Completed(
+                            _and_guards(face.guard, following.guard),
+                            following.value,
+                            face.faces | following.faces,
+                            (*face.pending_contracts, *following.pending_contracts),
+                        )
+                        for face in current.exits
+                        for following in after.exits
+                    )
+                ).normalize(),
+                position=position,
+                role="composed",
+            )
             continue
         if len(before.exits) != 1 or before.exits[0].guard != true_guard():
             loud(
