@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$repo" ]] || { echo "bcensus: must run inside a git checkout" >&2; exit 2; }
+if git -C "$repo" symbolic-ref -q HEAD >/dev/null; then
+  echo "bcensus: refusing a branch checkout; detach the exact commit to measure" >&2
+  exit 78
+fi
+if [[ -n "$(git -C "$repo" status --porcelain --untracked-files=all)" ]]; then
+  echo "bcensus: refusing a dirty checkout" >&2
+  exit 78
+fi
+
+commit="$(git -C "$repo" rev-parse HEAD)"
+export SUGAR_CENSUS_COMMIT="$commit"
+export SUGAR_CENSUS_OUTPUT_ROOT="/root/.cache/sugar/measurements/pandas-control-effect/$commit"
+export SUGAR_BINARY_ALLOW_BUILD=0
+
+exec "$repo/bin/sugarbin" run --host bx \
+  --env SUGAR_CENSUS_COMMIT --env SUGAR_CENSUS_OUTPUT_ROOT \
+  --env SUGAR_BINARY_ALLOW_BUILD \
+  --task authenticated-pandas-control-effect-preflight -- "$@"

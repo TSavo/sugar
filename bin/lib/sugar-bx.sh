@@ -249,16 +249,19 @@ sugar_bx_run_docker() {
   local image="$1" network="$2" has_artifacts="$3"; shift 3
   local remote_cwd="/workspace/sugar"
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$remote_cwd/$SUGAR_BX_REL_CWD"
-  local workspace_source artifacts_source manifest_source shelf_source
+  local workspace_source artifacts_source manifest_source shelf_source measurement_source
   workspace_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_REPO")" || return $?
   sugar_bx_ssh "mkdir -p $(sugar_bx_quote "$SUGAR_BX_BINARY_SHELF")" || return $?
   shelf_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_SHELF")" || return $?
+  sugar_bx_ssh "mkdir -p /home/tsavo/.cache/sugar/measurements" || return $?
+  measurement_source="$(sugar_bx_docker_bind_source /home/tsavo/.cache/sugar/measurements)" || return $?
   local -a docker_args=(docker run --rm
     --workdir "$remote_cwd"
     --env PATH=/opt/sugar/bin:/opt/java/bin:/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
     --env "SUGAR_BX_MOUNT_PROOF=$SUGAR_BX_MOUNT_PROOF"
     --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
-    --mount "type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly")
+    --mount "type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly"
+    --mount "type=bind,src=$measurement_source,dst=/root/.cache/sugar/measurements")
   [[ "$network" != none ]] || docker_args+=(--network none)
   if [[ "$has_artifacts" == 1 ]]; then
     artifacts_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/artifacts")" || return $?
