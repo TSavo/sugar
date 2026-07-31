@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import csv
 import importlib.metadata
+from dataclasses import replace
 from pathlib import Path
 
 from sugar_lift_py_tests.floor import ObjectMethodValue
+from sugar_lift_py_tests.callable_application import CallableApplication
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.sugar.call_site_sugar import _with_frame_mutable_globals
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
@@ -18,7 +22,7 @@ from sugar_lift_python_source.dependency_artifact import (
     resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
-
+from sugar_lift_python_source.manager_construction import _ModuleSourceFrameCallableV1
 
 PROVIDER = (
     "class nonmember(object):\n"
@@ -44,9 +48,7 @@ def _distribution(root: Path) -> importlib.metadata.Distribution:
         "Metadata-Version: 2.1\nName: instancecheck-fixture\nVersion: 1.0\n",
         encoding="utf-8",
     )
-    (metadata / "top_level.txt").write_text(
-        "instancecheck_fixture\n", encoding="utf-8"
-    )
+    (metadata / "top_level.txt").write_text("instancecheck_fixture\n", encoding="utf-8")
     recorded = (
         "instancecheck_fixture/__init__.py",
         "instancecheck_fixture-1.0.dist-info/METADATA",
@@ -88,16 +90,35 @@ def test_enum_nonmember_global_decides_object_method_false(tmp_path: Path) -> No
     bindings = frame.source_class_bindings
 
     assert tuple(binding.name for binding in bindings) == ("nonmember",)
+    assert replace(frame, source_class_bindings=()).frame_cid != frame.frame_cid
     nonmember = bindings[0].value
     assert nonmember.ordinary_instancecheck is True
     method = ObjectMethodValue(
-        "member", ("self",), TrueBoolLiteralSugar(site="method-site")
+        "member",
+        ("self",),
+        TrueBoolLiteralSugar(site="method-site"),
+        "blake3-512:" + "7" * 128,
     )
 
     outcome = nonmember.test_python_type(method, "Lib/enum.py:446:13")
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, FalseBoolLiteralSugar)
+
+    occurrence = SourceFragmentCoordinateV1(frame.source_identity_cid, 20, 0, 20, 12)
+    called = CallableApplication(
+        (method,),
+        (),
+        occurrence,
+        owner="enum nonmember frame tooth",
+        call_occurrence=occurrence,
+    ).apply(_ModuleSourceFrameCallableV1("probe", frame), None)
+    assert isinstance(called, Complete)
+    assert called.value.value == 2
+
+    callsite_ctx = _with_frame_mutable_globals(None, frame)
+    assert callsite_ctx.temporal.value_if_bound("nonmember") is nonmember
+    assert callsite_ctx.module_temporal.value_if_bound("nonmember") is nonmember
 
 
 def test_local_nonmember_shadow_cannot_borrow_module_class_authority(
@@ -106,6 +127,4 @@ def test_local_nonmember_shadow_cannot_borrow_module_class_authority(
     """Lying arm: a local binding excludes the same-spelled module class."""
     frame = _frame(tmp_path, "locally_shadowed")
 
-    assert all(
-        binding.name != "nonmember" for binding in frame.source_class_bindings
-    )
+    assert all(binding.name != "nonmember" for binding in frame.source_class_bindings)
