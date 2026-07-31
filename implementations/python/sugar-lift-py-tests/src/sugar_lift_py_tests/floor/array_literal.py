@@ -56,6 +56,14 @@ class ArrayLiteral(FloorValue):
     def contains_with(self, operation: Any, ctx: Any) -> Any:
         return operation.contains_array(self, ctx)
 
+    def iter_with(self, operation: Any, ctx: Any) -> Any:
+        """Iterate the authenticated members produced by a list-like floor."""
+        del operation, ctx
+        from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(ListIteratorValue(self.items, index=0))
+
     def delitem_with(self, operation: Any, ctx: Any) -> Any:
         return operation.delitem_array(self, ctx)
 
