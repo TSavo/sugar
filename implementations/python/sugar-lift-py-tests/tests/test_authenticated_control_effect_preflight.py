@@ -128,9 +128,11 @@ def test_preflight_refusal_never_calls_census():
 def test_preflight_success_calls_one_lease_wrapped_authoritative_census(tmp_path: Path):
     module, launch = _launch(tmp_path)
     calls = []
+    run_kwargs = []
 
     def run(command, **kwargs):
         calls.append(command)
+        run_kwargs.append(kwargs)
         (launch.output / "recensus.json").write_text(
             __import__("json").dumps(_result()), encoding="utf-8"
         )
@@ -141,6 +143,8 @@ def test_preflight_success_calls_one_lease_wrapped_authoritative_census(tmp_path
     rendered = " ".join(map(str, calls[0]))
     assert "heavy_measurement_lease.py" in rendered
     assert "control_effect_recensus.py" in rendered
+    child_paths = run_kwargs[0]["env"]["PYTHONPATH"].split(__import__("os").pathsep)
+    assert child_paths == [str(path) for path in module._SOURCE_ROOTS]
 
 
 def test_census_failure_propagates_after_writing_receipt(tmp_path: Path):

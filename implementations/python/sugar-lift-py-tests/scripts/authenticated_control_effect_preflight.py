@@ -184,7 +184,17 @@ def run_census_under_lease(
             file=sys.stderr,
         )
         return EX_IOERR
-    completed = runner(command, check=False, text=True, capture_output=True)
+    child_env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(str(path) for path in _SOURCE_ROOTS),
+    }
+    completed = runner(
+        command,
+        check=False,
+        text=True,
+        capture_output=True,
+        env=child_env,
+    )
     if completed.stdout:
         print(completed.stdout, end="")
     if completed.stderr:
