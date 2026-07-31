@@ -359,6 +359,29 @@ class CallSiteValue(FloorValue):
             )
         return operation.apply(projected, ctx)
 
+    def iter_with(self, operation, ctx):
+        """Iterate the sole Floor authenticated by this call's source body.
+
+        The call producer is reduced exactly once and publishes its completed
+        return through the existing private retention seat. Iteration is then
+        owned by that returned Floor. A bodyless call therefore keeps the
+        ordinary construction gap, while an ambiguous block remains a block
+        and is refused by the same ``iter_with`` surface; neither case can gain
+        iterable authority from the call spelling.
+        """
+        if self._retained_source_completion is not None:
+            return self.project_operation_receiver_outcome(
+                ctx, owner="CallSiteValue.iter_with"
+            ).and_then(lambda receiver: operation.submit(receiver, ctx))
+        if self.body is None:
+            return super().iter_with(operation, ctx)
+
+        return self.producer_outcome(ctx).and_then(
+            lambda produced: produced.project_operation_receiver_outcome(
+                ctx, owner="CallSiteValue.iter_with"
+            ).and_then(lambda receiver: operation.submit(receiver, ctx))
+        )
+
     def truth(self, site):
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
         # Ground (lift-time-decidable) coordinates must construct, never mint
