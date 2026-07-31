@@ -43,6 +43,7 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.object_value import ObjectValue
+        from sugar_lift_py_tests.floor.object_method_value import ObjectMethodValue
         from sugar_lift_py_tests.floor.runtime_class_value import RuntimeClassValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.none_value import NoneValue
@@ -53,7 +54,10 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.outcome import Complete
 
         def update(receiver, value):
-            if not isinstance(receiver, (ObjectValue, RuntimeClassValue, GuardedValue)):
+            if not isinstance(
+                receiver,
+                (ObjectValue, ObjectMethodValue, RuntimeClassValue, GuardedValue),
+            ):
                 construction_panic_gap(
                     owner="ReceiverFieldStoreStateSugar",
                     blame=self.site,

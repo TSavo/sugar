@@ -238,6 +238,12 @@ def test_real_cpython_312_enum_method_is_not_an_instance_of_type(
     )
     assert isinstance(object_outcome, Complete)
     assert isinstance(object_outcome.value, TrueBoolLiteralSugar)
+    absent_value = method.attribute("value", method.source_call_frame.owner.fragment)
+    assert absent_value.value.effect.exception_name == "AttributeError"
+    assert (
+        absent_value.value.effect.producer_node_owner
+        == "ObjectMethodValue.attribute"
+    )
 
     unauthenticated = replace(method, source_call_frame_cid=None)
     with pytest.raises(ConstructionPanic) as raised:
