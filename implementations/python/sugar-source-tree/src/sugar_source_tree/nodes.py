@@ -3079,7 +3079,10 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
         )
-        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+        from sugar_lift_py_tests.source_call_frame import (
+            SourceVisibleCallFrameV1,
+            enrich_source_class_bindings,
+        )
         from sugar_source_tree.binding_provenance import BindingCoordinateV1
 
         span = self.line_col_span()
@@ -3120,7 +3123,7 @@ class FunctionDef(Statement):
             ),
             self.fragment,
         )
-        return SourceVisibleCallFrameV1(
+        return enrich_source_class_bindings(SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
             definition_site=site,
             definition_fragment_cid=self.fragment.seal().cid,
@@ -3156,7 +3159,7 @@ class FunctionDef(Statement):
                     statement.fragment.seal().cid for statement in substituted_body
                 )
             ),
-        )
+        ))
 
     def lacks_captured_binding_testimony(self) -> bool:
         """Whether CPython classifies a closure binding we cannot yet seat."""

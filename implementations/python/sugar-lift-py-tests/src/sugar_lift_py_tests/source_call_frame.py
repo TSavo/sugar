@@ -189,6 +189,90 @@ class SourceClassBindingV1:
             )
 
 
+def enrich_source_class_bindings(frame):
+    """Seat ordinary module ClassDefs actually read by this function frame."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+    from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef, Name
+    from sugar_source_tree.panic import SugarNotWritten
+
+    target = frame.owner
+    if not isinstance(target, FunctionDef):
+        return frame
+    root = getattr(getattr(target.unit, "constructed_module", None), "root", None)
+    if root is None:
+        return frame
+    module_classes = tuple(item for item in root.body if isinstance(item, ClassDef))
+    table = target.unit.function_symtable(
+        target.name, target.line_col_span().start_line
+    )
+
+    def owned_loads(node):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            return
+        if isinstance(node, Name):
+            yield node
+            return
+        for field_name, _, child in node.children():
+            if field_name in {"target", "targets", "optional_vars"}:
+                continue
+            yield from owned_loads(child)
+
+    reached = []
+    for statement in target.body:
+        for node in owned_loads(statement):
+            bindings = tuple(
+                (target.unit.module_direct_bindings or {}).get(node.id, ())
+            )
+            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+                continue
+            candidate = bindings[0]
+            if (
+                candidate not in module_classes
+                or candidate.decorators
+                or candidate.line_col_span().start_line
+                >= target.line_col_span().start_line
+            ):
+                continue
+            try:
+                symbol = table.lookup(node.id)
+            except KeyError:
+                continue
+            if not symbol.is_global() or not symbol.is_referenced():
+                continue
+            if candidate not in reached:
+                reached.append(candidate)
+
+    result = []
+    class_ctx = ReduceContext(temporal=builtin_name_temporal())
+    for definition in reached:
+        outcome = definition.sugar().desugar(class_ctx)
+        if (
+            not isinstance(outcome, Complete)
+            or type(outcome.value) is not ClassDefinitionValue
+        ):
+            raise SugarNotWritten(
+                owner="source class global binding",
+                blame=definition.fragment,
+                observed=type(getattr(outcome, "value", outcome)).__name__,
+                requested="one exact ordinary module ClassDef Floor",
+                fix="construct the reached source class or keep its global use loud",
+            )
+        result.append(
+            SourceClassBindingV1(
+                definition.name,
+                outcome.value.binding_target_occurrence,
+                outcome.value.class_definition_cid,
+                outcome.value,
+            )
+        )
+    return replace(frame, source_class_bindings=tuple(result))
+
+
 @dataclass(frozen=True, eq=False)
 class BoundSourceCallActualsV1:
     """One binder result with its authenticated coordinate testimony."""
