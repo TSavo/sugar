@@ -31,6 +31,25 @@ class ReceiverOwnedMutationResult(FloorValue):
         del ctx, owner
         return self.result
 
+    def guarded(self, formula):
+        """Retain a receiver transition only on the branch that executed it.
+
+        A mutation contribution cannot simply discard its surrounding guard:
+        doing so would install ``receiver_after`` even on the branch where the
+        source statement did not run.  The authenticated receiver identity and
+        operation result are unchanged; only the post-state is conditional,
+        with the pre-state as the complementary face.
+        """
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+
+        return ReceiverOwnedMutationResult(
+            receiver_before=self.receiver_before,
+            receiver_after=GuardedValue(
+                formula, self.receiver_after, self.receiver_before
+            ),
+            result=self.result,
+        )
+
     def extend_scope(self, ctx):
         """Advance every alias carrying this exact receiver identity."""
         if ctx is None:
@@ -65,4 +84,3 @@ class ReceiverOwnedMutationResult(FloorValue):
                 self.result.to_term(owner=owner),
             ),
         )
-

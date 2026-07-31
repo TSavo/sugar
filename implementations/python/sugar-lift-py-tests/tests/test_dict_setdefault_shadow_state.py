@@ -12,6 +12,7 @@ from sugar_lift_py_tests.floor import (
     ListValue,
     MappingObjectValue,
     ObjectField,
+    ReceiverOwnedMutationResult,
     StringValue,
     TermValue,
 )
@@ -124,10 +125,12 @@ def test_authenticated_dict_subclass_keeps_receiver_identity_and_fields() -> Non
     outcome = sugar.desugar(None)
 
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.identity == "receiver-coordinate"
-    assert outcome.value.fields == receiver.fields
-    assert outcome.value.entries == (
+    assert isinstance(outcome.value, ReceiverOwnedMutationResult)
+    updated = outcome.value.receiver_after
+    assert isinstance(updated, MappingObjectValue)
+    assert updated.identity == "receiver-coordinate"
+    assert updated.fields == receiver.fields
+    assert updated.entries == (
         (StringValue("members"), ListValue((StringValue("member"),))),
     )
     assert order == ["receiver", "key", "default", "appended"]
@@ -152,8 +155,67 @@ def test_authenticated_dict_subclass_setdefault_uses_existing_value() -> None:
     outcome = sugar.desugar(None)
 
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.entries == (
+    assert isinstance(outcome.value, ReceiverOwnedMutationResult)
+    updated = outcome.value.receiver_after
+    assert isinstance(updated, MappingObjectValue)
+    assert updated.entries == (
         (StringValue("members"), ListValue((TermValue(1), TermValue(2)))),
     )
     assert order == ["receiver", "key", "default", "appended"]
+
+
+def test_mapping_mutation_advances_only_aliases_with_the_same_identity() -> None:
+    from sugar_lift_py_tests.context import ReduceContext
+
+    receiver = MappingObjectValue(
+        "DerivedDict", (), identity="receiver-coordinate"
+    )
+    foreign = MappingObjectValue("DerivedDict", (), identity="foreign-coordinate")
+    sugar = DictSetDefaultAppendStateSugar(
+        receiver=_FloorSugar(receiver, [], "receiver"),
+        key=_FloorSugar(StringValue("members"), [], "key"),
+        default=_FloorSugar(ListValue(()), [], "default"),
+        appended=_FloorSugar(StringValue("member"), [], "appended"),
+        site="mutation-site",
+    )
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, Complete)
+    mutation = outcome.value
+    assert isinstance(mutation, ReceiverOwnedMutationResult)
+
+    ctx = ReduceContext.root(owner="test")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("classdict", receiver))
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("foreign", foreign))
+    advanced = mutation.extend_scope(ctx)
+
+    assert advanced.temporal.value_for("classdict") is mutation.receiver_after
+    assert advanced.temporal.value_for("foreign") is foreign
+
+
+def test_guarded_mapping_mutation_preserves_identity_and_only_conditions_post_state() -> None:
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import GuardedValue
+    from sugar_lift_py_tests.ir import atomic
+
+    receiver = MappingObjectValue("DerivedDict", (), identity="receiver-coordinate")
+    foreign = MappingObjectValue("DerivedDict", (), identity="foreign-coordinate")
+    updated = receiver.mapping_with_entries(
+        ((StringValue("members"), ListValue((StringValue("member"),))),)
+    )
+    mutation = ReceiverOwnedMutationResult(receiver, updated, TermValue(None))
+    guard = atomic("test:mutation-selected", [])
+
+    guarded = mutation.guarded(guard)
+    ctx = ReduceContext.root(owner="test")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("classdict", receiver))
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("foreign", foreign))
+    advanced = guarded.extend_scope(ctx)
+
+    classdict = advanced.temporal.value_for("classdict")
+    assert isinstance(classdict, GuardedValue)
+    assert classdict.guard == guard
+    assert classdict.when_true is updated
+    assert classdict.when_false is receiver
+    assert advanced.temporal.value_for("foreign") is foreign
+    assert guarded.receiver_before is receiver
+    assert guarded.result == mutation.result

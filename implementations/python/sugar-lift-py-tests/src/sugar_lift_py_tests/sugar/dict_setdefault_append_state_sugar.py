@@ -99,4 +99,20 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
                 return setitem_with_context(key, appended_value, self.site, ctx)
             return updated.setitem(key, appended_value, self.site)
 
-        return appended_outcome.and_then(with_appended)
+        def publish(updated_receiver):
+            if isinstance(receiver, MappingObjectValue):
+                from sugar_lift_py_tests.floor.none_value import NoneValue
+                from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+                    ReceiverOwnedMutationResult,
+                )
+
+                return Complete(
+                    ReceiverOwnedMutationResult(
+                        receiver_before=receiver,
+                        receiver_after=updated_receiver,
+                        result=NoneValue(),
+                    )
+                )
+            return Complete(updated_receiver)
+
+        return appended_outcome.and_then(with_appended).and_then(publish)
