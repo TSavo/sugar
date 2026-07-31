@@ -383,6 +383,10 @@ class CallSiteValue(FloorValue):
         )
 
     def truth(self, site):
+        if self._retained_source_completion is not None:
+            return self.project_operation_receiver_outcome(
+                None, owner="CallSiteValue.truth"
+            ).and_then(lambda receiver: receiver.truth(site))
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
         # Ground (lift-time-decidable) coordinates must construct, never mint
         # RuntimeEffect authority via py.truthy (#4993 / #5147).
