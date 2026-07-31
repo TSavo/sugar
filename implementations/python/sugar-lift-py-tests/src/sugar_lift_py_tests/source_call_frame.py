@@ -26,17 +26,23 @@ class MutableGlobalBindingV1:
             raise ValueError("mutable global binding occurrence/source CID mismatch")
         if not self.name or self.kind not in {"dict", "list", "set"}:
             raise ValueError("mutable global binding requires a closed mutable kind")
-        object.__setattr__(self, "cid", cid_of_json({
-            "kind": "mutable-global-binding",
-            "schemaVersion": "1",
-            "sourceCid": self.source_cid,
-            "bindingOccurrence": self.binding_occurrence.to_dict(),
-            "name": self.name,
-            "mutableKind": self.kind,
-            "term": self.term,
-            "line": self.line,
-            "col": self.col,
-        }))
+        object.__setattr__(
+            self,
+            "cid",
+            cid_of_json(
+                {
+                    "kind": "mutable-global-binding",
+                    "schemaVersion": "1",
+                    "sourceCid": self.source_cid,
+                    "bindingOccurrence": self.binding_occurrence.to_dict(),
+                    "name": self.name,
+                    "mutableKind": self.kind,
+                    "term": self.term,
+                    "line": self.line,
+                    "col": self.col,
+                }
+            ),
+        )
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
@@ -152,6 +158,37 @@ class DecoratedClassBindingV1:
             )
 
 
+@dataclass(frozen=True)
+class SourceClassBindingV1:
+    """One ordinary module ClassDef captured by an authenticated source frame."""
+
+    name: str
+    definition_occurrence: object
+    class_definition_cid: str
+    value: object = field(compare=False)
+
+    def __post_init__(self):
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+
+        if (
+            not self.name
+            or type(self.definition_occurrence) is not SourceFragmentCoordinateV1
+            or not self.class_definition_cid
+            or type(self.value) is not ClassDefinitionValue
+            or self.value.class_name != self.name
+            or self.value.binding_target_occurrence != self.definition_occurrence
+            or self.value.class_definition_cid != self.class_definition_cid
+        ):
+            raise SourceCallBindingGap(
+                "source class binding lacks exact definition testimony"
+            )
+
+
 @dataclass(frozen=True, eq=False)
 class BoundSourceCallActualsV1:
     """One binder result with its authenticated coordinate testimony."""
@@ -185,9 +222,11 @@ class BoundSourceCallActualsV1:
                 and pair.coordinate.projection_path[: len(root.projection_path)]
                 == root.projection_path
             )
-            suffix = pair.coordinate.projection_path[
-                len(matching[0][0].projection_path) :
-            ] if len(matching) == 1 else ()
+            suffix = (
+                pair.coordinate.projection_path[len(matching[0][0].projection_path) :]
+                if len(matching) == 1
+                else ()
+            )
             if (
                 len(matching) != 1
                 or len(suffix) != 2
@@ -258,9 +297,8 @@ class BoundSourceCallActualsV1:
                 continue
             _reauthenticate_native_coordinates((stored_coordinate,))
             ordinal = stored_coordinate.ordinal
-            if (
-                stored_coordinate.coordinate_cid != demanded_cid
-                or ordinal >= len(self.pairs)
+            if stored_coordinate.coordinate_cid != demanded_cid or ordinal >= len(
+                self.pairs
             ):
                 raise SourceCallBindingGap(
                     "native carrier demand is foreign to the retained source frame"
@@ -309,6 +347,9 @@ class SourceVisibleCallFrameV1:
     decorated_class_bindings: tuple[DecoratedClassBindingV1, ...] = field(
         default=(), compare=False
     )
+    source_class_bindings: tuple[SourceClassBindingV1, ...] = field(
+        default=(), compare=False
+    )
     constructed_new_method: object | None = field(default=None, compare=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
@@ -327,6 +368,13 @@ class SourceVisibleCallFrameV1:
         ):
             raise SourceCallBindingGap(
                 "decorated class binding source does not match source frame identity"
+            )
+        if any(
+            binding.definition_occurrence.source_cid != self.source_identity_cid
+            for binding in self.source_class_bindings
+        ):
+            raise SourceCallBindingGap(
+                "source class binding source does not match source frame identity"
             )
         if self.constructed_new_method is not None:
             from sugar_lift_py_tests.floor.class_definition_value import (
@@ -385,6 +433,14 @@ class SourceVisibleCallFrameV1:
             "decoratedClassBindingCids": [
                 item.publication.publication_cid
                 for item in self.decorated_class_bindings
+            ],
+            "sourceClassBindings": [
+                {
+                    "name": item.name,
+                    "definitionOccurrence": item.definition_occurrence.wire(),
+                    "classDefinitionCid": item.class_definition_cid,
+                }
+                for item in self.source_class_bindings
             ],
         }
         if self.declaration_frame_cid is not None:
@@ -579,9 +635,7 @@ class SourceVisibleCallFrameV1:
             )
         by_cid = {coordinate.coordinate_cid: coordinate for coordinate in native}
         demanded = pending.demand.operand_coordinate_cids
-        for coordinate_cid, stored in zip(
-            demanded, pending.coordinates, strict=True
-        ):
+        for coordinate_cid, stored in zip(demanded, pending.coordinates, strict=True):
             if coordinate_cid is None:
                 if stored is not None:
                     raise SourceCallBindingGap(
@@ -658,7 +712,9 @@ class SourceVisibleCallFrameV1:
                                 _same_unit_actual_node(
                                     self.owner.unit,
                                     value,
-                                    coordinate.project("variadic-keyword", actual_index),
+                                    coordinate.project(
+                                        "variadic-keyword", actual_index
+                                    ),
                                 ),
                             )
                             for actual_index, (key, value) in enumerate(named.items())
@@ -821,9 +877,7 @@ def _same_unit_actual_node(owner_unit, node, coordinate):
         )
     site_cid = site.get("source_cid") or site.get("sourceCid")
     if site_cid != owner_unit.source_cid:
-        raise SourceCallBindingGap(
-            "formal binding site is not on the frame owner unit"
-        )
+        raise SourceCallBindingGap("formal binding site is not on the frame owner unit")
     span_info = site.get("span")
     if not isinstance(span_info, dict):
         raise SourceCallBindingGap("formal binding site missing sealed span")

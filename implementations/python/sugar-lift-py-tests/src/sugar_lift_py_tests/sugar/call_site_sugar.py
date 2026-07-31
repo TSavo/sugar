@@ -220,8 +220,8 @@ class CallSiteSugar(ConstructedTermSugar):
                 owner := self.source_call_frame.owner, (FunctionDef, AsyncFunctionDef)
             ):
                 table = owner.unit.function_symtable(
-                owner.name, owner.line_col_span().start_line
-            )
+                    owner.name, owner.line_col_span().start_line
+                )
             free_names = tuple(
                 symbol.get_name()
                 for symbol in table.get_symbols()
@@ -233,14 +233,11 @@ class CallSiteSugar(ConstructedTermSugar):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,
-                        observed=(
-                            "closure bindings lack producer coordinates: "
-                            f"{free_names!r}"
-                        ),
+                    observed=(
+                        "closure bindings lack producer coordinates: " f"{free_names!r}"
+                    ),
                     requested="captured binding coordinate testimony",
-                        fix=(
-                            "enroll producer-owned closure actuals before body reduction"
-                        ),
+                    fix=("enroll producer-owned closure actuals before body reduction"),
                 )
         if self.contract_resolution_gap is not None:
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
@@ -616,7 +613,8 @@ class CallSiteSugar(ConstructedTermSugar):
 def _with_frame_mutable_globals(ctx, frame):
     bindings = frame.mutable_global_bindings
     decorated_bindings = getattr(frame, "decorated_class_bindings", ())
-    if not bindings and not decorated_bindings:
+    source_class_bindings = getattr(frame, "source_class_bindings", ())
+    if not bindings and not decorated_bindings and not source_class_bindings:
         return ctx
     from dataclasses import replace
 
@@ -638,6 +636,9 @@ def _with_frame_mutable_globals(ctx, frame):
         module_temporal = module_temporal.bind_value(binding.name, value)
         temporal = temporal.bind_value(binding.name, value)
     for binding in decorated_bindings:
+        module_temporal = module_temporal.bind_value(binding.name, binding.value)
+        temporal = temporal.bind_value(binding.name, binding.value)
+    for binding in source_class_bindings:
         module_temporal = module_temporal.bind_value(binding.name, binding.value)
         temporal = temporal.bind_value(binding.name, binding.value)
     return replace(ctx, temporal=temporal, module_temporal=module_temporal)
