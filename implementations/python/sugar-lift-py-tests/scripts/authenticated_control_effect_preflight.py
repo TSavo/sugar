@@ -11,6 +11,22 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+# This script is the owning launcher for a synced source-tree measurement.  Its
+# Python imports must therefore resolve from that exact checkout, never from an
+# image-global package that happens to share the name.  Seat the three in-repo
+# packages before importing any of them below.
+_REPO = Path(__file__).resolve().parents[4]
+_SOURCE_ROOTS = tuple(
+    _REPO / "implementations/python" / package / "src"
+    for package in (
+        "sugar-lift-py-tests",
+        "sugar-lift-python-source",
+        "sugar-source-tree",
+    )
+)
+for _source_root in reversed(_SOURCE_ROOTS):
+    sys.path.insert(0, str(_source_root))
+
 from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
     authenticated_pandas_corpus,
@@ -25,6 +41,26 @@ TERMINAL_ARTIFACTS = (
     "measurement-status.txt",
     "lease-record.json",
 )
+
+
+def require_synced_source_packages(repo: Path) -> dict[str, str]:
+    """Authenticate every Python package used by the census to this checkout."""
+    import sugar_lift_py_tests
+    import sugar_lift_python_source
+    import sugar_source_tree
+
+    observed = {
+        "sugar_lift_py_tests": Path(sugar_lift_py_tests.__file__).resolve(),
+        "sugar_lift_python_source": Path(sugar_lift_python_source.__file__).resolve(),
+        "sugar_source_tree": Path(sugar_source_tree.__file__).resolve(),
+    }
+    source_root = (repo / "implementations/python").resolve()
+    for name, path in observed.items():
+        if source_root not in path.parents:
+            raise ExecutionEnvironmentMismatch(
+                f"census package {name} resolved outside synced checkout: {path}"
+            )
+    return {name: str(path) for name, path in observed.items()}
 
 
 @dataclass(frozen=True)
@@ -66,7 +102,8 @@ def authenticate_and_write_preflight() -> CensusLaunch:
             raise ExecutionEnvironmentMismatch(
                 f"pandas corpus enrollment is {corpus.file_count}; required 1421"
             )
-        repo = Path(__file__).resolve().parents[4]
+        repo = _REPO
+        package_sources = require_synced_source_packages(repo)
         pin_path = repo / "docs/ledgers/pins/pandas-3.0.3.pin.json"
         expected_pin = load_pin(pin_path)
         observed_pin = pin_corpus(
@@ -85,6 +122,7 @@ def authenticate_and_write_preflight() -> CensusLaunch:
             "pathBoundHash": observed_pin.path_bound_hash,
             "corpusRoot": str(corpus.root),
             "outputRoot": str(output),
+            "packageSources": package_sources,
             "status": "ready",
         }
         receipt_path = output / "preflight.json"

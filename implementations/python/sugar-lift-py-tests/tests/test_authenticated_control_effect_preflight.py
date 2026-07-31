@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,6 +49,39 @@ def test_launch_coordinates_require_exact_synced_commit_and_durable_output():
         commit + ":tracked-manifest:pid:nonce",
         Path(f"/root/.cache/sugar/measurements/pandas-control-effect/{commit}"),
     )
+
+
+def test_all_census_packages_resolve_from_the_synced_checkout():
+    module = _module()
+
+    sources = module.require_synced_source_packages(module._REPO)
+
+    assert set(sources) == {
+        "sugar_lift_py_tests",
+        "sugar_lift_python_source",
+        "sugar_source_tree",
+    }
+    assert all(
+        (module._REPO / "implementations/python").resolve()
+        in Path(path).resolve().parents
+        for path in sources.values()
+    )
+
+
+@pytest.mark.parametrize(
+    "package",
+    ("sugar_lift_py_tests", "sugar_lift_python_source", "sugar_source_tree"),
+)
+def test_one_image_global_package_makes_preflight_loud(monkeypatch, package: str):
+    module = _module()
+    monkeypatch.setitem(
+        sys.modules,
+        package,
+        SimpleNamespace(__file__=f"/image/site-packages/{package}/__init__.py"),
+    )
+
+    with pytest.raises(ExecutionEnvironmentMismatch, match=package):
+        module.require_synced_source_packages(module._REPO)
 
 
 @pytest.mark.parametrize(
