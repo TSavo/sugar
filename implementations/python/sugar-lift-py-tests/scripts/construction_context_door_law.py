@@ -61,6 +61,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+# This instrument owns only R_bare_construction_door over its explicitly
+# scanned source roots.  The sole corpus scoreboard is control_effect_recensus.
+SCOREBOARD_AUTHORITY = False
+
 BARE_DOOR = "from_path"
 BARE_DOOR_OWNER = "SourceFile"
 CONSTRUCTION_DRIVER = "sugar"

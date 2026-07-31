@@ -1324,15 +1324,23 @@ def authenticated_import_value_use_receipts(
 
 
 def authenticated_module_exports(
-    root: Path, path: Path, source: str, source_cid: str
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    *,
+    module_is_package: bool,
 ) -> list[dict[str, Any]]:
     """Source-authenticated module-slot declarations for the frozen catalog."""
+    if type(module_is_package) is not bool:
+        raise TypeError("module_is_package must be exact authenticated bool testimony")
     module_name = module_name_for_path(root, path)
     module = SourceFile((source, str(path), source_cid)).root
     final_state = _final_module_state(
         module=module,
         source_cid=source_cid,
         module_name=module_name,
+        module_is_package=module_is_package,
         module_identities={},
     )
     rows: list[dict[str, Any]] = []

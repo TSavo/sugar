@@ -392,7 +392,9 @@ def test_shadowed_reexport_is_not_published(tmp_path):
     public.write_text("from provider import pair\npair = lambda x: x\n")
     source, _filename, source_cid = path_source(str(public))
 
-    rows = authenticated_module_exports(tmp_path, public, source, source_cid)
+    rows = authenticated_module_exports(
+        tmp_path, public, source, source_cid, module_is_package=False
+    )
 
     assert not any(row["exportedSymbol"] == "python:public.pair" for row in rows)
 

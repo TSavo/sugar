@@ -260,6 +260,10 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
             "schemaVersion": "1",
             "moduleName": module_name_for_path(root, path),
             "sourceCid": source_cid,
+            # Package disposition is part of this enrolled source unit's
+            # identity.  Consumers receive it explicitly; none may reconstruct
+            # it from a filename while resolving relative imports.
+            "moduleIsPackage": path.name == "__init__.py",
         }
         for path, _source, source_cid in units
     }
@@ -267,7 +271,16 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         enrolled, _outcomes = authenticated_import_uses(
             root, path, source, source_cid, module_identities
         )
-        rows.extend(authenticated_module_exports(root, path, source, source_cid))
+        identity = module_identities[module_name_for_path(root, path)]
+        rows.extend(
+            authenticated_module_exports(
+                root,
+                path,
+                source,
+                source_cid,
+                module_is_package=identity["moduleIsPackage"],
+            )
+        )
         rows.extend(enrolled)
     return rows
 
