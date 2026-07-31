@@ -6,6 +6,7 @@ import csv
 import importlib.metadata
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from sugar_lift_py_tests.floor import ObjectMethodValue
 from sugar_lift_py_tests.callable_application import CallableApplication
@@ -23,6 +24,7 @@ from sugar_lift_python_source.dependency_artifact import (
 )
 from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
 from sugar_lift_python_source.manager_construction import _ModuleSourceFrameCallableV1
+import sugar_lift_python_source.manager_construction as manager_construction
 
 PROVIDER = (
     "class nonmember(object):\n"
@@ -35,6 +37,12 @@ PROVIDER = (
     "def locally_shadowed(value):\n"
     "    nonmember = value\n"
     "    return isinstance(value, nonmember)\n"
+    "def nested_probe(value):\n"
+    "    if isinstance(value, nonmember):\n"
+    "        return value.value\n"
+    "    return 2\n"
+    "def outer_probe(value):\n"
+    "    return nested_probe(value)\n"
 )
 
 
@@ -128,3 +136,49 @@ def test_local_nonmember_shadow_cannot_borrow_module_class_authority(
     frame = _frame(tmp_path, "locally_shadowed")
 
     assert all(binding.name != "nonmember" for binding in frame.source_class_bindings)
+
+
+def test_reachable_nested_frame_carries_its_own_source_class_global(
+    tmp_path: Path,
+) -> None:
+    """A nested reachable function is enriched before its frame is installed."""
+    installed = []
+    original_install = manager_construction._install_source_call_frame
+
+    def record_install(context, call, frame):
+        installed.append(frame)
+        return original_install(context, call, frame)
+
+    with patch.object(
+        manager_construction,
+        "_install_source_call_frame",
+        side_effect=record_install,
+    ):
+        _frame(tmp_path, "outer_probe")
+
+    nested_frame = next(
+        frame for frame in installed if frame.owner.name == "nested_probe"
+    )
+    assert tuple(binding.name for binding in nested_frame.source_class_bindings) == (
+        "nonmember",
+    )
+    method = ObjectMethodValue(
+        "member",
+        ("self",),
+        TrueBoolLiteralSugar(site="nested-method-site"),
+        "blake3-512:" + "8" * 128,
+    )
+    occurrence = SourceFragmentCoordinateV1(
+        nested_frame.source_identity_cid, 30, 0, 30, 12
+    )
+
+    called = CallableApplication(
+        (method,),
+        (),
+        occurrence,
+        owner="nested source class frame tooth",
+        call_occurrence=occurrence,
+    ).apply(_ModuleSourceFrameCallableV1("nested_probe", nested_frame), None)
+
+    assert isinstance(called, Complete)
+    assert called.value.value == 2
