@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .floor_value import FloorValue
@@ -253,15 +253,10 @@ class ObjectValue(FloorValue):
         remaining = tuple(field for field in self.fields if field.name != name)
         # Restore retires the deleted-field mark for this name.
         still_deleted = tuple(d for d in self.deleted_instance_fields if d != name)
-        return ObjectValue(
-            self.class_name,
-            (*remaining, ObjectField(name, value)),
-            self.methods,
-            self.class_fields,
-            self.identity,
-            self.deferred_helper_fields,
-            still_deleted,
-            self.defining_class,
+        return replace(
+            self,
+            fields=(*remaining, ObjectField(name, value)),
+            deleted_instance_fields=still_deleted,
         )
 
     def authenticates_plain_attribute_store(self, name: str) -> bool:

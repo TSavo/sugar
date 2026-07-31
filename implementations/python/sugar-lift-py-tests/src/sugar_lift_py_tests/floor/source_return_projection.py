@@ -20,6 +20,12 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
     from sugar_lift_py_tests.floor.loop_control_value import LoopControlValue
     from sugar_lift_py_tests.floor.raise_value import RaiseValue
     from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.receiver_field_store_value import (
+        ReceiverFieldStoreValue,
+    )
+    from sugar_lift_py_tests.floor.receiver_state_projection import (
+        fold_receiver_owned_stores,
+    )
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
@@ -64,7 +70,13 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
         and isinstance(returns[0], ReturnValue)
         and isinstance(returns[0].value, FloorValue)
     ):
-        return returns[0].value
+        return_index = value.statements.index(returns[0])
+        stores = tuple(
+            statement
+            for statement in value.statements[:return_index]
+            if isinstance(statement, ReceiverFieldStoreValue)
+        )
+        return fold_receiver_owned_stores(returns[0].value, stores)
     if (
         isinstance(value, BlockValue)
         and not value.can_fall_through
@@ -79,5 +91,11 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
         and all(guard == true_guard() for guard in returns[0].guards)
         and isinstance(returns[0].value, FloorValue)
     ):
-        return returns[0].value
+        return_index = value.statements.index(returns[0])
+        stores = tuple(
+            statement
+            for statement in value.statements[:return_index]
+            if isinstance(statement, ReceiverFieldStoreValue)
+        )
+        return fold_receiver_owned_stores(returns[0].value, stores)
     return value

@@ -21,8 +21,9 @@ class ReceiverFieldStoreValue(FloorValue):
         )
 
     def extend_scope(self, ctx):
-        """Advance every binding that names this exact constructed receiver."""
+        """Advance every alias of this authenticated constructed receiver."""
         from .object_value import ObjectValue
+        from .receiver_state_projection import same_authenticated_receiver
 
         if not isinstance(self.receiver, ObjectValue):
             return ctx
@@ -31,17 +32,14 @@ class ReceiverFieldStoreValue(FloorValue):
             from sugar_lift_py_tests.context import ReduceContext
 
             ctx = ReduceContext.root(owner="ReceiverFieldStoreValue")
-        updated = self.receiver.with_field_store(self.attr, self.value)
         temporal = ctx.temporal
-        identity = self.receiver.identity
         matched = False
         for binding in ctx.temporal.bindings:
-            candidate = binding.value
-            if (
-                isinstance(candidate, ObjectValue)
-                and type(candidate) is type(self.receiver)
-                and candidate.identity == identity
-            ):
+            if same_authenticated_receiver(binding.value, self.receiver):
+                # Advance the binding's CURRENT immutable version. Rebuilding
+                # from the store occurrence's earlier receiver would discard
+                # intervening mapping/list state carried by the alias.
+                updated = binding.value.with_field_store(self.attr, self.value)
                 temporal = temporal.bind_value(
                     binding.name, updated, blame=binding.blame
                 )
