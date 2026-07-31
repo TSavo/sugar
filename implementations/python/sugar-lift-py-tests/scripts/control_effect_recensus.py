@@ -253,10 +253,13 @@ def _with_census_partition(
     from sugar_source_tree.panic import WithConstructionGapKind
 
     vocabulary = tuple(member.value for member in WithConstructionGapKind)
-    if len(vocabulary) != 39:
+    # ENTER_MAY_HALT / EXIT_MAY_HALT are source-derived resource lifecycle
+    # gaps, added with the generator-backed resource contract. Keep the exact
+    # cardinality tooth current; do not replace it with an open-ended bucket.
+    if len(vocabulary) != 41:
         raise ValueError(
             "WithConstructionGapKind vocabulary changed: "
-            f"expected 39 members, found {len(vocabulary)}"
+            f"expected 41 members, found {len(vocabulary)}"
         )
     allowed = {"derived-contract", *(f"gap:{kind}" for kind in vocabulary)}
     unexpected = sorted(set(cm_resolutions) - allowed)
@@ -676,7 +679,7 @@ def main() -> int:
         require_pin,
         write_pin,
     )
-    from sugar_lift_py_tests.authenticated_pytest import corpus_manifest_cid
+    from pandas_floor_summary import corpus_cid as corpus_manifest_shape_cid
     from sugar_source_tree.tree import SourceTree
 
     # Pin FIRST. A run that cannot name its corpus has no denominator, and a
@@ -689,7 +692,7 @@ def main() -> int:
         )
         if args.require_corpus_pin is not None:
             require_pin(load_pin(args.require_corpus_pin), observed_pin)
-        manifest_shape_cid = corpus_manifest_cid(
+        manifest_shape_cid = corpus_manifest_shape_cid(
             [entry.path for entry in observed_pin.files]
         )
         _authenticate_declared_pandas_corpus(observed_pin, manifest_shape_cid)

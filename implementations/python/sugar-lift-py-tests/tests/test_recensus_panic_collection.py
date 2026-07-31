@@ -41,7 +41,9 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_gap(
     import sugar_source_tree.tree as tree_mod
 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
-    row = module._measure_file(path, relative="fixture.py")
+    row = module._measure_file(
+        path, relative="fixture.py", workspace_root=tmp_path
+    )
     assert row["category"] == "construction-panic"
     assert row["panic"]["type"] == "ConstructionPanic"
 
@@ -50,7 +52,7 @@ def test_control_effect_recensus_enumerates_one_file(tmp_path: Path) -> None:
     module = _load("control_effect_recensus")
     path = tmp_path / "clean.py"
     path.write_text("def a(z):\n    return z\n", encoding="utf-8")
-    row = module._measure_file(path, relative="clean.py")
+    row = module._measure_file(path, relative="clean.py", workspace_root=tmp_path)
     assert row["category"] == "completed"
     assert row["functionsTotal"] == 1
     assert row["functionsClean"] == 1
@@ -135,22 +137,14 @@ def test_backend_defect_keys_split_cm_and_call_demand() -> None:
     assert other not in {cm, call}
 
 
-def test_cm_membrane_bucket_keeps_assertion_separate_from_resource() -> None:
-    """With ΔR must never merge assertion membrane with protocol resource."""
+def test_cm_resolution_bucket_uses_authenticated_kind_not_vendor_spelling() -> None:
+    """With residual classification has no spelling-based admission arm."""
+    from types import SimpleNamespace
+
     module = _load("control_effect_recensus")
-    assert module._cm_membrane_bucket("python:pytest.raises") == "assertion-membrane"
-    assert (
-        module._cm_membrane_bucket("python:pandas._testing.assert_produces_warning")
-        == "assertion-membrane"
-    )
-    assert (
-        module._cm_membrane_bucket("python:pandas._testing.ensure_clean")
-        == "protocol-resource-candidate"
-    )
-    assert (
-        module._cm_membrane_bucket("python:pandas.option_context")
-        == "protocol-resource-candidate"
-    )
-    assert module._cm_membrane_bucket("python:pytest.raises") != (
-        module._cm_membrane_bucket("python:pandas._testing.ensure_clean")
+    assert not hasattr(module, "_cm_membrane_bucket")
+    assert module._cm_resolution_bucket(
+        SimpleNamespace(kind="call-target-source-absent")
+    ) == (
+        "gap:call-target-source-absent"
     )
