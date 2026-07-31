@@ -106,62 +106,20 @@ class MappingObjectValue(ObjectValue):
         from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
             ReceiverOwnedMutationResult,
         )
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor.receiver_state_projection import (
+            project_receiver_owned_mutation_chain,
+        )
 
         entries = value.statements if isinstance(value, BlockValue) else (value,)
         mutations = tuple(
             entry for entry in entries if isinstance(entry, ReceiverOwnedMutationResult)
         )
-        if not mutations:
-            construction_panic_gap(
-                owner="MappingObjectValue.setitem",
-                blame=self.identity,
-                observed="empty receiver-owned mutation chain",
-                requested="nonempty ordered __setitem__ receiver transition chain",
-                fix="preserve the source __setitem__ body mutation or keep loud",
-            )
-
-        current = self
-        for position, mutation in enumerate(mutations):
-            before = mutation.receiver_before
-            after = mutation.receiver_after
-            if (
-                type(before) is not type(current)
-                or getattr(before, "identity", None) != self.identity
-                or before != current
-            ):
-                construction_panic_gap(
-                    owner="MappingObjectValue.setitem",
-                    blame=self.identity,
-                    observed=(
-                        f"broken receiver mutation chain at position {position}: "
-                        f"before={type(before).__name__}:"
-                        f"{getattr(before, 'identity', None)!r}"
-                    ),
-                    requested="each receiver_before equal the preceding authenticated state",
-                    fix=(
-                        "preserve source order and exact receiver identity; never select "
-                        "the last mutation from a competing or reordered chain"
-                    ),
-                )
-            if (
-                type(after) is not type(current)
-                or getattr(after, "identity", None) != self.identity
-            ):
-                construction_panic_gap(
-                    owner="MappingObjectValue.setitem",
-                    blame=self.identity,
-                    observed=(
-                        f"foreign receiver_after at position {position}: "
-                        f"{type(after).__name__}:"
-                        f"{getattr(after, 'identity', None)!r}"
-                    ),
-                    requested="same-identity receiver_after for every transition",
-                    fix="return the authenticated receiver state owned by this method call",
-                )
-            current = after
-        return Complete(current)
+        return project_receiver_owned_mutation_chain(
+            self,
+            mutations,
+            owner="MappingObjectValue.setitem",
+            blame=self.identity,
+        )
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.outcome import Complete

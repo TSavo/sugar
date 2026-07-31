@@ -7,14 +7,18 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    GuardedValue,
     MappingObjectValue,
     NoneValue,
     ObjectMethodValue,
     ReceiverOwnedMutationResult,
+    ReceiverStatePartitionValue,
     StringValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.ir import and_, atomic, not_
+from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome.exit_set import partition, true_guard
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -141,6 +145,146 @@ def test_empty_receiver_mutation_chain_is_loud():
         start._project_setitem_receiver(BlockValue(()))
 
     assert raised.value.info.observed == "empty receiver-owned mutation chain"
+
+
+def _guarded_transition(start, guard, updated):
+    return ReceiverOwnedMutationResult(
+        start, GuardedValue(guard, updated, start), NoneValue()
+    )
+
+
+def test_real_lifecycle_nested_true_guarded_transition_collapses_to_live_receiver():
+    start, middle, end, *_ = _chain_states()
+    nested = GuardedValue(
+        true_guard(), GuardedValue(true_guard(), end, middle), start
+    )
+
+    outcome = start._project_setitem_receiver(
+        ReceiverOwnedMutationResult(start, nested, NoneValue())
+    )
+
+    assert outcome == Complete(end)
+
+
+def test_guarded_transition_retains_exact_complementary_receiver_faces():
+    start, middle, *_ = _chain_states()
+    guard = atomic("receiver-store", ())
+
+    outcome = start._project_setitem_receiver(
+        _guarded_transition(start, guard, middle)
+    )
+
+    assert isinstance(outcome, ExitSet)
+    assert {(face.guard, face.value) for face in outcome.exits} == {
+        (guard, middle),
+        (not_(guard), start),
+    }
+    assert all(face.value.identity == start.identity for face in outcome.exits)
+
+
+def test_later_transition_updates_only_matching_face_and_keeps_complement():
+    start, middle, end, *_ = _chain_states()
+    guard = atomic("receiver-store", ())
+    mutations = (
+        _guarded_transition(start, guard, middle),
+        _guarded_transition(middle, guard, end),
+    )
+
+    outcome = start._project_setitem_receiver(BlockValue(mutations))
+
+    assert isinstance(outcome, ExitSet)
+    assert {(face.guard, face.value) for face in outcome.exits} == {
+        (guard, end),
+        (not_(guard), start),
+    }
+
+
+def test_nested_transition_conjoins_guards_without_replacing_outer_guard():
+    start, middle, end, *_ = _chain_states()
+    outer = atomic("outer-store", ())
+    inner = atomic("inner-store", ())
+    mutations = (
+        _guarded_transition(start, outer, middle),
+        _guarded_transition(middle, inner, end),
+    )
+
+    outcome = start._project_setitem_receiver(BlockValue(mutations))
+
+    assert isinstance(outcome, ExitSet)
+    assert {(face.guard, face.value) for face in outcome.exits} == {
+        (and_([outer, inner]), end),
+        (and_([outer, not_(inner)]), middle),
+        (not_(outer), start),
+    }
+
+
+@pytest.mark.parametrize("foreign_arm", ("true", "false"))
+def test_foreign_identity_in_either_live_guarded_arm_is_loud(foreign_arm):
+    start, middle, *_ = _chain_states()
+    foreign = MappingObjectValue("_EnumDict", (), identity="foreign")
+    guard = atomic("receiver-store", ())
+    after = (
+        GuardedValue(guard, foreign, start)
+        if foreign_arm == "true"
+        else GuardedValue(guard, middle, foreign)
+    )
+
+    with pytest.raises(ConstructionPanic, match="foreign receiver"):
+        start._project_setitem_receiver(
+            ReceiverOwnedMutationResult(start, after, NoneValue())
+        )
+
+
+def test_explicit_partition_with_same_guard_on_both_arms_is_not_complementary():
+    start, middle, end, *_ = _chain_states()
+    guard = atomic("receiver-store", ())
+    yes, no = partition("lying-receiver-partition")
+    lying = ReceiverStatePartitionValue(
+        ExitSet(
+            (
+                Completed(guard, middle, frozenset({yes})),
+                Completed(guard, end, frozenset({no})),
+            )
+        )
+    )
+
+    with pytest.raises(ConstructionPanic, match="complementary partition"):
+        start._project_setitem_receiver(
+            ReceiverOwnedMutationResult(start, lying, NoneValue())
+        )
+
+
+def test_multiface_receiver_sequences_following_operation_once_per_face():
+    start, middle, *_ = _chain_states()
+    guard = atomic("receiver-store", ())
+    projected = start._project_setitem_receiver(
+        _guarded_transition(start, guard, middle)
+    )
+    calls = []
+
+    def following(receiver):
+        calls.append(receiver)
+        return receiver.mapping_builtin_setitem(
+            StringValue("later"), TermValue(9), "later-store"
+        )
+
+    outcome = projected.and_then(following)
+
+    assert isinstance(outcome, ExitSet)
+    assert calls == [middle, start]
+    assert all(
+        (StringValue("later"), TermValue(9)) in face.value.entries
+        for face in outcome.exits
+    )
+
+
+def test_receiver_mutation_python_result_cannot_be_used_as_post_state():
+    start, middle, *_ = _chain_states()
+
+    with pytest.raises(ConstructionPanic, match="NoneValue"):
+        start._project_setitem_receiver(
+            ReceiverOwnedMutationResult(start, middle, TermValue(9))
+        )
 
 
 def test_enumdict_source_halt_never_falls_through_to_builtin_storage():
