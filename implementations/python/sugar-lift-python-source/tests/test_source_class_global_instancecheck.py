@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import csv
+import enum
 import importlib.metadata
+import inspect
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +41,7 @@ from sugar_lift_python_source.manager_construction import resolve_source_visible
 from sugar_lift_python_source.manager_construction import _ModuleSourceFrameCallableV1
 import sugar_lift_python_source.manager_construction as manager_construction
 from sugar_source_tree.panic import BackendDefect
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
 
 @dataclass(frozen=True)
@@ -170,6 +174,55 @@ def test_enum_nonmember_global_decides_object_method_false(tmp_path: Path) -> No
     callsite_ctx = _with_frame_mutable_globals(None, frame)
     assert callsite_ctx.temporal.value_if_bound("nonmember") is nonmember
     assert callsite_ctx.module_temporal.value_if_bound("nonmember") is nonmember
+
+
+def test_real_cpython_312_enum_method_is_not_an_instance_of_type(
+    tmp_path: Path,
+) -> None:
+    """The real ``_EnumDict.__setitem__`` function cannot enter a class face."""
+    assert sys.version_info[:2] == (3, 12), (
+        "this law authenticates the declared CPython 3.12 stdlib source"
+    )
+    source = inspect.getsource(enum.nonmember) + "\n" + inspect.getsource(enum._EnumDict)
+    path = tmp_path / "enum_312_slice.py"
+    path.write_text(source, encoding="utf-8")
+    tree = open_source_file_for_construction(
+        path, root=tmp_path, populate_derived=False
+    )
+    enum_dict = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "ClassDef" and node.name == "_EnumDict"
+    )
+    constructed = enum_dict.sugar().desugar(
+        ReduceContext(temporal=builtin_name_temporal())
+    )
+    assert isinstance(constructed, Complete)
+    receiver = constructed.value.construct_receiver_state_from_block(
+        None, "real-cpython-312-enumdict-receiver"
+    )
+    method = next(item for item in receiver.methods if item.name == "__setitem__")
+    assert isinstance(method, ObjectMethodValue)
+    assert method.source_call_frame_cid is not None
+
+    type_class = builtin_name_temporal().value_if_bound("type")
+    outcome = type_class.test_python_type(method, "enum.py:_EnumDict.__setitem__")
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    object_class = builtin_name_temporal().value_if_bound("object")
+    object_outcome = object_class.test_python_type(
+        method, "enum.py:_EnumDict.__setitem__:object"
+    )
+    assert isinstance(object_outcome, Complete)
+    assert isinstance(object_outcome.value, TrueBoolLiteralSugar)
+
+    unauthenticated = replace(method, source_call_frame_cid=None)
+    with pytest.raises(ConstructionPanic) as raised:
+        type_class.test_python_type(
+            unauthenticated, "enum.py:_EnumDict.__setitem__:lying"
+        )
+    assert raised.value.info.owner == "ObjectMethodValue.python_isinstance"
 
 
 def test_local_nonmember_shadow_cannot_borrow_module_class_authority(

@@ -56,6 +56,47 @@ class ObjectMethodValue(FloorValue):
             symbol_kind="coordinate",
         )
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        """Decide that an authenticated source function object is not a class.
+
+        ``ObjectMethodValue`` is produced by a source ``FunctionDef`` and its
+        source-call-frame CID authenticates that value category.  It is an
+        ordinary ``object`` but not an instance of the builtin metaclass
+        ``type``.
+        Leaving this undecided creates an impossible ``isinstance(method,
+        type)`` face; CPython's ``enum._EnumDict.__setitem__`` then treats an
+        ordinary method as a class and eventually attempts ``method.value``.
+
+        This is deliberately narrower than claiming the full builtin object
+        MRO.  Other classinfo values retain the ordinary Floor refusal until
+        their own authenticated law exists.
+        """
+        if type_name not in {"type", "object"}:
+            return super().python_isinstance(type_name, type_term, site)
+        if not self.source_call_frame_cid:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="ObjectMethodValue.python_isinstance",
+                blame=site,
+                observed="source method without source call frame CID",
+                requested="authenticated source-function identity",
+                fix="retain the defining source frame or keep isinstance loud",
+            )
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            FalseBoolLiteralSugar(site=site)
+            if type_name == "type"
+            else TrueBoolLiteralSugar(site=site)
+        )
+
     def attribute_presence(self, name: str, site):
         """Decide descriptor members owned by this authenticated function object."""
         if not self.source_call_frame_cid:
