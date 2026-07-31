@@ -6,6 +6,7 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.ir import _term_content_cid
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor.class_definition_value import (
+    ClassNamespaceMemberV1,
     ClassDefinitionValue,
     ConstructedClassFieldV1,
     ConstructedClassMethodV1,
@@ -24,21 +25,45 @@ class ConstructedClassConditionalFieldsV1:
 
 
 @dataclass(frozen=True)
+class ClassNamespaceSugarMemberV1:
+    kind: str
+    name: str
+    binding_target_occurrence: SourceFragmentCoordinateV1
+    value: object = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
 class ClassDefinitionSugar(Sugar):
     class_name: str
     source_identity_cid: str
     definition_fragment_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
     fields: tuple[ConstructedClassFieldV1 | ConstructedClassConditionalFieldsV1, ...]
+    namespace_roster: tuple[ClassNamespaceSugarMemberV1, ...]
     docstring_cid: str | None
     annotation_cids: tuple[str, ...]
     decorator_cids: tuple[str, ...]
     binding_target_occurrence: SourceFragmentCoordinateV1
     base_sugars: tuple[Sugar, ...]
     base_fragment_cids: tuple[str, ...]
+    has_explicit_metaclass: bool
     site: object = field(compare=False)
     decorator_sugars: tuple[Sugar, ...] = field(default=(), compare=False)
     decorator_occurrences: tuple[object, ...] = field(default=(), compare=False)
+
+    def __post_init__(self):
+        positions = tuple(
+            (member.binding_target_occurrence.start_line, member.binding_target_occurrence.start_col)
+            for member in self.namespace_roster
+        )
+        if positions != tuple(sorted(positions)):
+            raise ValueError("class namespace roster is not in source order")
+        if any(
+            member.kind not in {"field", "method", "conditional"}
+            or member.binding_target_occurrence.source_cid != self.source_identity_cid
+            for member in self.namespace_roster
+        ):
+            raise ValueError("class namespace roster has foreign kind or occurrence")
 
     @classmethod
     def witnesses(cls):
@@ -81,6 +106,14 @@ class ClassDefinitionSugar(Sugar):
                 for method in self.methods
             ],
             "fields": [encode_field(item) for item in self.fields],
+            "namespaceRoster": [
+                {
+                    "kind": member.kind,
+                    "name": member.name,
+                    "bindingTargetOccurrence": member.binding_target_occurrence.wire(),
+                }
+                for member in self.namespace_roster
+            ],
             "docstringCid": self.docstring_cid,
             "annotationCids": list(self.annotation_cids),
             "decoratorCids": list(self.decorator_cids),
@@ -105,13 +138,25 @@ class ClassDefinitionSugar(Sugar):
         from sugar_lift_py_tests.floor import ObjectField
 
         class_fields = []
+        class_field_occurrences = []
+        evaluated_namespace_roster = []
         base_values = []
+        unresolved_base = False
         for base in self.base_sugars:
             outcome = base.desugar(ctx)
-            from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
+            from sugar_lift_py_tests.floor import (
+                BuiltinDictClassValue,
+                BuiltinObjectClassValue,
+                ClassValue,
+            )
 
             if isinstance(outcome, Complete) and isinstance(
-                outcome.value, (ClassDefinitionValue, BuiltinDictClassValue)
+                outcome.value,
+                (
+                    ClassDefinitionValue,
+                    BuiltinDictClassValue,
+                    BuiltinObjectClassValue,
+                ),
             ):
                 base_values.append(outcome.value)
             elif (
@@ -126,7 +171,9 @@ class ClassDefinitionSugar(Sugar):
             # HEAD omitted unenrolled bases from this roster.  This increment
             # evaluates them only to discover the exact BuiltinDictClassValue;
             # every other Floor remains outside the class model and gains no
-            # authority or behavior here.
+                # authority or behavior here.
+            else:
+                unresolved_base = True
 
         evaluated_groups = {}
 
@@ -183,9 +230,28 @@ class ClassDefinitionSugar(Sugar):
                     fix="keep effectful or unresolved class initializers loud",
                 )
             class_fields.append(ObjectField(item.name, outcome.value))
+            class_field_occurrences.append(item.binding_target_occurrence)
+            evaluated_namespace_roster.append(
+                ClassNamespaceMemberV1(
+                    "field",
+                    item.name,
+                    item.binding_target_occurrence,
+                    outcome.value,
+                )
+            )
 
-        for item in self.fields:
-            append_field(item)
+        for member in self.namespace_roster:
+            if member.kind == "method":
+                evaluated_namespace_roster.append(
+                    ClassNamespaceMemberV1(
+                        "method",
+                        member.name,
+                        member.binding_target_occurrence,
+                        member.value,
+                    )
+                )
+            else:
+                append_field(member.value)
         initializer = next(
             (method for method in self.methods if method.name == "__init__"), None
         )
@@ -201,5 +267,16 @@ class ClassDefinitionSugar(Sugar):
                 self.annotation_cids,
                 self.decorator_cids,
                 tuple(base_values),
+                tuple(class_field_occurrences),
+                tuple(evaluated_namespace_roster),
+                (
+                    not self.has_explicit_metaclass
+                    and not unresolved_base
+                    and all(
+                        not isinstance(base, ClassDefinitionValue)
+                        or base.ordinary_instancecheck
+                        for base in base_values
+                    )
+                ),
             )
         )

@@ -34,6 +34,22 @@ class ConstructedClassFieldV1:
 
 
 @dataclass(frozen=True)
+class ClassNamespaceMemberV1:
+    """One source-ordered class namespace binding and its exact occurrence."""
+
+    kind: str
+    name: str
+    binding_target_occurrence: SourceFragmentCoordinateV1
+    value: object = field(compare=False, repr=False)
+
+    def __post_init__(self):
+        if self.kind not in {"field", "method"}:
+            raise ValueError(f"invalid class namespace member kind: {self.kind}")
+        if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
+            raise TypeError("class namespace member requires an exact occurrence")
+
+
+@dataclass(frozen=True)
 class ClassDefinitionValue(GuardStableValue):
     class_name: str
     class_definition_cid: str
@@ -45,6 +61,11 @@ class ClassDefinitionValue(GuardStableValue):
     annotation_cids: tuple[str, ...] = ()
     decorator_cids: tuple[str, ...] = ()
     base_classes: tuple[object, ...] = ()
+    class_field_occurrences: tuple[SourceFragmentCoordinateV1, ...] = field(
+        default=(), compare=False, repr=False
+    )
+    namespace_roster: tuple[ClassNamespaceMemberV1, ...] = ()
+    ordinary_instancecheck: bool = False
 
     def __post_init__(self):
         if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
@@ -52,6 +73,52 @@ class ClassDefinitionValue(GuardStableValue):
                 "ClassDefinitionValue binding target must be an exact "
                 "SourceFragmentCoordinateV1"
             )
+
+    def class_member_value(self, name: str):
+        """Return one source-authenticated class member along this C3 tail."""
+        for field in reversed(self.class_fields):
+            if field.name == name:
+                return field.value
+        for method in reversed(self._object_methods()):
+            if method.name == name:
+                return method
+        return None
+
+    def test_python_type(self, value, site):
+        """Decide known function objects against an ordinary source class."""
+        from sugar_lift_py_tests.floor.object_method_value import ObjectMethodValue
+
+        if self.ordinary_instancecheck and isinstance(value, ObjectMethodValue):
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().test_python_type(value, site)
+
+    def namespace_members_in_source_order(self):
+        """Return the exact class-body bindings ordered by source occurrence."""
+        if not self.namespace_roster:
+            raise SugarNotWritten(
+                owner="ClassDefinitionValue.namespace_members_in_source_order",
+                blame=self.class_definition_cid,
+                observed="missing source-ordered namespace roster",
+                requested="one authenticated class-body member roster",
+                fix="retain the producer-owned roster through ClassDefinitionSugar",
+            )
+        return tuple(
+            (
+                member.binding_target_occurrence,
+                member.name,
+                (
+                    self._object_method_value(self, member.value)
+                    if member.kind == "method"
+                    else member.value
+                ),
+            )
+            for member in self.namespace_roster
+        )
 
     def callable_application_with(self, operation, ctx):
         """Construct one source class instance through its initializer frame."""
@@ -411,20 +478,26 @@ class ClassDefinitionValue(GuardStableValue):
         )
         owned = (*inherited, *((self, method) for method in self.methods))
         return tuple(
-            ObjectMethodValue(
-                method.name,
-                method.source_call_frame.parameters,
-                method.source_call_frame.body,
-                method.source_call_frame.frame_cid,
-                tuple(
-                    coordinate.cid
-                    for coordinate in method.source_call_frame.formal_coordinates
-                ),
-                method.source_call_frame,
-                method.descriptor_kind,
-                defining_class=defining_class,
-            )
+            self._object_method_value(defining_class, method)
             for defining_class, method in owned
+        )
+
+    @staticmethod
+    def _object_method_value(defining_class, method):
+        from sugar_lift_py_tests.floor import ObjectMethodValue
+
+        return ObjectMethodValue(
+            method.name,
+            method.source_call_frame.parameters,
+            method.source_call_frame.body,
+            method.source_call_frame.frame_cid,
+            tuple(
+                coordinate.cid
+                for coordinate in method.source_call_frame.formal_coordinates
+            ),
+            method.source_call_frame,
+            method.descriptor_kind,
+            defining_class=defining_class,
         )
 
     def _c3_tail(self) -> tuple["ClassDefinitionValue", ...]:

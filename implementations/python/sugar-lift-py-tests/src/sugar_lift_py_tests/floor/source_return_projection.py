@@ -99,3 +99,46 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
         )
         return fold_receiver_owned_stores(returns[0].value, stores)
     return value
+
+
+def project_authenticated_receiver_mutation_chain(value: FloorValue) -> FloorValue:
+    """Project the final receiver of an authenticated constructor field body.
+
+    ``ClassDef._authenticated_new_constructor_shape`` has already proved that
+    the omitted source prefix allocates one receiver and that the omitted
+    suffix returns that same receiver.  The retained middle contains only
+    receiver field assignments.  This function checks that their shadow
+    testimony is one contiguous immutable-state chain; it never infers a
+    return from an arbitrary block.
+    """
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+        ReceiverOwnedMutationResult,
+    )
+    from sugar_lift_py_tests.floor.receiver_state_projection import (
+        same_authenticated_receiver,
+    )
+
+    if not isinstance(value, BlockValue) or not value.statements:
+        return value
+    if not all(
+        isinstance(statement, ReceiverOwnedMutationResult)
+        for statement in value.statements
+    ):
+        return value
+    state = value.statements[0].receiver_before
+    if not isinstance(state, ObjectValue):
+        return value
+    for mutation in value.statements:
+        if (
+            mutation.receiver_before != state
+            or not same_authenticated_receiver(mutation.receiver_before, state)
+            or not isinstance(mutation.receiver_after, ObjectValue)
+            or not same_authenticated_receiver(mutation.receiver_after, state)
+            or not isinstance(mutation.result, NoneValue)
+        ):
+            return value
+        state = mutation.receiver_after
+    return state

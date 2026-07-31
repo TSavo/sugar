@@ -447,12 +447,7 @@ class _ModuleClassDefinitionBindingSugar:
                 )
                 class_name_floor = StringValue(self.definition.name)
                 bases_floor = TupleValue(tuple(value.base_classes))
-                fallback_namespace = DictValue(
-                    tuple(
-                        (StringValue(field.name), field.value)
-                        for field in value.class_fields
-                    )
-                )
+                fallback_namespace = DictValue(())
                 occurrence = _call_coordinate(keyword.value)
                 preparers = tuple(
                     method
@@ -511,8 +506,44 @@ class _ModuleClassDefinitionBindingSugar:
 
                     return applied.and_then(publish_metaclass_result)
 
+                def populate_namespace(namespace_floor):
+                    """Execute every class-body binding through its namespace.
+
+                    A source metaclass's ``__prepare__`` may return a mapping
+                    subclass whose ``__setitem__`` is part of class creation
+                    semantics.  Feeding only fields—or copying entries around
+                    that method—drops method definitions and bypasses the
+                    authenticated producer.
+                    """
+                    from sugar_lift_py_tests.floor import MappingObjectValue
+
+                    members = value.namespace_members_in_source_order()
+
+                    def seat(index, current):
+                        if index == len(members):
+                            return Complete(current)
+                        occurrence, name, member = members[index]
+                        key = StringValue(name)
+                        if isinstance(current, MappingObjectValue):
+                            stored = current.setitem_with_context(
+                                key, member, occurrence, ctx
+                            )
+                        elif isinstance(current, DictValue):
+                            stored = current.setitem(key, member, occurrence)
+                        else:
+                            raise SugarNotWritten(
+                                owner="module metaclass namespace population",
+                                blame=occurrence,
+                                observed=type(current).__name__,
+                                requested="the authenticated prepared mapping receiver",
+                                fix="retain __prepare__'s mapping floor or keep publication loud",
+                            )
+                        return stored.and_then(lambda updated: seat(index + 1, updated))
+
+                    return seat(0, namespace_floor)
+
                 if not preparers:
-                    return apply_new(fallback_namespace)
+                    return populate_namespace(fallback_namespace).and_then(apply_new)
                 prepare = preparers[0]
                 prepare_callable = _ModuleSourceFrameCallableV1(
                     prepare.name,
@@ -526,7 +557,7 @@ class _ModuleClassDefinitionBindingSugar:
                     owner="module metaclass namespace preparation",
                     call_occurrence=occurrence,
                 ).apply(prepare_callable, ctx)
-                return prepared.and_then(apply_new)
+                return prepared.and_then(populate_namespace).and_then(apply_new)
             if not sugar.decorator_sugars:
                 return Complete(ScopeRebind(self.definition.name, value))
             decorator_floors = []

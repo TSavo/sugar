@@ -35,6 +35,27 @@ class ObjectMethodValue(FloorValue):
         if not isinstance(self.body, (SugarBody, Sugar)):
             raise TypeError("ObjectMethodValue body must be constructor-built")
 
+    def to_term(self, *, owner: str):
+        """Project the authenticated source-frame identity of this function."""
+        del owner
+        if not self.source_call_frame_cid:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="ObjectMethodValue.to_term",
+                blame=self.name,
+                observed="method without source call frame CID",
+                requested="one authenticated source method coordinate",
+                fix="retain the defining source frame or keep the method loud",
+            )
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:source-method-value",
+            (str_const(self.source_call_frame_cid),),
+            symbol_kind="coordinate",
+        )
+
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit

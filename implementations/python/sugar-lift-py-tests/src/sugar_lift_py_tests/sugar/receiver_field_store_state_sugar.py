@@ -43,11 +43,17 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.object_value import ObjectValue
+        from sugar_lift_py_tests.floor.runtime_class_value import RuntimeClassValue
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+            ReceiverOwnedMutationResult,
+        )
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import Complete
 
         def update(receiver, value):
-            if not isinstance(receiver, ObjectValue):
+            if not isinstance(receiver, (ObjectValue, RuntimeClassValue, GuardedValue)):
                 construction_panic_gap(
                     owner="ReceiverFieldStoreStateSugar",
                     blame=self.site,
@@ -55,7 +61,15 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
                     requested="authenticated source receiver",
                     fix="retain field mutation as typed loud until its receiver floors",
                 )
-            return Complete(receiver.with_field_store(self.attr, value))
+            return Complete(
+                ReceiverOwnedMutationResult(
+                    receiver_before=receiver,
+                    receiver_after=receiver.with_field_store(self.attr, value),
+                    # Assignment is a statement.  Its receiver-after state is
+                    # an explicit shadow projection, never its Python result.
+                    result=NoneValue(),
+                )
+            )
 
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.value.desugar(ctx).and_then(

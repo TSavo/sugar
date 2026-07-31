@@ -4221,21 +4221,22 @@ class ClassDef(Statement):
             SourceFragmentCoordinateV1,
         )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
+            ClassNamespaceSugarMemberV1,
             ClassDefinitionSugar,
             ConstructedClassConditionalFieldsV1,
         )
 
-        def conditional_fields(statements):
-            def binding_occurrence(target):
-                span = target.line_col_span()
-                return SourceFragmentCoordinateV1(
-                    target.unit.source_cid,
-                    span.start_line,
-                    span.start_col,
-                    span.end_line,
-                    span.end_col,
-                )
+        def binding_occurrence(target):
+            span = target.line_col_span()
+            return SourceFragmentCoordinateV1(
+                target.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
 
+        def conditional_fields(statements):
             fields = []
             for item in statements:
                 if (
@@ -4309,18 +4310,49 @@ class ClassDef(Statement):
             )
             for method in methods
         )
-        fields = conditional_fields(
-            tuple(
-                item
-                for index, item in enumerate(self.body)
-                if not isinstance(item, (FunctionDef, Pass))
-                and not (
-                    index == 0
-                    and isinstance(item, Expr)
-                    and isinstance(item.value, Constant)
-                    and isinstance(item.value.value, str)
+        methods_by_cid = {
+            method.definition_fragment_cid: method for method in constructed
+        }
+        namespace_roster = []
+        for index, item in enumerate(self.body):
+            if isinstance(item, FunctionDef):
+                method = methods_by_cid[item.fragment.seal().cid]
+                namespace_roster.append(
+                    ClassNamespaceSugarMemberV1(
+                        "method",
+                        method.name,
+                        binding_occurrence(item),
+                        method,
+                    )
                 )
-            )
+                continue
+            if isinstance(item, Pass) or (
+                index == 0
+                and isinstance(item, Expr)
+                and isinstance(item.value, Constant)
+                and isinstance(item.value.value, str)
+            ):
+                continue
+            for member in conditional_fields((item,)):
+                is_conditional = isinstance(
+                    member, ConstructedClassConditionalFieldsV1
+                )
+                namespace_roster.append(
+                    ClassNamespaceSugarMemberV1(
+                        "conditional" if is_conditional else "field",
+                        "<conditional>" if is_conditional else member.name,
+                        (
+                            binding_occurrence(item.test)
+                            if is_conditional
+                            else member.binding_target_occurrence
+                        ),
+                        member,
+                    )
+                )
+        fields = tuple(
+            member.value
+            for member in namespace_roster
+            if member.kind != "method"
         )
         base_sugars = ()
         if self.bases:
@@ -4343,6 +4375,7 @@ class ClassDef(Statement):
             definition_fragment_cid=self.fragment.seal().cid,
             methods=constructed,
             fields=fields,
+            namespace_roster=tuple(namespace_roster),
             docstring_cid=docstring_cid,
             annotation_cids=tuple(
                 item.fragment.seal().cid for item in annotated_assignments
@@ -4368,6 +4401,9 @@ class ClassDef(Statement):
             ),
             base_sugars=base_sugars,
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
+            has_explicit_metaclass=any(
+                keyword.arg == "metaclass" for keyword in self.keywords
+            ),
             site=self.fragment,
         )
 
@@ -8971,7 +9007,24 @@ class ReceiverFieldStoreStatement(Statement):
 
     def substitution_binding(self, scope):
         del scope
-        return {self.receiver_name: self.post_state}
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        # The statement publishes one receiver-owned mutation.  Reads after
+        # the statement receive only its authenticated receiver-after face;
+        # binding the mutation object itself would make `return self` return
+        # the assignment result (None), while binding the raw post-state would
+        # leave the statement unable to advance the initializer's final state.
+        projected = materialize(
+            self.unit,
+            ShadowNode(
+                "ReceiverMutationPostState",
+                self.span,
+                (("mutation", Child(_handle_of(self.post_state))),),
+            ),
+            self.reporter,
+        )
+        return {self.receiver_name: projected}
 
     def _construct_sugar(self):
         from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar

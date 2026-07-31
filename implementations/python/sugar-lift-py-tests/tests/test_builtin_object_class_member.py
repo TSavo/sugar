@@ -52,3 +52,17 @@ def test_builtin_object_is_static_and_owns_only_its_closed_callable_member(
     qualname = receiver.attribute("__qualname__", member_site)
     assert name == Complete(StringValue("object"))
     assert qualname == Complete(StringValue("object"))
+
+
+@pytest.mark.parametrize(
+    "member",
+    ("__format__", "__new__", "__reduce_ex__", "__repr__", "__str__"),
+)
+def test_builtin_object_closed_data_model_members_are_authenticated(member) -> None:
+    receiver = BuiltinObjectClassValue(name="object", bases=(), record=None)
+
+    projected = receiver.attribute(member, _sites()[0])
+
+    assert projected == Complete(
+        BuiltinSemanticCallable(operation=f"python.object.{member}")
+    )

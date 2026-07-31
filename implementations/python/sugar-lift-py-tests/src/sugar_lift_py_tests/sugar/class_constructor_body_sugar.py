@@ -63,10 +63,13 @@ class ClassConstructorBodySugar(Sugar):
                 return None
             from sugar_lift_py_tests.floor import ObjectValue
             from sugar_lift_py_tests.floor.source_return_projection import (
+                project_authenticated_receiver_mutation_chain,
                 project_authenticated_source_return,
             )
 
             returned = project_authenticated_source_return(block)
+            if returned is block:
+                returned = project_authenticated_receiver_mutation_chain(block)
             if (
                 returned is block
                 and len(block.statements) == 1

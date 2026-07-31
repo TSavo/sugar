@@ -22,6 +22,7 @@ from .builtin_semantic_callable import BuiltinSemanticCallable
 from .builtin_super_value import BuiltinSuperMethodValue, BuiltinSuperValue
 from .call_site_value import CallSiteValue
 from .class_definition_value import (
+    ClassNamespaceMemberV1,
     ClassDefinitionValue,
     ConstructedClassFieldV1,
     ConstructedClassMethodV1,

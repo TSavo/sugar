@@ -71,6 +71,19 @@ class GuardedValue(FloorValue):
         """Distribute length through both authenticated guarded arms."""
         return self._map("length", site)
 
+    def with_field_store(self, name, value):
+        """Apply one field store to both already-authenticated receiver arms.
+
+        The surrounding statement guard still decides whether the mutation
+        occurred at all.  This method only preserves the receiver partition
+        that existed before that statement; it does not mint a new branch.
+        """
+        return GuardedValue(
+            self.guard,
+            self.when_true.with_field_store(name, value),
+            self.when_false.with_field_store(name, value),
+        )
+
     def _map(self, method: str, *args):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete

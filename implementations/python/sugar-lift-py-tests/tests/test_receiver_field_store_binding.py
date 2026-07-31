@@ -5,6 +5,7 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import (
     MappingObjectValue,
     ObjectValue,
+    ReceiverOwnedMutationResult,
     ReceiverFieldStoreValue,
     ReturnValue,
     StringValue,
@@ -16,7 +17,12 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
     ReceiverFieldStoreStateSugar,
 )
-from sugar_source_tree.nodes import FunctionDef, ReceiverFieldStoreState, Return
+from sugar_source_tree.nodes import (
+    FunctionDef,
+    ReceiverFieldStoreState,
+    ReceiverMutationPostState,
+    Return,
+)
 from sugar_source_tree.tree import SourceFile
 
 
@@ -160,7 +166,8 @@ def test_shadow_return_of_mutated_alias_reads_post_state() -> None:
     substituted = function.substitute({})
     returned = next(node for node in substituted.walk() if isinstance(node, Return))
 
-    assert isinstance(returned.value, ReceiverFieldStoreState)
+    assert isinstance(returned.value, ReceiverMutationPostState)
+    assert isinstance(returned.value.mutation, ReceiverFieldStoreState)
 
 
 def test_shadow_store_does_not_rewrite_distinct_alias_return() -> None:
@@ -202,10 +209,15 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
     ).desugar(None)
 
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.identity == receiver.identity
-    assert outcome.value.entries == receiver.entries
-    assert outcome.value.attribute("owner", "test") == Complete(TermValue(7))
+    assert isinstance(outcome.value, ReceiverOwnedMutationResult)
+    projected = outcome.value.project_receiver_post_state(
+        None, owner="test", blame="test"
+    )
+    assert isinstance(projected, Complete)
+    assert isinstance(projected.value, MappingObjectValue)
+    assert projected.value.identity == receiver.identity
+    assert projected.value.entries == receiver.entries
+    assert projected.value.attribute("owner", "test") == Complete(TermValue(7))
 
 
 def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
@@ -219,7 +231,8 @@ def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
     ).desugar(None)
 
     assert isinstance(outcome, Complete)
-    assert outcome.value.defining_class is defining_class
+    assert isinstance(outcome.value, ReceiverOwnedMutationResult)
+    assert outcome.value.receiver_after.defining_class is defining_class
 
 
 def test_receiver_field_post_state_does_not_borrow_foreign_class_authority() -> None:
