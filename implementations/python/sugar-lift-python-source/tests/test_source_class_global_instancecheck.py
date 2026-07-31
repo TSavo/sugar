@@ -28,6 +28,8 @@ from sugar_lift_py_tests.sugar.call_site_sugar import (
     _with_frame_mutable_globals,
 )
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
@@ -55,6 +57,22 @@ class _FloorSugar(ConstructedTermSugar):
     def to_term(self, *, owner):
         return self.value.to_term(owner=owner)
 
+
+@dataclass(frozen=True)
+class _ExplodingSugar(ConstructedTermSugar):
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        raise AssertionError("dead branch executed")
+
+    def to_term(self, *, owner):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor("test:dead-branch", (), symbol_kind="coordinate")
+
 PROVIDER = (
     "class nonmember(object):\n"
     "    def __init__(self, value):\n"
@@ -72,6 +90,10 @@ PROVIDER = (
     "    return 2\n"
     "def outer_probe(value):\n"
     "    return nested_probe(value)\n"
+    "def false_helper():\n"
+    "    return False\n"
+    "def true_helper():\n"
+    "    return True\n"
 )
 
 
@@ -242,6 +264,62 @@ def test_conflicting_same_name_global_testimony_is_not_last_wins() -> None:
             declaration_frame=declaration,
             blame="conflicting-global-tooth",
         )
+
+
+@pytest.mark.parametrize(
+    ("symbol", "expected_type"),
+    (("false_helper", FalseBoolLiteralSugar), ("true_helper", TrueBoolLiteralSugar)),
+)
+def test_retained_source_completion_owns_call_truth(
+    tmp_path: Path, symbol: str, expected_type: type
+) -> None:
+    """A source helper's retained bool selects truth; call spelling cannot."""
+    frame = _frame(tmp_path, symbol)
+    occurrence = SourceFragmentCoordinateV1(frame.source_identity_cid, 40, 0, 40, 8)
+    produced = CallSiteSugar(
+        target_name=symbol,
+        args=(),
+        site=f"{symbol}-call",
+        source_call_frame=frame,
+        call_occurrence=occurrence,
+    ).desugar(None)
+    assert isinstance(produced, Complete)
+
+    truth = produced.value.truth(f"{symbol}-truth")
+
+    assert isinstance(truth, Complete)
+    assert type(truth.value) is expected_type
+
+
+@pytest.mark.parametrize(
+    ("symbol", "body", "orelse", "expected"),
+    (
+        ("false_helper", _ExplodingSugar(), IntLiteralSugar(7, "good"), 7),
+        ("true_helper", IntLiteralSugar(9, "good"), _ExplodingSugar(), 9),
+    ),
+)
+def test_retained_helper_truth_selects_only_the_live_ifexp_arm(
+    tmp_path: Path,
+    symbol: str,
+    body: ConstructedTermSugar,
+    orelse: ConstructedTermSugar,
+    expected: int,
+) -> None:
+    """The opposite arm explodes if retained helper truth is ignored."""
+    frame = _frame(tmp_path, symbol)
+    occurrence = SourceFragmentCoordinateV1(frame.source_identity_cid, 41, 0, 41, 8)
+    helper = CallSiteSugar(
+        target_name=symbol,
+        args=(),
+        site=f"{symbol}-ifexp-call",
+        source_call_frame=frame,
+        call_occurrence=occurrence,
+    )
+
+    outcome = IfExpSugar(helper, body, orelse, site=f"{symbol}-ifexp").desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.value == expected
 
 
 def test_reachable_nested_frame_carries_its_own_source_class_global(
