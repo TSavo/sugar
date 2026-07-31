@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import csv
 import importlib.metadata
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from sugar_lift_py_tests.floor import ObjectMethodValue
 from sugar_lift_py_tests.context import ReduceContext
@@ -19,9 +22,12 @@ from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temp
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.call_site_sugar import (
+    CallSiteSugar,
     _same_source_declaration,
+    _seat_declaration_frame_globals,
     _with_frame_mutable_globals,
 )
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
@@ -31,6 +37,23 @@ from sugar_lift_python_source.dependency_artifact import (
 from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
 from sugar_lift_python_source.manager_construction import _ModuleSourceFrameCallableV1
 import sugar_lift_python_source.manager_construction as manager_construction
+from sugar_source_tree.panic import BackendDefect
+
+
+@dataclass(frozen=True)
+class _FloorSugar(ConstructedTermSugar):
+    value: object
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(self.value)
+
+    def to_term(self, *, owner):
+        return self.value.to_term(owner=owner)
 
 PROVIDER = (
     "class nonmember(object):\n"
@@ -130,6 +153,20 @@ def test_enum_nonmember_global_decides_object_method_false(tmp_path: Path) -> No
     assert isinstance(called, Complete)
     assert called.value.value == 2
 
+    stripped = replace(frame, source_class_bindings=())
+    called_from_stripped = CallSiteSugar(
+        target_name="probe",
+        args=(_FloorSugar(method),),
+        site="stripped enum nonmember frame tooth",
+        source_call_frame=stripped,
+        call_occurrence=occurrence,
+    ).desugar(None)
+    assert isinstance(called_from_stripped, Complete)
+    projected = called_from_stripped.value.project_operation_receiver(
+        None, owner="stripped enum nonmember frame tooth"
+    )
+    assert projected.value == 2
+
     callsite_ctx = _with_frame_mutable_globals(None, frame)
     assert callsite_ctx.temporal.value_if_bound("nonmember") is nonmember
     assert callsite_ctx.module_temporal.value_if_bound("nonmember") is nonmember
@@ -151,6 +188,13 @@ def test_context_enrichment_preserves_declaration_identity(tmp_path: Path) -> No
 
     assert enriched.frame_cid != bare.frame_cid
     assert _same_source_declaration(enriched, bare)
+    merged = _seat_declaration_frame_globals(
+        None,
+        installed_frame=enriched,
+        declaration_frame=enriched,
+        blame="duplicate-global-tooth",
+    )
+    assert merged.temporal.value_if_bound("nonmember") is enriched.source_class_bindings[0].value
 
 
 def test_different_source_declarations_cannot_share_body_authority(
@@ -165,6 +209,39 @@ def test_different_source_declarations_cannot_share_body_authority(
     shadowed = _frame(right, "locally_shadowed")
 
     assert not _same_source_declaration(probe, shadowed)
+
+
+def test_conflicting_same_name_global_testimony_is_not_last_wins() -> None:
+    """Lying arm: regenerated globals cannot overwrite an installed witness."""
+    occurrence = SimpleNamespace(source_cid="source")
+    installed_binding = SimpleNamespace(
+        name="nonmember",
+        definition_occurrence=occurrence,
+        class_definition_cid="blake3-512:" + "1" * 128,
+    )
+    declaration_binding = SimpleNamespace(
+        name="nonmember",
+        definition_occurrence=occurrence,
+        class_definition_cid="blake3-512:" + "2" * 128,
+    )
+    installed = SimpleNamespace(
+        mutable_global_bindings=(),
+        decorated_class_bindings=(),
+        source_class_bindings=(installed_binding,),
+    )
+    declaration = SimpleNamespace(
+        mutable_global_bindings=(),
+        decorated_class_bindings=(),
+        source_class_bindings=(declaration_binding,),
+    )
+
+    with pytest.raises(BackendDefect, match="conflicting source global testimony"):
+        _seat_declaration_frame_globals(
+            None,
+            installed_frame=installed,
+            declaration_frame=declaration,
+            blame="conflicting-global-tooth",
+        )
 
 
 def test_reachable_nested_frame_carries_its_own_source_class_global(
