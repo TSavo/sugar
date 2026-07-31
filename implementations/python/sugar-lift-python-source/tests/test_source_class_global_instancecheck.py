@@ -9,10 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sugar_lift_py_tests.floor import ObjectMethodValue
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.callable_application import CallableApplication
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.call_site_sugar import _with_frame_mutable_globals
@@ -182,3 +185,50 @@ def test_reachable_nested_frame_carries_its_own_source_class_global(
 
     assert isinstance(called, Complete)
     assert called.value.value == 2
+
+
+def test_class_method_frame_uses_same_source_class_global_authority(
+    tmp_path: Path,
+) -> None:
+    """ClassDef's direct method-frame door cannot bypass global enrichment."""
+    source = (
+        "class nonmember(object):\n"
+        "    pass\n"
+        "class Holder(object):\n"
+        "    def method(self, value):\n"
+        "        return isinstance(value, nonmember)\n"
+        "class ShadowHolder(object):\n"
+        "    def method(self, value):\n"
+        "        nonmember = value\n"
+        "        return isinstance(value, nonmember)\n"
+    )
+    path = tmp_path / "class_method_frame.py"
+    path.write_text(source, encoding="utf-8")
+    tree = open_source_file_for_construction(
+        path, root=tmp_path, populate_derived=False
+    )
+    classes = {
+        node.name: node
+        for node in tree.nodes()
+        if node.kind == "ClassDef" and node.name in {"Holder", "ShadowHolder"}
+    }
+    ctx = ReduceContext(temporal=builtin_name_temporal())
+    holder = classes["Holder"].sugar().desugar(ctx)
+    shadow = classes["ShadowHolder"].sugar().desugar(ctx)
+    assert isinstance(holder, Complete)
+    assert isinstance(shadow, Complete)
+    holder_frame = next(
+        method.source_call_frame
+        for method in holder.value.methods
+        if method.name == "method"
+    )
+    shadow_frame = next(
+        method.source_call_frame
+        for method in shadow.value.methods
+        if method.name == "method"
+    )
+
+    assert tuple(binding.name for binding in holder_frame.source_class_bindings) == (
+        "nonmember",
+    )
+    assert shadow_frame.source_class_bindings == ()
