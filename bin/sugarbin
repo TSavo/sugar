@@ -712,6 +712,7 @@ data = {"schema": 1, "binary": binary, "package": package, "sourceStamp": stamp,
 os.makedirs(os.path.dirname(path), exist_ok=True)
 fd, tmp = tempfile.mkstemp(prefix=".sugarbin-manifest-", dir=os.path.dirname(path))
 with os.fdopen(fd, "w") as out: json.dump(data, out, indent=2, sort_keys=True); out.write("\n")
+os.chmod(tmp, 0o644)
 os.replace(tmp, path)
 PY
 }
@@ -751,6 +752,30 @@ github_repo() {
 
 cache_dir() {
   printf '%s\n' "${SUGAR_BINARY_CACHE_DIR:-$HOME/.cache/sugar/binaries}"
+}
+
+shared_cache_cell_is_peer_readable() {
+  local candidate="$1" manifest="$2"
+  python3 - "$candidate" "$manifest" <<'PY'
+import os
+import stat
+import sys
+
+candidate, manifest = sys.argv[1:]
+try:
+    directory_mode = stat.S_IMODE(os.stat(os.path.dirname(candidate)).st_mode)
+    candidate_mode = stat.S_IMODE(os.stat(candidate).st_mode)
+    manifest_mode = stat.S_IMODE(os.stat(manifest).st_mode)
+except OSError:
+    raise SystemExit(1)
+
+if directory_mode != 0o755:
+    raise SystemExit(1)
+if candidate_mode != 0o755:
+    raise SystemExit(1)
+if manifest_mode != 0o644:
+    raise SystemExit(1)
+PY
 }
 
 # The cache is ONE host directory reached under two names: HOME is
@@ -1087,7 +1112,8 @@ pull_from_shelf() {
   mkdir -p "$candidate_dir"
   cp "$downloaded" "$candidate"
   cp "$downloaded_manifest" "$manifest"
-  chmod +x "$candidate"
+  chmod 0755 "$candidate_dir" "$candidate"
+  chmod 0644 "$manifest"
   verify_artifact_manifest "$candidate" "$stamp" "$identity" "downloaded shelf artifact" || return 1
   verify_attestation_if_present "$candidate" "$stamp"
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
@@ -1171,19 +1197,81 @@ filesystem_shelf_complete() {
     && -f "$cell/$name.metadata.json" ]]
 }
 
+filesystem_shelf_cell_is_peer_readable() {
+  local cell="$1" name="$2"
+  python3 - "$cell" "$name" <<'PY'
+import os
+import stat
+import sys
+
+cell, name = sys.argv[1:]
+try:
+    cell_mode = stat.S_IMODE(os.stat(cell).st_mode)
+    artifact_modes = [
+        stat.S_IMODE(os.stat(os.path.join(cell, f"{name}{suffix}")).st_mode)
+        for suffix in (".gz", ".sugarbin.json", ".metadata.json")
+    ]
+except OSError:
+    raise SystemExit(1)
+
+if cell_mode != 0o755:
+    raise SystemExit(1)
+if any(mode != 0o644 for mode in artifact_modes):
+    raise SystemExit(1)
+PY
+}
+
+ensure_shared_shelf_staging() {
+  local root="$1" target="$2"
+  python3 - "$root" "$target" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+target = pathlib.Path(sys.argv[2]).resolve()
+try:
+    target.relative_to(root)
+except ValueError:
+    raise SystemExit(2)
+
+current = root
+current.mkdir(parents=True, exist_ok=True)
+if stat.S_IMODE(current.stat().st_mode) != 0o777:
+    os.chmod(current, 0o777)
+for part in target.relative_to(root).parts:
+    current /= part
+    current.mkdir(exist_ok=True)
+    if stat.S_IMODE(current.stat().st_mode) != 0o777:
+        os.chmod(current, 0o777)
+PY
+}
+
 publish_to_filesystem_shelf() {
-  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta
+  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta shelf_root
   manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
   cell="$(filesystem_shelf_cell "$kind" "$stamp" "$name" "$runtime")"
   if filesystem_shelf_complete "$cell" "$name"; then
+    if ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
+      log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
+      return 2
+    fi
     log "filesystem shelf already has $name"
     return 0
   fi
   command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot publish $name"; return 1; }
   parent="$(dirname "$cell")"
-  mkdir -p "$parent/.incoming"
-  tmp="$(mktemp -d "$parent/.incoming/$name.XXXXXX")"
+  shelf_root="$(filesystem_shelf_root)"
+  if ! ensure_shared_shelf_staging "$shelf_root" "$parent/.incoming"; then
+    log "crime=uncreatable-filesystem-shelf-staging owner=bin/sugarbin path=$parent/.incoming current-uid=$(id -u) illegal shape=the host-shared shelf staging directory could not be initialized replacement=make the mounted shelf root writable by every runner identity; do not redirect the shelf or fall through to an empty temp path"
+    return 2
+  fi
+  if ! tmp="$(mktemp -d "$parent/.incoming/$name.XXXXXX")"; then
+    log "crime=uncreatable-filesystem-shelf-staging owner=bin/sugarbin path=$parent/.incoming current-uid=$(id -u) illegal shape=the host-shared shelf staging directory could not create an atomic cell replacement=repair the mounted shelf parent; do not redirect the shelf or fall through to an empty temp path"
+    return 2
+  fi
   gzip -9 -c "$bin" >"$tmp/$name.gz"
   cp "$manifest" "$tmp/$name.sugarbin.json"
   actor="${GITHUB_ACTOR:-${USER:-unknown}}"
@@ -1208,6 +1296,8 @@ with open(path, "w", encoding="utf-8") as out:
     }, out, indent=2, sort_keys=True)
     out.write("\n")
 PY
+  chmod 0755 "$tmp"
+  chmod 0644 "$tmp/$name.gz" "$tmp/$name.sugarbin.json" "$tmp/$name.metadata.json"
   # Atomic cell install. Concurrent publishers race on the same cell:
   # Linux raises ENOTEMPTY (not FileExistsError) when renaming onto a
   # non-empty destination directory. Treat complete peer cells as success;
@@ -1263,7 +1353,8 @@ PY
   # peer could still have won the rename). Success iff the cell is complete by
   # ANY publisher -- content is content-addressed and immutable, so a peer's
   # complete cell is exactly ours.
-  if filesystem_shelf_complete "$cell" "$name"; then
+  if filesystem_shelf_complete "$cell" "$name" \
+    && filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
     log "filesystem shelf publish raced for $name; peer won"
     return 0
   fi
@@ -1277,6 +1368,11 @@ pull_from_filesystem_shelf() {
   candidate_dir="$dir/$name"
   candidate="$candidate_dir/$bin_name"
   manifest="$(artifact_manifest_path "$candidate")"
+  if [[ -f "$candidate" && -f "$manifest" ]] \
+    && ! shared_cache_cell_is_peer_readable "$candidate" "$manifest"; then
+    log "crime=private-shared-cache-cell owner=bin/sugarbin cell=$candidate_dir illegal shape=a content-addressed binary cache cell is readable only by its creating identity replacement=repair the cell to directory/binary mode 0755 and manifest mode 0644; do not repoint SUGAR_BINARY_CACHE_DIR"
+    return 2
+  fi
   if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
     log "prebuilt cache hit for $name"
     materialize_cached_artifact "$candidate" "$stamp" "$identity"
@@ -1284,6 +1380,11 @@ pull_from_filesystem_shelf() {
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
   cell="$(filesystem_shelf_cell binary "$stamp" "$name")"
+  if filesystem_shelf_complete "$cell" "$name" \
+    && ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
+    log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
+    return 2
+  fi
   if ! filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf miss for $name"
     return 1
@@ -1293,7 +1394,8 @@ pull_from_filesystem_shelf() {
   tmp="$candidate.sugarbin-stage.$$"
   gzip -dc "$cell/$name.gz" >"$tmp"
   cp "$cell/$name.sugarbin.json" "$manifest"
-  chmod +x "$tmp"
+  chmod 0755 "$candidate_dir" "$tmp"
+  chmod 0644 "$manifest"
   mv -f "$tmp" "$candidate"
   if ! verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"; then
     log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
@@ -1328,6 +1430,7 @@ fd, temporary = tempfile.mkstemp(prefix=".sugarbin-artifact-manifest-", dir=os.p
 with os.fdopen(fd, "w", encoding="utf-8") as out:
     json.dump(data, out, indent=2, sort_keys=True)
     out.write("\n")
+os.chmod(temporary, 0o644)
 os.replace(temporary, path)
 PY
 }
@@ -1383,6 +1486,11 @@ publish_payload_artifact() {
 pull_payload_artifact() {
   local kind="$1" key="$2" runtime="$3" output="$4" name="$5" cell staging payload manifest output_manifest
   cell="$(filesystem_shelf_cell "$kind" "$key" "$name" "$runtime")"
+  if filesystem_shelf_complete "$cell" "$name" \
+    && ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
+    log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
+    return 2
+  fi
   if ! filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf miss for $kind key $key"
     return 1
