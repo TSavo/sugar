@@ -232,3 +232,40 @@ def test_class_method_frame_uses_same_source_class_global_authority(
         "nonmember",
     )
     assert shadow_frame.source_class_bindings == ()
+
+
+def test_enclosing_class_is_not_eagerly_published_into_its_own_method_frame(
+    tmp_path: Path,
+) -> None:
+    """A DictWrapper-shaped self global is later than its method definition."""
+    source = (
+        "class earlier(object):\n"
+        "    pass\n"
+        "class DictWrapper(object):\n"
+        "    def __getattr__(self, key):\n"
+        "        if isinstance(key, earlier):\n"
+        "            return DictWrapper(key)\n"
+        "        return key\n"
+    )
+    path = tmp_path / "self_class_global.py"
+    path.write_text(source, encoding="utf-8")
+    tree = open_source_file_for_construction(
+        path, root=tmp_path, populate_derived=False
+    )
+    wrapper = next(
+        node for node in tree.nodes() if node.kind == "ClassDef" and node.name == "DictWrapper"
+    )
+
+    constructed = wrapper.sugar().desugar(
+        ReduceContext(temporal=builtin_name_temporal())
+    )
+
+    assert isinstance(constructed, Complete)
+    frame = next(
+        method.source_call_frame
+        for method in constructed.value.methods
+        if method.name == "__getattr__"
+    )
+    assert tuple(binding.name for binding in frame.source_class_bindings) == (
+        "earlier",
+    )
