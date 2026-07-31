@@ -432,6 +432,12 @@ class CallSiteSugar(ConstructedTermSugar):
                         requested="the same authenticated source declaration",
                         fix="retain the callee declaration frame across node binding",
                     )
+                ctx = _seat_declaration_frame_globals(
+                    ctx,
+                    installed_frame=source_call_frame,
+                    declaration_frame=declaration_frame,
+                    blame=self.site,
+                )
                 source_body = declaration_frame.body
             source_frame_cid = source_call_frame.frame_cid
             # bind_actuals returned the complete formal-ordered tuple,
@@ -648,3 +654,46 @@ def _same_source_declaration(left, right) -> bool:
     left_cid = getattr(left, "declaration_frame_cid", None)
     right_cid = getattr(right, "declaration_frame_cid", None)
     return left_cid is not None and left_cid == right_cid
+
+
+def _frame_global_testimony(frame) -> dict[str, tuple]:
+    testimony = {}
+    for binding in frame.mutable_global_bindings:
+        testimony[binding.name] = (
+            "mutable",
+            binding.source_cid,
+            binding.binding_occurrence,
+        )
+    for binding in getattr(frame, "decorated_class_bindings", ()):
+        testimony[binding.name] = ("decorated-class", binding.publication)
+    for binding in getattr(frame, "source_class_bindings", ()):
+        testimony[binding.name] = (
+            "source-class",
+            binding.definition_occurrence,
+            binding.class_definition_cid,
+        )
+    return testimony
+
+
+def _seat_declaration_frame_globals(
+    ctx, *, installed_frame, declaration_frame, blame
+):
+    """Merge one declaration's globals without last-wins attribution."""
+    installed = _frame_global_testimony(installed_frame)
+    declaration = _frame_global_testimony(declaration_frame)
+    conflicts = tuple(
+        name
+        for name in installed.keys() & declaration.keys()
+        if installed[name] != declaration[name]
+    )
+    if conflicts:
+        from sugar_source_tree.panic import BackendDefect
+
+        raise BackendDefect(
+            owner="CallSiteSugar.desugar",
+            blame=blame,
+            observed=f"conflicting source global testimony: {conflicts!r}",
+            requested="one exact binding testimony per source global",
+            fix="preserve the declaration binding rather than overwriting by name",
+        )
+    return _with_frame_mutable_globals(ctx, declaration_frame)
