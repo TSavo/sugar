@@ -121,14 +121,63 @@ class ClassDefinitionValue(GuardStableValue):
             )
         )
         outcome = call.reduce_source_outcome(method_ctx)
+        return self.project_initializer_outcome(
+            outcome, receiver, receiver_coordinate
+        )
 
-        def project(value):
+    def project_initializer_outcome(self, outcome, receiver, receiver_coordinate_cid):
+        """Select each initializer face's final authenticated receiver version."""
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.receiver_state_partition_value import (
+            ReceiverStatePartitionValue,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+
+        def project_block(value):
             block = value if isinstance(value, BlockValue) else BlockValue((value,))
-            return Complete(
-                self.construct_receiver_state_from_block(block, receiver_coordinate)
+            final_context = block.final_context
+            temporal = getattr(final_context, "temporal", None)
+            selected = (
+                temporal.value_if_bound(receiver_coordinate_cid)
+                if temporal is not None
+                else None
+            )
+            from sugar_lift_py_tests.floor.object_value import ObjectValue
+            from sugar_lift_py_tests.floor.receiver_state_projection import (
+                same_authenticated_receiver,
             )
 
-        return outcome.and_then(project)
+            if isinstance(selected, ObjectValue) and same_authenticated_receiver(
+                selected, receiver
+            ):
+                return selected
+            # No unique authenticated final version: retain the established
+            # store-record projection and its existing loud failure modes.
+            return self.construct_receiver_state_from_block(
+                block, receiver_coordinate_cid
+            )
+
+        if isinstance(outcome, Complete):
+            return Complete(project_block(outcome.value))
+        if not isinstance(outcome, ExitSet):
+            return outcome
+        projected = []
+        for face in outcome.exits:
+            if isinstance(face, Halted):
+                projected.append(face)
+                continue
+            assert isinstance(face, Completed)
+            projected.append(
+                Completed(
+                    face.guard,
+                    project_block(face.value),
+                    face.faces,
+                    face.pending_contracts,
+                )
+            )
+        return Complete(
+            ReceiverStatePartitionValue(ExitSet(tuple(projected)).normalize())
+        )
 
     def call_method_value(
         self,

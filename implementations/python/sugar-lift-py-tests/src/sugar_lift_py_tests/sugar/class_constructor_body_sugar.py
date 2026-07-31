@@ -99,12 +99,8 @@ class ClassConstructorBodySugar(Sugar):
                     )
                 )
             from sugar_lift_py_tests.floor import BlockValue
-            from sugar_lift_py_tests.floor import (
-                EllipsisValue,
-                ReceiverStatePartitionValue,
-            )
+            from sugar_lift_py_tests.floor import EllipsisValue
             from sugar_lift_py_tests.outcome import Incomplete
-            from sugar_lift_py_tests.outcome import Completed, Halted
             from sugar_lift_py_tests.outcome.exit_set import ExitSet
             from sugar_source_tree.panic import SugarNotWritten
 
@@ -125,32 +121,38 @@ class ClassConstructorBodySugar(Sugar):
             if isinstance(outcome, Incomplete):
                 return outcome
             if isinstance(outcome, ExitSet):
-                projected = []
-                for face in outcome.exits:
-                    if isinstance(face, Halted):
-                        projected.append(face)
-                        continue
-                    assert isinstance(face, Completed)
-                    block = face.value
-                    if not isinstance(block, BlockValue):
-                        block = BlockValue((block,), can_fall_through=True)
-                    returned = project_new_return(value, block)
-                    projected.append(
-                        Completed(
-                            face.guard,
-                            (
-                                returned
-                                if returned is not None
-                                else value.construct_receiver_state_from_block(
-                                    block, self.receiver_coordinate_cid
-                                )
-                            ),
-                            face.faces,
-                            face.pending_contracts,
+                if self.constructed_new_method is not None and value.initializer is None:
+                    projected = []
+                    for face in outcome.exits:
+                        if isinstance(face, Halted):
+                            projected.append(face)
+                            continue
+                        assert isinstance(face, Completed)
+                        block = face.value
+                        if not isinstance(block, BlockValue):
+                            block = BlockValue((block,), can_fall_through=True)
+                        returned = project_new_return(value, block)
+                        projected.append(
+                            Completed(
+                                face.guard,
+                                (
+                                    returned
+                                    if returned is not None
+                                    else value.construct_receiver_state_from_block(
+                                        block, self.receiver_coordinate_cid
+                                    )
+                                ),
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                        )
+                    return Complete(
+                        ReceiverStatePartitionValue(
+                            ExitSet(tuple(projected)).normalize()
                         )
                     )
-                return Complete(
-                    ReceiverStatePartitionValue(ExitSet(tuple(projected)).normalize())
+                return value.project_initializer_outcome(
+                    outcome, receiver, self.receiver_coordinate_cid
                 )
             if not isinstance(outcome, Complete):
                 return outcome
@@ -174,10 +176,8 @@ class ClassConstructorBodySugar(Sugar):
             returned = project_new_return(value, block)
             if returned is not None:
                 return Complete(returned)
-            return Complete(
-                value.construct_receiver_state_from_block(
-                    block, self.receiver_coordinate_cid
-                )
+            return value.project_initializer_outcome(
+                Complete(block), receiver, self.receiver_coordinate_cid
             )
 
         return self.definition.desugar(ctx).and_then(construct)

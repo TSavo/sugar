@@ -583,6 +583,7 @@ def reduce_body(statements: tuple, ctx: object = None):
                     state.entries,
                     fall_through=state.fall_through,
                     can_fall_through=state.can_fall_through,
+                    final_context=state.context,
                 )
             )
         )
@@ -606,6 +607,7 @@ def reduce_body(statements: tuple, ctx: object = None):
                     state.entries,
                     fall_through=state.fall_through,
                     can_fall_through=state.can_fall_through,
+                    final_context=state.context,
                 )
             )
         )
@@ -621,6 +623,7 @@ def reduce_body(statements: tuple, ctx: object = None):
             entries,
             fall_through=state.fall_through,
             can_fall_through=state.can_fall_through,
+            final_context=state.context,
         )
     )
 

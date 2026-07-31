@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .floor_value import FloorValue
@@ -18,6 +18,9 @@ class BlockValue(FloorValue):
     statements: tuple[object, ...]
     fall_through: tuple = ()
     can_fall_through: bool = True
+    # Final temporal state of this exact completed block face.  It is runtime
+    # projection testimony, not part of BlockValue's semantic equality/term.
+    final_context: object | None = field(default=None, compare=False, repr=False)
 
     def guarded(self, formula):
         """Guard every suite entry through that entry's own Floor law."""
