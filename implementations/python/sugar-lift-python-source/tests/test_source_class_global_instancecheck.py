@@ -18,7 +18,10 @@ from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-from sugar_lift_py_tests.sugar.call_site_sugar import _with_frame_mutable_globals
+from sugar_lift_py_tests.sugar.call_site_sugar import (
+    _same_source_declaration,
+    _with_frame_mutable_globals,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
@@ -139,6 +142,29 @@ def test_local_nonmember_shadow_cannot_borrow_module_class_authority(
     frame = _frame(tmp_path, "locally_shadowed")
 
     assert all(binding.name != "nonmember" for binding in frame.source_class_bindings)
+
+
+def test_context_enrichment_preserves_declaration_identity(tmp_path: Path) -> None:
+    """Distinct frame CIDs may truthfully retain one source declaration."""
+    enriched = _frame(tmp_path, "probe")
+    bare = replace(enriched, source_class_bindings=())
+
+    assert enriched.frame_cid != bare.frame_cid
+    assert _same_source_declaration(enriched, bare)
+
+
+def test_different_source_declarations_cannot_share_body_authority(
+    tmp_path: Path,
+) -> None:
+    """Lying arm: source/name proximity cannot replace declaration identity."""
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    probe = _frame(left, "probe")
+    shadowed = _frame(right, "locally_shadowed")
+
+    assert not _same_source_declaration(probe, shadowed)
 
 
 def test_reachable_nested_frame_carries_its_own_source_class_global(
