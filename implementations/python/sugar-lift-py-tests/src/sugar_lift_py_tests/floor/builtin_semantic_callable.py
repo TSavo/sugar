@@ -52,6 +52,8 @@ class BuiltinSemanticCallable(FloorValue):
             return self._isinstance(operation)
         if self.operation == "python.len":
             return self._len(operation)
+        if self.operation == "python.hasattr":
+            return self._hasattr(operation)
         if self.operation == "python.enumerate.construct":
             return self._enumerate(operation)
         if self.operation == "python.super.construct":
@@ -152,6 +154,30 @@ class BuiltinSemanticCallable(FloorValue):
                 fix="project finite containers before len or keep the call loud",
             )
         return length(operation.site)
+
+    def _hasattr(self, operation):
+        """Ask the receiver's authenticated attribute-presence protocol."""
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        if operation.keyword_names or len(operation.arguments) != 2:
+            construction_panic_gap(
+                owner="BuiltinSemanticCallable.python.hasattr",
+                blame=str(operation.site),
+                observed=(len(operation.arguments), operation.keyword_names),
+                requested="exactly two positional hasattr operands",
+                fix="construct Python hasattr arity exactly or keep it loud",
+            )
+        receiver, name = operation.arguments
+        if not isinstance(name, StringValue):
+            construction_panic_gap(
+                owner="BuiltinSemanticCallable.python.hasattr",
+                blame=str(operation.site),
+                observed=type(name).__name__,
+                requested="source-decided string attribute name",
+                fix="retain the exact string argument or keep hasattr loud",
+            )
+        return receiver.attribute_presence(name.value, operation.site)
 
     def _enumerate(self, operation):
         """Construct the exact finite iterator for an authenticated sequence."""

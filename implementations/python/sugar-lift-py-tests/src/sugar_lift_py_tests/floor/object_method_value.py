@@ -56,6 +56,37 @@ class ObjectMethodValue(FloorValue):
             symbol_kind="coordinate",
         )
 
+    def attribute_presence(self, name: str, site):
+        """Decide descriptor members owned by this authenticated function object."""
+        if not self.source_call_frame_cid:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="ObjectMethodValue.attribute_presence",
+                blame=site,
+                observed="source method without source call frame CID",
+                requested="authenticated source-function descriptor contract",
+                fix="retain the defining source frame or keep hasattr loud",
+            )
+        descriptor_names = {"__get__", "__set__", "__delete__"}
+        if name not in descriptor_names:
+            return super().attribute_presence(name, site)
+
+        present = name == "__get__" or self.descriptor_kind == "property"
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if present
+            else FalseBoolLiteralSugar(site=site)
+        )
+
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit

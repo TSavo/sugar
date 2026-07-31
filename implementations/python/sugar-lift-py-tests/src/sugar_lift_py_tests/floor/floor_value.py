@@ -654,6 +654,19 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def attribute_presence(self, name: str, site):
+        """Answer authenticated ``hasattr(value, name)`` or stay loudly unknown."""
+        return self._floor_gap(
+            owner="attribute_presence",
+            blame=site,
+            observed=f"{type(self).__name__}.{name}",
+            requested="source-authenticated attribute-presence contract",
+            fix=(
+                "construct the receiver type's descriptor/member contract; "
+                "never decide hasattr from the requested spelling"
+            ),
+        )
+
     def attribute_named(self, name_value, site):
         """Carrier adapter for ``receiver.<static name>`` after discharge.
 

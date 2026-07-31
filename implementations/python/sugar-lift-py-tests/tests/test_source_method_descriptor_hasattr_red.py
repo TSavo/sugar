@@ -1,6 +1,6 @@
 """RED laws for CPython enum._is_descriptor over source function objects."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -81,6 +81,48 @@ def test_source_function_descriptor_contract_decides_enum_hasattr(name, expected
 def test_non_method_value_does_not_gain_descriptor_authority():
     with pytest.raises(ConstructionPanic):
         _hasattr(TermValue(7), "__get__")
+
+
+@pytest.mark.parametrize("name", ("__get__", "__set__", "__delete__"))
+def test_property_descriptor_contract_owns_all_three_names(name):
+    outcome = _hasattr(replace(_source_method(), descriptor_kind="property"), name)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+
+
+@pytest.mark.parametrize("kind", ("staticmethod", "classmethod"))
+def test_static_and_class_method_wrappers_own_only_get(kind):
+    method = replace(_source_method(), descriptor_kind=kind)
+
+    assert isinstance(_hasattr(method, "__get__").value, TrueBoolLiteralSugar)
+    assert isinstance(_hasattr(method, "__set__").value, FalseBoolLiteralSugar)
+    assert isinstance(_hasattr(method, "__delete__").value, FalseBoolLiteralSugar)
+
+
+def test_unsupported_function_attribute_name_stays_loud():
+    with pytest.raises(ConstructionPanic):
+        _hasattr(_source_method(), "__name__")
+
+
+def test_source_method_without_frame_cannot_claim_descriptor_contract():
+    with pytest.raises(ConstructionPanic):
+        _hasattr(replace(_source_method(), source_call_frame_cid=None), "__get__")
+
+
+def test_hasattr_requires_exact_string_name_and_exact_arity():
+    callable_floor = BuiltinSemanticCallable("python.hasattr")
+    context = ReduceContext.root(owner="descriptor-red")
+    method = _source_method()
+
+    with pytest.raises(ConstructionPanic):
+        callable_floor.callable_application_with(
+            CallableApplication((method, TermValue(7)), (), "site"), context
+        )
+    with pytest.raises(ConstructionPanic):
+        callable_floor.callable_application_with(
+            CallableApplication((method,), (), "site"), context
+        )
 
 
 @dataclass(frozen=True)
