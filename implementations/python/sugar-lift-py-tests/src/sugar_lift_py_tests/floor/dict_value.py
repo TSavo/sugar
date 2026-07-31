@@ -253,6 +253,9 @@ class DictValue(GuardStableValue):
         return self.undecided_subscript(index, site, owner="DictValue.subscript")
 
     def setitem(self, index, value, site):
+        guarded = self._guarded_setitem(index, value, site)
+        if guarded is not None:
+            return guarded
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -277,6 +280,37 @@ class DictValue(GuardStableValue):
                 **runtime_effect_evidence("py.setitem", index, site),
             )
         )
+
+    def _guarded_setitem(self, index, value, site):
+        """Store once on every authenticated guarded key/value face.
+
+        A GuardedValue's conditional term is lift-time decidable and therefore
+        cannot mint RuntimeEffect authority.  Preserve the source partition:
+        recursively apply this dict's ordinary store law to each face and
+        rejoin under the original guard and its exact complement.
+        """
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        operands = (index, value)
+        for position, operand in enumerate(operands):
+            if not isinstance(operand, GuardedValue):
+                continue
+
+            def project(face):
+                selected = list(operands)
+                selected[position] = face
+                return self.setitem(*selected, site)
+
+            when_true = outcome_to_exitset(project(operand.when_true)).guarded(
+                operand.guard
+            )
+            when_false = outcome_to_exitset(project(operand.when_false)).guarded(
+                not_(operand.guard)
+            )
+            return when_true.union(when_false)
+        return None
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.floor.string_value import StringValue
