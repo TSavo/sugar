@@ -31,6 +31,12 @@ class ReceiverOwnedMutationResult(FloorValue):
         del ctx, owner
         return self.result
 
+    def project_receiver_post_state(self, ctx, *, owner: str, blame: object):
+        del ctx, owner, blame
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self.receiver_after)
+
     def guarded(self, formula):
         """Retain a receiver transition only on the branch that executed it.
 

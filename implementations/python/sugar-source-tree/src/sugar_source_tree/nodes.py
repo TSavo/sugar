@@ -8840,7 +8840,24 @@ class DictSetDefaultAppendStatement(Statement):
 
     def substitution_binding(self, scope):
         del scope
-        return {self.receiver_name: self.post_state}
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        # The statement contributes the mutation occurrence, whose Python
+        # expression result is None.  Subsequent reads of the receiver bind to
+        # the authenticated receiver post-state instead.  Keep those two
+        # projections explicit in the shadow AST; treating the mutation result
+        # itself as the receiver turns `d[k]` into `None[k]`.
+        projected = materialize(
+            self.unit,
+            ShadowNode(
+                "ReceiverMutationPostState",
+                self.span,
+                (("mutation", Child(_handle_of(self.post_state))),),
+            ),
+            self.reporter,
+        )
+        return {self.receiver_name: projected}
 
     def _construct_sugar(self):
         from sugar_lift_py_tests.sugar.expr_statement_sugar import (
@@ -8857,6 +8874,30 @@ class DictSetDefaultAppendStatement(Statement):
 
 class MappingPopStatement(DictSetDefaultAppendStatement):
     """Shadow statement for completed ``mapping.pop(key, default)`` state."""
+
+    def substitution_binding(self, scope):
+        del scope
+        return {self.receiver_name: self.post_state}
+
+
+class ReceiverMutationPostState(Expression):
+    """The receiver-after projection of one shadow mutation occurrence."""
+
+    mutation: Expression
+    _child_fields = ("mutation",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.receiver_mutation_post_state_sugar import (
+            ReceiverMutationPostStateSugar,
+        )
+
+        return ReceiverMutationPostStateSugar(
+            mutation=self.mutation.sugar(), site=self.fragment
+        )
 
 
 class MappingPopAssignStatement(Statement):

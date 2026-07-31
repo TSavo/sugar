@@ -164,6 +164,49 @@ def test_authenticated_dict_subclass_setdefault_uses_existing_value() -> None:
     assert order == ["receiver", "key", "default", "appended"]
 
 
+def test_setdefault_append_does_not_invent_source_setitem_redispatch() -> None:
+    class _OverrideTrap(MappingObjectValue):
+        def setitem_with_context(self, index, value, site, ctx):
+            raise AssertionError("inherited dict.setdefault must not call __setitem__")
+
+    receiver = _OverrideTrap("DerivedDict", (), identity="receiver-coordinate")
+    sugar = DictSetDefaultAppendStateSugar(
+        receiver=_FloorSugar(receiver, [], "receiver"),
+        key=_FloorSugar(StringValue("members"), [], "key"),
+        default=_FloorSugar(ListValue(()), [], "default"),
+        appended=_FloorSugar(StringValue("member"), [], "appended"),
+        site="mutation-site",
+    )
+
+    outcome = sugar.desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, ReceiverOwnedMutationResult)
+    assert outcome.value.receiver_after.entries == (
+        (StringValue("members"), ListValue((StringValue("member"),))),
+    )
+
+
+def test_mutation_result_and_shadow_post_state_are_distinct_projections() -> None:
+    from sugar_lift_py_tests.floor import NoneValue
+
+    receiver = MappingObjectValue("DerivedDict", (), identity="receiver-coordinate")
+    updated = receiver.mapping_with_entries(
+        ((StringValue("members"), ListValue((StringValue("member"),))),)
+    )
+    mutation = ReceiverOwnedMutationResult(receiver, updated, NoneValue())
+
+    result = mutation.answer(None)
+    post_state = mutation.project_receiver_post_state(
+        None, owner="test", blame="mutation-site"
+    )
+
+    assert isinstance(result, Complete)
+    assert isinstance(result.value, NoneValue)
+    assert isinstance(post_state, Complete)
+    assert post_state.value is updated
+
+
 def test_mapping_mutation_advances_only_aliases_with_the_same_identity() -> None:
     from sugar_lift_py_tests.context import ReduceContext
 

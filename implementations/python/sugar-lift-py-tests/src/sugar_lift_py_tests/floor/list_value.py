@@ -25,6 +25,34 @@ class ListValue(FloorValue):
     def python_index_protocol(self) -> bool:
         return False
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        """Answer builtin type tests from this constructed list value."""
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type_name in {"list", "object"}:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        if type_name in {
+            "tuple",
+            "dict",
+            "set",
+            "frozenset",
+            "str",
+            "bytes",
+            "int",
+            "bool",
+            "float",
+            "type",
+            "NoneType",
+        }:
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().python_isinstance(type_name, type_term, site)
+
     def attribute(self, name, site):
         # Bound methods and fields on a constructed list (``[].append``, ``xs.index``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the

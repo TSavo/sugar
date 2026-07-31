@@ -94,25 +94,29 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
         appended_outcome = selected.append_with(appended, self.site)
 
         def with_appended(appended_value):
-            setitem_with_context = getattr(updated, "setitem_with_context", None)
-            if setitem_with_context is not None:
-                return setitem_with_context(key, appended_value, self.site, ctx)
+            # `dict.setdefault` is the inherited builtin operation.  Updating
+            # the selected list does not invoke a dict subclass's Python
+            # `__setitem__`; redispatching there invents a source call that
+            # Python never makes (and lets an unrelated override alter the
+            # post-state).  Apply the authenticated builtin mapping transition.
+            if isinstance(updated, MappingObjectValue):
+                return updated.mapping_builtin_setitem(
+                    key, appended_value, self.site
+                )
             return updated.setitem(key, appended_value, self.site)
 
         def publish(updated_receiver):
-            if isinstance(receiver, MappingObjectValue):
-                from sugar_lift_py_tests.floor.none_value import NoneValue
-                from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
-                    ReceiverOwnedMutationResult,
-                )
+            from sugar_lift_py_tests.floor.none_value import NoneValue
+            from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+                ReceiverOwnedMutationResult,
+            )
 
-                return Complete(
-                    ReceiverOwnedMutationResult(
-                        receiver_before=receiver,
-                        receiver_after=updated_receiver,
-                        result=NoneValue(),
-                    )
+            return Complete(
+                ReceiverOwnedMutationResult(
+                    receiver_before=receiver,
+                    receiver_after=updated_receiver,
+                    result=NoneValue(),
                 )
-            return Complete(updated_receiver)
+            )
 
         return appended_outcome.and_then(with_appended).and_then(publish)
