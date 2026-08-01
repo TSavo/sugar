@@ -1,5 +1,48 @@
 #!/usr/bin/env python3
-"""R_silent — independent disk census versus current construction roll call.
+"""R_silent — Criterion 2 fourth term: silent/unaccounted construction loci.
+
+## Class
+
+**Silent/unaccounted** = a source locus that is on disk (assert or body) and
+is absent from the construction roll call as either *warranted* or
+*unresolved*. The locus vanished from the denominator without classification.
+
+That is Crime-1 construction completeness (lift_coverage_accounting doctrine):
+stated work that never engaged the instrument. Panic / gap / timeout /
+native-crash are *classified* failures — not silent.
+
+## Population law (Criterion 2)
+
+Criterion 2 requires, over the **authenticated pandas corpus**,
+simultaneously:
+
+    R(construction panics) = R(native crashes) = R(timeouts) = R(silent) = 0
+
+Native / timeout / bare-exception floors already refuse empty scan roots and
+are bound to ``PANDAS_CORPUS`` in ``tools/run_sole_construction_floors.sh``.
+This floor must do the same: **explicit non-empty scan roots required**.
+Defaulting to kit ``production_roots`` (~444 files) is a wrong-population
+false green — R=0 on kit while the corpus is never entered.
+
+## Not this class (do not collapse)
+
+| Axis | Owner | Difference |
+| --- | --- | --- |
+| ``Unmeasured`` / SHELF_UNMEASURED | commit_measurement / shelf | Measurement *of* measurement: no reading was taken |
+| Heavy attendance absent-artifact | heavy_measurement_attendance | Job never ran / no artifact |
+| Gap / ConstructionPanic held | roll call ``unresolved`` | Instrument engaged; unfinished is classified |
+| R_silent | **this module** | Disk locus never appeared on the roll call |
+
+## Predicate
+
+    silent ⇔ (file, line, col, kind) ∈ disk_census
+             ∧ (file, line, col, kind) ∉ roll_call{warranted ∪ unresolved}
+
+## Ladder
+
+Auditor over (disk census × roll call). Type cannot close open source
+populations. Retirement: every disk locus is constructed into the roll call
+or classified; then silence at stable zero on the **corpus** population.
 
 In-process enum scan. Progress and engine logs never mix.
 """
@@ -26,6 +69,7 @@ from _enum_floor_runtime import (  # noqa: E402
     prepare_floor_io,
     production_roots,
     relative_to_root,
+    require_explicit_scan_roots,
     require_python_paths,
     with_file_timeout,
 )
@@ -263,7 +307,16 @@ def main() -> int:
             pass
     repo_root = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paths", nargs="*", type=Path)
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        default=[],
+        help=(
+            "Scan roots (required, non-empty). Criterion-2 silent floor police "
+            "the authenticated pandas corpus — never silent kit production_roots."
+        ),
+    )
     parser.add_argument("--live-root", action="append", type=Path, default=[])
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
@@ -277,8 +330,10 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        roots = args.live_root or args.paths or list(production_roots(repo_root))
-        paths = require_python_paths(roots)
+        # Same population door as native_crash / timeout / bare_exception:
+        # refuse empty args. Kit production_roots is never an implied default.
+        roots = list(args.live_root) + list(args.paths)
+        paths = require_explicit_scan_roots(roots)
     except ValueError as error:
         print(f"SILENT ZERO-TOLERANCE RED: {error}")
         return 1
