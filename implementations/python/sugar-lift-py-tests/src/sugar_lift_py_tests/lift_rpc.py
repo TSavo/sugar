@@ -2154,10 +2154,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         fn = _tree.resolve_function_for_call(call)
                     except _tree.FunctionBindingMiss:
                         continue
-                    try:
-                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
-                    except Exception:
-                        continue
+                    # No except/continue. Throws from unfinished body sugar rise.
+                    def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     if rows is None:
                         continue
                     post = rows[0].post

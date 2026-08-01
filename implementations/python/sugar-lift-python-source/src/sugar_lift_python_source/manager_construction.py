@@ -1646,19 +1646,12 @@ def construct_manager_behavior(
         if helper_fields:
             result = result.with_deferred_helper_fields()
     bindings = frame.runtime_entries
-    # BranchResultAuthentication / other control-metadata faces ride in the
-    # linearized if-block but are not term-projectable factory prefix work.
-    # Keep only prefix entries that mint a content CID; never panic the door.
-    prefix_cids_list: list[str] = []
-    kept_prefix: list[FloorValue] = []
-    for item in factory_prefix:
-        try:
-            prefix_cids_list.append(_term_content_cid(item.to_term(owner=resolved.cid)))
-            kept_prefix.append(item)
-        except ConstructionPanic:
-            continue
-    factory_prefix = tuple(kept_prefix)
-    prefix_cids = tuple(prefix_cids_list)
+    # factoryPrefixCids is inside the construction CID preimage. Project every
+    # face; ConstructionPanic propagates. No catch, no survivor list, no second
+    # mechanism — if a face has no term, the door panics. That is the point.
+    prefix_cids = tuple(
+        _term_content_cid(item.to_term(owner=resolved.cid)) for item in factory_prefix
+    )
     preimage = {
         "kind": "constructed-manager-behavior",
         "schemaVersion": "1",

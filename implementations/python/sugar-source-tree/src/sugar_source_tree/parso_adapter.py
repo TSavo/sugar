@@ -365,10 +365,9 @@ def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> Backen
     text = "".join(
         unit.source[_span(unit, p).start : _span(unit, p).end] for p in pieces
     )
-    try:
-        value = _pyast.literal_eval(text)
-    except Exception:
-        value = unit.source[start:end]
+    # Decode or throw. Never substitute raw source as Constant.value — that is
+    # meaning produced outside Sugar (LAW_OF_ONE).
+    value = _pyast.literal_eval(text)
     return _fixed_constant(span, value)
 
 
@@ -394,10 +393,8 @@ def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     if node.type == "string":
         import ast as _pyast
 
-        try:
-            value = _pyast.literal_eval(text)
-        except Exception:
-            value = text
+        # Decode or throw. Never substitute raw source as Constant.value.
+        value = _pyast.literal_eval(text)
         return _fixed_constant(span, value)
     if node.type == "keyword" and node.value in ("None", "True", "False"):
         value = {"None": None, "True": True, "False": False}[node.value]
