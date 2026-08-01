@@ -57,12 +57,23 @@ class RaiseValue(FloorValue):
 def _refuse_uncited_exit(
     effect: RaiseEffect, *, observed: str, requested: str, fix: str
 ) -> NoReturn:
-    """Render-edge mouth: absent evidence is a named throw, never a placeholder."""
+    """Render-edge mouth: absent evidence is a named throw, never a placeholder.
+
+    Blame for the panic is the effect's own locus when present — never a
+    second-mechanism literal standing in for missing tree testimony.
+    """
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
+    if effect.blame is not None:
+        blame: object = effect.blame
+    elif effect.occurrence is not None:
+        blame = effect.occurrence
+    else:
+        # No locus on the face: the gap's observed prose is the coordinate.
+        blame = observed
     construction_panic_gap(
         owner="RaiseValue.exceptional_exit_term",
-        blame=effect.blame or effect.occurrence or "nameless raise face",
+        blame=blame,
         observed=observed,
         requested=requested,
         fix=fix,
