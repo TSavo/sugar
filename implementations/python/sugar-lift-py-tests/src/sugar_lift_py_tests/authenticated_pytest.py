@@ -14,6 +14,11 @@ from types import ModuleType
 from typing import Iterable, Sequence
 
 from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
+from sugar_lift_py_tests.repo_root import (
+    RepoRootUnresolved,
+    resolve_repo_root,
+    sugar_lift_py_tests_package_root,
+)
 
 
 class ExecutionEnvironmentMismatch(RuntimeError):
@@ -55,10 +60,12 @@ def interpreter_identity() -> InterpreterIdentity:
 
 def declared_interpreter_runtime() -> str:
     """Read the one managed Python authority from the build manifest."""
-    repo_root = Path(__file__).resolve().parents[5]
-    manifest = tomllib.loads(
-        (repo_root / "sugar-build.toml").read_text(encoding="utf-8")
-    )
+    try:
+        repo_root = resolve_repo_root()
+    except RepoRootUnresolved as error:
+        raise ExecutionEnvironmentMismatch(str(error)) from error
+    manifest_path = repo_root / "sugar-build.toml"
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
     version = str(manifest["tools"]["python"])
     return f"cpython-{version}"
 
@@ -204,10 +211,14 @@ def authenticate_environment() -> (
     tuple[ImportIdentity, ImportIdentity, ImportIdentity, str]
 ):
     authenticate_interpreter_runtime(interpreter_identity())
-    package_root = Path(__file__).resolve().parents[2]
-    repo_root = Path(__file__).resolve().parents[5]
+    try:
+        repo_root = resolve_repo_root()
+        package_root = sugar_lift_py_tests_package_root(repo_root)
+    except RepoRootUnresolved as error:
+        raise ExecutionEnvironmentMismatch(str(error)) from error
     activate_checkout_import_roots(repo_root, sys.path)
     pins, expected_cid = _declared_corpus(package_root)
+
     purelib = Path(sysconfig.get_paths()["purelib"])
 
     pandas = import_module("pandas")
@@ -254,7 +265,11 @@ def authenticated_pandas_corpus() -> AuthenticatedPandasCorpus:
     from sugar_source_tree.tree import SourceTree
 
     root = pandas_identity.loaded_from.parent
-    _, expected_cid = _declared_corpus(Path(__file__).resolve().parents[2])
+    try:
+        package_root = sugar_lift_py_tests_package_root()
+    except RepoRootUnresolved as error:
+        raise ExecutionEnvironmentMismatch(str(error)) from error
+    _, expected_cid = _declared_corpus(package_root)
     observed_cid, file_count = authenticate_corpus_manifest(
         root, SourceTree(root).paths(), expected_cid
     )
