@@ -101,20 +101,28 @@ def test_report_names_file_line_class_and_required_fix() -> None:
     assert "retire_when=" in rendered
 
 
-def test_sourcefile_construction_door_live_self_seed_is_recognized() -> None:
-    """Live offender class: sourcefile_construction_door_auditor fills empty projection_calls with self."""
-    repo = Path(__file__).resolve().parents[3]
-    # parents: tests -> sugar-lift-py-tests -> python -> implementations -> repo?
-    # __file__ = .../implementations/python/sugar-lift-py-tests/tests/test_...
-    # parents[0]=tests, [1]=sugar-lift-py-tests, [2]=python, [3]=implementations, [4]=repo
+def test_sourcefile_construction_door_live_self_seed_is_drained() -> None:
+    """Drain pin: construction-door auditor no longer synthesizes projection callers.
+
+    #6958 enrolled R_synthesized_evidence=1 at the projection_calls self-seed.
+    This PR deletes that fill-in; empty observation is a contract red, never a
+    synthetic site. The planted twin above keeps the detector's teeth.
+
+    Fails when: the self-seed shape returns (if not projection_calls: fill with
+    Path(__file__)/auditor). Reachable by reintroducing the fallback.
+    """
+    # parents: tests -> sugar-lift-py-tests -> python -> implementations -> repo
     repo = Path(__file__).resolve().parents[4]
     auditor = repo / "tests" / "sourcefile_construction_door_auditor.py"
     assert auditor.is_file(), auditor
     source = auditor.read_text(encoding="utf-8")
     findings = LAW.scan_python_source(source, "tests/sourcefile_construction_door_auditor.py")
     synthesized = [f for f in findings if f.violation_class == "SYNTHESIZED-EVIDENCE"]
-    assert synthesized, (
-        "expected SYNTHESIZED-EVIDENCE on sourcefile_construction_door projection_calls self-seed; "
-        f"got {findings!r}"
+    assert synthesized == [], (
+        "R_synthesized_evidence regression on sourcefile_construction_door_auditor: "
+        "projection callers must not be self-seeded. "
+        f"findings={synthesized!r}"
     )
-    assert any("projection_calls" in f.observed for f in synthesized)
+    # Source-shape pin: the exact fallback shell must stay deleted.
+    assert "if not projection_calls:" not in source
+    assert "EvidenceSite(Path(__file__).resolve(), audit_line" not in source
