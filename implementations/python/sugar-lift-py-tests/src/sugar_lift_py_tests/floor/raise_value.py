@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.effect import RaiseEffect
 
@@ -53,16 +54,82 @@ class RaiseValue(FloorValue):
         return (_exceptional_exit_formula(self.effect),)
 
 
-def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
-    # Bare ``raise`` (re-raise of the active exception) is a source-cited
-    # exceptional exit: the coordinate is ``reraise``, not a silent drop and
-    # not a fabricated exception class. Explicit ``raise Exc(...)`` keeps its
-    # constructed name. Absence of both would be a construction gap elsewhere.
-    exception_name = (
-        effect.exception_name
-        if effect.exception_name is not None
-        else (None if effect.exception_type_coordinate is not None else "reraise")
+def _refuse_uncited_exit(
+    effect: RaiseEffect, *, observed: str, requested: str, fix: str
+) -> NoReturn:
+    """Render-edge mouth: absent evidence is a named throw, never a placeholder."""
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="RaiseValue.exceptional_exit_term",
+        blame=effect.blame or effect.occurrence or "nameless raise face",
+        observed=observed,
+        requested=requested,
+        fix=fix,
     )
+
+
+def _require_authenticated_exceptional_exit_citation(effect: RaiseEffect) -> None:
+    """A face with no authenticated identity must never reach FOL emission.
+
+    Throwing is honorable: it means identity or citation evidence is not yet
+    on the effect. Fabricating ``"reraise"``, ``"unavailable"``, or
+    ``"<unknown raise locus>"`` would mint a citable exit indistinguishable
+    from a genuinely authenticated one — the number the project is judged on.
+
+    Legitimate bare ``raise`` re-raise re-emits the in-flight effect's real
+    tree-derived identity (see ``RaiseSugar.desugar``); it does not mint the
+    string ``"reraise"`` at this edge.
+    """
+    has_identity = (
+        effect.exception_name is not None
+        or effect.exception_type_coordinate is not None
+    )
+    if not has_identity:
+        _refuse_uncited_exit(
+            effect,
+            observed=(
+                "raise face has neither exception_name nor "
+                "exception_type_coordinate"
+            ),
+            requested=(
+                "an authenticated exception identity (name or type coordinate) "
+                "derived from the tree"
+            ),
+            fix=(
+                "do not fabricate 'reraise'; keep the nameless face loud until "
+                "identity is authenticated (bare re-raise re-emits the in-flight "
+                "effect)"
+            ),
+        )
+    if effect.blame is None:
+        _refuse_uncited_exit(
+            effect,
+            observed="raise face has no blame locus for exceptional-exit citation",
+            requested="a source-derived blame coordinate on the RaiseEffect",
+            fix=(
+                "do not fabricate '<unknown raise locus>'; thread the construction "
+                "locus that owns the raise"
+            ),
+        )
+    if effect.source_sha256 is None:
+        _refuse_uncited_exit(
+            effect,
+            observed="raise face has no source_sha256 for exceptional-exit citation",
+            requested="the sha256 of the source text the raise lives in",
+            fix=(
+                "do not fabricate '#source-sha256=unavailable'; cite only when "
+                "the unit text hash is present"
+            ),
+        )
+
+
+def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
+    # Identity and citation are enforced at the term edge. Explicit
+    # ``raise Exc(...)`` keeps its constructed name; type-coordinate-only
+    # faces pass ``None`` so the term uses the coordinate. Nameless faces
+    # never reach emission (see ``_require_authenticated_exceptional_exit_citation``).
+    exception_name = effect.exception_name
 
     from sugar_lift_py_tests.ir import and_, eq, implies, make_var
 
@@ -77,25 +144,41 @@ def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
 
 
 def _exceptional_exit_term(effect: RaiseEffect, *, exception_name: str | None = None):
-    """Project the one source-cited term shared by raise posts and selections."""
+    """Project the one source-cited term shared by raise posts and selections.
+
+    Requires authenticated identity and citation evidence. Never substitutes
+    placeholder strings for absent fields.
+    """
+    _require_authenticated_exceptional_exit_citation(effect)
+
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    if effect.exception_type_coordinate is not None and exception_name is None:
+    resolved_name = (
+        exception_name if exception_name is not None else effect.exception_name
+    )
+    if effect.exception_type_coordinate is not None and resolved_name is None:
         name_term = effect.exception_type_coordinate
     else:
-        name = (
-            exception_name
-            if exception_name is not None
-            else effect.exception_name or "reraise"
-        )
-        name_term = str_const(name)
+        if resolved_name is None:
+            # Identity check already required name or coordinate; coordinate
+            # path taken above. Defensive mouth if both still empty.
+            _refuse_uncited_exit(
+                effect,
+                observed=(
+                    "raise face has neither exception_name nor "
+                    "exception_type_coordinate"
+                ),
+                requested=(
+                    "an authenticated exception identity (name or type coordinate) "
+                    "derived from the tree"
+                ),
+                fix="do not fabricate 'reraise'; keep the nameless face loud",
+            )
+        name_term = str_const(resolved_name)
     return ctor(
         "py.exceptional_exit",
         [
             name_term,
-            str_const(
-                f"{effect.blame or '<unknown raise locus>'}"
-                f"#source-sha256={effect.source_sha256 or 'unavailable'}"
-            ),
+            str_const(f"{effect.blame}#source-sha256={effect.source_sha256}"),
         ],
     )
