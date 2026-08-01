@@ -193,13 +193,24 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
     return ExitSet(tuple(exits)).normalize()
 
 
-def _effect_match_verdict(effect, matcher, ctx=None):
-    """Bare except matches any raise; typed arms use constructed identity.
+def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
+    """Bare except matches any raise; typed arms use the ONE matcher.
 
-    The codomain is the shared matcher's: ``MatchDecided`` when the arm settles
-    at lift, ``MatchRetained`` when the identity test is real and open. The
-    caller must route BOTH faces of a retention -- never treat it as a match
-    and never as a miss.
+    LAW OF ONE: tree shadows → sugar → meaning. Settled match/miss meaning is
+    only ``matches_raise_effect`` in ``authenticated_exception_matching``
+    (authenticated operands in, ``MatchDecided`` / ``MatchRetained`` out).
+    This function does not decide miss. It either:
+
+    - refuses with ``SugarNotWritten`` when the effect kind is not what ordinary
+      except sugar reads (``GroupedRaiseEffect`` is a sibling of ``RaiseEffect``,
+      not a subclass — same membrane as ``TryStarSugar``), or when the handler
+      type did not construct; or
+    - returns the one matcher's verdict for typed arms; or
+    - returns ``MatchDecided(True)`` for bare except over a real ``RaiseEffect``
+      (written bare-except sugar — no type operand to match).
+
+    Minting ``MatchDecided(False)`` here would be a second mechanism: ad-hoc
+    Python fabricating a miss outside the tree→sugar path.
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.authenticated_exception_matching import (
@@ -210,7 +221,14 @@ def _effect_match_verdict(effect, matcher, ctx=None):
     from sugar_source_tree.panic import SugarNotWritten
 
     if not isinstance(effect, RaiseEffect):
-        return MatchDecided(False)
+        blame = getattr(effect, "occurrence_id", None) or site
+        raise SugarNotWritten(
+            blame=blame,
+            owner="TrySugar._effect_match_verdict",
+            observed=type(effect).__name__,
+            requested="RaiseEffect for ordinary except routing",
+            fix="keep ordinary except and except* distinct",
+        )
     if matcher is None:
         return MatchDecided(True)
     expected = matcher.desugar(ctx)
@@ -343,7 +361,7 @@ def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
         if not residual.exits:
             return parts
         residual_guard = residual.exits[0].guard
-        verdict = _effect_match_verdict(exit_.effect, matcher, ctx)
+        verdict = _effect_match_verdict(exit_.effect, matcher, ctx, site=site)
         if isinstance(verdict, MatchDecided):
             if not verdict.value:
                 continue

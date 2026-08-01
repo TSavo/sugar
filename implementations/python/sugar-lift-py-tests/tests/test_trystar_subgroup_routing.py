@@ -403,9 +403,15 @@ def test_occurrence_lying_twin_matched_binding_is_not_residual_leaf():
 # ---------------------------------------------------------------------------
 
 
-def test_ordinary_try_cannot_consume_grouped_testimony():
-    """Ordinary except ValueError leaves ExceptionGroup intact (not rewritten)."""
-    effect = _grouped_halt(
+def test_ordinary_try_refuses_grouped_raise_effect():
+    """Ordinary except must not decide miss on GroupedRaiseEffect.
+
+    GroupedRaiseEffect is a sibling of RaiseEffect, not a subclass. Returning
+    MatchDecided(False) fabricates a miss on an effect kind ordinary Try
+    cannot read. Mirror TryStarSugar: named SugarNotWritten, membrane stays
+    loud both directions.
+    """
+    with pytest.raises(SugarNotWritten) as excinfo:
         _desugar(
             "def f():\n"
             "    try:\n"
@@ -414,14 +420,21 @@ def test_ordinary_try_cannot_consume_grouped_testimony():
             "        pass\n",
             name="ordinary_try.py",
         )
-    )
-    assert isinstance(effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in _leaves(effect)] == ["ValueError"]
+    gap = excinfo.value
+    assert gap.owner == "TrySugar._effect_match_verdict"
+    assert gap.observed == "GroupedRaiseEffect"
+    assert "RaiseEffect" in gap.requested
+    assert "except*" in gap.fix
 
 
-def test_ordinary_try_except_exceptiongroup_still_does_not_split():
-    """Even except ExceptionGroup on ordinary Try does not enter TryStar partition."""
-    effect = _grouped_halt(
+def test_ordinary_try_except_exceptiongroup_still_refuses_without_split():
+    """even except ExceptionGroup on ordinary Try does not enter TryStar partition.
+
+    The arm still cannot read GroupedRaiseEffect through RaiseEffect matching;
+    deciding miss would be the same fabricated verdict. Loud until ordinary
+    Try owns grouped routing (it does not).
+    """
+    with pytest.raises(SugarNotWritten) as excinfo:
         _desugar(
             "def f():\n"
             "    try:\n"
@@ -430,8 +443,9 @@ def test_ordinary_try_except_exceptiongroup_still_does_not_split():
             "        pass\n",
             name="ordinary_eg.py",
         )
-    )
-    assert [leaf.exception_name for leaf in _leaves(effect)] == ["ValueError"]
+    gap = excinfo.value
+    assert gap.owner == "TrySugar._effect_match_verdict"
+    assert gap.observed == "GroupedRaiseEffect"
 
 
 def test_trystar_refuses_ordinary_raise_effect():
@@ -447,6 +461,19 @@ def test_trystar_refuses_ordinary_raise_effect():
         )
     assert "TryStarSugar" in str(excinfo.value)
     assert "GroupedRaiseEffect" in str(excinfo.value)
+
+
+def test_truthful_ordinary_try_still_matches_raise_effect():
+    """Truthful twin: ordinary RaiseEffect under ordinary except still routes."""
+    outcome = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ValueError('alone')\n"
+        "    except ValueError:\n"
+        "        return 1\n",
+        name="ordinary_raise_truthful.py",
+    )
+    assert isinstance(outcome, Complete), outcome
 
 
 # ---------------------------------------------------------------------------
