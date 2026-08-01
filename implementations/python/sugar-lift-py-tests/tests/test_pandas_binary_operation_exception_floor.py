@@ -55,24 +55,19 @@ def _line_96_bitand(source: str, path: Path):
 
 
 def _assert_dual_edge_dispatch(node, *, producer: str = "BinOp") -> None:
-    """Undecided native dispatch publishes Halted + Completed faces."""
-    from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    """Undecided native dispatch throws named — never nameless dual-edge halt.
 
-    outcome = node.sugar().desugar(None)
-    assert isinstance(outcome, ExitSet)
-    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
-    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
-    assert len(halted) == 1
-    assert len(completed) == 1
-    effect = halted[0].effect
-    assert isinstance(effect, RaiseEffect)
-    assert effect.producer_node_owner == producer
-    assert effect.exception_name is None
-    # Never invent a runtime TypeError / RuntimeEffect for undecided source.
-    assert "TypeError" not in str(outcome)
-    assert "RuntimeEffect" not in str(outcome)
+    Historical name kept so call sites stay stable; the law is now
+    ``SugarNotWritten`` at ``binary_operation_exception_floor``.
+    """
+    del producer
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten) as raised:
+        node.sugar().desugar(None)
+    assert raised.value.owner == "binary_operation_exception_floor"
+    assert "undecided" in raised.value.observed.lower()
+    assert "TypeError" not in (raised.value.observed or "")
 
 
 def _assert_named_refusal(node, *, owner: str, observed: str) -> None:
@@ -127,7 +122,7 @@ def test_pandas_series_nan_bitand_retains_child_gap_and_binary_dispatch_twin() -
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
     # This focused SourceFile door has no authenticated import table, so it must
     # not pretend that ``np.nan`` resolved. The ground lying twin removes that
-    # child boundary and reaches the BinOp producer's dual-edge partition.
+    # child boundary and reaches the BinOp producer's named undecided refusal.
     _assert_named_refusal(
         _line_96_bitand(truthful, path),
         owner="SymbolicValue.attribute",
@@ -161,7 +156,7 @@ def test_pandas_series_bitand_mixed_rights_publish_both_dispatch_faces(
 
     Each site raises TypeError at CPython on a concrete Series, but the
     producer only sees a SymbolicValue left.  The shared undecided-binary law
-    publishes both dispatch faces without inventing TypeError.
+    throws named without inventing TypeError.
     """
     path = _corpus_file()
     source = path.read_text(encoding="utf-8")
@@ -181,8 +176,8 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     """Truthful twin of ``s_0123 & 3.14`` with both types source-decided.
 
     Enrolled site: ``pandas/tests/series/test_logical_ops.py:98``.  With an
-    undecided Series left the producer retains both dispatch faces; with two
-    TermValues the bitwise floor constructs authenticated TypeError RaiseValue. The twin is
+    undecided Series left the producer throws named; with two TermValues the
+    bitwise floor constructs authenticated TypeError RaiseValue. The twin is
     built on a workspace-relative locus so the ground exit can cite source.
     """
     from dataclasses import dataclass

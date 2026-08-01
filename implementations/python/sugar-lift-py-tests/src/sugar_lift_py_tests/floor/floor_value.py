@@ -760,6 +760,11 @@ class FloorValue:
         This is an accounted named refusal, not a construction failure.  The
         producer knows the native operation and the missing testimony, but it
         cannot choose either the completed or AttributeError edge honestly.
+
+        Distinct from the default :meth:`attribute` construction panic: that
+        door means a decided-type floor arm is missing (OUR defect). This door
+        means the receiver's runtime type is not source-decided, so neither
+        completion nor AttributeError is honest yet.
         """
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -777,10 +782,38 @@ class FloorValue:
             ),
         )
 
+    def undecided_contains(self, item, site, *, owner: str):
+        """Refuse membership when container dispatch is not source-decided.
+
+        Named refusal, not construction panic and not ``Complete(py.in)``.
+        Membership over an undecided receiver is a third value: the producer
+        cannot choose completed membership or TypeError without inventing
+        container-type testimony. Construction panic would miscount that as
+        OUR missing floor arm.
+        """
+        del item
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=site,
+            owner=owner,
+            observed=(
+                "undecided container runtime type or membership semantics: "
+                f"item in {type(self).__name__}"
+            ),
+            requested="a source-authenticated membership success or exceptional exit",
+            fix=(
+                "carry container-type and membership testimony to the contains "
+                "floor; do not guess TypeError or invent a completed py.in "
+                "coordinate"
+            ),
+        )
+
     def contains(self, item, site):
         # Default: this value does not stand on the membership floor -- it cannot
-        # answer whether it holds `item`. A symbolic container stays the py.in
-        # coordinate; a concrete container folds; absence here is the honest "no".
+        # answer whether it holds `item`. Decided containers override and fold
+        # or TypeError; undecided containers use :meth:`undecided_contains`.
+        # Absence of a decided arm here is the honest construction gap.
         del item
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
@@ -1077,23 +1110,65 @@ class FloorValue:
 
     def less_than(self, other, site):
         # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.
-        # Default Floor emits the ordinary atom; GuardedValue distributes;
-        # NamedExpressionValue presents-and-carries. No concrete-kind membrane
-        # and no operation-string admission on this surface.
+        # Default Floor emits the ordinary atom only when both operand types are
+        # source-decided; undecided pairs throw named (never Complete).
+        # GuardedValue distributes; NamedExpressionValue presents-and-carries.
         return other.less_than_from_left(self, site)
+
+    def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):
+        """Refuse ordering when either operand's runtime type is undecided.
+
+        Returns ``None`` when the law does not apply (non-values, or both types
+        source-decided). Raises ``SugarNotWritten`` when it does — never
+        ``Complete(PredicateValue(py.lt/…))``. Fabricating the solver atom for
+        undecided dispatch is the direct route to a false DONE: every ordering
+        row goes green for the wrong reason, and ``pytest.raises(TypeError)``
+        is structurally unsatisfiable.
+        """
+        denotes_self = getattr(self, "denotes_value", None)
+        denotes_other = getattr(other, "denotes_value", None)
+        if not callable(denotes_self) or not callable(denotes_other):
+            return None
+        if not (denotes_self() and denotes_other()):
+            return None
+        decided_self = getattr(self, "runtime_type_is_decided", None)
+        decided_other = getattr(other, "runtime_type_is_decided", None)
+        if not callable(decided_self) or not callable(decided_other):
+            return None
+        if decided_self() and decided_other():
+            return None
+
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=site,
+            owner=owner,
+            observed=(
+                "undecided ordering operand runtime type: "
+                f"{type(self).__name__} {operator} {type(other).__name__}"
+            ),
+            requested=(
+                "source-visible runtime types selecting an ordering completion "
+                "or an authenticated exceptional exit"
+            ),
+            fix=(
+                "do not emit py.lt/le/gt/ge or invent TypeError; resolve both "
+                "operands' runtime types from source before constructing"
+            ),
+        )
 
     def less_than_from_left(self, left, site):
         """Default RHS law for ``left < self`` — ordinary comparison atom.
 
         Overrides (GuardedValue, NamedExpressionValue, …) replace this door.
         Does not call ``left.less_than(self)`` (that would recurse).
+
+        Both operand types must be source-decided before the atom is emitted.
+        Undecided pairs throw named via :meth:`_undecided_ordering_law`.
         """
-        # Default: EMIT an operator-indexed atom. Fold when both sides are
-        # ground (the literal pair overrides); emit when either side stands on
-        # the term floor; panic only inside to_term when a side cannot enter
-        # FOL at all. Vendor `<` is py.lt -- not SMT < -- so the sort universe
-        # adjudicates (same NaN/reflexivity split as py.eq). Operand
-        # CallSiteValues ride as operand_callsites.
+        left._undecided_ordering_law(
+            self, site, owner="FloorValue.less_than_from_left", operator="<"
+        )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
         from sugar_lift_py_tests.outcome import Complete
@@ -1107,6 +1182,9 @@ class FloorValue:
         )
 
     def less_equal(self, other, site):
+        self._undecided_ordering_law(
+            other, site, owner="FloorValue.less_equal", operator="<="
+        )
         from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.outcome import Complete
@@ -1120,6 +1198,9 @@ class FloorValue:
         )
 
     def greater_than(self, other, site):
+        self._undecided_ordering_law(
+            other, site, owner="FloorValue.greater_than", operator=">"
+        )
         from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.outcome import Complete
@@ -1133,6 +1214,9 @@ class FloorValue:
         )
 
     def greater_equal(self, other, site):
+        self._undecided_ordering_law(
+            other, site, owner="FloorValue.greater_equal", operator=">="
+        )
         from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.outcome import Complete
@@ -1182,10 +1266,12 @@ class FloorValue:
         dispatch for the pair is undecided. That is a third value: the producer
         cannot claim sole completion and cannot invent an exception identity.
 
-        Publish both native-dispatch faces (mirrors Compare #6564): the
-        completed face retains the operator coordinate, and the halted face
-        retains a source-cited raise whose exception identity remains
-        undecided. Sole completion or sole TypeError invention stay forbidden.
+        Throw named (``SugarNotWritten``). Do not emit
+        ``Complete(SymbolicValue(...))`` and do not publish a dual-edge ExitSet
+        whose Halted face carries a nameless ``RaiseEffect`` — a nameless halt
+        is routed outside every TypeError boundary, so
+        ``pytest.raises(TypeError): a - b`` is structurally unsatisfiable while
+        still looking like a producer answer.
 
         Two cases stay outside this door:
 
@@ -1196,49 +1282,33 @@ class FloorValue:
           ground field laws, and absence there is still a gap.
 
         Returns ``None`` when the law does not apply, so the caller falls
-        through to its own pair gap.
+        through to its own pair gap. Raises when it does apply.
         """
         if not (self.denotes_value() and other.denotes_value()):
             return None
         if self.runtime_type_is_decided() and other.runtime_type_is_decided():
             return None
 
-        from sugar_lift_py_tests.effect import RaiseEffect
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import atomic, ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
-            Halted,
-            complement_guard,
-            partition,
-        )
+        from sugar_source_tree.panic import SugarNotWritten
 
-        left_term = self.to_term(owner=f"binary {operator} left")
-        right_term = other.to_term(owner=f"binary {operator} right")
-        completed_value = SymbolicValue(ctor(operator, [left_term, right_term]))
-        dispatch_raises = atomic(
-            f"python.binop_dispatch_raises[{operator}]",
-            [left_term, right_term],
+        raise SugarNotWritten(
+            blame=site,
+            owner="binary_operation_exception_floor",
+            observed=(
+                "undecided binary operand runtime type: "
+                f"{type(self).__name__} {operator} {type(other).__name__}"
+            ),
+            requested=(
+                "source-visible native binary-operator testimony selecting "
+                "completion or an authenticated exceptional exit"
+            ),
+            fix=(
+                "preserve the undecided third value at binary discharge; "
+                "resolve both operands' runtime types and __op__/__rop__ from "
+                "source before completing or halting — do not mint a nameless "
+                "raise face or a sole symbolic completion"
+            ),
         )
-        halted_face, completed_face = partition(
-            ("binary-native-dispatch", str(site), operator)
-        )
-        effect = RaiseEffect(
-            blame=str(site),
-            occurrence=str(site),
-            producer_node_owner="BinOp",
-        )
-        return ExitSet(
-            (
-                Halted(dispatch_raises, effect, faces=frozenset({halted_face})),
-                Completed(
-                    complement_guard(dispatch_raises),
-                    completed_value,
-                    frozenset({completed_face}),
-                ),
-            )
-        ).normalize()
 
     def _binary_floor_gap(self, other, site, owner, floor):
         """The ONE None arm for every binary-operation floor.
