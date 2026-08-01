@@ -15,7 +15,10 @@ class EllipsisValue(FloorValue):
     table (``symbolic_value.py``: ``"py.ellipsis": "ellipsis"``)."""
 
     def python_isinstance(self, type_name: str, type_term, site):
-        del type_term
+        del type_name  # display spelling is not authority
+        from sugar_lift_py_tests.floor.python_type_coordinate import (
+            authenticated_python_type_spelling,
+        )
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -24,9 +27,12 @@ class EllipsisValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
+        authenticated = authenticated_python_type_spelling(
+            type_term, owner="EllipsisValue.python_isinstance", site=site
+        )
         return Complete(
             TrueBoolLiteralSugar(site=site)
-            if type_name == "ellipsis"
+            if authenticated == "ellipsis"
             else FalseBoolLiteralSugar(site=site)
         )
 

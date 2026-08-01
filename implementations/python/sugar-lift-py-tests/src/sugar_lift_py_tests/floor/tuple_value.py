@@ -59,7 +59,14 @@ class TupleValue(FloorValue):
         )
 
     def python_isinstance(self, type_name: str, type_term, site):
-        """A constructed tuple is exactly an instance of ``tuple`` / ``object``."""
+        """A constructed tuple is exactly an instance of ``tuple`` / ``object``.
+
+        Dispatch reads the authenticated ``type_term`` coordinate. Display
+        ``type_name`` is never authority.
+        """
+        from sugar_lift_py_tests.floor.python_type_coordinate import (
+            authenticated_python_type_spelling,
+        )
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -68,9 +75,13 @@ class TupleValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        if type_name in {"tuple", "object"}:
+        del type_name
+        authenticated = authenticated_python_type_spelling(
+            type_term, owner="TupleValue.python_isinstance", site=site
+        )
+        if authenticated in {"tuple", "object"}:
             return Complete(TrueBoolLiteralSugar(site=site))
-        if type_name in {
+        if authenticated in {
             "list",
             "dict",
             "set",
@@ -84,7 +95,7 @@ class TupleValue(FloorValue):
             "NoneType",
         }:
             return Complete(FalseBoolLiteralSugar(site=site))
-        return super().python_isinstance(type_name, type_term, site)
+        return super().python_isinstance(authenticated, type_term, site)
 
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue

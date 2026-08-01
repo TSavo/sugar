@@ -96,15 +96,23 @@ class SymbolicValue(FloorValue):
             "py.ellipsis": "ellipsis",
             "py.complex": "complex",
         }
+        from sugar_lift_py_tests.floor.python_type_coordinate import (
+            authenticated_python_type_spelling,
+        )
+
+        del type_name  # display spelling is not authority
+        authenticated = authenticated_python_type_spelling(
+            type_term, owner="SymbolicValue.python_isinstance", site=site
+        )
         term = self.term
         if type(term) is _Ctor and term.name in ground_type_names:
-            matches = ground_type_names[term.name] == type_name
+            matches = ground_type_names[term.name] == authenticated
             return Complete(
                 TrueBoolLiteralSugar(site=site)
                 if matches
                 else FalseBoolLiteralSugar(site=site)
             )
-        return super().python_isinstance(type_name, type_term, site)
+        return super().python_isinstance(authenticated, type_term, site)
 
     def test_python_type(self, value, site):
         """Dispatch a vendor type test from an existing ``python:type`` term.

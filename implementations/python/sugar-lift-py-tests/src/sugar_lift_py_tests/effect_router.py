@@ -217,16 +217,126 @@ def _observed_effect(entry):
     return None
 
 
+def _matcher_raise_identity(matcher: EffectMatcher, *, owner: str, blame):
+    """Builtin exception-type coordinate for an EffectMatcher name.
+
+    The matcher still carries a language-owned type spelling at construction
+    (legacy Suppresses/Expects door). Matching never compares that spelling to
+    ``effect.exception_name`` — it mints the coordinate once and compares
+    identities. Name-less or non-builtin matchers are unwritten work.
+    """
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    from sugar_source_tree.panic import SugarNotWritten
+
+    name = getattr(matcher, "name", None)
+    if not isinstance(name, str) or not name:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed="name-less EffectMatcher",
+            requested="matcher carrying a language-owned exception type spelling",
+            fix=(
+                "construct EffectMatcher with a real exception type, or route "
+                "through AuthenticatedRaiseMatcher / matches_raise_effect"
+            ),
+        )
+    identity, _ = _builtin_exception_identity(name)
+    if identity is None:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed=f"matcher name {name!r} has no builtin type coordinate",
+            requested="a language-owned exception type with python:exception_type_identity",
+            fix="use a builtin exception type or AuthenticatedRaiseMatcher",
+        )
+    return identity
+
+
+def _raise_matches_matcher(effect: RaiseEffect, matcher: EffectMatcher) -> bool:
+    """Match a raise by exception_type_coordinate, never exception_name spelling."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    owner = "effect_router._matching_effect"
+    blame = getattr(effect, "occurrence_id", None) or owner
+    coordinate = getattr(effect, "exception_type_coordinate", None)
+    if coordinate is None:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed="raise effect without exception_type_coordinate",
+            requested="authenticated exception_type_coordinate on the halt",
+            fix=(
+                "mint the raise through the ground exit door or an authenticated "
+                "producer; do not match by exception_name spelling"
+            ),
+        )
+    return coordinate == _matcher_raise_identity(matcher, owner=owner, blame=blame)
+
+
+def _warning_matches_matcher(effect, matcher: EffectMatcher) -> bool:
+    """Match a warning by category_identity when present; else refuse spelling."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    owner = "effect_router._matching_effect"
+    blame = getattr(effect, "blame", None) or owner
+    identity = getattr(effect, "category_identity", None)
+    if identity is None:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed="warning effect without category_identity",
+            requested="authenticated category_identity on the warning",
+            fix=(
+                "construct the warning through a producer that mints "
+                "category_identity; do not match by category_name spelling"
+            ),
+        )
+    # Matcher still states a category spelling; mint the same coordinate door
+    # used for raises when the category is a builtins warning type.
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    name = getattr(matcher, "name", None)
+    if not isinstance(name, str) or not name:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed="name-less warning EffectMatcher",
+            requested="matcher carrying a warning category type spelling",
+            fix="construct EffectMatcher with a real warning category",
+        )
+    matcher_identity, _ = _builtin_exception_identity(name)
+    if matcher_identity is None:
+        # Non-builtin warning categories: compare identity terms if the
+        # producer used the same ctor shape as the matcher spelling via
+        # category_identity already being the authority — require equality
+        # only when both sides are coordinates. Spelling never participates.
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed=f"warning matcher name {name!r} has no builtin type coordinate",
+            requested="authenticated warning-category coordinate on the matcher",
+            fix="mint matcher identity or extend the authenticated warning door",
+        )
+    return identity == matcher_identity
+
+
 def _matching_effect(entries: tuple, matcher: EffectMatcher):
-    """First exact kind+name match, or None. Single match authority for route."""
+    """First kind+coordinate match, or None. Single match authority for route.
+
+    Display spellings (exception_name / category_name / matcher.name as string
+    equality) never decide. Missing coordinates throw — unfinished authentication.
+    """
     for index, entry in enumerate(entries):
         observed = _observed_effect(entry)
-        if (
-            observed is not None
-            and observed[0] == matcher.kind
-            and observed[1] == matcher.name
-        ):
-            return index, entry, observed
+        if observed is None or observed[0] != matcher.kind:
+            continue
+        kind, _type_name, _message, effect = observed
+        if kind == "raise":
+            if _raise_matches_matcher(effect, matcher):
+                return index, entry, observed
+        elif kind == "warning":
+            if _warning_matches_matcher(effect, matcher):
+                return index, entry, observed
     return None
 
 

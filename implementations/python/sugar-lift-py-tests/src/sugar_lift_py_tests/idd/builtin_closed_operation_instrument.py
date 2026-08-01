@@ -342,8 +342,9 @@ class _Visitor(ast.NodeVisitor):
             return True
 
         # type_name in {…} / type_name in SOME_FROZENSET — builtin shadowing lie.
-        if any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
-            if isinstance(node.left, ast.Name) and node.left.id == "type_name":
+        # type_name == "str" (and friends) — same sin as == rather than `in`.
+        if isinstance(node.left, ast.Name) and node.left.id == "type_name":
+            if any(isinstance(op, (ast.In, ast.NotIn, ast.Eq, ast.NotEq)) for op in node.ops):
                 return True
 
         attr_names = {
