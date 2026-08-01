@@ -102,7 +102,13 @@ class ClassValue(FloorValue):
         is True. Without this ground answer, RaisesExc's
         ``if isinstance(expected_exception, tuple):`` face stays undecided and
         the ``expected_exceptions`` field never floors to a TupleValue.
+
+        Dispatch reads the authenticated ``type_term`` coordinate
+        (``python:type("…")``). The display ``type_name`` string is never
+        consulted: under builtin shadowing the same spelling can name a
+        foreign type, and deciding False from that string is a wrong answer.
         """
+        from sugar_lift_py_tests.ir import _ConstStr, _Ctor
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -110,12 +116,31 @@ class ClassValue(FloorValue):
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
+        from sugar_source_tree.panic import SugarNotWritten
 
-        if type_name in {"type", "object"}:
+        del type_name  # display spelling is not authority
+        if (
+            type(type_term) is not _Ctor
+            or type_term.name != "python:type"
+            or len(type_term.args) != 1
+            or type(type_term.args[0]) is not _ConstStr
+        ):
+            raise SugarNotWritten(
+                blame=str(site),
+                owner="ClassValue.python_isinstance",
+                observed=f"type_term={type(type_term).__name__!s}",
+                requested='authenticated python:type("…") coordinate',
+                fix=(
+                    "thread the type operand's coordinate; never decide "
+                    "class-object isinstance by type_name spelling"
+                ),
+            )
+        authenticated_name = type_term.args[0].value
+        if authenticated_name in {"type", "object"}:
             return Complete(TrueBoolLiteralSugar(site=site))
-        if type_name in _CLASS_OBJECT_DISJOINT_TYPES:
+        if authenticated_name in _CLASS_OBJECT_DISJOINT_TYPES:
             return Complete(FalseBoolLiteralSugar(site=site))
-        return super().python_isinstance(type_name, type_term, site)
+        return super().python_isinstance(authenticated_name, type_term, site)
 
     def test_python_subtype(self, supertype, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue

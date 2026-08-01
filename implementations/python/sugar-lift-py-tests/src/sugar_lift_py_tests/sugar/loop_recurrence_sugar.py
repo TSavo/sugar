@@ -8,6 +8,34 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
+def _is_authenticated_stop_iteration(effect) -> bool:
+    """Iterator exhaustion only by authenticated ``StopIteration`` type coordinate.
+
+    The kit's ``next`` producer mints ``exception_type_coordinate``. Display
+    spelling of ``exception_name`` is never consulted: a foreign coordinate
+    wearing the same name is not exhaustion, and a RaiseEffect that omitted
+    its coordinate is unwritten work (throw), not a name-based guess.
+    """
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    from sugar_source_tree.panic import SugarNotWritten
+
+    owner = "LoopRecurrenceSugar._advance_iterator"
+    stop_identity, _ = _builtin_exception_identity("StopIteration")
+    coordinate = getattr(effect, "exception_type_coordinate", None)
+    if coordinate is None:
+        raise SugarNotWritten(
+            blame=getattr(effect, "occurrence_id", None) or owner,
+            owner=owner,
+            observed="RaiseEffect without exception_type_coordinate",
+            requested="authenticated StopIteration type coordinate from next producer",
+            fix=(
+                "mint the halt through ground_exceptional_exit / the iterator "
+                "floor; never decide exhaustion by exception_name spelling"
+            ),
+        )
+    return coordinate == stop_identity
+
+
 @dataclass(frozen=True)
 class LoopBindingRefSugar(ConstructedTermSugar):
     target_cid: str
@@ -244,7 +272,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         if isinstance(outcome, Incomplete):
             effect = outcome.effect
-            if isinstance(effect, RaiseEffect) and effect.exception_name == "StopIteration":
+            if isinstance(effect, RaiseEffect) and _is_authenticated_stop_iteration(
+                effect
+            ):
                 return self._finish_iterator(runtime, ctx, entries=entries)
             return outcome
         if not isinstance(outcome, Complete) or not isinstance(outcome.value, NextResult):
