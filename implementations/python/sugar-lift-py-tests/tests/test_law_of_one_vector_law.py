@@ -1,4 +1,4 @@
-"""Lying twins for the Law-of-One parent R vector (no curated site list)."""
+"""Model A parent: cites children only — never a second recognition walk."""
 
 from __future__ import annotations
 
@@ -14,90 +14,47 @@ sys.modules[_SPEC.name] = LAW
 _SPEC.loader.exec_module(LAW)
 
 
-def _axes(source: str, path: str = "planted/prod.py") -> set[str]:
-    return {f.axis for f in LAW.scan_python_source(source, path)}
+def test_parent_has_no_scan_python_source_reimplementation() -> None:
+    """Lying twin of dual production: parent must not own an AST offender walk."""
+    src = Path(LAW.__file__).read_text(encoding="utf-8") if LAW.__file__ else ""
+    # Model A forbids a parent re-scan API for MatchDecided/spelling/swallow classes
+    assert "def scan_python_source" not in src
+    assert "MatchDecided(False) outside" not in src
+    assert "FABRICATED-MEANING" not in src or "Model A" in src
+    assert "cite only" in src.lower() or "Model A" in src
 
 
-def test_each_axis_has_a_structural_planted_twin() -> None:
-    assert "FABRICATED-MEANING" in _axes(
-        "def decide():\n    return MatchDecided(False)\n",
-        "sugar_lift_py_tests/sugar/rogue.py",
-    )
-    assert "SPELLING-DISPATCH" in _axes(
-        "def gate(name):\n    if name == 'pytest.raises':\n        return True\n",
-        "sugar_lift_py_tests/gate.py",
-    )
-    assert "SWALLOWED-THROW" in _axes(
-        (
-            "def walk(xs):\n"
-            "    for x in xs:\n"
-            "        try:\n"
-            "            work(x)\n"
-            "        except Exception:\n"
-            "            continue\n"
-        ),
-        "sugar_lift_py_tests/src/pkg/walk.py",
-    )
-    assert "NAMELESS-IDENTITY" in _axes(
-        "def mint():\n    return RaiseEffect()\n",
-        "sugar_lift_py_tests/src/pkg/mint.py",
-    )
-    assert "TWO-PRODUCERS" in _axes(
-        "def decide():\n    return MatchDecided(True)\n",
-        "sugar_lift_py_tests/sugar/other_door.py",
-    )
+def test_report_separates_product_and_instrument_layers() -> None:
+    repo = Path(__file__).resolve().parents[4]
+    citations = LAW.collect_citations(repo)
+    rendered = LAW.format_report(citations)
+    assert "R_product_second_mechanism_cited" in rendered
+    assert "R_instrument_self_sealing_cited" in rendered
+    assert "Model A" in rendered
+    assert "climb:" in rendered
+    assert "membrane:" in rendered
+    # enrollment: every collector produces a citation row
+    assert len(citations) == len(LAW.COLLECTORS)
 
 
-def test_authenticated_matcher_may_mint_match_decided_false() -> None:
-    findings = LAW.scan_python_source(
-        "def m():\n    return MatchDecided(False)\n",
-        "authenticated_exception_matching.py",
-    )
-    assert not any(f.axis == "FABRICATED-MEANING" for f in findings)
-    assert not any(f.axis == "TWO-PRODUCERS" for f in findings)
+def test_missing_owner_is_red_not_zero() -> None:
+    """Enrollment is existence: a missing child cannot report R=0."""
+    from dataclasses import replace
+
+    # Simulate by calling collector against empty temp "repo"
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c = LAW._cite_self_sealing(Path(tmp))
+    assert c.status == "missing_owner"
+    assert c.R == -1
 
 
-def test_try_sugar_may_mint_match_decided_true_not_false() -> None:
-    ok = LAW.scan_python_source(
-        "def bare():\n    return MatchDecided(True)\n",
-        "try_sugar.py",
-    )
-    assert not any(f.axis == "TWO-PRODUCERS" for f in ok)
-    bad = LAW.scan_python_source(
-        "def bare():\n    return MatchDecided(False)\n",
-        "try_sugar.py",
-    )
-    assert any(f.axis == "FABRICATED-MEANING" for f in bad)
-
-
-def test_report_prints_per_axis_r_and_replacement_plan() -> None:
-    findings = LAW.scan_python_source(
-        "def m():\n    return MatchDecided(False)\n",
-        "rogue.py",
-    )
-    rendered = LAW.format_report(findings)
-    assert "LAW-OF-ONE PARENT R VECTOR" in rendered
-    assert "R_fabricated_meaning" in rendered
-    assert "required fix:" in rendered
-    assert "retire_when=" in rendered
-    assert "rung=auditor" in rendered
-    assert "stable_zero_requires" in rendered
-
-
-def test_honest_discrimination_is_silent() -> None:
-    source = """
-def m(identity, expected):
-    if expected in identity.mro:
-        return MatchDecided(True)
-    return MatchRetained("opaque")
-
-def pin():
-    return RaiseEffect(exception_type_coordinate=type_error, occurrence=site)
-
-def loud():
-    try:
-        work()
-    except ConstructionPanic:
-        raise
-"""
-    assert LAW.scan_python_source(source, "authenticated_exception_matching.py") == []
+def test_self_sealing_citation_uses_child_r_only() -> None:
+    repo = Path(__file__).resolve().parents[4]
+    c = LAW._cite_self_sealing(repo)
+    assert c.status == "ok"
+    assert c.axis == "self_sealing"
+    assert "self_sealing_instrument_law" in c.owner
+    # R is non-negative integer produced by child
+    assert isinstance(c.R, int) and c.R >= 0
