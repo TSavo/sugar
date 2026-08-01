@@ -484,8 +484,8 @@ def compose_tip_from_receipts_dir(
                         break
         if body is None or body_path is None:
             axes[axis_name] = unmeasured(
-                f"lease present for {lease_class!r} but no body artifact "
-                f"(suite-report / floor report) — Measured requires both"
+                f"NoReport: lease present for {lease_class!r} but no body artifact "
+                f"(suite-report / floor report)"
             )
             continue
         axes[axis_name] = measured_from_sealed_pair(
