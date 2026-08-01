@@ -228,3 +228,89 @@ def test_gate_complete_require_complete_is_green(tmp_path: Path) -> None:
     path = tmp_path / "cm.json"
     path.write_text(json.dumps(v.to_json()), encoding="utf-8")
     assert GATE.main(["--composition", str(path), "--require-complete"]) == 0
+
+
+def test_empty_receipts_tip_produces_partial_and_gate_red(tmp_path: Path) -> None:
+    """LIVE twin: tip with NO receipts → PartialVector → gate exit 1 (not skip).
+
+    This is the case that proves the object is required: silence is Unmeasured
+    on every tip axis, composition exists as partial, and --require-complete
+    is red. A gate that only fires when instruments already succeeded is not
+    a gate.
+    """
+    empty = tmp_path / "receipts"
+    empty.mkdir()
+    vector = CM.compose_tip_from_receipts_dir("tip-with-zero-receipts", empty)
+    assert isinstance(vector, CM.PartialVector), (
+        f"empty receipts must be PartialVector, got {type(vector).__name__}"
+    )
+    assert vector.unmeasured_axes(), "every tip axis should be Unmeasured"
+    assert "total" not in vector.to_json()
+    composition = tmp_path / "commit-measurement.json"
+    composition.write_text(
+        __import__("json").dumps(vector.to_json()), encoding="utf-8"
+    )
+    code = GATE.main(
+        ["--composition", str(composition), "--require-complete"]
+    )
+    assert code == 1, f"gate must RED on empty-receipt tip, got exit {code}"
+
+
+def test_missing_composition_file_gate_red_not_skipped(tmp_path: Path) -> None:
+    """Absent CommitMeasurement artifact is RED, never 'no file = fine'."""
+    code = GATE.main(
+        ["--composition", str(tmp_path / "commit-measurement.json"), "--require-complete"]
+    )
+    assert code == 1
+
+
+def test_workflow_runs_gate_even_when_attendance_would_exit_red() -> None:
+    """Enrollment law: compose+gate must not sit behind set -e on attendance.
+
+    Re-derived from the workflow file (live instrument path), not a hand list.
+    """
+    text = (
+        ROOT / ".github/workflows/heavy-measurement-attendance.yml"
+    ).read_text(encoding="utf-8")
+    assert "commit_measurement_gate.py" in text
+    assert "--require-complete" in text
+    # Must capture attendance exit and still run gate (not set -e abort before compose)
+    assert "gate_exit" in text or "GATE" in text or "att_exit" in text
+    assert "compose_tip_from_receipts_dir" in text or "commit_measurement.py" in text
+    # Decorative pattern: separate gate step after roll call under set -e only
+    # would skip on attendance red. The fixed job uses att_exit/gate_exit OR.
+    assert "att_exit" in text and "gate_exit" in text
+
+
+def test_s03_compose_cli_allows_partial_exit_zero(tmp_path: Path) -> None:
+    """S0.3 packaging: empty/partial receipts still write PartialVector exit 0.
+
+    --require-complete is attendance tip-complete claim only — not S0.3.
+    """
+    import subprocess
+    import sys
+
+    empty = tmp_path / "receipts"
+    empty.mkdir()
+    out = tmp_path / "commit-measurement.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "compose_commit_measurement.py"),
+            "--commit",
+            "s03-tip",
+            "--receipts-dir",
+            str(empty),
+            "--output",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert out.is_file()
+    payload = __import__("json").loads(out.read_text(encoding="utf-8"))
+    assert payload["status"] == "partial"
+    assert "total" not in payload
+    assert payload["unmeasuredAxes"]
