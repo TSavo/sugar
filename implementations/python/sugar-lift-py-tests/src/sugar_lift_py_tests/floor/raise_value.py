@@ -10,6 +10,19 @@ from .exception_cause_value import ExceptionCauseValue
 from .floor_value import FloorValue
 
 
+# Placeholder strings that invent exceptional-exit meaning outside the tree.
+# Identity/citation must come from Sugar/the tree — never these spellings.
+# Retirement: when exception_name is a closed typed constructor that can only
+# be built from tree/Sugar testimony (not bare str), delete this denylist.
+FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS = frozenset(
+    {
+        "reraise",
+        "unavailable",
+        "<unknown raise locus>",
+    }
+)
+
+
 @dataclass(frozen=True)
 class RaiseValue(FloorValue):
     """A Python raise exit carried by a block frontier.
@@ -91,7 +104,42 @@ def _require_authenticated_exceptional_exit_citation(effect: RaiseEffect) -> Non
     Legitimate bare ``raise`` re-raise re-emits the in-flight effect's real
     tree-derived identity (see ``RaiseSugar.desugar``); it does not mint the
     string ``"reraise"`` at this edge.
+
+    A face whose ``exception_name`` *is* a fabricated placeholder string is
+    the same sin relocated onto the field: refuse it. Empty spelling is not
+    tree identity either.
     """
+    if effect.exception_name is not None:
+        if effect.exception_name == "":
+            _refuse_uncited_exit(
+                effect,
+                observed="raise face exception_name is empty string",
+                requested=(
+                    "a non-empty tree-derived exception spelling, or a type "
+                    "coordinate with exception_name left unset"
+                ),
+                fix=(
+                    "do not mint empty identity; thread the exception name from "
+                    "Sugar or leave name unset and use exception_type_coordinate"
+                ),
+            )
+        if effect.exception_name in FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS:
+            _refuse_uncited_exit(
+                effect,
+                observed=(
+                    f"raise face exception_name is fabricated placeholder "
+                    f"{effect.exception_name!r}"
+                ),
+                requested=(
+                    "a tree-derived exception identity (real class spelling or "
+                    "type coordinate), never a render-edge placeholder string"
+                ),
+                fix=(
+                    "do not set exception_name to a fabricated placeholder; bare "
+                    "re-raise re-emits the in-flight effect's real identity"
+                ),
+            )
+
     has_identity = (
         effect.exception_name is not None
         or effect.exception_type_coordinate is not None
@@ -167,6 +215,21 @@ def _exceptional_exit_term(effect: RaiseEffect, *, exception_name: str | None = 
     resolved_name = (
         exception_name if exception_name is not None else effect.exception_name
     )
+    # Kwarg override can still smuggle a fabricated spelling after the face
+    # check; refuse it at the same mouth.
+    if resolved_name is not None and (
+        resolved_name == ""
+        or resolved_name in FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS
+    ):
+        _refuse_uncited_exit(
+            effect,
+            observed=(
+                f"exceptional-exit term resolved_name is fabricated or empty "
+                f"{resolved_name!r}"
+            ),
+            requested="tree-derived exception spelling or type-coordinate path",
+            fix="do not pass a fabricated placeholder as exception_name kwarg",
+        )
     if effect.exception_type_coordinate is not None and resolved_name is None:
         name_term = effect.exception_type_coordinate
     else:
