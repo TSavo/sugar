@@ -48,9 +48,28 @@ axis "R_construction_panic_catches_outside_membrane = 0" \
   python "$SCRIPTS/construction_panic_catch_law.py"
 
 # Heavy supervised enum floors — sequential, inside the one lease interval.
-axis "R_native_crashes = 0" python "$SCRIPTS/native_crash_zero_tolerance.py"
-axis "R_bare_exceptions = 0" python "$SCRIPTS/bare_exception_zero_tolerance.py"
-axis "R_timeouts = 0" python "$SCRIPTS/timeout_zero_tolerance.py"
+# Population: authenticated pandas corpus (NOT kit production_roots).
+# Silent default to sugar-lift-py-tests src+scripts was a false green: R=0 on
+# ~444 kit files while the corpus process floors never entered pandas.
+# Scanners refuse empty path args; this binding must name the corpus root.
+PANDAS_CORPUS="$(
+  python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+)" || {
+  echo "::error::cannot authenticate pandas corpus for process floors"
+  exit 1
+}
+echo "process-floor population: authenticated pandas corpus at $PANDAS_CORPUS"
+# --repo-root must be the corpus root (not the Sugar checkout): relative loci
+# and supervised-enum corpus_root are derived from it.
+axis "R_native_crashes = 0" \
+  python "$SCRIPTS/native_crash_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --repo-root "$PANDAS_CORPUS"
+axis "R_bare_exceptions = 0" \
+  python "$SCRIPTS/bare_exception_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --repo-root "$PANDAS_CORPUS"
+axis "R_timeouts = 0" \
+  python "$SCRIPTS/timeout_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --repo-root "$PANDAS_CORPUS"
 
 axis "All permanent axes are bound" \
   python -m pytest tests/test_python_sole_construction_ci.py -q

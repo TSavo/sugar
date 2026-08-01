@@ -57,6 +57,15 @@ def python_paths(roots: Sequence[Path]) -> list[Path]:
 
 
 def production_roots(repo_root: Path) -> tuple[Path, Path]:
+    """Kit package + corpus tooling only — NOT the pandas/numpy corpus wall.
+
+    Historical trap: native-crash / timeout / bare-exception floors defaulted
+    here when invoked with no path args. That measures Sugar's own sources
+    (~400 files) and reports green while the authenticated pandas corpus
+    (the population those process floors police) stays unmeasured. Use this
+    helper only when the caller *names* kit self-check; never as a silent
+    CLI default for corpus process floors.
+    """
     kit = repo_root / "implementations/python/sugar-lift-py-tests"
     return (kit / "src/sugar_lift_py_tests", kit / "scripts")
 
@@ -66,6 +75,30 @@ def require_python_paths(roots: Sequence[Path]) -> list[Path]:
     if not paths:
         raise ValueError(f"no Python source files found under {list(roots)}")
     return paths
+
+
+def require_explicit_scan_roots(roots: Sequence[Path]) -> list[Path]:
+    """Refuse empty path sets so a floor cannot green on a defaulted population.
+
+    The silent ``production_roots`` argparse default was a false-green door:
+    CI invoked the scanners with no args, they scanned kit src+scripts, and
+    R=0 meant "kit did not crash" while the pandas corpus was never entered.
+
+    Call sites must pass the intended roots (authenticated pandas corpus for
+    process floors). Empty is red, not a fallback.
+
+    Retirement: when these scanners' CLIs no longer admit zero path args
+    (required non-empty roots at the argparse door / typed config), delete
+    this check — empty becomes unrepresentable rather than audited.
+    """
+    if not roots:
+        raise ValueError(
+            "scan roots must be explicit and non-empty; refusing empty or "
+            "defaulted path set (wrong-population false green). Pass the "
+            "authenticated pandas corpus root (or other named population), "
+            "never rely on production_roots as a silent default."
+        )
+    return require_python_paths(roots)
 
 
 def relative_to_root(path: Path, root: Path) -> str:
