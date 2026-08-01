@@ -1,653 +1,438 @@
 #!/usr/bin/env python3
-"""Law-of-One parent R vector — live offender set, not a sin checklist.
+"""Law-of-One parent R — Model A citing aggregator (no second recognition).
 
-CLASS NAME
-    LAW-OF-ONE VIOLATION (parent)
+THIS IS NOT A MEGA-SCANNER. It must be impossible for this parent to report a
+number its children did not produce. It never re-walks AST for classes that
+child instruments already own.
 
-DEFINITION
-    The Law of One: there is exactly one way to produce a given kind of meaning
-    in the system — AST tree shadows for temporal rewrite/tree mods, Sugar for
-    meaning. Every other mechanism is a second door, a fabricated meaning, or a
-    soft half-write.
+## Class (product layer)
 
-    This instrument does NOT carry a curated list of sites. It structurally
-    recognizes the live offender *classes* we keep rediscovering under new
-    names, reports R per axis separately (AGENTS.md: keep axes separate), prints
-    each offender with a replacement plan, and exits red while any axis R > 0.
+**Second mechanism for a fact** — deciding, minting, keying, or silencing
+something that already has one lawful door, by a parallel path.
 
-AXES (separate R; never sum into a single "32 sins" threshold)
+Fabricated meaning, unauth/spelling dispatch, soft membranes (swallowed
+throws / soft skip / panic catch), dual doors, enrollment vanish faces — are
+*tags under that class*, owned by specialized children. They are not six peer
+parent axes with independent scanners.
 
-1. FABRICATED-MEANING
-   Meaning minted outside its owner. Canonical plant: ``MatchDecided(False)``
-   outside the authenticated matcher (deciding a settled miss without routing
-   through identity/MRO testimony). Generalized: ``MatchDecided`` constructed
-   with a constant False, or Incomplete/Complete(None) manufactured as a
-   benign stand-in for an unwritten decision.
+## Two layers (never one success number)
 
-2. SPELLING-DISPATCH
-   Semantic gate or route keyed by vendor/package *spelling* (string compare to
-   ``pytest.raises``, ``pandas.*``, overload name tables) rather than an
-   authenticated coordinate/CID/binding.
+1. **product** — second-mechanism children (construction/sugar/lift meaning)
+2. **instrument** — self-sealing / measurement integrity (#6958 only)
 
-3. SWALLOWED-THROW
-   ``except`` that soft-continues: pass, continue, return None/(), or empty
-   body without re-raise — half-writing absence. Includes bare except and
-   Exception/BaseException soft membranes in production sources.
+Summing product R with instrument R into one "done" number is orientation mud.
 
-4. NAMELESS-IDENTITY
-   Authenticated exceptional identity promised but un-named: RaiseEffect
-   construction without exception_type_coordinate, or keyword
-   ``exception_type_coordinate=None`` / ``occurrence=None`` at a mint site.
+## Climb, do not audit forever
 
-5. TWO-PRODUCERS
-   A second production door for a fact that already has an owner. Here:
-   ``MatchDecided(...)`` mints outside the closed owner set (authenticated
-   matcher + the one bare-except True path in try_sugar). Two doors for one
-   match fact.
+| Face | Parent stance |
+| --- | --- |
+| Nameless authenticated identity (product faces) | **Climb** to constructor (non-Optional identity). Prefer type over auditor. |
+| Dual producers of one fact | **Climb** to one door; delete second path; then delete any ratchet. |
+| Spelling / unauth dispatch | Legitimate **membrane** (open grammar); child owns it. |
+| Swallowed throws / soft panic catch | Legitimate **membrane** (open handlers); children own it. |
+| Self-sealing instruments | **Meta** layer; cite #6958 only — not a product peer. |
 
-6. SELF-SEALING-INSTRUMENT
-   Unfalsifiable teeth / checker-synthesized evidence. Owned by
-   ``self_sealing_instrument_law.py`` (#6958). This parent vector *cites* that
-   instrument as the axis owner and folds its live findings into the report
-   without re-implementing the class.
+## Model A rules
 
-ENFORCEMENT LADDER (per axis — every instrument should climb and retire)
+- Parent imports/calls child APIs only (black boxes).
+- Axis map is 1:1 with child modules, not with a hand-curated sin list.
+- Missing enrolled child file → parent RED (enrollment is existence for instruments).
+- Child R is whatever the child reports; parent does not recompute offenders.
+- When a child climbs to type and is deleted, drop the citation — never baseline 0.
 
-| Axis | Current rung | Retirement hatch |
-| --- | --- | --- |
-| FABRICATED-MEANING | auditor | Seal MatchDecided construction to one module/type; False miss unwritable outside matcher |
-| SPELLING-DISPATCH | auditor | All gates take authenticated coordinates; string vendor keys do not type-check |
-| SWALLOWED-THROW | auditor | Typed effect membrane; bare soft-except unwritable; panic on ConstructionPanic outside audit |
-| NAMELESS-IDENTITY | auditor | RaiseEffect requires non-Optional identity fields; None unconstructable |
-| TWO-PRODUCERS | auditor | One public mint door (Factory/Visitor); second Call site is a visibility/type error |
-| SELF-SEALING | auditor | See self_sealing_instrument_law retire_when |
+## Shell this PR deletes
 
-Not the board. Sole Python corpus scoreboard: scripts/control_effect_recensus.py.
+The dual-scan parent that reimplemented MatchDecided / spelling / swallow /
+nameless / self-seal AST walks (merged as #6970 mega-scanner). That was two
+producers of one R fact — a Law of One violation by the instrument built to
+enforce it.
+
+Not the board. Sole corpus scoreboard remains control_effect_recensus.py.
 """
 
 from __future__ import annotations
 
-# Not the board.
 SCOREBOARD_AUTHORITY = False
 
 import argparse
-import ast
 import importlib.util
 import json
-import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable
 
-# --- axis ids (stable names for R axes) --------------------------------------
-
-FABRICATED = "FABRICATED-MEANING"
-SPELLING = "SPELLING-DISPATCH"
-SWALLOWED = "SWALLOWED-THROW"
-NAMELESS = "NAMELESS-IDENTITY"
-TWO_PRODUCERS = "TWO-PRODUCERS"
-SELF_SEALING = "SELF-SEALING-INSTRUMENT"
-
-AXES = (
-    FABRICATED,
-    SPELLING,
-    SWALLOWED,
-    NAMELESS,
-    TWO_PRODUCERS,
-    SELF_SEALING,
-)
-
-REQUIRED_FIX = {
-    FABRICATED: (
-        "route the decision through the single owner (authenticated matcher / "
-        "Sugar recognition); never mint MatchDecided(False) or a benign "
-        "Complete(None) as a stand-in for an unwritten decision. Replacement: "
-        "MatchRetained / typed effect / write the Sugar arm."
-    ),
-    SPELLING: (
-        "resolve via authenticated binding/contract coordinate (CID, definition "
-        "memento, typed identity); delete string compares and spelling tables "
-        "that grant semantic membership."
-    ),
-    SWALLOWED: (
-        "re-raise, panic, or emit a named typed gap row; never pass/continue/"
-        "return None after except. Soft absence is a second mechanism for 'no fact'."
-    ),
-    NAMELESS: (
-        "require exception_type_coordinate and occurrence at RaiseEffect mint; "
-        "pin the authenticated identity term. None is not an authenticated exit."
-    ),
-    TWO_PRODUCERS: (
-        "delete the second mint door; all MatchDecided production routes through "
-        "the closed owner set (authenticated_exception_matching + the one "
-        "sanctioned bare-except True path). One fact, one producer."
-    ),
-    SELF_SEALING: (
-        "see self_sealing_instrument_law: delete checker-synthesized evidence, "
-        "tautological asserts, and presence-only identity teeth; pin Eq values."
-    ),
-}
-
-RUNG = {axis: "auditor" for axis in AXES}
-
-RETIRE_WHEN = {
-    FABRICATED: (
-        "MatchDecided is constructible only inside authenticated_exception_matching "
-        "(visibility or factory door); constant-False miss unwritable elsewhere"
-    ),
-    SPELLING: (
-        "gate APIs accept only authenticated coordinates; str vendor keys rejected "
-        "at the type/constructor boundary"
-    ),
-    SWALLOWED: (
-        "soft except→continue/None is a type error or linter-panic; ConstructionPanic "
-        "catch closed to audit membranes by type"
-    ),
-    NAMELESS: (
-        "RaiseEffect.exception_type_coordinate: Term (non-Optional); None does not parse"
-    ),
-    TWO_PRODUCERS: (
-        "single module-private constructor for MatchDecided; other packages cannot import mint"
-    ),
-    SELF_SEALING: (
-        "sealed evidence mints + typed assert_identity(Eq) + tautology-rejecting assert macro"
-    ),
-}
-
-# MatchDecided owners (path suffix). True/False both counted for TWO_PRODUCERS;
-# constant False outside authenticated matcher is also FABRICATED-MEANING.
-_MATCH_DECIDED_OWNERS = frozenset(
-    {
-        "authenticated_exception_matching.py",
-        # bare-except over a real RaiseEffect may return MatchDecided(True) only
-        "try_sugar.py",
-    }
-)
-_MATCH_FALSE_OWNERS = frozenset({"authenticated_exception_matching.py"})
-
-_FORBIDDEN_SPELLING = re.compile(
-    r"(^|[.:/_-])(pytest|pandas|numpy|pyarrow|matplotlib|contextlib)([.:/_-]|$)",
-    re.IGNORECASE,
-)
-_FORBIDDEN_API_NAMES = frozenset(
-    {
-        "row_for_spelling",
-        "default_community_manifest",
-        "manifest_membrane",
-        "community_context_managers",
-        "overload_name",
-        "by_name",
-    }
-)
-
-_SOFT_HANDLER_MARKERS = frozenset({"pass", "continue", "None", "Ellipsis"})
+# ---------------------------------------------------------------------------
+# Citation map: one row per child instrument. Parent never invents R.
+# ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, order=True)
-class Finding:
-    path: str
-    line: int
-    column: int
+@dataclass(frozen=True)
+class ChildSpec:
+    """Enrolled child. Missing path → parent red. R only from ``collect``."""
+
+    layer: str  # "product" | "instrument"
+    axis: str  # stable citation key
+    owner_relpath: str  # repo-relative path; enrollment is existence
+    description: str
+    # collect(repo_root) -> (R: int, detail: dict, errors: list[str])
+    # bound at runtime after loaders exist
+
+
+@dataclass
+class Citation:
+    layer: str
     axis: str
-    observed: str
+    owner: str
+    R: int
+    detail: dict
+    errors: list[str] = field(default_factory=list)
+    status: str = "ok"  # ok | missing_owner | collect_error
 
-    @property
-    def required_fix(self) -> str:
-        return REQUIRED_FIX[self.axis]
-
-    @property
-    def rung(self) -> str:
-        return RUNG[self.axis]
-
-    @property
-    def retire_when(self) -> str:
-        return RETIRE_WHEN[self.axis]
-
-    def to_value(self) -> dict[str, object]:
+    def to_value(self) -> dict:
         return {
-            "path": self.path,
-            "line": self.line,
-            "column": self.column,
+            "layer": self.layer,
             "axis": self.axis,
-            "observed": self.observed,
-            "requiredFix": self.required_fix,
-            "rung": self.rung,
-            "retireWhen": self.retire_when,
+            "owner": self.owner,
+            "R": self.R,
+            "status": self.status,
+            "detail": self.detail,
+            "errors": self.errors,
         }
 
 
-def _unparse(node: ast.AST) -> str:
-    try:
-        return ast.unparse(node)
-    except Exception:  # noqa: BLE001
-        return type(node).__name__
-
-
-def _call_tail(node: ast.AST) -> str:
-    if not isinstance(node, ast.Call):
-        return ""
-    func = node.func
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return ""
-
-
-def _path_basename(path: str) -> str:
-    return Path(path).name
-
-
-def _is_false_constant(node: ast.AST) -> bool:
-    return isinstance(node, ast.Constant) and node.value is False
-
-
-def _is_none_constant(node: ast.AST) -> bool:
-    return isinstance(node, ast.Constant) and node.value is None
-
-
-def _handler_is_soft(handler: ast.ExceptHandler) -> bool:
-    """Soft if body only continues/pass/returns None/() without raise."""
-    body = handler.body
-    if not body:
-        return True
-    # pure re-raise is hard (honorable)
-    if len(body) == 1 and isinstance(body[0], ast.Raise):
-        return False
-    soft_only = True
-    saw_raise = False
-    for stmt in body:
-        if isinstance(stmt, ast.Raise):
-            saw_raise = True
-            soft_only = False
-            continue
-        if isinstance(stmt, ast.Pass):
-            continue
-        if isinstance(stmt, ast.Continue):
-            continue
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-            # docstring / ellipsis
-            if stmt.value.value is Ellipsis or isinstance(stmt.value.value, str):
-                continue
-        if isinstance(stmt, ast.Return):
-            if stmt.value is None or _is_none_constant(stmt.value):
-                continue
-            if isinstance(stmt.value, (ast.Tuple, ast.List)) and not stmt.value.elts:
-                continue
-            # return of something else — may be recovery object (still soft)
-            continue
-        if isinstance(stmt, ast.Assign):
-            # fn = None soft assign
-            if _is_none_constant(stmt.value):
-                continue
-            soft_only = False
-            break
-        # anything else (append gap, log, call) — treat as possibly loud membrane
-        soft_only = False
-        break
-    if saw_raise and not soft_only:
-        # mixed: has raise somewhere — not pure soft
-        return False
-    return soft_only
-
-
-def _except_type_is_broad(handler: ast.ExceptHandler) -> bool:
-    if handler.type is None:
-        return True
-    names: set[str] = set()
-
-    def walk(node: ast.AST) -> None:
-        if isinstance(node, ast.Name):
-            names.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            names.add(node.attr)
-        elif isinstance(node, ast.Tuple):
-            for elt in node.elts:
-                walk(elt)
-
-    walk(handler.type)
-    return bool(names & {"Exception", "BaseException", "OSError", "ValueError", "ExceptionGroup"}) or handler.type is None
-
-
-def scan_python_source(source: str, path: str) -> list[Finding]:
-    """Structural recognition of Law-of-One axes in one module (no curated sites)."""
-    tree = ast.parse(source, filename=path)
-    findings: list[Finding] = []
-    base = _path_basename(path)
-
-    # Skip this parent instrument and the self-sealing shell (they document shapes).
-    if base in {
-        "law_of_one_vector_law.py",
-        "self_sealing_instrument_law.py",
-        "construction_invariant_law.py",
-        "construction_panic_catch_law.py",
-        "enumeration_binding_soft_skip_law.py",
-    }:
-        return []
-
-    for node in ast.walk(tree):
-        # --- FABRICATED-MEANING + TWO-PRODUCERS via MatchDecided -------------
-        if isinstance(node, ast.Call) and _call_tail(node) == "MatchDecided":
-            arg0 = node.args[0] if node.args else None
-            is_false = arg0 is not None and _is_false_constant(arg0)
-            if is_false and base not in _MATCH_FALSE_OWNERS:
-                findings.append(
-                    Finding(
-                        path,
-                        node.lineno,
-                        node.col_offset,
-                        FABRICATED,
-                        f"MatchDecided(False) outside authenticated matcher "
-                        f"({base}); settled miss must not be minted here",
-                    )
-                )
-            if base not in _MATCH_DECIDED_OWNERS:
-                findings.append(
-                    Finding(
-                        path,
-                        node.lineno,
-                        node.col_offset,
-                        TWO_PRODUCERS,
-                        f"MatchDecided mint in {base}; owners are "
-                        f"{sorted(_MATCH_DECIDED_OWNERS)}",
-                    )
-                )
-
-        # Complete(None) / return Complete(None) as fabricated completion
-        if isinstance(node, ast.Call) and _call_tail(node) == "Complete":
-            if node.args and _is_none_constant(node.args[0]):
-                findings.append(
-                    Finding(
-                        path,
-                        node.lineno,
-                        node.col_offset,
-                        FABRICATED,
-                        "Complete(None) manufactures a completed value for absence",
-                    )
-                )
-
-        # --- SPELLING-DISPATCH -----------------------------------------------
-        if isinstance(node, ast.Name) and node.id in _FORBIDDEN_API_NAMES:
-            findings.append(
-                Finding(
-                    path,
-                    node.lineno,
-                    node.col_offset,
-                    SPELLING,
-                    f"spelling-authority name `{node.id}`",
-                )
-            )
-        if isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_API_NAMES:
-            findings.append(
-                Finding(
-                    path,
-                    node.lineno,
-                    node.col_offset,
-                    SPELLING,
-                    f"spelling-authority attribute `{node.attr}`",
-                )
-            )
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if _FORBIDDEN_SPELLING.search(node.value) and _in_compare_or_key(node, tree):
-                findings.append(
-                    Finding(
-                        path,
-                        node.lineno,
-                        node.col_offset,
-                        SPELLING,
-                        f"semantic gate / key literal {node.value!r}",
-                    )
-                )
-
-        # --- SWALLOWED-THROW -------------------------------------------------
-        if isinstance(node, ast.ExceptHandler) and _handler_is_soft(node):
-            # Restrict to production-ish modules: under src/, not tests/
-            if "/tests/" in path.replace("\\", "/") or path.startswith("tests/"):
-                pass  # tests may soft-catch for harness; still count production
-            else:
-                if _except_type_is_broad(node) or handler_catches_named_gap(node):
-                    findings.append(
-                        Finding(
-                            path,
-                            node.lineno,
-                            node.col_offset,
-                            SWALLOWED,
-                            f"soft except ({_unparse(node.type) if node.type else 'bare'}) "
-                            f"→ pass/continue/return-None without re-raise",
-                        )
-                    )
-
-        # --- NAMELESS-IDENTITY -----------------------------------------------
-        if isinstance(node, ast.Call) and _call_tail(node) == "RaiseEffect":
-            kw = {k.arg: k.value for k in node.keywords if k.arg}
-            # no exception_type_coordinate keyword and no positional story
-            if "exception_type_coordinate" not in kw:
-                # empty RaiseEffect() or only partial fields
-                if not node.args:
-                    findings.append(
-                        Finding(
-                            path,
-                            node.lineno,
-                            node.col_offset,
-                            NAMELESS,
-                            "RaiseEffect(...) without exception_type_coordinate",
-                        )
-                    )
-            else:
-                if _is_none_constant(kw["exception_type_coordinate"]):
-                    findings.append(
-                        Finding(
-                            path,
-                            node.lineno,
-                            node.col_offset,
-                            NAMELESS,
-                            "RaiseEffect(exception_type_coordinate=None)",
-                        )
-                    )
-            if "occurrence" in kw and _is_none_constant(kw["occurrence"]):
-                findings.append(
-                    Finding(
-                        path,
-                        node.lineno,
-                        node.col_offset,
-                        NAMELESS,
-                        "RaiseEffect(occurrence=None)",
-                    )
-                )
-
-    return sorted(set(findings))
-
-
-def handler_catches_named_gap(handler: ast.ExceptHandler) -> bool:
-    names: set[str] = set()
-    if handler.type is None:
-        return False
-
-    def walk(node: ast.AST) -> None:
-        if isinstance(node, ast.Name):
-            names.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            names.add(node.attr)
-        elif isinstance(node, ast.Tuple):
-            for elt in node.elts:
-                walk(elt)
-
-    walk(handler.type)
-    return bool(
-        names
-        & {
-            "ConstructionPanic",
-            "FunctionBindingMiss",
-            "SourceCallBindingGap",
-            "SugarNotWritten",
-            "AttributionInvariantError",
-        }
-    )
-
-
-def _in_compare_or_key(const: ast.Constant, tree: ast.AST) -> bool:
-    """True when the string constant is used as a compare operand or subscript key."""
-    parents: dict[int, ast.AST] = {}
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            parents[id(child)] = parent
-    node: ast.AST | None = const
-    depth = 0
-    while node is not None and depth < 6:
-        parent = parents.get(id(node))
-        if parent is None:
-            break
-        if isinstance(parent, (ast.Compare, ast.Subscript, ast.keyword)):
-            return True
-        if isinstance(parent, ast.Call):
-            # dict key or equality helper
-            return True
-        node = parent
-        depth += 1
-    return False
-
-
-def _production_roots(repo: Path) -> tuple[Path, ...]:
-    return (
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
-        repo / "implementations/python/sugar-source-tree/src",
-        repo / "implementations/python/sugar-lift-python-source/src",
-    )
-
-
-def _source_files(roots: Iterable[Path]) -> list[Path]:
-    files: set[Path] = set()
-    for root in roots:
-        if root.is_file() and root.suffix == ".py":
-            files.add(root)
-        elif root.is_dir():
-            for path in root.rglob("*.py"):
-                if "__pycache__" in path.parts:
-                    continue
-                files.add(path)
-    return sorted(files)
-
-
-def _load_self_sealing():
-    here = Path(__file__).resolve().parent
-    path = here / "self_sealing_instrument_law.py"
-    spec = importlib.util.spec_from_file_location("self_sealing_instrument_law", path)
+def _load_script(repo: Path, rel: str, mod_name: str):
+    path = repo / rel
+    if not path.is_file():
+        return None, f"missing owner file: {rel}"
+    spec = importlib.util.spec_from_file_location(mod_name, path)
     if spec is None or spec.loader is None:
-        return None
+        return None, f"cannot load: {rel}"
     mod = importlib.util.module_from_spec(spec)
-    # dataclasses needs the module present in sys.modules during class body exec
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    sys.modules[mod_name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # noqa: BLE001 — surface as citation error
+        return None, f"{rel}: {type(exc).__name__}: {exc}"
+    return mod, None
 
 
-def scan_roots(
-    roots: Iterable[Path] | None = None,
-    *,
-    repo: Path | None = None,
-    include_self_sealing: bool = True,
-) -> tuple[list[Finding], list[str]]:
-    base = (repo or Path.cwd()).resolve()
-    findings: list[Finding] = []
-    errors: list[str] = []
-    scan_roots_list = tuple(roots) if roots is not None else _production_roots(base)
-    for path in _source_files(scan_roots_list):
-        label = (
-            str(path.resolve().relative_to(base))
-            if path.resolve().is_relative_to(base)
-            else str(path)
+def _cite_self_sealing(repo: Path) -> Citation:
+    rel = "implementations/python/sugar-lift-py-tests/scripts/self_sealing_instrument_law.py"
+    mod, err = _load_script(repo, rel, "loo_cite_self_sealing")
+    if err:
+        return Citation("instrument", "self_sealing", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+    try:
+        findings, errors = mod.scan_roots(repo=repo)
+        by = {}
+        for f in findings:
+            by[f.violation_class] = by.get(f.violation_class, 0) + 1
+        return Citation(
+            "instrument",
+            "self_sealing",
+            rel,
+            len(findings),
+            {"by_subclass": by, "source": "self_sealing_instrument_law.scan_roots"},
+            list(errors),
         )
-        try:
-            source = path.read_text(encoding="utf-8")
-            findings.extend(scan_python_source(source, label))
-        except (OSError, UnicodeError, SyntaxError) as exc:
-            errors.append(f"{label}: {type(exc).__name__}: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        return Citation("instrument", "self_sealing", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
 
-    if include_self_sealing:
-        mod = _load_self_sealing()
-        if mod is None:
-            errors.append("self_sealing_instrument_law.py: load failed")
+
+def _cite_swallowed_throw(repo: Path) -> Citation:
+    rel = "implementations/python/sugar-lift-py-tests/scripts/swallowed_throw_second_mechanism_law.py"
+    mod, err = _load_script(repo, rel, "loo_cite_swallowed")
+    if err:
+        return Citation("product", "swallowed_throw_second_mechanism", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+    try:
+        python_root = repo / "implementations/python"
+        offenders = mod.scan_python_root(python_root)
+        counts = mod.axis_counts(offenders)
+        return Citation(
+            "product",
+            "swallowed_throw_second_mechanism",
+            rel,
+            sum(counts.values()),
+            {"by_axis": counts, "source": "swallowed_throw_second_mechanism_law.scan_python_root"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Citation("product", "swallowed_throw_second_mechanism", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+
+
+def _cite_construction_panic_catch(repo: Path) -> Citation:
+    rel = "implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py"
+    mod, err = _load_script(repo, rel, "loo_cite_panic_catch")
+    if err:
+        return Citation("product", "construction_panic_catch", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+    try:
+        kit = repo / "implementations/python/sugar-lift-py-tests"
+        offenders = mod.scan_repository(kit)
+        panic = [o for o in offenders if getattr(o, "kind", "") != "auditor-error"]
+        return Citation(
+            "product",
+            "construction_panic_catch",
+            rel,
+            len(panic),
+            {"source": "construction_panic_catch_law.scan_repository", "raw_rows": len(offenders)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Citation("product", "construction_panic_catch", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+
+
+def _cite_enumeration_soft_skip(repo: Path) -> Citation:
+    rel = "implementations/python/sugar-lift-py-tests/scripts/enumeration_binding_soft_skip_law.py"
+    mod, err = _load_script(repo, rel, "loo_cite_enum_soft")
+    if err:
+        return Citation("product", "enumeration_binding_soft_skip", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+    try:
+        kit = repo / "implementations/python/sugar-lift-py-tests"
+        paths = mod.production_scan_roots(kit)
+        offenders = mod.scan_sources(paths, root=kit)
+        return Citation(
+            "product",
+            "enumeration_binding_soft_skip",
+            rel,
+            len(offenders),
+            {"source": "enumeration_binding_soft_skip_law.scan_sources"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Citation("product", "enumeration_binding_soft_skip", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+
+
+def _cite_source_audit_presence(repo: Path) -> Citation:
+    rel = "implementations/python/sugar-lift-py-tests/scripts/source_audit_presence_identity_law.py"
+    mod, err = _load_script(repo, rel, "loo_cite_presence")
+    if err:
+        return Citation("product", "source_audit_presence_identity", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+    try:
+        roots = [
+            repo / "implementations/python/sugar-lift-py-tests/src",
+            repo / "implementations/python/sugar-source-tree/src",
+            repo / "implementations/python/sugar-lift-python-source/src",
+        ]
+        offenders, unreadable = mod.scan_roots(roots)
+        return Citation(
+            "product",
+            "source_audit_presence_identity",
+            rel,
+            len(offenders),
+            {
+                "source": "source_audit_presence_identity_law.scan_roots",
+                "unreadable": len(unreadable),
+            },
+            [str(u) for u in unreadable[:20]],
+        )
+    except Exception as exp:  # noqa: BLE001
+        return Citation("product", "source_audit_presence_identity", rel, -1, {}, [f"{type(exp).__name__}: {exp}"], "collect_error")
+
+
+def _cite_one_matcher(repo: Path) -> Citation:
+    """MatchDecided(False) sole owner — recognition lives in the test module."""
+    rel = "implementations/python/sugar-lift-py-tests/tests/test_match_decided_one_matcher_law.py"
+    mod, err = _load_script(repo, rel, "loo_cite_one_matcher")
+    if err:
+        return Citation("product", "one_matcher_match_decided_false", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+    try:
+        # Child's structural scan over production packages
+        files = mod._production_py_files()
+        sites: list = []
+        for path in files:
+            sites.extend(mod._fabricated_decided_miss_sites(path))
+        return Citation(
+            "product",
+            "one_matcher_match_decided_false",
+            rel,
+            len(sites),
+            {
+                "source": "test_match_decided_one_matcher_law._fabricated_decided_miss_sites",
+                "sites": [
+                    {"path": str(p), "line": ln, "snippet": sn[:120]}
+                    for p, ln, sn in sites[:50]
+                ],
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Citation("product", "one_matcher_match_decided_false", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+
+
+def _cite_builtin_name_vendor_gates(repo: Path) -> Citation:
+    rel = (
+        "implementations/python/sugar-lift-py-tests/src/"
+        "sugar_lift_py_tests/idd/builtin_closed_operation_instrument.py"
+    )
+    path = repo / rel
+    if not path.is_file():
+        return Citation("product", "builtin_name_or_vendor_gates", rel, -1, {}, [f"missing owner file: {rel}"], "missing_owner")
+    try:
+        # Import as package if possible; else load file and call collect with roots
+        sys.path.insert(0, str(repo / "implementations/python/sugar-lift-py-tests/src"))
+        from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (  # type: ignore
+            collect_builtin_closed_operation_report,
+        )
+
+        roots = [
+            repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+            repo / "implementations/python/sugar-source-tree/src",
+            repo / "implementations/python/sugar-lift-python-source/src",
+        ]
+        report = collect_builtin_closed_operation_report(roots)
+        counts = report.counts() if hasattr(report, "counts") else {}
+        # Prefer name_or_vendor_gates axis if present; else total offenders
+        if isinstance(counts, dict) and "name_or_vendor_gates" in counts:
+            r = int(counts["name_or_vendor_gates"])
+            detail = {"by_axis": counts, "source": "builtin_closed_operation_instrument.collect"}
         else:
-            ss_findings, ss_errors = mod.scan_roots(mod._default_roots(base), repo=base)
-            errors.extend(ss_errors)
-            for row in ss_findings:
-                findings.append(
-                    Finding(
-                        path=row.path,
-                        line=row.line,
-                        column=row.column,
-                        axis=SELF_SEALING,
-                        observed=f"[{row.violation_class}] {row.observed}",
-                    )
-                )
-    return sorted(set(findings)), sorted(errors)
+            r = len(report.offenders)
+            by: dict[str, int] = {}
+            for o in report.offenders:
+                ax = getattr(o, "axis", "unknown")
+                by[ax] = by.get(ax, 0) + 1
+            r = by.get("name_or_vendor_gates", r)
+            detail = {"by_axis": by, "source": "builtin_closed_operation_instrument.collect"}
+        return Citation("product", "builtin_name_or_vendor_gates", rel, r, detail)
+    except Exception as exc:  # noqa: BLE001
+        return Citation("product", "builtin_name_or_vendor_gates", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
 
 
-def format_report(findings: Iterable[Finding], errors: Iterable[str] = ()) -> str:
-    rows = list(findings)
-    error_rows = list(errors)
+# Climb notes — parent does NOT audit these; names the required hatch.
+CLIMB_NOT_AUDIT = (
+    {
+        "face": "nameless_authenticated_identity_product",
+        "stance": "climb",
+        "why": (
+            "Codomain climb: RaiseEffect / Halted faces must require authenticated "
+            "type coordinate (non-Optional). Auditor forever is ceremony if None still constructs."
+        ),
+        "related_children": ["self_sealing PRESENCE-ONLY (tests only)", "RaiseEffect constructor work"],
+    },
+    {
+        "face": "dual_producers_one_fact",
+        "stance": "climb",
+        "why": (
+            "One door: delete the second path so dual production is unrepresentable; "
+            "then delete any ratchet that watched it. Parent must not keep a permanent axis."
+        ),
+        "related_children": ["one_matcher_match_decided_false", "source_audit_presence_identity"],
+    },
+)
+
+MEMBRANE_HONEST = (
+    {
+        "face": "spelling_unauth_dispatch",
+        "stance": "membrane",
+        "owner_axis": "builtin_name_or_vendor_gates + enumeration_binding_soft_skip",
+        "why": "Open grammar/vendor spelling; type cannot close ast.Compare on display text.",
+    },
+    {
+        "face": "swallowed_throws_soft_handlers",
+        "stance": "membrane",
+        "owner_axis": "swallowed_throw_second_mechanism + construction_panic_catch",
+        "why": "Open except surface; sanctioned membranes only; not ceremony if child-owned.",
+    },
+    {
+        "face": "self_sealing_instruments",
+        "stance": "membrane_meta",
+        "owner_axis": "self_sealing",
+        "why": "Open test Python; #6958 sole owner; parent cites only.",
+    },
+)
+
+
+COLLECTORS: list[tuple[str, str, str, Callable[[Path], Citation]]] = [
+    ("product", "one_matcher_match_decided_false", "test_match_decided_one_matcher_law", _cite_one_matcher),
+    ("product", "swallowed_throw_second_mechanism", "swallowed_throw_second_mechanism_law", _cite_swallowed_throw),
+    ("product", "construction_panic_catch", "construction_panic_catch_law", _cite_construction_panic_catch),
+    ("product", "enumeration_binding_soft_skip", "enumeration_binding_soft_skip_law", _cite_enumeration_soft_skip),
+    ("product", "source_audit_presence_identity", "source_audit_presence_identity_law", _cite_source_audit_presence),
+    ("product", "builtin_name_or_vendor_gates", "builtin_closed_operation_instrument", _cite_builtin_name_vendor_gates),
+    ("instrument", "self_sealing", "self_sealing_instrument_law", _cite_self_sealing),
+]
+
+
+def collect_citations(repo: Path) -> list[Citation]:
+    return [fn(repo) for _layer, _axis, _name, fn in COLLECTORS]
+
+
+def format_report(citations: list[Citation]) -> str:
     lines = [
-        "LAW-OF-ONE PARENT R VECTOR",
-        "class=LAW-OF-ONE VIOLATION",
-        "shape=live-scan (no curated site list; no hand threshold)",
+        "LAW-OF-ONE PARENT R VECTOR (Model A — cite only)",
+        "class=SECOND MECHANISM (product) + SELF-SEALING (instrument meta)",
+        "recognition=children only; parent never re-scans owned classes",
         "",
+        "=== climb (no parent auditor) ===",
     ]
-    for axis in AXES:
-        lines.append(
-            f"axis={axis} rung={RUNG[axis]} retire_when={RETIRE_WHEN[axis]}"
-        )
+    for row in CLIMB_NOT_AUDIT:
+        lines.append(f"climb:{row['face']}: {row['why']}")
     lines.append("")
-    for finding in rows:
+    lines.append("=== honest membranes (child-owned) ===")
+    for row in MEMBRANE_HONEST:
+        lines.append(f"membrane:{row['face']}: owner={row['owner_axis']}; {row['why']}")
+    lines.append("")
+    lines.append("=== citations ===")
+    product_r = 0
+    instrument_r = 0
+    missing = 0
+    errors = 0
+    for c in citations:
+        if c.status != "ok":
+            missing += 1 if c.status == "missing_owner" else 0
+            errors += 1 if c.status == "collect_error" else 0
+            lines.append(
+                f"CITATION {c.status} layer={c.layer} axis={c.axis} owner={c.owner} "
+                f"errors={c.errors}"
+            )
+            continue
+        if c.layer == "product":
+            product_r += c.R
+        else:
+            instrument_r += c.R
         lines.append(
-            f"{finding.path}:{finding.line}:{finding.column}: {finding.axis}: "
-            f"{finding.observed}; required fix: {finding.required_fix}"
+            f"cite layer={c.layer} axis={c.axis} owner={c.owner} "
+            f"R={c.R} detail={json.dumps(c.detail, sort_keys=True)[:200]}"
         )
-    lines.extend(f"AUDITOR-ERROR: {error}" for error in error_rows)
-    by_axis = {axis: sum(r.axis == axis for r in rows) for axis in AXES}
-    lines.append(f"R_law_of_one_total = {len(rows)}")
-    for axis, count in by_axis.items():
-        key = axis.lower().replace("-", "_")
-        lines.append(f"R_{key} = {count}")
-    lines.append(f"R_auditor_errors = {len(error_rows)}")
-    # Zeros are measurements that must be preserved — print them explicitly.
+        for e in c.errors:
+            lines.append(f"  child_error: {e}")
+
+    lines.append("")
+    lines.append(f"R_product_second_mechanism_cited = {product_r}")
+    lines.append(f"R_instrument_self_sealing_cited = {instrument_r}")
+    lines.append(f"R_citation_missing_owners = {missing}")
+    lines.append(f"R_citation_collect_errors = {errors}")
     lines.append(
-        "stable_zero_requires: all R_* == 0 and R_auditor_errors == 0 "
-        "(zeros are load-bearing; do not baseline remaining debt)"
+        "stable_zero_requires: every product citation R==0 AND instrument citation R==0 "
+        "AND no missing owners AND no collect errors "
+        "(layers reported separately; never one blended 'done' number)"
+    )
+    lines.append(
+        "retirement: when a child climbs to type/door and is deleted, drop its citation; "
+        "do not baseline"
     )
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("roots", nargs="*", type=Path)
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--json", type=Path)
-    parser.add_argument(
-        "--no-self-sealing",
-        action="store_true",
-        help="skip folding self_sealing_instrument_law (axis still reported as 0)",
-    )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     repo = args.repo.resolve()
-    roots = tuple(p.resolve() for p in args.roots) if args.roots else None
-    findings, errors = scan_roots(
-        roots, repo=repo, include_self_sealing=not args.no_self_sealing
-    )
-    print(format_report(findings, errors))
+    citations = collect_citations(repo)
+    print(format_report(citations))
+    product_r = sum(c.R for c in citations if c.layer == "product" and c.status == "ok")
+    instrument_r = sum(c.R for c in citations if c.layer == "instrument" and c.status == "ok")
+    bad = [c for c in citations if c.status != "ok" or c.R != 0]
     if args.json is not None:
-        by_axis = {axis: sum(f.axis == axis for f in findings) for axis in AXES}
         args.json.write_text(
             json.dumps(
                 {
-                    "kind": "law-of-one-parent-vector",
-                    "class": "LAW-OF-ONE VIOLATION",
-                    "R": len(findings),
-                    "byAxis": by_axis,
-                    "auditorErrors": errors,
-                    "findings": [f.to_value() for f in findings],
-                    "rung": RUNG,
-                    "retireWhen": RETIRE_WHEN,
+                    "kind": "law-of-one-parent-vector-model-a",
+                    "model": "A_cite_only",
+                    "class": "SECOND MECHANISM + instrument meta",
+                    "R_product_second_mechanism_cited": product_r,
+                    "R_instrument_self_sealing_cited": instrument_r,
+                    "climb_not_audit": list(CLIMB_NOT_AUDIT),
+                    "membrane_honest": list(MEMBRANE_HONEST),
+                    "citations": [c.to_value() for c in citations],
                 },
                 indent=2,
                 sort_keys=True,
@@ -655,7 +440,7 @@ def main() -> int:
             + "\n",
             encoding="utf-8",
         )
-    return 1 if findings or errors else 0
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
