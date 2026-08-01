@@ -228,6 +228,8 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
     ).read_text(encoding="utf-8")
     assert "return SoftUnresolvedWithSugar" not in nodes
     assert "from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import" not in nodes
+    assert "return SoftUnresolvedTrySugar" not in nodes
+    assert "from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import" not in nodes
 
     parso = (
         _PYTHON_ROOT / "sugar-source-tree/src/sugar_source_tree/parso_adapter.py"
@@ -263,37 +265,47 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
         for o in offenders
     ), _SCANNER.format_report(offenders)
     assert not any(
-        o.path.endswith("nodes.py")
-        and o.kind == "soft-unresolved-sugar-return"
-        and "With" in o.note
+        o.path.endswith("nodes.py") and o.kind == "soft-unresolved-sugar-return"
         for o in offenders
     ), _SCANNER.format_report(offenders)
     assert not any(
         o.path.endswith("manager_construction.py")
         and o.kind == "construction-panic-soft-continue"
-        and "factoryPrefix" in o.note
         for o in offenders
+    ), _SCANNER.format_report(offenders)
+    assert not any(
+        o.path.endswith("bind_lifter.py") and o.kind == "exception-soft-continue"
+        for o in offenders
+    ), _SCANNER.format_report(offenders)
+    assert not any(
+        o.path.endswith("bench_backends.py") and o.kind == "exception-soft-continue"
+        for o in offenders
+    ), _SCANNER.format_report(offenders)
+    # Permanent membrane residual: multi-file corpus census only.
+    residual = [
+        o
+        for o in offenders
+        if o.kind == "exception-soft-continue"
+    ]
+    assert all(o.path.endswith("census.py") for o in residual), _SCANNER.format_report(
+        offenders
     )
-    # factory-prefix survivor seal gone: no kept_prefix path left (content pin above).
-    # Nested ConstructionPanic continue at force_floor may remain as residual R.
 
 
 def test_live_scan_reports_named_axes_and_residual_is_nonzero_until_drained() -> None:
-    """Live R is measured output: axes named, residual remaining after this drain."""
+    """Live R is measured output: axes named; residual is census membrane only."""
     offenders = _SCANNER.scan_python_root(_PYTHON_ROOT)
     counts = _SCANNER.axis_counts(offenders)
     for axis in _SCANNER._AXES:
         assert axis in counts
-    # literal_eval axis must be zero after this drain
     assert counts["R_literal_eval_raw_substitution"] == 0
-    # SoftUnresolvedWith drained; SoftUnresolvedTry residual may remain
-    soft = [
-        o
-        for o in offenders
-        if o.kind == "soft-unresolved-sugar-return"
-    ]
-    assert all("Try" in o.note or "Try" in o.fix for o in soft) or soft == []
-    # Report must be non-empty text with axis headers
+    assert counts["R_soft_unresolved_sugar_return"] == 0
+    assert counts["R_construction_panic_soft_continue"] == 0
+    # Permanent open-domain membrane: multi-file census defect enumeration.
+    assert counts["R_exception_soft_continue"] == 1
+    assert all(
+        o.path.endswith("census.py") for o in offenders
+    ), _SCANNER.format_report(offenders)
     report = _SCANNER.format_report(offenders)
     assert "R_construction_panic_soft_continue" in report
     assert "R_exception_soft_continue" in report

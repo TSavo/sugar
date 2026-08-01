@@ -2695,6 +2695,7 @@ def _serialize_source_call_binding_gap(exc: BaseException) -> dict[str, Any] | N
 
 def _serve() -> None:
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
     request_count = 0
     while True:
@@ -2781,10 +2782,11 @@ def _serve() -> None:
             )
             _log_resident_profile(request_count, msg.get("method"))
             continue
-        except Exception as exc:
+        except SourceCallBindingGap as exc:
+            # Typed process membrane: serialize and keep serving.
+            # Unrelated Exceptions are not held — they rise (honorable).
             typed = _serialize_source_call_binding_gap(exc)
-            if typed is None:
-                raise
+            assert typed is not None
             _send(
                 {
                     "jsonrpc": "2.0",
