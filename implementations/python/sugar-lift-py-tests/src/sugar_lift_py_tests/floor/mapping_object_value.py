@@ -199,7 +199,10 @@ class MappingObjectValue(ObjectValue):
             construction_panic_gap(
                 owner="MappingObjectValue.get",
                 blame=blame,
-                observed="undecidable mapping key equality",
+                observed=(
+                    "undecidable mapping key equality: "
+                    f"key={type(key).__name__} over {type(self).__name__}"
+                ),
                 requested="one source-decided finite mapping key",
                 fix="construct key equality or keep get typed loud",
             )

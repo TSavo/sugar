@@ -1294,7 +1294,11 @@ def outcome_to_exitset(outcome) -> ExitSet:
         construction_panic_gap(
             owner="outcome_to_exitset",
             blame=outcome.demand.source_node,
-            observed="undischarged native operation demand",
+            observed=(
+                "undischarged native operation demand: "
+                f"{type(outcome).__name__} demand="
+                f"{type(outcome.demand).__name__}"
+            ),
             requested=(
                 "an ExitSet projected from authenticated caller actual operands"
             ),

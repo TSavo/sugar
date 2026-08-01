@@ -162,7 +162,10 @@ class SubscriptDeleteEffectSugar(Sugar):
             raise SugarNotWritten(
                 owner="SubscriptDeleteEffectSugar._delete",
                 blame=self.site,
-                observed="undischarged subscript delete over runtime-selected receiver",
+                observed=(
+                    "undischarged subscript delete over runtime-selected receiver: "
+                    f"{type(receiver).__name__}[{type(index).__name__}]"
+                ),
                 requested=(
                     "NativeOperationExitCarrierV1 n-ary delitem demand over "
                     "receiver and key formal coordinates"

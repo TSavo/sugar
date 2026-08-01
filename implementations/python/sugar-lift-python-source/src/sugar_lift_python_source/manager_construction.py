@@ -3431,7 +3431,12 @@ def _install_opaque_call_obligation(
         raise BackendDefect(
             blame=call.fragment,
             owner="manager_construction._install_opaque_call_obligation",
-            observed="conflicting opaque-call obligation",
+            observed=(
+                "conflicting opaque-call obligation at "
+                f"coordinate={coordinate!r} "
+                f"existing={type(existing).__name__} "
+                f"new={type(obligation).__name__}"
+            ),
             requested="byte-identical duplicate testimony",
             fix="resolve the conflicting target or authenticated owner",
         )

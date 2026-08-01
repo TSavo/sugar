@@ -71,7 +71,10 @@ class MappingPopResultSugar(ConstructedTermSugar):
             construction_panic_gap(
                 owner="MappingPopResultSugar",
                 blame=self.site,
-                observed="undecidable mapping key equality",
+                observed=(
+                    "undecidable mapping key equality: "
+                    f"key={type(key).__name__} over {type(receiver).__name__}"
+                ),
                 requested="one source-decided finite mapping key",
                 fix="construct key equality or keep pop typed loud",
             )

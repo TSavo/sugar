@@ -179,7 +179,11 @@ class SubscriptAugAssignSugar(Sugar):
             raise SugarNotWritten(
                 owner="SubscriptAugAssignSugar._store",
                 blame=self.set_site,
-                observed="undischarged augmented subscript store over undecided receiver",
+                observed=(
+                    "undischarged augmented subscript store over undecided receiver: "
+                    f"{type(receiver).__name__}[{type(index).__name__}]="
+                    f"{type(result).__name__}"
+                ),
                 requested=(
                     "NativeOperationExitCarrierV1 n-ary setitem demand over "
                     "receiver, key, and result formal coordinates"

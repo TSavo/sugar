@@ -234,7 +234,11 @@ class SubscriptStoreEffectSugar(Sugar):
             raise SugarNotWritten(
                 owner="SubscriptStoreEffectSugar._store",
                 blame=self.site,
-                observed="undischarged subscript store over runtime-selected receiver",
+                observed=(
+                    "undischarged subscript store over runtime-selected receiver: "
+                    f"{type(receiver).__name__}[{type(index).__name__}]="
+                    f"{type(value).__name__}"
+                ),
                 requested=(
                     "NativeOperationExitCarrierV1 n-ary setitem demand over "
                     "receiver, key, and value formal coordinates"
