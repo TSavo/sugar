@@ -70,6 +70,7 @@ HEAVY_ROSTER = {
     "numpy-wall": "NumPy Wall Ratchet",
     "pandas-wall": "Pandas Wall Ratchet",
     "restored-suite-scoreboard": "Restored Suite Scoreboard",
+    "control-effect-recensus": "Control-effect recensus (authoritative scoreboard)",
 }
 
 # Cadence per class. Verified against each workflow's own triggers by
@@ -82,6 +83,12 @@ HEAVY_CADENCE = {
     "numpy-wall": NIGHTLY_WINDOW,
     "pandas-wall": NIGHTLY_WINDOW,
     "restored-suite-scoreboard": NIGHTLY_WINDOW,
+    # THE AUTHORITY ITSELF. control_effect_recensus.py declares
+    # SCOREBOARD_AUTHORITY = True and is the sole producer of
+    # R_construction_panics, yet it was in no workflow and on no roster -- a
+    # hand-run tool, which is why product R was last measured 2026-07-26. Its
+    # silence was not even a question anybody asked.
+    "control-effect-recensus": NIGHTLY_WINDOW,
 }
 
 
