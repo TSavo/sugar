@@ -1357,7 +1357,6 @@ def authenticated_module_exports(
         # every showcase that walks call-contract exports.
         module_is_package=path.name == "__init__.py",
         module_identities={},
-        module_is_package=path.name == "__init__.py",
     )
     rows: list[dict[str, Any]] = []
     for local, reaching in sorted(final_state.items()):
