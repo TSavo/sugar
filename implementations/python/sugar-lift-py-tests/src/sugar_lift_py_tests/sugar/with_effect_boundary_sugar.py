@@ -448,10 +448,12 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             refusal.unresolved_warning_producers = unresolved_members
             raise refusal
         if len(observations) != 1:
-            # pytest.warns is EXISTENTIAL: one authenticated observation is the
-            # written surface. Cardinality ≠ 1 is not a decided miss — deciding
-            # False here fabricates ExpectationNotMet without asking the
-            # three-valued matcher. Sugar not written for multi-obs (yet).
+            # LAW OF ONE: match/miss meaning is only warning_effect_message_verdict
+            # (the one matcher) after sugar produced one authenticated observation.
+            # pytest.warns is EXISTENTIAL — one written surface. Cardinality ≠ 1
+            # is not a settled miss: deciding MatchDecided(False) here would be a
+            # second mechanism (ad-hoc count → fabricated ExpectationNotMet).
+            # Sugar not written for multi-obs yet; throw, do not decide.
             raise SugarNotWritten(
                 blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
@@ -468,6 +470,7 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
                 ),
             )
         index, observation = observations[0]
+        # ONE matcher: identity + optional message. No local MatchDecided mint.
         verdict = warning_effect_message_verdict(
             observation.effect, expected, pattern
         )

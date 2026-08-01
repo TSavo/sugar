@@ -194,17 +194,23 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
 
 
 def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
-    """Bare except matches any raise; typed arms use constructed identity.
+    """Bare except matches any raise; typed arms use the ONE matcher.
 
-    The codomain is the shared matcher's: ``MatchDecided`` when the arm settles
-    at lift, ``MatchRetained`` when the identity test is real and open. The
-    caller must route BOTH faces of a retention -- never treat it as a match
-    and never as a miss.
+    LAW OF ONE: tree shadows → sugar → meaning. Settled match/miss meaning is
+    only ``matches_raise_effect`` in ``authenticated_exception_matching``
+    (authenticated operands in, ``MatchDecided`` / ``MatchRetained`` out).
+    This function does not decide miss. It either:
 
-    Ordinary except routes only ``RaiseEffect``. ``GroupedRaiseEffect`` is a
-    sibling dataclass (not a subclass); minting ``MatchDecided(False)`` for it
-    fabricates a miss on an effect kind this router cannot read. Mirror
-    ``TryStarSugar``: throw a named ``SugarNotWritten`` instead.
+    - refuses with ``SugarNotWritten`` when the effect kind is not what ordinary
+      except sugar reads (``GroupedRaiseEffect`` is a sibling of ``RaiseEffect``,
+      not a subclass — same membrane as ``TryStarSugar``), or when the handler
+      type did not construct; or
+    - returns the one matcher's verdict for typed arms; or
+    - returns ``MatchDecided(True)`` for bare except over a real ``RaiseEffect``
+      (written bare-except sugar — no type operand to match).
+
+    Minting ``MatchDecided(False)`` here would be a second mechanism: ad-hoc
+    Python fabricating a miss outside the tree→sugar path.
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.authenticated_exception_matching import (
