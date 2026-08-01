@@ -108,7 +108,14 @@ def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome)
 
 
 def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
-    """Ordering law: undecided rich-method dispatch is a two-face partition."""
+    """Ordering law: undecided / default floor throws named (LAW_OF_ONE).
+
+    Ordering meaning is Sugar. Floor defaults must not mint
+    ``Complete(PredicateValue)``; when they refuse, ``outcome`` is never a
+    completed predicate dual-edge. This publisher is a no-op safety net for
+    residual Complete(PredicateValue) fabrications — equality/membership still
+    use the shared dual-edge helper where they have not yet been retired.
+    """
     return _publish_undecided_dispatch_edges(
         left,
         right,
