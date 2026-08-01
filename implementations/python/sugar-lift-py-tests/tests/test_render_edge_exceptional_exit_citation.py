@@ -10,32 +10,33 @@ Exactly one way to do anything:
 That is it. NO OTHER MECHANISM.
 
 Exception IDENTITY is meaning. It must come from Sugar / the tree — never
-from a Python ``or`` fallback that substitutes a literal at the boundary.
-``or "reraise"`` and ``or 'unavailable'`` are a second mechanism inventing
-meaning outside the tree. Doctrine: throwing is HONORABLE (code not written
-yet). The SIN is half-writing an answer outside the tree. Fix = throw, never
-substitute a placeholder.
+from a Python default that substitutes a literal at the boundary.
+``or "reraise"``, ``x if c else "reraise"``, and field values equal to those
+placeholders are second mechanisms inventing meaning outside the tree.
+Doctrine: throwing is HONORABLE (code not written yet). The SIN is half-writing
+an answer outside the tree. Fix = throw, never substitute a placeholder.
 
 A nameless face must not reach FOL as a citable ``py.exceptional_exit``.
+A face whose exception_name *is* a fabricated placeholder must not either.
 Authenticated bare re-raise re-emits the in-flight effect's real identity
 (from the tree); it does not mint the string ``"reraise"``.
 
-GATE: truthful twin cites under real evidence; lying twin (nameless face
-rendered as a cited exit) MUST FAIL.
+GATE: truthful twin cites under real evidence; lying twins (nameless face,
+fabricated-name face, missing citation) MUST FAIL.
 
-LAW_OF_ONE AUDITOR BLIND SPOT — SAY THIS LOUDLY
-===============================================
+LAW_OF_ONE AUDITOR BLIND SPOT
+=============================
 ``tests/law_of_one_auditor.py`` + ``law_of_one_evidence.py`` audit SourceFile
 owner paths, privacy closure, projection closure, and protocol zero-work.
-They do **not** walk floor render edges, BoolOp ``or``-literal meaning
-invention, or exceptional-exit FOL emission.
+They do **not** walk floor render edges, fabricated-meaning literal invention,
+or exceptional-exit FOL emission. This module owns recognition of that class.
+When the LAW_OF_ONE auditor gains a floor-render / meaning-invention axis that
+names live offenders of this class, retire the blind-spot probe below.
 
-  R_law_of_one_auditor_cannot_see_render_edge_fabrication = 1
-
-This module is the instrument that can see the sin: a runtime twin for
-nameless emission, plus an AST tooth for the second-mechanism shape
-(``x or "reraise"`` / ``x or 'unavailable'``) on the emission door.
-When the LAW_OF_ONE auditor gains a floor-render axis, retire this note.
+Retirement path for the production denylist
+(``FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS``): promote exception_name to a
+typed constructor that can only be built from tree/Sugar testimony so the
+placeholder strings become unrepresentable as identity.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.raise_value import (
+    FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS,
     RaiseValue,
     _exceptional_exit_formula,
     _exceptional_exit_term,
@@ -57,16 +59,6 @@ from sugar_lift_py_tests.ir import ctor, str_const
 
 _SHA = "a" * 64
 _LOCUS = "pkg/mod.py:12:4"
-
-# Literals that invent exceptional-exit meaning at the render edge.
-# Identity / citation evidence must come from the tree, never these strings.
-_FABRICATED_MEANING_LITERALS = frozenset(
-    {
-        "reraise",
-        "unavailable",
-        "<unknown raise locus>",
-    }
-)
 
 _RAISE_VALUE_PATH = (
     Path(__file__).resolve().parents[1]
@@ -103,42 +95,66 @@ def _coordinate_cited_effect(**overrides) -> RaiseEffect:
     return RaiseEffect(**fields)
 
 
-def or_literal_meaning_offenders(source: str, *, path: str = "<planted>") -> list[str]:
-    """AST tooth: ``or`` with a fabricated-meaning string is a second mechanism.
+def _is_fabricated_constant(node: ast.AST) -> str | None:
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS
+    ):
+        return node.value
+    return None
 
-    LAW OF ONE: meaning comes from Sugar/the tree. A BoolOp ``or`` whose
-    right-hand (or any operand after the first) is a Constant in the
-    fabricated set invents exception identity / citation at the boundary.
+
+def fabricated_meaning_offenders(source: str, *, path: str = "<planted>") -> list[str]:
+    """AST tooth: second-mechanism defaults that invent exceptional-exit meaning.
+
+    LAW OF ONE: meaning comes from Sugar/the tree. Recognized shapes:
+    - BoolOp ``or`` with a fabricated Constant (historical ``x or "reraise"``)
+    - IfExp with a fabricated Constant on either branch
+      (``x if c else "reraise"`` / ``"reraise" if c else x``)
+
+    Retirement: when production types make these spellings unrepresentable as
+    identity, this scanner becomes a pure reintroduction detector and may stay
+    as a membrane over open Python source, or retire if the denylist does.
     """
     tree = ast.parse(source, filename=path)
     offenders: list[str] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
-            continue
-        for operand in node.values:
-            if (
-                isinstance(operand, ast.Constant)
-                and isinstance(operand.value, str)
-                and operand.value in _FABRICATED_MEANING_LITERALS
-            ):
-                offenders.append(
-                    f"{path}:{getattr(node, 'lineno', 0)}: "
-                    f"or {operand.value!r} invents exceptional-exit meaning"
-                )
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            for operand in node.values:
+                lit = _is_fabricated_constant(operand)
+                if lit is not None:
+                    offenders.append(
+                        f"{path}:{getattr(node, 'lineno', 0)}: "
+                        f"or {lit!r} invents exceptional-exit meaning"
+                    )
+        elif isinstance(node, ast.IfExp):
+            for branch, label in ((node.body, "if-body"), (node.orelse, "if-else")):
+                lit = _is_fabricated_constant(branch)
+                if lit is not None:
+                    offenders.append(
+                        f"{path}:{getattr(node, 'lineno', 0)}: "
+                        f"{label} {lit!r} invents exceptional-exit meaning"
+                    )
     return offenders
 
 
+# Back-compat alias used by older call sites in this module's history.
+or_literal_meaning_offenders = fabricated_meaning_offenders
+
+
 # ---------------------------------------------------------------------------
-# LAW_OF_ONE auditor cannot see this sin — pin the blind spot
+# LAW_OF_ONE auditor cannot see this sin — real probe, no tautological R pin
 # ---------------------------------------------------------------------------
 
 
 def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
-    """LOUD: the independent LAW_OF_ONE product auditor is blind to this axis.
+    """Probe: the product LAW_OF_ONE auditor still has no render-edge axis.
 
-    Its evidence contract (owner path / privacy / projection / zero-work)
-    has no field for floor FOL emission or ``or``-literal meaning invention.
-    This tooth owns that recognition until a stronger substrate exists.
+    Fails when auditor/evidence text gains the vocabulary of this class
+    (exceptional_exit / reraise / RaiseValue on the evidence types) — that
+    is the signal the stronger substrate arrived and this note can retire.
+    There is no hard-coded R=1; the probe is the absence of those markers.
     """
     auditor = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_auditor.py"
     evidence = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_evidence.py"
@@ -149,32 +165,26 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
     evidence_text = evidence.read_text(encoding="utf-8")
 
     # Strings that would mean the auditor already owns *this* axis.
-    # (Other reds may say "unavailable" about unrelated product gaps.)
-    assert "reraise" not in auditor_text
+    assert "reraise" not in auditor_text, (
+        "law_of_one_auditor mentions reraise — re-check whether it now owns "
+        "render-edge fabrication and retire this module's blind-spot claim"
+    )
     assert "exceptional_exit" not in auditor_text
     assert "or \"reraise\"" not in auditor_text
     assert "source-sha256" not in auditor_text
-    # Evidence types are SourceFile-product only — no render-edge axis.
     assert "RenderEdge" not in evidence_text
     assert "exceptional_exit" not in evidence_text
     assert "RaiseValue" not in evidence_text
-
-    # Receipt axis the existing auditor does not measure. R stays 1 until
-    # law_of_one_auditor grows a floor-render / meaning-invention axis.
-    R_law_of_one_auditor_cannot_see_render_edge_fabrication = 1
-    assert R_law_of_one_auditor_cannot_see_render_edge_fabrication == 1, (
-        "LAW_OF_ONE auditor still cannot see render-edge fabrication; "
-        "this module remains the recognizing instrument"
-    )
+    assert "FABRICATED_EXCEPTIONAL_EXIT" not in auditor_text
 
 
 # ---------------------------------------------------------------------------
-# AST tooth: second-mechanism ``or``-literal meaning (Law of One shape)
+# AST tooth: second-mechanism fabricated-meaning literals
 # ---------------------------------------------------------------------------
 
 
 def test_ast_tooth_lying_twin_or_reraise_is_visible() -> None:
-    """Planted second mechanism must be recognized — the historical sin shape."""
+    """Planted BoolOp ``or`` second mechanism must be recognized."""
     planted = '''
 def _exceptional_exit_term(effect):
     name = effect.exception_name or "reraise"
@@ -182,21 +192,41 @@ def _exceptional_exit_term(effect):
     locus = effect.blame or "<unknown raise locus>"
     return name, cite, locus
 '''
-    offenders = or_literal_meaning_offenders(planted, path="planted.py")
+    offenders = fabricated_meaning_offenders(planted, path="planted.py")
     assert len(offenders) == 3, offenders
     assert any("reraise" in row for row in offenders)
     assert any("unavailable" in row for row in offenders)
     assert any("unknown raise locus" in row for row in offenders)
 
 
-def test_ast_tooth_truthful_raise_value_has_zero_or_literal_meaning() -> None:
-    """Production emission door: R=0 for fabricated-meaning ``or`` literals."""
+def test_ast_tooth_lying_twin_ifexp_reraise_is_visible() -> None:
+    """Planted IfExp default (if/else form of the same sin) must be recognized.
+
+    The historical AST tooth only saw BoolOp ``or``. Reintroduction via
+    ``x if c else "reraise"`` is the same second mechanism in different clothes.
+    """
+    planted = '''
+def _exceptional_exit_term(effect):
+    name = effect.exception_name if effect.exception_name is not None else "reraise"
+    cite = "unavailable" if effect.source_sha256 is None else effect.source_sha256
+    locus = effect.blame if effect.blame is not None else "<unknown raise locus>"
+    return name, cite, locus
+'''
+    offenders = fabricated_meaning_offenders(planted, path="planted_ifexp.py")
+    assert len(offenders) == 3, offenders
+    assert any("reraise" in row for row in offenders)
+    assert any("unavailable" in row for row in offenders)
+    assert any("unknown raise locus" in row for row in offenders)
+
+
+def test_ast_tooth_truthful_raise_value_has_zero_fabricated_meaning_defaults() -> None:
+    """Production emission door: R=0 for fabricated-meaning default shapes."""
     source = _RAISE_VALUE_PATH.read_text(encoding="utf-8")
-    offenders = or_literal_meaning_offenders(
+    offenders = fabricated_meaning_offenders(
         source, path=str(_RAISE_VALUE_PATH)
     )
     assert offenders == [], (
-        "render-edge emission invents meaning via or-literal; "
+        "render-edge emission invents meaning via default literal; "
         "Law of One: identity comes from the tree only. Offenders:\n"
         + "\n".join(offenders)
     )
@@ -211,7 +241,15 @@ def has_identity(effect):
         or effect.exception_type_coordinate is not None
     )
 '''
-    assert or_literal_meaning_offenders(clean) == []
+    assert fabricated_meaning_offenders(clean) == []
+
+
+def test_ast_tooth_does_not_flag_ifexp_without_fabricated_literal() -> None:
+    clean = '''
+def pick(a, b, c):
+    return a if c else b
+'''
+    assert fabricated_meaning_offenders(clean) == []
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +290,7 @@ def test_truthful_raise_value_post_contribution_is_the_cited_formula() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lying twin: nameless / uncited faces MUST NOT emit a citable exit
+# Lying twin: nameless / uncited / fabricated-name faces MUST NOT emit
 # ---------------------------------------------------------------------------
 
 
@@ -270,17 +308,18 @@ def test_nameless_face_cannot_reach_fol_emission() -> None:
         _exceptional_exit_term(nameless)
 
     info = raised.value.info
-    assert "neither" in info.observed or "no authenticated" in info.observed.lower()
-    # Must not have produced a greened FOL term under a made-up name.
-    with pytest.raises(ConstructionPanic):
-        term = _exceptional_exit_term(nameless)
-        assert term.args[0] == str_const("reraise")
+    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert "neither" in info.observed
+    assert "exception_name" in info.observed
+    assert "exception_type_coordinate" in info.observed
+    assert "reraise" in info.fix
 
 
 def test_nameless_raise_value_post_contribution_stays_loud() -> None:
     """post_contribution is the same door — nameless cannot soft-emit."""
-    with pytest.raises(ConstructionPanic):
+    with pytest.raises(ConstructionPanic) as raised:
         RaiseValue(RaiseEffect(blame=_LOCUS)).post_contribution()
+    assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
 
 
 def test_name_without_source_sha_cannot_cite_unavailable() -> None:
@@ -294,11 +333,10 @@ def test_name_without_source_sha_cannot_cite_unavailable() -> None:
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
 
-    text = str(raised.value)
-    assert "unavailable" not in text or "source" in text.lower()
-    with pytest.raises(ConstructionPanic):
-        term = _exceptional_exit_term(effect)
-        assert "unavailable" in str(term.args[1])
+    info = raised.value.info
+    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert "source_sha256" in info.observed
+    assert "unavailable" in info.fix
 
 
 def test_name_without_blame_cannot_cite_unknown_locus() -> None:
@@ -312,24 +350,80 @@ def test_name_without_blame_cannot_cite_unknown_locus() -> None:
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
 
-    with pytest.raises(ConstructionPanic):
-        term = _exceptional_exit_term(effect)
-        assert "unknown raise locus" in str(term.args[1])
+    info = raised.value.info
+    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert "blame" in info.observed
+    assert "unknown raise locus" in info.fix
 
 
 def test_fabricated_reraise_string_is_not_authenticated_bare_raise() -> None:
-    """Bare re-raise re-emits the in-flight effect; it does not mint 'reraise'.
-
-    A face whose only 'identity' would have been the render-edge default
-    string stays unrepresentable at FOL emission.
-    """
-    # No name, no type coordinate — the historical path that became "reraise".
+    """Nameless face with locus+sha (historical path that became 'reraise')."""
     effect = RaiseEffect(blame=_LOCUS, source_sha256=_SHA)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
 
     info = raised.value.info
-    # Throw carries the blame coordinate — honorable named refusal.
-    assert _LOCUS in info.blame or _LOCUS in str(raised.value)
-    assert info.owner  # named owner, not an AttributeError
+    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert _LOCUS in info.blame
+    assert "neither" in info.observed
+
+
+def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
+    """LYING TWIN: relocating the sin onto the field must still be red.
+
+    A face with exception_name='reraise' plus real blame/sha used to green a
+    citable exit after the first refuse-placeholders shot. Fabricated
+    identity is not authenticated identity.
+    """
+    effect = RaiseEffect(
+        exception_name="reraise",
+        blame=_LOCUS,
+        source_sha256=_SHA,
+    )
+
+    with pytest.raises(ConstructionPanic) as raised:
+        _exceptional_exit_term(effect)
+
+    info = raised.value.info
+    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert "fabricated" in info.observed
+    assert "reraise" in info.observed
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    sorted(FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS),
+)
+def test_every_fabricated_meaning_literal_as_name_is_loud(placeholder: str) -> None:
+    """Every denylist member as exception_name is an offender class, not a name."""
+    effect = RaiseEffect(
+        exception_name=placeholder,
+        blame=_LOCUS,
+        source_sha256=_SHA,
+    )
+    with pytest.raises(ConstructionPanic) as raised:
+        _exceptional_exit_term(effect)
+    assert placeholder in raised.value.info.observed
+    assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
+
+
+def test_empty_exception_name_cannot_reach_fol() -> None:
+    """Empty spelling is not tree-authenticated identity."""
+    effect = RaiseEffect(
+        exception_name="",
+        blame=_LOCUS,
+        source_sha256=_SHA,
+    )
+    with pytest.raises(ConstructionPanic) as raised:
+        _exceptional_exit_term(effect)
+    assert "empty" in raised.value.info.observed
+    assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
+
+
+def test_kwarg_fabricated_name_cannot_bypass_face_check() -> None:
+    """``_exceptional_exit_term(..., exception_name='reraise')`` is the same mouth."""
+    effect = _coordinate_cited_effect()
+    with pytest.raises(ConstructionPanic) as raised:
+        _exceptional_exit_term(effect, exception_name="reraise")
+    assert "reraise" in raised.value.info.observed

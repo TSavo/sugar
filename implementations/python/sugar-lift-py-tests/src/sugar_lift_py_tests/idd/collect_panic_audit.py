@@ -305,20 +305,40 @@ def _run_subprocess_with_file_watchdog(
                 process.kill()
                 stdout, stderr = process.communicate()
             # A timeout kills the whole subprocess: every file after the blamed
-            # one was never attempted. Report that shrinkage by name — blaming
-            # one file while half-writing "the rest did not exist" is the sin.
+            # one was never attempted. Emit TWO extractable panic lines:
+            # (1) the blamed-file timeout, (2) the population shortfall as its
+            # own structured record — prose-only remainder was half-writing R.
             attempted = _transport_files_seen(transport_log)
             expected_total = _expected_audit_file_count(command, cwd)
             files_attempted = len(attempted)
             if expected_total is None:
-                never_prose = "files never attempted unknown (target file count unavailable)"
-                population_prose = f"files attempted {files_attempted}"
+                population_prose = (
+                    f"files attempted {files_attempted}; "
+                    "files never attempted unknown (target file count unavailable)"
+                )
+                population_row = (
+                    "audit population shortfall panicked "
+                    "owner=idd.collect_panic_audit "
+                    f"blame={current_file} "
+                    "observed=never-attempted-unknown "
+                    f"requested=attempted-{files_attempted}-of-unknown "
+                    "fix=pass an explicit existing path target so the audit can "
+                    "name the unattempted remainder; do not invent expected=0"
+                )
             else:
                 files_never_attempted = max(0, expected_total - files_attempted)
-                never_prose = f"files never attempted {files_never_attempted}"
                 population_prose = (
                     f"files attempted {files_attempted} of {expected_total}; "
-                    f"{never_prose}"
+                    f"files never attempted {files_never_attempted}"
+                )
+                population_row = (
+                    "audit population shortfall panicked "
+                    "owner=idd.collect_panic_audit "
+                    f"blame={current_file} "
+                    f"observed=never-attempted-{files_never_attempted} "
+                    f"requested=attempted-{files_attempted}-of-{expected_total} "
+                    "fix=timeout aborted unattempted files; keep them in R until "
+                    "each is lifted or the population is re-declared"
                 )
             timeout_row = (
                 "audit file timed out and panicked "
@@ -330,7 +350,9 @@ def _run_subprocess_with_file_watchdog(
                 f"the timeout aborted the remaining unattempted files "
                 f"({population_prose})"
             )
-            combined_stderr = f"{stderr.rstrip()}\n{timeout_row}\n"
+            combined_stderr = (
+                f"{stderr.rstrip()}\n{timeout_row}\n{population_row}\n"
+            )
             return CommandResult(124, stdout, combined_stderr)
 
 
