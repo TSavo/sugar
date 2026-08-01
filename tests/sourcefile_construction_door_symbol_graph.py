@@ -1,4 +1,8 @@
-"""Source-ordered, scope-correct symbol graph for the LAW_OF_ONE auditor."""
+"""Source-ordered, scope-correct symbol graph for the construction-door auditor.
+
+Support graph for ``sourcefile_construction_door_auditor`` only — not a
+Law-of-One meaning census.
+"""
 
 from __future__ import annotations
 
