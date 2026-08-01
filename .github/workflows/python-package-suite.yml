@@ -169,7 +169,9 @@ jobs:
         shell: bash
         working-directory: implementations/python
         env:
-          PYTHONPATH: ${{ github.workspace }}/tools
+          # tools/ for the suite report plugin; checkout roots from the env
+          # action (first-party must NOT come from site-packages).
+          PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
         run: |
           set -uo pipefail
           cat > "$RUNNER_TEMP/sweep.sh" <<'SWEEP'
@@ -357,7 +359,9 @@ jobs:
         shell: bash
         working-directory: implementations/python
         env:
-          PYTHONPATH: ${{ github.workspace }}/tools
+          # tools/ for the suite report plugin; checkout roots from the env
+          # action (first-party must NOT come from site-packages).
+          PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
         run: |
           set -uo pipefail
           cat > "$RUNNER_TEMP/sweep-${{ matrix.order }}.sh" <<'SWEEP'

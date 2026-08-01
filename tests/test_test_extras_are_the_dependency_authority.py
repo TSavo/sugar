@@ -218,11 +218,22 @@ def bare_requirements(command: str) -> list[str]:
             skip_next = False
             continue
         if token.startswith("-"):
-            if token in {"--index-url", "--extra-index-url", "-r", "-c"}:
+            if token in {
+                "--index-url",
+                "--extra-index-url",
+                "--find-links",
+                "-r",
+                "-c",
+                "-f",
+            }:
                 skip_next = True
             continue
         if "/" in token or token.startswith(".") or token.endswith(".txt"):
             continue  # path install
+        if token.endswith(".whl"):
+            continue  # wheel file by name (third-party wheelhouse install)
+        if "$" in token or token.startswith("{"):
+            continue  # shell expansion / array (e.g. "${third_party[@]}")
         if token in {"pip", "install", "python", "-m"}:
             continue
         bare.append(normalize(token))
@@ -417,8 +428,14 @@ def test_the_environment_action_is_the_one_bound_definition() -> None:
 
     Tooth 5 accepts delegation to `.github/actions/python-test-environment`.
     That acceptance is worth exactly as much as this test: if the action stops
-    existing, stops installing `[test]`, or starts hand-listing, then every
-    floor that delegates to it is unbound and tooth 5's green is a lie.
+    existing, stops acquiring `[test]` into the wheelhouse, or starts
+    hand-listing, then every floor that delegates to it is unbound and tooth
+    5's green is a lie.
+
+    First-party packages are resolved from the synced checkout (PYTHONPATH),
+    not wheel-installed into the venv. The authority still drives the
+    *wheelhouse* via ``pip wheel ... sugar-lift-py-tests[test]``; the install
+    step must not put first-party packages into site-packages.
     """
     assert ENVIRONMENT_ACTION.exists(), (
         f"{ENVIRONMENT_ACTION_USE} is the single definition of the Python test "
@@ -438,26 +455,37 @@ def test_the_environment_action_is_the_one_bound_definition() -> None:
     for command in commands:
         if f"{AUTHORITY}[test]" not in command:
             offenders.append(f"acquires {AUTHORITY} without [test]: {command}")
+        # First-party must not be installed into the venv. `pip wheel` may
+        # still name the path so the third-party wheelhouse resolves from the
+        # authority table; `pip install` of the first-party package is the
+        # false-provenance defect authenticate_lift exists to refuse.
+        if command.startswith("pip install") and AUTHORITY in command:
+            offenders.append(
+                f"wheel-installs first-party {AUTHORITY} into the venv "
+                f"(must resolve from checkout via PYTHONPATH): {command}"
+            )
     for command in pip_install_commands(text):
         hand_listed = [
             requirement
             for requirement in bare_requirements(command)
-            # The three first-party package NAMES are how the wheelhouse is
-            # installed by name rather than by path; they are the packages
-            # themselves, not requirements of them.
             if requirement
             not in {
-                normalize(AUTHORITY),
-                "sugar-lift-python-source",
-                "sugar-source-tree",
+                # wheel bootstrap only; third-party deps arrive as wheel paths.
                 "wheel",
             }
         ]
         if hand_listed:
             offenders.append(f"hand-lists {sorted(set(hand_listed))}: {command}")
 
+    if "managed_checkout_pythonpath" not in text and "SUGAR_CHECKOUT_PYTHONPATH" not in text:
+        offenders.append(
+            "does not bind managed checkout PYTHONPATH before consumers import "
+            "first-party packages"
+        )
+
     assert not offenders, (
         f"{ENVIRONMENT_ACTION.name} is the ONE definition of the Python test "
-        f"environment; it must draw everything from `{AUTHORITY}[test]`:\n  "
+        f"environment; third-party from `{AUTHORITY}[test]` wheelhouse, "
+        f"first-party from the synced checkout:\n  "
         + "\n  ".join(offenders)
     )
