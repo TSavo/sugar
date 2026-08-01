@@ -88,8 +88,18 @@ class _Pass(_FixedSugar):
 
 class _Raise(_FixedSugar):
     def __init__(self, name: str, *, occurrence: str = "t.py:1:0", probe=None):
+        from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+        coordinate, mro = _builtin_exception_identity(name)
         super().__init__(
-            Incomplete(RaiseEffect(exception_name=name, occurrence=occurrence)),
+            Incomplete(
+                RaiseEffect(
+                    exception_name=name,
+                    occurrence=occurrence,
+                    exception_type_coordinate=coordinate,
+                    exception_type_mro=mro,
+                )
+            ),
             probe=probe,
         )
 
@@ -651,11 +661,21 @@ def test_lying_the_equivalence_is_specific_to_never_suppresses():
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
     exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
+    coordinate, mro = _builtin_exception_identity("ValueError")
     halted = Halted(
-        true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")
+        true_guard(),
+        RaiseEffect(
+            exception_name="ValueError",
+            exception_type_coordinate=coordinate,
+            exception_type_mro=mro,
+            occurrence="equiv.py:1:0",
+        ),
+        _FloorValue("pre"),
     )
-    suppressing = ExitSuppressionContract(frozenset({"ValueError"}))
+    suppressing = ExitSuppressionContract.suppresses(("ValueError",))
 
     through_exit = ExitSet((halted,)).and_exit(exit_es, disposition=suppressing)
     through_finally = ExitSet((halted,)).and_finally(lambda: exit_es)
