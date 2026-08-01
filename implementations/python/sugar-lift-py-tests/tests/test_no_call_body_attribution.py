@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.no_call_body_attribution import (
@@ -39,19 +39,19 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
 def _raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'), exception_type_coordinate=str_const('TypeError'))
+            RaiseEffect(exception_type_coordinate=str_const('TypeError'), occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'))
         )
     )
 
 
 def _nameless_raise_value():
-    return Complete(RaiseValue(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_no_call_body_attribution.py:51:0'))))
+    return Complete(RaiseValue(UndeterminedRaiseEffect()))
 
 
 def _call_owned_raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'), exception_type_coordinate=str_const('TypeError'), producer_node_owner='Call')
+            RaiseEffect(exception_type_coordinate=str_const('TypeError'), occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'), producer_node_owner='Call')
         )
     )
 

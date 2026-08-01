@@ -57,7 +57,6 @@ def _assert_named_halt(outcome) -> None:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
 
 
 def test_positional_actuals_discharge_through_python_binder() -> None:

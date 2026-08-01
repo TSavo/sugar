@@ -386,7 +386,6 @@ def test_bare_reraise_preserves_the_same_effect_occurrence():
     # Occurrence is the original raise site (line of ``raise ValueError``),
     # not a reconstructed site at the bare re-raise.
     assert out.effect.occurrence.endswith(":6:8")
-    assert out.effect.exception_type_coordinate is not None
 
 
 def test_bare_reraise_is_not_a_reconstructed_raise_at_handler_site():

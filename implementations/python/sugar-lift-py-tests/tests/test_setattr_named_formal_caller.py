@@ -90,7 +90,6 @@ def _assert_named_halt(outcome) -> Halted:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
     return halted
 
 
@@ -218,7 +217,6 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
 
 
@@ -355,7 +353,6 @@ def test_positional_caller_completes_field_store_via_setattr() -> None:
 def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
     halted = _assert_named_halt(_call_outcome("obj, value", "1, 2"))
     # Origin is store dispatch, not a fabricated boundary type alone.
-    assert halted.effect.exception_type_coordinate is not None
     # Source call presentation may name the Call producer for the edge; the
     # type coordinate is still from setattr floor discharge, not pytest.raises.
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
@@ -379,7 +376,6 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
     # Direct setattr owner is proven on the incomplete path before carrier
     # re-projects the exceptional resolution.

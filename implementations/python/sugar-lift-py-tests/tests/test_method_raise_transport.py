@@ -389,7 +389,13 @@ def test_wrong_exception_observation_is_not_the_method_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported method edge."""
     source = _raise_body() + "\nRaiser().boom()\n"
     halted = _method_halt(source)
-    foreign = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('foreign.py:1:0'), exception_name='ValueError', blame='foreign.py:1:0', exception_type_coordinate=_identity('ValueError'), exception_type_mro=(_identity('ValueError'),))
+    foreign = RaiseEffect.for_builtin("ValueError",
+        
+        blame="foreign.py:1:0",
+        occurrence="foreign.py:1:0",
+        exception_type_coordinate=_identity("ValueError"),
+        exception_type_mro=(_identity("ValueError"),),
+    )
     with pytest.raises(AssertionError):
         assert halted.effect is foreign
     with pytest.raises(AssertionError):

@@ -14,7 +14,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import NoneValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
@@ -89,7 +89,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     first_obligation = _Pending("first", (_Demand("first-demand"),))
     second_obligation = _Pending("second", (_Demand("second-demand"),))
     stopped_state = object()
-    stopped_effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('prefix-halt'), blame='prefix-halt')
+    stopped_effect = UndeterminedRaiseEffect(blame="prefix-halt", occurrence="prefix-halt")
     prefix = ExitSet(
         (
             Completed(

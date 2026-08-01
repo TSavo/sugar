@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
@@ -88,8 +88,33 @@ class RaiseSugar(Sugar):
                 )
             identity_reader = getattr(raised_value, "exception_type_identity", None)
             mro_reader = getattr(raised_value, "exception_type_mro", None)
+            coordinate = (
+                identity_reader()
+                if identity_reader is not None
+                else getattr(raised_value, "exception_type_coordinate", None)
+            )
+            if coordinate is None:
+                # Do not mint RaiseEffect(None). Throwing is honorable when
+                # identity is unfinished; UndeterminedRaiseEffect is the only
+                # non-throw door that cannot impersonate authentication.
+                from sugar_lift_py_tests.effect.raise_effect import (
+                    UndeterminedRaiseEffect,
+                )
+
+                return Incomplete(
+                    UndeterminedRaiseEffect(
+                        exception_name=self.exception_name,
+                        blame=blame,
+                        source_sha256=source_sha256,
+                        occurrence=blame,
+                        raised_value=raised_value,
+                        cause_value=cause_value,
+                        context_effect=context_effect,
+                        producer_node_owner="RaiseSugar.desugar",
+                    )
+                )
             return Incomplete(
-                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(blame), exception_name=self.exception_name, blame=blame, source_sha256=source_sha256, exception_type_coordinate=identity_reader() if identity_reader is not None else getattr(raised_value, 'exception_type_coordinate', None), exception_type_mro=mro_reader() if callable(mro_reader) else getattr(raised_value, 'exception_type_mro', None), raised_value=raised_value, cause_value=cause_value, context_effect=context_effect)
+                RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of(blame), exception_name=self.exception_name, blame=blame, source_sha256=source_sha256, exception_type_mro=mro_reader() if callable(mro_reader) else getattr(raised_value, 'exception_type_mro', None), raised_value=raised_value, cause_value=cause_value, context_effect=context_effect)
             )
 
         def after_exception(raised_value):

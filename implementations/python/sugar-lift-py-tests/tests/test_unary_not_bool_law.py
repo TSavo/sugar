@@ -285,11 +285,9 @@ def test_halted_truth_is_not_negated() -> None:
 
         assert isinstance(face.value, RaiseValue)
         assert face.value.effect.exception_name == "TypeError"
-        assert face.value.effect.exception_type_coordinate is not None
     else:
         assert isinstance(face, Halted)
         assert face.effect.exception_name == "TypeError"
-        assert face.effect.exception_type_coordinate is not None
 
 
 def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:

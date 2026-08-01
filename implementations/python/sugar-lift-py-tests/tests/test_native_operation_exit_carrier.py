@@ -21,7 +21,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
@@ -706,7 +706,7 @@ def test_nameless_halt_stays_outside_matching_boundary_end_to_end():
         (
             Halted(
                 true_guard(),
-                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('operation-origin')),
+                UndeterminedRaiseEffect(occurrence="operation-origin"),
             ),
         )
     )

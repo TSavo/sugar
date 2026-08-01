@@ -387,7 +387,13 @@ def test_lying_rollback_misreads_halt_as_completed_body() -> None:
 def test_wrong_exception_observation_is_not_the_delete_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported delete edge."""
     _, halted = _delitem_keyerror_halt()
-    foreign = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('foreign.py:1:0'), exception_name='KeyError', blame='foreign.py:1:0', exception_type_coordinate=_identity('KeyError'), exception_type_mro=(_identity('KeyError'),))
+    foreign = RaiseEffect.for_builtin("KeyError",
+        
+        blame="foreign.py:1:0",
+        occurrence="foreign.py:1:0",
+        exception_type_coordinate=_identity("KeyError"),
+        exception_type_mro=(_identity("KeyError"),),
+    )
     with pytest.raises(AssertionError):
         assert halted.effect is foreign
     with pytest.raises(AssertionError):
