@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from sugar_lift_py_tests.authenticated_pytest import (
+
     authenticate_environment,
     authenticated_pandas_corpus,
     declared_interpreter_runtime,
@@ -17,6 +18,8 @@ from sugar_source_tree.tree import SourceTree
 from sugar_lift_py_tests.lift_rpc import _preconstruction_demand_rows
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
 from sugar_source_tree.cpython_adapter import CPythonAstBackend
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 _SOURCE = """\
 from contextlib import nullcontext
@@ -59,7 +62,7 @@ def test_runtime_derived_testimony_names_only_the_declared_authority() -> None:
 
 def test_pinned_corpus_table_key_is_minted_under_declared_parser() -> None:
     corpus = authenticated_pandas_corpus()
-    source_root = Path(__file__).resolve().parents[1] / "src"
+    source_root = sugar_lift_py_tests_package_root() / "src"
     identity = demand_table_identity(
         corpus.root,
         SourceTree(corpus.root).paths(),

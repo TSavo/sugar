@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[1]
+
+from sugar_lift_py_tests.repo_root import python_implementations_root, sugar_lift_py_tests_package_root
+
+_ROOT = sugar_lift_py_tests_package_root()
 _SRC = _ROOT / "src" / "sugar_lift_py_tests"
 
 
@@ -250,7 +253,7 @@ def test_no_process_identity_in_slot_fallback() -> None:
     import re
 
     text = (
-        Path(__file__).resolve().parents[2]
+        python_implementations_root()
         / "sugar-source-tree"
         / "src"
         / "sugar_source_tree"

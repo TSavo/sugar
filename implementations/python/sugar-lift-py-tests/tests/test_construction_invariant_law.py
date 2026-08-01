@@ -5,7 +5,10 @@ from pathlib import Path
 import subprocess
 import sys
 
-_SCRIPT = Path(__file__).parents[1] / "scripts" / "construction_invariant_law.py"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SCRIPT = sugar_lift_py_tests_package_root() / "scripts" / "construction_invariant_law.py"
 _SPEC = importlib.util.spec_from_file_location("construction_invariant_law", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 LAW = importlib.util.module_from_spec(_SPEC)

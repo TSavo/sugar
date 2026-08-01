@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 _SEMANTIC_ROOTS = ("floor", "temporal", "proofir", "audit_only")
 _FACTORY_AUDIT_NAMES = ("ConstructionAuditStatus", "ConstructionAuditRow")
 
 
 def test_construction_semantics_do_not_import_or_reconstruct_factory_audit_objects():
     """R_semantic_factory_audit_authority stays red until the clean slice is zero."""
-    package = Path(__file__).parents[1] / "src" / "sugar_lift_py_tests"
+    package = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
     offenders: list[str] = []
     for root_name in _SEMANTIC_ROOTS:
         for path in sorted((package / root_name).rglob("*.py")):

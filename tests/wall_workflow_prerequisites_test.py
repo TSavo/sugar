@@ -3,7 +3,9 @@
 from pathlib import Path
 import re
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 WALL_WORKFLOWS = {
     "numpy": ROOT / ".github/workflows/numpy-wall.yml",
     "pandas": ROOT / ".github/workflows/pandas-wall.yml",

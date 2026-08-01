@@ -15,12 +15,15 @@ from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.tree import SourceTree
 
 from sugar_lift_py_tests.fixture_resource_obligation import (
+
     FixtureResourceOutcome,
     FixtureResourceBindingRefusal,
     FixtureSuppliedResourceObligationV1,
     classify_fixture_resource_outcome,
 )
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 @dataclass(frozen=True)
 class _FormalResourceSite:
@@ -277,7 +280,7 @@ def test_authenticated_pandas_303_temp_file_population_is_partitioned_by_formal(
     assert corpus.manifest_cid == CANONICAL_CORPUS_MANIFEST_CID
     with tempfile.TemporaryDirectory() as scratch:
         demand_table = pull_shared_demand_table(
-            Path(__file__).resolve().parents[4],
+            resolve_repo_root(),
             Path(scratch) / "python-demand-table.json",
         )
     assert demand_table["contentKey"] == SHARED_DEMAND_TABLE_CONTENT_KEY

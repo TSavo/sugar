@@ -5,6 +5,9 @@ import pytest
 from sugar_lift_py_tests.cm_boundary_detector import scan_construction_boundary
 
 
+
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
 def _write(root: Path, relative: str, source: str) -> None:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +59,7 @@ def test_planted_boundary_violations_each_raise_r(files, tmp_path):
 
 
 def test_complete_real_roots_have_stable_zero_boundary_residue():
-    python_root = Path(__file__).resolve().parents[2]
+    python_root = python_implementations_root()
     report = scan_construction_boundary(
         sugar_root=python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
         source_tree_root=python_root / "sugar-source-tree/src/sugar_source_tree",

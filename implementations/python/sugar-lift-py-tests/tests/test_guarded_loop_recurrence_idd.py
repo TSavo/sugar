@@ -3,10 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.idd.guarded_loop_recurrence import (
+
     scan_guarded_loop_recurrence,
     summarize_guarded_loop_recurrence,
 )
 
+
+from sugar_lift_py_tests.repo_root import python_implementations_root
 
 def test_instrument_names_each_forbidden_symbolic_loop_shape(tmp_path: Path) -> None:
     source = tmp_path / "nodes.py"
@@ -108,7 +111,7 @@ class ComprehensionSugar:
 
 
 def test_current_tree_measurement_is_stable_zero() -> None:
-    root = Path(__file__).parents[2]
+    root = python_implementations_root()
     findings = scan_guarded_loop_recurrence(root)
 
     assert findings == ()

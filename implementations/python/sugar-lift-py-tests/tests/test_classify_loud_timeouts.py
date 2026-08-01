@@ -9,7 +9,10 @@ from typing import Any
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import classify_loud_timeouts as mod  # noqa: E402

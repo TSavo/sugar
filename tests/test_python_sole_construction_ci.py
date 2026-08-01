@@ -12,7 +12,9 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 WORKFLOW = ROOT / ".github" / "workflows" / "factory-zero-tolerance.yml"
 ENROLL = ROOT / "tools" / "sole_construction_floor_enrollment.py"
 STATIC = ROOT / "tools" / "run_static_sole_construction_floors.sh"

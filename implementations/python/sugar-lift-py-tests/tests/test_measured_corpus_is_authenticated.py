@@ -38,6 +38,7 @@ import sysconfig
 import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import (
+
     ExecutionEnvironmentMismatch,
     InterpreterIdentity,
     authenticate_corpus_manifest,
@@ -47,7 +48,9 @@ from sugar_lift_py_tests.authenticated_pytest import (
 )
 from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
 
-_PYPROJECT = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_PYPROJECT = sugar_lift_py_tests_package_root() / "pyproject.toml"
 _CORPUS_PACKAGES = ("pandas", "numpy")
 
 

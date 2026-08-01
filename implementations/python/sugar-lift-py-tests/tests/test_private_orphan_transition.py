@@ -7,8 +7,11 @@ import sys
 
 import pytest
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "private_orphan_transition.py"
-REPO = Path(__file__).parents[4]
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
+
+SCRIPT = sugar_lift_py_tests_package_root() / "scripts" / "private_orphan_transition.py"
+REPO = resolve_repo_root()
 
 
 def _load_audit():

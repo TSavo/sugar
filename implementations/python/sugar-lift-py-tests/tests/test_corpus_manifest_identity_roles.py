@@ -6,8 +6,11 @@ import ast
 from pathlib import Path
 import re
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 _PRIMARY_MANIFEST_COORDINATE = re.compile(r"blake3-512:[0-9a-f]{128}\Z")
-_PYTHON_IMPLEMENTATIONS = Path(__file__).resolve().parents[4] / "implementations/python"
+_PYTHON_IMPLEMENTATIONS = resolve_repo_root() / "implementations/python"
 
 
 def _manifest_identity_slot_violations(source: str, label: str) -> tuple[str, ...]:

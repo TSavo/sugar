@@ -29,7 +29,10 @@ import importlib
 import importlib.util
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "src"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+SRC = sugar_lift_py_tests_package_root() / "src"
 
 
 def _function_local_imports(tree: ast.AST) -> list[tuple[str, str, int]]:

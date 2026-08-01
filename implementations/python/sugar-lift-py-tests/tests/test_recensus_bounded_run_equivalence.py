@@ -27,7 +27,10 @@ import json
 import sys
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 SCRIPT = SCRIPTS / "control_effect_recensus.py"
 
 

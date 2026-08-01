@@ -6,12 +6,15 @@ import ast
 from pathlib import Path
 
 from sugar_lift_py_tests.gap.audit_row import (
+
     ConstructionAuditStatus,
     gap_kind_status,
 )
 from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind
 
-_GAP = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests" / "gap"
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_GAP = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests" / "gap"
 
 
 def test_info_module_does_not_import_audit_row() -> None:

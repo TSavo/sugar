@@ -6,7 +6,10 @@ import importlib.util
 from pathlib import Path
 import sys
 
-_SCRIPT = Path(__file__).parents[1] / "scripts" / "self_sealing_instrument_law.py"
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
+
+_SCRIPT = sugar_lift_py_tests_package_root() / "scripts" / "self_sealing_instrument_law.py"
 _SPEC = importlib.util.spec_from_file_location("self_sealing_instrument_law", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 LAW = importlib.util.module_from_spec(_SPEC)
@@ -103,7 +106,7 @@ def test_sourcefile_construction_door_live_self_seed_is_drained() -> None:
     Path(__file__)/auditor). Reachable by reintroducing the fallback.
     """
     # parents: tests -> sugar-lift-py-tests -> python -> implementations -> repo
-    repo = Path(__file__).resolve().parents[4]
+    repo = resolve_repo_root()
     auditor = repo / "tests" / "sourcefile_construction_door_auditor.py"
     assert auditor.is_file(), auditor
     source = auditor.read_text(encoding="utf-8")

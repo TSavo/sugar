@@ -8,6 +8,7 @@ from types import ModuleType
 
 import pytest
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
     activate_checkout_import_roots,
@@ -223,7 +224,7 @@ def test_launcher_refuses_before_pytest_on_environment_mismatch(
 
 
 def test_bpytest_wrapper_contract_is_collected_by_pytest() -> None:
-    repo = Path(__file__).resolve().parents[1]
+    repo = resolve_repo_root()
     completed = subprocess.run(
         ["bash", str(repo / "tests/bpytest_authenticated_wrapper.sh"), str(repo)],
         text=True,
@@ -242,7 +243,7 @@ def test_bootstrap_venv_py312_twins_are_collected_by_pytest() -> None:
     absent, if pins are not post-editable, or if a non-exact 3.12.x / bare
     python3 is accepted.
     """
-    repo = Path(__file__).resolve().parents[1]
+    repo = resolve_repo_root()
     completed = subprocess.run(
         ["bash", str(repo / "tests/bootstrap_venv_py312_twins.sh"), str(repo)],
         text=True,

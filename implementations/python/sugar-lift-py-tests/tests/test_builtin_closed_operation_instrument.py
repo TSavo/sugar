@@ -10,6 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 def _write(root: Path, relative: str, source: str) -> None:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +162,7 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero() -> None:
         collect_builtin_closed_operation_report,
     )
 
-    root = Path(__file__).resolve().parents[1] / "src"
+    root = sugar_lift_py_tests_package_root() / "src"
     report = collect_builtin_closed_operation_report(root)
     targets = {
         "sugar_lift_py_tests/sugar/loop_recurrence_sugar.py",

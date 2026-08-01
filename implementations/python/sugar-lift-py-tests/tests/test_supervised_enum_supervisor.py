@@ -13,9 +13,11 @@ import json
 import os
 import subprocess
 
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 os.environ.setdefault("SUGAR_PROCESS_FLOOR_CACHE_DIR", "off")
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 # scan() imports process_floor_measurement_cache as a scripts sibling — same
 # door floors open when invoked as scripts/*.py (sys.path has scripts/).
 if str(_SCRIPTS) not in sys.path:

@@ -7,6 +7,7 @@ import pytest
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor import (
+
     NoneValue,
     ObjectField,
     ObjectValue,
@@ -23,6 +24,8 @@ from sugar_source_tree.nodes import Attribute
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+
+from sugar_lift_py_tests.repo_root import python_implementations_root, resolve_repo_root, sugar_lift_py_tests_package_root
 
 class _ValueSugar(ConstructedTermSugar):
     def __init__(self, value):
@@ -178,7 +181,7 @@ def test_authenticated_attribute_family_has_a_closed_nonzero_exit_split() -> Non
         run_authenticated_attribution,
     )
 
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     report = run_authenticated_attribution(
         repo_root, families=frozenset({ProducerFamily.ATTRIBUTE})
     )
@@ -193,8 +196,8 @@ def test_authenticated_attribute_family_has_a_closed_nonzero_exit_split() -> Non
 
 
 def test_attribute_construction_has_no_vendor_exception_name_arm() -> None:
-    production = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
-    source_tree = Path(__file__).resolve().parents[2] / "sugar-source-tree" / "src"
+    production = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
+    source_tree = python_implementations_root() / "sugar-source-tree" / "src"
     text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (

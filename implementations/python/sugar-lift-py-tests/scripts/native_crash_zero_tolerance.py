@@ -11,6 +11,9 @@ from __future__ import annotations
 # Not the board. This module measures its own named denominator; the sole
 # authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -163,7 +166,7 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, ValueError):
             pass
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "paths",

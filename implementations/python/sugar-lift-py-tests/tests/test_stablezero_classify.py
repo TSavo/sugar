@@ -9,7 +9,10 @@ import sugar_source_tree.tree as source_tree
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-_SCRIPT = Path(__file__).parents[1] / "scripts" / "stablezero_classify.py"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SCRIPT = sugar_lift_py_tests_package_root() / "scripts" / "stablezero_classify.py"
 _SPEC = importlib.util.spec_from_file_location("stablezero_classify", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 _MOD = importlib.util.module_from_spec(_SPEC)

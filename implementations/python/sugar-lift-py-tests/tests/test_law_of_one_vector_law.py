@@ -6,7 +6,10 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_SCRIPT = Path(__file__).parents[1] / "scripts" / "law_of_one_vector_law.py"
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
+
+_SCRIPT = sugar_lift_py_tests_package_root() / "scripts" / "law_of_one_vector_law.py"
 _SPEC = importlib.util.spec_from_file_location("law_of_one_vector_law", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 LAW = importlib.util.module_from_spec(_SPEC)
@@ -25,7 +28,7 @@ def test_parent_has_no_scan_python_source_reimplementation() -> None:
 
 
 def test_report_separates_product_and_instrument_layers() -> None:
-    repo = Path(__file__).resolve().parents[4]
+    repo = resolve_repo_root()
     citations = LAW.collect_citations(repo)
     rendered = LAW.format_report(citations)
     assert "R_product_second_mechanism_cited" in rendered
@@ -51,7 +54,7 @@ def test_missing_owner_is_red_not_zero() -> None:
 
 
 def test_self_sealing_citation_uses_child_r_only() -> None:
-    repo = Path(__file__).resolve().parents[4]
+    repo = resolve_repo_root()
     c = LAW._cite_self_sealing(repo)
     assert c.status == "ok"
     assert c.axis == "self_sealing"

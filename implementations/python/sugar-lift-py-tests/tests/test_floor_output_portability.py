@@ -8,9 +8,12 @@ import subprocess
 import sys
 
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 def test_vendor_floor_emits_arrows_under_cp1252(tmp_path: Path) -> None:
     script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "vendor_special_case_law.py"
+        sugar_lift_py_tests_package_root() / "scripts" / "vendor_special_case_law.py"
     )
     surface = tmp_path / "surface"
     surface.mkdir()

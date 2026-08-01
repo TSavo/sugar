@@ -9,12 +9,15 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import (
+
     FactoryWalkCompleteRowDto,
     FactoryWalkRedRowDto,
     FactoryWalkStatus,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+ROOT = sugar_lift_py_tests_package_root()
 
 
 def _with_src_on_pythonpath() -> str:

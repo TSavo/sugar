@@ -7,7 +7,9 @@ from collections import Counter
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+REPO_ROOT = resolve_repo_root()
 SOURCE_LEDGER = (
     REPO_ROOT / "docs/ledgers/pandas-timeout-shared-mechanism-5306.json"
 )

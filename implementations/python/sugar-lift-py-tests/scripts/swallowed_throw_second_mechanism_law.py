@@ -49,6 +49,9 @@ from __future__ import annotations
 
 # Not the board. Named denominator only.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -512,7 +515,7 @@ def format_report(offenders: list[SwallowOffender]) -> str:
 
 def default_python_root() -> Path:
     # scripts/ → sugar-lift-py-tests → python/
-    return Path(__file__).resolve().parents[2]
+    return python_implementations_root()
 
 
 def main(argv: list[str] | None = None) -> int:

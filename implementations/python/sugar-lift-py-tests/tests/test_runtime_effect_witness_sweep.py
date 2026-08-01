@@ -7,7 +7,10 @@ from typing import Iterator
 
 from sugar_lift_py_tests.effect import RuntimeEffect
 
-PACKAGE = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+PACKAGE = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 EVIDENCE_DOORS = {
     "runtime_effect_evidence",
     "runtime_effect_evidence_from_terms",

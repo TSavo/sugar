@@ -47,6 +47,9 @@ from __future__ import annotations
 # Not the board. This module measures its own named denominator; the sole
 # authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -531,7 +534,7 @@ def sole_path_roots(repo: Path | None = None) -> list[Path]:
 
     R on these roots must stay 0: meaning is tree + prebound refs only.
     """
-    kit = Path(__file__).resolve().parents[1]
+    kit = sugar_lift_py_tests_package_root()
     py = kit.parent
     if repo is not None:
         py = (repo / "implementations" / "python").resolve()
@@ -548,7 +551,7 @@ def default_production_roots(repo: Path | None = None) -> list[Path]:
     Includes sugar-lift-python-source while that package still feeds lift_rpc /
     production construction so every foreign-ast import there is named.
     """
-    kit = Path(__file__).resolve().parents[1]
+    kit = sugar_lift_py_tests_package_root()
     py = kit.parent
     # kit = .../sugar-lift-py-tests; py = .../python
     if repo is not None:

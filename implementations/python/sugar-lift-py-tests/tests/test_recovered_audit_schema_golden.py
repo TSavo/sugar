@@ -13,13 +13,16 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.kit_rpc import (
+
     AuditLeafEnvelopeDto,
     RecoveredAuditDto,
     RecoveredFrontierAuditDto,
 )
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 _FIXTURES = (
-    Path(__file__).resolve().parents[4] / "protocol" / "conformance" / "recovered-audit"
+    resolve_repo_root() / "protocol" / "conformance" / "recovered-audit"
 )
 
 

@@ -9,7 +9,14 @@ import sys
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+import sys
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 DEFAULT_CONTRACT = ROOT / "sugar-build.toml"
 PUBLISHED_BINARIES = frozenset({"sugar", "sugar-ir-smt-lib"})
 TASK_KEYS = frozenset({"capabilities", "binaries", "command", "network"})

@@ -17,7 +17,10 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-PYTHON_ROOT = Path(__file__).resolve().parents[2]
+
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
+PYTHON_ROOT = python_implementations_root()
 PROOF_MODULE = (
     PYTHON_ROOT
     / "sugar-lift-py-tests"

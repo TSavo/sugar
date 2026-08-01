@@ -3,12 +3,15 @@
 from pathlib import Path
 
 from with_v2_law_detector import (
+
     ModuleGraph,
     analyze_consumer_enrollment,
     analyze_single_authority,
 )
 
-PYTHON_ROOT = Path(__file__).resolve().parents[2]
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
+PYTHON_ROOT = python_implementations_root()
 PRODUCTION_ROOTS = (
     PYTHON_ROOT / "sugar-lift-py-tests" / "src" / "sugar_lift_py_tests",
     PYTHON_ROOT / "sugar-source-tree" / "src" / "sugar_source_tree",

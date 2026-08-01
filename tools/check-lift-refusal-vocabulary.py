@@ -23,7 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-ROOT = Path(__file__).resolve().parents[1]
+import sys
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 DEFAULT_CENSUS = ROOT / "tools" / "lift_refusal_vocabulary_census.json"
 REFUS_PATTERN = re.compile(r"refus", re.IGNORECASE)
 SCAN_PATHS = (

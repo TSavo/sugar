@@ -61,6 +61,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 BARE_DOOR = "from_path"
 BARE_DOOR_OWNER = "SourceFile"
 CONSTRUCTION_DRIVER = "sugar"
@@ -259,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return self_test()
 
-    roots = args.roots or [Path(__file__).resolve().parents[3]]
+    roots = args.roots or [(resolve_repo_root() / "implementations")]
     offenders, unreadable = scan_roots(roots)
     report = {
         "law": "R_bare_construction_door",

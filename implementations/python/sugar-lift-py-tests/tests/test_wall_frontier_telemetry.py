@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-_TOOL = Path(__file__).parents[4] / "tools" / "wall_frontier_telemetry.py"
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+_TOOL = resolve_repo_root() / "tools" / "wall_frontier_telemetry.py"
 _SPEC = importlib.util.spec_from_file_location("wall_frontier_telemetry", _TOOL)
 assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)

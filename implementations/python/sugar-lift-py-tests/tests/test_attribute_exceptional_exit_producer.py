@@ -21,6 +21,9 @@ from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import Attribute
 from sugar_source_tree.tree import SourceFile
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 SITE_SHA256 = "4d2599448c6b329af3822dbc2295fafe142d9ce84e49821c435d9b1c11fea793"
 SOURCE_CID = (
     "blake3-512:43cdd8a4f204ef75c77996a7e7a98b84bcd174de708cfe1e9e430415bbd636e2"
@@ -37,7 +40,7 @@ DEMAND_TABLE_KEY = (
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    return resolve_repo_root()
 
 
 def _site_attribute(source: str, site: Path) -> Attribute:
