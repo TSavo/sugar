@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,39 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import BinOp
 from sugar_source_tree.tree import SourceFile
+
+
+@dataclass(frozen=True)
+class _ValueSugar(ConstructedTermSugar):
+    """Floor carrier for ground TypeError twins — must be ConstructedTermSugar."""
+
+    value: object
+    site: object = "pandas-binary-value-sugar-site"
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        return self.value.to_term(owner=owner)
+
+    def occurrence_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        del owner
+        return ctor(
+            "python:test-value-sugar-occurrence",
+            (str_const(type(self.value).__name__),),
+            symbol_kind="coordinate",
+        )
 
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
 # sha256:a223… is historical negative testimony only — never identity.
@@ -180,14 +212,11 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     bitwise floor constructs authenticated TypeError RaiseValue. The twin is
     built on a workspace-relative locus so the ground exit can cite source.
     """
-    from dataclasses import dataclass
-
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.floor import RaiseValue, TermValue
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -204,18 +233,6 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     node = next(n for n in tree.nodes() if isinstance(n, BinOp))
-
-    @dataclass(frozen=True)
-    class _ValueSugar(Sugar):
-        value: object
-
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-        def desugar(self, ctx=None):
-            del ctx
-            return Complete(self.value)
 
     operation = type(node.sugar())(
         "BitAnd",
@@ -235,14 +252,11 @@ def test_source_decided_int_plus_str_emits_type_error() -> None:
     Enrolled shapes like ``"foo_" + ser`` refuse on undecided right; the
     dual ``TermValue + StringValue`` publishes RaiseValue.
     """
-    from dataclasses import dataclass
-
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.floor import RaiseValue, StringValue, TermValue
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -253,18 +267,6 @@ def test_source_decided_int_plus_str_emits_type_error() -> None:
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     node = next(n for n in tree.nodes() if isinstance(n, BinOp))
-
-    @dataclass(frozen=True)
-    class _ValueSugar(Sugar):
-        value: object
-
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-        def desugar(self, ctx=None):
-            del ctx
-            return Complete(self.value)
 
     operation = type(node.sugar())(
         "Add",
@@ -283,14 +285,11 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
 
     ``TermValue % ListValue`` is Python TypeError when both sides are decided.
     """
-    from dataclasses import dataclass
-
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -301,18 +300,6 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     node = next(n for n in tree.nodes() if isinstance(n, BinOp))
-
-    @dataclass(frozen=True)
-    class _ValueSugar(Sugar):
-        value: object
-
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-        def desugar(self, ctx=None):
-            del ctx
-            return Complete(self.value)
 
     operation = type(node.sugar())(
         "Mod",
@@ -333,11 +320,8 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
     constructed ListValue and the right a TermValue, BinOp publishes
     RaiseValue rather than panicking or inventing a concat coordinate.
     """
-    from dataclasses import dataclass
-
     from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -351,18 +335,6 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     node = next(n for n in tree.nodes() if isinstance(n, BinOp))
-
-    @dataclass(frozen=True)
-    class _ValueSugar(Sugar):
-        value: object
-
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-        def desugar(self, ctx=None):
-            del ctx
-            return Complete(self.value)
 
     operation = type(node.sugar())(
         "Add",

@@ -179,20 +179,32 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
 
 
 def _assert_named_ordering_or_membership_refusal(thunk) -> SugarNotWritten:
-    """Ordering/membership undecided dispatch throws named — never Complete."""
+    """Ordering/membership undecided dispatch throws named — never Complete.
+
+    Tooth requires ``undecided`` in observed (third-value testimony). Soft OR
+    on owner alone would green a decided-missing-arm mislabel as refusal.
+    """
     with pytest.raises(SugarNotWritten) as raised:
         thunk()
     observed = (raised.value.observed or "").lower()
-    owner = raised.value.owner or ""
+    owner = (raised.value.owner or "").lower()
+    assert "undecided" in observed, (
+        "undecided refusal must name undecidability in observed; "
+        f"got owner={raised.value.owner!r} observed={raised.value.observed!r}"
+    )
     assert (
-        "undecided" in observed
-        or "ordering" in observed
+        "ordering" in observed
         or "membership" in observed
-        or "contain" in owner.lower()
+        or "contain" in observed
+        or "contain" in owner
         or "less_than" in owner
         or "greater" in owner
         or "less_equal" in owner
         or "contains" in owner
+        or "binary" in owner
+    ), (
+        f"refusal must name ordering/membership owner or observed; "
+        f"got owner={raised.value.owner!r} observed={raised.value.observed!r}"
     )
     return raised.value
 
@@ -936,11 +948,13 @@ def test_decided_false_first_leg_emits_no_second_leg_occurrence() -> None:
     assert all(effect.occurrence_id != second_occurrence for effect in effects)
 
 
-def test_subscript_root_preserves_nested_compare_owned_halt() -> None:
-    """The concrete 128th row keeps the Compare halt through Subscript."""
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import Halted
+def test_subscript_root_preserves_nested_compare_owned_refusal() -> None:
+    """Enrolled getitem row: nested Compare undecided ordering throws named.
 
+    Law change from nameless dual-edge Halted(Compare): undecided operands
+    refuse at the ordering floor (SugarNotWritten). Subscript must not swallow
+    that refusal into a fabricated ExitSet or sole Complete.
+    """
     path = _corpus_root() / "tests/series/indexing/test_getitem.py"
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == GETITEM_SITE_SHA256
@@ -959,12 +973,9 @@ def test_subscript_root_preserves_nested_compare_owned_halt() -> None:
         if isinstance(node, Compare) and node.line_col_span().start_line == 595
     )
 
-    outcome = subscript.sugar().desugar(None)
-    assert isinstance(outcome, ExitSet)
-    compare_halt = next(
-        face
-        for face in outcome.exits
-        if isinstance(face, Halted) and face.effect.producer_node_owner == "Compare"
-    )
-    assert compare_halt.effect.exception_name is None
-    assert compare_halt.effect.blame == str(comparison.fragment)
+    with pytest.raises(SugarNotWritten) as raised:
+        subscript.sugar().desugar(None)
+    assert "undecided" in (raised.value.observed or "").lower()
+    # Blame still cites the Compare locus (not a silent swallow at Subscript).
+    blame = str(raised.value.blame)
+    assert str(comparison.fragment) in blame or "test_getitem" in blame
