@@ -76,21 +76,45 @@ def receipts_attendance(receipts_dir):
 
 
 def workflow_runs(commit, repo=None):
-    """Fall back to the run list. `cancelled` here is the eviction signature."""
-    argv = ["gh", "run", "list", "--commit", commit, "--limit", "100",
-            "--json", "name,status,conclusion,databaseId,workflowName"]
-    if repo:
-        argv += ["--repo", repo]
+    """Fall back to the run list. `cancelled` here is the eviction signature.
+
+    THE API, NOT ``gh run list``. On 2026-08-01 ``gh run list --limit 200``
+    reported 6 non-completed runs for this repository while the REST API
+    reported 234 (182 queued + 52 in progress). A CI bankruptcy was declared
+    complete on the strength of that 6, the 228 real runs kept every one of
+    the 25 available runners busy, and the measurement everybody was waiting
+    on never got a slot.
+
+    Under-reporting is the worst possible failure for a ROLL CALL. A missing
+    run reads as "no run at all for this commit", which is indistinguishable
+    from an evicted one -- the precise confusion this module exists to end.
+    So the fallback asks the paginated API and treats an unavailable API as
+    unknown (``None``), never as absence.
+    """
+    slug = repo or "${GITHUB_REPOSITORY}"
+    argv = ["gh", "api", f"repos/{slug}/actions/runs?head_sha={commit}&per_page=100",
+            "--paginate", "--jq",
+            ".workflow_runs[]?|{name,status,conclusion,databaseId:.id,workflowName:.name}"]
     try:
         completed = subprocess.run(argv, capture_output=True, text=True, check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"heavy-measurement-attendance: `gh run list` unavailable: {exc}",
+        print(f"heavy-measurement-attendance: GitHub API unavailable: {exc}",
               file=sys.stderr)
         return None
-    try:
-        return json.loads(completed.stdout)
-    except ValueError:
-        return None
+    runs = []
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            runs.append(json.loads(line))
+        except ValueError:
+            # A page we cannot parse is unknown testimony, not absence.
+            print("heavy-measurement-attendance: unparseable run row; "
+                  "treating the run list as unavailable rather than empty",
+                  file=sys.stderr)
+            return None
+    return runs
 
 
 def main(argv=None):

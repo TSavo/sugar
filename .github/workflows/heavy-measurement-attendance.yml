@@ -1,0 +1,108 @@
+name: Heavy measurement attendance (roll call)
+
+# THE DEFECT THIS FIXES
+#
+# tools/heavy_measurement_attendance.py existed, was correct, and was invoked
+# by NOTHING. Its own docstring names the failure it was written to catch:
+#
+#     absent artifact == "no failures reported" == looks like a clean floor
+#     R is not 0, R is UNMEASURED
+#
+# On 2026-08-01 that is exactly what happened. An empty commit was pushed to
+# main to take one clean measurement of the merged tree. Six workflows ran;
+# three went green and three went red, and NOT ONE of them measured the corpus:
+# the sole-construction floors refused under the lease (auth failure, then a
+# zero-claim refusal), the package suite hit an unevictable root-owned shelf
+# cell and emitted no suite-report.json, and the three greens are
+# DISCRIMINATION workflows that prove an instrument can tell a planted offender
+# from a clean one -- they say nothing about pandas. The roll call would have
+# reported R_attendance and named every silent class. It was never called.
+#
+# An instrument nobody runs is not an instrument. Enrollment is existence.
+#
+# WHY workflow_run AND NOT A STEP INSIDE ci.yml
+#
+# The roll call is a question about a COMMIT, not about a run: which enrolled
+# heavy classes spoke about this tip? It can only be answered after the heavy
+# classes settle, so a step inside ci.yml would race them and report a false
+# absence. Triggering on workflow_run completion recomputes the roll call each
+# time a heavy class finishes; the reading converges as they land. A class that
+# never runs never flips to present, so its silence stays loud forever rather
+# than being papered over by a single early reading.
+
+on:
+  workflow_run:
+    workflows:
+      - "Python package suite (authoritative)"
+      - "Python sole-construction floors (R>0 red)"
+      - "NumPy Wall Ratchet"
+      - "Pandas Wall Ratchet"
+      - "Restored Suite Scoreboard"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit SHA to hold the roll call for"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  roll-call:
+    name: roll call (R_attendance = 0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the commit under roll call
+        id: subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.inputs.commit || github.event.workflow_run.head_sha }}"
+          [ -n "$sha" ] || { echo "no commit to hold a roll call for"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "roll call subject: $sha"
+
+      - name: Collect lease receipts for the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.subject.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          # Every run for this SHA, from the API. NOT `gh run list` -- that
+          # under-reports: on 2026-08-01 it returned 6 non-completed runs where
+          # the API returned 234, and a bankruptcy sweep was declared complete
+          # on the strength of it.
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" \
+            --paginate --jq '.workflow_runs[]?|.id' > run-ids.txt || true
+          echo "runs for this commit: $(wc -l < run-ids.txt)"
+          while read -r id; do
+            [ -z "$id" ] && continue
+            gh run download "$id" --dir "receipts/$id" 2>/dev/null || true
+          done < run-ids.txt
+          echo "receipt files found: $(find receipts -name '*.json' | wc -l)"
+
+      - name: Roll call
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.subject.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 tools/heavy_measurement_attendance.py \
+            --commit "$SHA" \
+            --receipts-dir receipts \
+            --repo "${GITHUB_REPOSITORY}" \
+            | tee attendance.md \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: heavy-measurement-attendance-${{ steps.subject.outputs.sha }}
+          path: attendance.md
+          if-no-files-found: warn
