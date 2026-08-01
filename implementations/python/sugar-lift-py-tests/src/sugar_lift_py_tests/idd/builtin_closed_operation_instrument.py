@@ -115,6 +115,10 @@ class BuiltinClosedOperationOffender:
     line: int
     observed: str
     replacement: str
+    # Partition tag (see docs/spelling-dispatch-partition.md).
+    # name_or_vendor_gates only counts climbable identity-spelling kinds;
+    # permanent open-domain membranes use their own axes.
+    kind: str = "unclassified"
 
 
 @dataclass(frozen=True)
@@ -127,6 +131,9 @@ class BuiltinClosedOperationReport:
             "construction_side_doors",
             "generic_builtin_verdicts",
             "name_or_vendor_gates",
+            "open_lexical_ast_id",
+            "open_lexical_attr_name",
+            "exception_name_fabrication_denylist",
             "panic_catches",
         )
         return {axis: sum(row.axis == axis for row in self.offenders) for axis in axes}
@@ -182,28 +189,42 @@ def is_panic_type_name(name: str) -> bool:
     )
 
 
+def production_python_scan_roots(repo: Path) -> list[Path]:
+    """Production roots the parent vector cites for spelling-unauth face."""
+    return [
+        repo / "implementations/python/sugar-lift-py-tests/src",
+        repo / "implementations/python/sugar-source-tree/src",
+        repo / "implementations/python/sugar-lift-python-source/src",
+    ]
+
+
 def collect_builtin_closed_operation_report(
-    root: Path,
+    root: Path | list[Path] | tuple[Path, ...],
 ) -> BuiltinClosedOperationReport:
+    """Scan one root or several. Prefer ``production_python_scan_roots(repo)``."""
+    roots = [root] if isinstance(root, Path) else list(root)
     offenders: list[BuiltinClosedOperationOffender] = []
-    for path in sorted(root.rglob("*.py")):
-        relative_path = path.relative_to(root)
-        parts = relative_path.parts
-        if "sugar_lift_py_tests" in parts:
-            package_index = parts.index("sugar_lift_py_tests")
-            lane = parts[package_index + 1 : package_index + 2]
-            if lane and lane[0] in _SKIP_LANES:
-                continue
-            if relative_path.name == "lift_rpc.py":
-                continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (OSError, SyntaxError):
+    for one in roots:
+        if not one.is_dir():
             continue
-        relative = str(relative_path)
-        visitor = _Visitor(relative)
-        visitor.visit(tree)
-        offenders.extend(visitor.offenders)
+        for path in sorted(one.rglob("*.py")):
+            relative_path = path.relative_to(one)
+            parts = relative_path.parts
+            if "sugar_lift_py_tests" in parts:
+                package_index = parts.index("sugar_lift_py_tests")
+                lane = parts[package_index + 1 : package_index + 2]
+                if lane and lane[0] in _SKIP_LANES:
+                    continue
+                if relative_path.name == "lift_rpc.py":
+                    continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            except (OSError, SyntaxError):
+                continue
+            relative = str(relative_path)
+            visitor = _Visitor(relative)
+            visitor.visit(tree)
+            offenders.extend(visitor.offenders)
     return BuiltinClosedOperationReport(tuple(offenders))
 
 
@@ -226,6 +247,7 @@ class _Visitor(ast.NodeVisitor):
                 f"def {node.name}",
                 "match exception_type_coordinate against ExitSuppressionContract "
                 "coordinates minted at the suppresses() door; never suppress by name",
+                kind="name_keyed_suppress_api",
             )
         self._function_stack.append(node)
         self.generic_visit(node)
@@ -247,19 +269,48 @@ class _Visitor(ast.NodeVisitor):
                 ast.unparse(node),
                 "match exception_type_coordinate against ExitSuppressionContract "
                 "coordinates minted at the suppresses() door; never suppress by name",
+                kind="name_keyed_suppress_api",
             )
         self.generic_visit(node)
 
     def visit_Compare(self, node: ast.Compare) -> None:
         rendered = ast.unparse(node)
-        if self._is_spelling_gate_compare(node):
-            self._flag_vendor_gate(node, rendered)
+        kind = self._spelling_gate_kind(node)
+        if kind is not None:
+            if kind == "vendor_cm":
+                self._flag_vendor_gate(node, rendered)
+            else:
+                self._add(
+                    "name_or_vendor_gates",
+                    node,
+                    rendered,
+                    "route the authenticated type/exception coordinate; never display spelling",
+                    kind=kind,
+                )
+                if self._function_stack:
+                    function = self._function_stack[-1]
+                    key = id(function)
+                    if key not in self._side_door_functions:
+                        self._side_door_functions.add(key)
+                        self._add(
+                            "construction_side_doors",
+                            function,
+                            function.name,
+                            "use the sole floor callable_application_with construction path",
+                            kind="construction_side_door",
+                        )
+        else:
+            open_hit = self._classify_open_domain_compare(node)
+            if open_hit is not None:
+                axis, open_kind, fix = open_hit
+                self._add(axis, node, rendered, fix, kind=open_kind)
         if self._compare_is_generic_builtin_verdict(node):
             self._add(
                 "generic_builtin_verdicts",
                 node,
                 rendered,
                 "construct the closed semantic operation and result on the Python floor",
+                kind="generic_builtin_verdict",
             )
         self.generic_visit(node)
 
@@ -304,6 +355,7 @@ class _Visitor(ast.NodeVisitor):
                     node,
                     name,
                     "leave unsupported floor construction loud; never catch its panic",
+                    kind="panic_catch",
                 )
                 break
         self.generic_visit(node)
@@ -314,6 +366,7 @@ class _Visitor(ast.NodeVisitor):
             node,
             observed,
             "route the authenticated builtin coordinate through the Python floor",
+            kind="vendor_cm",
         )
         if self._function_stack:
             function = self._function_stack[-1]
@@ -325,6 +378,7 @@ class _Visitor(ast.NodeVisitor):
                     function,
                     function.name,
                     "use the sole floor callable_application_with construction path",
+                    kind="construction_side_door",
                 )
 
     def _node_is_vendor_coordinate(self, node: ast.AST) -> bool:
@@ -334,18 +388,22 @@ class _Visitor(ast.NodeVisitor):
         return qn is not None and is_vendor_cm_coordinate_spelling(qn)
 
     def _is_spelling_gate_compare(self, node: ast.Compare) -> bool:
-        """True when this compare decides by display spelling, not a coordinate."""
+        """True when compare is a type-identity / vendor spelling gate (climbable class).
+
+        Permanent open-domain membranes are classified separately in
+        ``_classify_open_domain_compare`` and do not inflate this axis.
+        """
+        return self._spelling_gate_kind(node) is not None
+
+    def _spelling_gate_kind(self, node: ast.Compare) -> str | None:
         operands = (node.left, *node.comparators)
 
-        # Vendor CM coordinates (structural path identity — NOT substring).
         if any(self._node_is_vendor_coordinate(operand) for operand in operands):
-            return True
+            return "vendor_cm"
 
-        # type_name in {…} / type_name in SOME_FROZENSET — builtin shadowing lie.
-        # type_name == "str" (and friends) — same sin as == rather than `in`.
         if isinstance(node.left, ast.Name) and node.left.id == "type_name":
             if any(isinstance(op, (ast.In, ast.NotIn, ast.Eq, ast.NotEq)) for op in node.ops):
-                return True
+                return "type_name_gate"
 
         attr_names = {
             operand.attr
@@ -356,16 +414,67 @@ class _Visitor(ast.NodeVisitor):
             isinstance(operand, ast.Constant) and isinstance(operand.value, str)
             for operand in operands
         )
+        eq_ops = any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops)
 
-        # effect.exception_name == "StopIteration" (and any == on that attr).
-        if "exception_name" in attr_names:
-            return True
+        # Identity-by-spelling: exception_name == "StopIteration" (real class).
+        # Empty string / denylist placeholders belong on fabrication axis.
+        if "exception_name" in attr_names and has_str_constant and eq_ops:
+            fabricated = {"", "reraise", "unavailable", "<unknown raise locus>"}
+            for operand in operands:
+                if (
+                    isinstance(operand, ast.Constant)
+                    and isinstance(operand.value, str)
+                    and operand.value in fabricated
+                ):
+                    return None  # open-domain / fabrication classifier owns it
+            return "exception_name_identity_eq"
 
-        # func.id == "importorskip" — unbound lexical text vs string.
+        # matcher.name equality (not field.name / binding.name lookups).
+        for operand in operands:
+            if (
+                isinstance(operand, ast.Attribute)
+                and operand.attr == "name"
+                and isinstance(operand.value, ast.Name)
+                and operand.value.id == "matcher"
+            ):
+                return "matcher_name_eq"
+
+        return None
+
+    def _classify_open_domain_compare(
+        self, node: ast.Compare
+    ) -> tuple[str, str, str] | None:
+        """Permanent membranes: open Python Name / attr projection domain.
+
+        Returns (axis, kind, replacement) or None.
+        """
+        operands = (node.left, *node.comparators)
+        attr_names = {
+            operand.attr
+            for operand in operands
+            if isinstance(operand, ast.Attribute)
+        }
+        has_str_constant = any(
+            isinstance(operand, ast.Constant) and isinstance(operand.value, str)
+            for operand in operands
+        )
+
+        # Unbound lexical AST id vs string (range/super/len/importorskip/__all__).
+        # Domain open: no local type closes every Name.id in vendor grammar.
+        # Retirement: Name resolves only through authenticated binding coordinates
+        # and Call.func never carries a free spelling id for dispatch.
         if "id" in attr_names and has_str_constant:
-            return True
+            return (
+                "open_lexical_ast_id",
+                "func_id_lexical",
+                "resolve Name through binding coordinates; never dispatch on func.id spelling. "
+                "Membrane until Call sites carry authenticated builtin coordinates.",
+            )
 
-        # name == matcher.name — spelling equality of names.
+        # field.name / binding.name / method.name / statement.name == name
+        # Python attribute and binding projection is name-keyed by the language.
+        # Retirement: only if methods/fields become content-addressed handles
+        # without string names at the floor surface (not planned).
         name_attrs = [
             operand
             for operand in operands
@@ -377,9 +486,33 @@ class _Visitor(ast.NodeVisitor):
             if isinstance(operand, ast.Name) and operand.id == "name"
         ]
         if name_attrs and (name_names or len(name_attrs) >= 2):
-            return True
+            # Exclude matcher.name (handled as climbable spelling gate).
+            if any(
+                isinstance(op, ast.Attribute)
+                and op.attr == "name"
+                and isinstance(op.value, ast.Name)
+                and op.value.id == "matcher"
+                for op in name_attrs
+            ):
+                return None
+            return (
+                "open_lexical_attr_name",
+                "lexical_attr_name",
+                "attribute/binding projection is name-keyed in Python; "
+                "membrane forever unless handles replace names at the floor.",
+            )
 
-        return False
+        # exception_name presence / fabrication denylist — different product law
+        # (#6949 render-edge), not unauth isinstance dispatch.
+        if "exception_name" in attr_names:
+            return (
+                "exception_name_fabrication_denylist",
+                "exception_name_presence_or_denylist",
+                "owned by render-edge fabrication door; not a type-identity spelling gate. "
+                "Retires when exception_name is not a constructible free string on RaiseEffect.",
+            )
+
+        return None
 
     def _pattern_is_vendor_coordinate(self, pattern: ast.pattern) -> bool:
         if isinstance(pattern, ast.MatchValue):
@@ -412,7 +545,15 @@ class _Visitor(ast.NodeVisitor):
         }
         return bool(bools)
 
-    def _add(self, axis: str, node: ast.AST, observed: str, replacement: str) -> None:
+    def _add(
+        self,
+        axis: str,
+        node: ast.AST,
+        observed: str,
+        replacement: str,
+        *,
+        kind: str = "unclassified",
+    ) -> None:
         self.offenders.append(
             BuiltinClosedOperationOffender(
                 axis=axis,
@@ -420,5 +561,6 @@ class _Visitor(ast.NodeVisitor):
                 line=getattr(node, "lineno", 0),
                 observed=observed,
                 replacement=replacement,
+                kind=kind,
             )
         )
