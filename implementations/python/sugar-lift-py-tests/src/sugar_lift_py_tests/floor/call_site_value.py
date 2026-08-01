@@ -500,29 +500,14 @@ class CallSiteValue(FloorValue):
         )
 
     def contains(self, item, site):
-        # `item in callsite`: dig a concrete container when the body yields one;
-        # otherwise the call result is an opaque container and stays py.in —
-        # uninterpreted membership, never invented.
+        # Dig a concrete container when the body yields one; otherwise the call
+        # result's container type is undecided — named refusal, never
+        # Complete(py.in) fabrication.
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.contains")
         if dug is not None and dug is not self:
             return dug.contains(item, site)
-
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(
-                atomic(
-                    "py.in",
-                    [
-                        item.to_term(owner="CallSiteValue.contains member"),
-                        self.term,
-                    ],
-                ),
-                site,
-                operand_callsites=(*item.callsites(), self),
-            )
+        return self.undecided_contains(
+            item, site, owner="CallSiteValue.contains"
         )
 
     def subscript(self, index, site):
