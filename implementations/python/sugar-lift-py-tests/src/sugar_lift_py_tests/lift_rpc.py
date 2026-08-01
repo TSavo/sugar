@@ -2125,6 +2125,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 target_candidates = []
                 targets = []
                 seen_targets = set()
+                implication_gaps: List[Dict[str, Any]] = []
                 for call in _tree.call_nodes_in_assert(sf, span):
                     name = call.func.id
                     if name in seen_targets:
@@ -2133,9 +2134,22 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     targets.append(name)
                     try:
                         fn = _tree.resolve_function_for_call(call)
-                    except _tree.FunctionBindingMiss:
+                    except _tree.FunctionBindingMiss as miss:
+                        # Named refuse from the construction door — gap row, not
+                        # soft continue that reopens pre-#6946 soft-None.
+                        implication_gaps.append(
+                            {
+                                "memento": at,
+                                "reason": (
+                                    f"FunctionBindingMiss name={miss.name!r} "
+                                    f"reason={miss.reason}"
+                                ),
+                            }
+                        )
                         continue
                     # No except/continue. Throws from unfinished body sugar rise.
+                    # FunctionBindingMiss is named refuse (gap above); unfinished
+                    # body sugar must not be reclassified as empty candidates.
                     def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     if rows is None:
                         continue
@@ -2191,7 +2205,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     "payload": demand,
                 }
                 _send_enumerate_result(
-                    msg_id, [node], [], term_tables=[term_table.nodes]
+                    msg_id,
+                    [node],
+                    implication_gaps,
+                    term_tables=[term_table.nodes],
                 )
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
@@ -2279,8 +2296,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     sf, at.get("span") if isinstance(at, dict) else None
                 )
                 targets = []
-                by_name = {name: (m, d) for name, m, d in universes}
+                # Abstract contracts keyed by authenticated def identity
+                # (source_cid), never by callee spelling. Spelling by_name[t]
+                # reopened first-match after FunctionBindingMiss (#6946 residual).
+                by_source_cid = {
+                    m["source_cid"]: (m, d) for _n, m, d in universes
+                }
                 cued = []
+                cue_gaps: List[Dict[str, Any]] = []
                 seen = set()
                 for call in calls:
                     t = call.func.id
@@ -2289,12 +2312,21 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     seen.add(t)
                     targets.append(t)
                     # Resolve by binding/coordinate at the call site — not
-                    # first-match-by-spelling. Miss is a named throw; soft skip
-                    # is an explicit catch of FunctionBindingMiss.
+                    # first-match-by-spelling. Miss is a named throw; the dig
+                    # records a gap and does not fall through to a spelling table.
                     try:
                         fn = _tree.resolve_function_for_call(call)
-                    except _tree.FunctionBindingMiss:
-                        fn = None
+                    except _tree.FunctionBindingMiss as miss:
+                        cue_gaps.append(
+                            {
+                                "memento": at,
+                                "reason": (
+                                    f"FunctionBindingMiss name={miss.name!r} "
+                                    f"reason={miss.reason}"
+                                ),
+                            }
+                        )
+                        continue
                     # A call IS substitution: ground args fill the pre, so the
                     # dig serves the contract AS APPLIED at this call (a concrete
                     # iterable unrolls the callee's loop here; the fold
@@ -2306,7 +2338,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # the abstract is still a hole (that is the whole point of
                     # filling the pre). Arity is the binder's job (vararg packs,
                     # defaults fill) — never len(args)==len(params).
-                    if fn is not None and _tree._args_are_ground(call):
+                    if _tree._args_are_ground(call):
                         try:
                             keywords = tuple(
                                 (keyword.arg, keyword.value)
@@ -2316,29 +2348,50 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             memento, rows = _tree.applied_contract_rows(
                                 fn, tuple(call.args), file_rel, keywords=keywords
                             )
-                        except (SugarNotWritten, SourceCallBindingGap):
+                        except SugarNotWritten:
+                            # Typed tree frontier: abstract identity fallback.
+                            rows = None
+                        except SourceCallBindingGap as bind_gap:
+                            cue_gaps.append(
+                                {
+                                    "memento": at,
+                                    "reason": f"SourceCallBindingGap: {bind_gap}",
+                                }
+                            )
                             rows = None
                         if rows:
                             cued.append(_node(memento.to_rpc(), rows[0]))
                             continue
-                    if t in by_name:
-                        cued.append(_node(*by_name[t]))
-                _send_enumerate_result(
-                    msg_id,
-                    cued,
-                    (
-                        []
-                        if cued
-                        else [
+                    # Abstract contract for THIS authenticated definition only.
+                    def_rpc = _tree.function_def_memento(fn, file_rel).to_rpc()
+                    abstract = by_source_cid.get(def_rpc["source_cid"])
+                    if abstract is not None:
+                        cued.append(_node(*abstract))
+                    else:
+                        cue_gaps.append(
                             {
                                 "memento": at,
                                 "reason": (
-                                    "no universe for the callee(s) this call site cues: "
-                                    f"{targets or 'none'}"
+                                    "resolved callee has no abstract universe row "
+                                    f"(name={t!r} source_cid={def_rpc['source_cid']})"
                                 ),
                             }
-                        ]
-                    ),
+                        )
+                dig_gaps = list(cue_gaps)
+                if not cued and not dig_gaps:
+                    dig_gaps.append(
+                        {
+                            "memento": at,
+                            "reason": (
+                                "no universe for the callee(s) this call site cues: "
+                                f"{targets or 'none'}"
+                            ),
+                        }
+                    )
+                _send_enumerate_result(
+                    msg_id,
+                    cued,
+                    dig_gaps,
                     term_tables=[term_table.nodes],
                 )
                 _log_enumeration_demand(
