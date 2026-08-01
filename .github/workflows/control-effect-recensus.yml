@@ -1,0 +1,120 @@
+name: Control-effect recensus (authoritative scoreboard)
+
+# THE DEFECT THIS FIXES
+#
+# scripts/control_effect_recensus.py declares SCOREBOARD_AUTHORITY = True. It
+# is THE authoritative scoreboard -- every other instrument in the kit declares
+# False, and tests/test_one_authoritative_scoreboard.py pins that there is
+# exactly one. It is the sole producer of R_construction_panics and of the
+# desugar board that every drain is ranked against.
+#
+# It appeared in NO WORKFLOW. Searching the repo for it returns docs, ledgers,
+# and two tests -- nothing that runs it. It was a hand-run tool.
+#
+# That is why the product R for this project was last measured on 2026-07-26:
+# somebody ran it by hand that day, and every board cited since
+# (9a78828ee, 43d994888) is that artifact. On 2026-08-01 a campaign of ~35 PRs
+# landed and could not be evaluated, because the tip has no board and nothing
+# schedules one. The roll call added in #6975 could not catch it either: the
+# authority was not on the roster, so its silence was not even a question
+# anybody asked.
+#
+# The authority being unenrolled is the enrollment law broken at the one place
+# it matters most. Enrollment is existence.
+#
+# WHY NIGHTLY AND NOT push:[main]
+#
+# This is a full-corpus recensus over pandas -- a heavy class. Putting it on
+# every push re-saturates the runner pool we just spent a day unclogging (184
+# queued runs against a max of 25). So it takes the same cadence as the walls
+# and the scoreboard sweep, and the roll call enforces the WINDOW rather than
+# the commit: tools/heavy_measurement_attendance.py --cadence nightly-window
+# reports it missing if it did not speak for its window. workflow_dispatch is
+# provided so a tip board can be demanded on purpose, which is exactly what a
+# drain campaign needs before and after it lands.
+
+on:
+  schedule:
+    # After the walls (37/53 past 10) so the heavy lease is not contended at
+    # the moment three classes wake up together.
+    - cron: "23 11 * * *"
+  workflow_dispatch:
+    inputs:
+      corpus_subtree:
+        description: "Optional subtree inside the corpus for a bounded run"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  recensus:
+    name: control-effect recensus (R_construction_panics)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
+
+      - name: Recensus, under the machine-wide heavy lease
+        shell: bash
+        run: |
+          set -uo pipefail
+          # The corpus is resolved by the SAME authenticated door the process
+          # floors use. Never a path guessed here -- an unauthenticated corpus
+          # is a board about the wrong population, which reads as progress.
+          PANDAS_CORPUS="$(
+            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+          )" || {
+            echo "::error::cannot authenticate pandas corpus for the recensus"
+            exit 1
+          }
+          echo "recensus population: authenticated pandas corpus at $PANDAS_CORPUS"
+          set +e
+          python3 tools/heavy_measurement_lease.py \
+            --class control-effect-recensus \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            -- python implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
+                 "${{ github.event.inputs.corpus_subtree || '' }}$PANDAS_CORPUS" \
+                 --corpus-root "$PANDAS_CORPUS" \
+                 --repo "$GITHUB_WORKSPACE" \
+                 --commit "$GITHUB_SHA" \
+                 --out-dir "$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
+          leased_exit=$?
+          set -e
+          # 75 is the lease REFUSING. A board that did not run is UNMEASURED,
+          # never R=0 -- the confusion this whole family exists to end.
+          if [ "$leased_exit" = "75" ]; then
+            echo "::error::heavy-measurement lease not acquired; the recensus did NOT run. R is UNMEASURED, not 0."
+            exit 75
+          fi
+          exit "$leased_exit"
+
+      - name: Lease gate (R_lease = 0)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/heavy_measurement_lease_gate.py \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The receipt distinguishes "ran and found nothing" from "never ran".
+      - name: Upload the recensus lease receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-effect-recensus-lease
+          path: lease-record.json
+          if-no-files-found: error
+
+      - name: Upload the board
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-effect-recensus-board
+          path: .sugar/pandas-control-effect/**
+          if-no-files-found: warn
