@@ -95,15 +95,20 @@ def _status_by_line(audit: dict) -> dict[int, str]:
     return {row["locus"]["line"]: row["status"] for row in audit["loci"]}
 
 
-def _assert_conserved(audit: dict) -> None:
+def _assert_conserved(audit: dict, *, report_R: int) -> None:
+    """Live ledger tooth — requires report.R, not status-only sum.
+
+    Status-only ``warranted + unresolved == source_loci`` is tautological when
+    every locus is binary; it stays green under CID-alone partial presence.
+    """
+    from sugar_lift_py_tests.tree_enumerate import assert_source_audit_ledger
+
     totals = audit["totals"]
-    assert (
-        totals["source_warranted"] + totals["source_unresolved"]
-        == totals["source_loci"]
-    ), (
-        f"conservation broken: warranted({totals['source_warranted']}) + "
-        f"unresolved({totals['source_unresolved']}) != "
-        f"source_loci({totals['source_loci']})"
+    assert_source_audit_ledger(
+        warranted=totals["source_warranted"],
+        unresolved=totals["source_unresolved"],
+        source_loci=totals["source_loci"],
+        report_R=report_R,
     )
 
 
@@ -135,7 +140,7 @@ def test_lying_twin_shared_cid_partial_presence_does_not_warrant_both() -> None:
     assert totals["source_warranted"] == 1
     assert totals["source_unresolved"] == 1
     assert totals["source_loci"] == 2
-    _assert_conserved(audit)
+    _assert_conserved(audit, report_R=report.R)
     assert totals["source_unresolved"] == report.R
 
 
@@ -178,7 +183,7 @@ def test_lying_twin_lift_rpc_roll_call_uses_the_one_door(
         1: "warranted",
         2: "unresolved",
     }, f"lift_rpc still keys presence by CID alone: {_status_by_line(audit)}"
-    _assert_conserved(audit)
+    _assert_conserved(audit, report_R=report.R)
     assert audit["totals"]["source_unresolved"] == report.R
 
 
@@ -206,7 +211,7 @@ def test_truthful_twin_both_present_both_warranted() -> None:
         "source_warranted": 2,
         "source_unresolved": 0,
     }
-    _assert_conserved(audit)
+    _assert_conserved(audit, report_R=report.R)
     assert report.R == 0
 
 
@@ -227,7 +232,7 @@ def test_truthful_twin_neither_present_both_unresolved() -> None:
         "source_warranted": 0,
         "source_unresolved": 2,
     }
-    _assert_conserved(audit)
+    _assert_conserved(audit, report_R=report.R)
     assert audit["totals"]["source_unresolved"] == report.R
 
 
@@ -241,10 +246,10 @@ def test_truthful_twin_roll_call_path_conserves_on_real_source(tmp_path: Path) -
     path = tmp_path / "m.py"
     path.write_text("def f():\n    return 1\n", encoding="utf-8")
     audit = source_audit_from_roll_call(path, "m.py")
-    _assert_conserved(audit)
 
     reporter = CollectingReporter()
     report = discharge(SourceFile.from_path(str(path), reporter=reporter))
+    _assert_conserved(audit, report_R=report.R)
     assert audit["totals"]["source_unresolved"] == report.R
     assert audit["totals"]["source_loci"] == len(report.roster)
 

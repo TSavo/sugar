@@ -432,6 +432,49 @@ def _roll_call_identity(entry) -> tuple:
     return (entry.file, entry.start_line, entry.start_col, entry.kind, entry.cid)
 
 
+def assert_source_audit_ledger(
+    *,
+    warranted: int,
+    unresolved: int,
+    source_loci: int,
+    report_R: int,
+) -> None:
+    """Panic tooth for source-audit ledger conservation.
+
+    The historical dual-producer drift (SIN CLUSTER 7 / lift_rpc path) was:
+    status keyed by CID alone (inflating warranted) while ``source_unresolved``
+    was taken from ``report.R`` (still counting the absent shared-CID seat).
+    Then ``warranted + report.R > source_loci`` and Yellow silently became Blue.
+
+    The tooth that sings is therefore:
+
+        warranted + report_R == source_loci
+        AND unresolved == report_R
+
+    A status-only sum ``warranted + unresolved == source_loci`` is NOT a tooth:
+    when every locus is assigned exactly one of {warranted, unresolved}, that
+    equality is tautological and stays green under the illegal CID-alone map.
+    That decorative shell was deleted; this function is the live replacement.
+
+    Retirement path: if presence status becomes unconstructable except via
+    full-tuple identity (typed present set / closed seat key), this assert
+    remains as contact panic for ledger arithmetic only, or retires if the
+    wire totals become derived fields of a single typed partition value.
+    """
+    if warranted + report_R != source_loci:
+        raise AssertionError(
+            f"source-audit conservation broken: warranted({warranted}) + "
+            f"report.R({report_R}) != source_loci({source_loci}); "
+            "CID-alone presence inflates warranted while R still counts the "
+            "absent seat — key presence by (file, line, col, kind, cid)"
+        )
+    if unresolved != report_R:
+        raise AssertionError(
+            f"source-audit unresolved({unresolved}) != report.R({report_R}); "
+            "presence must use the full roll-call identity, not CID alone"
+        )
+
+
 def source_audit_from_report(report, file_rel: str) -> dict:
     """ONE door: project a ``MinorityReport`` onto the source-audit wire.
 
@@ -441,7 +484,8 @@ def source_audit_from_report(report, file_rel: str) -> dict:
     There is no second producer of ``source_unresolved`` (no independent
     ``report.R`` path, no CID-only set kept "in sync").
 
-    Conservation is a tooth, not a print: ``warranted + unresolved == source_loci``.
+    Conservation is a tooth, not a print: ``warranted + report.R == source_loci``
+    (and ``unresolved == report.R``). See ``assert_source_audit_ledger``.
     """
     present_keys = {_roll_call_identity(entry) for entry in report.present}
     loci = []
@@ -465,16 +509,12 @@ def source_audit_from_report(report, file_rel: str) -> dict:
     warranted = sum(1 for locus in loci if locus["status"] == "warranted")
     unresolved = sum(1 for locus in loci if locus["status"] == "unresolved")
     source_loci = len(loci)
-    if warranted + unresolved != source_loci:
-        raise AssertionError(
-            f"source-audit conservation broken: warranted({warranted}) + "
-            f"unresolved({unresolved}) != source_loci({source_loci})"
-        )
-    if unresolved != report.R:
-        raise AssertionError(
-            f"source-audit unresolved({unresolved}) != report.R({report.R}); "
-            "presence must use the full roll-call identity, not CID alone"
-        )
+    assert_source_audit_ledger(
+        warranted=warranted,
+        unresolved=unresolved,
+        source_loci=source_loci,
+        report_R=report.R,
+    )
     return {
         "role": file_rel,
         "loci": loci,
