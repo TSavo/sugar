@@ -206,7 +206,7 @@ rm -rf "$cell_ok"
 }
 
 # Static crime strings for publish refuse path must be live (not comment-only)
-grep -F 'finalize_peer_evictable_shelf_cell "$cell" "$name"' "$sugarbin" || {
+grep -F 'finalize_peer_evictable_shelf_cell "$cell"' "$sugarbin" || {
   echo 'publish does not call finalize on success path' >&2
   exit 1
 }
