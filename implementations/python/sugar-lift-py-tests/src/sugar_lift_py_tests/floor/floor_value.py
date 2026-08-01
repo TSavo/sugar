@@ -1118,19 +1118,28 @@ class FloorValue:
     def _refuse_ordering_meaning(
         self, other, site, *, owner: str, operator: str
     ) -> None:
-        """LAW_OF_ONE door for ordering: throw named; never mint FOL meaning.
+        """LAW_OF_ONE door for ordering: never mint FOL meaning.
 
         Exactly one mechanism produces meaning: AST shadows → temporal rewrite
         → Sugar. An ordering OUTCOME is meaning. Minting
         ``Complete(PredicateValue(py.lt/…))`` from a Python helper — even when
         both types are source-decided and the atom would be "right" — is a
-        second mechanism. Undecided pairs refuse as the third value; decided
-        pairs without a ground arm refuse until that arm is written.
+        second mechanism.
 
-        Does not return. Always raises ``SugarNotWritten``.
+        Two exits only:
+
+        * **Undecided** (operands denote values but runtime type is not
+          source-decided): named third-value refusal (``SugarNotWritten``).
+          Perfect machinery over source could not yet choose Sugar fold or
+          authenticated TypeError.
+        * **Decided (or non-undecided) with no ground arm**: construction
+          panic. That is OUR missing Floor/Sugar arm, not source
+          undecidability. Mislabeling it as ``SugarNotWritten`` is unwritten
+          code wearing a typed refusal. Binary floor already panics decided
+          missing pairs via ``_binary_floor_gap``; ordering matches that law.
+
+        Does not return.
         """
-        from sugar_source_tree.panic import SugarNotWritten
-
         denotes_self = getattr(self, "denotes_value", None)
         denotes_other = getattr(other, "denotes_value", None)
         both_denote = (
@@ -1148,41 +1157,42 @@ class FloorValue:
             and decided_self()
             and decided_other()
         )
+        pair = f"{type(self).__name__} {operator} {type(other).__name__}"
         if both_denote and not both_decided:
-            observed = (
-                "undecided ordering operand runtime type: "
-                f"{type(self).__name__} {operator} {type(other).__name__}"
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=site,
+                owner=owner,
+                observed=f"undecided ordering operand runtime type: {pair}",
+                requested=(
+                    "source-visible runtime types selecting Sugar-owned ordering "
+                    "meaning or an authenticated exceptional exit"
+                ),
+                fix=(
+                    "do not mint Complete(PredicateValue(py.lt/le/gt/ge)) or invent "
+                    "TypeError; resolve both operands' runtime types from source, "
+                    "then construct via a ground Sugar arm"
+                ),
             )
-            requested = (
-                "source-visible runtime types selecting Sugar-owned ordering "
-                "meaning or an authenticated exceptional exit"
-            )
-            fix = (
-                "do not mint Complete(PredicateValue(py.lt/le/gt/ge)) or invent "
-                "TypeError; resolve both operands' runtime types from source, "
-                "then construct via a ground Sugar arm"
-            )
-        else:
-            observed = (
-                "default ordering floor has no Sugar arm for "
-                f"{type(self).__name__} {operator} {type(other).__name__}"
-            )
-            requested = (
-                "Sugar-owned ordering meaning (TrueBoolLiteralSugar / "
-                "FalseBoolLiteralSugar / authenticated RaiseValue) or a "
-                "named third-value refusal"
-            )
-            fix = (
-                "LAW_OF_ONE: implement a ground pair arm that constructs Sugar; "
-                "never resolve_comparison_atom / Complete(PredicateValue) on "
-                "FloorValue defaults"
-            )
-        raise SugarNotWritten(
-            blame=site,
+
+        # Decided pair with no arm — or non-denoting pair on this door: OUR gap.
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
             owner=owner,
-            observed=observed,
-            requested=requested,
-            fix=fix,
+            blame=site,
+            observed=f"default ordering floor has no Sugar arm for {pair}",
+            requested=(
+                "Sugar-owned ordering meaning (TrueBoolLiteralSugar / "
+                "FalseBoolLiteralSugar / authenticated RaiseValue)"
+            ),
+            fix=(
+                "LAW_OF_ONE / PANIC=GAP: implement a ground pair arm that "
+                "constructs Sugar; never resolve_comparison_atom / "
+                "Complete(PredicateValue) on FloorValue defaults; never label "
+                "a decided missing arm as SugarNotWritten"
+            ),
         )
 
     def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):

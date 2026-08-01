@@ -194,15 +194,41 @@ def test_source_decided_int_ordering_constructs_bool_sugar() -> None:
     assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
 
-def test_decided_default_pair_without_sugar_arm_throws_named() -> None:
-    """LAW_OF_ONE: decided types with no ground arm refuse — no FOL invent."""
+def test_decided_default_pair_without_sugar_arm_panics_not_refuses() -> None:
+    """PANIC=GAP: decided types with no ground arm are OUR defect, not refusal.
+
+    Mislabeling this as SugarNotWritten is unwritten code wearing a typed
+    refusal. Binary floor panics decided missing pairs; ordering matches.
+    """
     from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     # ListValue has no ordering arm; both types are source-decided.
-    with pytest.raises(SugarNotWritten) as raised:
+    with pytest.raises(ConstructionPanic) as raised:
         ListValue((TermValue(1),)).less_than(ListValue((TermValue(2),)), SITE)
-    assert "LAW_OF_ONE" in (raised.value.fix or "")
-    assert "Complete(PredicateValue)" in (raised.value.fix or "")
+    msg = str(raised.value)
+    assert "no Sugar arm" in msg or "LAW_OF_ONE" in msg
+    assert "Complete(PredicateValue)" in msg or "PredicateValue" in msg
+
+
+def test_decided_string_le_gt_ge_construct_bool_sugar() -> None:
+    """Truthful: source-decided str ordering folds to True/False Sugar for all ops."""
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    a, b = StringValue("a"), StringValue("b")
+    le = a.less_equal(b, SITE)
+    assert isinstance(le, Complete)
+    assert isinstance(le.value, TrueBoolLiteralSugar)
+    gt = b.greater_than(a, SITE)
+    assert isinstance(gt, Complete)
+    assert isinstance(gt.value, TrueBoolLiteralSugar)
+    ge = a.greater_equal(a, SITE)
+    assert isinstance(ge, Complete)
+    assert isinstance(ge.value, TrueBoolLiteralSugar)
+    # False face still Sugar, never PredicateValue invent.
+    le_false = b.less_equal(a, SITE)
+    assert isinstance(le_false.value, FalseBoolLiteralSugar)
 
 
 def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
@@ -215,6 +241,49 @@ def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
         raise AssertionError(
             "ordering floor returned a value; must throw named (LAW_OF_ONE)"
         )
+
+
+def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
+    """Lying twin: residual Complete(PredicateValue) cannot dual-edge at Sugar.
+
+    Plants the old FOL invent outcome into publish_undecided_ordering_edges.
+    Must ConstructionPanic — never ExitSet with nameless Compare halt.
+    """
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+        publish_undecided_ordering_edges,
+    )
+
+    left = _symbolic()
+    right = TermValue(1)
+    forged = Complete(
+        PredicateValue(
+            atomic(
+                "py.lt",
+                [
+                    left.to_term(owner="lying residual left"),
+                    right.to_term(owner="lying residual right"),
+                ],
+            ),
+            SITE,
+        )
+    )
+    with pytest.raises(ConstructionPanic) as raised:
+        outcome = publish_undecided_ordering_edges(
+            left, right, SITE, "Lt", forged
+        )
+        if isinstance(outcome, ExitSet):
+            raise AssertionError(
+                "residual ordering PredicateValue dual-edged — SIN reintroduced"
+            )
+        raise AssertionError(
+            "residual ordering PredicateValue passed through; must panic"
+        )
+    assert "PredicateValue" in str(raised.value)
+    assert "ordering" in str(raised.value).lower()
 
 
 # ---------------------------------------------------------------------------

@@ -153,6 +153,71 @@ class StringValue(GuardStableValue):
             )
         return super().less_than_from_left(left, site)
 
+    def less_equal(self, other, site):
+        # Source-decided str lexicographic order is Sugar, not FOL invent and
+        # not a named refusal of missing machinery.
+        if type(other) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value <= other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.less_equal")
+        return super().less_equal(other, site)
+
+    def greater_than(self, other, site):
+        if type(other) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value > other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.greater_than")
+        return super().greater_than(other, site)
+
+    def greater_equal(self, other, site):
+        if type(other) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value >= other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.greater_equal")
+        return super().greater_equal(other, site)
+
     def length(self, site):
         # A string knows its length: the count of characters.
         del site
