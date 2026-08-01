@@ -1,8 +1,9 @@
 name: Prepare Python test environment
 description: >-
   The ONE definition of the sugar Python test environment. Builds an immutable
-  wheel-installed venv from the package's declared dependency authority, mints
-  its environment identity, and puts it on PATH read-only.
+  third-party wheelhouse from the package's declared dependency authority,
+  installs those third-party wheels read-only into a venv, and binds first-party
+  packages to the SYNCED CHECKOUT via PYTHONPATH (never site-packages).
 
 # WHY THIS EXISTS
 #
@@ -15,12 +16,30 @@ description: >-
 # There is now one definition and it lives here. The authoritative suite job
 # consumes it. Every zero-tolerance floor consumes it. No caller installs its
 # own dependency list: `sugar-lift-py-tests[test]` is the sole dependency
-# authority (#6275), and the only names below are FIRST-PARTY PATHS, which are
-# the packages themselves rather than a hand-list of their requirements.
+# authority (#6275), and the only names below are FIRST-PARTY PATHS used to
+# *resolve* that table into a third-party wheelhouse — not to install the
+# packages themselves into the venv.
 #
-# The venv is built from wheels and then made read-only. Editable installs let
-# a later job silently change what an earlier job measured; a wheel install
-# plus `chmod a-w` makes that attempt fail loudly instead.
+# FIRST-PARTY vs THIRD-PARTY (load-bearing split)
+#
+# Third-party [test] dependencies (pytest, numpy, pandas, ...) are wheel-
+# installed into a read-only venv. That property is deliberate: a later job
+# cannot silently change what an earlier job measured.
+#
+# First-party packages (sugar-lift-*, sugar-source-tree, ...) MUST resolve from
+# the SYNCED CHECKOUT via PYTHONPATH. Wheel-installing them into site-packages
+# is false provenance: authenticate_lift then sees a different build than the
+# tree the measurement claims about (ExecutionEnvironmentMismatch). Do NOT
+# weaken authenticate_lift to accept site-packages; do NOT install first-party
+# into the venv. AuthenticatedInstalledLift (content-stamp equality) is a
+# later design and is NOT this action.
+#
+# ORDERING
+#
+# Checkout roots must be on PYTHONPATH before any process imports
+# sugar_lift_py_tests. Activating roots after the first import is a no-op:
+# sys.modules already holds the site-packages (or other) copy. This action
+# exports PYTHONPATH via GITHUB_ENV so every subsequent step inherits it.
 
 inputs:
   python-version:
@@ -51,6 +70,9 @@ outputs:
   env-dir:
     description: Root of the prepared environment.
     value: ${{ steps.install.outputs.env-dir }}
+  checkout-pythonpath:
+    description: Absolute managed first-party PYTHONPATH for the synced checkout.
+    value: ${{ steps.install.outputs.checkout-pythonpath }}
 
 runs:
   using: composite
@@ -100,21 +122,44 @@ runs:
         # never resolved, and only the file travels to the next job.
         python3 tools/python_suite_identity_gate.py --environment-identity "$identity"
 
-    - name: Build wheelhouse from the declared dependency authority
+    - name: Build third-party wheelhouse from the declared dependency authority
       shell: bash
       run: |
         set -euo pipefail
         env_dir="$RUNNER_TEMP/sugar-python-test-environment"
         rm -rf "$env_dir/wheelhouse"
+        mkdir -p "$env_dir/wheelhouse"
         # `[test]` is the sole dependency authority. The three paths are the
-        # first-party packages themselves; every third-party requirement is
-        # resolved transitively FROM that table, never named here.
+        # first-party packages themselves — used only so pip can resolve their
+        # declared third-party requirements into the wheelhouse. The first-party
+        # wheels themselves are dropped: they must not be installed into the
+        # venv (false provenance against the synced checkout).
         python -m pip wheel --quiet --wheel-dir "$env_dir/wheelhouse" \
           './implementations/python/sugar-lift-py-tests[test]' \
           ./implementations/python/sugar-lift-python-source \
           ./implementations/python/sugar-source-tree
+        # Keep the wheelhouse third-party only. First-party resolves via
+        # PYTHONPATH from the checkout (next step).
+        shopt -s nullglob
+        removed=0
+        for whl in "$env_dir/wheelhouse"/sugar_lift_*.whl \
+                   "$env_dir/wheelhouse"/sugar_source_tree-*.whl; do
+          rm -f "$whl"
+          removed=$((removed + 1))
+        done
+        if [ "$removed" -eq 0 ]; then
+          echo "::error::expected first-party wheels to strip from wheelhouse; none matched"
+          ls -la "$env_dir/wheelhouse" || true
+          exit 1
+        fi
+        third_party=( "$env_dir/wheelhouse"/*.whl )
+        if [ "${#third_party[@]}" -eq 0 ]; then
+          echo "::error::third-party wheelhouse is empty after stripping first-party"
+          exit 1
+        fi
+        echo "third-party wheelhouse: ${#third_party[@]} wheels (stripped $removed first-party)"
 
-    - name: Install immutable environment
+    - name: Install immutable third-party environment + bind checkout PYTHONPATH
       id: install
       shell: bash
       run: |
@@ -126,12 +171,38 @@ runs:
         if [ -d "$venv" ]; then chmod -R u+w "$venv"; rm -rf "$venv"; fi
         python -m venv "$venv"
         "$venv/bin/python" -m pip install --quiet --upgrade pip wheel
-        "$venv/bin/python" -m pip install --quiet \
-          --no-index --find-links "$env_dir/wheelhouse" \
-          'sugar-lift-py-tests[test]' \
-          sugar-lift-python-source \
-          sugar-source-tree
+
+        # Install ONLY third-party wheels. Never sugar-lift-* / sugar-source-tree.
+        shopt -s nullglob
+        third_party=( "$env_dir/wheelhouse"/*.whl )
+        if [ "${#third_party[@]}" -eq 0 ]; then
+          echo "::error::no third-party wheels to install"
+          exit 1
+        fi
+        "$venv/bin/python" -m pip install --quiet --no-index \
+          "${third_party[@]}"
         "$venv/bin/python" -m pip freeze --all > "$env_dir/resolved-distributions.txt"
+
+        # Refuse if a first-party package snuck into site-packages. Check each
+        # name alone: `pip show a b` exits non-zero if any is missing, which
+        # would mask a partial install.
+        for pkg in sugar-lift-py-tests sugar-lift-python-source sugar-source-tree; do
+          if "$venv/bin/python" -m pip show "$pkg" >/dev/null 2>&1; then
+            echo "::error::first-party package $pkg present in venv; must resolve from checkout only"
+            "$venv/bin/python" -m pip show "$pkg" || true
+            exit 1
+          fi
+        done
+
+        # Checkout roots BEFORE any subsequent import of sugar_lift_py_tests.
+        # tools/managed_checkout_pythonpath.py is stdlib-only so it can run
+        # without the package on path (the ordering this action exists to fix).
+        checkout_pythonpath="$(
+          python3 tools/managed_checkout_pythonpath.py --repo-root .
+        )"
+        echo "PYTHONPATH=${checkout_pythonpath}" >> "$GITHUB_ENV"
+        echo "SUGAR_CHECKOUT_PYTHONPATH=${checkout_pythonpath}" >> "$GITHUB_ENV"
+        echo "checkout PYTHONPATH bound ($(echo "$checkout_pythonpath" | tr ':' '\n' | wc -l | tr -d ' ') roots)"
 
         # Consumers share this environment READ-ONLY. No job may mutate it:
         # adding a package to an already-measured environment is how a floor
@@ -143,6 +214,7 @@ runs:
         echo "$venv/bin" >> "$GITHUB_PATH"
         echo "python=$venv/bin/python" >> "$GITHUB_OUTPUT"
         echo "env-dir=$env_dir" >> "$GITHUB_OUTPUT"
+        echo "checkout-pythonpath=$checkout_pythonpath" >> "$GITHUB_OUTPUT"
 
     - name: Upload environment identity
       if: inputs.identity-artifact == 'true'

@@ -72,10 +72,11 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
             "R_native_crashes = 0",
             "R_bare_exceptions = 0",
             "R_timeouts = 0",
+            "R_silent = 0",
         }:
-            # Process floors must name a population. Bare script invocation
-            # used to default to kit production_roots (~444 files) — false
-            # green while the authenticated pandas corpus went unmeasured.
+            # Process floors + Criterion-2 silent must name a population.
+            # Bare silent_zero_tolerance used to default to kit production_roots
+            # (~444 files) — false green while authenticated pandas was unmeasured.
             assert "PANDAS_CORPUS" in step or "authenticated_pandas" in step, (
                 f"{axis} must pass an explicit corpus path; silent default "
                 "to kit production_roots is a wrong-population false green"
@@ -87,19 +88,20 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
 
 
 def test_process_floors_resolve_authenticated_pandas_population() -> None:
-    """The floor set must authenticate pandas before the three process axes."""
+    """The floor set must authenticate pandas before the four corpus axes."""
     floors = FLOOR_SET.read_text()
     assert "authenticated_pandas_corpus" in floors, (
         "process floors must resolve the authenticated pandas corpus root"
     )
     assert "PANDAS_CORPUS=" in floors
-    # Order: corpus resolved once, then all three axes use it.
+    # Order: corpus resolved once, then all four Criterion-2 population axes use it.
     corpus_at = floors.find("PANDAS_CORPUS=")
     native_at = floors.find('axis "R_native_crashes = 0"')
     bare_at = floors.find('axis "R_bare_exceptions = 0"')
     timeout_at = floors.find('axis "R_timeouts = 0"')
-    assert 0 <= corpus_at < native_at < bare_at < timeout_at, (
-        "PANDAS_CORPUS must be bound before the process-floor axes"
+    silent_at = floors.find('axis "R_silent = 0"')
+    assert 0 <= corpus_at < native_at < bare_at < timeout_at < silent_at, (
+        "PANDAS_CORPUS must be bound before native/bare/timeout/silent axes"
     )
 
 

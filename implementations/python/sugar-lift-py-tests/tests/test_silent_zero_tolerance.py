@@ -66,12 +66,19 @@ def test_wrong_kind_at_same_coordinate_is_silent() -> None:
 
 
 def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:
+    """Kit roots still exist for intentional self-check — never CLI default."""
     roots = _SCANNER.production_roots(tmp_path)
 
     assert roots == (
         tmp_path / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
         tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
     )
+
+
+def test_empty_scan_roots_are_refused() -> None:
+    """Wrong-population door closed: empty args cannot green on kit default."""
+    with pytest.raises(ValueError, match="scan roots must be explicit"):
+        _SCANNER.require_explicit_scan_roots(())
 
 
 def test_empty_surface_is_loud(tmp_path: Path) -> None:
