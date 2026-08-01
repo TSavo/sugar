@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _enum_floor_runtime import (  # noqa: E402
     prepare_floor_io,
     production_roots,
+    require_explicit_scan_roots,
     require_python_paths,
 )
 from _production_lift_child import production_lift_bootstrap_error  # noqa: E402
@@ -156,7 +157,11 @@ def main() -> int:
         "paths",
         nargs="*",
         type=Path,
-        default=list(production_roots(repo_root)),
+        default=[],
+        help=(
+            "Scan roots (required, non-empty). Process floors police the "
+            "authenticated pandas corpus — never silent kit production_roots."
+        ),
     )
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
@@ -178,10 +183,14 @@ def main() -> int:
         return 2
 
     try:
-        paths = require_python_paths(args.paths)
+        paths = require_explicit_scan_roots(args.paths)
     except ValueError as error:
         print(f"NATIVE-CRASH ZERO-TOLERANCE RED: {error}")
         return 1
+    print(
+        "NATIVE-CRASH POPULATION: "
+        f"roots={[str(p) for p in args.paths]} files={len(paths)}"
+    )
 
     _base, engine_path, progress_path = prepare_floor_io(
         repo_root=args.repo_root,
