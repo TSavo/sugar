@@ -105,9 +105,46 @@ jobs:
             | tee attendance.md \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Compose CommitMeasurement (cite receipts only)
+        env:
+          SHA: ${{ steps.subject.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # One door for READING tip state. Values are field-paths on sealed
+          # bodies; lease alone without suite-report/floor body is Unmeasured.
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import importlib.util
+          spec = importlib.util.spec_from_file_location(
+              "cm", Path("tools/commit_measurement.py")
+          )
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          import os
+          sha = os.environ["SHA"]
+          vector = mod.compose_tip_from_receipts_dir(sha, Path("receipts"))
+          Path("commit-measurement.json").write_text(
+              json.dumps(vector.to_json(), indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(vector.to_json(), indent=2, sort_keys=True))
+          PY
+
+      - name: Gate — tip composition required (silence is not clean)
+        run: |
+          set -euo pipefail
+          # REQUIRED not advisory: PartialVector or missing file → red.
+          python3 tools/commit_measurement_gate.py \
+            --composition commit-measurement.json \
+            --require-complete \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: heavy-measurement-attendance-${{ steps.subject.outputs.sha }}
-          path: attendance.md
+          path: |
+            attendance.md
+            commit-measurement.json
           if-no-files-found: warn
