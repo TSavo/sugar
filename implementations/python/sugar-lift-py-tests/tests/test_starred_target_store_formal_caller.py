@@ -377,7 +377,8 @@ def test_exact_arity_valueerror_identity() -> None:
         == "DynamicUnpackStoreAssignSugar.arity_mismatch"
     )
     # Operation occurrence cites the unpack site — not a foreign boundary.
-    assert effect.occurrence_id == str(site) or effect.occurrence_id == str(site)
+    assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
+    assert effect.occurrence_id == str(site)
 
 
 def test_arity_valueerror_wrong_occurrence_is_not_truthful() -> None:

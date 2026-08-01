@@ -21,7 +21,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
@@ -547,6 +547,10 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
     assert isinstance(halted, Halted)
     assert halted.effect.exception_name is None
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
+    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence!r}"
+    )
 
 
 def test_undischarged_native_operation_is_typed_loud_not_completed():
@@ -706,7 +710,7 @@ def test_nameless_halt_stays_outside_matching_boundary_end_to_end():
         (
             Halted(
                 true_guard(),
-                UndeterminedRaiseEffect(occurrence="operation-origin"),
+                RaiseEffect(occurrence="operation-origin"),
             ),
         )
     )
@@ -848,6 +852,10 @@ def test_setitem_discharges_and_halts_with_named_exception_identity():
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _Expected("IndexError").identity
+    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence!r}"
+    )
 
 
 def test_setattr_named_unwraps_string_value_and_discharges():
@@ -1086,3 +1094,7 @@ def test_symbolic_formal_subscript_discharges_authenticated_exceptional_through_
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
+    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence!r}"
+    )

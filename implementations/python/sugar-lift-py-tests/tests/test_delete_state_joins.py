@@ -153,6 +153,10 @@ def _delitem_keyerror_halt(
     halted = exits.exits[0]
     assert isinstance(halted, Halted), halted
     assert halted.effect.exception_type_coordinate == _identity("KeyError")
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     assert halted.state is pending.pre_effect_state.state, (
         f"{CODEX1}: halt.state is not enrolled pre-effect state identity"
     )
@@ -340,6 +344,7 @@ def test_bound_method_delete_producer_outcome_halts_with_named_keyerror() -> Non
     assert halted.effect.exception_name == "KeyError" or (
         halted.effect.exception_type_coordinate == _identity("KeyError")
     )
+    assert halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
     assert halted.state is not None, (
         f"{CODEX1}: bound-method delete halt dropped pre-effect state"
     )
@@ -387,8 +392,8 @@ def test_lying_rollback_misreads_halt_as_completed_body() -> None:
 def test_wrong_exception_observation_is_not_the_delete_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported delete edge."""
     _, halted = _delitem_keyerror_halt()
-    foreign = RaiseEffect.for_builtin("KeyError",
-        
+    foreign = RaiseEffect(
+        exception_name="KeyError",
         blame="foreign.py:1:0",
         occurrence="foreign.py:1:0",
         exception_type_coordinate=_identity("KeyError"),

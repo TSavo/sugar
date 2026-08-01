@@ -140,6 +140,11 @@ def _assert_named_halt(outcome) -> Halted:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity('IndexError')
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     # #6640: exceptional discharge stamps the reducer-owned pre-effect state.
     assert halted.state is not None, (
         "NativeOperationResolutionV1.project omitted the formal setitem "

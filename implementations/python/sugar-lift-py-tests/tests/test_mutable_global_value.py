@@ -9,6 +9,15 @@ from sugar_source_tree.nodes import Name, Subscript
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+def _identity(name: str):
+    from sugar_lift_py_tests.floor.ground_exit import (
+        _builtin_exception_identity,
+    )
+
+    identity, _mro = _builtin_exception_identity(name)
+    return identity
+
+
 
 def _sites(tmp_path, source: str, filename: str):
     path = tmp_path / filename
@@ -43,8 +52,12 @@ def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_f
     halted = next(exit for exit in exits.exits if isinstance(exit, Halted))
     completed = next(exit for exit in exits.exits if isinstance(exit, Completed))
     assert halted.effect.exception_name == "KeyError"
-    assert halted.effect.occurrence_id == str(site)
-    assert halted.effect.exception_type_mro is not None
+    assert halted.effect.occurrence == str(site)
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    key_error_coord, key_error_mro = _builtin_exception_identity("KeyError")
+    assert halted.effect.exception_type_coordinate == key_error_coord
+    assert halted.effect.exception_type_mro == key_error_mro
     assert isinstance(completed.value, CallSiteValue)
     assert completed.value.target_name == "py.subscript"
     assert completed.value.site is site

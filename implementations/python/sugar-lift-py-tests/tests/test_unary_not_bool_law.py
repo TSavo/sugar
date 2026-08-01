@@ -285,9 +285,11 @@ def test_halted_truth_is_not_negated() -> None:
 
         assert isinstance(face.value, RaiseValue)
         assert face.value.effect.exception_name == "TypeError"
+        assert face.value.effect.exception_type_coordinate == _identity('TypeError')
     else:
         assert isinstance(face, Halted)
         assert face.effect.exception_name == "TypeError"
+        assert face.effect.exception_type_coordinate == _identity('TypeError')
 
 
 def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:
@@ -345,6 +347,10 @@ def test_formal_not_halt_bypasses_negate_continuation() -> None:
         [str_const("builtins"), str_const("TypeError")],
     )
     # Occurrence is the operation site, not a fabricated boundary locus.
+    assert isinstance(exits.exits[0].effect.occurrence_id, str) and ":" in exits.exits[0].effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {exits.exits[0].effect.occurrence_id!r}"
+    )
 
 
 def test_undecided_actual_stays_named_refusal_on_discharge() -> None:

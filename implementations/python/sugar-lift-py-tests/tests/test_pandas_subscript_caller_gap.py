@@ -327,7 +327,10 @@ def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> Non
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.occurrence_id == str(carrier.demand.source_node.wire())
+    # ListValue[1] on len-1 list is IndexError (not TypeError). Presence-only
+    # used to green either; the value pin must name IndexError or it is a false tooth.
+    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert halted.effect.occurrence == str(carrier.demand.source_node.wire())
 
 
 class _Expected:
@@ -360,7 +363,7 @@ def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() 
 
     assert len(routed.exits) == 1
     assert isinstance(routed.exits[0], Halted)
-    assert routed.exits[0].effect.occurrence_id == str(carrier.demand.source_node.wire())
+    assert routed.exits[0].effect.occurrence == str(carrier.demand.source_node.wire())
     assert (
         routed.exits[0].effect.exception_type_coordinate
         != _Expected("ValueError").identity

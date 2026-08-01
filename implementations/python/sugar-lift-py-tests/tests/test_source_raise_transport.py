@@ -156,6 +156,7 @@ def test_authenticated_raise_helper_publishes_named_halt_at_call() -> None:
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "ValueError"
     assert halted.effect.exception_type_coordinate == _identity("ValueError")
+    assert halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
     # Call boundary re-owns the published edge.
     assert halted.effect.producer_node_owner == "Call"
     assert halted.state is not None
@@ -170,6 +171,10 @@ def test_store_indexerror_raise_helper_carries_named_type_and_occurrence() -> No
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "IndexError"
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence!r}"
+    )
     assert halted.effect.producer_node_owner == "Call"
     assert halted.state is not None
 
@@ -396,8 +401,8 @@ def test_wrong_exception_observation_is_not_the_helper_effect() -> None:
         bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
-    foreign = RaiseEffect.for_builtin("ValueError",
-        
+    foreign = RaiseEffect(
+        exception_name="ValueError",
         blame="foreign.py:1:0",
         occurrence="foreign.py:1:0",
         exception_type_coordinate=_identity("ValueError"),

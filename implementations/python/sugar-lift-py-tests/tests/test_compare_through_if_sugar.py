@@ -132,6 +132,10 @@ def test_exceptional_condition_bypasses_both_bodies() -> None:
         halted.effect.exception_type_coordinate
         == _expected_exception("TypeError").exception_type_identity()
     )
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
 
 
 def test_matching_assertion_boundary_consumes_and_preserves_pre_effect_state() -> None:

@@ -67,7 +67,10 @@ def _leaf_occurrence_map(effect) -> dict[str, list[str]]:
     """Map exception_name -> ordered occurrence list for all leaves."""
     by_name: dict[str, list[str]] = {}
     for leaf in _leaves(effect):
-        assert leaf.occurrence is not None, leaf
+        assert isinstance(leaf.occurrence, str) and ":" in leaf.occurrence, (
+            "authenticated raise locus must be a file:line:col occurrence id, "
+            f"not presence-only; got {leaf.occurrence!r}"
+        )
         by_name.setdefault(leaf.exception_name, []).append(leaf.occurrence)
     return by_name
 
@@ -345,6 +348,10 @@ def test_bare_reraise_at_inner_level_preserves_inner_occurrences_with_outer_resi
     by_name = {leaf.exception_name: leaf for leaf in leaves}
     for ctor_name, line in lines_by_ctor.items():
         leaf = by_name[ctor_name]
+        assert isinstance(leaf.occurrence, str) and ":" in leaf.occurrence, (
+            "authenticated raise locus must be a file:line:col occurrence id, "
+            f"not presence-only; got {leaf.occurrence!r}"
+        )
         assert leaf.occurrence.startswith(f"{name}:{line}:"), (
             f"{ctor_name} occurrence {leaf.occurrence!r} must be the sealed "
             f"raise site at {name}:{line}, not a reminted residual site"

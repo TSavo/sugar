@@ -29,6 +29,10 @@ def _halt_occurrence(compare: Compare) -> str:
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
+    assert isinstance(halted[0].effect.occurrence_id, str) and ":" in halted[0].effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted[0].effect.occurrence_id!r}"
+    )
     return halted[0].effect.occurrence_id
 
 

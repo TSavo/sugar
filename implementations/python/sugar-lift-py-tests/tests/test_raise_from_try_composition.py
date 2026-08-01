@@ -108,6 +108,10 @@ def test_raise_outer_from_handler_binding_keeps_distinct_type_and_occurrence():
     effect = _halt_effect(_desugar(source))
 
     assert effect.exception_name == "RuntimeError"
+    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {effect.occurrence!r}"
+    )
     assert "RuntimeError" in (effect.exception_name or "")
 
     # Cause is the authentic routed inner raise — ObservedEffectValue, not invented.
@@ -115,6 +119,10 @@ def test_raise_outer_from_handler_binding_keeps_distinct_type_and_occurrence():
     cause_effect = effect.cause_value.effect
     assert isinstance(cause_effect, RaiseEffect)
     assert cause_effect.exception_name == "ValueError"
+    assert isinstance(cause_effect.occurrence, str) and ":" in cause_effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {cause_effect.occurrence!r}"
+    )
 
     # Type + occurrence pairs are distinct; never collapse cause into outer.
     assert effect.exception_name != cause_effect.exception_name
@@ -144,6 +152,7 @@ def test_handler_state_projects_authentic_cause_not_handler_type():
     effect = _halt_effect(_desugar(truthful))
     assert isinstance(effect.cause_value, ObservedEffectValue)
     assert effect.cause_value.effect.exception_name == "KeyError"
+    assert effect.cause_value.effect.occurrence == str(truthful)
     # Occurrence is the body raise site, not the except clause / outer site.
     body_occ = effect.cause_value.effect.occurrence
     assert body_occ != effect.occurrence
@@ -203,6 +212,10 @@ def test_from_none_suppresses_chaining_without_erasing_outer():
     effect = _halt_effect(_desugar(source))
 
     assert effect.exception_name == "RuntimeError"
+    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {effect.occurrence!r}"
+    )
     assert isinstance(effect.raised_value, CallSiteValue)
     assert effect.raised_value.target_name == "RuntimeError"
 
@@ -245,8 +258,8 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
     """If the cause expression halts, the outer RaiseEffect is never emitted."""
     outer = _call_exception("RuntimeError", "outer")
     cause_halt = Incomplete(
-        RaiseEffect.for_builtin("KeyError",
-            
+        RaiseEffect(
+            exception_name="KeyError",
             blame="unit.py:9:4",
             occurrence="unit.py:9:4",
             raised_value=_call_exception("KeyError", "cause-boom"),
@@ -263,7 +276,7 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
 
     # Cause evaluation's halt is the exit — not RuntimeError outer.
     assert effect.exception_name == "KeyError"
-    assert effect.occurrence_id == "unit.py:9:4"
+    assert effect.occurrence == "unit.py:9:4"
     assert effect.exception_name != "RuntimeError"
     # Outer was constructed as Complete but never wrapped into a raise halt.
     assert not (
@@ -285,7 +298,7 @@ def test_successful_cause_then_outer_is_the_compose_twin():
     )
     effect = _halt_effect(sugar.desugar())
     assert effect.exception_name == "RuntimeError"
-    assert effect.occurrence_id == "compose.py:3:4"
+    assert effect.occurrence == "compose.py:3:4"
     assert isinstance(effect.cause_value, CallSiteValue)
     assert effect.cause_value.target_name == "KeyError"
     assert effect.cause_value is not effect.raised_value
