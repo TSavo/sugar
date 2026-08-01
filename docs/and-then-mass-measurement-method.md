@@ -162,26 +162,97 @@ single mis-parse is visible.
 
 ---
 
-## 6. What each count means for Deferred
+## 6. Pre-committed decision rule: build Deferred or not
 
-Owner ruling: Deferred is typed “not yet discharged”; undischarged Deferred at a
-**terminus** must still **panic**. Accept only if loud incompleteness is
+**Written before tip numbers exist** so the reading cannot be rationalised after
+the fact (how “283 means Deferred” survived on a board that had `native=0`).
+
+Notation (from §5): \(N_{\mathrm{related}}\), \(R_{\mathrm{native}}\),
+\(R_{\mathrm{pending}}\), \(R_{\mathrm{guarded}}\), \(R_{\mathrm{other}}\).
+
+Owner ruling (always): Deferred is typed “not yet discharged.” An undischarged
+Deferred that reaches a **terminus** must still **panic**, naming demand, source
+node, and failed discharger. Accept Deferred only if loud incompleteness is
 preserved or increased (relocated), never silenced.
 
-| Observation on tip board | Implication for building Deferred |
+### 6.1 What Deferred is for (object, not slogan)
+
+Deferred is the typed cell for **undischarged `NativeOperationExitCarrierV1`**
+(and kin) so composition can be total **without** inventing a completed exit.
+It is **not** a generic bucket for every and_then panic, and **not** the object
+for multi-demand pending-contract joins or GuardedValue arm laws.
+
+### 6.2 Thresholds (tip board, and_then-related only)
+
+Define **native share**:
+
+\[
+s_{\mathrm{native}} = \frac{R_{\mathrm{native}}}{N_{\mathrm{related}}}
+\quad (N_{\mathrm{related}} > 0);\quad
+s_{\mathrm{native}} := 0 \text{ if } N_{\mathrm{related}} = 0.
+\]
+
+| Verdict | Pre-committed condition | Action |
+| --- | --- | --- |
+| **BUILD Deferred (slice-justified)** | \(N_{\mathrm{related}} > 0\) **and** \(s_{\mathrm{native}} \ge 1/3\) **and** \(R_{\mathrm{native}} \ge 10\) | Build Deferred for the native_deferred class only. Publish pending/guarded as separate objects. Terminus panic required. |
+| **BUILD Deferred (dominant)** | \(s_{\mathrm{native}} \ge 1/2\) **and** \(R_{\mathrm{native}} \ge 10\) | Same as above; native is the primary and_then hole. Still do not claim pending/guarded are fixed by Deferred. |
+| **DO NOT build Deferred as the answer to and_then mass** | \(R_{\mathrm{native}} = 0\), **or** \(s_{\mathrm{native}} < 1/10\) while \(R_{\mathrm{pending}} \ge 3 \times R_{\mathrm{native}}\), **or** \(R_{\mathrm{pending}} \ge \max(50,\, 2 \times R_{\mathrm{native}})\) with \(s_{\mathrm{native}} < 1/3\) | **Same shape as stale 9a.** Mass is pending-contract (or other). Deferred alone does not retire the bulk. Prefer pending-contract / demand-set object. Deferred may still be a small typed fix if \(R_{\mathrm{native}} \ge 1\) as a **narrow** carrier hole — see §6.3. |
+| **DO NOT build Deferred at all this cycle** | \(R_{\mathrm{native}} = 0\) **and** \(N_{\mathrm{related}} > 0\) | No Deferred mass on tip. Building Deferred would not reduce and_then-related loud incompleteness. Spend the climb budget on the dominant bucket (usually pending_contract or guarded). |
+| **INSUFFICIENT MEASURE** | Board missing, incomplete denominator, or \(N_{\mathrm{related}} = 0\) while board claims huge construction panic mass outside the and_then filter | **Do not decide.** Fix recognition or re-run board; do not invent Deferred size. |
+| **REJECT shipped Deferred** (post-land check) | After Deferred: mid-sequence native panics drop **and** total loud incompleteness drops by that amount **without** equal terminus panics naming demand/source/caller | False green. Revert or fix terminus mouth. |
+
+### 6.3 Plain answer: what split makes Deferred **NOT** worth building?
+
+**Not worth building as the fix for “and_then mass” when:**
+
+1. **\(R_{\mathrm{native}} = 0\)** on tip (stale-9a shape, or cleaner). There is no
+   undischarged-native cell mass to hold. Deferred would be a type looking for a
+   job.
+
+2. **Pending-contract dominates:** \(R_{\mathrm{pending}} \ge 3 \times R_{\mathrm{native}}\)
+   (or \(R_{\mathrm{pending}} \ge 50\) with \(s_{\mathrm{native}} < 1/3\)). Building
+   Deferred while selling “we fixed the 283” is the same lie as 9a under a new
+   name. The missing object is multi-demand / demand-set algebra, not Deferred.
+
+3. **Guarded dominates with native ~0:** same — different object
+   (`GuardedValue` / single-outcome), not Deferred.
+
+**Is any split enough to justify Deferred independent of mass?**
+
+**Yes, narrowly — but not as the and_then-mass story.**
+
+- If product already has `NativeOperationExitCarrierV1` and
+  `outcome_to_exitset` **must** panic on undischarged carriers, the algebra is
+  already incomplete: composition is not total over a real production type.
+  A Deferred Exit variant can still be justified as **making the algebra total
+  over an existing type**, with terminus panic as the incompleteness mouth —
+  even when \(R_{\mathrm{native}}\) is small — **provided** we do **not** claim
+  it retires pending/guarded mass.
+
+- That justification is **geometric** (total composition + honest terminus), not
+  “because the board is 283.” If \(R_{\mathrm{native}} = 0\) at tip, even this
+  geometric case is weak: either carriers never reach the conversion boundary
+  in the corpus, or recognition is wrong. Prefer re-measure recognition before
+  inventing Deferred for a zero-mass class.
+
+**Summary one-liner:**
+
+> **Build Deferred only if tip \(R_{\mathrm{native}}\) is a real, non-negligible
+> share of and_then-related panics (thresholds in §6.2), or as a narrow
+> totality fix for an existing undischarged-native type without claiming
+> pending/guarded retirement. Do not build Deferred as the answer when
+> \(R_{\mathrm{native}} = 0\) or pending-contract dominates — that is the 9a
+> error pre-committed against.**
+
+### 6.4 Observation table (after numbers, map to §6.2 only)
+
+| Observation on tip board | Map to §6.2 verdict |
 | --- | --- |
-| \(R_{\mathrm{native}} \gg 0\) and dominates \(N_{\mathrm{related}}\) | Deferred is the **main** algebra hole: typed cell for undischarged native demand is worth building; terminus panic must stay loud and named. |
-| \(R_{\mathrm{native}} \approx 0\) and \(R_{\mathrm{pending}} \gg 0\) | **Same as stale 9a:** mass is pending-contract multi-demand joins, **not** Deferred. Building Deferred alone will **not** retire the bulk; do not sell Deferred as “fixing the 283.” Pending-contract / demand-set algebra is the object. |
-| \(R_{\mathrm{guarded}} \gg 0\) | Separate GuardedValue / single-outcome incompleteness; Deferred does not own it. |
-| \(R_{\mathrm{native}}\) modest, mixed with pending/guarded | Deferred is a **partial** climb; publish the split so design does not erase pending/guarded under one type. |
-| After Deferred: \(R_{\mathrm{native}}\) drops **and** total loud incompleteness drops by the same amount without new terminus panics | **Regression (false green)** — Deferred silenced mass mid-composition without terminus loudness. Reject. |
-| After Deferred: mid-sequence native panics drop; equal/greater loud panics appear at undischarged terminus with demand/source/caller named | **Rung climbed** — same loudness, honest location. |
-
-**Decision rule (pre-build):**
-
-- If tip \(R_{\mathrm{native}} = 0\) (or negligible vs \(R_{\mathrm{pending}}\)): **do not** prioritize Deferred as the answer to “and_then mass”; prioritize pending-contract objects.
-- If tip \(R_{\mathrm{native}}\) is the bulk of \(N_{\mathrm{related}}\): Deferred is justified **for that slice only**; still measure pending/guarded separately.
-
+| \(s_{\mathrm{native}} \ge 1/2\), \(R_{\mathrm{native}} \ge 10\) | BUILD dominant |
+| \(s_{\mathrm{native}} \ge 1/3\), \(R_{\mathrm{native}} \ge 10\) | BUILD slice-justified |
+| \(R_{\mathrm{native}} = 0\), \(N_{\mathrm{related}} > 0\) | DO NOT build this cycle |
+| pending \(\ge 3\times\) native, \(s_{\mathrm{native}} < 1/3\) | DO NOT as and_then-mass answer |
+| Post-land: mass silenced without terminus panics | REJECT shipped Deferred |
 ---
 
 ## 7. Ladder (why this is a document, not a product type yet)
