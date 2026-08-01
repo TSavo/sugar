@@ -211,7 +211,11 @@
 
 1. **S0.1** — Finish recensus `30720169468`; bank board artifact (DONE-WHEN above).  
 2. **S0.2** — Finish sole-construction `30720199631`; bank process-floor R triple (DONE-WHEN above).  
-3. **S0.3** — Package tip measurement (board + floors + optional CommitMeasurement complete); only then **S1.1** live re-rank.
+3. **S0.3** — Package tip measurement (board + floors + optional CommitMeasurement); only then **S1.1** live re-rank.
+   - **REQUIRED:** board JSON (S0.1) + process-floor R triple native/bare/timeout (S0.2).
+   - **OPTIONAL:** `CommitMeasurement` via `tools/compose_commit_measurement.py` — **may be PartialVector** (unmeasured axes expected if package suite has not spoken). Do **not** use `commit_measurement_gate --require-complete` for S0.3 packaging.
+   - Ready command (run only after S0.1/S0.2 receipts exist; do not contend in-flight runs):
+     `python3 tools/compose_commit_measurement.py --commit "$SHA" --receipts-dir receipts/ --output commit-measurement.json`
 
 ---
 

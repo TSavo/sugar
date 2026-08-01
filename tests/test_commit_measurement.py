@@ -280,3 +280,37 @@ def test_workflow_runs_gate_even_when_attendance_would_exit_red() -> None:
     # Decorative pattern: separate gate step after roll call under set -e only
     # would skip on attendance red. The fixed job uses att_exit/gate_exit OR.
     assert "att_exit" in text and "gate_exit" in text
+
+
+def test_s03_compose_cli_allows_partial_exit_zero(tmp_path: Path) -> None:
+    """S0.3 packaging: empty/partial receipts still write PartialVector exit 0.
+
+    --require-complete is attendance tip-complete claim only — not S0.3.
+    """
+    import subprocess
+    import sys
+
+    empty = tmp_path / "receipts"
+    empty.mkdir()
+    out = tmp_path / "commit-measurement.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "compose_commit_measurement.py"),
+            "--commit",
+            "s03-tip",
+            "--receipts-dir",
+            str(empty),
+            "--output",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert out.is_file()
+    payload = __import__("json").loads(out.read_text(encoding="utf-8"))
+    assert payload["status"] == "partial"
+    assert "total" not in payload
+    assert payload["unmeasuredAxes"]
