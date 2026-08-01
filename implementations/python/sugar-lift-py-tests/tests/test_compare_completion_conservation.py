@@ -96,7 +96,7 @@ def test_all_34_compare_completions_publish_authenticated_compare_exits(
             payload,
             corpus.root,
             families=frozenset({ProducerFamily.COMPARE}),
-        ),
+        ).probes,
         families=frozenset({ProducerFamily.COMPARE}),
     )
     probes = tuple(

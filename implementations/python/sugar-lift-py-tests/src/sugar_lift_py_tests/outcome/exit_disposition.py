@@ -9,9 +9,9 @@ on its own.
 Authority lives only in typed contracts:
 
 - ``NeverSuppresses`` — never consume a body halt; a completion completes
-- ``ExitSuppressionContract`` — source-proven named suppress set (or empty)
+- ``ExitSuppressionContract`` — source-proven type-coordinate suppress set (or empty)
 - ``RuntimeSelected`` — undecidable; leave the halt open under its guard
-- ``Suppresses(matcher)`` — membrane matcher (exact kind+name)
+- ``Suppresses(matcher)`` — membrane matcher (raise + authenticated type)
 - ``EffectBoundaryDisposition`` — assertion boundary; the only contract that
   can name an effect on the **completed** edge
 
@@ -183,10 +183,7 @@ def _resource_verdict(disposition: object, effect: object) -> str:
         return "restore"
 
     if isinstance(disposition, ExitSuppressionContract):
-        name = getattr(effect, "exception_name", None)
-        if not isinstance(name, str) or not name:
-            return "open"
-        return "suppress" if disposition.suppresses_exception(name) else "restore"
+        return _exit_suppression_contract_verdict(disposition, effect)
 
     if isinstance(disposition, Suppresses):
         return _suppresses_verdict(disposition, effect)
@@ -198,15 +195,54 @@ def _resource_verdict(disposition: object, effect: object) -> str:
     )
 
 
+def _require_exception_type_coordinate(effect, *, owner: str):
+    """Shared door: halt faces suppress only with an authenticated type coordinate."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if effect is None:
+        return None
+    coordinate = getattr(effect, "exception_type_coordinate", None)
+    if coordinate is None:
+        raise SugarNotWritten(
+            blame=getattr(effect, "occurrence_id", None) or owner,
+            owner=owner,
+            observed="effect without exception_type_coordinate",
+            requested="authenticated exception_type_coordinate on the halt",
+            fix=(
+                "mint the raise through the ground exit door or an authenticated "
+                "producer; do not suppress by exception_name spelling"
+            ),
+        )
+    return coordinate
+
+
+def _exit_suppression_contract_verdict(disposition, effect) -> str:
+    """Suppress by coordinate membership only — never by exception_name spelling.
+
+    LAW OF ONE with the Suppresses arm: both doors demand
+    ``exception_type_coordinate``. Soft ``open`` on a missing name was the
+    residual second mechanism after sin-cluster-5 Suppresses was fixed.
+    """
+    owner = "exit_disposition.ExitSuppressionContract"
+    if effect is None:
+        return "restore"
+    coordinate = _require_exception_type_coordinate(effect, owner=owner)
+    if not disposition.exception_type_coordinates:
+        return "restore"
+    return (
+        "suppress"
+        if disposition.suppresses_coordinate(coordinate)
+        else "restore"
+    )
+
+
 def _suppresses_verdict(disposition, effect) -> str:
     """Suppress only by authenticated exception type coordinate, never by name.
 
     A name-less matcher and a name-less effect used to compare equal and
-    suppress. Spelling is half-writing the match: the neighbouring
-    ``ExitSuppressionContract`` arm already refused empty names; this arm
-    goes further and demands the effect's ``exception_type_coordinate``
-    against the builtin identity of the matcher's type. Missing coordinate
-    or name-less matcher is unwritten work (throw), not a soft open.
+    suppress. Spelling is half-writing the match. Both this arm and
+    ``ExitSuppressionContract`` demand ``exception_type_coordinate``; missing
+    coordinate or name-less matcher is unwritten work (throw), not a soft open.
     """
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
     from sugar_source_tree.panic import SugarNotWritten
@@ -230,18 +266,7 @@ def _suppresses_verdict(disposition, effect) -> str:
         )
     if effect is None:
         return "restore"
-    coordinate = getattr(effect, "exception_type_coordinate", None)
-    if coordinate is None:
-        raise SugarNotWritten(
-            blame=blame,
-            owner=owner,
-            observed="effect without exception_type_coordinate",
-            requested="authenticated exception_type_coordinate on the halt",
-            fix=(
-                "mint the raise through the ground exit door or an authenticated "
-                "producer; do not suppress by exception_name spelling"
-            ),
-        )
+    coordinate = _require_exception_type_coordinate(effect, owner=owner)
     matcher_identity, _ = _builtin_exception_identity(matcher_name)
     if matcher_identity is None:
         raise SugarNotWritten(

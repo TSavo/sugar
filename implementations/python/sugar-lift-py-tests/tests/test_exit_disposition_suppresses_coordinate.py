@@ -2,7 +2,8 @@
 
 The old arm compared ``name == matcher.name`` with no None-guard: a
 coordinate-authenticated but name-less effect equaled a name-less matcher and
-was suppressed. Neighbour ExitSuppressionContract already refused empty names.
+was suppressed. ExitSuppressionContract shares the same coordinate door
+(see test_exit_disposition_exit_suppression_contract).
 """
 
 from __future__ import annotations

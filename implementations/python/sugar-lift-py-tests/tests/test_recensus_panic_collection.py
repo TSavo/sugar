@@ -83,9 +83,8 @@ def test_mid_file_construction_panic_does_not_shrink_function_denominator(
     import sugar_source_tree.nodes as nodes_mod
 
     # FunctionDef.sugar is the door the recensus calls via function.sugar().
-    target = getattr(nodes_mod, "FunctionDef", None)
-    if target is None:
-        pytest.skip("FunctionDef not importable for patch")
+    # No skip hatch: if FunctionDef is missing the tooth must fail, not vanish.
+    target = nodes_mod.FunctionDef
     original_sugar = target.sugar
 
     monkeypatch.setattr(target, "sugar", flaky_sugar)
