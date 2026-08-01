@@ -18,16 +18,17 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def _monorepo_root() -> Path | None:
-    """Locate monorepo root from installed package paths (…/implementations/python/…)."""
-    import sugar_lift_py_tests
+    """Locate monorepo root via the one resolve door (sugar-build.toml).
 
-    here = Path(sugar_lift_py_tests.__file__).resolve()
-    for parent in here.parents:
-        if (parent / "tools" / "sugar_source_stamp.py").is_file() and (
-            parent / "implementations" / "rust" / "Cargo.toml"
-        ).is_file():
-            return parent
-    return None
+    Returns None when the door refuses — callers that need a soft miss keep
+    that shape. Prefer ``resolve_repo_root()`` when absence must be loud.
+    """
+    from sugar_lift_py_tests.repo_root import RepoRootUnresolved, resolve_repo_root
+
+    try:
+        return resolve_repo_root()
+    except RepoRootUnresolved:
+        return None
 
 
 def _content_identity(roots: list[Path]) -> str:

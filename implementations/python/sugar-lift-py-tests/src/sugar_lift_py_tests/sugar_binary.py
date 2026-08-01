@@ -6,9 +6,21 @@ import subprocess
 from pathlib import Path
 from typing import Mapping
 
-ROOT = Path(__file__).resolve().parents[5]
-SUGARBIN = ROOT / "bin" / "sugarbin"
-SUGARBIN_WINDOWS = ROOT / "bin" / "sugarbin.ps1"
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+
+def monorepo_root() -> Path:
+    """Monorepo root via the one resolve door — never parents[N]."""
+    return resolve_repo_root()
+
+
+def sugarbin_path() -> Path:
+    return monorepo_root() / "bin" / "sugarbin"
+
+
+def sugarbin_windows_path() -> Path:
+    return monorepo_root() / "bin" / "sugarbin.ps1"
+
 
 subprocess_run = subprocess.run
 
@@ -77,12 +89,12 @@ def resolve_sugar_binary(
             "powershell.exe",
             "-NoProfile",
             "-File",
-            str(SUGARBIN_WINDOWS),
+            str(sugarbin_windows_path()),
             "-Profile",
             profile,
         ]
     elif route == "windows-broker":
-        child_env["SUGAR_WINDOWS_SCRIPT"] = str(SUGARBIN)
+        child_env["SUGAR_WINDOWS_SCRIPT"] = str(sugarbin_path())
         command = [
             "bash.exe",
             "-lc",
@@ -93,12 +105,12 @@ def resolve_sugar_binary(
             profile,
         ]
     else:
-        command = [str(SUGARBIN), "--profile", profile]
+        command = [str(sugarbin_path()), "--profile", profile]
     timeout = resolve_timeout_seconds(child_env)
     try:
         completed = subprocess_run(
             command,
-            cwd=ROOT,
+            cwd=monorepo_root(),
             env=child_env,
             text=True,
             capture_output=True,

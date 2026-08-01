@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 from sugar_lift_py_tests.sugar_binary import (
     SugarBinaryResolutionError,
     resolve_sugar_binary,
@@ -22,10 +23,21 @@ Verdict = Literal[
     "solver-timeout",
 ]
 
-ROOT = Path(__file__).resolve().parents[5]
-PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
-PY_SOURCE = ROOT / "implementations" / "python" / "sugar-lift-python-source"
-PY_PYTEST_WITNESS = ROOT / "implementations" / "python" / "sugar-lift-py-pytest-witness"
+
+def _root() -> Path:
+    return resolve_repo_root()
+
+
+def _py_tests() -> Path:
+    return _root() / "implementations" / "python" / "sugar-lift-py-tests"
+
+
+def _py_source() -> Path:
+    return _root() / "implementations" / "python" / "sugar-lift-python-source"
+
+
+def _py_pytest_witness() -> Path:
+    return _root() / "implementations" / "python" / "sugar-lift-py-pytest-witness"
 _SUGAR_BUILD_LOCK = Lock()
 _RESOLVED_SUGAR_BIN: Path | None = None
 
@@ -75,7 +87,8 @@ class WitnessPipelineResult:
 
 def _pythonpath() -> str:
     return os.pathsep.join(
-        str(path / "src") for path in (PY_PYTEST_WITNESS, PY_TESTS, PY_SOURCE)
+        str(path / "src")
+        for path in (_py_pytest_witness(), _py_tests(), _py_source())
     )
 
 
@@ -149,7 +162,7 @@ timeout_seconds = 10
 binary = "lake"
 ir_compiler = "lean"
 timeout_seconds = 10
-lake_project = "{ROOT / 'tools' / 'portfolio' / 'lean-mathlib'}"
+lake_project = "{_root() / 'tools' / 'portfolio' / 'lean-mathlib'}"
 """,
         encoding="utf-8",
     )
@@ -250,7 +263,7 @@ lake_project = "{ROOT / 'tools' / 'portfolio' / 'lean-mathlib'}"
 
 
 def run_lift_rpc(project: Path) -> dict:
-    env = {**os.environ, "PYTHONPATH": str(PY_TESTS / "src")}
+    env = {**os.environ, "PYTHONPATH": str(_py_tests() / "src")}
     request = "\n".join(
         json.dumps(message)
         for message in [
