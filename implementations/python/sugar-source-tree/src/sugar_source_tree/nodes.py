@@ -11580,6 +11580,33 @@ class Name(Expression):
             return self
         bound = unwrap_binding_state(bound)
         if isinstance(bound, Node):
+            # Formal / binding-coordinate refs carry identity in ``coordinate``,
+            # not in the Param's declaration span. Replacing every use with the
+            # declaration-span node collapses source order: a chained compare
+            # ``1 <= month`` becomes operands (const@use, formal@decl) with decl
+            # left of the use, so Compare._comparison_leg_site rejects a
+            # well-formed chain (datetime._days_in_month assert; claim-mass
+            # line 160). Both doors that mint formals share this shape:
+            # FunctionDef.substitute → FormalRef, source_visible_call_frame →
+            # BindingCoordinateRef. Re-span to the use site; coordinate CID is
+            # unchanged.
+            if (
+                bound.kind in ("FormalRef", "BindingCoordinateRef")
+                and bound.span != self.span
+                and hasattr(bound, "coordinate")
+            ):
+                from .backend import Leaf, materialize
+                from .shadow import ShadowNode
+
+                return materialize(
+                    self.unit,
+                    ShadowNode(
+                        bound.kind,
+                        self.span,
+                        (("coordinate", Leaf(bound.coordinate)),),
+                    ),
+                    self.reporter,
+                )
             return bound
         span = self.line_col_span()
         if (

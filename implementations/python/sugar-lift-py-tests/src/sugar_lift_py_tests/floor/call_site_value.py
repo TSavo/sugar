@@ -44,7 +44,9 @@ class _RetainedSourceCompletionV1:
         return 0x52455441
 
 
-def _retained_completion_invariant(*, owner: str, callsite: "CallSiteValue", observed: str):
+def _retained_completion_invariant(
+    *, owner: str, callsite: "CallSiteValue", observed: str
+):
     from sugar_source_tree.panic import BackendDefect
 
     raise BackendDefect(
@@ -555,6 +557,7 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
         index_term = index.to_term(owner="CallSiteValue.setitem index")
         value_term = value.to_term(owner="CallSiteValue.setitem value")
         return Complete(
@@ -645,6 +648,7 @@ class CallSiteValue(FloorValue):
 
         def list_append_coordinate(prior):
             from sugar_lift_py_tests.ir import ctor
+
             value_term = value.to_term(owner="CallSiteValue.append_with value")
             return Complete(
                 CallSiteValue(
@@ -787,6 +791,7 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
         index_term = index.to_term(owner="CallSiteValue.delitem index")
         return Complete(
             CallSiteValue(
@@ -1255,10 +1260,15 @@ class CallSiteValue(FloorValue):
                 )
             token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
             try:
-                outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+                outcome = _reduce_callsite_body(
+                    body, reduce_ctx, blame=self.target_name
+                )
             finally:
                 _ACTIVE_DIG_DEMAND.reset(token)
-            from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 actuals = self.bound_native_actuals_by_coordinate
                 if actuals is None and self.bound_source_actuals is not None:
@@ -1490,7 +1500,10 @@ class CallSiteValue(FloorValue):
 
         if isinstance(outcome, Complete):
             return Complete(retaining(outcome.value))
-        from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
         if isinstance(outcome, NativeOperationExitCarrierV1):
             if self.bound_source_actuals is not None:
                 outcome = self.bound_source_actuals.project_native_carrier(outcome)
@@ -1501,6 +1514,7 @@ class CallSiteValue(FloorValue):
                 if not isinstance(outcome, NativeOperationExitCarrierV1):
                     return outcome
                 from sugar_source_tree.panic import SugarNotWritten
+
                 raise SugarNotWritten(
                     owner="CallSiteValue.project_producer_outcome",
                     blame=self.target_name,

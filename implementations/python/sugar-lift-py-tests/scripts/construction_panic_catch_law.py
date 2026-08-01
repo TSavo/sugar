@@ -84,32 +84,21 @@ _SANCTIONED_HANDLER_SHAPES = {
         "audit_only/collect_construction_gaps.py",
         "collect_construction_gaps",
     ): frozenset(
-        {
-            _canonical_handler(
-                """
+        {_canonical_handler("""
 except ConstructionPanic as panic:
     gaps.append(gap_from_construction_panic(label, panic))
-"""
-            )
-        }
+""")}
     ),
     (
         "audit_only/collect_construction_gaps.py",
         "collect_construction_panic",
     ): frozenset(
-        {
-            _canonical_handler(
-                """
+        {_canonical_handler("""
 except ConstructionPanic as panic:
     return None, gap_from_construction_panic(label, panic)
-"""
-            )
-        }
+""")}
     ),
-    ("desugar_repro.py", "_desugar_one"): frozenset(
-        {
-            _canonical_handler(
-                """
+    ("desugar_repro.py", "_desugar_one"): frozenset({_canonical_handler("""
 except BaseException as exc:
     status = type(exc).__name__
     detail = str(exc)
@@ -117,44 +106,30 @@ except BaseException as exc:
         f"{frame.filename}:{frame.lineno} {frame.name}"
         for frame in traceback.extract_tb(exc.__traceback__)[-6:]
     ]
-"""
-            )
-        }
-    ),
-    ("exit_set_arm_census.py", "patched_and_exit"): frozenset(
-        {
-            _canonical_handler(
-                """
+""")}),
+    ("exit_set_arm_census.py", "patched_and_exit"): frozenset({_canonical_handler("""
 except BaseException as exc:
     row.verdict_probe_error = f"{type(exc).__name__}: {exc}"
     row.check()
     return result
-"""
-            )
-        }
-    ),
+""")}),
     ("stablezero_classify.py", "classify"): frozenset(
         {
-            _canonical_handler(
-                """
+            _canonical_handler("""
 except ConstructionPanic as panic:
     row["status"] = "ConstructionPanic"
     row["testimony"] = _testimony(panic)
-"""
-            ),
-            _canonical_handler(
-                """
+"""),
+            _canonical_handler("""
 except BaseException as error:
     row["status"] = f"raised:{type(error).__name__}"
     row["testimony"] = _testimony(error)
-"""
-            ),
+"""),
         }
     ),
     ("_production_lift_child.py", "production_lift_testimony"): frozenset(
         {
-            _canonical_handler(
-                """
+            _canonical_handler("""
 except BaseException as error:
     row = _typed_construction_row(error)
     if row is None:
@@ -167,31 +142,24 @@ except BaseException as error:
         "typed_gap_count": len(gaps),
         "typed_gaps": gaps,
     }
-"""
-            ),
-            _canonical_handler(
-                """
+"""),
+            _canonical_handler("""
 except BaseException as error:
     row = _typed_construction_row(error)
     if row is None:
         raise
     gaps.append(row)
-"""
-            ),
+"""),
         }
     ),
 }
 
 _SANCTIONED_ISINSTANCE_SHAPES = {
     ("_production_lift_child.py", "_typed_construction_row"): frozenset(
-        {
-            _canonical_statement(
-                """
+        {_canonical_statement("""
 if isinstance(error, ConstructionPanic):
     return _construction_panic_row(error)
-"""
-            )
-        }
+""")}
     )
 }
 
@@ -273,8 +241,10 @@ def _ends_in_raise(stmts: list[ast.stmt]) -> bool:
     if isinstance(last, ast.Raise):
         return True
     if isinstance(last, ast.If):
-        return bool(last.orelse) and _ends_in_raise(last.body) and _ends_in_raise(
-            last.orelse
+        return (
+            bool(last.orelse)
+            and _ends_in_raise(last.body)
+            and _ends_in_raise(last.orelse)
         )
     return False
 

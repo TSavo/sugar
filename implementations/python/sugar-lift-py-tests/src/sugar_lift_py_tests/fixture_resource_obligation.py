@@ -24,9 +24,7 @@ class FixtureResourceBindingRefusal(ValueError):
     def __init__(self, coordinate: str, detail: str):
         self.coordinate = coordinate
         self.detail = detail
-        super().__init__(
-            f"fixture resource binding refused at {coordinate}: {detail}"
-        )
+        super().__init__(f"fixture resource binding refused at {coordinate}: {detail}")
 
 
 @dataclass(frozen=True)
@@ -59,9 +57,7 @@ class FixtureSuppliedResourceObligationV1:
         }
         return cls(authenticated.cid, cid_of_json(preimage))
 
-    def discharge(
-        self, binding: BindingEntryV1
-    ) -> FixtureSuppliedResourceDischargeV1:
+    def discharge(self, binding: BindingEntryV1) -> FixtureSuppliedResourceDischargeV1:
         if binding.coordinate.cid != self.formal_coordinate_cid:
             raise FixtureResourceBindingRefusal(
                 self.formal_coordinate_cid,

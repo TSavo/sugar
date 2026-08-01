@@ -52,10 +52,11 @@ class BindingCoordinateV1:
     def project(self, *path: str | int) -> "BindingCoordinateV1":
         """Derive an authenticated child coordinate from this formal seat."""
         if not path or not all(
-            isinstance(part, (str, int)) and not isinstance(part, bool)
-            for part in path
+            isinstance(part, (str, int)) and not isinstance(part, bool) for part in path
         ):
-            raise BindingProvenanceGap("projected coordinate requires a structural path")
+            raise BindingProvenanceGap(
+                "projected coordinate requires a structural path"
+            )
         projection_path = (*self.projection_path, *path)
         preimage = {
             "kind": "binding-coordinate",
