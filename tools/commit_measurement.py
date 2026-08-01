@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any, Mapping, Union
 
 # Board residual keys this composition must never invent as its own axes.
+_MEASURED_SEAL = object()
+
 FORBIDDEN_BOARD_AXIS_NAMES = frozenset(
     {
         "R_construction",
@@ -99,8 +101,10 @@ def _lookup_path(body: Mapping[str, Any], field_path: str) -> Any:
 class Measured:
     """Measured axis: value cited from a body artifact under a lease receipt.
 
-    Unconstructible without lease receipt_cid AND body_artifact_cid AND
-    value_field_path. Lease alone does not prove the number.
+    Unconstructible without lease receipt_cid AND a parsed body that owns the
+    value (body_artifact_cid is content-address of that body). Lease alone does
+    not prove the number — use ``measured(...)`` / ``measured_from_sealed_pair``.
+    Direct construction without the module seal is refused.
     """
 
     value: int
@@ -109,8 +113,15 @@ class Measured:
     value_field_path: str
     collected: int
     exit_code: int
+    _seal: object
 
     def __post_init__(self) -> None:
+        if self._seal is not _MEASURED_SEAL:
+            raise CommitMeasurementError(
+                "Measured is sealed: construct via measured(body=...) or "
+                "measured_from_sealed_pair only — free-floating value+receipt "
+                "without a parsed report body is Unmeasured(NoReport)"
+            )
         _require_int("value", self.value, min_value=0)
         object.__setattr__(
             self, "receipt_cid", _require_nonempty_str("receipt_cid", self.receipt_cid)
@@ -154,18 +165,57 @@ def measured(
     value: int,
     *,
     receipt_cid: str,
-    body_artifact_cid: str,
+    body: Mapping[str, Any],
     value_field_path: str,
-    collected: int,
+    collected: int | None = None,
     exit_code: int,
 ) -> Measured:
+    """Build Measured only from a parsed body artifact + lease receipt CID.
+
+    Free-floating value + fake body CID is unconstructible: the body must be
+    present, parse as a mapping, and ``value`` must equal the field path.
+    Lease alone without a report body is Unmeasured(NoReport), never Measured.
+    """
+    if not isinstance(body, Mapping):
+        raise CommitMeasurementError(
+            "Measured requires a parsed body mapping (report artifact); "
+            f"got {type(body).__name__}. Lease alone is not enough — "
+            "NoReport is Unmeasured."
+        )
+    path_s = _require_nonempty_str("value_field_path", value_field_path)
+    try:
+        raw = _lookup_path(body, path_s)
+    except KeyError as exc:
+        raise CommitMeasurementError(
+            f"Measured refuses: body missing value field {path_s!r} "
+            f"(NoReport/partial body)"
+        ) from exc
+    if type(raw) is not int or raw < 0:
+        raise CommitMeasurementError(
+            f"Measured refuses: body field {path_s!r} is not a non-negative int: {raw!r}"
+        )
+    if type(value) is not int or value != raw:
+        raise CommitMeasurementError(
+            f"Measured refuses: value {value!r} does not match body[{path_s!r}]={raw!r}; "
+            f"cite the body, do not invent the number"
+        )
+    if collected is None:
+        try:
+            collected = _lookup_path(body, "totals.collected")
+        except KeyError:
+            collected = 0
+    if type(collected) is not int or collected < 0:
+        raise CommitMeasurementError(
+            f"collected must be non-negative int; got {collected!r}"
+        )
     return Measured(
         value,
         receipt_cid,
-        body_artifact_cid,
-        value_field_path,
+        content_cid(body),
+        path_s,
         collected,
         exit_code,
+        _MEASURED_SEAL,
     )
 
 
@@ -233,10 +283,16 @@ def measured_from_sealed_pair(
         code = 0 if status == "completed/zero-findings" else 1
     if type(code) is not int:
         return unmeasured(f"exit_code not int: {code!r}")
+    expected_cid = content_cid(body)
+    if body_artifact_cid != expected_cid:
+        return unmeasured(
+            "NoReport: body_artifact_cid mismatch "
+            f"(presented {body_artifact_cid!r}, content {expected_cid!r})"
+        )
     return measured(
         raw_value,
         receipt_cid=lease_receipt_cid,
-        body_artifact_cid=body_artifact_cid,
+        body=body,
         value_field_path=path,
         collected=collected,
         exit_code=code,
@@ -484,8 +540,8 @@ def compose_tip_from_receipts_dir(
                         break
         if body is None or body_path is None:
             axes[axis_name] = unmeasured(
-                f"lease present for {lease_class!r} but no body artifact "
-                f"(suite-report / floor report) — Measured requires both"
+                f"NoReport: lease present for {lease_class!r} but no body artifact "
+                f"(suite-report / floor report)"
             )
             continue
         axes[axis_name] = measured_from_sealed_pair(
