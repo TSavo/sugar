@@ -8433,17 +8433,16 @@ class Try(Statement):
             for type_node in type_nodes:
                 if not isinstance(type_node, Name):
                     # ``except re.error`` / dotted types are not bare Names.
-                    # Under dual-mode factory frame projection, soft-incomplete
-                    # so class bases (AbstractRaises) can still project; full
-                    # reduction of that arm remains CoverageGap, never green.
-                    context = self.unit.construction_context
-                    if getattr(context, "frame_projection", False):
-                        from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import (
-                            SoftUnresolvedTrySugar,
-                        )
-
-                        return SoftUnresolvedTrySugar(site=self.fragment)
-                    return super()._construct_sugar()
+                    # SoftUnresolvedTrySugar was a second mechanism that
+                    # rendered unfinished except-type Sugar as Incomplete.
+                    # Raise: write the missing Sugar door, do not soft-survive.
+                    raise SugarNotWritten(
+                        owner="Try._construct_sugar",
+                        blame=self.fragment,
+                        observed="non-Name except type without authenticated identity",
+                        requested="a constructed exception-type coordinate (or Name)",
+                        fix="resolve the handler type lexically or write Sugar for dotted except types",
+                    )
                 identity = self.unit.exception_type_identity(type_node)
                 if identity is None:
                     raise SugarNotWritten(
