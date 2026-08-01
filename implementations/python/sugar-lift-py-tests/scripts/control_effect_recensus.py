@@ -431,6 +431,7 @@ def _measure_file(
 
     functions_total = 0
     functions_clean = 0
+    functions_enumerated = 0
     families: Counter[str] = Counter()
     construction_seen: set[tuple[str, str, object, object]] = set()
     backend_defects: Counter[str] = Counter()
@@ -463,7 +464,7 @@ def _measure_file(
         families[kind] += 1
 
     def construct():
-        nonlocal functions_total, functions_clean
+        nonlocal functions_total, functions_clean, functions_enumerated
         reporter = CollectingReporter()
         # Fresh context per file so source_derived refs stay file-local; the
         # demand/gap table (contract_refs) may be shared across the census.
@@ -489,8 +490,17 @@ def _measure_file(
         )
         cm_resolutions.update(file_cm_resolutions)
         unrecognized_cm_kinds.update(file_unrecognized_kinds)
-        for function in source_file.functions():
-            functions_total += 1
+        # Materialize the function population BEFORE the per-function walk.
+        # ConstructionPanic is BaseException and escapes this loop; if we
+        # increment functions_total inside the loop, a mid-file panic freezes a
+        # PARTIAL denominator that is later summed into the board, and Clean%
+        # is computed over a silently shrunken set. The full declared count is
+        # the denominator; enumeration progress is a separate measurement.
+        declared_functions = tuple(source_file.functions())
+        functions_total = len(declared_functions)
+        functions_enumerated = 0
+        for function in declared_functions:
+            functions_enumerated += 1
             try:
                 span = function.line_col_span()
                 line: object = span.start_line
@@ -502,7 +512,7 @@ def _measure_file(
             # Announce the function BEFORE constructing it (elapsed=None), so a
             # hang shows the exact function it is stuck on -- not the one before.
             if on_function is not None:
-                on_function(functions_total - 1, functions_clean, fn_name, None)
+                on_function(functions_enumerated - 1, functions_clean, fn_name, None)
             t_fn = time.perf_counter()
             try:
                 sugar = function.sugar()
@@ -518,7 +528,7 @@ def _measure_file(
             # Report completion WITH this function's own construction time, so
             # `last=` is per-function and a slow/blowup function is obvious.
             if on_function is not None:
-                on_function(functions_total, functions_clean, fn_name, fn_s)
+                on_function(functions_enumerated, functions_clean, fn_name, fn_s)
         # Sole construction-gap source: reporter occurrences, site-deduped.
         # BackendDefect is table hygiene — own counter, never construction R.
         for node, panic in reporter.gaps:
@@ -538,6 +548,15 @@ def _measure_file(
         "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
         "astSites": dict(_ast_site_prevalence(path)),
     }
+    functions_not_enumerated = max(0, functions_total - functions_enumerated)
+    function_accounting = {
+        "functionsTotal": functions_total,
+        "functionsClean": functions_clean,
+        "functionsEnumerated": functions_enumerated,
+        "functionsNotEnumerated": functions_not_enumerated,
+        "functionsEnumerationComplete": functions_not_enumerated == 0
+        and (panic_row is None or functions_total == functions_enumerated),
+    }
     if panic_row is not None:
         return {
             "category": "construction-panic",
@@ -547,8 +566,7 @@ def _measure_file(
                 "message": panic_row.message,
                 "gap": panic_row.info,
             },
-            "functionsTotal": functions_total,
-            "functionsClean": functions_clean,
+            **function_accounting,
             "families": dict(families),
             "backendDefects": dict(backend_defects),
             "R_backend_defects": sum(backend_defects.values()),
@@ -557,8 +575,7 @@ def _measure_file(
         }
     return {
         "category": "completed",
-        "functionsTotal": functions_total,
-        "functionsClean": functions_clean,
+        **function_accounting,
         "families": dict(families),
         "backendDefects": dict(backend_defects),
         "R_backend_defects": sum(backend_defects.values()),
