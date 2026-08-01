@@ -385,15 +385,21 @@ def _source_files(roots: Iterable[Path]) -> list[Path]:
 
 
 def scan_roots(
-    roots: Iterable[Path], *, repo: Path | None = None
+    roots: Iterable[Path] | None = None, *, repo: Path | None = None
 ) -> tuple[list[Finding], list[str]]:
+    """Scan instrument roots. ``roots`` defaults to ``_default_roots(repo)``.
+
+    Parent vector citations call ``scan_roots(repo=repo)`` — roots must be
+    optional so a missing-arg TypeError cannot silently zero the axis.
+    """
     base = (repo or Path.cwd()).resolve()
+    scan_paths = tuple(roots) if roots is not None else _default_roots(base)
     findings: list[Finding] = []
     errors: list[str] = []
     # Never audit this script as an offender source of examples in docstrings
     # with executable code — docstrings are not AST statements. Fine.
     self_path = Path(__file__).resolve()
-    for path in _source_files(roots):
+    for path in _source_files(scan_paths):
         if path.resolve() == self_path:
             continue
         label = (
