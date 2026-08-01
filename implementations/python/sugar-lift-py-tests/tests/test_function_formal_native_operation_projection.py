@@ -57,13 +57,22 @@ def test_ordinary_function_call_discharge_can_complete() -> None:
 
 
 def test_ordinary_function_call_discharge_can_halt_with_named_identity() -> None:
+    from sugar_lift_py_tests.ir import ctor, str_const
+
     outcome = _call_outcome("None, 2")
 
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
+    # Pin the positive identity — `is not None` is a weak tooth under a name
+    # that promises TypeError from None < int.
+    type_error = ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("TypeError")],
+    )
+    assert halted.effect.exception_type_coordinate == type_error
+    assert halted.effect.exception_name == "TypeError"
     assert halted.effect.occurrence_id is not None
 
 
