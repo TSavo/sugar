@@ -400,12 +400,30 @@ def _import_from_module(
     return ".".join(base) or None
 
 
-def _importorskip_module(value: Node | None) -> str | None:
-    """Module name of ``pytest.importorskip("mod")`` / ``importorskip("mod")``.
+def _unique_import_def_from_state(
+    state: "State | None", local_name: str
+) -> "_ImportDef | None":
+    """The sole import definition reaching ``local_name``, or None."""
+    if state is None:
+        return None
+    reaching = state.get(local_name, frozenset({_UNBOUND}))
+    imports = {value for value in reaching if isinstance(value, _ImportDef)}
+    if len(imports) != 1:
+        return None
+    rest = reaching - imports
+    if rest:
+        return None
+    return next(iter(imports))
 
-    Source-visible only: Attribute or Name head, one positional string
-    Constant, no keywords/stars.  Spelling of the module is the Constant's
-    own value, never a vendor table.
+
+def _importorskip_module(value: Node | None, state: "State | None") -> str | None:
+    """Module name of authenticated ``pytest.importorskip("mod")``.
+
+    Head must be a reaching import binding — ``python:pytest.importorskip``
+    for a bare name, or ``python:pytest`` for an attribute head whose member
+    path is ``importorskip``. Unbound lexical text (``func.id ==
+    "importorskip"``, ``func.value.id == "pytest"``) never mints a module
+    availability fact: the analyzer's own ``state`` is the authority.
     """
     if value is None or value.kind != "Call":
         return None
@@ -417,15 +435,16 @@ def _importorskip_module(value: Node | None) -> str | None:
     if not isinstance(module, str) or not module:
         return None
     func = value.func
-    if func.kind == "Name" and func.id == "importorskip":
-        return module
-    if (
-        func.kind == "Attribute"
-        and func.attr == "importorskip"
-        and func.value.kind == "Name"
-        and func.value.id == "pytest"
-    ):
-        return module
+    if func.kind == "Name":
+        binding = _unique_import_def_from_state(state, func.id)
+        if binding is not None and binding.target_symbol == "python:pytest.importorskip":
+            return module
+        return None
+    if func.kind == "Attribute" and func.attr == "importorskip" and func.value.kind == "Name":
+        binding = _unique_import_def_from_state(state, func.value.id)
+        if binding is not None and binding.target_symbol == "python:pytest":
+            return module
+        return None
     return None
 
 
@@ -824,7 +843,7 @@ class _Pass:
             self.expression(value, state, scope)
             targets = node.targets if node.kind == "Assign" else [node.target]
             importorskip = (
-                _importorskip_module(value)
+                _importorskip_module(value, state)
                 if node.kind == "Assign" and len(targets) == 1
                 else None
             )
@@ -1334,6 +1353,7 @@ def authenticated_module_exports(
         source_cid=source_cid,
         module_name=module_name,
         module_identities={},
+        module_is_package=path.name == "__init__.py",
     )
     rows: list[dict[str, Any]] = []
     for local, reaching in sorted(final_state.items()):

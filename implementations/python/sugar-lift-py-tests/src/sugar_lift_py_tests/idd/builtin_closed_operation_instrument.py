@@ -55,6 +55,17 @@ def collect_builtin_closed_operation_report(
 
 
 class _Visitor(ast.NodeVisitor):
+    """Structural detector for spelling-gates outside authenticated coordinates.
+
+    Name/vendor gates are compares that decide control by display text
+    (``exception_name == "..."``, ``func.id == "importorskip"``,
+    ``type_name in {...}``, ``name == matcher.name``) instead of an
+    authenticated type/binding coordinate from the tree. A green report
+    that only looked for the substrings ``pytest.raises`` /
+    ``contextlib.suppress`` could not see those sins and carried no
+    information.
+    """
+
     def __init__(self, path: str) -> None:
         self.path = path
         self.offenders: list[BuiltinClosedOperationOffender] = []
@@ -62,6 +73,16 @@ class _Visitor(ast.NodeVisitor):
         self._side_door_functions: set[int] = set()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # Name-keyed suppress API is itself the residual shell (method body may
+        # only mention self.exception_names; the method *name* is the crime).
+        if node.name == "suppresses_exception":
+            self._add(
+                "name_or_vendor_gates",
+                node,
+                f"def {node.name}",
+                "match exception_type_coordinate against ExitSuppressionContract "
+                "coordinates minted at the suppresses() door; never suppress by name",
+            )
         self._function_stack.append(node)
         self.generic_visit(node)
         self._function_stack.pop()
@@ -70,15 +91,7 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_Compare(self, node: ast.Compare) -> None:
         rendered = ast.unparse(node)
-        string_values = {
-            value.value
-            for value in ast.walk(node)
-            if isinstance(value, ast.Constant) and isinstance(value.value, str)
-        }
-        if any(
-            "pytest.raises" in value or "contextlib.suppress" in value
-            for value in string_values
-        ):
+        if self._is_spelling_gate_compare(node):
             self._add(
                 "name_or_vendor_gates",
                 node,
@@ -124,6 +137,79 @@ class _Visitor(ast.NodeVisitor):
                 "leave unsupported floor construction loud; never catch its panic",
             )
         self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # Residual after cluster-5 Suppresses fix: ExitSuppressionContract still
+        # decided suppress via suppresses_exception(str) / exception_names.
+        # Those shells are deleted; any reintroduction is a name_or_vendor_gate.
+        # Retirement of this detector arm: when no production Attribute load of
+        # either name remains AND the type system forbids constructing a
+        # name-keyed suppress contract (coordinates-only field), delete this arm.
+        if node.attr in {"suppresses_exception", "exception_names"}:
+            self._add(
+                "name_or_vendor_gates",
+                node,
+                ast.unparse(node),
+                "match exception_type_coordinate against ExitSuppressionContract "
+                "coordinates minted at the suppresses() door; never suppress by name",
+            )
+        self.generic_visit(node)
+
+    def _is_spelling_gate_compare(self, node: ast.Compare) -> bool:
+        """True when this compare decides by display spelling, not a coordinate."""
+        # Legacy vendor-string gates (kept: still a spelling membrane).
+        string_values = {
+            value.value
+            for value in ast.walk(node)
+            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        }
+        if any(
+            "pytest.raises" in value or "contextlib.suppress" in value
+            for value in string_values
+        ):
+            return True
+
+        # type_name in {…} / type_name in SOME_FROZENSET — builtin shadowing lie.
+        if any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+            if isinstance(node.left, ast.Name) and node.left.id == "type_name":
+                return True
+
+        operands = (node.left, *node.comparators)
+        attr_names = {
+            operand.attr
+            for operand in operands
+            if isinstance(operand, ast.Attribute)
+        }
+        has_str_constant = any(
+            isinstance(operand, ast.Constant) and isinstance(operand.value, str)
+            for operand in operands
+        )
+
+        # effect.exception_name == "StopIteration" (and any == on that attr).
+        if "exception_name" in attr_names:
+            return True
+
+        # func.id == "importorskip" / func.value.id == "pytest" — unbound lexical text.
+        # Member path ``.attr == "importorskip"`` is structural once the head is
+        # an authenticated import binding; it is not a spelling gate by itself.
+        if "id" in attr_names and has_str_constant:
+            return True
+
+        # name == matcher.name — name-less suppress / spelling equality of names.
+        name_attrs = [
+            operand
+            for operand in operands
+            if isinstance(operand, ast.Attribute) and operand.attr == "name"
+        ]
+        name_names = [
+            operand
+            for operand in operands
+            if isinstance(operand, ast.Name) and operand.id == "name"
+        ]
+        if name_attrs and (name_names or len(name_attrs) >= 2):
+            return True
+
+        return False
 
     def _add(self, axis: str, node: ast.AST, observed: str, replacement: str) -> None:
         self.offenders.append(

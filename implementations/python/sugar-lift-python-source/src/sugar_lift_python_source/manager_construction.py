@@ -1571,43 +1571,40 @@ def construct_manager_behavior(
         # Typed floor projection failure — not a bare crash, not soft silence.
         # Multi-arm ExitSet is still a factory with Completed return arms: dig
         # the source outcome and project manager returns from those arms.
+        #
+        # ConstructionPanic carries prose in ``info.observed``, not a typed
+        # ExitSet payload. Discriminate by re-reducing the source body and
+        # matching the outcome type. NEVER substring-match panic message text
+        # — control flow driven by error-message prose is a SIN.
         owner = getattr(getattr(panic, "info", None), "owner", None) or "force-floor"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        if "ExitSet" in str(observed):
-            projected_force_floor_detail = str(observed)
-            from sugar_lift_py_tests.outcome import Complete, ExitSet
+        from sugar_lift_py_tests.outcome import Complete, ExitSet
 
-            outcome = call.reduce_source_outcome(reduce_ctx)
-            if isinstance(outcome, ExitSet):
-                manager_projection_arm_count = len(outcome.exits) - bool(
-                    keyword_actuals
-                )
-                projected_force_floor_detail = (
-                    f"ExitSet with {manager_projection_arm_count} arms"
-                )
-                projected = _project_manager_from_exitset(
-                    outcome,
-                    factory_prefix=factory_prefix,
-                    seen_calls=seen_calls,
-                    resolved_cid=resolved.cid,
-                )
-                if isinstance(projected, ManagerConstructionGapV1):
-                    return projected
-                result, factory_prefix = projected
-            elif isinstance(outcome, Complete):
-                projected = _project_factory_manager(
-                    outcome.value,
-                    factory_prefix=factory_prefix,
-                    seen_calls=seen_calls,
-                    resolved_cid=resolved.cid,
-                )
-                if isinstance(projected, ManagerConstructionGapV1):
-                    return projected
-                result, factory_prefix = projected
-            else:
-                return ManagerConstructionGapV1(
-                    "force-floor", resolved.cid, f"{owner}:{observed}"
-                )
+        outcome = call.reduce_source_outcome(reduce_ctx)
+        if isinstance(outcome, ExitSet):
+            manager_projection_arm_count = len(outcome.exits) - bool(keyword_actuals)
+            projected_force_floor_detail = (
+                f"ExitSet with {manager_projection_arm_count} arms"
+            )
+            projected = _project_manager_from_exitset(
+                outcome,
+                factory_prefix=factory_prefix,
+                seen_calls=seen_calls,
+                resolved_cid=resolved.cid,
+            )
+            if isinstance(projected, ManagerConstructionGapV1):
+                return projected
+            result, factory_prefix = projected
+        elif isinstance(outcome, Complete):
+            projected = _project_factory_manager(
+                outcome.value,
+                factory_prefix=factory_prefix,
+                seen_calls=seen_calls,
+                resolved_cid=resolved.cid,
+            )
+            if isinstance(projected, ManagerConstructionGapV1):
+                return projected
+            result, factory_prefix = projected
         else:
             return ManagerConstructionGapV1(
                 "force-floor", resolved.cid, f"{owner}:{observed}"
@@ -1649,19 +1646,12 @@ def construct_manager_behavior(
         if helper_fields:
             result = result.with_deferred_helper_fields()
     bindings = frame.runtime_entries
-    # BranchResultAuthentication / other control-metadata faces ride in the
-    # linearized if-block but are not term-projectable factory prefix work.
-    # Keep only prefix entries that mint a content CID; never panic the door.
-    prefix_cids_list: list[str] = []
-    kept_prefix: list[FloorValue] = []
-    for item in factory_prefix:
-        try:
-            prefix_cids_list.append(_term_content_cid(item.to_term(owner=resolved.cid)))
-            kept_prefix.append(item)
-        except ConstructionPanic:
-            continue
-    factory_prefix = tuple(kept_prefix)
-    prefix_cids = tuple(prefix_cids_list)
+    # factoryPrefixCids is inside the construction CID preimage. Project every
+    # face; ConstructionPanic propagates. No catch, no survivor list, no second
+    # mechanism — if a face has no term, the door panics. That is the point.
+    prefix_cids = tuple(
+        _term_content_cid(item.to_term(owner=resolved.cid)) for item in factory_prefix
+    )
     preimage = {
         "kind": "constructed-manager-behavior",
         "schemaVersion": "1",

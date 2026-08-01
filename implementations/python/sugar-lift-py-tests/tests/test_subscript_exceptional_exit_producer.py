@@ -224,7 +224,7 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
             payload,
             corpus.root,
             families=frozenset({ProducerFamily.SUBSCRIPT}),
-        ),
+        ).probes,
         families=frozenset({ProducerFamily.SUBSCRIPT}),
     )
     probes = tuple(

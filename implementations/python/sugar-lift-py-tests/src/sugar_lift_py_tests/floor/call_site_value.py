@@ -81,12 +81,24 @@ def _term_cycle_key(term: Term) -> str:
 class ExitSuppressionContract:
     """Static evidence for one context manager's exceptional exit.
 
-    An empty exception set proves propagation.  A non-empty set proves that
-    exactly those named exception classes are suppressed.  Runtime-dependent
-    exits carry no contract at all and therefore remain loud in WithSugar.
+    An empty coordinate set proves propagation. A non-empty set proves that
+    exactly those **authenticated type coordinates** are suppressed. Names
+    enter only through :meth:`suppresses`, which resolves each name to a
+    builtin ``python:exception_type_identity`` once at construction — the
+    one door. Match sites never see a spelling; they compare
+    ``effect.exception_type_coordinate`` against this frozenset.
+
+    Runtime-dependent exits carry no contract at all and therefore remain
+    loud in WithSugar.
+
+    Retirement path for residual name suppress: the deleted
+    ``exception_names`` / ``suppresses_exception(str)`` shell. If a caller
+    needs foreign (non-builtin) types, promote this field to carry
+    source-authenticated coordinates from the tree rather than the builtin
+    table — then the string door can refuse non-empty names entirely.
     """
 
-    exception_names: frozenset[str]
+    exception_type_coordinates: frozenset
 
     @classmethod
     def never_suppresses(cls) -> "ExitSuppressionContract":
@@ -94,12 +106,31 @@ class ExitSuppressionContract:
 
     @classmethod
     def suppresses(cls, exception_names: tuple[str, ...]) -> "ExitSuppressionContract":
+        """ONE door: resolve source-facing names to type coordinates at mint."""
         if not exception_names:
             raise ValueError("a suppressing exit contract must name an exception")
-        return cls(frozenset(exception_names))
+        from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
-    def suppresses_exception(self, exception_name: str) -> bool:
-        return exception_name in self.exception_names
+        coordinates = []
+        for name in exception_names:
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    "ExitSuppressionContract.suppresses requires non-empty "
+                    f"exception type names; got {name!r}"
+                )
+            identity, _mro = _builtin_exception_identity(name)
+            if identity is None:
+                raise ValueError(
+                    f"matcher name {name!r} has no builtin type coordinate; "
+                    "use a language-owned exception or thread an authenticated "
+                    "coordinate into ExitSuppressionContract"
+                )
+            coordinates.append(identity)
+        return cls(frozenset(coordinates))
+
+    def suppresses_coordinate(self, coordinate) -> bool:
+        """True when ``coordinate`` is one of the contract's type identities."""
+        return coordinate in self.exception_type_coordinates
 
 
 @dataclass(frozen=True)
@@ -500,29 +531,14 @@ class CallSiteValue(FloorValue):
         )
 
     def contains(self, item, site):
-        # `item in callsite`: dig a concrete container when the body yields one;
-        # otherwise the call result is an opaque container and stays py.in —
-        # uninterpreted membership, never invented.
+        # Dig a concrete container when the body yields one; otherwise the call
+        # result's container type is undecided — named refusal, never
+        # Complete(py.in) fabrication.
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.contains")
         if dug is not None and dug is not self:
             return dug.contains(item, site)
-
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(
-                atomic(
-                    "py.in",
-                    [
-                        item.to_term(owner="CallSiteValue.contains member"),
-                        self.term,
-                    ],
-                ),
-                site,
-                operand_callsites=(*item.callsites(), self),
-            )
+        return self.undecided_contains(
+            item, site, owner="CallSiteValue.contains"
         )
 
     def subscript(self, index, site):

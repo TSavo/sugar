@@ -14,6 +14,8 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     BodyAttribution,
     BodyProbe,
     DemandTableRefusal,
+    DiscoveryDisposition,
+    NamedDemandExclusion,
     ProducerFamily,
     attribute_body_probe,
     attribute_body_probes,
@@ -114,7 +116,12 @@ def test_authenticated_exit_ledger_projects_both_source_coordinates() -> None:
 
 
 def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
-    """Lying twin: a Halted face cannot borrow authenticated identity."""
+    """Lying twin: a Halted face cannot borrow authenticated identity.
+
+    Undischarged excludes the face from the authenticated-exit tally; the
+    nameless-halted-face tripwire must still fire (coordinates are carried so
+    the scan is reachable). A guard that cannot fire is worse than no guard.
+    """
     report = attribute_body_probes(
         (_probe(ProducerFamily.SUBSCRIPT, _nameless_raise_value),)
     )
@@ -123,9 +130,21 @@ def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
     assert row.authenticated_exceptional_exits == 0
     assert row.named_refusals == 0
     assert row.undischarged == 1
-    assert report.loud_failure_count == 0
+    assert len(report.exceptional_exit_identity_discrepancies) == 1
+    assert report.exceptional_exit_identity_discrepancies[0].body_id == (
+        "pandas/example.py:1:Subscript"
+    )
+    assert report.exceptional_exit_identity_discrepancies[0].missing == (
+        "exceptionTypeCoordinate",
+        "raiseOccurrence",
+    )
+    assert report.loud_failure_count == 1
     assert "authenticatedExceptionalExit body=" not in report.render()
     assert "undischarged body=pandas/example.py:1:Subscript" in report.render()
+    assert (
+        "NAMELESS HALTED FACE body=pandas/example.py:1:Subscript "
+        "missing=exceptionTypeCoordinate,raiseOccurrence"
+    ) in report.render()
 
 
 def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
@@ -140,7 +159,9 @@ def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
     assert row.undischarged == 503
     assert row.construction_panics == 0
     assert report.outcome_total == 503
-    assert report.loud_failure_count == 0
+    # Each nameless face trips the identity tripwire; exits stay zero.
+    assert len(report.exceptional_exit_identity_discrepancies) == 503
+    assert report.loud_failure_count == 503
 
 
 def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
@@ -265,9 +286,9 @@ def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
         "outcomeTotal=0 unaccounted=1" in report.render()
     )
     assert (
-        "OUTCOME TOTAL DISCREPANCY enrolled=1 outcomeTotal=0 unaccounted=1"
-        in report.render()
-    )
+        "OUTCOME TOTAL DISCREPANCY enrolled=1 outcomeTotal=0 discrepancies=1 "
+        "conservationShortfall=0"
+    ) in report.render()
 
 
 def test_construction_panic_keeps_producer_owner_not_probe_family() -> None:
@@ -350,6 +371,85 @@ def test_shared_table_accepts_only_the_canonical_content_manifest() -> None:
         )
 
 
+def test_nameless_tripwire_fires_when_coordinates_are_none() -> None:
+    """Mutation as transaction: None-coordinate effects must trip NAMELESS FACE.
+
+    If the undischarged route dropped coordinates, this scan was dead and a
+    mutation that flipped counts to authenticated exits had nothing catching it.
+    """
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.BINOP, _nameless_raise_value),)
+    )
+
+    assert report.bodies[0].exceptional_exit_coordinates == ((None, None),)
+    assert report.exceptional_exit_identity_discrepancies
+    assert report.loud_failure_count >= 1
+    assert "NAMELESS HALTED FACE body=pandas/example.py:1:BinOp" in report.render()
+
+
+def test_conservation_shortfall_is_a_hard_loud_failure() -> None:
+    """Conservation is asserted, not merely printed.
+
+    A report whose enrolled probes exceed attributed outcomes + discrepancies
+    must exit non-zero via loud_failure_count even without AttributionInvariantError.
+    """
+    from sugar_lift_py_tests.no_call_body_attribution import (
+        AttributionReport,
+        FamilyAttribution,
+    )
+
+    report = AttributionReport(
+        bodies=(),
+        discrepancies=(),
+        exceptional_exit_identity_discrepancies=(),
+        by_family={
+            family: FamilyAttribution(
+                family=family,
+                enrolled=1 if family is ProducerFamily.SUBSCRIPT else 0,
+                authenticated_exceptional_exits=0,
+                named_refusals=0,
+                construction_panics=0,
+                undischarged=0,
+            )
+            for family in ProducerFamily
+        },
+    )
+
+    assert report.conservation_shortfall == 1
+    assert report.loud_failure_count == 1
+    assert "conservationShortfall=1" in report.render()
+
+
+def test_resolved_demand_without_matching_with_is_named_not_silent(
+    tmp_path,
+) -> None:
+    """Lying twin: a resolved demand cannot vanish via bare continue."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+
+    package = tmp_path / "pandas"
+    package.mkdir()
+    path = package / "missing_with.py"
+    source = "def f():\n    return 1\n"
+    path.write_text(source, encoding="utf-8")
+    source_cid = blake3_512_of(source.encode())
+    rows = [
+        {
+            "kind": "context-manager-demand",
+            "gapKind": None,
+            "useSite": {
+                "sourceCid": source_cid,
+                "startLine": 99,
+                "startCol": 0,
+                "endLine": 99,
+                "endCol": 4,
+            },
+        }
+    ]
+
+    with pytest.raises(AttributionInvariantError, match="no-matching-with"):
+        discover_no_call_body_probes({"rows": rows}, package)
+
+
 def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     tmp_path,
 ) -> None:
@@ -406,19 +506,38 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
             }
         )
 
-    probes = discover_no_call_body_probes({"rows": rows}, package)
+    disposition = discover_no_call_body_probes({"rows": rows}, package)
+    assert isinstance(disposition, DiscoveryDisposition)
+    probes = disposition.probes
 
     assert [(probe.family, probe.body_id) for probe in probes] == [
         (ProducerFamily.BINOP, "binop_body.py:3:BinOp"),
         (ProducerFamily.SUBSCRIPT, "subscript_body.py:3:Subscript"),
     ]
+    # Call root is a named exclusion on the disposition object — never a
+    # function-attribute side channel and never a silent continue.
+    assert any(
+        exclusion.reason == "root-outside-selected-families"
+        and exclusion.root == "Call"
+        for exclusion in disposition.named_exclusions
+    )
 
     binop_only = discover_no_call_body_probes(
         {"rows": rows}, package, families=frozenset({ProducerFamily.BINOP})
     )
-    assert [(probe.family, probe.body_id) for probe in binop_only] == [
+    assert [(probe.family, probe.body_id) for probe in binop_only.probes] == [
         (ProducerFamily.BINOP, "binop_body.py:3:BinOp")
     ]
+    # Family filter is a post-recognition disposition (not root-outside).
+    assert any(
+        exclusion.reason == "family-filter" and exclusion.family == "Subscript"
+        for exclusion in binop_only.named_exclusions
+    )
+    assert any(
+        exclusion.reason == "root-outside-selected-families"
+        and exclusion.root == "Call"
+        for exclusion in binop_only.named_exclusions
+    )
 
 
 def test_population_selection_never_reads_manager_target_symbol() -> None:
@@ -491,7 +610,7 @@ def test_discovery_projects_one_family_through_one_typed_construction_per_source
     monkeypatch.setattr(SourceFile, "nodes", refuse_second_traversal)
     probes = discover_no_call_body_probes(
         {"rows": rows}, package, families=frozenset({ProducerFamily.ATTRIBUTE})
-    )
+    ).probes
 
     assert [probe.body_id for probe in probes] == ["attribute_body.py:3:Attribute"]
     assert constructed_source_cids == [rows[0]["useSite"]["sourceCid"], subscript_cid]
@@ -544,7 +663,7 @@ def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -
         },
         package,
         families=frozenset({ProducerFamily.ATTRIBUTE}),
-    )
+    ).probes
 
     report = attribute_body_probes(probes)
 
@@ -575,3 +694,46 @@ def test_selected_family_denominator_remains_fixed() -> None:
 
 def test_attribute_family_denominator_is_native_root_inventory() -> None:
     assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 53
+
+def test_discovery_has_no_last_named_exclusions_side_channel() -> None:
+    """Lying twin: the side-channel shell must not reappear.
+
+    Exclusions live on DiscoveryDisposition.named_exclusions — the one door.
+    A function attribute that tests alone read was half-writing production
+    accounting: disposition that production never saw.
+    """
+    assert not hasattr(discover_no_call_body_probes, "last_named_exclusions")
+    assert discover_no_call_body_probes.__annotations__.get("return") in (
+        DiscoveryDisposition,
+        "DiscoveryDisposition",
+    )
+
+
+def test_undischarged_without_coordinates_refuses_construction() -> None:
+    """Construction door: empty coordinates on UNDISCHARGED are unwritable.
+
+    Retirement path already climbed one rung (carry coordinates). This door
+    deletes the residual shell where a future path could return UNDISCHARGED
+    with coordinates=() and re-kill the nameless-face scan.
+    """
+    with pytest.raises(AttributionInvariantError, match="dead-guard sin"):
+        BodyAttribution(
+            "pandas/example.py:1:Subscript",
+            ProducerFamily.SUBSCRIPT,
+            AttributionOutcome.UNDISCHARGED,
+            "native-operation exception identity unproven",
+            # empty coordinates — illegal
+        )
+
+
+def test_undischarged_with_none_coordinates_is_constructible() -> None:
+    """Truthful twin: (None, None) faces keep the tripwire live."""
+    body = BodyAttribution(
+        "pandas/example.py:1:Subscript",
+        ProducerFamily.SUBSCRIPT,
+        AttributionOutcome.UNDISCHARGED,
+        "native-operation exception identity unproven",
+        ((None, None),),
+    )
+    assert body.exceptional_exit_coordinates == ((None, None),)
+

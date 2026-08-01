@@ -1598,34 +1598,15 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     from sugar_source_tree.roll_call import discharge
     from sugar_source_tree.tree import SourceFile
 
+    from sugar_lift_py_tests.tree_enumerate import source_audit_from_report
+
     reporter = CollectingReporter()
     source_file = SourceFile.from_path(str(full_path), reporter=reporter)
     report = discharge(source_file)
-    present_cids = {entry.cid for entry in report.present}
-    loci = [
-        {
-            "status": "warranted" if entry.cid in present_cids else "unresolved",
-            "kind": entry.kind,
-            "name": entry.name,
-            "source_cid": entry.cid,
-            "locus": {
-                "file": file_rel,
-                "line": entry.start_line,
-                "col": entry.start_col,
-            },
-        }
-        for entry in report.roster
-    ]
-    warranted = sum(row["status"] == "warranted" for row in loci)
-    source_audit = {
-        "role": file_rel,
-        "loci": loci,
-        "totals": {
-            "source_loci": len(loci),
-            "source_warranted": warranted,
-            "source_unresolved": report.R,
-        },
-    }
+    # ONE door: the same full-tuple presence projection as tree_enumerate.
+    # Do not re-derive status by CID alone, and do not mix report.R with a
+    # separately keyed warranted count (that pair already drifted).
+    source_audit = source_audit_from_report(report, file_rel)
 
     demanded_source = f"module:{source_file.unit.source_cid}"
     panics = []
@@ -2142,15 +2123,34 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         caller_post = term_table.formula(formula)
 
                 target_candidates = []
-                targets = _tree.call_target_names(sf, span)
-                for name in targets:
-                    fn = _tree.find_function_by_name(sf, name)
-                    if fn is None:
+                targets = []
+                seen_targets = set()
+                implication_gaps: List[Dict[str, Any]] = []
+                for call in _tree.call_nodes_in_assert(sf, span):
+                    name = call.func.id
+                    if name in seen_targets:
                         continue
+                    seen_targets.add(name)
+                    targets.append(name)
                     try:
-                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
-                    except Exception:
+                        fn = _tree.resolve_function_for_call(call)
+                    except _tree.FunctionBindingMiss as miss:
+                        # Named refuse from the construction door — gap row, not
+                        # soft continue that reopens pre-#6946 soft-None.
+                        implication_gaps.append(
+                            {
+                                "memento": at,
+                                "reason": (
+                                    f"FunctionBindingMiss name={miss.name!r} "
+                                    f"reason={miss.reason}"
+                                ),
+                            }
+                        )
                         continue
+                    # No except/continue. Throws from unfinished body sugar rise.
+                    # FunctionBindingMiss is named refuse (gap above); unfinished
+                    # body sugar must not be reclassified as empty candidates.
+                    def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     if rows is None:
                         continue
                     post = rows[0].post
@@ -2205,7 +2205,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     "payload": demand,
                 }
                 _send_enumerate_result(
-                    msg_id, [node], [], term_tables=[term_table.nodes]
+                    msg_id,
+                    [node],
+                    implication_gaps,
+                    term_tables=[term_table.nodes],
                 )
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
@@ -2223,6 +2226,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # call-site cue.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
                 sf = _tree.source_file(full_path)
@@ -2292,8 +2296,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     sf, at.get("span") if isinstance(at, dict) else None
                 )
                 targets = []
-                by_name = {name: (m, d) for name, m, d in universes}
+                # Abstract contracts keyed by authenticated def identity
+                # (source_cid), never by callee spelling. Spelling by_name[t]
+                # reopened first-match after FunctionBindingMiss (#6946 residual).
+                by_source_cid = {
+                    m["source_cid"]: (m, d) for _n, m, d in universes
+                }
                 cued = []
+                cue_gaps: List[Dict[str, Any]] = []
                 seen = set()
                 for call in calls:
                     t = call.func.id
@@ -2301,7 +2311,22 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue
                     seen.add(t)
                     targets.append(t)
-                    fn = _tree.find_function_by_name(sf, t)
+                    # Resolve by binding/coordinate at the call site — not
+                    # first-match-by-spelling. Miss is a named throw; the dig
+                    # records a gap and does not fall through to a spelling table.
+                    try:
+                        fn = _tree.resolve_function_for_call(call)
+                    except _tree.FunctionBindingMiss as miss:
+                        cue_gaps.append(
+                            {
+                                "memento": at,
+                                "reason": (
+                                    f"FunctionBindingMiss name={miss.name!r} "
+                                    f"reason={miss.reason}"
+                                ),
+                            }
+                        )
+                        continue
                     # A call IS substitution: ground args fill the pre, so the
                     # dig serves the contract AS APPLIED at this call (a concrete
                     # iterable unrolls the callee's loop here; the fold
@@ -2311,39 +2336,62 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # applied dig is attempted even when the ABSTRACT universe is
                     # a gap: the applied substitution can succeed exactly where
                     # the abstract is still a hole (that is the whole point of
-                    # filling the pre).
-                    if (
-                        fn is not None
-                        and len(call.args) == len(fn.params)
-                        and _tree._args_are_ground(call)
-                    ):
+                    # filling the pre). Arity is the binder's job (vararg packs,
+                    # defaults fill) — never len(args)==len(params).
+                    if _tree._args_are_ground(call):
                         try:
+                            keywords = tuple(
+                                (keyword.arg, keyword.value)
+                                for keyword in call.keywords
+                                if keyword.arg is not None
+                            )
                             memento, rows = _tree.applied_contract_rows(
-                                fn, tuple(call.args), file_rel
+                                fn, tuple(call.args), file_rel, keywords=keywords
                             )
                         except SugarNotWritten:
+                            # Typed tree frontier: abstract identity fallback.
+                            rows = None
+                        except SourceCallBindingGap as bind_gap:
+                            cue_gaps.append(
+                                {
+                                    "memento": at,
+                                    "reason": f"SourceCallBindingGap: {bind_gap}",
+                                }
+                            )
                             rows = None
                         if rows:
                             cued.append(_node(memento.to_rpc(), rows[0]))
                             continue
-                    if t in by_name:
-                        cued.append(_node(*by_name[t]))
-                _send_enumerate_result(
-                    msg_id,
-                    cued,
-                    (
-                        []
-                        if cued
-                        else [
+                    # Abstract contract for THIS authenticated definition only.
+                    def_rpc = _tree.function_def_memento(fn, file_rel).to_rpc()
+                    abstract = by_source_cid.get(def_rpc["source_cid"])
+                    if abstract is not None:
+                        cued.append(_node(*abstract))
+                    else:
+                        cue_gaps.append(
                             {
                                 "memento": at,
                                 "reason": (
-                                    "no universe for the callee(s) this call site cues: "
-                                    f"{targets or 'none'}"
+                                    "resolved callee has no abstract universe row "
+                                    f"(name={t!r} source_cid={def_rpc['source_cid']})"
                                 ),
                             }
-                        ]
-                    ),
+                        )
+                dig_gaps = list(cue_gaps)
+                if not cued and not dig_gaps:
+                    dig_gaps.append(
+                        {
+                            "memento": at,
+                            "reason": (
+                                "no universe for the callee(s) this call site cues: "
+                                f"{targets or 'none'}"
+                            ),
+                        }
+                    )
+                _send_enumerate_result(
+                    msg_id,
+                    cued,
+                    dig_gaps,
                     term_tables=[term_table.nodes],
                 )
                 _log_enumeration_demand(
