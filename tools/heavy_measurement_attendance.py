@@ -47,6 +47,23 @@ from pathlib import Path
 # Adding a heavy workflow without adding it here is how an instrument goes
 # quiet unnoticed, so tests/test_heavy_measurement_concurrency_topology.py
 # checks this roster against the workflows themselves.
+# A roster entry carries its CADENCE, because two different obligations were
+# being asked one question. A PER_COMMIT class owes testimony about THIS TIP.
+# A NIGHTLY class owes testimony about the most recent scheduled WINDOW and is
+# not asked about any particular commit at all.
+#
+# Conflating them made the roll call permanently red for a non-defect: three of
+# the five classes are cron/dispatch-only, so a per-commit R_attendance floored
+# at 3 forever. A permanently red instrument is tuned out, and a tuned-out
+# instrument is decorative -- the death this module exists to prevent.
+#
+# So the minority is computed ONLY over the classes OWED for the question being
+# asked, and the two cadences are NEVER SUMMED. A single number mixing "did not
+# speak when it owed us" with "was never asked" is not a measurement, it is a
+# mood.
+PER_COMMIT = "per-commit"
+NIGHTLY_WINDOW = "nightly-window"
+
 HEAVY_ROSTER = {
     "python-package-suite": "Python package suite (authoritative)",
     "python-sole-construction-floors": "Python sole-construction floors (R>0 red)",
@@ -54,6 +71,23 @@ HEAVY_ROSTER = {
     "pandas-wall": "Pandas Wall Ratchet",
     "restored-suite-scoreboard": "Restored Suite Scoreboard",
 }
+
+# Cadence per class. Verified against each workflow's own triggers by
+# tests/test_heavy_measurement_concurrency_topology.py: a class typed
+# PER_COMMIT whose workflow has no `push: branches: [main]` is a contradiction
+# the roll call cannot detect at runtime, so the test makes it uncompilable.
+HEAVY_CADENCE = {
+    "python-package-suite": PER_COMMIT,
+    "python-sole-construction-floors": PER_COMMIT,
+    "numpy-wall": NIGHTLY_WINDOW,
+    "pandas-wall": NIGHTLY_WINDOW,
+    "restored-suite-scoreboard": NIGHTLY_WINDOW,
+}
+
+
+def owed(cadence):
+    """The classes that owe testimony for the question being asked."""
+    return [c for c in HEAVY_ROSTER if HEAVY_CADENCE[c] == cadence]
 
 
 def receipts_attendance(receipts_dir):
@@ -125,6 +159,12 @@ def main(argv=None):
     parser.add_argument("--repo", default=None)
     parser.add_argument("--advisory", action="store_true",
                         help="report the minority without failing (nightly telemetry mode)")
+    parser.add_argument("--cadence", choices=(PER_COMMIT, NIGHTLY_WINDOW),
+                        default=PER_COMMIT,
+                        help="which obligation the roll call is about. Per-commit "
+                             "classes owe testimony about this tip; nightly classes "
+                             "owe testimony about their last scheduled window. The "
+                             "two are never summed.")
     args = parser.parse_args(argv)
 
     attended, testimony = ({}, [])
@@ -142,13 +182,14 @@ def main(argv=None):
                         f"{run.get('status')}/{run.get('conclusion')} (#{run.get('databaseId')})"
                     )
 
-    minority = [c for c in HEAVY_ROSTER if c not in attended]
+    obliged = owed(args.cadence)
+    minority = [c for c in obliged if c not in attended]
 
-    print(f"### heavy-measurement attendance for `{args.commit}`")
+    print(f"### heavy-measurement attendance ({args.cadence}) for `{args.commit}`")
     print()
     print("| heavy class | spoke | testimony |")
     print("| --- | --- | --- |")
-    for lease_class in HEAVY_ROSTER:
+    for lease_class in obliged:
         if lease_class in attended:
             detail = f"receipt `{attended[lease_class]}`, lease acquired"
             spoke = "yes"
@@ -171,7 +212,13 @@ def main(argv=None):
                   f"That is honest silence, and it is still silence.")
 
     print()
-    print(f"**R_attendance = {len(minority)}**")
+    axis = "R_attendance_commit" if args.cadence == PER_COMMIT else "R_attendance_nightly"
+    print(f"**{axis} = {len(minority)}**")
+    not_asked = [c for c in HEAVY_ROSTER if c not in obliged]
+    if not_asked:
+        print()
+        print("Not asked at this cadence (a different obligation, NOT counted here): "
+              + ", ".join(f"`{c}`" for c in not_asked))
     if minority:
         print()
         print("These instruments did not report. Their silence is NOT a clean floor —")

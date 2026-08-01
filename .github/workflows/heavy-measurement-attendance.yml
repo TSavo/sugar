@@ -93,8 +93,13 @@ jobs:
           SHA: ${{ steps.subject.outputs.sha }}
         run: |
           set -euo pipefail
+          # PER-COMMIT cadence only. The nightly classes (walls, scoreboard)
+          # owe testimony about their last scheduled WINDOW, not about this
+          # tip, and mixing the two floors R_attendance at 3 forever for a
+          # reason that is not a defect. The two axes are never summed.
           python3 tools/heavy_measurement_attendance.py \
             --commit "$SHA" \
+            --cadence per-commit \
             --receipts-dir receipts \
             --repo "${GITHUB_REPOSITORY}" \
             | tee attendance.md \
