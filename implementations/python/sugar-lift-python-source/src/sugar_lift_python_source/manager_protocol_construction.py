@@ -660,7 +660,12 @@ def _project_generator_enter_result(protocol, machine, result):
         refusal = observed_entry_refusal()
         blame = str(machine.instance_coordinate)
         return Incomplete(
-            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(f'generator-entry-refusal:{blame}'), exception_name=refusal.exception_name, blame=blame, raised_value=refusal.message)
+            RaiseEffect.for_builtin(
+                refusal.exception_name,
+                blame=blame,
+                occurrence=f"generator-entry-refusal:{blame}",
+                raised_value=refusal.message,
+            )
         )
     if isinstance(result, GeneratorTransitionGapV1):
         raise SugarNotWritten(

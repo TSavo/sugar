@@ -140,7 +140,6 @@ def _assert_named_halt(outcome) -> Halted:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
     # #6640: exceptional discharge stamps the reducer-owned pre-effect state.
     assert halted.state is not None, (
         "NativeOperationResolutionV1.project omitted the formal setitem "

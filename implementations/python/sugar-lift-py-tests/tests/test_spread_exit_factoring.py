@@ -69,7 +69,7 @@ class _TwoFacedElement:
         self.index = index
         self.guard = _atom(f"g{index}")
         self.halt_guard = _atom(f"h{index}")
-        self.effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0'), exception_name=f'E{index}')
+        self.effect = RaiseEffect.for_builtin(f'E{index}', occurrence='implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0')
 
     def desugar(self, ctx=None):
         del ctx

@@ -251,44 +251,28 @@ def _publish_undecided_dispatch_edges(
     if decided_left() and decided_right():
         return outcome
 
-    from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.outcome import Complete, ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        Halted,
-        complement_guard,
-        partition,
-    )
+    # Undecided compare must not mint a nameless RaiseEffect (sin-cluster-2 /
+    # constructor climb). Throwing is honorable unfinished identity work;
+    # dual-edge ExitSet with undetermined halt is forbidden.
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-    if not isinstance(outcome, Complete) or not isinstance(
-        outcome.value, PredicateValue
-    ):
-        return outcome
-
-    from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.ir import atomic
-
-    dispatch_raises = atomic(
-        _DISPATCH_RAISE_COORDINATE[op_kind],
-        [
-            left.to_term(owner=f"{op_kind} left operand"),
-            right.to_term(owner=f"{op_kind} right operand"),
-        ],
+    construction_panic_gap(
+        owner=f"ComparisonOpSugar.{op_kind}",
+        blame=site,
+        observed=(
+            "undecided binary compare reached dual-edge path without "
+            "authenticated exception_type_coordinate"
+        ),
+        requested=(
+            "decided ground TypeError via ground_type_error, or named refusal "
+            "before ExitSet mint"
+        ),
+        fix=(
+            "do not construct RaiseEffect without exception_type_coordinate; "
+            "ground decided pairs use ground_type_error; undecided native "
+            "dispatch throws before dual-edge fabrication"
+        ),
     )
-    halted_face, completed_face = partition(
-        partition_key_for_law(law, site, op_kind)
-    )
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(site)), blame=str(site), producer_node_owner='Compare')
-    return ExitSet(
-        (
-            Halted(dispatch_raises, effect, faces=frozenset({halted_face})),
-            Completed(
-                complement_guard(dispatch_raises),
-                outcome.value,
-                frozenset({completed_face}),
-            ),
-        )
-    ).normalize()
 
 
 @dataclass(frozen=True)

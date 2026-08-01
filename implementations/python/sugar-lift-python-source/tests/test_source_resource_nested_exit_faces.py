@@ -143,7 +143,10 @@ def _state(marker: str):
 
 def _nested_body_faces():
     """One ExitSet with Completed, Returned, and Halted faces under distinct guards."""
-    raise_effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:10:8:raise'), exception_name='ValueError', blame='body.py:10:8:raise')
+    raise_effect = RaiseEffect.for_builtin("ValueError",
+        occurrence="body.py:10:8:raise",
+        blame="body.py:10:8:raise",
+        )
     return ExitSet(
         (
             Completed(
@@ -291,7 +294,10 @@ def test_truthy_exit_suppresses_only_the_incoming_raise():
 def test_exit_halt_supersedes_every_incoming_body_face():
     """A halted __exit__ supersedes Completed, Returned, and Halted body faces."""
     body, raise_effect = _nested_body_faces()
-    exit_halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('exit.py:1:0'), exception_name='RuntimeError', blame='exit.py:1:0')
+    exit_halt = RaiseEffect.for_builtin("RuntimeError",
+        occurrence="exit.py:1:0",
+        blame="exit.py:1:0",
+        )
     protocol = _RecordingProtocol(exit_outcome=Incomplete(exit_halt))
     sugar = _source_resource(
         protocol=protocol,
@@ -321,8 +327,14 @@ def test_exit_halt_supersedes_every_incoming_body_face():
 
 def test_face_occurrence_lying_twin_discriminates_exit_bindings():
     """Lying twin: distinct raise occurrences mint distinct ExitFaceBinding rows."""
-    a = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:1:0:A'), exception_name='ValueError', blame='body.py:1:0:A')
-    b = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:2:0:B'), exception_name='ValueError', blame='body.py:2:0:B')
+    a = RaiseEffect.for_builtin("ValueError",
+        occurrence="body.py:1:0:A",
+        blame="body.py:1:0:A",
+        )
+    b = RaiseEffect.for_builtin("ValueError",
+        occurrence="body.py:2:0:B",
+        blame="body.py:2:0:B",
+        )
     bind_a = ExitFaceBinding.from_body_exit(
         "exit-face", Halted(true_guard(), a, _state("a"))
     )

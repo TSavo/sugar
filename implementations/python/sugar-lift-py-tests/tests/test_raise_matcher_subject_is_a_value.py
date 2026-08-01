@@ -71,7 +71,11 @@ class _TermBearingHandler:
 
 def _valueless_effect() -> RaiseEffect:
     """The measured shape: a raise with no value and no authenticated type."""
-    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(OCCURRENCE), exception_name='NameError', blame=OCCURRENCE)
+    return RaiseEffect.for_builtin("NameError",
+        
+        blame=OCCURRENCE,
+        occurrence=OCCURRENCE,
+    )
 
 
 # -- the refusal is correct output -------------------------------------------
@@ -156,7 +160,12 @@ def test_a_real_value_term_still_retains_the_question() -> None:
     as a refusal. A guard that refused everything would pass every test above
     and destroy the mechanism.
     """
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(OCCURRENCE), exception_name='ValueError', blame=OCCURRENCE, raised_value=TermValue(7))
+    effect = RaiseEffect.for_builtin("ValueError",
+        
+        blame=OCCURRENCE,
+        occurrence=OCCURRENCE,
+        raised_value=TermValue(7),
+    )
     # A handler with NO authenticated identity but WITH a value term: the
     # question is then real and undecidable rather than unstatable.
     handler = _TermBearingHandler()
@@ -171,7 +180,12 @@ def test_matching_halt_without_message_operand_retains_message_obligation() -> N
     """Truthful twin: the raised VALUE exists, but its rendered message is open."""
     identity = TermValue(1).to_term(owner="exception identity")
     raised_value = TermValue(7)
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(OCCURRENCE), exception_name='ValueError', exception_type_coordinate=identity, raised_value=raised_value)
+    effect = RaiseEffect.for_builtin("ValueError",
+        
+        exception_type_coordinate=identity,
+        occurrence=OCCURRENCE,
+        raised_value=raised_value,
+    )
     expected = _AuthenticatedHandler(identity)
 
     verdict = raise_effect_message_verdict(
@@ -189,7 +203,12 @@ def test_matching_halt_without_message_operand_retains_message_obligation() -> N
 def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
     """Lying twin: a source coordinate is not a rendered-message operand."""
     identity = TermValue(1).to_term(owner="exception identity")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(OCCURRENCE), exception_name='ValueError', exception_type_coordinate=identity, raised_value=None)
+    effect = RaiseEffect.for_builtin("ValueError",
+        
+        exception_type_coordinate=identity,
+        occurrence=OCCURRENCE,
+        raised_value=None,
+    )
     expected = _AuthenticatedHandler(identity)
 
     with pytest.raises(SugarNotWritten) as raised:
@@ -209,7 +228,12 @@ def _effect_with_message(message: str) -> tuple[RaiseEffect, _AuthenticatedHandl
         None,
     )
     return (
-        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(OCCURRENCE), exception_name='ValueError', exception_type_coordinate=identity, raised_value=raised_value),
+        RaiseEffect.for_builtin("ValueError",
+            
+            exception_type_coordinate=identity,
+            occurrence=OCCURRENCE,
+            raised_value=raised_value,
+        ),
         _AuthenticatedHandler(identity),
     )
 

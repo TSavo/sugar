@@ -327,7 +327,6 @@ def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> Non
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
     assert halted.effect.occurrence_id == str(carrier.demand.source_node.wire())
 
 

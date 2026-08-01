@@ -194,7 +194,12 @@ def test_bare_reraise_is_exact_inflight_effect_identity():
         resolve_in_flight_effect,
     )
 
-    incoming = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:1:0'), exception_name='ValueError', blame='body.py:1:0', raised_value=_call_exc('ValueError', 'first'))
+    incoming = RaiseEffect.for_builtin("ValueError",
+        
+        blame="body.py:1:0",
+        occurrence="body.py:1:0",
+        raised_value=_call_exc("ValueError", "first"),
+    )
     ctx = bind_in_flight_effect(
         ReduceContext.root(owner="bare-reraise"),
         "handler-slot",

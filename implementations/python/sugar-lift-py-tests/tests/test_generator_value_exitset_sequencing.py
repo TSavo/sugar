@@ -119,7 +119,7 @@ def _mixed_faces():
     pending = (_Pending("pending:halted-left"),)
     halted_left = Halted(
         left_guard,
-        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('value:halted:left'), exception_name='LeftError'),
+        RaiseEffect.for_builtin("LeftError", occurrence="value:halted:left"),
         state=object(),
         faces=frozenset({left_face}),
         pending_contracts=pending,
@@ -132,7 +132,7 @@ def _mixed_faces():
     )
     halted_right = Halted(
         right_guard,
-        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('value:halted:right'), exception_name='RightError'),
+        RaiseEffect.for_builtin("RightError", occurrence="value:halted:right"),
         state=object(),
         faces=frozenset({right_face}),
         pending_contracts=(),
@@ -276,14 +276,14 @@ def test_synthetic_all_halted_assign_is_unchanged_and_runs_no_continuation(
     arms = (
         Halted(
             membership_guard,
-            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('contains'), exception_name='TypeError'),
+            RaiseEffect.for_builtin("TypeError", occurrence="contains"),
             None,
             frozenset({membership_true}),
             (),
         ),
         Halted(
             and_((not_(membership_guard), equality_guard)),
-            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('equals'), exception_name='TypeError'),
+            RaiseEffect.for_builtin("TypeError", occurrence="equals"),
             None,
             frozenset({membership_false, equality_true}),
             (),
@@ -321,7 +321,7 @@ def test_synthetic_all_halted_assign_is_unchanged_and_runs_no_continuation(
 
 @pytest.mark.parametrize("consumer", ("assign", "return", "yield"))
 def test_incomplete_value_becomes_one_halted_face_without_advancing(consumer: str) -> None:
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('incomplete:value'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin("ValueError", occurrence="incomplete:value")
     reductions: list[str] = []
     value = _OutcomeValue(Incomplete(effect), reductions)
     if consumer == "assign":
@@ -405,7 +405,7 @@ def _carrier(tmp_path, *, mixed: bool = False):
         halted_face, completed_face = partition("carrier-discharge")
         halted = Halted(
             atomic("carrier:halted", []),
-            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('carrier:halted'), exception_name='CarrierError'),
+            RaiseEffect.for_builtin("CarrierError", occurrence="carrier:halted"),
             state=object(),
             faces=frozenset({halted_face}),
             pending_contracts=(_Pending("pending:carrier-halted"),),

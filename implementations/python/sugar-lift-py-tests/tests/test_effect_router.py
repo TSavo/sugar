@@ -30,7 +30,7 @@ from sugar_lift_py_tests.floor.warning_observation_value import WarningObservati
 
 
 def _raise_incomplete(name: str) -> Incomplete:
-    return Incomplete(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_effect_router.py:33:0'), exception_name=name))
+    return Incomplete(RaiseEffect.for_builtin(name, occurrence='implementations/python/sugar-lift-py-tests/tests/test_effect_router.py:33:0'))
 
 
 def _some_fact() -> InvValue:

@@ -149,10 +149,12 @@ def test_too_few_members_named_valueerror(tmp_path: Path) -> None:
     op = _star_op(prefix=("a", "b"), star="rest", blame=site)
     outcome = op.submit(TupleValue((TermValue(1),)), None)
     assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "ValueError" or (
-        outcome.effect.exception_type_coordinate is not None
-        and "ValueError" in repr(outcome.effect.exception_type_coordinate)
-    )
+    # RaiseEffect is unconstructible without coordinate; pin identity, not presence.
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    assert isinstance(outcome.effect, RaiseEffect)
+    expected = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_starred_unpack_projection.py:156:0')
+    assert outcome.effect.exception_type_coordinate == expected.exception_type_coordinate
 
 
 def test_too_few_discrimination_is_not_completed_bind(tmp_path: Path) -> None:
@@ -240,9 +242,12 @@ def test_later_store_halt_preserves_earlier_star_bindings(tmp_path: Path) -> Non
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert len(halted) == 1
     assert len(completed) == 0
-    assert halted[0].effect.exception_name == "TypeError" or (
-        halted[0].effect.exception_type_coordinate is not None
-        and "TypeError" in repr(halted[0].effect.exception_type_coordinate)
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    assert isinstance(halted[0].effect, RaiseEffect)
+    expected = RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_starred_unpack_projection.py:248:0')
+    assert (
+        halted[0].effect.exception_type_coordinate == expected.exception_type_coordinate
     )
     # No completed return face — store halt blocked later targets.
     assert not any(isinstance(e, Completed) for e in outcome.exits)

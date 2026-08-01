@@ -150,7 +150,7 @@ class NativeOperationResolutionV1:
             testimony = self.pre_effect_state
             effect = self.effect
             if testimony is None:
-                effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(occurrence.wire())), exception_type_coordinate=self.exception_type_coordinate, blame=str(occurrence.wire()))
+                effect = RaiseEffect(exception_type_coordinate=self.exception_type_coordinate, occurrence=AuthenticatedRaiseLocus.of(str(occurrence.wire())), blame=str(occurrence.wire()))
             if not isinstance(effect, RaiseEffect):
                 raise TypeError(
                     "exceptional native operation effect must be RaiseEffect"

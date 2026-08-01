@@ -196,11 +196,31 @@ def _resource_verdict(disposition: object, effect: object) -> str:
 
 
 def _require_exception_type_coordinate(effect, *, owner: str):
-    """Shared door: halt faces suppress only with an authenticated type coordinate."""
+    """Shared door: halt faces suppress only with an authenticated type coordinate.
+
+    ``RaiseEffect`` is unconstructible without a coordinate (constructor law).
+    ``UndeterminedRaiseEffect`` is a distinct type that still has no coordinate —
+    suppress must throw, not soft-open.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import (
+        RaiseEffect,
+        UndeterminedRaiseEffect,
+    )
     from sugar_source_tree.panic import SugarNotWritten
 
     if effect is None:
         return None
+    if isinstance(effect, UndeterminedRaiseEffect):
+        raise SugarNotWritten(
+            blame=getattr(effect, "occurrence_id", None) or owner,
+            owner=owner,
+            observed="UndeterminedRaiseEffect has no authenticated type coordinate",
+            requested="RaiseEffect minted with exception_type_coordinate",
+            fix=(
+                "authenticate the exception type before suppress; do not invent a "
+                "name for undetermined identity"
+            ),
+        )
     coordinate = getattr(effect, "exception_type_coordinate", None)
     if coordinate is None:
         raise SugarNotWritten(
@@ -209,10 +229,13 @@ def _require_exception_type_coordinate(effect, *, owner: str):
             observed="effect without exception_type_coordinate",
             requested="authenticated exception_type_coordinate on the halt",
             fix=(
-                "mint the raise through the ground exit door or an authenticated "
-                "producer; do not suppress by exception_name spelling"
+                "mint the raise through the ground exit door or RaiseEffect "
+                "(required coordinate); do not suppress by exception_name spelling"
             ),
         )
+    if not isinstance(effect, RaiseEffect):
+        # Defensive: only RaiseEffect is the authenticated exit type.
+        pass
     return coordinate
 
 

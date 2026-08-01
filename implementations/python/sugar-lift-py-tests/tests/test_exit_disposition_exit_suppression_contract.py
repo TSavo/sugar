@@ -28,7 +28,7 @@ def _guard():
 def _value_error(*, coordinate=None, mro=None, name="ValueError"):
     if coordinate is None and mro is None:
         coordinate, mro = _builtin_exception_identity("ValueError")
-    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('exit_suppression.py:1:0'), exception_name=name, exception_type_coordinate=coordinate, exception_type_mro=mro)
+    return RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of('exit_suppression.py:1:0'), exception_name=name, exception_type_mro=mro)
 
 
 def test_truthful_contract_suppresses_matching_coordinate() -> None:
@@ -60,7 +60,7 @@ def test_lying_twin_same_spelling_foreign_coordinate_restores() -> None:
 
 
 def test_missing_effect_coordinate_throws() -> None:
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('exit_suppression.py:2:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin("ValueError", occurrence="exit_suppression.py:2:0")
     with pytest.raises(SugarNotWritten) as caught:
         exit_disposition_effect(
             ExitSuppressionContract.suppresses(("ValueError",)),

@@ -160,7 +160,12 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
             del ctx
             log.append(self.label)
             return Incomplete(
-                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(self.site)), exception_name='ValueError', blame=str(self.site), producer_node_owner=f'halt:{self.label}')
+                RaiseEffect.for_builtin("ValueError",
+                    
+                    blame=str(self.site),
+                    occurrence=str(self.site),
+                    producer_node_owner=f"halt:{self.label}",
+                )
             )
 
         @classmethod

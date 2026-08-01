@@ -144,7 +144,12 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
         body=(
             _FixedSugar(
                 Incomplete(
-                    RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('resource.py:4:8'), exception_name='ValueError', exception_type_coordinate=coordinate, exception_type_mro=mro)
+                    RaiseEffect.for_builtin("ValueError",
+                        
+                        occurrence="resource.py:4:8",
+                        exception_type_coordinate=coordinate,
+                        exception_type_mro=mro,
+                    )
                 )
             ),
         ),
@@ -167,7 +172,7 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
 
 
 def test_source_true_exit_consumes_the_halted_edge():
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('resource.py:4:8'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin("ValueError", occurrence="resource.py:4:8")
     sugar, protocol = _truthiness_resource(
         exit_value=TermValue(True), body=(_FixedSugar(Incomplete(effect)),)
     )
@@ -180,7 +185,7 @@ def test_source_true_exit_consumes_the_halted_edge():
 
 
 def test_source_false_exit_passes_the_exact_halted_edge_through():
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('resource.py:4:8'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin("ValueError", occurrence="resource.py:4:8")
     sugar, protocol = _truthiness_resource(
         exit_value=TermValue(False), body=(_FixedSugar(Incomplete(effect)),)
     )
@@ -194,7 +199,7 @@ def test_source_false_exit_passes_the_exact_halted_edge_through():
 
 
 def test_source_undecided_exit_keeps_both_suppression_faces():
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('resource.py:4:8'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin("ValueError", occurrence="resource.py:4:8")
     result = SymbolicValue(ctor("fixture:undecided-exit", ()))
     sugar, _ = _truthiness_resource(
         exit_value=result, body=(_FixedSugar(Incomplete(effect)),)
@@ -245,7 +250,9 @@ def test_source_exit_runs_on_early_return_face():
         ),
         (
             Incomplete(
-                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('resource.py:8:8'), exception_name='ValueError')
+                RaiseEffect.for_builtin("ValueError",
+                     occurrence="resource.py:8:8"
+                )
             ),
             TermValue(False),
             Halted,
