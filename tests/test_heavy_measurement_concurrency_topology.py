@@ -67,6 +67,18 @@ def _text(name):
     return (WORKFLOWS / name).read_text()
 
 
+def _attendance_module():
+    """Load the roll call as a module so its roster and cadence are checkable."""
+    from importlib import util
+
+    spec = util.spec_from_file_location(
+        "heavy_measurement_attendance", ROOT / "tools" / "heavy_measurement_attendance.py"
+    )
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize("workflow", sorted(HEAVY_WORKFLOWS))
 def test_heavy_workflows_declare_no_concurrency_group(workflow):
     """No group means no pending slot means nothing to evict."""
@@ -180,3 +192,55 @@ def test_orchestrator_still_runs_the_corpus_floors():
         "construction_side_door_law.py",
     ):
         assert script in floors, f"the leased floor set must invoke {script}"
+
+
+def test_roster_cadence_matches_each_workflow_trigger():
+    """A class typed PER_COMMIT must actually run on every commit.
+
+    THE DEFECT THIS FIXES. The roll call was enrolled with one untyped roster
+    and asked every class the same question: did you speak about this tip?
+    Three of the five are `workflow_dispatch` + cron only, so they can never
+    answer it -- R_attendance floored at 3 on every commit, forever, for a
+    reason that is not a defect. A permanently red instrument is tuned out,
+    and a tuned-out instrument is decorative.
+
+    The cadence is now declared in HEAVY_CADENCE, and a declaration nobody
+    checks is a comment. This is the check: PER_COMMIT requires
+    `push: branches: [main]`, NIGHTLY_WINDOW requires a `schedule:`. Retyping a
+    class without changing its triggers -- or adding a trigger without
+    retyping -- fails here, at check time, instead of silently producing a
+    number that mixes "owed and silent" with "never asked".
+    """
+    module = _attendance_module()
+    for workflow, lease_class in HEAVY_WORKFLOWS.items():
+        text = _text(workflow)
+        on_block = re.split(r"^[a-zA-Z]", text.split("on:", 1)[1], maxsplit=1)[0]
+        cadence = module.HEAVY_CADENCE[lease_class]
+        if cadence == module.PER_COMMIT:
+            assert "push:" in on_block and "main" in on_block, (
+                f"{lease_class} is typed PER_COMMIT but {workflow} has no "
+                f"push:[main] trigger, so it can never testify about a commit; "
+                f"either give it the trigger or retype it NIGHTLY_WINDOW"
+            )
+        else:
+            assert "schedule:" in on_block, (
+                f"{lease_class} is typed NIGHTLY_WINDOW but {workflow} has no "
+                f"schedule: trigger, so it owes a window it will never be asked "
+                f"about; either give it a schedule or retype it PER_COMMIT"
+            )
+
+
+def test_the_two_cadences_are_never_summed():
+    """R_attendance_commit and R_attendance_nightly are different obligations.
+
+    A single number mixing "did not speak when it owed us" with "was never
+    asked" is not a measurement. The roll call must emit one axis per cadence
+    and must never expose a combined total.
+    """
+    module = _attendance_module()
+    source = Path(module.__file__).read_text()
+    assert "R_attendance_commit" in source and "R_attendance_nightly" in source
+    assert "len(HEAVY_ROSTER)" not in source, (
+        "the minority must be computed over the OWED classes for the cadence "
+        "being asked, never over the whole roster"
+    )
