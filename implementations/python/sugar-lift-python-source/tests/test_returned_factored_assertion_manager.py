@@ -266,7 +266,7 @@ def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
         or getattr(binding.effect, "occurrence", None)
         or getattr(binding.effect, "blame", None)
     )
-    assert occurrence is not None
+    assert occurrence == str(binding)
     assert all(_observed_binding(face) is None for face in exits.exits if isinstance(face, Halted))
 
 

@@ -266,6 +266,10 @@ def test_handler_halt_plus_finally_read_e_keeps_handler_exception_as_context():
     assert effect.context_effect.exception_name == "RuntimeError"
     # Primary is NameError for e, not the handler RuntimeError alone.
     assert effect.exception_name == "NameError"
+    assert isinstance(effect.context_effect.occurrence, str) and ":" in effect.context_effect.occurrence, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {effect.context_effect.occurrence!r}"
+    )
 
 
 def test_bindings_survive_on_returned_cleanup_edge():

@@ -73,6 +73,10 @@ def test_ordinary_function_call_discharge_can_halt_with_named_identity() -> None
     )
     assert halted.effect.exception_type_coordinate == type_error
     assert halted.effect.exception_name == "TypeError"
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
 
 
 def test_swapped_actuals_retain_the_operation_coordinate() -> None:

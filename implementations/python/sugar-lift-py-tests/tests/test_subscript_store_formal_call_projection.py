@@ -119,6 +119,10 @@ def test_immutable_receiver_reads_but_formal_store_halts_with_named_type() -> No
 
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     assert "'startLine': 2" in halted.effect.occurrence
     assert "assertion" not in halted.effect.occurrence
 

@@ -145,6 +145,10 @@ def test_named_exceptional_source_return_bypasses_both_bodies_with_state() -> No
 
     halted = _only_exit(call.sugar().desugar(None), Halted)
     assert halted.effect.exception_type_coordinate == _type_error_identity()
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     assert halted.state is not None
 
 
