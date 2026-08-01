@@ -1155,8 +1155,6 @@ def _project_return_faces_to_manager(
     Returns None when no face force_floors to ObjectValue yet (caller may try
     nested hops). Returns a gap when multi-manager identities refuse.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
     managers: list[
         tuple[
             FloorValue,
@@ -1182,35 +1180,13 @@ def _project_return_faces_to_manager(
             # GuardedReturn in prefix state). Already projected — skip, do not
             # invent a call-graph-cycle residual for a peer harvest.
             continue
-        try:
-            floor = returned.force_floor(
-                reduce_ctx,
-                owner="construct_manager_behavior returned object",
-                project_callsite=False,
-            )
-        except ConstructionPanic:
-            # A nested source constructor can itself have guarded completion
-            # arms. Project those arms through the same source-authenticated
-            # manager door used for a top-level multi-arm factory.
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            nested_outcome = returned.reduce_source_outcome(reduce_ctx)
-            if not isinstance(nested_outcome, ExitSet):
-                continue
-            projected = _project_manager_from_exitset(
-                nested_outcome,
-                factory_prefix=(),
-                seen_calls=seen_calls,
-                resolved_cid=resolved_cid,
-            )
-            if isinstance(projected, ManagerConstructionGapV1):
-                continue
-            floor, nested_prefix = projected
-            if isinstance(floor, ObjectValue):
-                managers.append((face, floor, returned))
-                non_return_prefix = (*non_return_prefix, *nested_prefix)
-                seen_calls.add(id(returned))
-            continue
+        # No ConstructionPanic soft continue. Nested unfinished floors rise.
+        # Recovery-via-ExitSet was a second mechanism for missing to_term.
+        floor = returned.force_floor(
+            reduce_ctx,
+            owner="construct_manager_behavior returned object",
+            project_callsite=False,
+        )
         if isinstance(floor, (ObjectValue, ReceiverStatePartitionValue)):
             managers.append((face, floor, returned))
             seen_calls.add(id(returned))

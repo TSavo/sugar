@@ -157,3 +157,15 @@ def test_declared_interpreter_runtime_uses_door_not_parents(
     from sugar_lift_py_tests.authenticated_pytest import declared_interpreter_runtime
 
     assert declared_interpreter_runtime() == "cpython-3.12.13"
+
+
+def test_idd_wall_mains_do_not_count_parents_for_repo_root() -> None:
+    """Residual parents[5] seats routed: wall CLIs use the resolve door."""
+    import inspect
+
+    from sugar_lift_py_tests.idd import numpy_wall, pandas_wall
+
+    for mod in (numpy_wall, pandas_wall):
+        src = inspect.getsource(mod.main)
+        assert "parents[5]" not in src, mod.__name__
+        assert "resolve_repo_root" in src, mod.__name__

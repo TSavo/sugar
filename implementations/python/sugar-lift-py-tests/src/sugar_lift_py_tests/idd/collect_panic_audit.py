@@ -60,8 +60,16 @@ def collect_panic_audit(
         try:
             package_path = resolver(package).resolve()
         except (
-            Exception
-        ) as exc:  # pragma: no cover - exact exception is environment-owned
+            ModuleNotFoundError,
+            ImportError,
+            OSError,
+            FileNotFoundError,
+            TypeError,
+            ValueError,
+            RuntimeError,
+        ) as exc:
+            # Environment-owned resolution failures only — never bare Exception.
+            # Unrelated throws rise (honorable unfinished work in the resolver).
             target = LiftTarget(f"{package}-all", root)
             message = f"unable to resolve installed package `{package}`: {exc}"
             diagnostics.append(message)
