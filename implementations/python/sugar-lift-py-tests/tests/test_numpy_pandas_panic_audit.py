@@ -278,10 +278,13 @@ def test_audit_subprocess_times_out_the_current_file_loudly(
         result.stdout,
         result.stderr,
     )
-    assert len(records) == 1
-    assert records[0].kind == "unexpected"
-    assert records[0].owner == "idd.collect_panic_audit"
-    assert records[0].blame == "numpy/slow.py"
+    # Timeout + structured population shortfall (expected unknown: no path target).
+    assert len(records) == 2
+    by_observed = {record.observed: record for record in records}
+    assert by_observed["audit-file-timeout"].kind == "unexpected"
+    assert by_observed["audit-file-timeout"].owner == "idd.collect_panic_audit"
+    assert by_observed["audit-file-timeout"].blame == "numpy/slow.py"
+    assert by_observed["never-attempted-unknown"].requested == "attempted-1-of-unknown"
 
 
 def test_audit_timeout_names_files_never_attempted(
@@ -326,8 +329,14 @@ def test_audit_timeout_names_files_never_attempted(
         result.stdout,
         result.stderr,
     )
-    assert len(records) == 1
-    assert records[0].blame == "pkg/slow.py"
+    # Two structured records: blamed timeout + population shortfall (not prose-only).
+    assert len(records) == 2
+    by_observed = {record.observed: record for record in records}
+    assert "audit-file-timeout" in by_observed
+    assert by_observed["audit-file-timeout"].blame == "pkg/slow.py"
+    assert "never-attempted-2" in by_observed
+    assert by_observed["never-attempted-2"].requested == "attempted-1-of-3"
+    assert by_observed["never-attempted-2"].owner == "idd.collect_panic_audit"
 
 
 def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) -> None:
