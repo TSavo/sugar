@@ -1,3 +1,12 @@
+"""Teeth for builtin_closed_operation_instrument — structural, not substring.
+
+Cluster 5 shapes (exception_name / matcher.name / importorskip / type_name in)
+and vendor CM coordinates beyond the old {pytest.raises, contextlib.suppress}
+substring list. Lying twins plant arms the substring matcher missed.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 
@@ -7,7 +16,26 @@ def _write(root: Path, relative: str, source: str) -> None:
     path.write_text(source, encoding="utf-8")
 
 
-def test_instrument_names_forbidden_side_doors_and_replacement(tmp_path):
+def test_is_vendor_cm_coordinate_spelling_is_structural_not_substring() -> None:
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        is_vendor_cm_coordinate_spelling,
+    )
+
+    assert is_vendor_cm_coordinate_spelling("pytest.raises")
+    assert is_vendor_cm_coordinate_spelling("pytest.warns")
+    assert is_vendor_cm_coordinate_spelling("contextlib.suppress")
+    assert is_vendor_cm_coordinate_spelling("contextlib.nullcontext")
+    assert is_vendor_cm_coordinate_spelling("unittest.mock.patch")
+    assert is_vendor_cm_coordinate_spelling("warnings.catch_warnings")
+
+    assert not is_vendor_cm_coordinate_spelling("xpytest.raisesy")
+    assert not is_vendor_cm_coordinate_spelling("not pytest.raises")
+    assert not is_vendor_cm_coordinate_spelling("pytest")
+    assert not is_vendor_cm_coordinate_spelling("numpy.array")
+    assert not is_vendor_cm_coordinate_spelling("")
+
+
+def test_instrument_names_forbidden_side_doors_and_replacement(tmp_path: Path) -> None:
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
     )
@@ -33,7 +61,7 @@ def test_instrument_names_forbidden_side_doors_and_replacement(tmp_path):
     assert all("floor" in row.replacement.lower() for row in report.offenders)
 
 
-def test_instrument_truthful_floor_shape_is_zero(tmp_path):
+def test_instrument_truthful_floor_shape_is_zero(tmp_path: Path) -> None:
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
     )
@@ -56,12 +84,11 @@ def test_instrument_truthful_floor_shape_is_zero(tmp_path):
     assert report.offenders == ()
 
 
-def test_instrument_structurally_sees_spelling_gates_of_cluster_five(tmp_path):
+def test_instrument_structurally_sees_spelling_gates_of_cluster_five(tmp_path: Path) -> None:
     """Sin cluster 5 shapes: name gates outside authenticated coordinates.
 
-    Before the production fixes these four patterns lived at the named
-    coordinates. The instrument must catch each by AST shape, not by the
-    legacy ``pytest.raises`` / ``contextlib.suppress`` substring filter.
+    The instrument must catch each by AST shape, not by the legacy
+    ``pytest.raises`` / ``contextlib.suppress`` substring filter.
     """
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
@@ -119,13 +146,12 @@ def test_instrument_structurally_sees_spelling_gates_of_cluster_five(tmp_path):
     assert any("exception_name" in text for text in observed)
     assert any("matcher.name" in text for text in observed)
     assert any("importorskip" in text for text in observed)
-    assert any("pytest" in text for text in observed)
     assert any("type_name in" in text for text in observed)
     assert any("suppresses_exception" in text for text in observed)
     assert any("exception_names" in text for text in observed)
 
 
-def test_instrument_fixed_cluster_five_production_sites_are_zero():
+def test_instrument_fixed_cluster_five_production_sites_are_zero() -> None:
     """After the coordinate fix, the named production files have no name gates."""
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
@@ -150,7 +176,7 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero():
     )
 
 
-def test_instrument_lying_twin_name_suppress_shell_is_red(tmp_path):
+def test_instrument_lying_twin_name_suppress_shell_is_red(tmp_path: Path) -> None:
     """Planting suppresses_exception / exception_names must be detected (teeth)."""
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
@@ -166,8 +192,152 @@ def test_instrument_lying_twin_name_suppress_shell_is_red(tmp_path):
     report = collect_builtin_closed_operation_report(tmp_path)
     gates = [row for row in report.offenders if row.axis == "name_or_vendor_gates"]
     assert any("suppresses_exception" in row.observed for row in gates), gates
-    # effect.exception_name attr compare / load in residual decision path
     assert any(
         "exception_name" in row.observed or "suppresses_exception" in row.observed
         for row in gates
     )
+
+
+def test_lying_twin_pytest_warns_compare_is_detected(tmp_path: Path) -> None:
+    """Lying twin: vendor arm the old substring list did not name.
+
+    Old: ``"pytest.raises" in value or "contextlib.suppress" in value``
+    left ``provider_name == "pytest.warns"`` silent.
+    """
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "src/warns_gate.py",
+        "def derive(provider_name):\n"
+        "    if provider_name == 'pytest.warns':\n"
+        "        return 'side-door'\n"
+        "    return 'floor'\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] >= 1
+    assert report.r["construction_side_doors"] >= 1
+    assert any("pytest.warns" in row.observed for row in report.offenders)
+
+
+def test_lying_twin_match_case_vendor_arm_is_detected(tmp_path: Path) -> None:
+    """Lying twin: match/case vendor arm is not a Compare — substring visitor missed it."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "src/match_gate.py",
+        "def derive(provider_name):\n"
+        "    match provider_name:\n"
+        "        case 'contextlib.nullcontext':\n"
+        "            return 'side-door'\n"
+        "        case _:\n"
+        "            return 'floor'\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] >= 1
+    assert any("contextlib.nullcontext" in row.observed for row in report.offenders)
+
+
+def test_lying_twin_attribute_chain_gate_is_detected(tmp_path: Path) -> None:
+    """Lying twin: compare to pytest.raises as Attribute, no string Constant."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "src/attr_gate.py",
+        "import pytest\n"
+        "\n"
+        "def derive(provider):\n"
+        "    if provider is pytest.raises:\n"
+        "        return 'side-door'\n"
+        "    return 'floor'\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] >= 1
+    assert any("pytest.raises" in row.observed for row in report.offenders)
+
+
+def test_lying_twin_dict_logo_dispatch_is_detected(tmp_path: Path) -> None:
+    """Lying twin: vendor spelling as dict key (relocated from Compare)."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "src/dict_gate.py",
+        "def derive(provider_name):\n"
+        "    table = {'unittest.mock.patch': 'side-door'}\n"
+        "    return table.get(provider_name, 'floor')\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] >= 1
+    assert any("unittest.mock.patch" in row.observed for row in report.offenders)
+
+
+def test_substring_false_positive_is_not_a_gate(tmp_path: Path) -> None:
+    """Truthful: superstring that only contains the old needles is not a coordinate."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "src/doc.py",
+        "def note(msg):\n"
+        "    if msg == 'see docs for xpytest.raisesy examples':\n"
+        "        return True\n"
+        "    return False\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] == 0
+    assert report.offenders == ()
+
+
+def test_generic_verdict_is_exact_name_not_substring(tmp_path: Path) -> None:
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "src/verdict.py",
+        "def a(builtin_result):\n"
+        "    return builtin_result is True\n"
+        "\n"
+        "def b(my_builtin_result_flag):\n"
+        "    return my_builtin_result_flag is True\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["generic_builtin_verdicts"] == 1
+
+
+def test_instrument_does_not_scan_idd_or_plant_self(tmp_path: Path) -> None:
+    """No self-fabrication: idd lane is skipped; instrument never inserts callers."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "sugar_lift_py_tests/idd/planted_sin.py",
+        "def derive(provider_name):\n"
+        "    if provider_name == 'pytest.raises':\n"
+        "        return True\n"
+        "    return False\n",
+    )
+    _write(
+        tmp_path,
+        "sugar_lift_py_tests/floor/ok.py",
+        "def apply(receiver, operation):\n"
+        "    return receiver.callable_application_with(operation, None)\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.offenders == ()
