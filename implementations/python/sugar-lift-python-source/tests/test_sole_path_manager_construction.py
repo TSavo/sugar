@@ -1912,13 +1912,7 @@ def test_factored_raise_routing_uses_none_and_pattern_message_faces():
     type_term = ctor("python:exception_type", [str_const("builtins.ValueError")])
     raise_face = Halted(
         true_guard(),
-        RaiseEffect(
-            exception_name="ValueError",
-            blame="t.py:2:8",
-            exception_type_coordinate=type_term,
-            exception_type_mro=(type_term,),
-            raised_value=StringValue("needle"),
-        ),
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('t.py:2:8'), exception_name='ValueError', blame='t.py:2:8', exception_type_coordinate=type_term, exception_type_mro=(type_term,), raised_value=StringValue('needle')),
         None,
     )
     body = ExitSet((raise_face,))

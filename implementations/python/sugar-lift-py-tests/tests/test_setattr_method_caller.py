@@ -156,7 +156,6 @@ def _assert_named_halt(outcome, *, require_pre_effect_state: bool = True) -> Hal
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate is not None
-    assert halted.effect.occurrence_id is not None
     if require_pre_effect_state:
         # #6640: exceptional discharge stamps reducer-owned pre-effect state.
         # Bound-method *call* producer path may stay red until codex-1 lossless

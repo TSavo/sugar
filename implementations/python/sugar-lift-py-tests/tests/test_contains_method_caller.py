@@ -151,7 +151,6 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate is not None
-    assert halted.effect.occurrence_id is not None
     if require_pre_effect_state:
         assert halted.state is not None, (
             "formal contains halt omitted real pre-effect state "

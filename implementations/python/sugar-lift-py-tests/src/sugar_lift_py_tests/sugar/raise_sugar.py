@@ -89,26 +89,7 @@ class RaiseSugar(Sugar):
             identity_reader = getattr(raised_value, "exception_type_identity", None)
             mro_reader = getattr(raised_value, "exception_type_mro", None)
             return Incomplete(
-                RaiseEffect(
-                    exception_name=self.exception_name,
-                    blame=blame,
-                    source_sha256=source_sha256,
-                    # Occurrence is the raise site — not a type-level identity.
-                    occurrence=blame,
-                    exception_type_coordinate=(
-                        identity_reader()
-                        if identity_reader is not None
-                        else getattr(raised_value, "exception_type_coordinate", None)
-                    ),
-                    exception_type_mro=(
-                        mro_reader()
-                        if callable(mro_reader)
-                        else getattr(raised_value, "exception_type_mro", None)
-                    ),
-                    raised_value=raised_value,
-                    cause_value=cause_value,
-                    context_effect=context_effect,
-                )
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(blame), exception_name=self.exception_name, blame=blame, source_sha256=source_sha256, exception_type_coordinate=identity_reader() if identity_reader is not None else getattr(raised_value, 'exception_type_coordinate', None), exception_type_mro=mro_reader() if callable(mro_reader) else getattr(raised_value, 'exception_type_mro', None), raised_value=raised_value, cause_value=cause_value, context_effect=context_effect)
             )
 
         def after_exception(raised_value):

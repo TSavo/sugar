@@ -61,13 +61,7 @@ def _raise(name: str, marker: str, *, message: object | None = None):
         )
     return Halted(
         true_guard(),
-        RaiseEffect(
-            exception_name=name,
-            blame=f"producer.py:1:{marker}",
-            exception_type_coordinate=_identity(name),
-            exception_type_mro=(_identity(name),),
-            raised_value=raised_value,
-        ),
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(f'producer.py:1:{marker}'), exception_name=name, blame=f'producer.py:1:{marker}', exception_type_coordinate=_identity(name), exception_type_mro=(_identity(name),), raised_value=raised_value),
         _state(marker),
     )
 
@@ -235,7 +229,7 @@ def test_nameless_halt_stays_outside_assertion_boundary():
     cannot turn a nameless halt into that result or demand a predicate whose
     subject does not exist.
     """
-    nameless = RaiseEffect(blame="producer.py:9:4")
+    nameless = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('producer.py:9:4'), blame='producer.py:9:4')
     body = ExitSet((Halted(true_guard(), nameless, _state("nameless")),))
 
     routed = _boundary_from_exitset(body, expected=_Expected("ValueError")).desugar()
@@ -259,27 +253,10 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     producer_coordinate = _identity("TypeError")
     assert producer_coordinate == expected.identity
 
-    producer_effect = RaiseEffect(
-        exception_name="TypeError",
-        blame="pandas/tests/arithmetic/common.py:144:8",
-        occurrence="pandas/tests/arithmetic/common.py:144:8",
-        exception_type_coordinate=producer_coordinate,
-        exception_type_mro=(producer_coordinate,),
-        raised_value=CallSiteValue(
-            "TypeError",
-            (StringValue("Cannot compare type Timestamp with date"),),
-            ("message",),
-            ctor("call:TypeError", []),
-            None,
-        ),
-        producer_node_owner="ComparisonOpSugar.desugar",
-    )
+    producer_effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('pandas/tests/arithmetic/common.py:144:8'), exception_name='TypeError', blame='pandas/tests/arithmetic/common.py:144:8', exception_type_coordinate=producer_coordinate, exception_type_mro=(producer_coordinate,), raised_value=CallSiteValue('TypeError', (StringValue('Cannot compare type Timestamp with date'),), ('message',), ctor('call:TypeError', []), None), producer_node_owner='ComparisonOpSugar.desugar')
     matching = Halted(true_guard(), producer_effect, _state("compare"))
     other = _raise("ValueError", "other-type")
-    nameless_effect = RaiseEffect(
-        blame="pandas/tests/arithmetic/common.py:144:8",
-        producer_node_owner="ComparisonOpSugar.desugar",
-    )
+    nameless_effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('pandas/tests/arithmetic/common.py:144:8'), blame='pandas/tests/arithmetic/common.py:144:8', producer_node_owner='ComparisonOpSugar.desugar')
     nameless = Halted(true_guard(), nameless_effect, _state("nameless"))
     completed = Completed(true_guard(), _state("completed"))
     msg = CallSiteValue(
@@ -328,7 +305,7 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     assert binding.effect.exception_type_coordinate is producer_coordinate
     assert binding.effect.exception_type_coordinate is not expected.identity
     assert binding.effect.producer_node_owner == "ComparisonOpSugar.desugar"
-    assert binding.effect.occurrence == "pandas/tests/arithmetic/common.py:144:8"
+    assert binding.effect.occurrence_id == "pandas/tests/arithmetic/common.py:144:8"
     assert failed_message.effect is producer_effect
 
     by_marker = {
@@ -633,21 +610,7 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
     from sugar_lift_py_tests.floor import StringValue
 
     occurrence = "producer.py:4:8:factored-none"
-    producer = RaiseEffect(
-        exception_name="ValueError",
-        blame=occurrence,
-        occurrence=occurrence,
-        exception_type_coordinate=_identity("ValueError"),
-        exception_type_mro=(_identity("ValueError"),),
-        raised_value=CallSiteValue(
-            "ValueError",
-            (StringValue("boom"),),
-            ("message",),
-            ctor("call:ValueError", []),
-            None,
-        ),
-        producer_node_owner="Compare.desugar",
-    )
+    producer = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occurrence), exception_name='ValueError', blame=occurrence, exception_type_coordinate=_identity('ValueError'), exception_type_mro=(_identity('ValueError'),), raised_value=CallSiteValue('ValueError', (StringValue('boom'),), ('message',), ctor('call:ValueError', []), None), producer_node_owner='Compare.desugar')
     body = ExitSet((Halted(true_guard(), producer, _state("none-face-body")),))
 
     routed = _factored_boundary_from_exitset(body).desugar()
@@ -676,21 +639,7 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
     from sugar_lift_py_tests.floor import StringValue
 
     occurrence = "producer.py:8:4:factored-pattern"
-    producer = RaiseEffect(
-        exception_name="ValueError",
-        blame=occurrence,
-        occurrence=occurrence,
-        exception_type_coordinate=_identity("ValueError"),
-        exception_type_mro=(_identity("ValueError"),),
-        raised_value=CallSiteValue(
-            "ValueError",
-            (StringValue("cannot convert"),),
-            ("message",),
-            ctor("call:ValueError", []),
-            None,
-        ),
-        producer_node_owner="BinOp.desugar",
-    )
+    producer = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occurrence), exception_name='ValueError', blame=occurrence, exception_type_coordinate=_identity('ValueError'), exception_type_mro=(_identity('ValueError'),), raised_value=CallSiteValue('ValueError', (StringValue('cannot convert'),), ('message',), ctor('call:ValueError', []), None), producer_node_owner='BinOp.desugar')
     # Symbolic pattern keeps the message predicate open → held + complement.
     pattern = SymbolicValue(make_var("msg_pattern"))
     body = ExitSet((Halted(true_guard(), producer, _state("pattern-face-body")),))
@@ -728,20 +677,7 @@ def test_factored_as_binding_faces_keep_distinct_guards_and_identities():
     )
     from sugar_lift_py_tests.floor import StringValue
 
-    producer = RaiseEffect(
-        exception_name="ValueError",
-        blame="producer.py:1:0",
-        occurrence="producer.py:1:0",
-        exception_type_coordinate=_identity("ValueError"),
-        exception_type_mro=(_identity("ValueError"),),
-        raised_value=CallSiteValue(
-            "ValueError",
-            (StringValue("x"),),
-            ("message",),
-            ctor("call:ValueError", []),
-            None,
-        ),
-    )
+    producer = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('producer.py:1:0'), exception_name='ValueError', blame='producer.py:1:0', exception_type_coordinate=_identity('ValueError'), exception_type_mro=(_identity('ValueError'),), raised_value=CallSiteValue('ValueError', (StringValue('x'),), ('message',), ctor('call:ValueError', []), None))
     body = ExitSet((Halted(true_guard(), producer, _state("dual")),))
     pattern = SymbolicValue(make_var("open_pattern"))
 
@@ -773,20 +709,7 @@ def test_factored_none_face_without_as_slot_consumes_without_binding():
     """Discrimination twin: no observation slot means no binding testimony."""
     from sugar_lift_py_tests.floor import StringValue
 
-    producer = RaiseEffect(
-        exception_name="ValueError",
-        blame="producer.py:2:0",
-        occurrence="producer.py:2:0",
-        exception_type_coordinate=_identity("ValueError"),
-        exception_type_mro=(_identity("ValueError"),),
-        raised_value=CallSiteValue(
-            "ValueError",
-            (StringValue("boom"),),
-            ("message",),
-            ctor("call:ValueError", []),
-            None,
-        ),
-    )
+    producer = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('producer.py:2:0'), exception_name='ValueError', blame='producer.py:2:0', exception_type_coordinate=_identity('ValueError'), exception_type_mro=(_identity('ValueError'),), raised_value=CallSiteValue('ValueError', (StringValue('boom'),), ('message',), ctor('call:ValueError', []), None))
     body = ExitSet((Halted(true_guard(), producer, _state("no-slot")),))
 
     routed = _factored_boundary_from_exitset(body, observation_slot_id=None).desugar()

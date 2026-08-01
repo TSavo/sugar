@@ -113,7 +113,7 @@ def test_exitset_listcomp_length_preserves_halt_guard_and_pending() -> None:
     completed_pending = _Pending("pending:completed")
     halted = Halted(
         atomic("test:halted", ()),
-        RaiseEffect("ValueError", occurrence="source.py:1:0"),
+        RaiseEffect('ValueError', occurrence=AuthenticatedRaiseLocus.of('source.py:1:0')),
         TermValue(41),
         pending_contracts=(halted_pending,),
     )

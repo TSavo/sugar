@@ -39,26 +39,19 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
 def _raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(
-                exception_type_coordinate=str_const("TypeError"),
-                occurrence="pandas/example.py:1:4",
-            )
+            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'), exception_type_coordinate=str_const('TypeError'))
         )
     )
 
 
 def _nameless_raise_value():
-    return Complete(RaiseValue(RaiseEffect()))
+    return Complete(RaiseValue(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_no_call_body_attribution.py:51:0'))))
 
 
 def _call_owned_raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(
-                exception_type_coordinate=str_const("TypeError"),
-                occurrence="pandas/example.py:1:4",
-                producer_node_owner="Call",
-            )
+            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'), exception_type_coordinate=str_const('TypeError'), producer_node_owner='Call')
         )
     )
 

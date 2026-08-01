@@ -108,7 +108,7 @@ def _halt(name: str, *, pending=()):
     left, _ = partition(("if-guard-halt", name))
     return Halted(
         atomic(f"guard:halted:{name}", []),
-        RaiseEffect(exception_name=f"{name}Error", occurrence=f"guard:{name}"),
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(f'guard:{name}'), exception_name=f'{name}Error'),
         state=object(),
         faces=frozenset({left}),
         pending_contracts=pending,
@@ -225,7 +225,7 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
 def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     calls: list[object] = []
     incomplete = Incomplete(
-        RaiseEffect(exception_name="InnerError", occurrence="guard:inner")
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('guard:inner'), exception_name='InnerError')
     )
     operand = _TruthOperand(incomplete, calls)
     outer = atomic("guard:outer-incomplete", [])

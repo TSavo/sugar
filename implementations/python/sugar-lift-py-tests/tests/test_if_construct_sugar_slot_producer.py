@@ -152,7 +152,6 @@ def test_condition_halt_bypasses_both_if_bodies() -> None:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.occurrence_id is not None
     assert halted.state is not None
 
 

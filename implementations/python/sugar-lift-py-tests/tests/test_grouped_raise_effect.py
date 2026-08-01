@@ -20,12 +20,7 @@ def _leaf(identity, occurrence: str, *mro, raised_value=None):
 
     if raised_value is None:
         raised_value = _typed_value(identity, *(tuple(mro) or (identity,)))
-    return RaiseEffect(
-        exception_type_coordinate=identity,
-        exception_type_mro=tuple(mro) or (identity,),
-        occurrence=occurrence,
-        raised_value=raised_value,
-    )
+    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occurrence), exception_type_coordinate=identity, exception_type_mro=tuple(mro) or (identity,), raised_value=raised_value)
 
 
 def test_nested_group_partition_preserves_tree_and_leaf_identities():
@@ -120,11 +115,7 @@ def test_except_star_partition_and_issubclass_share_class_value_floor(monkeypatc
     issubclass.callable_application_with(
         CallableApplication((leaf_class, base_class), (), "issubclass-site"), None
     )
-    leaf = RaiseEffect(
-        exception_type_coordinate=leaf_identity,
-        occurrence="leaf:truthful",
-        raised_value=leaf_type,
-    )
+    leaf = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('leaf:truthful'), exception_type_coordinate=leaf_identity, raised_value=leaf_type)
     partition = GroupedRaiseEffect("group:root", "root", (leaf,)).partition(
         base_type, "except-star-site"
     )

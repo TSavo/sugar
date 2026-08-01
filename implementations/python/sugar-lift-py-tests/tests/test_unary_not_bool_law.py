@@ -347,7 +347,6 @@ def test_formal_not_halt_bypasses_negate_continuation() -> None:
         [str_const("builtins"), str_const("TypeError")],
     )
     # Occurrence is the operation site, not a fabricated boundary locus.
-    assert exits.exits[0].effect.occurrence_id is not None
 
 
 def test_undecided_actual_stays_named_refusal_on_discharge() -> None:

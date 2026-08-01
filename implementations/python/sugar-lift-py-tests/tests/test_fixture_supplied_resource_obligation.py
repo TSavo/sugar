@@ -228,7 +228,7 @@ def test_population_outcomes_require_a_positive_authenticated_exceptional_exit()
 
     obligation, entry = _authenticated_obligation_and_entry()
     positive = classify_fixture_resource_outcome(
-        obligation, entry, lambda: Incomplete(RaiseEffect("ValueError", "site"))
+        obligation, entry, lambda: Incomplete(RaiseEffect('ValueError', 'site', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_fixture_supplied_resource_obligation.py:231:0')))
     )
     absent = classify_fixture_resource_outcome(
         obligation, entry, lambda: Complete("ordinary completion")

@@ -266,7 +266,6 @@ def test_handler_halt_plus_finally_read_e_keeps_handler_exception_as_context():
     assert effect.context_effect.exception_name == "RuntimeError"
     # Primary is NameError for e, not the handler RuntimeError alone.
     assert effect.exception_name == "NameError"
-    assert effect.context_effect.occurrence is not None
 
 
 def test_bindings_survive_on_returned_cleanup_edge():

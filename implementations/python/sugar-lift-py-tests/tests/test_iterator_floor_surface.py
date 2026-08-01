@@ -127,7 +127,7 @@ def test_list_next_exhausts_with_named_stop_iteration() -> None:
     assert outcome.effect.exception_type_coordinate == _stopiteration_type_identity()
     # Exact next-operation occurrence + owner from the authenticated fragment.
     assert outcome.effect.producer_node_owner == "project_next"
-    assert outcome.effect.occurrence == str(site)
+    assert outcome.effect.occurrence_id == str(site)
     assert outcome.effect.occurrence_id == str(site)
 
 
@@ -144,7 +144,7 @@ def test_tuple_next_walks_then_stops() -> None:
     assert isinstance(second, Incomplete)
     assert second.effect.exception_name == "StopIteration"
     assert second.effect.exception_type_coordinate == _stopiteration_type_identity()
-    assert second.effect.occurrence == str(site)
+    assert second.effect.occurrence_id == str(site)
 
 
 def test_project_next_matches_operation_submit() -> None:
@@ -166,7 +166,7 @@ def test_empty_list_iterator_stops_immediately() -> None:
     assert isinstance(outcome, Incomplete)
     assert outcome.effect.exception_name == "StopIteration"
     assert outcome.effect.exception_type_coordinate == _stopiteration_type_identity()
-    assert outcome.effect.occurrence == str(site)
+    assert outcome.effect.occurrence_id == str(site)
     assert outcome.effect.producer_node_owner == "project_next"
 
 
@@ -301,7 +301,7 @@ def test_full_list_walk_via_projectors() -> None:
     assert stop.effect.exception_name == "StopIteration"
     assert stop.effect.exception_type_coordinate == _stopiteration_type_identity()
     assert stop.effect.producer_node_owner == "project_next"
-    assert stop.effect.occurrence == str(site)
+    assert stop.effect.occurrence_id == str(site)
     assert seen == [TermValue(1), TermValue(2), TermValue(3)]
 
 

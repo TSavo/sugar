@@ -437,14 +437,7 @@ def _three_deep_manager_halt(exception_name: str):
     original_middle = middle
     original_inner = inner
     middle_exit, inner_enter, inner_exit = [], [], []
-    effect = RaiseEffect(
-        exception_name=exception_name,
-        exception_type_coordinate=ctor(
-            "python:exception_type_identity",
-            [str_const("builtins"), str_const(exception_name)],
-        ),
-        occurrence="test_common.py:640",
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('test_common.py:640'), exception_name=exception_name, exception_type_coordinate=ctor('python:exception_type_identity', [str_const('builtins'), str_const(exception_name)]))
     inner = replace(
         inner,
         manager=_FixedOutcomeSugar(Incomplete(effect)),
@@ -594,14 +587,7 @@ def _three_deep_level_receipts(exception_name: str):
     outer, middle, inner = _with_routers(
         _built_function(identity, "test_close_on_error", rows)
     )
-    effect = RaiseEffect(
-        exception_name=exception_name,
-        exception_type_coordinate=ctor(
-            "python:exception_type_identity",
-            [str_const("builtins"), str_const(exception_name)],
-        ),
-        occurrence="test_common.py:640",
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('test_common.py:640'), exception_name=exception_name, exception_type_coordinate=ctor('python:exception_type_identity', [str_const('builtins'), str_const(exception_name)]))
     inner = replace(
         inner,
         manager=_FixedOutcomeSugar(Incomplete(effect)),

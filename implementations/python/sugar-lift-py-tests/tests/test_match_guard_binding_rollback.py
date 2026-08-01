@@ -281,12 +281,7 @@ class _HaltingGuard(Sugar):
 
     def desugar(self, ctx=None):
         return Incomplete(
-            RaiseEffect(
-                exception_name="ValueError",
-                blame=str(self.site),
-                occurrence=str(self.site),
-                producer_node_owner="MatchGuard",
-            )
+            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(self.site)), exception_name='ValueError', blame=str(self.site), producer_node_owner='MatchGuard')
         )
 
 

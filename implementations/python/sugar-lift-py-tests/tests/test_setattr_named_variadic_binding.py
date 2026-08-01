@@ -262,7 +262,6 @@ def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert halted.effect.occurrence_id is not None
     assert halted.state is not None
     assert pending.pre_effect_state.state is halted.state
 

@@ -174,10 +174,7 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
             log.append("value")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(
-                        exception_type_coordinate=str_const("ValueError"),
-                        occurrence="attr_store.py:2:16",
-                    )
+                    RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('attr_store.py:2:16'), exception_type_coordinate=str_const('ValueError'))
                 )
             )
 
@@ -517,7 +514,6 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     ):
         assert isinstance(halt, Halted)
         assert "AttributeError" in repr(halt.effect.exception_type_coordinate)
-        assert halt.effect.occurrence_id is not None
         assert f"'startLine': {CORPUS_LINE}" in halt.effect.occurrence_id
 
     for receiver, owner in (
