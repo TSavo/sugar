@@ -740,8 +740,8 @@ def _raise_effect_with_message(message: str):
             return identity
 
     return (
-        RaiseEffect(
-            exception_name="ValueError",
+        RaiseEffect.for_builtin("ValueError",
+            
             exception_type_coordinate=identity,
             occurrence=f"{message}@match-pattern",
             raised_value=raised,

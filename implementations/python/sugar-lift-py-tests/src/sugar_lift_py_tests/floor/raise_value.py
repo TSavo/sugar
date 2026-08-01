@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NoReturn
 
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 
 from .exception_value import ExceptionValue
 from .exception_cause_value import ExceptionCauseValue
@@ -93,8 +93,12 @@ def _refuse_uncited_exit(
     )
 
 
-def _require_authenticated_exceptional_exit_citation(effect: RaiseEffect) -> None:
+def _require_authenticated_exceptional_exit_citation(effect) -> None:
     """A face with no authenticated identity must never reach FOL emission.
+
+    ``RaiseEffect`` is unconstructible without ``exception_type_coordinate``.
+    ``UndeterminedRaiseEffect`` is a distinct type and is refused here — it
+    must not emit FOL as an authenticated exceptional exit.
 
     Throwing is honorable: it means identity or citation evidence is not yet
     on the effect. Fabricating ``"reraise"``, ``"unavailable"``, or
@@ -109,6 +113,28 @@ def _require_authenticated_exceptional_exit_citation(effect: RaiseEffect) -> Non
     the same sin relocated onto the field: refuse it. Empty spelling is not
     tree identity either.
     """
+    from sugar_lift_py_tests.effect.raise_effect import (
+        RaiseEffect,
+        UndeterminedRaiseEffect,
+    )
+
+    if isinstance(effect, UndeterminedRaiseEffect):
+        _refuse_uncited_exit(
+            effect,
+            observed="UndeterminedRaiseEffect cannot emit authenticated exceptional-exit FOL",
+            requested="RaiseEffect with exception_type_coordinate at construction",
+            fix=(
+                "authenticate the exception type before render; do not invent a "
+                "name for undetermined identity"
+            ),
+        )
+    if not isinstance(effect, RaiseEffect):
+        _refuse_uncited_exit(
+            effect,
+            observed=f"{type(effect).__name__} is not RaiseEffect",
+            requested="RaiseEffect (authenticated exceptional exit)",
+            fix="mint through RaiseEffect / ground_raise_effect / RaiseEffect.for_builtin",
+        )
     if effect.exception_name is not None:
         if effect.exception_name == "":
             _refuse_uncited_exit(

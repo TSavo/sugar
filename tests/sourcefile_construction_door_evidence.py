@@ -1,7 +1,13 @@
-"""Test-owned evidence contract for LAW_OF_ONE.
+"""Test-owned evidence for the SourceFile construction-door auditor.
 
-Production must not import this module.  The independent repository auditor
-constructs these values; producer and consumer tests may only inspect them.
+Production must not import this module. Only
+``sourcefile_construction_door_auditor`` may mint
+``SourceFileConstructionDoorEvidence``; consumer tests inspect via
+``assert_test_owned_evidence``.
+
+This is **not** Law-of-One meaning evidence. It closes construction ownership,
+product privacy, and zero-work projection only — see the auditor module
+docstring for offender classes, structural blindness, and retirement paths.
 """
 
 from __future__ import annotations
@@ -114,7 +120,7 @@ class ProtocolZeroWorkEvidence:
 
 
 @dataclass(frozen=True, init=False)
-class LawOfOneEvidence:
+class SourceFileConstructionDoorEvidence:
     discovered: tuple[Path, ...]
     audited: tuple[Path, ...]
     unaudited: tuple[Path, ...]
@@ -129,11 +135,14 @@ class LawOfOneEvidence:
     def __init__(self, *args: object, **kwargs: object) -> None:
         del args, kwargs
         raise TypeError(
-            "LawOfOneEvidence is sealed; only the independent test auditor may mint it"
+            "SourceFileConstructionDoorEvidence is sealed; only "
+            "sourcefile_construction_door_auditor may mint it"
         )
 
     def assert_closed(self) -> None:
-        assert self.discovered, "LAW_OF_ONE discovered denominator must be non-empty"
+        assert self.discovered, (
+            "sourcefile construction-door discovered denominator must be non-empty"
+        )
         assert set(self.discovered) == set(self.audited) | set(self.unaudited)
         assert set(self.audited).isdisjoint(self.unaudited)
         assert self.unaudited == ()
@@ -215,14 +224,20 @@ class LawOfOneEvidence:
         )
 
         projection = self.projection
-        assert projection.callers
+        assert projection.callers, (
+            "R_missing_projection_callers: zero static callers of the sole "
+            "projection door; empty is a finding, never a self-seeded auditor site"
+        )
         assert projection.dynamic_edges == ()
         assert projection.aliases == ()
         assert projection.reexports == ()
         assert projection.wrappers == ()
         assert projection.non_product_callers == ()
         assert projection.legacy_doors == ()
-        assert projection.discovered_edges == projection.audited_edges > 0
+        assert projection.discovered_edges == projection.audited_edges > 0, (
+            "R_projection_edge_denominator: discovered/audited edges must match "
+            "and be non-empty (empty denominator means the door is unexercised)"
+        )
 
         zero = self.zero_work
         assert zero.constructor_events == 1
@@ -247,15 +262,15 @@ class LawOfOneEvidence:
         )
 
 
-def assert_test_owned_evidence(evidence: Any) -> LawOfOneEvidence:
+def assert_test_owned_evidence(evidence: Any) -> SourceFileConstructionDoorEvidence:
     """Reject production DTOs/lookalikes and validate the complete evidence."""
-    assert type(evidence) is LawOfOneEvidence
+    assert type(evidence) is SourceFileConstructionDoorEvidence
     assert _MINTED_EVIDENCE_IDENTITIES.get(id(evidence)) is evidence
     evidence.assert_closed()
     return evidence
 
 
-_MINTED_EVIDENCE_IDENTITIES: dict[int, LawOfOneEvidence] = {}
+_MINTED_EVIDENCE_IDENTITIES: dict[int, SourceFileConstructionDoorEvidence] = {}
 
 
 def _mint_test_owned_evidence(
@@ -270,9 +285,9 @@ def _mint_test_owned_evidence(
     privacy: PrivacyLeakEvidence,
     projection: ProjectionClosureEvidence,
     zero_work: ProtocolZeroWorkEvidence,
-) -> LawOfOneEvidence:
-    """Private mint used only by ``law_of_one_auditor``."""
-    evidence = object.__new__(LawOfOneEvidence)
+) -> SourceFileConstructionDoorEvidence:
+    """Private mint — only ``sourcefile_construction_door_auditor`` may call."""
+    evidence = object.__new__(SourceFileConstructionDoorEvidence)
     for name, value in locals().items():
         if name != "evidence":
             object.__setattr__(evidence, name, value)

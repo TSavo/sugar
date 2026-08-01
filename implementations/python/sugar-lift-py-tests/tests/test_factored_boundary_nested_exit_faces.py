@@ -147,15 +147,7 @@ def _raise(
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(
-            exception_name=name,
-            blame=occ,
-            occurrence=occ,
-            exception_type_coordinate=_identity(name),
-            exception_type_mro=(_identity(name),),
-            raised_value=raised_value,
-            producer_node_owner=producer_node_owner or "NestedBody.desugar",
-        ),
+        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner=producer_node_owner or 'NestedBody.desugar'),
         _state(marker),
     )
 
@@ -338,7 +330,7 @@ def test_matching_raise_consumes_and_binds_exact_occurrence_under_none_face():
     binding = _observed_binding(none_consumed[0])
     assert binding.slot_id == "excinfo"
     assert binding.effect is matching_effect
-    assert binding.effect.occurrence == "body.py:10:8:matching-raise"
+    assert binding.effect.occurrence_id == "body.py:10:8:matching-raise"
     assert binding.effect.exception_name == "ValueError"
     assert binding.effect.producer_node_owner == "NestedBody.desugar"
 

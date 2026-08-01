@@ -131,8 +131,8 @@ def test_enter_bound_generator_construction_refuses_foreign_frame():
 
 def test_enter_bound_generator_sequences_mixed_yield_and_halt_faces():
     true_face, false_face = partition("mixed-enter-guard")
-    effect = RaiseEffect(
-        exception_name="RenamedError",
+    effect = RaiseEffect.for_builtin("RenamedError",
+        
         blame="mixed-enter",
         occurrence="mixed-enter:halt",
     )

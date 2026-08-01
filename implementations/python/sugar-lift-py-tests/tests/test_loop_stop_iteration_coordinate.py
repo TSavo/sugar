@@ -27,8 +27,8 @@ def _stop_identity():
 
 def test_truthful_stop_iteration_coordinate_is_exhaustion() -> None:
     identity, mro = _stop_identity()
-    effect = RaiseEffect(
-        exception_name="StopIteration",
+    effect = RaiseEffect.for_builtin("StopIteration",
+        
         exception_type_coordinate=identity,
         exception_type_mro=mro,
         occurrence="loop.py:1:0",
@@ -39,8 +39,8 @@ def test_truthful_stop_iteration_coordinate_is_exhaustion() -> None:
 
 def test_lying_twin_same_spelling_foreign_coordinate_is_not_exhaustion() -> None:
     identity, mro = _stop_identity()
-    truthful = RaiseEffect(
-        exception_name="StopIteration",
+    truthful = RaiseEffect.for_builtin("StopIteration",
+        
         exception_type_coordinate=identity,
         exception_type_mro=mro,
         occurrence="loop.py:1:0",
@@ -60,8 +60,8 @@ def test_lying_twin_same_spelling_foreign_coordinate_is_not_exhaustion() -> None
 
 
 def test_missing_coordinate_throws_named_not_name_fallback() -> None:
-    effect = RaiseEffect(
-        exception_name="StopIteration",
+    effect = RaiseEffect.for_builtin("StopIteration",
+        
         exception_type_coordinate=None,
         occurrence="loop.py:2:0",
     )

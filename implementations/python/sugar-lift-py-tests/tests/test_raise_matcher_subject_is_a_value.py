@@ -71,8 +71,8 @@ class _TermBearingHandler:
 
 def _valueless_effect() -> RaiseEffect:
     """The measured shape: a raise with no value and no authenticated type."""
-    return RaiseEffect(
-        exception_name="NameError",
+    return RaiseEffect.for_builtin("NameError",
+        
         blame=OCCURRENCE,
         occurrence=OCCURRENCE,
     )
@@ -160,8 +160,8 @@ def test_a_real_value_term_still_retains_the_question() -> None:
     as a refusal. A guard that refused everything would pass every test above
     and destroy the mechanism.
     """
-    effect = RaiseEffect(
-        exception_name="ValueError",
+    effect = RaiseEffect.for_builtin("ValueError",
+        
         blame=OCCURRENCE,
         occurrence=OCCURRENCE,
         raised_value=TermValue(7),
@@ -180,8 +180,8 @@ def test_matching_halt_without_message_operand_retains_message_obligation() -> N
     """Truthful twin: the raised VALUE exists, but its rendered message is open."""
     identity = TermValue(1).to_term(owner="exception identity")
     raised_value = TermValue(7)
-    effect = RaiseEffect(
-        exception_name="ValueError",
+    effect = RaiseEffect.for_builtin("ValueError",
+        
         exception_type_coordinate=identity,
         occurrence=OCCURRENCE,
         raised_value=raised_value,
@@ -203,8 +203,8 @@ def test_matching_halt_without_message_operand_retains_message_obligation() -> N
 def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
     """Lying twin: a source coordinate is not a rendered-message operand."""
     identity = TermValue(1).to_term(owner="exception identity")
-    effect = RaiseEffect(
-        exception_name="ValueError",
+    effect = RaiseEffect.for_builtin("ValueError",
+        
         exception_type_coordinate=identity,
         occurrence=OCCURRENCE,
         raised_value=None,
@@ -228,8 +228,8 @@ def _effect_with_message(message: str) -> tuple[RaiseEffect, _AuthenticatedHandl
         None,
     )
     return (
-        RaiseEffect(
-            exception_name="ValueError",
+        RaiseEffect.for_builtin("ValueError",
+            
             exception_type_coordinate=identity,
             occurrence=OCCURRENCE,
             raised_value=raised_value,

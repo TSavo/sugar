@@ -1,7 +1,9 @@
-"""Explicit pytest injection seam for shared LAW_OF_ONE evidence.
+"""Pytest injection seam for shared SourceFile construction-door evidence.
 
-Consumer tests import ``law_of_one_evidence`` from this module and name the
-typed parameter in their signature.  There is no request/name lookup.
+Consumer tests import ``sourcefile_construction_door_evidence`` from this
+module and name the typed parameter in their signature. No request/name
+lookup. Domain is construction-door / privacy / zero-work projection only —
+not Law-of-One sugar-meaning sins.
 """
 
 from __future__ import annotations
@@ -10,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from law_of_one_auditor import audit_law_of_one
-from law_of_one_evidence import LawOfOneEvidence, assert_test_owned_evidence
+from sourcefile_construction_door_auditor import audit_sourcefile_construction_door
+from sourcefile_construction_door_evidence import SourceFileConstructionDoorEvidence, assert_test_owned_evidence
 
 
 # Static3's test helper imports this historical seam.  It is deliberately a
@@ -22,13 +24,13 @@ _direct_source_file_entry = _CanonicalSourceFile.from_path
 
 
 @pytest.fixture
-def law_of_one_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LawOfOneEvidence:
+def sourcefile_construction_door_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SourceFileConstructionDoorEvidence:
     from sugar_source_tree.backend import Backend
     from sugar_source_tree.tree import SourceFile
 
     if "materialize_module" not in Backend.__dict__:
         pytest.skip(
-            "dormant LAW_OF_ONE axes: R_missing_backend_materialize_module=1"
+            "dormant SOURCEFILE_CONSTRUCTION_DOOR axes: R_missing_backend_materialize_module=1"
         )
 
     repository_root = Path(__file__).resolve().parent
@@ -37,7 +39,7 @@ def law_of_one_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LawO
     ).is_dir():
         repository_root = repository_root.parent
     assert (repository_root / "implementations").is_dir()
-    evidence = audit_law_of_one(
+    evidence = audit_sourcefile_construction_door(
         repository_root=repository_root,
         temporary_root=tmp_path,
         monkeypatch=monkeypatch,

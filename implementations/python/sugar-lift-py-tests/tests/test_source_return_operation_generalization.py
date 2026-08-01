@@ -132,12 +132,12 @@ CODEX3_OWNER = (
 @pytest.mark.parametrize(
     "competing_exit",
     (
-        RaiseValue(RaiseEffect(exception_name="TypeError")),
+        RaiseValue(RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:140:0')),
         GuardedRaise(
             (TermValue(True).to_term(owner="guard"),),
-            RaiseEffect(exception_name="TypeError"),
+            RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:138:0'),
         ),
-        Incomplete(RaiseEffect(exception_name="TypeError")),
+        Incomplete(RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:135:0')),
         LoopControlValue("break", "helper.py:3"),
     ),
 )

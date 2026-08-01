@@ -69,7 +69,7 @@ def _guard(index: int):
 
 
 def _effect(name: str) -> RaiseEffect:
-    return RaiseEffect(exception_name=name)
+    return RaiseEffect.for_builtin(name, occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set_normalize_identity.py:72:0')
 
 
 def _random_exits(rng: random.Random, count: int, distinct: int) -> tuple:

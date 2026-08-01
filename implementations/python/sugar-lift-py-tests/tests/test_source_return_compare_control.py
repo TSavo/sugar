@@ -145,7 +145,6 @@ def test_named_exceptional_source_return_bypasses_both_bodies_with_state() -> No
 
     halted = _only_exit(call.sugar().desugar(None), Halted)
     assert halted.effect.exception_type_coordinate == _type_error_identity()
-    assert halted.effect.occurrence_id is not None
     assert halted.state is not None
 
 

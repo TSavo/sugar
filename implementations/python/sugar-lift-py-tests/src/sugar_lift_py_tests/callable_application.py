@@ -23,14 +23,13 @@ class CallableApplication:
     call_occurrence: SourceFragmentCoordinateV1 | None = None
 
     def __post_init__(self) -> None:
-        if self.call_occurrence is not None and type(
-            self.call_occurrence
-        ) is not SourceFragmentCoordinateV1:
+        if (
+            self.call_occurrence is not None
+            and type(self.call_occurrence) is not SourceFragmentCoordinateV1
+        ):
             raise TypeError(
                 "CallableApplication.call_occurrence must be SourceFragmentCoordinateV1"
             )
 
-    def apply(
-        self, receiver: "FloorValue", ctx: "ReduceContext | None"
-    ) -> "Outcome":
+    def apply(self, receiver: "FloorValue", ctx: "ReduceContext | None") -> "Outcome":
         return receiver.callable_application_with(self, ctx)

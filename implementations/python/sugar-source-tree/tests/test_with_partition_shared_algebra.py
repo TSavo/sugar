@@ -734,7 +734,7 @@ def test_discrimination_a_matching_halt_does_not_remain_outgoing(tmp_path):
 def test_exit_halt_supersedes_every_incoming_edge(tmp_path):
     resource, _ = _both_arms(tmp_path)
     body_es = _body_exitset(resource.body)
-    cleanup_failure = RaiseEffect(exception_name="OSError", occurrence="exit:1:0")
+    cleanup_failure = RaiseEffect.for_builtin("OSError", occurrence="exit:1:0")
 
     routed = body_es.and_exit(
         ExitSet.halted(cleanup_failure), disposition=resource.disposition

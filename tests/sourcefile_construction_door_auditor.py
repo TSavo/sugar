@@ -1,4 +1,79 @@
-"""Executable independent, test-owned LAW_OF_ONE auditor."""
+"""SourceFile construction-door auditor (NOT the Law of One doctrine).
+
+Domain (what this instrument can see)
+-------------------------------------
+Independent, test-owned census over the **SourceFile construction door**,
+**product-type privacy**, and **zero-work reporting projection**:
+
+1. **Sole construction owner** — ``Backend.materialize_module`` (and the
+   canonical ``SourceFile.from_path`` / ``__init__`` path) is the only
+   production work entry. Offender classes:
+
+   - second ``materialize_module`` override / adapter override
+   - unauthorized ``SourceFile(...)`` construction outside the owner
+   - dynamic / unresolved edges into the construction door
+   - premature work before ``__init__`` (forbidden intake work edges)
+   - dual module paths for one production module key
+
+2. **Product-type privacy** — constructed-module product types stay closed:
+   no public aliases, re-exports, wrappers, caches, second product doors,
+   public constructors, or serialization doors (e.g. successful pickle of
+   the product).
+
+3. **Zero-work reporting projection** — ``reporting_projection`` /
+   ``project_constructed_module`` does no construction work on re-entry;
+   reporter/protocol counters stay flat; foreign products project to
+   foreign projections.
+
+Evidence is sealed as ``SourceFileConstructionDoorEvidence``; only this
+auditor may mint it.
+
+Not this instrument (structural blindness — do not expand here)
+----------------------------------------------------------------
+Sugar-meaning sins owned by **per-sin** instruments. Expanding this auditor
+to cover them would merge distinct meaning laws into a construction-door
+instrument and create a second mechanism under one name (advisor ruling):
+
+- fabricated ``MatchDecided`` (and dual-edge FOL invent)
+- display-spelling dispatch vs authenticated coordinates
+- nameless halted faces / vanished exceptional-exit identity
+- swallowed throws (``except Exception: continue`` second mechanisms)
+- render-edge fabrication of exceptional-exit identity
+
+Those axes stay with their own instruments (sin-cluster / render-edge /
+MatchDecided / spelling / swallowed-throw teeth). This file must remain
+silent on them.
+
+Why the auditor may persist (domain openness)
+---------------------------------------------
+The production graph of SourceFile call edges, product relation types, and
+projection callers is an **open** boundary: new packages, adapters, and
+forwarders can appear without a closed type roster at this layer. A
+content-addressed / graph auditor is the legitimate membrane until:
+
+Retirement paths (per offender class)
+-------------------------------------
+- **Unauthorized constructors / second materialize_module doors** → one
+  typed construction door owned by Backend; visibility / factory so a
+  second door does not type-check; delete this owner-path axis when
+  construction is unrepresentable outside that door.
+- **Premature intake work** → type/protocol that forbids work before
+  ``__init__`` completes; delete the intake-work edge census when
+  unrepresentable.
+- **Product aliases / re-exports / wrappers / public constructors /
+  pickle doors** → product types private by language visibility + no
+  public re-export surface; delete privacy census when the type system
+  closes the product.
+- **Projection re-entry work** → projection is a pure view type / cached
+  value with no construction side effects; delete zero-work axis when
+  re-entry construction is unrepresentable.
+
+Self-seed note: if the owner module never calls the reporting projection,
+an empty caller set is a live signal (``R_missing_projection_callers``).
+Filling the caller set with this auditor's own site is self-fabrication
+(SYNTHESIZED-EVIDENCE). Callers are discovered from the owner module only;
+never self-seed.
+"""
 
 from __future__ import annotations
 
@@ -13,9 +88,9 @@ from typing import Callable
 
 import pytest
 
-from law_of_one_evidence import (
+from sourcefile_construction_door_evidence import (
     EvidenceSite,
-    LawOfOneEvidence,
+    SourceFileConstructionDoorEvidence,
     OwnerCallPathEvidence,
     PrivacyLeakEvidence,
     ProjectionClosureEvidence,
@@ -23,12 +98,70 @@ from law_of_one_evidence import (
     SourceFileSurfaceEvidence,
     _mint_test_owned_evidence,
 )
-from law_of_one_symbol_graph import SymbolGraph
+from sourcefile_construction_door_symbol_graph import CallEdge, SymbolGraph
+
 
 
 def project_constructed_module(product: object) -> object:
     """The sole test-owned, product-only reporting projection."""
     return product.reporting_projection
+
+
+def discover_projection_call_edges(
+    *,
+    owner_path: Path,
+    owner_source: str | None = None,
+    projection_name: str = "project_constructed_module",
+) -> tuple[CallEdge, ...]:
+    """Static call edges that target the sole projection door in its owner module.
+
+    Empty is a measured finding: the door is unexercised. Callers are never
+    fabricated. The door is test-owned, so production trees cannot see it;
+    discovery walks the owning module (this auditor), not the production graph.
+    """
+    path = owner_path.resolve()
+    source = (
+        owner_source
+        if owner_source is not None
+        else path.read_text(encoding="utf-8")
+    )
+    tree = ast.parse(source, filename=str(path))
+    graph = SymbolGraph({"projection_owner": (path, tree)})
+    definitions = {
+        symbol
+        for symbol in graph.definitions.values()
+        if symbol.name == projection_name and symbol.path.resolve() == path
+    }
+    if not definitions:
+        return ()
+    return tuple(
+        edge
+        for edge in graph.calls
+        if set(edge.targets) & definitions
+    )
+
+
+def discover_projection_callers(
+    *,
+    owner_path: Path,
+    owner_source: str | None = None,
+    projection_name: str = "project_constructed_module",
+) -> tuple[EvidenceSite, ...]:
+    """Evidence sites for every static caller of the sole projection door.
+
+    A zero-length result is the honest empty measurement. It must remain empty
+    until a real caller exists; never replace it with the auditor itself.
+    """
+    return tuple(
+        EvidenceSite(
+            edge.path, edge.line, edge.caller.lexical, edge.caller.name
+        )
+        for edge in discover_projection_call_edges(
+            owner_path=owner_path,
+            owner_source=owner_source,
+            projection_name=projection_name,
+        )
+    )
 
 
 def _site(path: Path, node: ast.AST, owners: tuple[str, ...], symbol: str) -> EvidenceSite:
@@ -85,13 +218,13 @@ def _module_key(path: Path, root: Path) -> str:
     return ".".join(parts)
 
 
-def audit_law_of_one(
+def audit_sourcefile_construction_door(
     *,
     repository_root: Path,
     temporary_root: Path,
     monkeypatch: pytest.MonkeyPatch,
     source_file_entry: Callable[..., object],
-) -> LawOfOneEvidence:
+) -> SourceFileConstructionDoorEvidence:
     from sugar_source_tree.backend import Backend
     import sugar_source_tree.backend as backend_module
     from sugar_source_tree.nodes import Node
@@ -302,20 +435,29 @@ def audit_law_of_one(
             "R_sourcefile_leaf_assertion_projection=1: downstream must consume "
             "ConstructedModule.leaf_assertion_rows directly"
         )
+    # Production must not grow a second projection door under the same name.
+    # The sole door is test-owned (project_constructed_module in this module).
     projection_symbols = tuple(
         symbol
         for symbol in graph.definitions.values()
         if symbol.name == "project_constructed_module"
     )
-    projection_call_edges = tuple(
+    production_projection_call_edges = tuple(
         edge
         for edge in graph.calls
         if any(target in projection_symbols for target in edge.targets)
     )
-    if len(projection_symbols) > 1:
+    if projection_symbols:
         contract_reds.append(
             "R_projection_definition_count="
-            f"{len(projection_symbols)}: expected exactly one canonical body"
+            f"{len(projection_symbols)}: production must not define "
+            "project_constructed_module; the sole door is test-owned"
+        )
+    if production_projection_call_edges:
+        contract_reds.append(
+            "R_production_projection_callers="
+            f"{len(production_projection_call_edges)}: production must not "
+            "route through a project_constructed_module door"
         )
     projection_bindings = tuple(
         binding
@@ -326,6 +468,22 @@ def audit_law_of_one(
     if projection_bindings:
         contract_reds.append(
             f"R_projection_alias_or_reexport={len(projection_bindings)}"
+        )
+    # Owner-module callers of the test-owned door. Empty is a finding.
+    projection_owner_path = Path(
+        inspect.getsourcefile(project_constructed_module) or ""
+    ).resolve()
+    owner_projection_edges = discover_projection_call_edges(
+        owner_path=projection_owner_path
+    )
+    owner_projection_callers = discover_projection_callers(
+        owner_path=projection_owner_path
+    )
+    if not owner_projection_callers:
+        contract_reds.append(
+            "R_missing_projection_callers=1: zero static callers of "
+            "project_constructed_module in its owner module; empty is a "
+            "finding (never self-seed the auditor as a fake caller)"
         )
     backend_door = Backend.__dict__.get("materialize_module")
     backend_door_symbols = ()
@@ -418,7 +576,7 @@ def audit_law_of_one(
         )
     )
     errors.extend(
-        f"{edge.path}:{edge.line}: unresolved semantic LAW_OF_ONE edge "
+        f"{edge.path}:{edge.line}: unresolved semantic SOURCEFILE_CONSTRUCTION_DOOR edge "
         f"{edge.expression!r} in {edge.caller.qualified}"
         for edge in relevant_dynamic
     )
@@ -468,7 +626,10 @@ def audit_law_of_one(
         f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
         f"R_legacy_leaf_name_doors={len(legacy_paths)}",
         f"R_sourcefile_leaf_assertion_projection={source_file_leaf_projection}",
+        f"R_projection_definition_count={len(projection_symbols)}",
+        f"R_production_projection_callers={len(production_projection_call_edges)}",
         f"R_projection_alias_or_reexport={len(projection_bindings)}",
+        f"R_missing_projection_callers={int(not owner_projection_callers)}",
         "R_protocol_closure_dormant="
         f"{int(not observed_constructed_module)}",
         "R_privacy_roster_dormant="
@@ -482,13 +643,13 @@ def audit_law_of_one(
     )
     if contract_reds:
         raise AssertionError(
-            "LAW_OF_ONE_RECEIPT\n"
+            "SOURCEFILE_CONSTRUCTION_DOOR_RECEIPT\n"
             + "\n".join(receipt)
-            + "\nLAW_OF_ONE_REDS\n"
+            + "\nSOURCEFILE_CONSTRUCTION_DOOR_REDS\n"
             + "\n".join(contract_reds)
         )
 
-    projection_file = Path(inspect.getsourcefile(project_constructed_module) or "").resolve()
+    projection_file = projection_owner_path
     projection_line = inspect.getsourcelines(project_constructed_module)[1]
     owner = EvidenceSite(door_file, door_line, (SourceFile.__name__,), door.__name__)
     projection_def = EvidenceSite(projection_file, projection_line, (), project_constructed_module.__name__)
@@ -507,17 +668,11 @@ def audit_law_of_one(
         for edge in door_edges
         if not edge.dynamic and set(edge.targets) == {source_file_symbol}
     ]
-    projection_edges = [
-        edge for edge in graph.calls
-        if any(target.path.resolve() == projection_file and target.line == projection_line for target in edge.targets)
-    ]
+    # Real callers of the test-owned door (owner module). Never self-seed.
+    projection_edges = list(owner_projection_edges)
     door_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in door_edges]
-    projection_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in projection_edges]
-    if not projection_calls:
-        audit_line = inspect.getsourcelines(audit_law_of_one)[1]
-        projection_calls = [
-            EvidenceSite(Path(__file__).resolve(), audit_line, (), audit_law_of_one.__name__)
-        ]
+    projection_calls = list(owner_projection_callers)
+
     projection_semantic_owners = set(projection_symbols)
     changed = True
     while changed:
@@ -587,7 +742,15 @@ def audit_law_of_one(
     )
     assert len(owner_defs) == 1
     assert door_calls
-    assert len(projection_calls) > 0
+    assert projection_calls, (
+        "R_missing_projection_callers: zero static callers of "
+        "project_constructed_module; empty is a finding (do not self-seed)"
+    )
+    # Callers must be real call sites in the owner module (path match), never
+    # a fabricated EvidenceSite stamped at an arbitrary auditor line.
+    assert all(
+        site.path.resolve() == projection_owner_path for site in projection_calls
+    ), projection_calls
     canonical_call = EvidenceSite(
         canonical_edge.path,
         canonical_edge.line,
@@ -756,7 +919,7 @@ def audit_law_of_one(
         )
     if product_axis_reds:
         raise AssertionError(
-            "LAW_OF_ONE_PRODUCT_REDS\n"
+            "SOURCEFILE_CONSTRUCTION_DOOR_PRODUCT_REDS\n"
             + "\n".join(product_axis_reds)
             + "\nR_privacy_relation_closure_unmeasured=1"
             + "\nR_reference_denominator_unmeasured=1"
@@ -1012,8 +1175,16 @@ def audit_law_of_one(
         if binding.kind == "reexport"
     )
     projection_wrapper_sites = []
+    owner_projection_tree = ast.parse(
+        projection_owner_path.read_text(encoding="utf-8"),
+        filename=str(projection_owner_path),
+    )
     for edge in projection_edges:
-        tree = parsed[edge.path]
+        tree = (
+            owner_projection_tree
+            if edge.path.resolve() == projection_owner_path
+            else parsed[edge.path]
+        )
         parents = _parents(tree)
         matching_calls = [
             node for node in ast.walk(tree)
@@ -1023,9 +1194,12 @@ def audit_law_of_one(
             projection_wrapper_sites.append(
                 EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
             )
+    # Product-argument discipline applies to production routes only. The
+    # owner module may exercise the door (including the arity TypeError twin)
+    # without resolving product_symbols from the production graph.
     non_product_projection_callers = tuple(
         EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
-        for edge in projection_edges
+        for edge in production_projection_call_edges
         if len(edge.argument_producers) != 1
         or not (set(edge.argument_producers[0]) & product_symbols)
     )
@@ -1264,7 +1438,10 @@ def audit_law_of_one(
             results[0], foreign_product, foreign_projection,
         ),
     )
-    assert projection_calls
+    assert projection_calls, (
+        "R_missing_projection_callers: zero static callers of "
+        "project_constructed_module; empty is a finding (do not self-seed)"
+    )
     assert projection_def.path.resolve() == projection_file
     assert len(inspect.signature(project_constructed_module).parameters) == 1, (
         "projection accepts exactly one constructed product; a foreign "

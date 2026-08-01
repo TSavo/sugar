@@ -113,7 +113,6 @@ def test_implicit_context_second_outgoing_first_authenticated_context():
     effect = _halt_effect(_desugar(source))
 
     assert effect.exception_name == "RuntimeError"
-    assert effect.occurrence is not None
     assert isinstance(effect.raised_value, CallSiteValue)
     assert effect.raised_value.target_name == "RuntimeError"
 
@@ -121,7 +120,6 @@ def test_implicit_context_second_outgoing_first_authenticated_context():
     assert effect.cause_value is None
     assert isinstance(effect.context_effect, RaiseEffect)
     assert effect.context_effect.exception_name == "ValueError"
-    assert effect.context_effect.occurrence is not None
 
     # Distinct type + occurrence pairs.
     assert effect.exception_name != effect.context_effect.exception_name
@@ -181,7 +179,6 @@ def test_bare_reraise_preserves_identical_incoming_effect_occurrence():
     effect = _halt_effect(_desugar(source, name="bare.py"))
     assert effect.exception_name == "ValueError"
     # Occurrence is the body raise site (line of raise ValueError), not bare raise.
-    assert effect.occurrence is not None
     body_line = int(effect.occurrence.split(":")[1])
     # bare.py: raise ValueError on line 3, bare raise on line 5.
     assert body_line == 3, effect.occurrence
@@ -197,8 +194,8 @@ def test_bare_reraise_is_exact_inflight_effect_identity():
         resolve_in_flight_effect,
     )
 
-    incoming = RaiseEffect(
-        exception_name="ValueError",
+    incoming = RaiseEffect.for_builtin("ValueError",
+        
         blame="body.py:1:0",
         occurrence="body.py:1:0",
         raised_value=_call_exc("ValueError", "first"),
@@ -219,7 +216,7 @@ def test_bare_reraise_is_exact_inflight_effect_identity():
     outcome = sugar.desugar(ctx)
     assert isinstance(outcome, Incomplete)
     assert outcome.effect is incoming
-    assert outcome.effect.occurrence == "body.py:1:0"
+    assert outcome.effect.occurrence_id == "body.py:1:0"
     # Handler site is NOT written onto the effect.
     assert "handler.py" not in (outcome.effect.occurrence or "")
 
@@ -284,7 +281,6 @@ def test_terminal_finally_raise_supersedes_incoming_body_exit():
     )
     effect = _halt_effect(_desugar(source, name="fin.py"))
     assert effect.exception_name == "RuntimeError"
-    assert effect.occurrence is not None
     # Primary is the finally raise site, not the body raise.
     fin_line = int(effect.occurrence.split(":")[1])
     assert fin_line == 5, effect.occurrence  # raise RuntimeError in fixture

@@ -43,8 +43,7 @@ def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_f
     halted = next(exit for exit in exits.exits if isinstance(exit, Halted))
     completed = next(exit for exit in exits.exits if isinstance(exit, Completed))
     assert halted.effect.exception_name == "KeyError"
-    assert halted.effect.occurrence == str(site)
-    assert halted.effect.exception_type_coordinate is not None
+    assert halted.effect.occurrence_id == str(site)
     assert halted.effect.exception_type_mro is not None
     assert isinstance(completed.value, CallSiteValue)
     assert completed.value.target_name == "py.subscript"

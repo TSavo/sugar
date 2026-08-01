@@ -143,11 +143,10 @@ def _state(marker: str):
 
 def _nested_body_faces():
     """One ExitSet with Completed, Returned, and Halted faces under distinct guards."""
-    raise_effect = RaiseEffect(
-        exception_name="ValueError",
+    raise_effect = RaiseEffect.for_builtin("ValueError",
         occurrence="body.py:10:8:raise",
         blame="body.py:10:8:raise",
-    )
+        )
     return ExitSet(
         (
             Completed(
@@ -228,7 +227,7 @@ def test_one_enter_and_exit_per_nested_body_face():
     assert returned_binding.kind == "completed"
     assert halted_binding.kind == "raised"
     assert halted_binding.exception_name == "ValueError"
-    assert halted_binding.occurrence == "body.py:10:8:raise"
+    assert halted_binding.occurrence_id == "body.py:10:8:raise"
 
 
 def test_false_exit_preserves_return_halt_and_temporal_state():
@@ -295,11 +294,10 @@ def test_truthy_exit_suppresses_only_the_incoming_raise():
 def test_exit_halt_supersedes_every_incoming_body_face():
     """A halted __exit__ supersedes Completed, Returned, and Halted body faces."""
     body, raise_effect = _nested_body_faces()
-    exit_halt = RaiseEffect(
-        exception_name="RuntimeError",
+    exit_halt = RaiseEffect.for_builtin("RuntimeError",
         occurrence="exit.py:1:0",
         blame="exit.py:1:0",
-    )
+        )
     protocol = _RecordingProtocol(exit_outcome=Incomplete(exit_halt))
     sugar = _source_resource(
         protocol=protocol,
@@ -329,16 +327,14 @@ def test_exit_halt_supersedes_every_incoming_body_face():
 
 def test_face_occurrence_lying_twin_discriminates_exit_bindings():
     """Lying twin: distinct raise occurrences mint distinct ExitFaceBinding rows."""
-    a = RaiseEffect(
-        exception_name="ValueError",
+    a = RaiseEffect.for_builtin("ValueError",
         occurrence="body.py:1:0:A",
         blame="body.py:1:0:A",
-    )
-    b = RaiseEffect(
-        exception_name="ValueError",
+        )
+    b = RaiseEffect.for_builtin("ValueError",
         occurrence="body.py:2:0:B",
         blame="body.py:2:0:B",
-    )
+        )
     bind_a = ExitFaceBinding.from_body_exit(
         "exit-face", Halted(true_guard(), a, _state("a"))
     )
@@ -348,8 +344,8 @@ def test_face_occurrence_lying_twin_discriminates_exit_bindings():
     assert bind_a.kind == bind_b.kind == "raised"
     assert bind_a.exception_name == bind_b.exception_name == "ValueError"
     assert bind_a.occurrence != bind_b.occurrence
-    assert bind_a.occurrence == "body.py:1:0:A"
-    assert bind_b.occurrence == "body.py:2:0:B"
+    assert bind_a.occurrence_id == "body.py:1:0:A"
+    assert bind_b.occurrence_id == "body.py:2:0:B"
 
     # Completions never borrow a raise occurrence.
     completed = ExitFaceBinding.from_body_exit(

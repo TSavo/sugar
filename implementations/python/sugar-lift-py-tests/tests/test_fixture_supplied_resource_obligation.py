@@ -228,7 +228,7 @@ def test_population_outcomes_require_a_positive_authenticated_exceptional_exit()
 
     obligation, entry = _authenticated_obligation_and_entry()
     positive = classify_fixture_resource_outcome(
-        obligation, entry, lambda: Incomplete(RaiseEffect("ValueError", "site"))
+        obligation, entry, lambda: Incomplete(RaiseEffect.for_builtin("ValueError", blame="site", occurrence="site"))
     )
     absent = classify_fixture_resource_outcome(
         obligation, entry, lambda: Complete("ordinary completion")

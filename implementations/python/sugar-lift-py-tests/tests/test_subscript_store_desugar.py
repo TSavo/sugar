@@ -184,10 +184,7 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
             log.append("value")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(
-                        exception_type_coordinate=str_const("ValueError"),
-                        occurrence="store.py:4:12",
-                    )
+                    RaiseEffect(exception_type_coordinate=str_const('ValueError'), occurrence=AuthenticatedRaiseLocus.of('store.py:4:12'))
                 )
             )
 
@@ -221,10 +218,7 @@ def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
             log.append("receiver")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(
-                        exception_type_coordinate=str_const("LookupError"),
-                        occurrence="store.py:4:4",
-                    )
+                    RaiseEffect(exception_type_coordinate=str_const('LookupError'), occurrence=AuthenticatedRaiseLocus.of('store.py:4:4'))
                 )
             )
 

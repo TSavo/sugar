@@ -500,11 +500,8 @@ class ConstructionTestimonyReporterV1:
                 or definition.ref not in self._materialized_by_ref
                 or node.ref not in self._materialized_by_ref
                 or definition.unit.source_cid != node.unit.source_cid
-                or not isinstance(
-                    resolved_definition, (FunctionDef, AsyncFunctionDef)
-                )
-                or resolved_definition.fragment.seal()
-                != definition.fragment.seal()
+                or not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef))
+                or resolved_definition.fragment.seal() != definition.fragment.seal()
                 or value.call_occurrence != call_occurrence
                 or frame is None
                 or frame.owner.ref is not definition.ref
@@ -1221,13 +1218,9 @@ def _cv2_leaf(value: object) -> Any:
     from sugar_source_tree.backend import _validated_construction_event_receipt_cid
     from sugar_source_tree.nodes import Node, TargetPatternV1
 
-    construction_event_receipt_cid = _validated_construction_event_receipt_cid(
-        value
-    )
+    construction_event_receipt_cid = _validated_construction_event_receipt_cid(value)
     if construction_event_receipt_cid is not None:
-        return {
-            "backendConstructionEventReceiptCid": construction_event_receipt_cid
-        }
+        return {"backendConstructionEventReceiptCid": construction_event_receipt_cid}
 
     if type(value) is TargetPatternV1:
         receipt = value.receipt
@@ -1373,9 +1366,7 @@ def constructed_value_cid_v2(value: object) -> str:
     """
     from sugar_source_tree.backend import _validated_construction_event_receipt_cid
 
-    construction_event_receipt_cid = _validated_construction_event_receipt_cid(
-        value
-    )
+    construction_event_receipt_cid = _validated_construction_event_receipt_cid(value)
     if construction_event_receipt_cid is not None:
         return construction_event_receipt_cid
 

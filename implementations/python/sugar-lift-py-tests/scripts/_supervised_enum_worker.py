@@ -163,9 +163,11 @@ def main() -> int:
             try:
                 response = _initialize(
                     str(msg.get("corpus_root") or ""),
-                    str(msg["demand_table_path"])
-                    if msg.get("demand_table_path")
-                    else None,
+                    (
+                        str(msg["demand_table_path"])
+                        if msg.get("demand_table_path")
+                        else None
+                    ),
                     allow_local_demand_derivation=bool(
                         msg.get("allow_local_demand_derivation", False)
                     ),

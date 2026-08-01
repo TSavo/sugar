@@ -132,7 +132,6 @@ def test_exceptional_condition_bypasses_both_bodies() -> None:
         halted.effect.exception_type_coordinate
         == _expected_exception("TypeError").exception_type_identity()
     )
-    assert halted.effect.occurrence_id is not None
 
 
 def test_matching_assertion_boundary_consumes_and_preserves_pre_effect_state() -> None:

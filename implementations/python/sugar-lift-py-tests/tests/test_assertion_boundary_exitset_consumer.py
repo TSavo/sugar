@@ -18,7 +18,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
@@ -61,13 +61,7 @@ def _raise(name: str, marker: str, *, message: object | None = None):
         )
     return Halted(
         true_guard(),
-        RaiseEffect(
-            exception_name=name,
-            blame=f"producer.py:1:{marker}",
-            exception_type_coordinate=_identity(name),
-            exception_type_mro=(_identity(name),),
-            raised_value=raised_value,
-        ),
+        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(f'producer.py:1:{marker}'), exception_name=name, blame=f'producer.py:1:{marker}', exception_type_mro=(_identity(name),), raised_value=raised_value),
         _state(marker),
     )
 
@@ -182,7 +176,9 @@ def _boundary_from_exitset(
             message_selector,
             ExceptionInfoBindingV1(),
         ),
-        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(tuple(parameters))),
+        contract_ref=SimpleNamespace(
+            import_signature=ImportSignatureV2(tuple(parameters))
+        ),
         context_manager_edge=None,
         observation_slot_id=observation_slot_id,
         site="pandas/tests/arithmetic/common.py:143:4",
@@ -233,14 +229,12 @@ def test_nameless_halt_stays_outside_assertion_boundary():
     cannot turn a nameless halt into that result or demand a predicate whose
     subject does not exist.
     """
-    nameless = RaiseEffect(blame="producer.py:9:4")
+    nameless = UndeterminedRaiseEffect(blame="producer.py:9:4")
     body = ExitSet((Halted(true_guard(), nameless, _state("nameless")),))
 
     routed = _boundary_from_exitset(body, expected=_Expected("ValueError")).desugar()
 
-    assert routed.exits == (
-        Halted(true_guard(), nameless, _state("nameless")),
-    )
+    assert routed.exits == (Halted(true_guard(), nameless, _state("nameless")),)
 
 
 def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
@@ -259,8 +253,8 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     producer_coordinate = _identity("TypeError")
     assert producer_coordinate == expected.identity
 
-    producer_effect = RaiseEffect(
-        exception_name="TypeError",
+    producer_effect = RaiseEffect.for_builtin("TypeError",
+        
         blame="pandas/tests/arithmetic/common.py:144:8",
         occurrence="pandas/tests/arithmetic/common.py:144:8",
         exception_type_coordinate=producer_coordinate,
@@ -276,7 +270,7 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     )
     matching = Halted(true_guard(), producer_effect, _state("compare"))
     other = _raise("ValueError", "other-type")
-    nameless_effect = RaiseEffect(
+    nameless_effect = UndeterminedRaiseEffect(
         blame="pandas/tests/arithmetic/common.py:144:8",
         producer_node_owner="ComparisonOpSugar.desugar",
     )
@@ -328,7 +322,7 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     assert binding.effect.exception_type_coordinate is producer_coordinate
     assert binding.effect.exception_type_coordinate is not expected.identity
     assert binding.effect.producer_node_owner == "ComparisonOpSugar.desugar"
-    assert binding.effect.occurrence == "pandas/tests/arithmetic/common.py:144:8"
+    assert binding.effect.occurrence_id == "pandas/tests/arithmetic/common.py:144:8"
     assert failed_message.effect is producer_effect
 
     by_marker = {
@@ -609,9 +603,7 @@ def _factored_boundary_from_exitset(
         manager=Fixed(Complete(manager_value)),
         body=(Fixed(body),),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id=observation_slot_id,
@@ -635,8 +627,8 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
     from sugar_lift_py_tests.floor import StringValue
 
     occurrence = "producer.py:4:8:factored-none"
-    producer = RaiseEffect(
-        exception_name="ValueError",
+    producer = RaiseEffect.for_builtin("ValueError",
+        
         blame=occurrence,
         occurrence=occurrence,
         exception_type_coordinate=_identity("ValueError"),
@@ -667,7 +659,9 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
     assert binding.slot_id == "excinfo"
     assert binding.effect is producer
     assert binding.effect.occurrence == occurrence
-    assert binding.effect.exception_type_coordinate is producer.exception_type_coordinate
+    assert (
+        binding.effect.exception_type_coordinate is producer.exception_type_coordinate
+    )
     assert binding.effect.producer_node_owner == "Compare.desugar"
 
 
@@ -676,8 +670,8 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
     from sugar_lift_py_tests.floor import StringValue
 
     occurrence = "producer.py:8:4:factored-pattern"
-    producer = RaiseEffect(
-        exception_name="ValueError",
+    producer = RaiseEffect.for_builtin("ValueError",
+        
         blame=occurrence,
         occurrence=occurrence,
         exception_type_coordinate=_identity("ValueError"),
@@ -700,8 +694,7 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
     pattern_faces = [
         face
         for face in routed.exits
-        if "match-pattern-face" in str(face.guard)
-        and "py.re_search" in str(face.guard)
+        if "match-pattern-face" in str(face.guard) and "py.re_search" in str(face.guard)
     ]
     assert {type(face).__name__ for face in pattern_faces} == {
         "Completed",
@@ -729,8 +722,8 @@ def test_factored_as_binding_faces_keep_distinct_guards_and_identities():
     )
     from sugar_lift_py_tests.floor import StringValue
 
-    producer = RaiseEffect(
-        exception_name="ValueError",
+    producer = RaiseEffect.for_builtin("ValueError",
+        
         blame="producer.py:1:0",
         occurrence="producer.py:1:0",
         exception_type_coordinate=_identity("ValueError"),
@@ -774,8 +767,8 @@ def test_factored_none_face_without_as_slot_consumes_without_binding():
     """Discrimination twin: no observation slot means no binding testimony."""
     from sugar_lift_py_tests.floor import StringValue
 
-    producer = RaiseEffect(
-        exception_name="ValueError",
+    producer = RaiseEffect.for_builtin("ValueError",
+        
         blame="producer.py:2:0",
         occurrence="producer.py:2:0",
         exception_type_coordinate=_identity("ValueError"),
@@ -790,9 +783,7 @@ def test_factored_none_face_without_as_slot_consumes_without_binding():
     )
     body = ExitSet((Halted(true_guard(), producer, _state("no-slot")),))
 
-    routed = _factored_boundary_from_exitset(
-        body, observation_slot_id=None
-    ).desugar()
+    routed = _factored_boundary_from_exitset(body, observation_slot_id=None).desugar()
 
     none_completed = [
         face

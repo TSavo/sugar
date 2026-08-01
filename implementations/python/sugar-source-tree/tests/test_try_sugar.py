@@ -240,7 +240,6 @@ def test_bare_reraise_reemits_the_exact_inflight_raise():
     )
     assert isinstance(out, Incomplete)
     assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_type_coordinate is not None
     assert out.effect.exception_name == "ValueError"
     assert out.effect.occurrence.endswith(":6:8")
 
@@ -530,7 +529,6 @@ def test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit():
     )
     assert isinstance(out, Incomplete)
     assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_type_coordinate is not None
     assert out.effect.exception_name == "ArbitraryCleanupFault"
 
 

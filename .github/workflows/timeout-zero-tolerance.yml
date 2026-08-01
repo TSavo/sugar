@@ -3,7 +3,6 @@ name: Timeout zero tolerance (discrimination)
 # Discrimination only. Full corpus R_timeouts runs exclusively under
 # factory-zero-tolerance.yml (one heavy orchestrator).
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:

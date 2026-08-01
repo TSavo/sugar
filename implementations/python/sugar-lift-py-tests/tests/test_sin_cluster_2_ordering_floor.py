@@ -1,6 +1,6 @@
-"""SIN CLUSTER 2 + LAW_OF_ONE — ordering meaning is Sugar, never a floor invent.
+"""SIN CLUSTER 2 + SOURCEFILE_CONSTRUCTION_DOOR — ordering meaning is Sugar, never a floor invent.
 
-LAW_OF_ONE: AST shadows → temporal rewrite → Sugar → meaning. No other
+SOURCEFILE_CONSTRUCTION_DOOR: AST shadows → temporal rewrite → Sugar → meaning. No other
 mechanism. An ordering OUTCOME is meaning, so minting
 ``Complete(PredicateValue(py.lt/…))`` from a Python floor helper is a second
 mechanism even when the atom would be "right".
@@ -13,7 +13,7 @@ Also covers:
 - undecided contains: named refusal
 - undecided attribute: named refusal (already correct)
 
-NOTE: ``tests/law_of_one_auditor.py`` audits SourceFile construction ownership
+NOTE: ``tests/sourcefile_construction_door_auditor.py`` audits SourceFile construction ownership
 and cannot see this floor-meaning sin. The AST tooth below is the instrument
 that names the offender until a stronger substrate exists.
 """
@@ -58,7 +58,7 @@ def _callsite() -> CallSiteValue:
 
 
 # ---------------------------------------------------------------------------
-# LAW_OF_ONE tooth: FloorValue ordering defaults never mint PredicateValue
+# SOURCEFILE_CONSTRUCTION_DOOR tooth: FloorValue ordering defaults never mint PredicateValue
 # ---------------------------------------------------------------------------
 
 
@@ -72,16 +72,16 @@ def _floor_value_path() -> Path:
     )
 
 
-def test_law_of_one_auditor_cannot_see_ordering_floor_meaning_sin() -> None:
-    """LOUD: repository LAW_OF_ONE auditor is SourceFile-owner scoped only.
+def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_sin() -> None:
+    """LOUD: repository SOURCEFILE_CONSTRUCTION_DOOR auditor is SourceFile-owner scoped only.
 
     It does not AST-walk floor ordering doors for Complete(PredicateValue).
     This package tooth is the instrument for that axis until the auditor
     gains a floor-meaning denominator — do not pretend the shared auditor
     closed this sin.
     """
-    auditor = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_auditor.py"
-    assert auditor.is_file(), "law_of_one_auditor.py must exist"
+    auditor = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_auditor.py"
+    assert auditor.is_file(), "sourcefile_construction_door_auditor.py must exist"
     text = auditor.read_text(encoding="utf-8")
     assert "less_than_from_left" not in text
     assert "resolve_comparison_atom" not in text
@@ -120,7 +120,7 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
                             f"{item.name}:{child.lineno}:…PredicateValue(...)"
                         )
     assert not offenders, (
-        "LAW_OF_ONE floor-meaning sin R_ordering_default_predicate_mint="
+        "SOURCEFILE_CONSTRUCTION_DOOR floor-meaning sin R_ordering_default_predicate_mint="
         f"{len(offenders)}:\n" + "\n".join(offenders)
     )
 
@@ -207,7 +207,7 @@ def test_decided_default_pair_without_sugar_arm_panics_not_refuses() -> None:
     with pytest.raises(ConstructionPanic) as raised:
         ListValue((TermValue(1),)).less_than(ListValue((TermValue(2),)), SITE)
     msg = str(raised.value)
-    assert "no Sugar arm" in msg or "LAW_OF_ONE" in msg
+    assert "no Sugar arm" in msg or "SOURCEFILE_CONSTRUCTION_DOOR" in msg
     assert "Complete(PredicateValue)" in msg or "PredicateValue" in msg
 
 
@@ -239,7 +239,7 @@ def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
         outcome = _symbolic().less_than(TermValue(1), SITE)
         assert not isinstance(getattr(outcome, "value", None), PredicateValue)
         raise AssertionError(
-            "ordering floor returned a value; must throw named (LAW_OF_ONE)"
+            "ordering floor returned a value; must throw named (SOURCEFILE_CONSTRUCTION_DOOR)"
         )
 
 

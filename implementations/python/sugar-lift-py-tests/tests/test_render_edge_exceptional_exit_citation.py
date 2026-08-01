@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.raise_value import (
     FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS,
     RaiseValue,
@@ -71,13 +71,12 @@ _RAISE_VALUE_PATH = (
 
 def _named_cited_effect(**overrides) -> RaiseEffect:
     fields = dict(
-        exception_name="ValueError",
         blame=_LOCUS,
         source_sha256=_SHA,
         occurrence=_LOCUS,
     )
     fields.update(overrides)
-    return RaiseEffect(**fields)
+    return RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_render_edge_exceptional_exit_citation.py:79:0')
 
 
 def _coordinate_cited_effect(**overrides) -> RaiseEffect:
@@ -92,7 +91,7 @@ def _coordinate_cited_effect(**overrides) -> RaiseEffect:
         occurrence=_LOCUS,
     )
     fields.update(overrides)
-    return RaiseEffect(**fields)
+    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_render_edge_exceptional_exit_citation.py:94:0'))
 
 
 def _is_fabricated_constant(node: ast.AST) -> str | None:
@@ -302,7 +301,7 @@ def test_nameless_face_cannot_reach_fol_emission() -> None:
                           "<unknown raise locus>#source-sha256=unavailable")
     which is indistinguishable from a genuinely cited exit.
     """
-    nameless = RaiseEffect()
+    nameless = UndeterminedRaiseEffect()
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(nameless)
@@ -318,17 +317,13 @@ def test_nameless_face_cannot_reach_fol_emission() -> None:
 def test_nameless_raise_value_post_contribution_stays_loud() -> None:
     """post_contribution is the same door — nameless cannot soft-emit."""
     with pytest.raises(ConstructionPanic) as raised:
-        RaiseValue(RaiseEffect(blame=_LOCUS)).post_contribution()
+        RaiseValue(UndeterminedRaiseEffect(blame=_LOCUS)).post_contribution()
     assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
 
 
 def test_name_without_source_sha_cannot_cite_unavailable() -> None:
     """Placeholder ``#source-sha256=unavailable`` is absent evidence, not a cite."""
-    effect = RaiseEffect(
-        exception_name="ValueError",
-        blame=_LOCUS,
-        source_sha256=None,
-    )
+    effect = RaiseEffect.for_builtin('ValueError', blame=_LOCUS, source_sha256=None, occurrence=_LOCUS)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -341,11 +336,7 @@ def test_name_without_source_sha_cannot_cite_unavailable() -> None:
 
 def test_name_without_blame_cannot_cite_unknown_locus() -> None:
     """Placeholder ``<unknown raise locus>`` is not a re-readable citation."""
-    effect = RaiseEffect(
-        exception_name="ValueError",
-        blame=None,
-        source_sha256=_SHA,
-    )
+    effect = RaiseEffect.for_builtin('ValueError', blame=None, source_sha256=_SHA, occurrence=None)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -358,7 +349,7 @@ def test_name_without_blame_cannot_cite_unknown_locus() -> None:
 
 def test_fabricated_reraise_string_is_not_authenticated_bare_raise() -> None:
     """Nameless face with locus+sha (historical path that became 'reraise')."""
-    effect = RaiseEffect(blame=_LOCUS, source_sha256=_SHA)
+    effect = UndeterminedRaiseEffect(blame=_LOCUS, source_sha256=_SHA)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -376,11 +367,7 @@ def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
     citable exit after the first refuse-placeholders shot. Fabricated
     identity is not authenticated identity.
     """
-    effect = RaiseEffect(
-        exception_name="reraise",
-        blame=_LOCUS,
-        source_sha256=_SHA,
-    )
+    effect = RaiseEffect.for_builtin('reraise', blame=_LOCUS, source_sha256=_SHA, occurrence=_LOCUS)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -397,11 +384,7 @@ def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
 )
 def test_every_fabricated_meaning_literal_as_name_is_loud(placeholder: str) -> None:
     """Every denylist member as exception_name is an offender class, not a name."""
-    effect = RaiseEffect(
-        exception_name=placeholder,
-        blame=_LOCUS,
-        source_sha256=_SHA,
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(_LOCUS), exception_name=placeholder, blame=_LOCUS, source_sha256=_SHA)
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
     assert placeholder in raised.value.info.observed
@@ -410,11 +393,7 @@ def test_every_fabricated_meaning_literal_as_name_is_loud(placeholder: str) -> N
 
 def test_empty_exception_name_cannot_reach_fol() -> None:
     """Empty spelling is not tree-authenticated identity."""
-    effect = RaiseEffect(
-        exception_name="",
-        blame=_LOCUS,
-        source_sha256=_SHA,
-    )
+    effect = RaiseEffect.for_builtin('', blame=_LOCUS, source_sha256=_SHA, occurrence=_LOCUS)
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
     assert "empty" in raised.value.info.observed

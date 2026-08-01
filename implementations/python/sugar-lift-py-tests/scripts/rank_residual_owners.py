@@ -67,9 +67,7 @@ def _classify_factoring(row: dict[str, Any]) -> str:
     if isinstance(verdict, dict):
         kind = verdict.get("kind", "?")
         merged = " merged-arm" if verdict.get("mergedArm") else ""
-        head = (
-            "remaining-work" if verdict.get("isRemainingWork") else "correct-refusal"
-        )
+        head = "remaining-work" if verdict.get("isRemainingWork") else "correct-refusal"
         return f"{head} ({kind}{merged})"
     return "UNCLASSIFIED (ledger predates #6364 classifier)"
 
@@ -129,13 +127,9 @@ def rank(board: dict[str, Any]) -> dict[str, Any]:
             "R_construction": board.get("R_construction"),
             "R_desugar_total_DO_NOT_PUBLISH_RAW": board.get("R_desugar"),
             "R_desugar_owed_work": board.get("R_desugar_owed_work"),
-            "R_desugar_accounted_semantics": board.get(
-                "R_desugar_accounted_semantics"
-            ),
+            "R_desugar_accounted_semantics": board.get("R_desugar_accounted_semantics"),
             "R_construction_panics": board.get("R_construction_panics"),
-            "R_desugar_construction_panics": board.get(
-                "R_desugar_construction_panics"
-            ),
+            "R_desugar_construction_panics": board.get("R_desugar_construction_panics"),
             "R_desugar_defects": board.get("R_desugar_defects"),
             "R_backend_defects": board.get("R_backend_defects"),
             "R_unresolvable_dispatch_targets": board.get(
@@ -180,8 +174,10 @@ def _markdown(report: dict[str, Any]) -> str:
     add = out.append
     pin = report["corpusPin"]
     add(f"# Ranked residual owners — {pin.get('distribution')} {pin.get('version')}\n")
-    add(f"Commit `{report['commit']}`, corpus pin `{pin.get('aggregateHash','')[:16]}…`, "
-        f"{pin.get('fileCount')} files.\n")
+    add(
+        f"Commit `{report['commit']}`, corpus pin `{pin.get('aggregateHash','')[:16]}…`, "
+        f"{pin.get('fileCount')} files.\n"
+    )
 
     denominator = report["denominator"]
     add("## Denominator\n")
@@ -191,8 +187,10 @@ def _markdown(report: dict[str, Any]) -> str:
     add("```\n")
 
     add("## stableZero vector\n")
-    add(f"`controlEffectStableZero` = **{report['controlEffectStableZero']}**, "
-        f"`red` = **{report['red']}**\n")
+    add(
+        f"`controlEffectStableZero` = **{report['controlEffectStableZero']}**, "
+        f"`red` = **{report['red']}**\n"
+    )
     add("```")
     for key, value in (report["stableZeroTerms"] or {}).items():
         add(f"{key:32} {value}")
@@ -209,17 +207,23 @@ def _markdown(report: dict[str, Any]) -> str:
         # An ABSENT split is not a split of zero. Saying "0 accounted
         # semantics" here would be a fabricated measurement -- the same
         # misleading-zero shape this instrument exists to refuse.
-        add(f"Total {total}. **SPLIT UNAVAILABLE** — this ledger predates the "
+        add(
+            f"Total {total}. **SPLIT UNAVAILABLE** — this ledger predates the "
             "occurrence-key split, so the owed-work share is unmeasured, not "
-            "zero. Re-run to obtain it; do not publish the total as work.\n")
+            "zero. Re-run to obtain it; do not publish the total as work.\n"
+        )
     elif work:
-        add(f"Total {total} = **{work} owed work** + {semantics} accounted "
+        add(
+            f"Total {total} = **{work} owed work** + {semantics} accounted "
             f"semantics. Publishing the total as work overstates it by "
-            f"**{total / work:.1f}x**.\n")
+            f"**{total / work:.1f}x**.\n"
+        )
     else:
-        add(f"Total {total} = **0 owed work** + {semantics} accounted "
+        add(
+            f"Total {total} = **0 owed work** + {semantics} accounted "
             "semantics. Every row is the correct output of a reduction that "
-            "succeeded; none of it is a backlog.\n")
+            "succeeded; none of it is a backlog.\n"
+        )
     add("### Owed work, by owner\n")
     add("```")
     for owner, count in list(rank_["desugarOwedWorkByOwner"].items())[:20]:

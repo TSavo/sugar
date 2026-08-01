@@ -14,8 +14,8 @@ outside the tree→sugar path (cardinality, isinstance kind gates, spelling).
 Throwing ``SugarNotWritten`` is honorable: sugar is not written yet. Fabricating
 a decided miss is the sin even when the runtime answer would have been miss.
 
-BLIND SPOT (loud): ``tests/law_of_one_auditor.py`` / ``law_of_one_evidence.py`` /
-``law_of_one_symbol_graph.py`` audit SourceFile construction, privacy, and
+BLIND SPOT (loud): ``tests/sourcefile_construction_door_auditor.py`` / ``sourcefile_construction_door_evidence.py`` /
+``sourcefile_construction_door_symbol_graph.py`` audit SourceFile construction, privacy, and
 projection closure. They do **not** scan sugar for fabricated ``MatchDecided``
 mints. This file is the instrument that can see this sin class. If it is
 deleted or skipped, the cluster is unguarded again.
@@ -131,17 +131,17 @@ def test_one_matcher_is_the_sole_match_decided_false_owner() -> None:
     )
 
 
-def test_law_of_one_auditor_is_blind_to_fabricated_match_decided() -> None:
-    """LOUD: repository LAW_OF_ONE auditor does not cover this sin class.
+def test_sourcefile_construction_door_auditor_is_blind_to_fabricated_match_decided() -> None:
+    """LOUD: repository SOURCEFILE_CONSTRUCTION_DOOR auditor does not cover this sin class.
 
-    ``tests/law_of_one_auditor.py`` closes SourceFile construction, privacy, and
+    ``tests/sourcefile_construction_door_auditor.py`` closes SourceFile construction, privacy, and
     projection. It never walks sugar for MatchDecided mints. This assertion pins
-    that gap so nobody confuses a green LAW_OF_ONE receipt with coverage of
+    that gap so nobody confuses a green SOURCEFILE_CONSTRUCTION_DOOR receipt with coverage of
     fabricated decided-miss.
     """
     repo_tests = Path(__file__).resolve().parents[4] / "tests"
-    auditor = repo_tests / "law_of_one_auditor.py"
-    evidence = repo_tests / "law_of_one_evidence.py"
+    auditor = repo_tests / "sourcefile_construction_door_auditor.py"
+    evidence = repo_tests / "sourcefile_construction_door_evidence.py"
     assert auditor.is_file(), auditor
     assert evidence.is_file(), evidence
     auditor_src = auditor.read_text(encoding="utf-8")
@@ -150,7 +150,7 @@ def test_law_of_one_auditor_is_blind_to_fabricated_match_decided() -> None:
     assert "materialize_module" in auditor_src or "constructed_module" in auditor_src
     # Negative pin: it does not name this sin class.
     assert "MatchDecided" not in auditor_src, (
-        "law_of_one_auditor now mentions MatchDecided — either wire fabricated "
+        "sourcefile_construction_door_auditor now mentions MatchDecided — either wire fabricated "
         "decided-miss into its receipt, or update this blindness pin"
     )
     assert "fabricated decided" not in auditor_src.lower()

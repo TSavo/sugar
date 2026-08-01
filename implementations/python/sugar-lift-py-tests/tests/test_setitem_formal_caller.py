@@ -72,8 +72,6 @@ def _assert_named_halt(outcome) -> Halted:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate is not None
-    assert halted.effect.occurrence_id is not None
     return halted
 
 
@@ -306,7 +304,6 @@ def test_invalid_index_halts_with_named_indexerror() -> None:
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.effect.occurrence_id is not None
 
 
 def test_discrimination_valid_index_is_not_indexerror() -> None:

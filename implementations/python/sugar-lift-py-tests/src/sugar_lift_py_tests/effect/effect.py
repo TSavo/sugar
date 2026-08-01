@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, Never, NoReturn
 
 from .coverage_gap_effect import CoverageGapEffect
-from .raise_effect import RaiseEffect
+from .raise_effect import RaiseEffect, UndeterminedRaiseEffect
 from .grouped_raise_effect import GroupedRaiseEffect
 from .runtime_effect import RuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
@@ -15,6 +15,7 @@ from .loop_control_effect import LoopControlEffect
 # No-recognizer is panic, not a typed Incomplete arm.
 Effect = (
     RaiseEffect
+    | UndeterminedRaiseEffect
     | GroupedRaiseEffect
     | WarningEffect
     | RuntimeEffect
@@ -39,6 +40,7 @@ def require_effect(effect: object) -> Effect:
         effect,
         (
             RaiseEffect,
+            UndeterminedRaiseEffect,
             GroupedRaiseEffect,
             WarningEffect,
             RuntimeEffect,
@@ -51,7 +53,8 @@ def require_effect(effect: object) -> Effect:
         return effect
     raise TypeError(
         "Incomplete.effect must be a typed Effect "
-        "(RaiseEffect | WarningEffect | RuntimeEffect | CoverageGapEffect | SourceOracleEffect); "
+        "(RaiseEffect | UndeterminedRaiseEffect | WarningEffect | RuntimeEffect | "
+        "CoverageGapEffect | SourceOracleEffect); "
         "FactoryGap/DigBoundary were deleted — the None arm panics"
     )
 
@@ -61,6 +64,8 @@ def effect_kind(effect: Effect) -> str:
         return "GroupedRaiseEffect"
     if isinstance(effect, RaiseEffect):
         return "RaiseEffect"
+    if isinstance(effect, UndeterminedRaiseEffect):
+        return "UndeterminedRaiseEffect"
     if isinstance(effect, WarningEffect):
         return "WarningEffect"
     if isinstance(effect, RuntimeEffect):
@@ -81,6 +86,8 @@ def effect_reason(effect: Effect) -> str:
         return effect.reason
     if isinstance(effect, RaiseEffect):
         return effect.reason
+    if isinstance(effect, UndeterminedRaiseEffect):
+        return effect.reason
     if isinstance(effect, WarningEffect):
         return effect.reason
     if isinstance(effect, RuntimeEffect):
@@ -100,6 +107,9 @@ def effect_status(effect: Effect) -> EffectStatus:
     if isinstance(effect, GroupedRaiseEffect):
         return "raise-effect"
     if isinstance(effect, RaiseEffect):
+        return "raise-effect"
+    if isinstance(effect, UndeterminedRaiseEffect):
+        # Not authenticated; still a raise-shaped halt for routing status only.
         return "raise-effect"
     if isinstance(effect, WarningEffect):
         return "warning-effect"

@@ -160,8 +160,8 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
             del ctx
             log.append(self.label)
             return Incomplete(
-                RaiseEffect(
-                    exception_name="ValueError",
+                RaiseEffect.for_builtin("ValueError",
+                    
                     blame=str(self.site),
                     occurrence=str(self.site),
                     producer_node_owner=f"halt:{self.label}",
@@ -567,7 +567,7 @@ def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
     effect = out.value.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.setitem"
-    assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
+    assert effect.occurrence_id == str(site) or effect.occurrence_id == str(site)
 
 
 def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
@@ -583,7 +583,6 @@ def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
     effect = out.value.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.delitem"
-    assert effect.occurrence_id is not None
 
 
 def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:

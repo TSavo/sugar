@@ -46,7 +46,7 @@ def _guard(name: str):
 
 
 def _effect(name: str = "ValueError"):
-    return RaiseEffect(exception_name=name)
+    return RaiseEffect.for_builtin(name, occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set_arm_census.py:49:0')
 
 
 def _value():

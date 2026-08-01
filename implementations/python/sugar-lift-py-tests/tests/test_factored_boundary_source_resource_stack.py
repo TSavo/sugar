@@ -256,15 +256,7 @@ def _raise(name: str, marker: str, *, message=None, occurrence=None):
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(
-            exception_name=name,
-            blame=occ,
-            occurrence=occ,
-            exception_type_coordinate=_identity(name),
-            exception_type_mro=(_identity(name),),
-            raised_value=raised_value,
-            producer_node_owner="StackBody.desugar",
-        ),
+        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner='StackBody.desugar'),
         _state(marker),
     )
 
@@ -591,5 +583,5 @@ def test_excinfo_only_on_consumed_occurrence_through_stack():
     assert matching_effect in bound
     assert mismatch_effect not in bound
     assert all(
-        e.occurrence == "body.py:10:8:matching" for e in bound
+        e.occurrence_id == "body.py:10:8:matching" for e in bound
     )
