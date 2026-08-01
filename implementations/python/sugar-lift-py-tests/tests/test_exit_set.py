@@ -218,7 +218,15 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
 
 
 def test_and_exit_membrane_suppresses_matcher_authority():
-    body = RaiseEffect(exception_name="KeyError")
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    coordinate, mro = _builtin_exception_identity("KeyError")
+    body = RaiseEffect(
+        exception_name="KeyError",
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
+        occurrence="exit_set.py:1:0",
+    )
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),

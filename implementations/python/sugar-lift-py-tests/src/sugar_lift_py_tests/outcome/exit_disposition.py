@@ -189,16 +189,66 @@ def _resource_verdict(disposition: object, effect: object) -> str:
         return "suppress" if disposition.suppresses_exception(name) else "restore"
 
     if isinstance(disposition, Suppresses):
-        matcher = disposition.matcher
-        if getattr(matcher, "kind", None) != "raise":
-            return "open"
-        name = getattr(effect, "exception_name", None)
-        if name == matcher.name:
-            return "suppress"
-        return "restore"
+        return _suppresses_verdict(disposition, effect)
 
     raise TypeError(
         "exit disposition must be NeverSuppresses, ExitSuppressionContract, "
         "RuntimeSelected, Suppresses, or EffectBoundaryDisposition; "
         f"got {type(disposition).__name__}"
     )
+
+
+def _suppresses_verdict(disposition, effect) -> str:
+    """Suppress only by authenticated exception type coordinate, never by name.
+
+    A name-less matcher and a name-less effect used to compare equal and
+    suppress. Spelling is half-writing the match: the neighbouring
+    ``ExitSuppressionContract`` arm already refused empty names; this arm
+    goes further and demands the effect's ``exception_type_coordinate``
+    against the builtin identity of the matcher's type. Missing coordinate
+    or name-less matcher is unwritten work (throw), not a soft open.
+    """
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    from sugar_source_tree.panic import SugarNotWritten
+
+    matcher = disposition.matcher
+    if getattr(matcher, "kind", None) != "raise":
+        return "open"
+    owner = "exit_disposition.Suppresses"
+    blame = getattr(effect, "occurrence_id", None) or owner
+    matcher_name = getattr(matcher, "name", None)
+    if not isinstance(matcher_name, str) or not matcher_name:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed="name-less Suppresses matcher",
+            requested="matcher carrying an exception type name with a builtin identity",
+            fix=(
+                "construct Suppresses with a real exception type; never let "
+                "None == None suppress a coordinate-authenticated effect"
+            ),
+        )
+    if effect is None:
+        return "restore"
+    coordinate = getattr(effect, "exception_type_coordinate", None)
+    if coordinate is None:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed="effect without exception_type_coordinate",
+            requested="authenticated exception_type_coordinate on the halt",
+            fix=(
+                "mint the raise through the ground exit door or an authenticated "
+                "producer; do not suppress by exception_name spelling"
+            ),
+        )
+    matcher_identity, _ = _builtin_exception_identity(matcher_name)
+    if matcher_identity is None:
+        raise SugarNotWritten(
+            blame=blame,
+            owner=owner,
+            observed=f"matcher name {matcher_name!r} has no builtin type coordinate",
+            requested="a language-owned exception type with python:exception_type_identity",
+            fix="use a builtin exception type or an AuthenticatedRaiseMatcher coordinate path",
+        )
+    return "suppress" if coordinate == matcher_identity else "restore"
