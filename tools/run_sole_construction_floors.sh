@@ -70,6 +70,11 @@ axis "R_bare_exceptions = 0" \
 axis "R_timeouts = 0" \
   python "$SCRIPTS/timeout_zero_tolerance.py" "$PANDAS_CORPUS" \
   --repo-root "$PANDAS_CORPUS"
+# R_silent is Criterion 2's fourth simultaneous term — same population as the
+# three process floors. Kit-default silent was a false green (unmeasured corpus).
+axis "R_silent = 0" \
+  python "$SCRIPTS/silent_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --repo-root "$PANDAS_CORPUS"
 
 axis "All permanent axes are bound" \
   python -m pytest tests/test_python_sole_construction_ci.py -q
@@ -84,7 +89,8 @@ axis "R_vendor_special_case = 0" python "$SCRIPTS/vendor_special_case_law.py"
 
 axis "R_silent discrimination" \
   python -m pytest --noconftest "$TESTS/tests/test_silent_zero_tolerance.py" -q
-axis "R_silent = 0" python "$SCRIPTS/silent_zero_tolerance.py"
+# Live R_silent over corpus is bound with the process floors above (PANDAS_CORPUS).
+# Do not re-invoke with kit defaults — that is the wrong-population door.
 
 axis "R_factory_walk_unclassified discrimination" \
   python -m pytest --noconftest "$TESTS/tests/test_factory_walk_unclassified_law.py" -q
