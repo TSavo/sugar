@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 import sysconfig
 import tomllib
@@ -162,30 +161,44 @@ def authenticate_corpus_manifest(
 
 
 def activate_checkout_import_roots(repo_root: Path, search_path: list[str]) -> None:
-    """Activate exactly the mounted roots declared by the managed closure."""
-    dockerfile = repo_root / "tools/sugar-build/Dockerfile"
-    matches = re.findall(
-        r"^ENV PYTHONPATH=(.*)$",
-        dockerfile.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    if len(matches) != 1:
-        raise ExecutionEnvironmentMismatch(
-            f"expected one managed PYTHONPATH declaration in {dockerfile}, found {len(matches)}"
+    """Activate exactly the mounted roots declared by the managed closure.
+
+    Shares the Dockerfile declaration with ``tools/managed_checkout_pythonpath.py``
+    (the CI env binder). Prefer that tool for process-start PYTHONPATH: by the
+    time this function runs inside ``sugar_lift_py_tests``, the package is
+    already imported, so rebinding ``sys.path`` cannot unseat a site-packages
+    copy already in ``sys.modules``. CI must export checkout roots *before*
+    any import of this package.
+    """
+    try:
+        from managed_checkout_pythonpath import (  # type: ignore[import-not-found]
+            ManagedCheckoutPythonpathError,
+            managed_checkout_import_roots,
         )
-    prefix = "/workspace/sugar/"
-    roots: list[str] = []
-    for entry in matches[0].split(":"):
-        if not entry.startswith(prefix):
+    except ImportError:
+        # stdlib-only loader so authentication still works when tools/ is not
+        # already on sys.path (the common authenticated-pytest entry shape).
+        import importlib.util
+
+        tool = (
+            Path(repo_root).resolve() / "tools" / "managed_checkout_pythonpath.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "managed_checkout_pythonpath", tool
+        )
+        if spec is None or spec.loader is None:
             raise ExecutionEnvironmentMismatch(
-                f"managed PYTHONPATH entry escaped the synced checkout: {entry}"
+                f"cannot load managed checkout PYTHONPATH tool from {tool}"
             )
-        root = (repo_root / entry[len(prefix) :]).resolve()
-        if not root.is_dir():
-            raise ExecutionEnvironmentMismatch(
-                f"managed PYTHONPATH entry does not exist in the synced checkout: {root}"
-            )
-        roots.append(str(root))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        ManagedCheckoutPythonpathError = module.ManagedCheckoutPythonpathError
+        managed_checkout_import_roots = module.managed_checkout_import_roots
+
+    try:
+        roots = [str(root) for root in managed_checkout_import_roots(repo_root)]
+    except ManagedCheckoutPythonpathError as error:
+        raise ExecutionEnvironmentMismatch(str(error)) from error
     search_path[0:0] = roots
 
 
@@ -216,6 +229,11 @@ def authenticate_environment() -> (
         package_root = sugar_lift_py_tests_package_root(repo_root)
     except RepoRootUnresolved as error:
         raise ExecutionEnvironmentMismatch(str(error)) from error
+    # Activate checkout roots before any further first-party import (e.g.
+    # sugar_source_tree). sugar_lift_py_tests itself is already loaded when this
+    # module runs; process-start PYTHONPATH (python-test-environment) is the
+    # authority for that first import. authenticate_lift still refuses a
+    # site-packages copy — never relax that check.
     activate_checkout_import_roots(repo_root, sys.path)
     pins, expected_cid = _declared_corpus(package_root)
 
@@ -223,7 +241,10 @@ def authenticate_environment() -> (
 
     pandas = import_module("pandas")
     numpy = import_module("numpy")
-    lift = import_module("sugar_lift_py_tests")
+    # Prefer the already-loaded package (process-start path) over a second
+    # import_module after path mutation, which would leave a wrong copy in
+    # sys.modules if the first import came from site-packages.
+    lift = sys.modules.get("sugar_lift_py_tests") or import_module("sugar_lift_py_tests")
     pandas_distribution = metadata.distribution("pandas")
     numpy_distribution = metadata.distribution("numpy")
     pandas_identity = authenticate_distribution(
