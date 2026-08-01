@@ -50,6 +50,7 @@ HEAVY_WORKFLOWS = {
     "numpy-wall.yml": "numpy-wall",
     "pandas-wall.yml": "pandas-wall",
     "restored-suite-scoreboard.yml": "restored-suite-scoreboard",
+    "control-effect-recensus.yml": "control-effect-recensus",
 }
 
 # The dead group. Nothing may claim it again.
@@ -244,3 +245,28 @@ def test_the_two_cadences_are_never_summed():
         "the minority must be computed over the OWED classes for the cadence "
         "being asked, never over the whole roster"
     )
+
+
+def test_the_authoritative_scoreboard_is_on_the_roster():
+    """The one instrument with SCOREBOARD_AUTHORITY must owe testimony.
+
+    control_effect_recensus.py declares SCOREBOARD_AUTHORITY = True and is the
+    sole producer of R_construction_panics. It was in no workflow and on no
+    roster: a hand-run tool. So the last product R for this project was taken
+    on 2026-07-26 by somebody running it manually, ~35 PRs landed on
+    2026-08-01 with no board to evaluate them against, and the roll call could
+    not report the gap because the authority was not a class it asked about.
+
+    An unenrolled authority is the enrollment law broken where it matters most.
+    """
+    module = _attendance_module()
+    authority = ROOT / "implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py"
+    assert "SCOREBOARD_AUTHORITY = True" in authority.read_text(), (
+        "control_effect_recensus is no longer the authority; find who is and "
+        "put THAT class on the roster"
+    )
+    assert "control-effect-recensus" in module.HEAVY_ROSTER, (
+        "the authoritative scoreboard is not on the heavy roster, so the roll "
+        "call cannot notice when it goes quiet"
+    )
+    assert module.HEAVY_CADENCE["control-effect-recensus"] == module.NIGHTLY_WINDOW

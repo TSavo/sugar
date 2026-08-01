@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence
 
+from sugar_lift_py_tests.repo_root import RepoRootUnresolved, resolve_repo_root
+
 from .collect_panic_audit import (
     _cached_audit_workspace,
     _prepare_audit_workspace,
@@ -524,8 +526,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path(__file__).resolve().parents[5],
-        help="repository root",
+        default=None,
+        help="repository root (default: resolve via sugar-build.toml door)",
     )
     parser.add_argument(
         "--output-dir",
@@ -547,7 +549,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    root = args.root.resolve()
+    try:
+        root = (
+            args.root.resolve()
+            if args.root is not None
+            else resolve_repo_root()
+        )
+    except RepoRootUnresolved as error:
+        parser.error(str(error))
     output_dir = args.output_dir or (root / ".sugar" / "pandas-wall")
     floors_path = args.floors or (root / "tools" / "pandas-wall-floors.json")
     result = build_pandas_wall(

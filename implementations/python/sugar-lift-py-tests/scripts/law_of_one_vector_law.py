@@ -123,6 +123,7 @@ def _cite_self_sealing(repo: Path) -> Citation:
     if err:
         return Citation("instrument", "self_sealing", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
     try:
+        # roots default inside scan_roots — never omit via wrong kwargs only.
         findings, errors = mod.scan_roots(repo=repo)
         by = {}
         for f in findings:
