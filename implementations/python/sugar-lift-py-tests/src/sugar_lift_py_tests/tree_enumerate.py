@@ -363,6 +363,69 @@ def _gap_locus(node, file_rel: str) -> tuple[str, str]:
     return pos, terminal
 
 
+def _roll_call_identity(entry) -> tuple:
+    """The SAME identity ``MinorityReport`` uses for present/minority.
+
+    Equal source text seals to one CID at distinct loci; those seats are
+    distinct obligations. Never key presence by CID alone.
+    """
+    return (entry.file, entry.start_line, entry.start_col, entry.kind, entry.cid)
+
+
+def source_audit_from_report(report, file_rel: str) -> dict:
+    """ONE door: project a ``MinorityReport`` onto the source-audit wire.
+
+    Presence is keyed by the full roll-call identity
+    ``(file, line, col, kind, cid)`` — the same tuple ``MinorityReport`` uses.
+    Status and the three ledger totals are derived once from that partition.
+    There is no second producer of ``source_unresolved`` (no independent
+    ``report.R`` path, no CID-only set kept "in sync").
+
+    Conservation is a tooth, not a print: ``warranted + unresolved == source_loci``.
+    """
+    present_keys = {_roll_call_identity(entry) for entry in report.present}
+    loci = []
+    for entry in report.roster:
+        status = (
+            "warranted" if _roll_call_identity(entry) in present_keys else "unresolved"
+        )
+        loci.append(
+            {
+                "status": status,
+                "kind": entry.kind,
+                "name": entry.name,
+                "source_cid": entry.cid,
+                "locus": {
+                    "file": file_rel,
+                    "line": entry.start_line,
+                    "col": entry.start_col,
+                },
+            }
+        )
+    warranted = sum(1 for locus in loci if locus["status"] == "warranted")
+    unresolved = sum(1 for locus in loci if locus["status"] == "unresolved")
+    source_loci = len(loci)
+    if warranted + unresolved != source_loci:
+        raise AssertionError(
+            f"source-audit conservation broken: warranted({warranted}) + "
+            f"unresolved({unresolved}) != source_loci({source_loci})"
+        )
+    if unresolved != report.R:
+        raise AssertionError(
+            f"source-audit unresolved({unresolved}) != report.R({report.R}); "
+            "presence must use the full roll-call identity, not CID alone"
+        )
+    return {
+        "role": file_rel,
+        "loci": loci,
+        "totals": {
+            "source_loci": source_loci,
+            "source_warranted": warranted,
+            "source_unresolved": unresolved,
+        },
+    }
+
+
 def source_audit_from_roll_call(full_path: Path, file_rel: str) -> dict:
     """The report feed the Rust CLI renders, straight from the reporter's roll
     call. Construction registers every node; the discharge answers present
@@ -380,34 +443,7 @@ def source_audit_from_roll_call(full_path: Path, file_rel: str) -> dict:
     reporter = CollectingReporter()
     sf = SourceFile.from_path(str(full_path), reporter=reporter)
     report = discharge(sf)
-    present_cids = {e.cid for e in report.present}
-    loci = []
-    for entry in report.roster:
-        status = "warranted" if entry.cid in present_cids else "unresolved"
-        loci.append(
-            {
-                "status": status,
-                "kind": entry.kind,
-                "name": entry.name,
-                "source_cid": entry.cid,
-                "locus": {
-                    "file": file_rel,
-                    "line": entry.start_line,
-                    "col": entry.start_col,
-                },
-            }
-        )
-    warranted = sum(1 for locus in loci if locus["status"] == "warranted")
-    unresolved = len(loci) - warranted
-    return {
-        "role": file_rel,
-        "loci": loci,
-        "totals": {
-            "source_loci": len(loci),
-            "source_warranted": warranted,
-            "source_unresolved": unresolved,
-        },
-    }
+    return source_audit_from_report(report, file_rel)
 
 
 def _root_of(full_path: Path, file_rel: str) -> Path:

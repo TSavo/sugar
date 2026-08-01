@@ -1598,34 +1598,15 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     from sugar_source_tree.roll_call import discharge
     from sugar_source_tree.tree import SourceFile
 
+    from sugar_lift_py_tests.tree_enumerate import source_audit_from_report
+
     reporter = CollectingReporter()
     source_file = SourceFile.from_path(str(full_path), reporter=reporter)
     report = discharge(source_file)
-    present_cids = {entry.cid for entry in report.present}
-    loci = [
-        {
-            "status": "warranted" if entry.cid in present_cids else "unresolved",
-            "kind": entry.kind,
-            "name": entry.name,
-            "source_cid": entry.cid,
-            "locus": {
-                "file": file_rel,
-                "line": entry.start_line,
-                "col": entry.start_col,
-            },
-        }
-        for entry in report.roster
-    ]
-    warranted = sum(row["status"] == "warranted" for row in loci)
-    source_audit = {
-        "role": file_rel,
-        "loci": loci,
-        "totals": {
-            "source_loci": len(loci),
-            "source_warranted": warranted,
-            "source_unresolved": report.R,
-        },
-    }
+    # ONE door: the same full-tuple presence projection as tree_enumerate.
+    # Do not re-derive status by CID alone, and do not mix report.R with a
+    # separately keyed warranted count (that pair already drifted).
+    source_audit = source_audit_from_report(report, file_rel)
 
     demanded_source = f"module:{source_file.unit.source_cid}"
     panics = []
