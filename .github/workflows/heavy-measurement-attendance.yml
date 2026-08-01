@@ -87,41 +87,41 @@ jobs:
           done < run-ids.txt
           echo "receipt files found: $(find receipts -name '*.json' | wc -l)"
 
-      - name: Roll call
+      - name: Roll call + CommitMeasurement gate (fail closed)
+        id: measure
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.subject.outputs.sha }}
         run: |
-          set -euo pipefail
-          # PER-COMMIT cadence only. The nightly classes (walls, scoreboard)
-          # owe testimony about their last scheduled WINDOW, not about this
-          # tip, and mixing the two floors R_attendance at 3 forever for a
-          # reason that is not a defect. The two axes are never summed.
+          set -uo pipefail
+          # PER-COMMIT cadence only. Nightlies are a different obligation.
+          #
+          # CRITICAL: attendance exit 1 must NOT skip compose/gate. A gate that
+          # only runs when attendance is already green is decorative. Capture
+          # attendance exit, ALWAYS compose, ALWAYS gate, then OR the reds.
+          set +e
           python3 tools/heavy_measurement_attendance.py \
             --commit "$SHA" \
             --cadence per-commit \
             --receipts-dir receipts \
             --repo "${GITHUB_REPOSITORY}" \
-            | tee attendance.md \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+            > attendance.md 2>&1
+          att_exit=$?
+          set -e
+          cat attendance.md | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "attendance_exit=$att_exit"
 
-      - name: Compose CommitMeasurement (cite receipts only)
-        env:
-          SHA: ${{ steps.subject.outputs.sha }}
-        run: |
-          set -euo pipefail
-          # One door for READING tip state. Values are field-paths on sealed
-          # bodies; lease alone without suite-report/floor body is Unmeasured.
+          # Compose even when receipts/ are empty: that is PartialVector, not silence.
           python3 - <<'PY'
           from pathlib import Path
           import json
           import importlib.util
+          import os
           spec = importlib.util.spec_from_file_location(
               "cm", Path("tools/commit_measurement.py")
           )
           mod = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(mod)
-          import os
           sha = os.environ["SHA"]
           vector = mod.compose_tip_from_receipts_dir(sha, Path("receipts"))
           Path("commit-measurement.json").write_text(
@@ -131,14 +131,20 @@ jobs:
           print(json.dumps(vector.to_json(), indent=2, sort_keys=True))
           PY
 
-      - name: Gate — tip composition required (silence is not clean)
-        run: |
-          set -euo pipefail
-          # REQUIRED not advisory: PartialVector or missing file → red.
+          set +e
           python3 tools/commit_measurement_gate.py \
             --composition commit-measurement.json \
             --require-complete \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          gate_exit=$?
+          set -e
+          echo "gate_exit=$gate_exit"
+          # Fail closed: either attendance minority OR incomplete composition.
+          if [ "$att_exit" -ne 0 ] || [ "$gate_exit" -ne 0 ]; then
+            echo "RED: attendance_exit=$att_exit gate_exit=$gate_exit"
+            exit 1
+          fi
+          echo "GREEN: attendance and CommitMeasurement complete"
 
       - uses: actions/upload-artifact@v4
         if: always()
