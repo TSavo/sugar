@@ -46,6 +46,9 @@ echo 'PASS: sugarbin shelf assets are immutable and race-idempotent'
 # R_shelf_peer_evictable_cell: regenerable cells must be peer-evictable.
 "$repo/tests/sugarbin_shelf_peer_evictable.sh" "$repo"
 
+# R_shelf_content_addressed_cell: address = h(payload), not sourceStamp name.
+"$repo/tests/sugarbin_shelf_content_addressed.sh" "$repo"
+
 # Exercise the python-demand-table artifact through the shelf boundary. Static
 # inspection cannot prove that a partial cell is refused or that concurrent
 # publication never exposes a mixture of two producers' bytes.

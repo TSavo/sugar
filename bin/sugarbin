@@ -1182,18 +1182,66 @@ filesystem_shelf_root() {
   printf '%s\n' "${SUGAR_BINARY_SHELF_ROOT:-$HOME/.cache/sugar/binary-shelf-v2}"
 }
 
+# blake3-512 of file bytes — the CAS address preimage for binary cells.
+blake3_512_file() {
+  require_b3sum || return 1
+  local digest
+  digest="$(b3sum -l 64 --no-names "$1")" || return 1
+  printf 'blake3-512_%s\n' "$digest"
+}
+
+# CAS cell path: pure function of payload content key (h = h(p)).
+# Platform/profile are NOT part of the address — same bytes → same cell.
+filesystem_shelf_cas_cell() {
+  local content_key="$1" name="$2"
+  printf '%s/cas/%s/%s\n' \
+    "$(filesystem_shelf_root)" "$(stamp_for_filename "$content_key")" "$name"
+}
+
+# Mutable stamp→contentKey pointer. NOT the cell; not membership of content.
+# Lookup convenience only. Two stamps may share one CAS cell when builds collide.
+filesystem_shelf_stamp_ref_path() {
+  local stamp="$1" name="$2"
+  printf '%s/%s/%s/by-stamp/%s/%s.ref\n' \
+    "$(filesystem_shelf_root)" "$(platform_key)" "$profile" \
+    "$(stamp_for_filename "$stamp")" "$name"
+}
+
+write_filesystem_shelf_stamp_ref() {
+  local stamp="$1" name="$2" content_key="$3" ref parent tmp
+  ref="$(filesystem_shelf_stamp_ref_path "$stamp" "$name")"
+  parent="$(dirname "$ref")"
+  ensure_shared_shelf_staging "$(filesystem_shelf_root)" "$parent" || return 2
+  tmp="$ref.tmp.$$"
+  printf '%s\n' "$content_key" >"$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$ref"
+  chmod 0777 "$parent" 2>/dev/null || true
+  return 0
+}
+
+read_filesystem_shelf_stamp_ref() {
+  local stamp="$1" name="$2" ref key
+  ref="$(filesystem_shelf_stamp_ref_path "$stamp" "$name")"
+  [[ -f "$ref" ]] || return 1
+  key="$(tr -d '[:space:]' <"$ref")"
+  [[ "$key" =~ ^blake3-512_[0-9a-f]{128}$ ]] || return 1
+  printf '%s\n' "$key"
+}
+
+# Payload artifacts (non-binary) already pass a blake3 content key as `stamp`.
 filesystem_shelf_cell() {
-  local kind="$1" stamp="$2" name="$3" runtime="${4:-}"
+  local kind="$1" content_key="$2" name="$3" runtime="${4:-}"
   if [[ "$kind" == binary ]]; then
-    printf '%s/%s/%s/%s/%s\n' \
-      "$(filesystem_shelf_root)" "$(platform_key)" "$profile" \
-      "$(stamp_for_filename "$stamp")" "$name"
+    # Binary cells: content_key MUST be blake3-512 of the binary payload bytes.
+    # sourceStamp lookup goes through by-stamp ref, never as the cell path.
+    filesystem_shelf_cas_cell "$content_key" "$name"
     return 0
   fi
   [[ -n "$runtime" ]] || { log "artifact shelf cell requires an authenticated runtime"; return 2; }
-  printf '%s/%s/%s/%s/%s/%s/%s\n' \
-    "$(filesystem_shelf_root)" "$kind" "$(platform_key)" "$profile" \
-    "$runtime" "$(stamp_for_filename "$stamp")" "$name"
+  # CAS: kind/cas/<contentKey>/<name> — address is h(payload), not stamp-name.
+  printf '%s/%s/cas/%s/%s\n' \
+    "$(filesystem_shelf_root)" "$kind" "$(stamp_for_filename "$content_key")" "$name"
 }
 
 filesystem_shelf_complete() {
@@ -1325,68 +1373,85 @@ PY
 }
 
 publish_to_filesystem_shelf() {
-  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta shelf_root
+  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta shelf_root content_key shelf_name
   manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
-  cell="$(filesystem_shelf_cell "$kind" "$stamp" "$name" "$runtime")"
-  if filesystem_shelf_complete "$cell" "$name"; then
-    if ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
+  # Cell address = h(payload). For binaries, hash the executable bytes (not
+  # sourceStamp). sourceStamp is recorded in the stamp ref and metadata only.
+  # Leaf name for CAS is the binary name only — embedding sourceStamp in the
+  # leaf would re-introduce stamp into the address (same bytes, two cells).
+  if [[ "$kind" == binary ]]; then
+    content_key="$(blake3_512_file "$bin")" || return 1
+    shelf_name="$bin_name"
+  else
+    # Non-binary: caller already passes content key as stamp.
+    content_key="$stamp"
+    shelf_name="$name"
+  fi
+  cell="$(filesystem_shelf_cell "$kind" "$content_key" "$shelf_name" "$runtime")"
+  if filesystem_shelf_complete "$cell" "$shelf_name"; then
+    if ! filesystem_shelf_cell_is_peer_readable "$cell" "$shelf_name"; then
       log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
       return 2
     fi
     # Existing complete cells must still be peer-evictable. Heal modes through
     # the ONE door rather than accepting root-owned 0755 leftovers.
-    if ! filesystem_shelf_cell_is_peer_evictable "$cell" "$name"; then
-      if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+    if ! filesystem_shelf_cell_is_peer_evictable "$cell" "$shelf_name"; then
+      if ! finalize_peer_evictable_shelf_cell "$cell" "$shelf_name"; then
         return 2
       fi
     fi
-    log "filesystem shelf already has $name"
+    # CAS cell exists: only refresh the stamp→content pointer (mutable ref).
+    if [[ "$kind" == binary ]]; then
+      write_filesystem_shelf_stamp_ref "$stamp" "$shelf_name" "$content_key" || return $?
+    fi
+    log "filesystem shelf already has content $content_key for $shelf_name"
     return 0
   fi
-  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot publish $name"; return 1; }
+  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot publish $shelf_name"; return 1; }
   parent="$(dirname "$cell")"
   shelf_root="$(filesystem_shelf_root)"
   if ! ensure_shared_shelf_staging "$shelf_root" "$parent/.incoming"; then
     log "crime=uncreatable-filesystem-shelf-staging owner=bin/sugarbin path=$parent/.incoming current-uid=$(id -u) illegal shape=the host-shared shelf staging directory could not be initialized replacement=make the mounted shelf root writable by every runner identity; do not redirect the shelf or fall through to an empty temp path"
     return 2
   fi
-  if ! tmp="$(mktemp -d "$parent/.incoming/$name.XXXXXX")"; then
+  if ! tmp="$(mktemp -d "$parent/.incoming/$shelf_name.XXXXXX")"; then
     log "crime=uncreatable-filesystem-shelf-staging owner=bin/sugarbin path=$parent/.incoming current-uid=$(id -u) illegal shape=the host-shared shelf staging directory could not create an atomic cell replacement=repair the mounted shelf parent; do not redirect the shelf or fall through to an empty temp path"
     return 2
   fi
-  gzip -9 -c "$bin" >"$tmp/$name.gz"
-  cp "$manifest" "$tmp/$name.sugarbin.json"
+  gzip -9 -c "$bin" >"$tmp/$shelf_name.gz"
+  cp "$manifest" "$tmp/$shelf_name.sugarbin.json"
   actor="${GITHUB_ACTOR:-${USER:-unknown}}"
   sha="$(sha256_file "$bin")"
-  meta="$tmp/$name.metadata.json"
-  python3 - "$meta" "$actor" "$stamp" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
+  meta="$tmp/$shelf_name.metadata.json"
+  python3 - "$meta" "$actor" "$stamp" "$content_key" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 
-path, actor, stamp, platform, profile, sha256, binary = sys.argv[1:]
+path, actor, stamp, content_key, platform, profile, sha256, binary = sys.argv[1:]
 with open(path, "w", encoding="utf-8") as out:
     json.dump({
         "actor": actor,
         "buildStamp": stamp,
+        "contentKey": content_key,
         "platform": platform,
         "profile": profile,
         "sha256": sha256,
         "source": binary,
         "publishedAt": datetime.now(timezone.utc).isoformat(),
-        "transport": "filesystem-cas-v2",
+        "transport": "filesystem-cas-v3",
     }, out, indent=2, sort_keys=True)
     out.write("\n")
 PY
   # Staging uses peer-evictable modes from the start (ONE door).
   chmod 0777 "$tmp"
-  chmod 0644 "$tmp/$name.gz" "$tmp/$name.sugarbin.json" "$tmp/$name.metadata.json"
+  chmod 0644 "$tmp/$shelf_name.gz" "$tmp/$shelf_name.sugarbin.json" "$tmp/$shelf_name.metadata.json"
   # Atomic cell install. Concurrent publishers race on the same cell:
   # Linux raises ENOTEMPTY (not FileExistsError) when renaming onto a
   # non-empty destination directory. Treat complete peer cells as success;
   # reclaim incomplete leftovers once and retry.
-  if python3 - "$tmp" "$cell" "$name" <<'PY'
+  if python3 - "$tmp" "$cell" "$shelf_name" <<'PY'
 import errno
 import os
 import shutil
@@ -1427,10 +1492,13 @@ while True:
         raise SystemExit(1)
 PY
   then
-    if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+    if ! finalize_peer_evictable_shelf_cell "$cell" "$shelf_name"; then
       return 2
     fi
-    log "published $name to filesystem shelf"
+    if [[ "$kind" == binary ]]; then
+      write_filesystem_shelf_stamp_ref "$stamp" "$shelf_name" "$content_key" || return $?
+    fi
+    log "published $shelf_name content $content_key to filesystem shelf"
     return 0
   fi
   local status=$?
@@ -1440,14 +1508,17 @@ PY
   # peer could still have won the rename). Success iff the cell is complete by
   # ANY publisher -- content is content-addressed and immutable, so a peer's
   # complete cell is exactly ours — and peer-evictable after finalize.
-  if filesystem_shelf_complete "$cell" "$name"; then
-    if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+  if filesystem_shelf_complete "$cell" "$shelf_name"; then
+    if ! finalize_peer_evictable_shelf_cell "$cell" "$shelf_name"; then
       return 2
     fi
-    log "filesystem shelf publish raced for $name; peer won"
+    if [[ "$kind" == binary ]]; then
+      write_filesystem_shelf_stamp_ref "$stamp" "$shelf_name" "$content_key" || return $?
+    fi
+    log "filesystem shelf publish raced for $shelf_name content $content_key; peer won"
     return 0
   fi
-  log "filesystem shelf publication failed for $name"
+  log "filesystem shelf publication failed for $shelf_name"
   return 1
 }
 
@@ -1489,40 +1560,58 @@ pull_from_filesystem_shelf() {
     rm -f "$candidate" "$manifest" 2>/dev/null || true
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
-  cell="$(filesystem_shelf_cell binary "$stamp" "$name")"
-  if filesystem_shelf_complete "$cell" "$name" \
-    && ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
+  # Resolve stamp → content key (mutable pointer), then open CAS cell at h(p).
+  # Shelf leaf is binary name only (not stamp-keyed artifact_name).
+  local content_key shelf_name="$bin_name"
+  if ! content_key="$(read_filesystem_shelf_stamp_ref "$stamp" "$shelf_name")"; then
+    log "filesystem shelf miss for $shelf_name (no stamp→content ref)"
+    return 1
+  fi
+  cell="$(filesystem_shelf_cas_cell "$content_key" "$shelf_name")"
+  if filesystem_shelf_complete "$cell" "$shelf_name" \
+    && ! filesystem_shelf_cell_is_peer_readable "$cell" "$shelf_name"; then
     log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
     return 2
   fi
-  if filesystem_shelf_complete "$cell" "$name" \
-    && ! filesystem_shelf_cell_is_peer_evictable "$cell" "$name"; then
+  if filesystem_shelf_complete "$cell" "$shelf_name" \
+    && ! filesystem_shelf_cell_is_peer_evictable "$cell" "$shelf_name"; then
     # Readable but peer-unevictable (classic root-owned 0755): do not serve as a
     # healthy hit. Try finalize heal; if that fails, miss → rebuild path.
-    if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+    if ! finalize_peer_evictable_shelf_cell "$cell" "$shelf_name"; then
       log "crime=unevictable-shelf-cell owner=bin/sugarbin cell=$cell replacement=privileged rm -rf then rebuild; or republish through finalize_peer_evictable_shelf_cell"
       return 1
     fi
   fi
-  if ! filesystem_shelf_complete "$cell" "$name"; then
-    log "filesystem shelf miss for $name"
+  if ! filesystem_shelf_complete "$cell" "$shelf_name"; then
+    log "filesystem shelf miss for $shelf_name (stamp ref $content_key has no CAS cell)"
     return 1
   fi
-  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack $name"; return 2; }
+  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack $shelf_name"; return 2; }
   mkdir -p "$candidate_dir"
   tmp="$candidate.sugarbin-stage.$$"
-  gzip -dc "$cell/$name.gz" >"$tmp"
-  cp "$cell/$name.sugarbin.json" "$manifest"
+  gzip -dc "$cell/$shelf_name.gz" >"$tmp"
+  cp "$cell/$shelf_name.sugarbin.json" "$manifest"
   chmod 0755 "$candidate_dir" "$tmp"
   chmod 0644 "$manifest"
   mv -f "$tmp" "$candidate"
+  # CAS membership: payload at address h must satisfy h(payload) = address.
+  local actual_key
+  if ! actual_key="$(blake3_512_file "$candidate")"; then
+    rm -f "$candidate" "$manifest" 2>/dev/null || true
+    return 1
+  fi
+  if [[ "$actual_key" != "$content_key" ]]; then
+    log "crime=cas-address-payload-mismatch owner=bin/sugarbin cell=$cell address=$content_key payload=$actual_key replacement=evict the CAS cell; a content-addressed shelf cannot host p under h≠h(p)"
+    evict_shelf_cell "$cell" "$candidate" "$manifest" || return $?
+    return 1
+  fi
   if ! verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"; then
     # Strict check failed: do not serve. Evict regenerable cell → miss → rebuild.
     log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=evict cell and rebuild from declared inputs"
     evict_shelf_cell "$cell" "$candidate" "$manifest" || return $?
     return 1
   fi
-  log "filesystem shelf hit for $name"
+  log "filesystem shelf hit for $shelf_name content $content_key"
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }
 
