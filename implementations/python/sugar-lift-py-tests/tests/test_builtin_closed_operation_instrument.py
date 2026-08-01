@@ -101,21 +101,32 @@ def test_instrument_structurally_sees_spelling_gates_of_cluster_five(tmp_path):
         "        return False\n"
         "    return None\n",
     )
+    # Residual shell after Suppresses was fixed: name-keyed ExitSuppressionContract.
+    _write(
+        tmp_path,
+        "call_site_value.py",
+        "class ExitSuppressionContract:\n"
+        "    exception_names = frozenset()\n"
+        "    def suppresses_exception(self, exception_name):\n"
+        "        return exception_name in self.exception_names\n",
+    )
 
     report = collect_builtin_closed_operation_report(tmp_path)
     gates = [row for row in report.offenders if row.axis == "name_or_vendor_gates"]
     observed = {row.observed for row in gates}
 
-    assert report.r["name_or_vendor_gates"] >= 4
+    assert report.r["name_or_vendor_gates"] >= 5
     assert any("exception_name" in text for text in observed)
     assert any("matcher.name" in text for text in observed)
     assert any("importorskip" in text for text in observed)
     assert any("pytest" in text for text in observed)
     assert any("type_name in" in text for text in observed)
+    assert any("suppresses_exception" in text for text in observed)
+    assert any("exception_names" in text for text in observed)
 
 
 def test_instrument_fixed_cluster_five_production_sites_are_zero():
-    """After the coordinate fix, the four named production files have no name gates."""
+    """After the coordinate fix, the named production files have no name gates."""
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
     )
@@ -127,6 +138,7 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero():
         "sugar_lift_py_tests/outcome/exit_disposition.py",
         "sugar_lift_py_tests/import_binding.py",
         "sugar_lift_py_tests/floor/class_value.py",
+        "sugar_lift_py_tests/floor/call_site_value.py",
     }
     hits = [
         row
@@ -135,4 +147,27 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero():
     ]
     assert hits == [], "cluster-5 production sites still gate on spelling:\n" + "\n".join(
         f"{row.path}:{row.line}: {row.observed}" for row in hits
+    )
+
+
+def test_instrument_lying_twin_name_suppress_shell_is_red(tmp_path):
+    """Planting suppresses_exception / exception_names must be detected (teeth)."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "residual.py",
+        "def decide(effect, disposition):\n"
+        "    name = effect.exception_name\n"
+        "    return disposition.suppresses_exception(name)\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    gates = [row for row in report.offenders if row.axis == "name_or_vendor_gates"]
+    assert any("suppresses_exception" in row.observed for row in gates), gates
+    # effect.exception_name attr compare / load in residual decision path
+    assert any(
+        "exception_name" in row.observed or "suppresses_exception" in row.observed
+        for row in gates
     )

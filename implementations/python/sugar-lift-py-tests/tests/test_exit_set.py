@@ -177,7 +177,15 @@ def test_and_exit_never_suppresses_restores_body_halt():
 
 
 def test_and_exit_proven_contract_consumes_named_halt():
-    body = RaiseEffect(exception_name="ValueError")
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    coordinate, mro = _builtin_exception_identity("ValueError")
+    body = RaiseEffect(
+        exception_name="ValueError",
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
+        occurrence="exit_set.py:2:0",
+    )
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
@@ -207,8 +215,16 @@ def test_and_exit_fans_exitset_across_conditional_faces():
 
 
 def test_and_exit_proven_contract_suppresses_only_matching_face():
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
     condition = _guard("condition")
-    effect = RaiseEffect(exception_name="ValueError")
+    coordinate, mro = _builtin_exception_identity("ValueError")
+    effect = RaiseEffect(
+        exception_name="ValueError",
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
+        occurrence="exit_set.py:3:0",
+    )
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     after = incoming.and_exit(
         ExitSet.completed(True),

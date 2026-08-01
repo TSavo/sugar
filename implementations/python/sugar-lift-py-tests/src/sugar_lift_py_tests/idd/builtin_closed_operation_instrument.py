@@ -73,6 +73,16 @@ class _Visitor(ast.NodeVisitor):
         self._side_door_functions: set[int] = set()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # Name-keyed suppress API is itself the residual shell (method body may
+        # only mention self.exception_names; the method *name* is the crime).
+        if node.name == "suppresses_exception":
+            self._add(
+                "name_or_vendor_gates",
+                node,
+                f"def {node.name}",
+                "match exception_type_coordinate against ExitSuppressionContract "
+                "coordinates minted at the suppresses() door; never suppress by name",
+            )
         self._function_stack.append(node)
         self.generic_visit(node)
         self._function_stack.pop()
@@ -125,6 +135,23 @@ class _Visitor(ast.NodeVisitor):
                 node,
                 caught,
                 "leave unsupported floor construction loud; never catch its panic",
+            )
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # Residual after cluster-5 Suppresses fix: ExitSuppressionContract still
+        # decided suppress via suppresses_exception(str) / exception_names.
+        # Those shells are deleted; any reintroduction is a name_or_vendor_gate.
+        # Retirement of this detector arm: when no production Attribute load of
+        # either name remains AND the type system forbids constructing a
+        # name-keyed suppress contract (coordinates-only field), delete this arm.
+        if node.attr in {"suppresses_exception", "exception_names"}:
+            self._add(
+                "name_or_vendor_gates",
+                node,
+                ast.unparse(node),
+                "match exception_type_coordinate against ExitSuppressionContract "
+                "coordinates minted at the suppresses() door; never suppress by name",
             )
         self.generic_visit(node)
 

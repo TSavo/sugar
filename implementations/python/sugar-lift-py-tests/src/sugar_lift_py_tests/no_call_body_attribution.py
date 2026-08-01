@@ -83,6 +83,20 @@ class BodyAttribution:
     detail: str
     exceptional_exit_coordinates: tuple[tuple[object | None, object | None], ...] = ()
 
+    def __post_init__(self) -> None:
+        # Construction door: UNDISCHARGED with empty coordinates re-kills the
+        # nameless-face tripwire (scan walks exceptional_exit_coordinates only).
+        # Refuse construction so the dead-guard shape is unwritable.
+        if (
+            self.outcome is AttributionOutcome.UNDISCHARGED
+            and not self.exceptional_exit_coordinates
+        ):
+            raise AttributionInvariantError(
+                f"{self.body_id}: UNDISCHARGED requires exceptional_exit_coordinates "
+                "so the nameless-face tripwire can fire; empty coordinates are the "
+                "dead-guard sin (pass (None, None) faces when identity is unproven)"
+            )
+
 
 @dataclass(frozen=True)
 class AttributionDiscrepancy:
@@ -95,6 +109,40 @@ class AttributionDiscrepancy:
 class ExceptionalExitIdentityDiscrepancy:
     body_id: str
     missing: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NamedDemandExclusion:
+    """A resolved demand accounted outside the enrolled no-call population.
+
+    One of three lawful dispositions for a resolved demand (enroll | exclude | throw).
+    Never a bare continue and never a function-attribute side channel.
+    """
+
+    reason: str
+    coordinate: str
+    root: str | None = None
+    family: str | None = None
+
+    def render(self) -> str:
+        parts = [f"reason={self.reason}", f"coordinate={self.coordinate}"]
+        if self.root is not None:
+            parts.append(f"root={self.root}")
+        if self.family is not None:
+            parts.append(f"family={self.family}")
+        return " ".join(parts)
+
+
+@dataclass(frozen=True)
+class DiscoveryDisposition:
+    """One door for discovery: enrolled probes plus named exclusions.
+
+    Return value of ``discover_no_call_body_probes``. Callers read ``.probes`` and
+    ``.named_exclusions`` — there is no ``last_named_exclusions`` attribute.
+    """
+
+    probes: tuple[BodyProbe, ...]
+    named_exclusions: tuple[NamedDemandExclusion, ...]
 
 
 @dataclass(frozen=True)
@@ -513,16 +561,17 @@ def discover_no_call_body_probes(
     corpus_root: Path,
     *,
     families: frozenset[ProducerFamily] | None = None,
-) -> tuple[BodyProbe, ...]:
+) -> DiscoveryDisposition:
     """Project authenticated assertion demands to their native body producer.
 
     Every resolved context-manager demand participates.  The native body root
     selects the producer family; no manager or vendor spelling selects it or
     grants semantic behavior to a producer.
 
-    A resolved demand that does not enroll is never a bare ``continue``: it is
-    either a named exclusion (out of this instrument's selected root types) or
-    an ``AttributionInvariantError`` that names the coordinate and reason.
+    One door: return ``DiscoveryDisposition(probes, named_exclusions)``. A resolved
+    demand that does not enroll is either a ``NamedDemandExclusion`` on that
+    object or an ``AttributionInvariantError`` that names the coordinate and
+    reason. There is no function-attribute side channel.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
@@ -540,6 +589,8 @@ def discover_no_call_body_probes(
     )
     from sugar_source_tree.tree import SourceFile, SourceTree
 
+    # Full recognition map — family filter is a post-recognition disposition,
+    # never a pre-filter that collapses family-filter into root-outside.
     family_by_type = {
         Subscript: ProducerFamily.SUBSCRIPT,
         BinOp: ProducerFamily.BINOP,
@@ -548,12 +599,7 @@ def discover_no_call_body_probes(
         UnaryOp: ProducerFamily.UNARYOP,
         BoolOp: ProducerFamily.BOOLOP,
     }
-    selected_families = families or frozenset(ProducerFamily)
-    family_by_type = {
-        node_type: family
-        for node_type, family in family_by_type.items()
-        if family in selected_families
-    }
+    selected_families = families if families is not None else frozenset(ProducerFamily)
     paths_by_cid = {}
     for path in SourceTree(corpus_root).paths():
         paths_by_cid[blake3_512_of(path.read_bytes())] = path
@@ -572,7 +618,7 @@ def discover_no_call_body_probes(
 
     probes = []
     seen = set()
-    named_exclusions: list[str] = []
+    named_exclusions: list[NamedDemandExclusion] = []
     for source_cid, demands in demands_by_source.items():
         path = paths_by_cid.get(source_cid)
         if path is None:
@@ -628,9 +674,11 @@ def discover_no_call_body_probes(
                 )
             with_node = managers[0]
             if len(with_node.body) != 1 or not isinstance(with_node.body[0], Expr):
-                # Named disposition: out of the single-expr no-call population.
                 named_exclusions.append(
-                    f"reason=non-single-expr-body coordinate={coordinate}"
+                    NamedDemandExclusion(
+                        reason="non-single-expr-body",
+                        coordinate=coordinate,
+                    )
                 )
                 continue
             expression = with_node.body[0].value
@@ -643,16 +691,22 @@ def discover_no_call_body_probes(
                 None,
             )
             if family is None:
-                root_name = type(expression).__name__
                 named_exclusions.append(
-                    f"reason=root-outside-selected-families "
-                    f"coordinate={coordinate} root={root_name}"
+                    NamedDemandExclusion(
+                        reason="root-outside-selected-families",
+                        coordinate=coordinate,
+                        root=type(expression).__name__,
+                    )
                 )
                 continue
-            if families is not None and family not in families:
+            if family not in selected_families:
                 named_exclusions.append(
-                    f"reason=family-filter coordinate={coordinate} "
-                    f"family={family.value}"
+                    NamedDemandExclusion(
+                        reason="family-filter",
+                        coordinate=coordinate,
+                        family=family.value,
+                        root=type(expression).__name__,
+                    )
                 )
                 continue
             body_id = (
@@ -671,12 +725,11 @@ def discover_no_call_body_probes(
                     ),
                 )
             )
-    # Surface named exclusions on the function for twin tests (not half-written).
-    discover_no_call_body_probes.last_named_exclusions = tuple(named_exclusions)  # type: ignore[attr-defined]
-    return tuple(sorted(probes, key=lambda probe: probe.body_id))
+    return DiscoveryDisposition(
+        probes=tuple(sorted(probes, key=lambda probe: probe.body_id)),
+        named_exclusions=tuple(named_exclusions),
+    )
 
-
-discover_no_call_body_probes.last_named_exclusions = ()  # type: ignore[attr-defined]
 
 
 def require_expected_denominators(
@@ -723,8 +776,11 @@ def run_authenticated_attribution(
         payload = pull_shared_demand_table(
             repo_root, Path(scratch) / "python-demand-table.json"
         )
+    disposition = discover_no_call_body_probes(
+        payload, corpus.root, families=families
+    )
     probes = require_expected_denominators(
-        discover_no_call_body_probes(payload, corpus.root, families=families),
+        disposition.probes,
         families=families,
     )
     return attribute_body_probes(probes)
