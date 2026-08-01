@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
 def test_terminal_raise_with_prior_state_promotes_to_halt_only():
     marker = object()
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_promote_terminal_raise_halts.py:39:0'), exception_name='OSError')
+    effect = RaiseEffect.for_builtin('OSError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_promote_terminal_raise_halts.py:39:0')
     exits = ExitSet(
         (
             Completed(
@@ -36,7 +36,7 @@ def test_terminal_raise_with_prior_state_promotes_to_halt_only():
 def test_guarded_raise_keeps_its_complementary_completed_arm():
     marker = object()
     condition = make_var("condition")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_promote_terminal_raise_halts.py:18:0'), exception_name='OSError')
+    effect = RaiseEffect.for_builtin('OSError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_promote_terminal_raise_halts.py:18:0')
     exits = ExitSet(
         (
             Completed(

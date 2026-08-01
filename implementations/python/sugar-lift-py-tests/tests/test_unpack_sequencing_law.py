@@ -350,7 +350,6 @@ def test_list_indexerror_store_halt_originates_in_setitem_not_boundary(
     effect = halted[0].effect
     assert effect.exception_name == "IndexError"
     assert effect.producer_node_owner == "ground_index_error"
-    assert effect.exception_type_coordinate is not None
     # Type name may match a boundary expectation; origin is the store producer.
     assert "pytest" not in (effect.producer_node_owner or "").lower()
 

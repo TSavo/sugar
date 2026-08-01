@@ -570,8 +570,20 @@ def test_second_handler_reads_first_handler_temporal_binding():
     _ve_cls, ve_typed, ve_id = _synthetic_class("ValueError")
     _te_cls, te_typed, te_id = _synthetic_class("TypeError")
 
-    ve_leaf = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('leaf:ve'), exception_name='ValueError', exception_type_coordinate=ve_id, exception_type_mro=(ve_id,), raised_value=ve_typed)
-    te_leaf = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('leaf:te'), exception_name='TypeError', exception_type_coordinate=te_id, exception_type_mro=(te_id,), raised_value=te_typed)
+    ve_leaf = RaiseEffect.for_builtin("ValueError",
+        
+        occurrence="leaf:ve",
+        exception_type_coordinate=ve_id,
+        exception_type_mro=(ve_id,),
+        raised_value=ve_typed,
+    )
+    te_leaf = RaiseEffect.for_builtin("TypeError",
+        
+        occurrence="leaf:te",
+        exception_type_coordinate=te_id,
+        exception_type_mro=(te_id,),
+        raised_value=te_typed,
+    )
     group = GroupedRaiseEffect(
         "group:root", "g", (ve_leaf, te_leaf), occurrence="group:root"
     )
@@ -615,10 +627,16 @@ def test_second_handler_reads_first_handler_temporal_binding():
             bound = temporal.value_if_bound("x") if temporal is not None else None
             if bound is None:
                 return Incomplete(
-                    RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('read-x-missing'), exception_name='NameError')
+                    RaiseEffect.for_builtin("NameError",
+                        
+                        occurrence="read-x-missing",
+                    )
                 )
             return Incomplete(
-                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('read-x-ok'), exception_name='RuntimeError')
+                RaiseEffect.for_builtin("RuntimeError",
+                    
+                    occurrence="read-x-ok",
+                )
             )
 
         @classmethod
@@ -795,7 +813,13 @@ def test_guarded_handler_faces_conjoin_body_guard():
         unit=SimpleNamespace(source="try-star"),
     )
     _ve_cls, ve_typed, ve_id = _synthetic_class("ValueError")
-    leaf = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('leaf:ve'), exception_name='ValueError', exception_type_coordinate=ve_id, exception_type_mro=(ve_id,), raised_value=ve_typed)
+    leaf = RaiseEffect.for_builtin("ValueError",
+        
+        occurrence="leaf:ve",
+        exception_type_coordinate=ve_id,
+        exception_type_mro=(ve_id,),
+        raised_value=ve_typed,
+    )
     group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence="group:root")
     body_atom = atomic("body.guard", [str_const("body")])
     handler_atom = atomic("handler.guard", [str_const("handler")])
@@ -828,7 +852,10 @@ def test_guarded_handler_faces_conjoin_body_guard():
                 (
                     Halted(
                         handler_atom,
-                        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('handler:re'), exception_name='RuntimeError'),
+                        RaiseEffect.for_builtin("RuntimeError",
+                            
+                            occurrence="handler:re",
+                        ),
                         None,
                     ),
                 )
@@ -890,7 +917,13 @@ def test_alternative_exceptional_faces_keep_separate_guards():
         unit=SimpleNamespace(source="try-star"),
     )
     _ve_cls, ve_typed, ve_id = _synthetic_class("ValueError")
-    leaf = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('leaf:ve'), exception_name='ValueError', exception_type_coordinate=ve_id, exception_type_mro=(ve_id,), raised_value=ve_typed)
+    leaf = RaiseEffect.for_builtin("ValueError",
+        
+        occurrence="leaf:ve",
+        exception_type_coordinate=ve_id,
+        exception_type_mro=(ve_id,),
+        raised_value=ve_typed,
+    )
     group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence="group:root")
     body_atom = atomic("body.guard", [str_const("body")])
     g1 = atomic("alt.one", [str_const("1")])
@@ -912,12 +945,12 @@ def test_alternative_exceptional_faces_keep_separate_guards():
                 (
                     Halted(
                         g1,
-                        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('a1'), exception_name='KeyError'),
+                        RaiseEffect.for_builtin("KeyError", occurrence="a1"),
                         None,
                     ),
                     Halted(
                         g2,
-                        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('a2'), exception_name='OSError'),
+                        RaiseEffect.for_builtin("OSError", occurrence="a2"),
                         None,
                     ),
                 )

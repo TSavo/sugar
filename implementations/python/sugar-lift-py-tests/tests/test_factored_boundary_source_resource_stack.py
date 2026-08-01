@@ -256,7 +256,7 @@ def _raise(name: str, marker: str, *, message=None, occurrence=None):
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_coordinate=_identity(name), exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner='StackBody.desugar'),
+        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner='StackBody.desugar'),
         _state(marker),
     )
 

@@ -265,7 +265,11 @@ class _Fixed(Sugar):
 
 def _nested_body_faces() -> ExitSet:
     """Completed, Returned, and Halted edges under distinct guards."""
-    raise_effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:10:8:raise'), exception_name='ValueError', blame='body.py:10:8:raise')
+    raise_effect = RaiseEffect.for_builtin("ValueError",
+        
+        occurrence="body.py:10:8:raise",
+        blame="body.py:10:8:raise",
+    )
     return ExitSet(
         (
             Completed(

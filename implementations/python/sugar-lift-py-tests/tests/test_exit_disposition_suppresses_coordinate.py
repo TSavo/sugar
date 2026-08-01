@@ -28,7 +28,7 @@ def _guard():
 def _key_error(*, coordinate=None, mro=None, name="KeyError"):
     if coordinate is None and mro is None:
         coordinate, mro = _builtin_exception_identity("KeyError")
-    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('suppress.py:1:0'), exception_name=name, exception_type_coordinate=coordinate, exception_type_mro=mro)
+    return RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of('suppress.py:1:0'), exception_name=name, exception_type_mro=mro)
 
 
 def test_truthful_suppresses_matching_coordinate() -> None:
@@ -72,7 +72,7 @@ def test_name_less_matcher_throws_not_suppress() -> None:
 def test_name_less_effect_with_coordinate_does_not_equal_name_less_matcher() -> None:
     """THE historical bug: None == None suppressed a coordinate-authenticated halt."""
     coordinate, mro = _builtin_exception_identity("KeyError")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('suppress.py:2:0'), exception_name=None, exception_type_coordinate=coordinate, exception_type_mro=mro)
+    effect = RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of('suppress.py:2:0'), exception_name=None, exception_type_mro=mro)
     with pytest.raises(SugarNotWritten):
         exit_disposition_effect(
             Suppresses(EffectMatcher(kind="raise", name=None)),  # type: ignore[arg-type]
@@ -81,7 +81,7 @@ def test_name_less_effect_with_coordinate_does_not_equal_name_less_matcher() -> 
 
 
 def test_missing_effect_coordinate_throws() -> None:
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('suppress.py:3:0'), exception_name='KeyError')
+    effect = RaiseEffect.for_builtin("KeyError", occurrence="suppress.py:3:0")
     with pytest.raises(SugarNotWritten) as caught:
         exit_disposition_effect(
             Suppresses(EffectMatcher(kind="raise", name="KeyError")),

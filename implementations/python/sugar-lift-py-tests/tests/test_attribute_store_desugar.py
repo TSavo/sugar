@@ -174,7 +174,7 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
             log.append("value")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('attr_store.py:2:16'), exception_type_coordinate=str_const('ValueError'))
+                    RaiseEffect(exception_type_coordinate=str_const('ValueError'), occurrence=AuthenticatedRaiseLocus.of('attr_store.py:2:16'))
                 )
             )
 

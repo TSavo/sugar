@@ -26,14 +26,14 @@ def test_single_unconditional_completed_collapses_to_complete():
 
 
 def test_single_unconditional_halted_collapses_to_incomplete():
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:209:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:209:0')
 
     assert ExitSet.halted(effect).collapse() == Incomplete(effect)
 
 
 def test_conditional_halt_keeps_halted_and_complementary_completed_exits():
     condition = _guard("condition")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:198:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:198:0')
 
     exits = ExitSet.conditional_halt(condition, effect, "state")
 
@@ -61,7 +61,7 @@ def test_normalize_drops_unsatisfiable_exit():
 
 def test_sequencing_maps_only_completed_exits():
     condition = _guard("condition")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:173:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:173:0')
     exits = ExitSet.conditional_halt(condition, effect, 1)
 
     sequenced = exits.sequence(lambda value: ExitSet.completed(value + 1))
@@ -74,7 +74,7 @@ def test_sequencing_maps_only_completed_exits():
 
 def test_block_reduction_retains_complement_of_guarded_halt():
     condition = _guard("condition")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:165:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:165:0')
 
     class GuardedHalt:
         def desugar(self, ctx=None):
@@ -96,22 +96,22 @@ def test_and_finally_cleanup_completion_restores_incoming_completed():
 
 
 def test_and_finally_cleanup_completion_restores_incoming_halted():
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:131:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:131:0')
     incoming = ExitSet.halted(effect)
     after = incoming.and_finally(lambda: ExitSet.completed("cleanup-done"))
     assert after.collapse() == Incomplete(effect)
 
 
 def test_and_finally_cleanup_halt_supersedes_incoming():
-    original = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:106:0'), exception_name='ValueError')
-    cleanup = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:166:0'), exception_name='RuntimeError')
+    original = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:106:0')
+    cleanup = RaiseEffect.for_builtin('RuntimeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:166:0')
     incoming = ExitSet.halted(original)
     after = incoming.and_finally(lambda: ExitSet.halted(cleanup))
     assert after.collapse() == Incomplete(cleanup)
 
 
 def test_and_finally_cleanup_halt_supersedes_completed():
-    cleanup = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:158:0'), exception_name='RuntimeError')
+    cleanup = RaiseEffect.for_builtin('RuntimeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:158:0')
     incoming = ExitSet.completed("ok")
     after = incoming.and_finally(lambda: ExitSet.halted(cleanup))
     assert after.collapse() == Incomplete(cleanup)
@@ -128,7 +128,7 @@ def test_and_finally_terminal_cleanup_completion_supersedes():
 
 def test_and_finally_runs_cleanup_on_every_conditional_exit():
     condition = _guard("condition")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:99:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:99:0')
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     seen = []
 
@@ -155,22 +155,22 @@ def test_and_exit_completion_keeps_body_completed():
 
 
 def test_and_exit_halt_supersedes_body_completed():
-    exit_halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:114:0'), exception_name='RuntimeError')
+    exit_halt = RaiseEffect.for_builtin('RuntimeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:114:0')
     incoming = ExitSet.completed("body")
     after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
     assert after.collapse() == Incomplete(exit_halt)
 
 
 def test_and_exit_halt_supersedes_body_halted():
-    body = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:77:0'), exception_name='ValueError')
-    exit_halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:107:0'), exception_name='RuntimeError')
+    body = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:77:0')
+    exit_halt = RaiseEffect.for_builtin('RuntimeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:107:0')
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
     assert after.collapse() == Incomplete(exit_halt)
 
 
 def test_and_exit_never_suppresses_restores_body_halt():
-    body = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:64:0'), exception_name='ValueError')
+    body = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:64:0')
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
     assert after.collapse() == Incomplete(body)
@@ -180,7 +180,12 @@ def test_and_exit_proven_contract_consumes_named_halt():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     coordinate, mro = _builtin_exception_identity("ValueError")
-    body = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('exit_set.py:2:0'), exception_name='ValueError', exception_type_coordinate=coordinate, exception_type_mro=mro)
+    body = RaiseEffect.for_builtin("ValueError",
+        
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
+        occurrence="exit_set.py:2:0",
+    )
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
@@ -190,7 +195,7 @@ def test_and_exit_proven_contract_consumes_named_halt():
 
 
 def test_and_exit_runtime_selected_leaves_open_residual_not_guessed():
-    body = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:36:0'), exception_name='ValueError')
+    body = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:36:0')
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
@@ -201,7 +206,7 @@ def test_and_exit_runtime_selected_leaves_open_residual_not_guessed():
 
 def test_and_exit_fans_exitset_across_conditional_faces():
     condition = _guard("condition")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:29:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:29:0')
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     exit_es = ExitSet.completed(False)
     after = incoming.and_exit(exit_es, disposition=NeverSuppresses())
@@ -214,7 +219,12 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
 
     condition = _guard("condition")
     coordinate, mro = _builtin_exception_identity("ValueError")
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('exit_set.py:3:0'), exception_name='ValueError', exception_type_coordinate=coordinate, exception_type_mro=mro)
+    effect = RaiseEffect.for_builtin("ValueError",
+        
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
+        occurrence="exit_set.py:3:0",
+    )
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     after = incoming.and_exit(
         ExitSet.completed(True),
@@ -227,7 +237,12 @@ def test_and_exit_membrane_suppresses_matcher_authority():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     coordinate, mro = _builtin_exception_identity("KeyError")
-    body = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('exit_set.py:1:0'), exception_name='KeyError', exception_type_coordinate=coordinate, exception_type_mro=mro)
+    body = RaiseEffect.for_builtin("KeyError",
+        
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
+        occurrence="exit_set.py:1:0",
+    )
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),

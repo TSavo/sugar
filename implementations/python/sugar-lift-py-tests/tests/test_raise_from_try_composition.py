@@ -245,7 +245,12 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
     """If the cause expression halts, the outer RaiseEffect is never emitted."""
     outer = _call_exception("RuntimeError", "outer")
     cause_halt = Incomplete(
-        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('unit.py:9:4'), exception_name='KeyError', blame='unit.py:9:4', raised_value=_call_exception('KeyError', 'cause-boom'))
+        RaiseEffect.for_builtin("KeyError",
+            
+            blame="unit.py:9:4",
+            occurrence="unit.py:9:4",
+            raised_value=_call_exception("KeyError", "cause-boom"),
+        )
     )
     sugar = RaiseSugar(
         exception=Fixed(Complete(outer)),

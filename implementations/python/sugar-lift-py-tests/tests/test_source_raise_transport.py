@@ -396,7 +396,13 @@ def test_wrong_exception_observation_is_not_the_helper_effect() -> None:
         bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
-    foreign = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('foreign.py:1:0'), exception_name='ValueError', blame='foreign.py:1:0', exception_type_coordinate=_identity('ValueError'), exception_type_mro=(_identity('ValueError'),))
+    foreign = RaiseEffect.for_builtin("ValueError",
+        
+        blame="foreign.py:1:0",
+        occurrence="foreign.py:1:0",
+        exception_type_coordinate=_identity("ValueError"),
+        exception_type_mro=(_identity("ValueError"),),
+    )
     with pytest.raises(AssertionError):
         assert halted.effect is foreign
     with pytest.raises(AssertionError):

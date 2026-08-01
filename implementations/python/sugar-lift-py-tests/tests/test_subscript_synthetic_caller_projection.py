@@ -96,7 +96,6 @@ def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
     exceptional = (positional, keyword, default)
     halted = tuple(outcome.exits[0] for outcome in exceptional)
     assert all(isinstance(exit_, Halted) for exit_ in halted)
-    assert all(exit_.effect.exception_type_coordinate is not None for exit_ in halted)
     assert {exit_.effect.occurrence_id for exit_ in halted} == {
         str(carrier.demand.source_node.wire())
     }

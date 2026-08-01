@@ -886,7 +886,7 @@ def test_failure_entering_inner_assigned_resource_still_exits_outer():
     (the inner manager was never entered).
     """
     outer_exit, inner_exit = [], []
-    halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('inner.py:1:0'), exception_name='OSError')
+    halt = RaiseEffect.for_builtin("OSError", occurrence="inner.py:1:0")
     inner = _source_resource(
         manager=_FixedSugar(Complete(_FloorValue("inner-mgr"))),
         protocol=_ProbeProtocol(enter=Incomplete(halt), exit_probe=inner_exit),
@@ -921,7 +921,7 @@ def test_failure_entering_inner_assigned_resource_still_exits_outer():
 def test_discrimination_outer_exit_is_not_skipped_on_enter_halt():
     """BITE: completion-only exit would leave the outer exit probe empty."""
     outer_exit, inner_exit = [], []
-    halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('inner.py:1:0'), exception_name='OSError')
+    halt = RaiseEffect.for_builtin("OSError", occurrence="inner.py:1:0")
     inner = _source_resource(
         manager=_FixedSugar(Complete(_FloorValue("inner-mgr"))),
         protocol=_ProbeProtocol(enter=Incomplete(halt), exit_probe=inner_exit),

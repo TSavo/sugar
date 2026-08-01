@@ -272,7 +272,7 @@ def test_the_effect_itself_is_not_altered_by_the_carried_demand():
     """
     from sugar_lift_py_tests.effect import RaiseEffect
 
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:476:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:476:0')
     bare = Incomplete(effect)
     carrying = Incomplete(effect, (), ("sentinel-entry",))
 
@@ -355,7 +355,7 @@ def test_an_effect_face_is_no_longer_the_partition_gap():
 
     joined = rewrap_pending(
         entry,
-        Incomplete(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:441:0'), exception_name='ValueError')),
+        Incomplete(RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:441:0')),
         owner="test_effect_face",
         blame=entry.source_node,
     )
@@ -382,7 +382,7 @@ def _halted_carrier(guard=None):
 
     out = _out("def f(p):\n return [p[0]]\n")
     (entry,) = _entries(out)
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:385:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:385:0')
     incomplete = Incomplete(effect, (guard,) if guard is not None else (), (entry,))
     exits = outcome_to_exitset(incomplete)
     (arm,) = exits.exits
@@ -438,7 +438,7 @@ def test_halted_arms_owing_different_things_are_different_destinations():
 
     first = _entries(_out("def f(p):\n return [p[0]]\n"))[0]
     second = _entries(_out("def f(q):\n return [q[1]]\n"))[0]
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:358:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:358:0')
 
     merged = ExitSet(
         (
@@ -473,7 +473,7 @@ def test_halted_arms_owing_the_same_thing_still_merge():
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 
     (entry,) = _entries(_out("def f(p):\n return [p[0]]\n"))
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:275:0'), exception_name='ValueError')
+    effect = RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-source-tree/tests/test_parameter_contract_demand_set.py:275:0')
 
     merged = ExitSet(
         (
