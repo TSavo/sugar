@@ -100,20 +100,20 @@ def test_report_names_file_line_class_and_required_fix() -> None:
     assert "retire_when=" in rendered
 
 
-def test_law_of_one_live_self_seed_is_recognized() -> None:
-    """Live offender class: law_of_one_auditor fills empty projection_calls with self."""
+def test_sourcefile_construction_door_live_self_seed_is_recognized() -> None:
+    """Live offender class: sourcefile_construction_door_auditor fills empty projection_calls with self."""
     repo = Path(__file__).resolve().parents[3]
     # parents: tests -> sugar-lift-py-tests -> python -> implementations -> repo?
     # __file__ = .../implementations/python/sugar-lift-py-tests/tests/test_...
     # parents[0]=tests, [1]=sugar-lift-py-tests, [2]=python, [3]=implementations, [4]=repo
     repo = Path(__file__).resolve().parents[4]
-    auditor = repo / "tests" / "law_of_one_auditor.py"
+    auditor = repo / "tests" / "sourcefile_construction_door_auditor.py"
     assert auditor.is_file(), auditor
     source = auditor.read_text(encoding="utf-8")
-    findings = LAW.scan_python_source(source, "tests/law_of_one_auditor.py")
+    findings = LAW.scan_python_source(source, "tests/sourcefile_construction_door_auditor.py")
     synthesized = [f for f in findings if f.violation_class == "SYNTHESIZED-EVIDENCE"]
     assert synthesized, (
-        "expected SYNTHESIZED-EVIDENCE on law_of_one projection_calls self-seed; "
+        "expected SYNTHESIZED-EVIDENCE on sourcefile_construction_door projection_calls self-seed; "
         f"got {findings!r}"
     )
     assert any("projection_calls" in f.observed for f in synthesized)

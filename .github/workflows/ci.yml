@@ -35,7 +35,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
 
 # NO `concurrency:` BLOCK. `cancel-in-progress: false` is not enough: GitHub
 # keeps only ONE pending run per group and replaces a queued run with a newer

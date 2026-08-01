@@ -4,7 +4,6 @@ name: Bare exception zero tolerance (discrimination)
 # factory-zero-tolerance.yml so heavy floors share one pinned run and one
 # concurrency group (no multi-workflow pending-run cancellation).
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:

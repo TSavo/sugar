@@ -8,8 +8,8 @@ import tempfile
 
 import pytest
 
-from law_of_one_evidence import LawOfOneEvidence, assert_test_owned_evidence
-from law_of_one_fixture import _direct_source_file_entry, law_of_one_evidence
+from sourcefile_construction_door_evidence import SourceFileConstructionDoorEvidence, assert_test_owned_evidence
+from sourcefile_construction_door_fixture import _direct_source_file_entry, sourcefile_construction_door_evidence
 from sugar_source_tree.backend import Backend
 from sugar_source_tree.nodes import SourceUnit
 from sugar_source_tree.panic import BackendDefect
@@ -248,12 +248,12 @@ def test_source_file_constructs_and_seals_inside_one_reporter_event(
     assert construction_values[0] is receipt
 
 
-def test_independent_law_of_one_evidence_closes_owner_privacy_and_zero_work(
+def test_independent_sourcefile_construction_door_evidence_closes_owner_privacy_and_zero_work(
     constructed_module_door,
-    law_of_one_evidence: LawOfOneEvidence,
+    sourcefile_construction_door_evidence: SourceFileConstructionDoorEvidence,
 ) -> None:
-    closed = assert_test_owned_evidence(law_of_one_evidence)
-    assert closed is law_of_one_evidence
+    closed = assert_test_owned_evidence(sourcefile_construction_door_evidence)
+    assert closed is sourcefile_construction_door_evidence
     assert closed.zero_work.closed_roll_call is (
         closed.zero_work.constructed_product.closed_roll_call
     )
@@ -1131,9 +1131,9 @@ def test_authentically_empty_leaf_roster_is_not_producer_never_ran(
 
 def test_repeated_leaf_views_are_identity_projection_with_zero_later_work(
     constructed_module_door,
-    law_of_one_evidence: LawOfOneEvidence,
+    sourcefile_construction_door_evidence: SourceFileConstructionDoorEvidence,
 ) -> None:
-    evidence = assert_test_owned_evidence(law_of_one_evidence)
+    evidence = assert_test_owned_evidence(sourcefile_construction_door_evidence)
     product = evidence.zero_work.constructed_product
     rows = product.leaf_assertion_rows
 
