@@ -46,13 +46,63 @@ def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
     return None
 
 
+class FunctionBindingMiss(Exception):
+    """Named refusal: no unique authenticated function binding.
+
+    Absence is a decision. Returning bare ``None`` made a miss
+    indistinguishable from a soft skip; callers that need soft handling must
+    catch this named throw explicitly.
+    """
+
+    def __init__(self, *, name: str, reason: str) -> None:
+        self.name = name
+        self.reason = reason
+        super().__init__(f"FunctionBindingMiss name={name!r} reason={reason}")
+
+
 def find_function_by_name(sf: SourceFile, name: str):
-    """The function definition with this exact name, or None. Direct name
-    resolution -- the callee a cue names is found by that name."""
-    for fn in sf.functions():
-        if fn.name == name:
-            return fn
-    return None
+    """Resolve the unique module-direct function binding for ``name``.
+
+    Authority is ``module_direct_bindings`` (bind-time roster), never
+    first-match-by-spelling over transitive ``functions()`` (class methods and
+    nested defs share spellings). Miss or competing bindings THROW named —
+    they are not soft ``None``.
+    """
+    bindings = (sf.unit.module_direct_bindings or {}).get(name, ())
+    functions = [
+        binding
+        for binding in bindings
+        if isinstance(binding, (FunctionDef, AsyncFunctionDef))
+    ]
+    if len(functions) == 1:
+        return functions[0]
+    if not functions:
+        raise FunctionBindingMiss(
+            name=name, reason="no module-direct function binding"
+        )
+    raise FunctionBindingMiss(
+        name=name,
+        reason=f"{len(functions)} competing module-direct function bindings",
+    )
+
+
+def resolve_function_for_call(call):
+    """Resolve the callee through binding/coordinate at an exact call site.
+
+    Uses ``SourceUnit.source_function_definition_for_call`` — lexical rows and
+    module-direct bindings, not spelling walks. THROW named on a miss.
+    """
+    from sugar_source_tree.nodes import Name
+
+    unit = call.unit
+    definition = unit.source_function_definition_for_call(call)
+    if definition is not None:
+        return definition
+    name = call.func.id if isinstance(call.func, Name) else type(call.func).__name__
+    raise FunctionBindingMiss(
+        name=name,
+        reason="no unique authenticated function binding at call site",
+    )
 
 
 def call_target_names(sf: SourceFile, span: Optional[dict]) -> list:
@@ -294,32 +344,42 @@ def _args_are_ground(call) -> bool:
     return True
 
 
-def applied_contract_rows(fn, arg_nodes: tuple, file_rel: str):
+def applied_contract_rows(fn, arg_nodes: tuple, file_rel: str, keywords: tuple = ()):
     """The callee's contract AS APPLIED at a call: a call IS substitution.
 
-    Substitute the actual argument nodes for the formals into the body -- the
-    same `_substitute_body` that threads a block; a concrete iterable arg makes
-    a symbolic loop unroll here (`_Splice`), a filled name inlines. Then lift
-    the applied body. `A(xs): total=0; for x in xs: total=total+x` dug at
-    `A([1,2,3])` yields post `out == 6` -- the fold coordinate collapsed by the
-    dig, exactly as `c[post]=5` collapses `b[post]`. The DTO keeps the callee's
-    memento and formals (same wire shape; the post simply no longer mentions
-    them). Incomplete -> (memento, None), an effect, as the abstract path."""
+    Binding goes through ``SourceCallFrame.bind_node_actuals`` — the same door
+    that packs positional, keyword, default, positional-only, keyword-only, and
+    variadic formals. An ad-hoc flat param/actual zip binder is forbidden:
+    ``def f(a, *rest)`` called ``f(1, 2)`` must bind ``rest=(2,)``, not
+    ``rest=2``.
+
+    Construction uses the bound frame's already-sugared body and the frame's
+    formal coordinates — not a second bare ``FunctionUniverseSugar`` mint that
+    drifts from ``FunctionDef.sugar()``. Incomplete -> (memento, None), an
+    effect, as the abstract path. Binding gaps propagate as
+    ``SourceCallBindingGap``.
+    """
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        FunctionUniverseSugar,
-    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 
     def_memento = function_def_memento(fn, file_rel)
-    scope = {p.name: a for p, a in zip(fn.params, arg_nodes)}
-    applied_body, _changed = fn._substitute_body(fn.body, scope)
-    sugar = FunctionUniverseSugar(
-        name=fn.name,
-        formals=tuple(p.name for p in fn.params),
-        statements=tuple(stmt.sugar() for stmt in applied_body),
-        site=fn.fragment,
+    frame = fn.source_visible_call_frame()
+    # SourceCallBindingGap propagates loud — no soft gap swallow.
+    bound = frame.bind_node_actuals(tuple(arg_nodes), tuple(keywords))
+    # Statement sugars and formal coordinates come from the construction door
+    # (frame bind + FunctionDef body sugars). Project the universe floor
+    # without a second incomplete FunctionUniverseSugar producer.
+    outcome = reduce_body(bound.body.statements).and_then(
+        lambda record: Complete(
+            UniverseValue(
+                name=fn.name,
+                formals=bound.parameters,
+                record=record,
+                formal_coordinates=bound.formal_coordinates,
+            )
+        )
     )
-    outcome = sugar.desugar(None)
     if not isinstance(outcome, Complete):
         return def_memento, None
     return def_memento, outcome.value.payload_rows(def_memento)
