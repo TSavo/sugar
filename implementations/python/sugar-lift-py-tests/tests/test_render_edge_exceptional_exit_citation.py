@@ -155,8 +155,8 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
     is the signal the stronger substrate arrived and this note can retire.
     There is no hard-coded R=1; the probe is the absence of those markers.
     """
-    auditor = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_auditor.py"
-    evidence = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_evidence.py"
+    auditor = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_auditor.py"
+    evidence = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_evidence.py"
     assert auditor.is_file(), auditor
     assert evidence.is_file(), evidence
 
