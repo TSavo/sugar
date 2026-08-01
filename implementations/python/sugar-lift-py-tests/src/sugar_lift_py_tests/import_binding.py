@@ -1352,6 +1352,10 @@ def authenticated_module_exports(
         module=module,
         source_cid=source_cid,
         module_name=module_name,
+        # Same package bit every other door passes (#6941-era formal kwarg):
+        # omitting it TypeErrors the preconstruction demand scan and silences
+        # every showcase that walks call-contract exports.
+        module_is_package=path.name == "__init__.py",
         module_identities={},
         module_is_package=path.name == "__init__.py",
     )

@@ -225,7 +225,9 @@ class _SealedBackendRelation:
                     fix="consume the sole producer product",
                 )
             raise TypeError("backend construction owner")
-        if not isinstance(_owner_token, _PrivateSeal) or _owner_token.owner_type is not type(self):
+        if not isinstance(
+            _owner_token, _PrivateSeal
+        ) or _owner_token.owner_type is not type(self):
             raise TypeError("backend construction owner")
         changed = tuple(
             name
@@ -285,7 +287,9 @@ class _SealedBackendRelation:
 def _close_private(instance: _SealedBackendRelation, **fields: object) -> object:
     for name, value in fields.items():
         object.__setattr__(instance, name, value)
-    object.__setattr__(instance, "_owner_token", _PrivateSeal(type(instance), dict(fields)))
+    object.__setattr__(
+        instance, "_owner_token", _PrivateSeal(type(instance), dict(fields))
+    )
     return instance
 
 
@@ -686,7 +690,9 @@ class Backend:
         # This is the sole completed traversal.  Every roster below is a
         # projection of these exact constructed node objects, never a reread.
         constructed_nodes = tuple(root.walk())
-        positions = {id(node): position for position, node in enumerate(constructed_nodes)}
+        positions = {
+            id(node): position for position, node in enumerate(constructed_nodes)
+        }
         parent_positions: list[int | None] = [None] * len(constructed_nodes)
         for position, node in enumerate(constructed_nodes):
             for field_name in type(node)._child_fields:
@@ -820,7 +826,9 @@ class Backend:
         for node in constructed_nodes:
             if not isinstance(node, Assign) or len(node.targets) != 1:
                 continue
-            if not isinstance(node.targets[0], Name) or not isinstance(node.value, Constant):
+            if not isinstance(node.targets[0], Name) or not isinstance(
+                node.value, Constant
+            ):
                 continue
             value = node.value.value
             if type(value) not in (int, float, str):
@@ -891,7 +899,9 @@ class Backend:
                 construction_event_identity=event_identity,
                 filename=unit.filename,
                 function_occurrence=owning_function,
-                function_locus=(None if owning_function is None else owning_function.line_col_span()),
+                function_locus=(
+                    None if owning_function is None else owning_function.line_col_span()
+                ),
                 assert_occurrence=owning_assert,
                 assert_locus=owning_assert.line_col_span(),
                 call_occurrence=call,

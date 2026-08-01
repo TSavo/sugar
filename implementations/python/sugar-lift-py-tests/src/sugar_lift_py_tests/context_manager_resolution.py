@@ -94,26 +94,27 @@ class ImportedCallValueSubsumptionV1:
     resolution_kind: str
     resolved_object_cid: str
     relation_cid: str
-    _authority: object = field(
-        init=False, repr=False, compare=False, default=None
-    )
+    _authority: object = field(init=False, repr=False, compare=False, default=None)
 
     def __post_init__(self) -> None:
         if self._authority is not _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY:
             raise ValueError("import call/value subsumption lacks producer authority")
-        if not all(
-            (
-                self.source_cid,
-                self.module_identity_cid,
-                self.import_binding_cid,
-                self.target_symbol,
-                self.call_use_cid,
-                self.value_use_cid,
-                self.resolution_kind,
-                self.resolved_object_cid,
-                self.relation_cid,
+        if (
+            not all(
+                (
+                    self.source_cid,
+                    self.module_identity_cid,
+                    self.import_binding_cid,
+                    self.target_symbol,
+                    self.call_use_cid,
+                    self.value_use_cid,
+                    self.resolution_kind,
+                    self.resolved_object_cid,
+                    self.relation_cid,
+                )
             )
-        ) or not self.exported_member_path:
+            or not self.exported_member_path
+        ):
             raise ValueError("import call/value subsumption lacks binding testimony")
         if (
             self.call_coordinate.source_cid != self.source_cid
@@ -224,9 +225,7 @@ def _mint_import_call_value_subsumption(
     for name, value in values.items():
         object.__setattr__(relation, name, value)
     object.__setattr__(relation, "relation_cid", relation._expected_cid())
-    object.__setattr__(
-        relation, "_authority", _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY
-    )
+    object.__setattr__(relation, "_authority", _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY)
     relation.__post_init__()
     return relation
 

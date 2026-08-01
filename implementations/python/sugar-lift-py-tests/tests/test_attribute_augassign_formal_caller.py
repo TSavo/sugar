@@ -187,9 +187,7 @@ def test_discrimination_duplicated_get_is_detected() -> None:
             box["get"] += 1
             return super().attribute(name, site)
 
-    r = _CountingObject(
-        "Widget", (ObjectField("field", TermValue(1)),), (), (), "d0"
-    )
+    r = _CountingObject("Widget", (ObjectField("field", TermValue(1)),), (), (), "d0")
     r.attribute("field", "g1")
     r.attribute("field", "g2")
     assert box["get"] == 2
@@ -316,9 +314,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
     out = _production_desugar(receiver, NoneValue())
     assert box["set"] == 0
     assert not (
-        isinstance(out, Complete)
-        and isinstance(out.value, ObjectValue)
-        and box["set"]
+        isinstance(out, Complete) and isinstance(out.value, ObjectValue) and box["set"]
     )
 
 
@@ -343,9 +339,9 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
     )
     out = _production_desugar(receiver, TermValue(1))
     # Shared AttributeStoreEffectSugar.project_setattr converts RaiseValue → Incomplete.
-    assert isinstance(out, Incomplete), (
-        f"store halt must be Incomplete (halted store face), not {type(out).__name__}: {out}"
-    )
+    assert isinstance(
+        out, Incomplete
+    ), f"store halt must be Incomplete (halted store face), not {type(out).__name__}: {out}"
     # Discrimination: Complete(RaiseValue) would greenwash statement completion.
     with pytest.raises(AssertionError):
         assert isinstance(out, Complete) and isinstance(out.value, RaiseValue)
@@ -371,8 +367,7 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
     function, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     coords = {
-        c.declared_name: c.coordinate_cid
-        for c in function.sugar().formal_coordinates
+        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
     receiver = _obj_with_field(1)
     exits = pending.discharge(
@@ -472,8 +467,7 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
 def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None:
     """A renamed source helper uses the same read/inplace/store carrier chain."""
     function, pending = _helper_definition(
-        "def renamed(receiver, increment):\n"
-        "    receiver.total += increment\n"
+        "def renamed(receiver, increment):\n" "    receiver.total += increment\n"
     )
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "attribute_named"
@@ -576,9 +570,7 @@ def test_discrimination_incomplete_does_not_fall_through() -> None:
     from sugar_lift_py_tests.effect import CoverageGapEffect
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
-    face = Incomplete(
-        CoverageGapEffect(boundary="iadd", reason="unresolved inplace")
-    )
+    face = Incomplete(CoverageGapEffect(boundary="iadd", reason="unresolved inplace"))
 
     class _Inc(FloorValue):
         def inplace_binary_operator_with(self, operation, ctx):

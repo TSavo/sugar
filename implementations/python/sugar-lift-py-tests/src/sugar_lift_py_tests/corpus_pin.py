@@ -194,9 +194,7 @@ class CorpusPin:
         return pin
 
 
-def aggregate_hash(
-    distribution: str, version: str, files: Iterable[CorpusFile]
-) -> str:
+def aggregate_hash(distribution: str, version: str, files: Iterable[CorpusFile]) -> str:
     """One sha256 over (distribution, version, sorted path→content manifest).
 
     The distribution and version are inside the hash on purpose: the identical
