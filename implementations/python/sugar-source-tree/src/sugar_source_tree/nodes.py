@@ -7251,21 +7251,11 @@ class With(Statement):
                 site=self.fragment,
             )
 
-        context = self.unit.construction_context
-        if getattr(context, "frame_projection", False):
-            try:
-                resolved_ref = self._require_narrow_cm_ref(item)
-            except Exception:  # noqa: BLE001 — soft dual-mode factory projection
-                # Nested With only on the function-form branch of dual-mode
-                # EffectBoundary factories (pytest.raises). Leave a soft
-                # incomplete so the CM return path can still project a frame.
-                from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import (
-                    SoftUnresolvedWithSugar,
-                )
-
-                return SoftUnresolvedWithSugar(site=self.fragment)
-        else:
-            resolved_ref = self._require_narrow_cm_ref(item)
+        # Named SourceTreePanic from the narrow CM door is honorable unfinished
+        # work. Soft dual-mode used to catch Exception and substitute
+        # SoftUnresolvedWithSugar — UNDECIDED rendered as incomplete. Let the
+        # throw propagate; a None return remains the only "not this arm" signal.
+        resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
@@ -7772,16 +7762,13 @@ class With(Statement):
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
                 return None
+            # Soft dual-mode used to catch Exception around the narrow CM door
+            # and treat SourceTreePanic as resolved_ref=None — a named refusal
+            # rendered as "not an effect boundary" (False). Let the throw rise;
+            # None from the door itself remains the only undecided-absent arm.
             resolved_ref = None
             if self._generator_manager_frame(item) is None:
-                context = self.unit.construction_context
-                if getattr(context, "frame_projection", False):
-                    try:
-                        resolved_ref = self._require_narrow_cm_ref(item)
-                    except Exception:  # noqa: BLE001 — soft dual-mode projection
-                        resolved_ref = None
-                else:
-                    resolved_ref = self._require_narrow_cm_ref(item)
+                resolved_ref = self._require_narrow_cm_ref(item)
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
             )

@@ -73,7 +73,7 @@ from .backend import (
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import vocabulary_missing
+from .panic import backend_defect, vocabulary_missing
 from .spans import Span
 
 TSNode = object  # tree_sitter.Node, kept untyped at the boundary
@@ -308,8 +308,17 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
 
         try:
             value = _pyast.literal_eval(text)
-        except Exception:
-            value = text
+        except Exception as exc:
+            backend_defect(
+                blame=node,
+                owner="tree_sitter_python_adapter._string_like",
+                observed=(
+                    f"literal_eval failed ({type(exc).__name__}: {exc}); "
+                    f"text={text!r}"
+                ),
+                requested="a successfully decoded Python string-literal value",
+                fix="fix the adapter decode or the backend leaf text; never substitute raw source as Constant.value",
+            )
         return _fixed_constant(span, value)
     values: List[BackendNode] = []
     for c in node.children:
@@ -350,8 +359,17 @@ def _concatenated_string(unit: SourceUnit, node: TSNode) -> Description:
         text = "".join(_text(unit, p) for p in pieces)
         try:
             value = _pyast.literal_eval(text)
-        except Exception:
-            value = unit.source[span.start : span.end]
+        except Exception as exc:
+            backend_defect(
+                blame=pieces[0],
+                owner="tree_sitter_python_adapter._concatenated_string",
+                observed=(
+                    f"literal_eval failed ({type(exc).__name__}: {exc}); "
+                    f"text={text!r}"
+                ),
+                requested="a successfully decoded Python string-literal value",
+                fix="fix the adapter decode or the backend leaf text; never substitute raw source as Constant.value",
+            )
         return _fixed_constant(span, value)
     values: List[BackendNode] = []
     for p in pieces:
