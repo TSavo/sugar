@@ -1204,6 +1204,8 @@ filesystem_shelf_complete() {
 }
 
 filesystem_shelf_cell_is_peer_readable() {
+  # Readable by peer identities: others can enter the cell and read artifacts.
+  # Evictability is a separate, stronger claim — see peer_evictable.
   local cell="$1" name="$2"
   python3 - "$cell" "$name" <<'PY'
 import os
@@ -1220,11 +1222,79 @@ try:
 except OSError:
     raise SystemExit(1)
 
-if cell_mode != 0o755:
+# others must have r-x on the cell directory
+if (cell_mode & 0o005) != 0o005:
     raise SystemExit(1)
-if any(mode != 0o644 for mode in artifact_modes):
+# others must have r-- on each artifact
+if any((mode & 0o004) != 0o004 for mode in artifact_modes):
     raise SystemExit(1)
 PY
+}
+
+filesystem_shelf_cell_is_peer_evictable() {
+  # ONE DOOR law (R_shelf_peer_evictable_cell): a regenerable cell must be
+  # removable by peer runners without privilege. On Linux, rm -rf of a non-empty
+  # directory requires write on the cell itself (to unlink children) and write
+  # on the parent (to unlink the cell). Root-owned 0755 cells are readable but
+  # permanently unhealable by peers — that shape is refused at publish.
+  local cell="$1" name="$2"
+  python3 - "$cell" "$name" <<'PY'
+import os
+import stat
+import sys
+
+cell, name = sys.argv[1:]
+parent = os.path.dirname(cell)
+try:
+    parent_mode = stat.S_IMODE(os.stat(parent).st_mode)
+    cell_mode = stat.S_IMODE(os.stat(cell).st_mode)
+    artifact_modes = [
+        stat.S_IMODE(os.stat(os.path.join(cell, f"{name}{suffix}")).st_mode)
+        for suffix in (".gz", ".sugarbin.json", ".metadata.json")
+    ]
+except OSError:
+    raise SystemExit(1)
+
+# others need wx on parent (unlink cell) and on cell (empty children)
+if (parent_mode & 0o003) != 0o003:
+    raise SystemExit(1)
+if (cell_mode & 0o003) != 0o003:
+    raise SystemExit(1)
+# artifacts remain peer-readable (r-- for others); write on files is not required
+# for eviction (directory write unlinks them).
+if any((mode & 0o004) != 0o004 for mode in artifact_modes):
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+finalize_peer_evictable_shelf_cell() {
+  # ONE DOOR for publication ownership. Every successful cell install ends here.
+  # Modes make peer eviction unprivileged: cell dir 0777 (others wx), artifacts
+  # 0644 (others r). Parent path already 0777 via ensure_shared_shelf_staging.
+  # A cell that remains peer-unevictable after finalize is unconstructible —
+  # we refuse and tear the install down rather than wedge the estate.
+  local cell="$1" name="$2"
+  python3 - "$cell" "$name" <<'PY' || return 2
+import os
+import stat
+import sys
+
+cell, name = sys.argv[1:]
+os.chmod(cell, 0o777)
+for suffix in (".gz", ".sugarbin.json", ".metadata.json"):
+    path = os.path.join(cell, f"{name}{suffix}")
+    os.chmod(path, 0o644)
+# Ensure parent allows peer unlink of this cell.
+parent = os.path.dirname(cell)
+os.chmod(parent, 0o777)
+PY
+  if ! filesystem_shelf_cell_is_peer_evictable "$cell" "$name"; then
+    log "crime=unevictable-shelf-publish owner=bin/sugarbin cell=$cell illegal shape=published regenerable cell that peer runners cannot evict replacement=publish only through finalize_peer_evictable_shelf_cell so cell dirs are peer-writable (0777) and parents allow unlink; never leave root-owned 0755 cells on the shared shelf"
+    rm -rf "$cell" 2>/dev/null || true
+    return 2
+  fi
+  return 0
 }
 
 ensure_shared_shelf_staging() {
@@ -1264,6 +1334,13 @@ publish_to_filesystem_shelf() {
       log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
       return 2
     fi
+    # Existing complete cells must still be peer-evictable. Heal modes through
+    # the ONE door rather than accepting root-owned 0755 leftovers.
+    if ! filesystem_shelf_cell_is_peer_evictable "$cell" "$name"; then
+      if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+        return 2
+      fi
+    fi
     log "filesystem shelf already has $name"
     return 0
   fi
@@ -1302,7 +1379,8 @@ with open(path, "w", encoding="utf-8") as out:
     }, out, indent=2, sort_keys=True)
     out.write("\n")
 PY
-  chmod 0755 "$tmp"
+  # Staging uses peer-evictable modes from the start (ONE door).
+  chmod 0777 "$tmp"
   chmod 0644 "$tmp/$name.gz" "$tmp/$name.sugarbin.json" "$tmp/$name.metadata.json"
   # Atomic cell install. Concurrent publishers race on the same cell:
   # Linux raises ENOTEMPTY (not FileExistsError) when renaming onto a
@@ -1349,6 +1427,9 @@ while True:
         raise SystemExit(1)
 PY
   then
+    if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+      return 2
+    fi
     log "published $name to filesystem shelf"
     return 0
   fi
@@ -1358,9 +1439,11 @@ PY
   # attempt (status 3 = we observed it complete; status 1 = we gave up, but a
   # peer could still have won the rename). Success iff the cell is complete by
   # ANY publisher -- content is content-addressed and immutable, so a peer's
-  # complete cell is exactly ours.
-  if filesystem_shelf_complete "$cell" "$name" \
-    && filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
+  # complete cell is exactly ours — and peer-evictable after finalize.
+  if filesystem_shelf_complete "$cell" "$name"; then
+    if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+      return 2
+    fi
     log "filesystem shelf publish raced for $name; peer won"
     return 0
   fi
@@ -1411,6 +1494,15 @@ pull_from_filesystem_shelf() {
     && ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
     log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
     return 2
+  fi
+  if filesystem_shelf_complete "$cell" "$name" \
+    && ! filesystem_shelf_cell_is_peer_evictable "$cell" "$name"; then
+    # Readable but peer-unevictable (classic root-owned 0755): do not serve as a
+    # healthy hit. Try finalize heal; if that fails, miss → rebuild path.
+    if ! finalize_peer_evictable_shelf_cell "$cell" "$name"; then
+      log "crime=unevictable-shelf-cell owner=bin/sugarbin cell=$cell replacement=privileged rm -rf then rebuild; or republish through finalize_peer_evictable_shelf_cell"
+      return 1
+    fi
   fi
   if ! filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf miss for $name"
