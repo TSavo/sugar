@@ -29,7 +29,6 @@ name: Python package suite (authoritative)
 # are not verdicts.
 
 on:
-  pull_request:
   push:
     branches: [main]
   schedule:
