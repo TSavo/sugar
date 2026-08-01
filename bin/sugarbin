@@ -722,16 +722,22 @@ verify_artifact_manifest() {
   manifest="$(artifact_manifest_path "$binary_path")"
   [[ -f "$binary_path" && -x "$binary_path" ]] || return 1
   [[ -f "$manifest" ]] || { log "$label skipped: no executable manifest at $manifest"; return 1; }
-  python3 - "$manifest" "$binary_path" "$bin_name" "$package" "$stamp" "$identity" "$(platform_key)" "$target_triple" "$profile" "$rustc_verbose" "$cargo_verbose" <<'PY'
+  # Identity law (build_identity): shelf/artifact identity is ONLY authenticated
+  # source matter (sourceStamp) plus cell path fields (platform/profile/binary).
+  # rustc/cargo verbose strings are diagnostic residue, not identity — the OS
+  # line in `cargo -vV` drifts when the managed image base moves (Ubuntu→Debian)
+  # with the same rustc/cargo commit-hash, and demanding exact match bricks the
+  # entire shared shelf for every caller. Checksum still guards binary bytes.
+  python3 - "$manifest" "$binary_path" "$bin_name" "$package" "$stamp" "$identity" "$(platform_key)" "$profile" <<'PY'
 import hashlib, json, sys
-manifest, path, binary, package, stamp, identity, platform, target, profile, rustc, cargo = sys.argv[1:]
+manifest, path, binary, package, stamp, identity, platform, profile = sys.argv[1:]
 try:
     with open(manifest, encoding="utf-8") as f: data = json.load(f)
 except Exception as e:
     print(f"sugarbin: invalid artifact manifest: {e}", file=sys.stderr); raise SystemExit(1)
 expected = {"schema": 1, "binary": binary, "package": package, "sourceStamp": stamp,
-            "buildIdentity": identity, "platform": platform, "targetTriple": target,
-            "profile": profile, "features": [], "rustc": rustc, "cargo": cargo,
+            "buildIdentity": identity, "platform": platform,
+            "profile": profile, "features": [],
             "built": True, "executed": False}
 for key, value in expected.items():
     if data.get(key) != value:
@@ -1398,8 +1404,13 @@ pull_from_filesystem_shelf() {
   chmod 0644 "$manifest"
   mv -f "$tmp" "$candidate"
   if ! verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"; then
+    # Corrupt cell is a miss, not a hard door close: remove the cell so the next
+    # resolution rebuilds (when ALLOW_BUILD=1) instead of bricking every caller
+    # that hits the same shared shelf path (docs/build-execution.md recovery).
     log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
-    return 2
+    rm -rf "$cell" 2>/dev/null || true
+    rm -f "$candidate" "$manifest" 2>/dev/null || true
+    return 1
   fi
   log "filesystem shelf hit for $name"
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
