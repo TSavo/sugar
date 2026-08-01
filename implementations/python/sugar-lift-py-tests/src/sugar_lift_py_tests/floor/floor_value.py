@@ -1110,123 +1110,110 @@ class FloorValue:
 
     def less_than(self, other, site):
         # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.
-        # Default Floor emits the ordinary atom only when both operand types are
-        # source-decided; undecided pairs throw named (never Complete).
-        # GuardedValue distributes; NamedExpressionValue presents-and-carries.
+        # LAW_OF_ONE: ordering meaning is Sugar (or a ground arm that constructs
+        # Sugar / authenticated RaiseValue). The default door never mints
+        # Complete(PredicateValue) — that is a second mechanism.
         return other.less_than_from_left(self, site)
 
-    def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):
-        """Refuse ordering when either operand's runtime type is undecided.
+    def _refuse_ordering_meaning(
+        self, other, site, *, owner: str, operator: str
+    ) -> None:
+        """LAW_OF_ONE door for ordering: throw named; never mint FOL meaning.
 
-        Returns ``None`` when the law does not apply (non-values, or both types
-        source-decided). Raises ``SugarNotWritten`` when it does — never
-        ``Complete(PredicateValue(py.lt/…))``. Fabricating the solver atom for
-        undecided dispatch is the direct route to a false DONE: every ordering
-        row goes green for the wrong reason, and ``pytest.raises(TypeError)``
-        is structurally unsatisfiable.
+        Exactly one mechanism produces meaning: AST shadows → temporal rewrite
+        → Sugar. An ordering OUTCOME is meaning. Minting
+        ``Complete(PredicateValue(py.lt/…))`` from a Python helper — even when
+        both types are source-decided and the atom would be "right" — is a
+        second mechanism. Undecided pairs refuse as the third value; decided
+        pairs without a ground arm refuse until that arm is written.
+
+        Does not return. Always raises ``SugarNotWritten``.
         """
-        denotes_self = getattr(self, "denotes_value", None)
-        denotes_other = getattr(other, "denotes_value", None)
-        if not callable(denotes_self) or not callable(denotes_other):
-            return None
-        if not (denotes_self() and denotes_other()):
-            return None
-        decided_self = getattr(self, "runtime_type_is_decided", None)
-        decided_other = getattr(other, "runtime_type_is_decided", None)
-        if not callable(decided_self) or not callable(decided_other):
-            return None
-        if decided_self() and decided_other():
-            return None
-
         from sugar_source_tree.panic import SugarNotWritten
 
+        denotes_self = getattr(self, "denotes_value", None)
+        denotes_other = getattr(other, "denotes_value", None)
+        both_denote = (
+            callable(denotes_self)
+            and callable(denotes_other)
+            and denotes_self()
+            and denotes_other()
+        )
+        decided_self = getattr(self, "runtime_type_is_decided", None)
+        decided_other = getattr(other, "runtime_type_is_decided", None)
+        both_decided = (
+            both_denote
+            and callable(decided_self)
+            and callable(decided_other)
+            and decided_self()
+            and decided_other()
+        )
+        if both_denote and not both_decided:
+            observed = (
+                "undecided ordering operand runtime type: "
+                f"{type(self).__name__} {operator} {type(other).__name__}"
+            )
+            requested = (
+                "source-visible runtime types selecting Sugar-owned ordering "
+                "meaning or an authenticated exceptional exit"
+            )
+            fix = (
+                "do not mint Complete(PredicateValue(py.lt/le/gt/ge)) or invent "
+                "TypeError; resolve both operands' runtime types from source, "
+                "then construct via a ground Sugar arm"
+            )
+        else:
+            observed = (
+                "default ordering floor has no Sugar arm for "
+                f"{type(self).__name__} {operator} {type(other).__name__}"
+            )
+            requested = (
+                "Sugar-owned ordering meaning (TrueBoolLiteralSugar / "
+                "FalseBoolLiteralSugar / authenticated RaiseValue) or a "
+                "named third-value refusal"
+            )
+            fix = (
+                "LAW_OF_ONE: implement a ground pair arm that constructs Sugar; "
+                "never resolve_comparison_atom / Complete(PredicateValue) on "
+                "FloorValue defaults"
+            )
         raise SugarNotWritten(
             blame=site,
             owner=owner,
-            observed=(
-                "undecided ordering operand runtime type: "
-                f"{type(self).__name__} {operator} {type(other).__name__}"
-            ),
-            requested=(
-                "source-visible runtime types selecting an ordering completion "
-                "or an authenticated exceptional exit"
-            ),
-            fix=(
-                "do not emit py.lt/le/gt/ge or invent TypeError; resolve both "
-                "operands' runtime types from source before constructing"
-            ),
+            observed=observed,
+            requested=requested,
+            fix=fix,
+        )
+
+    def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):
+        """Backward-compatible name: refuse ordering meaning (always throws)."""
+        self._refuse_ordering_meaning(
+            other, site, owner=owner, operator=operator
         )
 
     def less_than_from_left(self, left, site):
-        """Default RHS law for ``left < self`` — ordinary comparison atom.
+        """Default RHS law for ``left < self`` — never invents FOL meaning.
 
-        Overrides (GuardedValue, NamedExpressionValue, …) replace this door.
-        Does not call ``left.less_than(self)`` (that would recurse).
-
-        Both operand types must be source-decided before the atom is emitted.
-        Undecided pairs throw named via :meth:`_undecided_ordering_law`.
+        Overrides (TermValue, StringValue, GuardedValue, NamedExpressionValue, …)
+        construct Sugar or distribute. Does not call ``left.less_than(self)``.
         """
-        left._undecided_ordering_law(
+        left._refuse_ordering_meaning(
             self, site, owner="FloorValue.less_than_from_left", operator="<"
-        )
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(
-                resolve_comparison_atom("lt", left, self, owner=str(site)),
-                site,
-                operand_callsites=(*left.callsites(), *self.callsites()),
-            )
         )
 
     def less_equal(self, other, site):
-        self._undecided_ordering_law(
+        self._refuse_ordering_meaning(
             other, site, owner="FloorValue.less_equal", operator="<="
-        )
-        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(
-                resolve_comparison_atom("le", self, other, owner=str(site)),
-                site,
-                operand_callsites=(*self.callsites(), *other.callsites()),
-            )
         )
 
     def greater_than(self, other, site):
-        self._undecided_ordering_law(
+        self._refuse_ordering_meaning(
             other, site, owner="FloorValue.greater_than", operator=">"
-        )
-        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(
-                resolve_comparison_atom("gt", self, other, owner=str(site)),
-                site,
-                operand_callsites=(*self.callsites(), *other.callsites()),
-            )
         )
 
     def greater_equal(self, other, site):
-        self._undecided_ordering_law(
+        self._refuse_ordering_meaning(
             other, site, owner="FloorValue.greater_equal", operator=">="
-        )
-        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(
-                resolve_comparison_atom("ge", self, other, owner=str(site)),
-                site,
-                operand_callsites=(*self.callsites(), *other.callsites()),
-            )
         )
 
     def denotes_value(self) -> bool:
