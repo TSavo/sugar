@@ -7251,10 +7251,7 @@ class With(Statement):
                 site=self.fragment,
             )
 
-        # Named SourceTreePanic from the narrow CM door is honorable unfinished
-        # work. Soft dual-mode used to catch Exception and substitute
-        # SoftUnresolvedWithSugar — UNDECIDED rendered as incomplete. Let the
-        # throw propagate; a None return remains the only "not this arm" signal.
+        # SourceTreePanic from the door propagates — no Exception swallow.
         resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
             from sugar_lift_py_tests.context_manager_contract import (
@@ -7762,10 +7759,7 @@ class With(Statement):
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
                 return None
-            # Soft dual-mode used to catch Exception around the narrow CM door
-            # and treat SourceTreePanic as resolved_ref=None — a named refusal
-            # rendered as "not an effect boundary" (False). Let the throw rise;
-            # None from the door itself remains the only undecided-absent arm.
+            # SourceTreePanic from the door propagates — no Exception swallow.
             resolved_ref = None
             if self._generator_manager_frame(item) is None:
                 resolved_ref = self._require_narrow_cm_ref(item)

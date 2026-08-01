@@ -2147,11 +2147,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     fn = _tree.find_function_by_name(sf, name)
                     if fn is None:
                         continue
-                    # function_contract_rows may raise SugarNotWritten /
-                    # ConstructionPanic for unfinished body sugar. That throw is
-                    # honorable. Catching Exception and continuing manufactured
-                    # absence in targetCandidates (candidateCount undercount with
-                    # no named refusal). Let the throw propagate to the RPC edge.
+                    # No except/continue. Throws from unfinished body sugar rise.
                     def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     if rows is None:
                         continue

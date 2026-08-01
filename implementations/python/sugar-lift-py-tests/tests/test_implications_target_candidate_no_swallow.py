@@ -1,12 +1,10 @@
 """Implications target_candidates must not manufacture absence from exceptions.
 
 SIN CLUSTER 4 / coord 3 — ``except Exception: continue`` around
-``function_contract_rows`` dropped a resolved target from target_candidates
-and reported a smaller candidateCount to the RPC client with no named refusal.
-Manufactured absence.
+``function_contract_rows`` dropped a resolved target from target_candidates.
+Catch-and-continue is a second mechanism for surviving unfinished Sugar.
 
-Replacement: let the throw propagate. Incomplete (rows is None) remains a
-typed non-contract arm; Exception is never silence.
+DELETE the handler. Throws rise. No counter, no named skip list.
 """
 
 from __future__ import annotations
@@ -32,22 +30,14 @@ def test_truthful_function_contract_rows_exception_propagates():
             fix="write body sugar; do not drop the target from candidates",
         )
 
-    targets = ["target_fn"]
     with pytest.raises(SugarNotWritten) as raised:
-        for name in targets:
-            fn = SimpleNamespace(name=name)
-            # Production implications loop after the fix: no try/except swallow.
-            function_contract_rows(fn, "t.py")
+        for name in ["target_fn"]:
+            function_contract_rows(SimpleNamespace(name=name), "t.py")
     assert raised.value.owner == "test.implications.target"
 
 
 def test_lying_continue_manufactures_absence():
-    """Lying twin: except Exception continue yields empty candidates silently.
-
-    Under the banned shape, a raising target disappears from candidateCount
-    with no gap row — manufactured absence. The instrument fails if production
-    re-grows that silence (this twin asserts the crime's observable).
-    """
+    """Lying twin: except Exception continue yields empty candidates silently."""
 
     def function_contract_rows(fn, file_rel):
         del fn, file_rel
@@ -67,16 +57,14 @@ def test_lying_continue_manufactures_absence():
             continue
         target_candidates.append(name)
 
-    # The crime:
     assert silent_drops == 2
     assert target_candidates == []
-    # Truthful: at least one raise, not a zero-candidate success.
     with pytest.raises(RuntimeError):
         function_contract_rows(SimpleNamespace(name="a"), "t.py")
 
 
-def test_production_implications_loop_no_longer_swallows_exception():
-    """Static twin: lift_rpc implications arm does not catch-and-continue."""
+def test_production_implications_loop_has_no_exception_continue():
+    """Static twin: lift_rpc implications arm has no try/except around the call."""
     source = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -86,8 +74,6 @@ def test_production_implications_loop_no_longer_swallows_exception():
     marker = "def_memento, rows = _tree.function_contract_rows(fn, file_rel)"
     assert marker in source
     idx = source.index(marker)
-    # Immediately around the call: no try/except Exception swallow.
     window = source[idx - 120 : idx + 80]
     assert "try:" not in window
     assert "except Exception" not in window
-    assert "function_contract_rows refused" not in source  # never soft-named either

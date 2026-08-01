@@ -79,7 +79,7 @@ from .backend import (
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import backend_defect, vocabulary_missing
+from .panic import vocabulary_missing
 from .spans import Span
 
 ParsoNode = object  # parso.tree.NodeOrLeaf, kept untyped at the boundary
@@ -365,18 +365,9 @@ def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> Backen
     text = "".join(
         unit.source[_span(unit, p).start : _span(unit, p).end] for p in pieces
     )
-    try:
-        value = _pyast.literal_eval(text)
-    except Exception as exc:
-        # A decode we could not perform must not become Constant.value. Raw
-        # source text is not a literal value — refuse by name with blame.
-        backend_defect(
-            blame=pieces[0],
-            owner="parso_adapter._join_string_pieces",
-            observed=f"literal_eval failed ({type(exc).__name__}: {exc}); text={text!r}",
-            requested="a successfully decoded Python string-literal value",
-            fix="fix the adapter decode or the backend leaf text; never substitute raw source as Constant.value",
-        )
+    # Decode or throw. Never substitute raw source as Constant.value — that is
+    # meaning produced outside Sugar (LAW_OF_ONE).
+    value = _pyast.literal_eval(text)
     return _fixed_constant(span, value)
 
 
@@ -402,21 +393,8 @@ def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     if node.type == "string":
         import ast as _pyast
 
-        try:
-            value = _pyast.literal_eval(text)
-        except Exception as exc:
-            # Parse failure is not a value. Downstream trusts Constant.value;
-            # substituting raw source text launders an adapter defect into data.
-            backend_defect(
-                blame=node,
-                owner="parso_adapter._constant_leaf",
-                observed=(
-                    f"literal_eval failed ({type(exc).__name__}: {exc}); "
-                    f"text={text!r}"
-                ),
-                requested="a successfully decoded Python string-literal value",
-                fix="fix the adapter decode or the backend leaf text; never substitute raw source as Constant.value",
-            )
+        # Decode or throw. Never substitute raw source as Constant.value.
+        value = _pyast.literal_eval(text)
         return _fixed_constant(span, value)
     if node.type == "keyword" and node.value in ("None", "True", "False"):
         value = {"None": None, "True": True, "False": False}[node.value]

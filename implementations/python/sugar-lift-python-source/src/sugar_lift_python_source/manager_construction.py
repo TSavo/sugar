@@ -973,37 +973,6 @@ class ManagerConstructionGapV1:
     detail: str
 
 
-def _content_cids_for_factory_prefix(
-    factory_prefix: tuple[FloorValue, ...],
-    *,
-    resolved_cid: str,
-) -> tuple[str, ...] | ManagerConstructionGapV1:
-    """Mint content CIDs for every factory-prefix face — or refuse by name.
-
-    ``factoryPrefixCids`` is sealed inside the manager-construction preimage.
-    Projection is therefore a transaction: every face mints a CID, or the door
-    returns a named residual. Catching ``ConstructionPanic`` and sealing only
-    the survivors would silently mutate identity (structurally different
-    factories could share a construction CID). Silence is not zero.
-    """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
-    cids: list[str] = []
-    for item in factory_prefix:
-        try:
-            cids.append(_term_content_cid(item.to_term(owner=resolved_cid)))
-        except ConstructionPanic as panic:
-            info = getattr(panic, "info", None)
-            owner = getattr(info, "owner", None) or type(item).__name__
-            observed = getattr(info, "observed", None) or str(panic)
-            return ManagerConstructionGapV1(
-                "force-floor",
-                resolved_cid,
-                f"factory-prefix:{type(item).__name__}:{owner}:{observed}",
-            )
-    return tuple(cids)
-
-
 def _factory_return_faces_from_entries(
     entries: tuple,
 ) -> tuple[FloorValue, ...]:
@@ -1680,15 +1649,12 @@ def construct_manager_behavior(
         if helper_fields:
             result = result.with_deferred_helper_fields()
     bindings = frame.runtime_entries
-    # factoryPrefixCids is inside the construction CID preimage. Every prefix
-    # face projects or the door refuses by name — never drop a panic and seal
-    # a shorter survivor list (that mutates identity).
-    sealed_prefix = _content_cids_for_factory_prefix(
-        factory_prefix, resolved_cid=resolved.cid
+    # factoryPrefixCids is inside the construction CID preimage. Project every
+    # face; ConstructionPanic propagates. No catch, no survivor list, no second
+    # mechanism — if a face has no term, the door panics. That is the point.
+    prefix_cids = tuple(
+        _term_content_cid(item.to_term(owner=resolved.cid)) for item in factory_prefix
     )
-    if isinstance(sealed_prefix, ManagerConstructionGapV1):
-        return sealed_prefix
-    prefix_cids = sealed_prefix
     preimage = {
         "kind": "constructed-manager-behavior",
         "schemaVersion": "1",
