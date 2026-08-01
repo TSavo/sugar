@@ -1573,26 +1573,17 @@ def _decorator_contract_witnesses(
             if not isinstance(keyword.value.value, str):
                 continue
             text = keyword.value.value
-            try:
-                from sugar_lift_py_tests.canonicalizer import encode_jcs
-                from sugar_lift_py_tests.contract_expression import (
-                    parse_contract_expression,
-                )
-                from sugar_lift_py_tests.ir import formula_to_value
+            # No except/continue. Invalid decorator contract text must throw —
+            # soft diagnostics here manufactured absence of the obligation.
+            from sugar_lift_py_tests.canonicalizer import encode_jcs
+            from sugar_lift_py_tests.contract_expression import (
+                parse_contract_expression,
+            )
+            from sugar_lift_py_tests.ir import formula_to_value
 
-                names = [*param_names, "out"] if role == "post" else param_names
-                formula = parse_contract_expression(text, names)
-                predicate = json.loads(encode_jcs(formula_to_value(formula)))
-            except Exception as exc:
-                diagnostics.append(
-                    {
-                        "kind": "decorator-contract-invalid",
-                        "message": str(exc),
-                        "path": rel_path,
-                        "line": getattr(decorator, "lineno", node.lineno),
-                    }
-                )
-                continue
+            names = [*param_names, "out"] if role == "post" else param_names
+            formula = parse_contract_expression(text, names)
+            predicate = json.loads(encode_jcs(formula_to_value(formula)))
             witnesses.append(
                 {
                     "confidence_basis_points": 10000,

@@ -134,13 +134,11 @@ def run_throughput(backend_name: str, root: Path, limit: Optional[int]) -> None:
     constructed = 0
     nodes = 0
     for identity in identities:
-        try:
-            file = SourceFile(identity, backend=tree.backend)
-            for _n in file.nodes():
-                nodes += 1
-            constructed += 1
-        except Exception:
-            continue
+        # No except/continue. A bad SourceFile is unfinished work — throw.
+        file = SourceFile(identity, backend=tree.backend)
+        for _n in file.nodes():
+            nodes += 1
+        constructed += 1
     dt = time.perf_counter() - t0
     load_end = _load1()
 

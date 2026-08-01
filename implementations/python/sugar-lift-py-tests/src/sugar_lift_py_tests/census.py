@@ -122,6 +122,13 @@ def census(root: Path) -> int:
 
         # Sole ConstructionPanic membrane: audit_only.collect_construction_panic.
         # No local ``except ConstructionPanic`` soft continue (panic-catch law).
+        #
+        # PERMANENT MEMBRANE (open domain — not a drain residual to green-fake):
+        # Multi-file corpus census over unknown third-party sources. Python's
+        # except surface is open; one file's bare Exception must become a DEFECT
+        # row so the rest of the corpus is still measured. Advisor ruled
+        # swallowed-throw an honest permanent membrane class for this reason.
+        # Product construction paths must NOT copy this pattern.
         try:
             _, panic_row = collect_construction_panic(rel, _measure_file)
         except Exception as e:  # a crash is a DEFECT row, never silence
