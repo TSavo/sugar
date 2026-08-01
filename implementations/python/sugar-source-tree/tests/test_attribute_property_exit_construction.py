@@ -65,7 +65,6 @@ def test_source_property_getter_publishes_authenticated_exceptional_exit(
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "ValueError"
     assert effect.exception_type_coordinate is not None
-    assert effect.occurrence_id is not None
     assert effect.producer_node_owner == "Attribute"
 
 
@@ -92,7 +91,6 @@ def test_property_getter_raise_keeps_imported_bare_exception_coordinate(
     assert isinstance(halted.effect, RaiseEffect)
     assert halted.effect.exception_name == "CustomError"
     assert halted.effect.exception_type_coordinate is not None
-    assert halted.effect.occurrence_id is not None
 
 
 def test_source_property_getter_that_returns_completes_without_a_raise(
@@ -167,5 +165,4 @@ def test_pandas_303_abstract_method_property_is_the_concrete_reproducer() -> Non
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "AbstractMethodError"
     assert effect.exception_type_coordinate is not None
-    assert effect.occurrence_id is not None
     assert effect.producer_node_owner == "Attribute"

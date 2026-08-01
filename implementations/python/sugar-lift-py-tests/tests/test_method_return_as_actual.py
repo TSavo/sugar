@@ -395,7 +395,6 @@ def test_method_returning_raise_propagates_named_exceptional_edge() -> None:
     assert isinstance(halted, Halted), halted
     assert halted.effect.exception_name == "ValueError"
     assert halted.effect.exception_type_coordinate == _identity("ValueError")
-    assert halted.effect.occurrence_id is not None
 
 
 def test_discrimination_completed_return_is_not_valueerror_halt() -> None:

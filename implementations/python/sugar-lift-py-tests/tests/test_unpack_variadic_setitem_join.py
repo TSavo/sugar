@@ -209,7 +209,6 @@ def test_variadic_store_halt_preserves_earlier_name_binding_state() -> None:
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.effect.occurrence_id is not None
     assert halted.state is not None
     assert pending.pre_effect_state.state is halted.state
     assert not isinstance(getattr(halted, "value", None), UniverseValue)

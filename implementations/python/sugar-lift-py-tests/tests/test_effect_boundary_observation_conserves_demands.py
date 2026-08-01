@@ -98,12 +98,7 @@ def _raise_effect(name: str):
             "builtins"
         ), __import__("sugar_lift_py_tests.ir", fromlist=["str_const"]).str_const(name)],
     )
-    return RaiseEffect(
-        exception_name=name,
-        blame=f"{SRC}:3:8",
-        exception_type_coordinate=identity,
-        exception_type_mro=(identity,),
-    )
+    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(f'{SRC}:3:8'), exception_name=name, blame=f'{SRC}:3:8', exception_type_coordinate=identity, exception_type_mro=(identity,))
 
 
 class _AlwaysMatches:

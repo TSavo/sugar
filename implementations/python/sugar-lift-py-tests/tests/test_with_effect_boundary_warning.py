@@ -267,12 +267,7 @@ def _raise_with_entries(*entries):
         (
             Halted(
                 true_guard(),
-                RaiseEffect(
-                    exception_name="TypeError",
-                    exception_type_coordinate=type_identity,
-                    occurrence="body.py:3:4",
-                    raised_value=raised_value,
-                ),
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:3:4'), exception_name='TypeError', exception_type_coordinate=type_identity, raised_value=raised_value),
                 state,
             ),
         )
@@ -449,12 +444,7 @@ def _raise_after_warning(*, warning_message="deprecated operand"):
         (
             Halted(
                 true_guard(),
-                RaiseEffect(
-                    exception_name="TypeError",
-                    exception_type_coordinate=type_identity,
-                    occurrence="renamed.py:6:8",
-                    raised_value=raised_value,
-                ),
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('renamed.py:6:8'), exception_name='TypeError', exception_type_coordinate=type_identity, raised_value=raised_value),
                 state,
             ),
         )

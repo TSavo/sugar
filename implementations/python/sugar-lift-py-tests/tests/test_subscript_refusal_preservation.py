@@ -65,7 +65,7 @@ def test_partitioned_subscript_preserves_original_typed_refusal(tmp_path, monkey
         (
             Halted(
                 complement_guard(guard),
-                RaiseEffect(exception_name="RuntimeError", occurrence=str(site)),
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(site)), exception_name='RuntimeError'),
             ),
             Completed(guard, _RefusingValue(refusal)),
         )
@@ -89,7 +89,7 @@ def test_partitioned_subscript_truth_keeps_value_and_halt_faces(tmp_path, monkey
         (
             Halted(
                 complement_guard(guard),
-                RaiseEffect(exception_name="RuntimeError", occurrence=str(site)),
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(site)), exception_name='RuntimeError'),
             ),
             Completed(
                 guard,

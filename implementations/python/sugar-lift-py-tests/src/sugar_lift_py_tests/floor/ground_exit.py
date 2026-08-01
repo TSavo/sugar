@@ -107,13 +107,19 @@ def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=N
     source_sha256 = (
         hashlib.sha256(source.encode()).hexdigest() if source is not None else None
     )
+    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+        AuthenticatedRaiseLocus,
+    )
+
     blame = str(site)
     type_coordinate, type_mro = _builtin_exception_identity(exception_name)
+    # ONE door for ground locus: site seal becomes AuthenticatedRaiseLocus.
+    # Empty/None cannot pass AuthenticatedRaiseLocus.of.
     return RaiseEffect(
+        occurrence=AuthenticatedRaiseLocus.of(blame),
         exception_name=exception_name,
         blame=blame,
         source_sha256=source_sha256,
-        occurrence=blame,
         exception_type_coordinate=type_coordinate,
         exception_type_mro=type_mro,
         raised_value=raised_value,

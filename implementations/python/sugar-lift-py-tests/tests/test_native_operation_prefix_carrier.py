@@ -89,7 +89,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     first_obligation = _Pending("first", (_Demand("first-demand"),))
     second_obligation = _Pending("second", (_Demand("second-demand"),))
     stopped_state = object()
-    stopped_effect = RaiseEffect(blame="prefix-halt", occurrence="prefix-halt")
+    stopped_effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('prefix-halt'), blame='prefix-halt')
     prefix = ExitSet(
         (
             Completed(

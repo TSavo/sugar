@@ -433,7 +433,7 @@ def test_guard_halt_retains_exact_pre_halt_formal_floors() -> None:
     floor = TrueBoolLiteralSugar(site=param.fragment)
     machine = _machine(entry=entry, floor=floor)
     halted = machine.throw(
-        RaiseEffect(exception_name="HaltProbe", occurrence="guard:halt")
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('guard:halt'), exception_name='HaltProbe')
     )
     assert isinstance(halted, ExitSet)
     for exit_ in halted.exits:

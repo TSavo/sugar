@@ -80,7 +80,7 @@ def test_every_face_of_a_partition_carries_the_demand() -> None:
             Completed(ctor("g_true", []), TermValue(7), (), ()),
             Halted(
                 ctor("g_false", []),
-                RaiseEffect(exception_name="ValueError", blame=BLAME),
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(BLAME), exception_name='ValueError', blame=BLAME),
                 None,
                 (),
                 (),

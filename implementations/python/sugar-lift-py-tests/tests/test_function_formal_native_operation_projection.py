@@ -73,7 +73,6 @@ def test_ordinary_function_call_discharge_can_halt_with_named_identity() -> None
     )
     assert halted.effect.exception_type_coordinate == type_error
     assert halted.effect.exception_name == "TypeError"
-    assert halted.effect.occurrence_id is not None
 
 
 def test_swapped_actuals_retain_the_operation_coordinate() -> None:

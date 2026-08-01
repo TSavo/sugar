@@ -345,7 +345,6 @@ def test_bare_reraise_at_inner_level_preserves_inner_occurrences_with_outer_resi
     by_name = {leaf.exception_name: leaf for leaf in leaves}
     for ctor_name, line in lines_by_ctor.items():
         leaf = by_name[ctor_name]
-        assert leaf.occurrence is not None
         assert leaf.occurrence.startswith(f"{name}:{line}:"), (
             f"{ctor_name} occurrence {leaf.occurrence!r} must be the sealed "
             f"raise site at {name}:{line}, not a reminted residual site"

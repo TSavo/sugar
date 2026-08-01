@@ -108,7 +108,6 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
         [str_const("builtins"), str_const("AttributeError")],
     )
     assert halted.exits[0].effect.exception_type_coordinate == attribute_error
-    assert halted.exits[0].effect.occurrence_id is not None
 
 
 def test_undecidable_attribute_actual_remains_named_loud() -> None:

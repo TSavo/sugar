@@ -278,11 +278,7 @@ def _publish_undecided_dispatch_edges(
     halted_face, completed_face = partition(
         partition_key_for_law(law, site, op_kind)
     )
-    effect = RaiseEffect(
-        blame=str(site),
-        occurrence=str(site),
-        producer_node_owner="Compare",
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(str(site)), blame=str(site), producer_node_owner='Compare')
     return ExitSet(
         (
             Halted(dispatch_raises, effect, faces=frozenset({halted_face})),

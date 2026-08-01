@@ -30,12 +30,10 @@ def _expression(expression: str):
 def _raise_occurrence(outcome) -> str:
     if isinstance(outcome, Complete):
         assert isinstance(outcome.value, RaiseValue)
-        assert outcome.value.effect.occurrence_id is not None
         return outcome.value.effect.occurrence_id
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
-    assert halted[0].effect.occurrence_id is not None
     return halted[0].effect.occurrence_id
 
 

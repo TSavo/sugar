@@ -62,7 +62,7 @@ def test_source_return_projection_selects_one_unconditional_returned_floor() -> 
         BlockValue(
             (
                 ReturnValue(TermValue("returned")),
-                RaiseValue(RaiseEffect(exception_name="RuntimeError")),
+                RaiseValue(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-python-source/tests/test_metaclass_block_publication.py:91:0'), exception_name='RuntimeError')),
             ),
             can_fall_through=False,
         ),
@@ -88,7 +88,7 @@ def test_source_return_projection_preserves_ambiguous_control_flow(ambiguous) ->
     (
         BlockValue((TermValue("foreign"),)),
         BlockValue(
-            (RaiseValue(RaiseEffect(exception_name="RuntimeError")),),
+            (RaiseValue(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-python-source/tests/test_metaclass_block_publication.py:65:0'), exception_name='RuntimeError')),),
             can_fall_through=False,
         ),
     ),

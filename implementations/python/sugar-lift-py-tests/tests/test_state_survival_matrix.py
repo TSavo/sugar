@@ -149,7 +149,6 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
     assert isinstance(halted, Halted)
     assert halted.state is pending.pre_effect_state.state
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.effect.occurrence_id is not None
     return pending, halted
 
 
@@ -352,13 +351,7 @@ def test_c_assertion_observation_binds_real_occurrence_effect() -> None:
 def test_c_wrong_occurrence_observation_refuses_twin() -> None:
     """Bite: binding must not claim a foreign occurrence / effect object."""
     _, halted = _unpack_store_halt()
-    foreign = RaiseEffect(
-        exception_name="IndexError",
-        blame="foreign.py:1:0",
-        occurrence="foreign.py:1:0",
-        exception_type_coordinate=_identity("IndexError"),
-        exception_type_mro=(_identity("IndexError"),),
-    )
+    foreign = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('foreign.py:1:0'), exception_name='IndexError', blame='foreign.py:1:0', exception_type_coordinate=_identity('IndexError'), exception_type_mro=(_identity('IndexError'),))
     routed = _assertion_boundary(
         ExitSet((halted,)),
         expected=_Expected("IndexError"),

@@ -84,14 +84,14 @@ def _source_call_partition(result_coordinate: str = "py.listcomp"):
         (
             Halted(
                 left_guard,
-                RaiseEffect("TypeError", occurrence="source.py:3:8"),
+                RaiseEffect('TypeError', occurrence=AuthenticatedRaiseLocus.of('source.py:3:8')),
                 TermValue(11),
                 frozenset({left_face}),
                 (_Pending("pending:left"),),
             ),
             Halted(
                 right_guard,
-                RaiseEffect("ValueError", occurrence="source.py:5:8"),
+                RaiseEffect('ValueError', occurrence=AuthenticatedRaiseLocus.of('source.py:5:8')),
                 TermValue(22),
                 frozenset({right_face}),
                 (_Pending("pending:right"),),
