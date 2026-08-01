@@ -269,27 +269,29 @@ def _cite_builtin_name_vendor_gates(repo: Path) -> Citation:
         sys.path.insert(0, str(repo / "implementations/python/sugar-lift-py-tests/src"))
         from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (  # type: ignore
             collect_builtin_closed_operation_report,
+            production_python_scan_roots,
         )
 
-        roots = [
-            repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
-            repo / "implementations/python/sugar-source-tree/src",
-            repo / "implementations/python/sugar-lift-python-source/src",
-        ]
+        roots = production_python_scan_roots(repo)
         report = collect_builtin_closed_operation_report(roots)
-        counts = report.counts() if hasattr(report, "counts") else {}
-        # Prefer name_or_vendor_gates axis if present; else total offenders
-        if isinstance(counts, dict) and "name_or_vendor_gates" in counts:
-            r = int(counts["name_or_vendor_gates"])
-            detail = {"by_axis": counts, "source": "builtin_closed_operation_instrument.collect"}
-        else:
-            r = len(report.offenders)
-            by: dict[str, int] = {}
-            for o in report.offenders:
-                ax = getattr(o, "axis", "unknown")
-                by[ax] = by.get(ax, 0) + 1
-            r = by.get("name_or_vendor_gates", r)
-            detail = {"by_axis": by, "source": "builtin_closed_operation_instrument.collect"}
+        by: dict[str, int] = {}
+        by_kind: dict[str, int] = {}
+        for o in report.offenders:
+            ax = getattr(o, "axis", "unknown")
+            by[ax] = by.get(ax, 0) + 1
+            k = getattr(o, "kind", "unclassified")
+            by_kind[k] = by_kind.get(k, 0) + 1
+        # Climb residual only — permanent membranes are separate axes (partition doc).
+        r = int(by.get("name_or_vendor_gates", 0))
+        detail = {
+            "by_axis": by,
+            "by_kind": by_kind,
+            "source": "builtin_closed_operation_instrument.collect multi-root",
+            "partition": "docs/spelling-dispatch-partition.md",
+            "membrane_open_lexical_ast_id": by.get("open_lexical_ast_id", 0),
+            "membrane_open_lexical_attr_name": by.get("open_lexical_attr_name", 0),
+            "fabrication_denylist_axis": by.get("exception_name_fabrication_denylist", 0),
+        }
         return Citation("product", "builtin_name_or_vendor_gates", rel, r, detail)
     except Exception as exc:  # noqa: BLE001
         return Citation("product", "builtin_name_or_vendor_gates", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
@@ -321,8 +323,16 @@ MEMBRANE_HONEST = (
     {
         "face": "spelling_unauth_dispatch",
         "stance": "membrane",
-        "owner_axis": "builtin_name_or_vendor_gates + enumeration_binding_soft_skip",
-        "why": "Open grammar/vendor spelling; type cannot close ast.Compare on display text.",
+        "owner_axis": (
+            "builtin_name_or_vendor_gates (climb residual) + "
+            "open_lexical_ast_id + open_lexical_attr_name (permanent) + "
+            "enumeration_binding_soft_skip; see docs/spelling-dispatch-partition.md"
+        ),
+        "why": (
+            "Open grammar/vendor Name.id and attr.name projection; type cannot close "
+            "ast.Compare on display text. Climb residual is vendor-CM / type-identity "
+            "only; lexical membranes are permanent under current ontology."
+        ),
     },
     {
         "face": "swallowed_throws_soft_handlers",

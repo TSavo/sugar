@@ -390,3 +390,41 @@ def test_instrument_does_not_scan_idd_or_plant_self(tmp_path: Path) -> None:
     )
     report = collect_builtin_closed_operation_report(tmp_path)
     assert report.offenders == ()
+
+
+def test_partition_does_not_count_lexical_attr_name_as_identity_gate(tmp_path: Path) -> None:
+    """field.name == name is open-domain membrane, not name_or_vendor_gates."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "object_value.py",
+        "def attribute(self, name):\n"
+        "    for field in self.fields:\n"
+        "        if field.name == name:\n"
+        "            return field.value\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] == 0
+    assert report.r["open_lexical_attr_name"] >= 1
+
+
+def test_partition_func_id_string_is_open_lexical_not_type_identity(tmp_path: Path) -> None:
+    """func.id == \"range\" is permanent open-domain membrane."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "nodes.py",
+        "def _concrete(iterable):\n"
+        "    if iterable.func.id == \"range\":\n"
+        "        return True\n"
+        "    return False\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    assert report.r["name_or_vendor_gates"] == 0
+    assert report.r["open_lexical_ast_id"] >= 1
