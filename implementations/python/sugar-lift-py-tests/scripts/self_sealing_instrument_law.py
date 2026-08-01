@@ -14,8 +14,8 @@ DEFINITION
     1. SYNTHESIZED-EVIDENCE
        The checker invents the population or site it later asserts is non-empty
        / present. Canonical shape: ``if not observed: observed = [self/__file__/
-       this auditor]``. Worked exemplar: ``tests/law_of_one_auditor.py`` inserting
-       ``audit_law_of_one`` as a projection caller when the graph has none, then
+       this auditor]``. Worked exemplar: ``tests/sourcefile_construction_door_auditor.py`` inserting
+       ``audit_sourcefile_construction_door`` as a projection caller when the graph has none, then
        ``assert projection_calls``.
 
     2. TAUTOLOGICAL-ASSERT
@@ -38,7 +38,7 @@ ENFORCEMENT LADDER
     - Type system: cannot forbid optional fields being non-None with the wrong
       value, nor forbid a test author from writing ``if not xs: xs = [...]``.
     - Construction door: production evidence types can seal minting (see
-      LawOfOneEvidence), but the *test/auditor* surface that fabricates callers
+      SourceFileConstructionDoorEvidence), but the *test/auditor* surface that fabricates callers
       is open Python.
     - Panic at contact: a green test never runs production contact on the lie.
 
@@ -165,7 +165,7 @@ def _mentions_self_or_file(node: ast.AST) -> bool:
         if isinstance(child, ast.Attribute) and child.attr in _SELF_NAME_MARKERS:
             return True
         if isinstance(child, ast.Constant) and isinstance(child.value, str):
-            # EvidenceSite(..., audit_law_of_one.__name__) etc. still needs Call.
+            # EvidenceSite(..., audit_sourcefile_construction_door.__name__) etc. still needs Call.
             pass
         if isinstance(child, ast.Call):
             func = child.func

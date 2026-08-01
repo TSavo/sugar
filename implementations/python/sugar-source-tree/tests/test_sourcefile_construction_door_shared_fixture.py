@@ -1,13 +1,13 @@
-"""Consumer proof for the explicitly injected shared LAW_OF_ONE evidence."""
+"""Consumer proof for the explicitly injected shared SOURCEFILE_CONSTRUCTION_DOOR evidence."""
 
 import ast
 from pathlib import Path
 
 import pytest
 
-from law_of_one_evidence import LawOfOneEvidence, assert_test_owned_evidence
-from law_of_one_fixture import law_of_one_evidence
-from law_of_one_symbol_graph import SymbolGraph
+from sourcefile_construction_door_evidence import SourceFileConstructionDoorEvidence, assert_test_owned_evidence
+from sourcefile_construction_door_fixture import sourcefile_construction_door_evidence
+from sourcefile_construction_door_symbol_graph import SymbolGraph
 from sugar_source_tree.backend import Backend
 from sugar_source_tree.tree import SourceFile
 
@@ -43,10 +43,10 @@ def test_backend_materialize_module_is_the_canonical_event_owner() -> None:
     )
 
 
-def test_shared_law_of_one_evidence_is_typed_sealed_and_closed(
-    law_of_one_evidence: LawOfOneEvidence,
+def test_shared_sourcefile_construction_door_evidence_is_typed_sealed_and_closed(
+    sourcefile_construction_door_evidence: SourceFileConstructionDoorEvidence,
 ) -> None:
-    assert assert_test_owned_evidence(law_of_one_evidence) is law_of_one_evidence
+    assert assert_test_owned_evidence(sourcefile_construction_door_evidence) is sourcefile_construction_door_evidence
 
 
 def _graph(tmp_path: Path, sources: dict[str, str]) -> SymbolGraph:

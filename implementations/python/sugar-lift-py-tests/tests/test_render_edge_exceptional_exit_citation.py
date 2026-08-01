@@ -24,13 +24,13 @@ Authenticated bare re-raise re-emits the in-flight effect's real identity
 GATE: truthful twin cites under real evidence; lying twins (nameless face,
 fabricated-name face, missing citation) MUST FAIL.
 
-LAW_OF_ONE AUDITOR BLIND SPOT
+SOURCEFILE_CONSTRUCTION_DOOR AUDITOR BLIND SPOT
 =============================
-``tests/law_of_one_auditor.py`` + ``law_of_one_evidence.py`` audit SourceFile
+``tests/sourcefile_construction_door_auditor.py`` + ``sourcefile_construction_door_evidence.py`` audit SourceFile
 owner paths, privacy closure, projection closure, and protocol zero-work.
 They do **not** walk floor render edges, fabricated-meaning literal invention,
 or exceptional-exit FOL emission. This module owns recognition of that class.
-When the LAW_OF_ONE auditor gains a floor-render / meaning-invention axis that
+When the SOURCEFILE_CONSTRUCTION_DOOR auditor gains a floor-render / meaning-invention axis that
 names live offenders of this class, retire the blind-spot probe below.
 
 Retirement path for the production denylist
@@ -144,20 +144,20 @@ or_literal_meaning_offenders = fabricated_meaning_offenders
 
 
 # ---------------------------------------------------------------------------
-# LAW_OF_ONE auditor cannot see this sin — real probe, no tautological R pin
+# SOURCEFILE_CONSTRUCTION_DOOR auditor cannot see this sin — real probe, no tautological R pin
 # ---------------------------------------------------------------------------
 
 
-def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
-    """Probe: the product LAW_OF_ONE auditor still has no render-edge axis.
+def test_sourcefile_construction_door_auditor_cannot_see_render_edge_fabrication() -> None:
+    """Probe: the product SOURCEFILE_CONSTRUCTION_DOOR auditor still has no render-edge axis.
 
     Fails when auditor/evidence text gains the vocabulary of this class
     (exceptional_exit / reraise / RaiseValue on the evidence types) — that
     is the signal the stronger substrate arrived and this note can retire.
     There is no hard-coded R=1; the probe is the absence of those markers.
     """
-    auditor = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_auditor.py"
-    evidence = Path(__file__).resolve().parents[4] / "tests" / "law_of_one_evidence.py"
+    auditor = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_auditor.py"
+    evidence = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_evidence.py"
     assert auditor.is_file(), auditor
     assert evidence.is_file(), evidence
 
@@ -166,7 +166,7 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
 
     # Strings that would mean the auditor already owns *this* axis.
     assert "reraise" not in auditor_text, (
-        "law_of_one_auditor mentions reraise — re-check whether it now owns "
+        "sourcefile_construction_door_auditor mentions reraise — re-check whether it now owns "
         "render-edge fabrication and retire this module's blind-spot claim"
     )
     assert "exceptional_exit" not in auditor_text
