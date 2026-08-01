@@ -14,6 +14,8 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     BodyAttribution,
     BodyProbe,
     DemandTableRefusal,
+    DiscoveryDisposition,
+    NamedDemandExclusion,
     ProducerFamily,
     attribute_body_probe,
     attribute_body_probes,
@@ -504,28 +506,38 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
             }
         )
 
-    probes = discover_no_call_body_probes({"rows": rows}, package)
+    disposition = discover_no_call_body_probes({"rows": rows}, package)
+    assert isinstance(disposition, DiscoveryDisposition)
+    probes = disposition.probes
 
     assert [(probe.family, probe.body_id) for probe in probes] == [
         (ProducerFamily.BINOP, "binop_body.py:3:BinOp"),
         (ProducerFamily.SUBSCRIPT, "subscript_body.py:3:Subscript"),
     ]
-    # Call root is a named exclusion — never a silent continue that half-writes
-    # "this demand did not exist".
-    exclusions = discover_no_call_body_probes.last_named_exclusions
+    # Call root is a named exclusion on the disposition object — never a
+    # function-attribute side channel and never a silent continue.
     assert any(
-        "root-outside-selected-families" in row and "root=Call" in row
-        for row in exclusions
+        exclusion.reason == "root-outside-selected-families"
+        and exclusion.root == "Call"
+        for exclusion in disposition.named_exclusions
     )
 
     binop_only = discover_no_call_body_probes(
         {"rows": rows}, package, families=frozenset({ProducerFamily.BINOP})
     )
-    assert [(probe.family, probe.body_id) for probe in binop_only] == [
+    assert [(probe.family, probe.body_id) for probe in binop_only.probes] == [
         (ProducerFamily.BINOP, "binop_body.py:3:BinOp")
     ]
-    subset_exclusions = discover_no_call_body_probes.last_named_exclusions
-    assert any("root-outside-selected-families" in row for row in subset_exclusions)
+    # Family filter is a post-recognition disposition (not root-outside).
+    assert any(
+        exclusion.reason == "family-filter" and exclusion.family == "Subscript"
+        for exclusion in binop_only.named_exclusions
+    )
+    assert any(
+        exclusion.reason == "root-outside-selected-families"
+        and exclusion.root == "Call"
+        for exclusion in binop_only.named_exclusions
+    )
 
 
 def test_population_selection_never_reads_manager_target_symbol() -> None:
@@ -598,7 +610,7 @@ def test_discovery_projects_one_family_through_one_typed_construction_per_source
     monkeypatch.setattr(SourceFile, "nodes", refuse_second_traversal)
     probes = discover_no_call_body_probes(
         {"rows": rows}, package, families=frozenset({ProducerFamily.ATTRIBUTE})
-    )
+    ).probes
 
     assert [probe.body_id for probe in probes] == ["attribute_body.py:3:Attribute"]
     assert constructed_source_cids == [rows[0]["useSite"]["sourceCid"], subscript_cid]
@@ -651,7 +663,7 @@ def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -
         },
         package,
         families=frozenset({ProducerFamily.ATTRIBUTE}),
-    )
+    ).probes
 
     report = attribute_body_probes(probes)
 
@@ -682,3 +694,46 @@ def test_selected_family_denominator_remains_fixed() -> None:
 
 def test_attribute_family_denominator_is_native_root_inventory() -> None:
     assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 53
+
+def test_discovery_has_no_last_named_exclusions_side_channel() -> None:
+    """Lying twin: the side-channel shell must not reappear.
+
+    Exclusions live on DiscoveryDisposition.named_exclusions — the one door.
+    A function attribute that tests alone read was half-writing production
+    accounting: disposition that production never saw.
+    """
+    assert not hasattr(discover_no_call_body_probes, "last_named_exclusions")
+    assert discover_no_call_body_probes.__annotations__.get("return") in (
+        DiscoveryDisposition,
+        "DiscoveryDisposition",
+    )
+
+
+def test_undischarged_without_coordinates_refuses_construction() -> None:
+    """Construction door: empty coordinates on UNDISCHARGED are unwritable.
+
+    Retirement path already climbed one rung (carry coordinates). This door
+    deletes the residual shell where a future path could return UNDISCHARGED
+    with coordinates=() and re-kill the nameless-face scan.
+    """
+    with pytest.raises(AttributionInvariantError, match="dead-guard sin"):
+        BodyAttribution(
+            "pandas/example.py:1:Subscript",
+            ProducerFamily.SUBSCRIPT,
+            AttributionOutcome.UNDISCHARGED,
+            "native-operation exception identity unproven",
+            # empty coordinates — illegal
+        )
+
+
+def test_undischarged_with_none_coordinates_is_constructible() -> None:
+    """Truthful twin: (None, None) faces keep the tripwire live."""
+    body = BodyAttribution(
+        "pandas/example.py:1:Subscript",
+        ProducerFamily.SUBSCRIPT,
+        AttributionOutcome.UNDISCHARGED,
+        "native-operation exception identity unproven",
+        ((None, None),),
+    )
+    assert body.exceptional_exit_coordinates == ((None, None),)
+
