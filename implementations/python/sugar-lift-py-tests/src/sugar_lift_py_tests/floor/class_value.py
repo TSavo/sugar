@@ -108,7 +108,9 @@ class ClassValue(FloorValue):
         consulted: under builtin shadowing the same spelling can name a
         foreign type, and deciding False from that string is a wrong answer.
         """
-        from sugar_lift_py_tests.ir import _ConstStr, _Ctor
+        from sugar_lift_py_tests.floor.python_type_coordinate import (
+            authenticated_python_type_spelling,
+        )
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -116,26 +118,11 @@ class ClassValue(FloorValue):
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
-        from sugar_source_tree.panic import SugarNotWritten
 
         del type_name  # display spelling is not authority
-        if (
-            type(type_term) is not _Ctor
-            or type_term.name != "python:type"
-            or len(type_term.args) != 1
-            or type(type_term.args[0]) is not _ConstStr
-        ):
-            raise SugarNotWritten(
-                blame=str(site),
-                owner="ClassValue.python_isinstance",
-                observed=f"type_term={type(type_term).__name__!s}",
-                requested='authenticated python:type("…") coordinate',
-                fix=(
-                    "thread the type operand's coordinate; never decide "
-                    "class-object isinstance by type_name spelling"
-                ),
-            )
-        authenticated_name = type_term.args[0].value
+        authenticated_name = authenticated_python_type_spelling(
+            type_term, owner="ClassValue.python_isinstance", site=site
+        )
         if authenticated_name in {"type", "object"}:
             return Complete(TrueBoolLiteralSugar(site=site))
         if authenticated_name in _CLASS_OBJECT_DISJOINT_TYPES:

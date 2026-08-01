@@ -165,6 +165,16 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero() -> None:
         "sugar_lift_py_tests/import_binding.py",
         "sugar_lift_py_tests/floor/class_value.py",
         "sugar_lift_py_tests/floor/call_site_value.py",
+        # residual after cluster-5: floor isinstance + effect_router
+        "sugar_lift_py_tests/floor/tuple_value.py",
+        "sugar_lift_py_tests/floor/string_value.py",
+        "sugar_lift_py_tests/floor/bytes_value.py",
+        "sugar_lift_py_tests/floor/complex_value.py",
+        "sugar_lift_py_tests/floor/ellipsis_value.py",
+        "sugar_lift_py_tests/floor/term_value.py",
+        "sugar_lift_py_tests/floor/symbolic_value.py",
+        "sugar_lift_py_tests/floor/python_type_coordinate.py",
+        "sugar_lift_py_tests/effect_router.py",
     }
     hits = [
         row
@@ -174,6 +184,45 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero() -> None:
     assert hits == [], "cluster-5 production sites still gate on spelling:\n" + "\n".join(
         f"{row.path}:{row.line}: {row.observed}" for row in hits
     )
+
+
+def test_instrument_sees_type_name_eq_string_spelling_gate(tmp_path: Path) -> None:
+    """Residual shape after cluster-5: ``type_name == "str"`` must be red."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "string_value.py",
+        "def python_isinstance(type_name, type_term):\n"
+        "    return type_name == 'str'\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    gates = [row for row in report.offenders if row.axis == "name_or_vendor_gates"]
+    assert gates, "type_name == 'str' must register as name_or_vendor_gates"
+    assert any("type_name" in row.observed for row in gates)
+
+
+def test_instrument_sees_effect_router_name_equality_spelling_gate(tmp_path: Path) -> None:
+    """Planted ``observed[1] == matcher.name`` style name equality is a gate."""
+    from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
+        collect_builtin_closed_operation_report,
+    )
+
+    _write(
+        tmp_path,
+        "effect_router.py",
+        "def _matching_effect(entries, matcher):\n"
+        "    for entry in entries:\n"
+        "        name = entry.effect.exception_name\n"
+        "        if name == matcher.name:\n"
+        "            return entry\n"
+        "    return None\n",
+    )
+    report = collect_builtin_closed_operation_report(tmp_path)
+    gates = [row for row in report.offenders if row.axis == "name_or_vendor_gates"]
+    assert gates, "exception_name / matcher.name equality must be a name_or_vendor_gate"
 
 
 def test_instrument_lying_twin_name_suppress_shell_is_red(tmp_path: Path) -> None:
