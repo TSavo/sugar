@@ -561,6 +561,74 @@ rust_workspace="$repo_root/implementations/rust"
 
 log() {
   printf 'sugarbin: %s\n' "$*" >&2
+  # Receipt-side shelf exercise testimony (tools/shelf_exercise_report.py).
+  # Silence without resolveOpened is UNMEASURED; resolve without shelf events
+  # is NEVER_TOUCHED; shelf events without crimes is EXERCISED_CLEAN.
+  shelf_exercise_note_log "$*"
+}
+
+# Path of the shelf-exercise receipt for this resolve, or empty when not
+# enrolled (local ad-hoc use without GITHUB_WORKSPACE / SUGAR_SHELF_EXERCISE_RECEIPT).
+shelf_exercise_receipt_path() {
+  if [[ -n "${SUGAR_SHELF_EXERCISE_RECEIPT:-}" ]]; then
+    printf '%s\n' "$SUGAR_SHELF_EXERCISE_RECEIPT"
+    return 0
+  fi
+  if [[ -n "${GITHUB_WORKSPACE:-}" ]]; then
+    printf '%s\n' "$GITHUB_WORKSPACE/.sugar/shelf-exercise.json"
+    return 0
+  fi
+  return 1
+}
+
+shelf_exercise_open_resolve() {
+  # Positive claim: binary resolve ran. Without this, NEVER_TOUCHED cannot be
+  # distinguished from UNMEASURED (the silence-as-testimony hole).
+  local out reporter
+  out="$(shelf_exercise_receipt_path 2>/dev/null)" || return 0
+  reporter="$repo_root/tools/shelf_exercise_report.py"
+  [[ -f "$reporter" ]] || return 0
+  python3 "$reporter" open --output "$out" 2>/dev/null || true
+}
+
+shelf_exercise_note_log() {
+  local msg="$1" out reporter op outcome crime=""
+  out="$(shelf_exercise_receipt_path 2>/dev/null)" || return 0
+  reporter="$repo_root/tools/shelf_exercise_report.py"
+  [[ -f "$reporter" ]] || return 0
+  case "$msg" in
+    crime=unevictable-shelf-*|crime=private-filesystem-shelf-*|crime=cas-address-payload-mismatch*|crime=corrupt-shelf-cell*|crime=uncreatable-filesystem-shelf-*|crime=private-shared-cache-cell*)
+      op=crime
+      outcome=crime
+      crime="${msg%% *}"
+      crime="${crime#crime=}"
+      ;;
+    filesystem\ shelf\ hit*)
+      op=pull; outcome=hit ;;
+    filesystem\ shelf\ miss*)
+      op=pull; outcome=miss ;;
+    filesystem\ shelf\ already\ has\ content*)
+      op=publish; outcome=already ;;
+    published\ *\ content\ *\ to\ filesystem\ shelf*)
+      op=publish; outcome=published ;;
+    filesystem\ shelf\ publish\ raced*)
+      op=publish; outcome=raced ;;
+    filesystem\ shelf\ publication\ failed*)
+      op=publish; outcome=failed ;;
+    prebuilt\ cache\ hit*|prebuilt\ cache\ rejected*)
+      # Local stamp-keyed cache sits in front of CAS pull — still shelf path.
+      op=pull; outcome=prebuilt ;;
+    *)
+      return 0
+      ;;
+  esac
+  if [[ "$op" == crime ]]; then
+    python3 "$reporter" event --output "$out" --op crime --outcome crime \
+      --crime "$crime" --name "${bin_name:-}" 2>/dev/null || true
+  else
+    python3 "$reporter" event --output "$out" --op "$op" --outcome "$outcome" \
+      --name "${bin_name:-}" 2>/dev/null || true
+  fi
 }
 
 quote_sh() {
@@ -1804,6 +1872,9 @@ main() {
   tool_versions || return $?
   identity="$(build_identity "$stamp")"
   name="$(artifact_name "$identity")"
+  # Enroll this resolve on the shelf-exercise receipt before any shelf path.
+  # A resolve that never pulls/publishes is SHELF_NEVER_TOUCHED, not silence.
+  shelf_exercise_open_resolve
 
   candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
   if verify_artifact_manifest "$candidate" "$stamp" "$identity" "local target"; then
