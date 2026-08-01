@@ -2150,6 +2150,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # No except/continue. Throws from unfinished body sugar rise.
                     # FunctionBindingMiss is named refuse (gap above); unfinished
                     # body sugar must not be reclassified as empty candidates.
+                    # JOIN defect with sin-cluster-4: enumeration door must not
+                    # re-preserve the Exception swallow around function_contract_rows.
                     def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     if rows is None:
                         continue
