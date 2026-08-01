@@ -306,10 +306,8 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
         text = _text(unit, node)
         import ast as _pyast
 
-        try:
-            value = _pyast.literal_eval(text)
-        except Exception:
-            value = text
+        # Decode or throw. Never substitute raw source as Constant.value.
+        value = _pyast.literal_eval(text)
         return _fixed_constant(span, value)
     values: List[BackendNode] = []
     for c in node.children:
@@ -348,10 +346,8 @@ def _concatenated_string(unit: SourceUnit, node: TSNode) -> Description:
         import ast as _pyast
 
         text = "".join(_text(unit, p) for p in pieces)
-        try:
-            value = _pyast.literal_eval(text)
-        except Exception:
-            value = unit.source[span.start : span.end]
+        # Decode or throw. Never substitute raw source as Constant.value.
+        value = _pyast.literal_eval(text)
         return _fixed_constant(span, value)
     values: List[BackendNode] = []
     for p in pieces:

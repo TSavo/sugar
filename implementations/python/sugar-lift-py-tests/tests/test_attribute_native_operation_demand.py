@@ -17,22 +17,27 @@ from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
-class _ValueSugar(Sugar):
+class _ValueSugar(ConstructedTermSugar):
     def __init__(self, value):
-        self.value = value
+        object.__setattr__(self, "value", value)
+        object.__setattr__(self, "site", None)
 
     def desugar(self, ctx=None):
         del ctx
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        del owner
+        return str_const("test-value-sugar")
 
     @classmethod
     def witnesses(cls):
@@ -88,13 +93,21 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
     )
     halted = carrier.discharge({formal.coordinate_cid: NoneValue()})
 
+    from sugar_lift_py_tests.ir import ctor, str_const
+
     assert carrier.demand.operator == "attribute_named"
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
     assert completed.exits[0].value == TermValue(7)
     assert len(halted.exits) == 1
     assert isinstance(halted.exits[0], Halted)
-    assert halted.exits[0].effect.exception_type_coordinate is not None
+    # Pin the positive identity — `is not None` under an identity-promising
+    # name is a weak tooth; the named AttributeError must be the value.
+    attribute_error = ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("AttributeError")],
+    )
+    assert halted.exits[0].effect.exception_type_coordinate == attribute_error
     assert halted.exits[0].effect.occurrence_id is not None
 
 

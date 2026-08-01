@@ -278,10 +278,65 @@ def test_audit_subprocess_times_out_the_current_file_loudly(
         result.stdout,
         result.stderr,
     )
-    assert len(records) == 1
-    assert records[0].kind == "unexpected"
-    assert records[0].owner == "idd.collect_panic_audit"
-    assert records[0].blame == "numpy/slow.py"
+    # Timeout + structured population shortfall (expected unknown: no path target).
+    assert len(records) == 2
+    by_observed = {record.observed: record for record in records}
+    assert by_observed["audit-file-timeout"].kind == "unexpected"
+    assert by_observed["audit-file-timeout"].owner == "idd.collect_panic_audit"
+    assert by_observed["audit-file-timeout"].blame == "numpy/slow.py"
+    assert by_observed["never-attempted-unknown"].requested == "attempted-1-of-unknown"
+
+
+def test_audit_timeout_names_files_never_attempted(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lying twin: a timeout must not half-write that later files did not exist.
+
+    Truthful: the blamed file is named AND the unattempted remainder is counted
+    against the target's declared .py population.
+    """
+    monkeypatch.setenv("SUGAR_PANIC_AUDIT_FILE_TIMEOUT_SECS", "0.1")
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "fast.py").write_text("x = 1\n", encoding="utf-8")
+    (package / "slow.py").write_text("x = 2\n", encoding="utf-8")
+    (package / "never.py").write_text("x = 3\n", encoding="utf-8")
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json, os, time\n"
+            "with open(os.environ['SUGAR_KIT_LOG'], 'a') as handle:\n"
+            "    handle.write(json.dumps({"
+            "'stage': 'enumerate.request', "
+            "'level_name': 'facts', "
+            "'at': {'file': 'pkg/slow.py'}"
+            "}) + '\\n')\n"
+            "time.sleep(30)\n"
+        ),
+        str(package),
+    ]
+
+    result = panic_audit_module._run_subprocess(command, tmp_path)
+
+    assert result.returncode == 124
+    assert "blame=pkg/slow.py" in result.stderr
+    assert "files attempted 1 of 3" in result.stderr
+    assert "files never attempted 2" in result.stderr
+    records = panic_audit_module.extract_panic_records(
+        panic_audit_module.LiftTarget("pkg-all", package),
+        result.stdout,
+        result.stderr,
+    )
+    # Two structured records: blamed timeout + population shortfall (not prose-only).
+    assert len(records) == 2
+    by_observed = {record.observed: record for record in records}
+    assert "audit-file-timeout" in by_observed
+    assert by_observed["audit-file-timeout"].blame == "pkg/slow.py"
+    assert "never-attempted-2" in by_observed
+    assert by_observed["never-attempted-2"].requested == "attempted-1-of-3"
+    assert by_observed["never-attempted-2"].owner == "idd.collect_panic_audit"
 
 
 def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) -> None:

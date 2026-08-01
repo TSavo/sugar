@@ -108,14 +108,43 @@ def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome)
 
 
 def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
-    """Ordering law: undecided rich-method dispatch is a two-face partition."""
-    return _publish_undecided_dispatch_edges(
-        left,
-        right,
-        site,
-        op_kind,
-        outcome,
-        law=CompareLaw.ORDERING,
+    """Ordering law: never dual-edge residual FOL invent (LAW_OF_ONE).
+
+    Floor undecided doors throw named; ground doors construct Sugar or
+    authenticated RaiseValue. A residual ``Complete(PredicateValue)`` is OUR
+    fabrication second door — construction panic, not a nameless dual-edge
+    ExitSet. Equality still dual-edges via the shared helper; membership uses
+    :func:`publish_undecided_membership_edges`.
+
+    Retirement path: when no path can mint ordering PredicateValue, this
+    membrane only passes through and may shrink to ``return outcome``.
+    """
+    del left, right
+    from sugar_lift_py_tests.floor import PredicateValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    if not isinstance(outcome, Complete) or not isinstance(
+        outcome.value, PredicateValue
+    ):
+        return outcome
+
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="publish_undecided_ordering_edges",
+        blame=site,
+        observed=(
+            f"residual Complete(PredicateValue) on ordering desugar ({op_kind})"
+        ),
+        requested=(
+            "named SugarNotWritten for undecided operands, or Sugar-owned "
+            "TrueBool/FalseBool/RaiseValue for decided ground"
+        ),
+        fix=(
+            "LAW_OF_ONE: never dual-edge or sole-complete FOL invent for "
+            "ordering; construct Sugar on ground arms; throw named when "
+            "runtime types are undecided"
+        ),
     )
 
 

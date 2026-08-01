@@ -8,9 +8,9 @@ named for THIS right operand, falling to the (owner x pair) gap.
 
 Most of those pairs are not eight arms to write. When at least one operand's
 runtime TYPE is undecided, Python's own operator dispatch for the pair is
-undecided.  That is a third value: the producer publishes both possible faces,
-retaining the symbolic completion beside a source-cited exceptional edge whose
-exception identity remains undecided.
+undecided.  That is a third value: the producer throws a named refusal
+(``SugarNotWritten``) rather than completing symbolically or minting a
+nameless dual-edge halt that TypeError boundaries cannot match.
 
 The category is read from each value's own testimony (``denotes_value`` /
 ``runtime_type_is_decided``), never from a lexical type name.
@@ -34,11 +34,9 @@ from sugar_lift_py_tests.floor.set_value import SetValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
-from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, _Lambda, ctor, make_var
-from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_source_tree.panic import SugarNotWritten
 
 SITE = "undecided-binary-site"
 
@@ -68,38 +66,25 @@ def _comprehension() -> ComprehensionValue:
     )
 
 
-def _dual_edge(left, right, method: str, operator: str):
-    """Undecided native dispatch publishes both completion and halt faces."""
-    outcome = getattr(left, method)(right, SITE)
-    assert isinstance(outcome, ExitSet)
-    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
-    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
-    assert len(halted) == 1
-    assert len(completed) == 1
-    effect = halted[0].effect
-    assert isinstance(effect, RaiseEffect)
-    assert effect.producer_node_owner == "BinOp"
-    assert effect.exception_name is None
-    assert "TypeError" not in str(outcome)
-    assert "RuntimeEffect" not in str(outcome)
-    assert isinstance(completed[0].value, SymbolicValue)
-    return outcome
+def _named_refusal(left, right, method: str, operator: str):
+    """Undecided native dispatch throws named — never Complete or nameless halt."""
+    del operator
+    with pytest.raises(SugarNotWritten) as raised:
+        getattr(left, method)(right, SITE)
+    assert raised.value.owner == "binary_operation_exception_floor"
+    assert "undecided" in raised.value.observed.lower()
+    # Do not invent TypeError identity in the refusal text as a fake exit.
+    assert "TypeError" not in (raised.value.observed or "")
+    return raised.value
 
 
 def _refusal(left, right, method: str, operator: str):
-    return _dual_edge(left, right, method, operator)
+    return _named_refusal(left, right, method, operator)
 
 
-def test_undecided_native_bitwise_dispatch_publishes_both_faces() -> None:
+def test_undecided_native_bitwise_dispatch_throws_named() -> None:
     """The producer cannot choose sole ``__and__`` or sole TypeError."""
-    outcome = _symbolic().bitwise_and(TermValue(0), SITE)
-    assert isinstance(outcome, ExitSet)
-    halted = next(face for face in outcome.exits if isinstance(face, Halted))
-    completed = next(face for face in outcome.exits if isinstance(face, Completed))
-    assert isinstance(halted.effect, RaiseEffect)
-    assert halted.effect.producer_node_owner == "BinOp"
-    assert halted.effect.exception_name is None
-    assert isinstance(completed.value, SymbolicValue)
+    _named_refusal(_symbolic(), TermValue(0), "bitwise_and", "&")
 
 
 @pytest.mark.parametrize(
@@ -120,10 +105,10 @@ def test_undecided_native_bitwise_dispatch_publishes_both_faces() -> None:
         ("right_shift", ">>"),
     ),
 )
-def test_undecided_call_result_publishes_both_dispatch_faces(
+def test_undecided_call_result_throws_named_refusal(
     method: str, operator: str
 ) -> None:
-    _dual_edge(_callsite(), TermValue(2), method, operator)
+    _named_refusal(_callsite(), TermValue(2), method, operator)
 
 
 @pytest.mark.parametrize(
@@ -144,10 +129,10 @@ def test_undecided_call_result_publishes_both_dispatch_faces(
         ("right_shift", ">>"),
     ),
 )
-def test_symbolic_left_operand_publishes_both_dispatch_faces(
+def test_symbolic_left_operand_throws_named_refusal(
     method: str, operator: str
 ) -> None:
-    _dual_edge(_symbolic(), TermValue(2), method, operator)
+    _named_refusal(_symbolic(), TermValue(2), method, operator)
 
 
 def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
@@ -159,73 +144,25 @@ def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
     assert outcome.value == TermValue(3)
 
 
-def test_swapped_symbolic_operands_retain_distinct_coordinates() -> None:
-    """Ordered dispatch identity distinguishes ``a - b`` from ``b - a``."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-
+def test_swapped_symbolic_operands_both_throw_named() -> None:
+    """Both orderings refuse; neither fabricates a dual-edge partition."""
     left = SymbolicValue(make_var("left"))
     right = SymbolicValue(make_var("right"))
-    forward = left.subtract(right, SITE)
-    reverse = right.subtract(left, SITE)
-
-    forward_completed = next(
-        exit_ for exit_ in forward.exits if isinstance(exit_, Completed)
-    )
-    reverse_completed = next(
-        exit_ for exit_ in reverse.exits if isinstance(exit_, Completed)
-    )
-    forward_halted = next(exit_ for exit_ in forward.exits if isinstance(exit_, Halted))
-    reverse_halted = next(exit_ for exit_ in reverse.exits if isinstance(exit_, Halted))
-    assert forward_completed.value.term == ctor(
-        "-", [make_var("left"), make_var("right")]
-    )
-    assert reverse_completed.value.term == ctor(
-        "-", [make_var("right"), make_var("left")]
-    )
-    assert forward_halted.guard != reverse_halted.guard
+    with pytest.raises(SugarNotWritten) as forward:
+        left.subtract(right, SITE)
+    with pytest.raises(SugarNotWritten) as reverse:
+        right.subtract(left, SITE)
+    assert forward.value.owner == "binary_operation_exception_floor"
+    assert reverse.value.owner == "binary_operation_exception_floor"
+    assert " - " in forward.value.observed
+    assert " - " in reverse.value.observed
 
 
-def test_lying_exception_type_does_not_consume_binary_dispatch_halt() -> None:
-    """The boundary cannot invent an identity for an undecided binary raise."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        AuthenticatedRaiseMatcher,
-        EffectBoundaryDisposition,
-    )
-    from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.effect.expectation_not_met_effect import (
-        ExpectationNotMetEffect,
-    )
-    from sugar_lift_py_tests.ir import str_const
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import Halted
-
-    class _Expected:
-        def exception_type_identity(self):
-            return ctor(
-                "python:exception_type_identity",
-                [str_const("builtins"), str_const("ValueError")],
-            )
-
-    body = _symbolic().add(TermValue(2), SITE)
-    original = next(
-        exit_
-        for exit_ in body.exits
-        if isinstance(exit_, Halted) and isinstance(exit_.effect, RaiseEffect)
-    )
-    from sugar_source_tree.panic import SugarNotWritten
-
-    with pytest.raises(
-        SugarNotWritten,
-        match="handler or raised exception has no term to state the test over",
-    ):
-        body.and_exit(
-            ExitSet.completed(object()),
-            disposition=EffectBoundaryDisposition(
-                matcher=AuthenticatedRaiseMatcher(expected=_Expected()),
-                unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-            ),
-        )
-    assert original.effect.exception_name is None
+def test_lying_exception_type_cannot_consume_named_binary_refusal() -> None:
+    """A boundary matcher never sees a nameless halt to invent identity for."""
+    with pytest.raises(SugarNotWritten) as raised:
+        _symbolic().add(TermValue(2), SITE)
+    assert raised.value.owner == "binary_operation_exception_floor"
 
 
 # -- positive arm: the pairs the pinned census actually found -----------------
@@ -278,17 +215,13 @@ def test_the_law_refuses_every_operator_it_names_from_one_place() -> None:
         _refusal(BytesValue(b"x"), _symbolic(), method, operator)
 
 
-def test_both_operand_categories_are_conserved_in_the_dual_edge() -> None:
-    """The dual-edge partition cites both operand terms; no sole TypeError."""
+def test_both_operand_categories_are_conserved_in_the_named_refusal() -> None:
+    """The refusal names both operand categories; no sole TypeError invent."""
     left = BytesValue(b"ab")
     right = _symbolic()
-    outcome = _dual_edge(left, right, "add", "+")
-    halted = next(face for face in outcome.exits if isinstance(face, Halted))
-    completed = next(face for face in outcome.exits if isinstance(face, Completed))
-    # Halt guard names both operand terms under the operator dispatch atom.
-    guard = halted.guard
-    assert guard is not None
-    assert isinstance(completed.value, SymbolicValue)
+    refusal = _named_refusal(left, right, "add", "+")
+    assert "BytesValue" in refusal.observed
+    assert "SymbolicValue" in refusal.observed
 
 
 # -- the real reproducers: whole functions, lifted from source ---------------
@@ -309,7 +242,7 @@ def test_both_operand_categories_are_conserved_in_the_dual_edge() -> None:
         ("set_minus_call", "def f(g):\n    return {1, 2} - g()\n"),
     ),
 )
-def test_the_whole_function_publishes_undecided_native_dispatch(
+def test_the_whole_function_publishes_undecided_named_refusal(
     tmp_path, name, source
 ) -> None:
     """Whole-function construction cannot launder sole completion or TypeError."""
@@ -320,18 +253,10 @@ def test_the_whole_function_publishes_undecided_native_dispatch(
     path.write_text(source, encoding="utf-8")
 
     fn = next(SourceFile(path_source(str(path))).functions())
-    outcome = fn.sugar().desugar(None)
-    assert isinstance(outcome, ExitSet)
-    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
-    assert halted
-    assert all(
-        isinstance(face.effect, RaiseEffect)
-        and face.effect.producer_node_owner == "BinOp"
-        for face in halted
-    )
+    with pytest.raises(SugarNotWritten) as raised:
+        fn.sugar().desugar(None)
+    assert raised.value.owner == "binary_operation_exception_floor"
 
-
-# -- discriminating arm: the law refuses, loudly, everywhere else -------------
 
 
 class _FragmentSite:

@@ -304,15 +304,55 @@ def _run_subprocess_with_file_watchdog(
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
+            # A timeout kills the whole subprocess: every file after the blamed
+            # one was never attempted. Emit TWO extractable panic lines:
+            # (1) the blamed-file timeout, (2) the population shortfall as its
+            # own structured record — prose-only remainder was half-writing R.
+            attempted = _transport_files_seen(transport_log)
+            expected_total = _expected_audit_file_count(command, cwd)
+            files_attempted = len(attempted)
+            if expected_total is None:
+                population_prose = (
+                    f"files attempted {files_attempted}; "
+                    "files never attempted unknown (target file count unavailable)"
+                )
+                population_row = (
+                    "audit population shortfall panicked "
+                    "owner=idd.collect_panic_audit "
+                    f"blame={current_file} "
+                    "observed=never-attempted-unknown "
+                    f"requested=attempted-{files_attempted}-of-unknown "
+                    "fix=pass an explicit existing path target so the audit can "
+                    "name the unattempted remainder; do not invent expected=0"
+                )
+            else:
+                files_never_attempted = max(0, expected_total - files_attempted)
+                population_prose = (
+                    f"files attempted {files_attempted} of {expected_total}; "
+                    f"files never attempted {files_never_attempted}"
+                )
+                population_row = (
+                    "audit population shortfall panicked "
+                    "owner=idd.collect_panic_audit "
+                    f"blame={current_file} "
+                    f"observed=never-attempted-{files_never_attempted} "
+                    f"requested=attempted-{files_attempted}-of-{expected_total} "
+                    "fix=timeout aborted unattempted files; keep them in R until "
+                    "each is lifted or the population is re-declared"
+                )
             timeout_row = (
                 "audit file timed out and panicked "
                 "owner=idd.collect_panic_audit "
                 f"blame={current_file} "
                 "observed=audit-file-timeout "
                 "requested=bounded-file-audit "
-                "fix=optimize or construct a bounded lift for this source"
+                "fix=optimize or construct a bounded lift for this source; "
+                f"the timeout aborted the remaining unattempted files "
+                f"({population_prose})"
             )
-            combined_stderr = f"{stderr.rstrip()}\n{timeout_row}\n"
+            combined_stderr = (
+                f"{stderr.rstrip()}\n{timeout_row}\n{population_row}\n"
+            )
             return CommandResult(124, stdout, combined_stderr)
 
 
@@ -329,20 +369,69 @@ def _latest_transport_file(
 
     latest: Optional[str] = None
     for line in lines:
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if row.get("stage") == "lift.workspace.file":
-            file_name = row.get("file")
-        elif row.get("stage") == "enumerate.request":
-            at = row.get("at")
-            file_name = at.get("file") if isinstance(at, dict) else None
-        else:
-            file_name = None
-        if isinstance(file_name, str) and file_name:
+        file_name = _file_name_from_transport_line(line)
+        if file_name is not None:
             latest = file_name
     return latest, new_offset
+
+
+def _file_name_from_transport_line(line: str) -> Optional[str]:
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if row.get("stage") == "lift.workspace.file":
+        file_name = row.get("file")
+    elif row.get("stage") == "enumerate.request":
+        at = row.get("at")
+        file_name = at.get("file") if isinstance(at, dict) else None
+    else:
+        file_name = None
+    if isinstance(file_name, str) and file_name:
+        return file_name
+    return None
+
+
+def _transport_files_seen(transport_log: Path) -> set[str]:
+    seen: set[str] = set()
+    try:
+        with transport_log.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                file_name = _file_name_from_transport_line(line)
+                if file_name is not None:
+                    seen.add(file_name)
+    except OSError:
+        return seen
+    return seen
+
+
+def _expected_audit_file_count(command: List[str], cwd: Path) -> Optional[int]:
+    """Count .py files the lift would walk, so a timeout can name the unattempted set.
+
+    Prefer an explicit path argument that stages a workspace (rightmost directory
+    with ``.sugar`` or any existing directory/file target). Missing targets are
+    ``None`` — never invent a zero that half-writes "nothing was expected".
+    """
+    target: Optional[Path] = None
+    for part in reversed(command[1:]):
+        if not part or str(part).startswith("-"):
+            continue
+        candidate = Path(part)
+        if not candidate.is_absolute():
+            candidate = (cwd / candidate).resolve()
+        if candidate.exists():
+            target = candidate
+            break
+    if target is None:
+        return None
+    if target.is_file():
+        return 1 if target.suffix == ".py" else None
+    count = 0
+    for source in target.rglob("*.py"):
+        if "__pycache__" in source.parts:
+            continue
+        count += 1
+    return count
 
 
 def _hermetic_env_for_sugar_command(command: List[str]) -> dict:

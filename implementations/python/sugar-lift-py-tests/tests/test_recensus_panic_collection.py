@@ -41,9 +41,67 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_gap(
     import sugar_source_tree.tree as tree_mod
 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
-    row = module._measure_file(path, relative="fixture.py")
+    row = module._measure_file(path, relative="fixture.py", workspace_root=tmp_path)
     assert row["category"] == "construction-panic"
     assert row["panic"]["type"] == "ConstructionPanic"
+
+
+def test_mid_file_construction_panic_does_not_shrink_function_denominator(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Lying twin: a ConstructionPanic mid-loop must not bank a partial total.
+
+    Truthful: functionsTotal is the declared population, materialized before the
+    walk. A panic that escapes still leaves the full denominator on the row so
+    the board never computes Clean% over a silently shrunken set.
+    """
+    module = _load("control_effect_recensus")
+    path = tmp_path / "multi.py"
+    path.write_text(
+        "def a():\n    return 1\n\ndef b():\n    return 2\n\ndef c():\n    return 3\n",
+        encoding="utf-8",
+    )
+
+    calls = {"n": 0}
+    original_sugar = None
+
+    def flaky_sugar(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ConstructionPanic(
+                ConstructionGap(
+                    owner="mid-file-panic",
+                    blame="multi.py:b",
+                    observed="second function",
+                    requested="constructed sugar",
+                    fix="keep the panic loud without shrinking the denominator",
+                )
+            )
+        return original_sugar(self, *args, **kwargs)
+
+    # Patch after SourceFile constructs so functions() still lists all three.
+    import sugar_source_tree.nodes as nodes_mod
+
+    # FunctionDef.sugar is the door the recensus calls via function.sugar().
+    # No skip hatch: if FunctionDef is missing the tooth must fail, not vanish.
+    target = nodes_mod.FunctionDef
+    original_sugar = target.sugar
+
+    monkeypatch.setattr(target, "sugar", flaky_sugar)
+    # Empty contract_refs avoids provisional demand derivation (unrelated to
+    # the denominator law under test).
+    row = module._measure_file(
+        path,
+        relative="multi.py",
+        workspace_root=tmp_path,
+        contract_refs={},
+    )
+
+    assert row["category"] == "construction-panic"
+    assert row["functionsTotal"] == 3
+    assert row["functionsEnumerated"] == 2
+    assert row["functionsNotEnumerated"] == 1
+    assert row["functionsEnumerationComplete"] is False
 
 
 def test_control_effect_recensus_enumerates_one_file(tmp_path: Path) -> None:

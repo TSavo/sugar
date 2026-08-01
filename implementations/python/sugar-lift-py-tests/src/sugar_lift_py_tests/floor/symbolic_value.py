@@ -388,45 +388,12 @@ class SymbolicValue(FloorValue):
             )
         if isinstance(other, GuardedValue):
             return other.map_from_left(owner, self, site)
-        denotes_other = getattr(other, "denotes_value", None)
-        if callable(denotes_other) and denotes_other():
-            from sugar_lift_py_tests.effect import RaiseEffect
-            from sugar_lift_py_tests.ir import atomic, ctor, str_const
-            from sugar_lift_py_tests.outcome import ExitSet
-            from sugar_lift_py_tests.outcome.exit_set import (
-                Completed,
-                Halted,
-                complement_guard,
-                partition,
-            )
-
-            left_term = self.to_term(owner=f"{operator} left operand")
-            right_term = other.to_term(owner=f"{operator} right operand")
-            dispatch_raises = atomic(
-                "python.binary_dispatch_raises",
-                [str_const(operator), left_term, right_term],
-            )
-            halted_face, completed_face = partition(
-                ("binary-native-dispatch", str(site), operator)
-            )
-            return ExitSet(
-                (
-                    Halted(
-                        dispatch_raises,
-                        RaiseEffect(
-                            blame=str(site),
-                            occurrence=str(site),
-                            producer_node_owner="BinOp",
-                        ),
-                        faces=frozenset({halted_face}),
-                    ),
-                    Completed(
-                        complement_guard(dispatch_raises),
-                        SymbolicValue(ctor(operator, [left_term, right_term])),
-                        frozenset({completed_face}),
-                    ),
-                )
-            ).normalize()
+        # Undecided native dispatch: throw named via the shared law. Never mint
+        # Complete(SymbolicValue) or a nameless dual-edge RaiseEffect — that
+        # half-writes an answer the TypeError boundary cannot match.
+        refused = self._undecided_binary_law(other, site, operator)
+        if refused is not None:
+            return refused
         return self._binary_floor_gap(
             other,
             site,
@@ -493,17 +460,11 @@ class SymbolicValue(FloorValue):
         return self.undecided_attribute(name, site, owner="SymbolicValue.attribute")
 
     def contains(self, item, site):
-        # `item in self`: a symbolic container stays the py.in coordinate, a
-        # boolean-valued opaque predicate (`item in recv`). Membership on an
-        # unknown container is uninterpreted -- decidable only where a later
-        # equality/guard consumes it, never invented.
-        del site
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            PredicateValue(atomic("py.in", [item.to_term(owner="contains"), self.term]))
+        # Membership on an unknown container is a third value: neither
+        # Complete(py.in) nor TypeError is honest without container-type
+        # testimony. Named refusal, not fabrication.
+        return self.undecided_contains(
+            item, site, owner="SymbolicValue.contains"
         )
 
     def format_data_model(self, spec, site, ctx):
