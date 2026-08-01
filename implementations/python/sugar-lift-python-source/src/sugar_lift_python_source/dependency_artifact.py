@@ -865,9 +865,7 @@ def resolve_import_binding(
                 or nested_module not in graph.modules
                 or (
                     demand_kind == "import-value-use-demand"
-                    and list(
-                        authenticated_use.use.get("exportedMemberPath") or ()
-                    )
+                    and list(authenticated_use.use.get("exportedMemberPath") or ())
                     != suffix
                 )
             ):

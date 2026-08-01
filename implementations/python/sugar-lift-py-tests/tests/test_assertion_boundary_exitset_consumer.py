@@ -182,7 +182,9 @@ def _boundary_from_exitset(
             message_selector,
             ExceptionInfoBindingV1(),
         ),
-        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(tuple(parameters))),
+        contract_ref=SimpleNamespace(
+            import_signature=ImportSignatureV2(tuple(parameters))
+        ),
         context_manager_edge=None,
         observation_slot_id=observation_slot_id,
         site="pandas/tests/arithmetic/common.py:143:4",
@@ -238,9 +240,7 @@ def test_nameless_halt_stays_outside_assertion_boundary():
 
     routed = _boundary_from_exitset(body, expected=_Expected("ValueError")).desugar()
 
-    assert routed.exits == (
-        Halted(true_guard(), nameless, _state("nameless")),
-    )
+    assert routed.exits == (Halted(true_guard(), nameless, _state("nameless")),)
 
 
 def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
@@ -609,9 +609,7 @@ def _factored_boundary_from_exitset(
         manager=Fixed(Complete(manager_value)),
         body=(Fixed(body),),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id=observation_slot_id,
@@ -667,7 +665,9 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
     assert binding.slot_id == "excinfo"
     assert binding.effect is producer
     assert binding.effect.occurrence == occurrence
-    assert binding.effect.exception_type_coordinate is producer.exception_type_coordinate
+    assert (
+        binding.effect.exception_type_coordinate is producer.exception_type_coordinate
+    )
     assert binding.effect.producer_node_owner == "Compare.desugar"
 
 
@@ -700,8 +700,7 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
     pattern_faces = [
         face
         for face in routed.exits
-        if "match-pattern-face" in str(face.guard)
-        and "py.re_search" in str(face.guard)
+        if "match-pattern-face" in str(face.guard) and "py.re_search" in str(face.guard)
     ]
     assert {type(face).__name__ for face in pattern_faces} == {
         "Completed",
@@ -790,9 +789,7 @@ def test_factored_none_face_without_as_slot_consumes_without_binding():
     )
     body = ExitSet((Halted(true_guard(), producer, _state("no-slot")),))
 
-    routed = _factored_boundary_from_exitset(
-        body, observation_slot_id=None
-    ).desugar()
+    routed = _factored_boundary_from_exitset(body, observation_slot_id=None).desugar()
 
     none_completed = [
         face

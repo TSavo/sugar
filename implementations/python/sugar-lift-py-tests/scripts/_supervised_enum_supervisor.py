@@ -98,9 +98,7 @@ class SupervisedEnumSupervisor:
         initialize = {"kind": "initialize", "corpus_root": str(self.corpus_root)}
         if self.demand_table_path is not None:
             initialize["demand_table_path"] = str(self.demand_table_path)
-        initialize["allow_local_demand_derivation"] = (
-            self.allow_local_demand_derivation
-        )
+        initialize["allow_local_demand_derivation"] = self.allow_local_demand_derivation
         self._proc.stdin.write(json.dumps(initialize) + "\n")
         self._proc.stdin.flush()
         initialized = self._readline(timeout=30.0)

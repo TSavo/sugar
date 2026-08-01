@@ -121,9 +121,7 @@ class BuiltinSuperValue(FloorValue):
             key, value = arguments
             return self.receiver.mapping_builtin_setitem(key, value, blame).and_then(
                 lambda updated: Complete(
-                    ReceiverOwnedMutationResult(
-                        self.receiver, updated, NoneValue()
-                    )
+                    ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
                 )
             )
         construction_panic_gap(

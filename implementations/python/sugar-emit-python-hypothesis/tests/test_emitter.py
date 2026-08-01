@@ -97,7 +97,7 @@ def test_emitted_supported_predicates_run_under_pytest(tmp_path: Path) -> None:
         require_declared_corpus(
             "hypothesis is not importable",
             "the environment running this package's suite",
-            'sugar-emit-python-hypothesis pyproject.toml [project] dependencies '
+            "sugar-emit-python-hypothesis pyproject.toml [project] dependencies "
             '= ["blake3>=1.0.0", "hypothesis>=6.0.0"] -- a HARD dependency, '
             "not an extra",
             "pip install -e 'implementations/python/sugar-emit-python-hypothesis'",
