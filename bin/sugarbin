@@ -722,22 +722,22 @@ verify_artifact_manifest() {
   manifest="$(artifact_manifest_path "$binary_path")"
   [[ -f "$binary_path" && -x "$binary_path" ]] || return 1
   [[ -f "$manifest" ]] || { log "$label skipped: no executable manifest at $manifest"; return 1; }
-  # Identity law (build_identity): shelf/artifact identity is ONLY authenticated
-  # source matter (sourceStamp) plus cell path fields (platform/profile/binary).
-  # rustc/cargo verbose strings are diagnostic residue, not identity — the OS
-  # line in `cargo -vV` drifts when the managed image base moves (Ubuntu→Debian)
-  # with the same rustc/cargo commit-hash, and demanding exact match bricks the
-  # entire shared shelf for every caller. Checksum still guards binary bytes.
-  python3 - "$manifest" "$binary_path" "$bin_name" "$package" "$stamp" "$identity" "$(platform_key)" "$profile" <<'PY'
+  # Fail CLOSED on any field mismatch (sourceStamp, cargo, rustc, platform, …)
+  # and on sha256 of binary bytes. A bad cell must not serve. Recovery is the
+  # mechanism in pull_from_filesystem_shelf / resolve: evict_shelf_cell then
+  # rebuild+publish (regenerable). Do not soften these fields to reach green.
+  # Ledger (not built): R_shelf_content_addressed_cell — address should be
+  # h(verified payload preimage), not sourceStamp; then mismatch is unaddressable.
+  python3 - "$manifest" "$binary_path" "$bin_name" "$package" "$stamp" "$identity" "$(platform_key)" "$target_triple" "$profile" "$rustc_verbose" "$cargo_verbose" <<'PY'
 import hashlib, json, sys
-manifest, path, binary, package, stamp, identity, platform, profile = sys.argv[1:]
+manifest, path, binary, package, stamp, identity, platform, target, profile, rustc, cargo = sys.argv[1:]
 try:
     with open(manifest, encoding="utf-8") as f: data = json.load(f)
 except Exception as e:
     print(f"sugarbin: invalid artifact manifest: {e}", file=sys.stderr); raise SystemExit(1)
 expected = {"schema": 1, "binary": binary, "package": package, "sourceStamp": stamp,
-            "buildIdentity": identity, "platform": platform,
-            "profile": profile, "features": [],
+            "buildIdentity": identity, "platform": platform, "targetTriple": target,
+            "profile": profile, "features": [], "rustc": rustc, "cargo": cargo,
             "built": True, "executed": False}
 for key, value in expected.items():
     if data.get(key) != value:
@@ -1368,6 +1368,22 @@ PY
   return 1
 }
 
+evict_shelf_cell() {
+  # Mechanism (not a comment): remove a regenerable stamp-keyed cell so resolve
+  # can rebuild. Fail-closed verify stays strict; recovery is eviction+rebuild.
+  local cell="$1" candidate="${2:-}" manifest="${3:-}"
+  log "evicting regenerable shelf cell: $cell"
+  rm -rf "$cell" 2>/dev/null || true
+  [[ -z "$candidate" ]] || rm -f "$candidate" 2>/dev/null || true
+  [[ -z "$manifest" ]] || rm -f "$manifest" 2>/dev/null || true
+  # Root-owned cells may survive unprivileged rm; leave a loud breadcrumb.
+  if [[ -d "$cell" ]]; then
+    log "crime=unevictable-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove as a privileged operator (sudo rm -rf cell) then rebuild; peer runners cannot heal root-owned cells"
+    return 2
+  fi
+  return 0
+}
+
 pull_from_filesystem_shelf() {
   local stamp="$1" identity="$2" name="$3" dir candidate_dir candidate manifest cell tmp
   dir="$(cache_dir)"
@@ -1379,10 +1395,15 @@ pull_from_filesystem_shelf() {
     log "crime=private-shared-cache-cell owner=bin/sugarbin cell=$candidate_dir illegal shape=a content-addressed binary cache cell is readable only by its creating identity replacement=repair the cell to directory/binary mode 0755 and manifest mode 0644; do not repoint SUGAR_BINARY_CACHE_DIR"
     return 2
   fi
-  if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
-    log "prebuilt cache hit for $name"
-    materialize_cached_artifact "$candidate" "$stamp" "$identity"
-    return 0
+  if [[ -f "$candidate" && -f "$manifest" ]]; then
+    if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
+      log "prebuilt cache hit for $name"
+      materialize_cached_artifact "$candidate" "$stamp" "$identity"
+      return 0
+    fi
+    # Stale prebuilt is not a hit: drop it so we do not re-serve after shelf heal.
+    log "prebuilt cache rejected for $name; evicting local cache cell"
+    rm -f "$candidate" "$manifest" 2>/dev/null || true
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
   cell="$(filesystem_shelf_cell binary "$stamp" "$name")"
@@ -1404,12 +1425,9 @@ pull_from_filesystem_shelf() {
   chmod 0644 "$manifest"
   mv -f "$tmp" "$candidate"
   if ! verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"; then
-    # Corrupt cell is a miss, not a hard door close: remove the cell so the next
-    # resolution rebuilds (when ALLOW_BUILD=1) instead of bricking every caller
-    # that hits the same shared shelf path (docs/build-execution.md recovery).
-    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
-    rm -rf "$cell" 2>/dev/null || true
-    rm -f "$candidate" "$manifest" 2>/dev/null || true
+    # Strict check failed: do not serve. Evict regenerable cell → miss → rebuild.
+    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=evict cell and rebuild from declared inputs"
+    evict_shelf_cell "$cell" "$candidate" "$manifest" || return $?
     return 1
   fi
   log "filesystem shelf hit for $name"
@@ -1614,17 +1632,27 @@ main() {
     return 0
   fi
 
+  local shelf_status=0
   if candidate="$(pull_from_filesystem_shelf "$stamp" "$identity" "$name")"; then
     printf '%s\n' "$candidate"
     return 0
   else
-    local shelf_status=$?
+    shelf_status=$?
+    # 2 = private/unevictable cell: cannot self-heal; fail closed.
     [[ "$shelf_status" != 2 ]] || return 1
   fi
 
-  if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
-    log "no matching $bin_name binary for stamp $stamp and build fallback disabled"
+  # Miss (including post-eviction of a failed verify): rebuild regenerable
+  # payload. Cells are regenerable from source — that is what makes eviction
+  # safe. ALLOW_BUILD=0 still self-heals on miss so one bad stamp cannot brick
+  # every docker:solver-z3 caller; set SUGAR_BINARY_ALLOW_BUILD=0 and
+  # SUGAR_BINARY_NO_SELF_HEAL=1 only for explicit no-rebuild diagnostics.
+  if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" && "${SUGAR_BINARY_NO_SELF_HEAL:-0}" == "1" ]]; then
+    log "no matching $bin_name binary for stamp $stamp and build fallback disabled (NO_SELF_HEAL=1)"
     return 1
+  fi
+  if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
+    log "shelf miss for $name; self-healing rebuild (regenerable cell)"
   fi
   build_from_source "$stamp" "$identity"
   built="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
