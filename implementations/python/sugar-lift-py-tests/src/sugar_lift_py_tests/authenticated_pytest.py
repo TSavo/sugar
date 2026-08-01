@@ -162,7 +162,20 @@ def authenticate_corpus_manifest(
 
 
 def activate_checkout_import_roots(repo_root: Path, search_path: list[str]) -> None:
-    """Activate exactly the mounted roots declared by the managed closure."""
+    """Activate exactly the mounted roots declared by the managed closure.
+
+    ORDERING LAW: these roots must be active BEFORE any import of
+    ``sugar_lift_py_tests``. Rebinding ``sys.path`` after the package is
+    already in ``sys.modules`` does not change the loaded module object;
+    ``authenticate_lift`` will still see a site-packages ``__file__`` and
+    correctly refuse. The python-test-environment action therefore exports
+    checkout PYTHONPATH at process start and does not wheel-install
+    first-party packages into the venv.
+
+    Later climb (not this patch): ``AuthenticatedInstalledLift`` when a
+    venv content-stamp equals the checkout — still never a path-prefix
+    relaxation that accepts arbitrary site-packages as the claim tree.
+    """
     dockerfile = repo_root / "tools/sugar-build/Dockerfile"
     matches = re.findall(
         r"^ENV PYTHONPATH=(.*)$",
@@ -216,6 +229,9 @@ def authenticate_environment() -> (
         package_root = sugar_lift_py_tests_package_root(repo_root)
     except RepoRootUnresolved as error:
         raise ExecutionEnvironmentMismatch(str(error)) from error
+    # Checkout roots first. If this process already imported sugar_lift_py_tests
+    # from site-packages (roots activated too late), authenticate_lift below
+    # refuses — the authority is correct; fix the environment, not the check.
     activate_checkout_import_roots(repo_root, sys.path)
     pins, expected_cid = _declared_corpus(package_root)
 
@@ -223,6 +239,9 @@ def authenticate_environment() -> (
 
     pandas = import_module("pandas")
     numpy = import_module("numpy")
+    # Prefer a fresh import after roots are active so a cold path binds checkout.
+    # Do not delete this package from sys.modules while it is running — that is
+    # why the action must export PYTHONPATH before the process starts.
     lift = import_module("sugar_lift_py_tests")
     pandas_distribution = metadata.distribution("pandas")
     numpy_distribution = metadata.distribution("numpy")

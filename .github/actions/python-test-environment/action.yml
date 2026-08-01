@@ -18,9 +18,15 @@ description: >-
 # authority (#6275), and the only names below are FIRST-PARTY PATHS, which are
 # the packages themselves rather than a hand-list of their requirements.
 #
-# The venv is built from wheels and then made read-only. Editable installs let
-# a later job silently change what an earlier job measured; a wheel install
-# plus `chmod a-w` makes that attempt fail loudly instead.
+# The venv holds THIRD-PARTY wheels only (immutable wheelhouse), then is made
+# read-only. FIRST-PARTY sugar-lift-* packages resolve from the SYNCED CHECKOUT
+# via PYTHONPATH (Dockerfile ENV PYTHONPATH / activate_checkout_import_roots).
+# Wheel-installing first-party into site-packages is what produced
+# ExecutionEnvironmentMismatch on S0.1/S0.2: lift loaded from
+# .../venv/.../site-packages while authenticate_lift requires checkout src.
+# Do NOT weaken authenticate_lift to accept site-packages. Later climb
+# (not this patch): AuthenticatedInstalledLift when content-stamp equals
+# checkout. Path-prefix checkout test is parents[N]-family long-term, ledgered.
 
 inputs:
   python-version:
@@ -126,12 +132,34 @@ runs:
         if [ -d "$venv" ]; then chmod -R u+w "$venv"; rm -rf "$venv"; fi
         python -m venv "$venv"
         "$venv/bin/python" -m pip install --quiet --upgrade pip wheel
+        # THIRD-PARTY only. First-party sugar-lift-* must not land in
+        # site-packages: they load from the synced checkout via PYTHONPATH.
+        mapfile -t third_party < <(
+          python tools/python_test_third_party_requirements.py --repo-root .
+        )
+        if [ "${#third_party[@]}" -eq 0 ]; then
+          echo "::error::third-party requirement list is empty; refusing install"
+          exit 1
+        fi
         "$venv/bin/python" -m pip install --quiet \
           --no-index --find-links "$env_dir/wheelhouse" \
-          'sugar-lift-py-tests[test]' \
-          sugar-lift-python-source \
-          sugar-source-tree
+          "${third_party[@]}"
         "$venv/bin/python" -m pip freeze --all > "$env_dir/resolved-distributions.txt"
+        # Refuse a regression that re-installs first-party into the venv.
+        if grep -Eiq '^(sugar-lift-py-tests|sugar-lift-python-source|sugar-source-tree)==' \
+          "$env_dir/resolved-distributions.txt"; then
+          echo "::error::first-party sugar package installed into venv; checkout PYTHONPATH is the authority"
+          cat "$env_dir/resolved-distributions.txt" >&2
+          exit 1
+        fi
+
+        # Checkout import roots BEFORE any process can import sugar_lift_py_tests.
+        # activate_checkout_import_roots after first import is a no-op on sys.modules.
+        checkout_pythonpath="$(
+          python tools/python_test_checkout_pythonpath.py --repo-root .
+        )"
+        echo "PYTHONPATH=${checkout_pythonpath}" >> "$GITHUB_ENV"
+        echo "checkout PYTHONPATH active for subsequent steps"
 
         # Consumers share this environment READ-ONLY. No job may mutate it:
         # adding a package to an already-measured environment is how a floor
