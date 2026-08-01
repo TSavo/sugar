@@ -129,11 +129,14 @@ def _truthiness_resource(*, exit_value, body, enter_value=TermValue(2), slot=Non
 
 
 def test_summary_suppresses_disposition_consumes_matching_body_halt():
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
     disposition = Suppresses(EffectMatcher(kind="raise", name="ValueError"))
     summary = SimpleNamespace(
         semantics=SimpleNamespace(exit=SimpleNamespace(disposition=disposition))
     )
     protocol = _CompletedProtocol()
+    coordinate, mro = _builtin_exception_identity("ValueError")
     sugar = _source_resource(
         manager=_FixedSugar(Complete(TermValue(1))),
         protocol=protocol,
@@ -142,7 +145,10 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
             _FixedSugar(
                 Incomplete(
                     RaiseEffect(
-                        exception_name="ValueError", occurrence="resource.py:4:8"
+                        exception_name="ValueError",
+                        occurrence="resource.py:4:8",
+                        exception_type_coordinate=coordinate,
+                        exception_type_mro=mro,
                     )
                 )
             ),
