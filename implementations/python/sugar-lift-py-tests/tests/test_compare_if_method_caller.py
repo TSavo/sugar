@@ -147,6 +147,11 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity('TypeError')
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     if require_pre_effect_state:
         assert halted.state is not None, (
             "formal less_than halt omitted real pre-effect state "
@@ -382,6 +387,7 @@ def test_incompatible_ordering_method_call_halts_with_named_typeerror() -> None:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
+    assert halted.effect.occurrence_id == str(site)
     # Honest instrument for codex-1: state must be non-None after lossless fix.
     assert halted.state is not None, (
         "bound-method producer_outcome TypeError halt lacks pre-effect state "

@@ -90,6 +90,11 @@ def _assert_named_halt(outcome) -> Halted:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity('AttributeError')
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     return halted
 
 
@@ -217,7 +222,9 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity('AttributeError')
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
+    assert halted.effect.occurrence_id == str(site)
 
 
 def test_source_defined_property_without_setter_discrimination() -> None:
@@ -275,6 +282,10 @@ def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
         if isinstance(face, Halted) and face.effect is original.effect
     ]
     assert remaining == [original]
+    assert isinstance(remaining[0].effect.occurrence_id, str) and ":" in remaining[0].effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {remaining[0].effect.occurrence_id!r}"
+    )
 
 
 def test_source_defined_wrong_boundary_type_discrimination() -> None:
@@ -353,6 +364,7 @@ def test_positional_caller_completes_field_store_via_setattr() -> None:
 def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
     halted = _assert_named_halt(_call_outcome("obj, value", "1, 2"))
     # Origin is store dispatch, not a fabricated boundary type alone.
+    assert halted.effect.exception_type_coordinate == _identity('AttributeError')
     # Source call presentation may name the Call producer for the edge; the
     # type coordinate is still from setattr floor discharge, not pytest.raises.
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
@@ -376,6 +388,8 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity('AttributeError')
+    assert halted.effect.occurrence_id == str(site)
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
     # Direct setattr owner is proven on the incomplete path before carrier
     # re-projects the exceptional resolution.
@@ -523,6 +537,10 @@ def test_wrong_expected_type_leaves_exceptional_edge_unconsumed() -> None:
     assert produced_type != wrong
     # The exceptional edge is still present (unconsumed by a wrong boundary).
     assert isinstance(halted, Halted)
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -174,7 +175,10 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
             log.append("value")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(exception_type_coordinate=str_const('ValueError'), occurrence=AuthenticatedRaiseLocus.of('attr_store.py:2:16'))
+                    RaiseEffect(
+                        exception_type_coordinate=str_const("ValueError"),
+                        occurrence=AuthenticatedRaiseLocus.of("attr_store.py:2:16"),
+                    )
                 )
             )
 
@@ -514,6 +518,10 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     ):
         assert isinstance(halt, Halted)
         assert "AttributeError" in repr(halt.effect.exception_type_coordinate)
+        assert isinstance(halt.effect.occurrence_id, str) and ":" in halt.effect.occurrence_id, (
+            "authenticated raise locus must be a file:line:col occurrence id, "
+            f"not presence-only; got {halt.effect.occurrence_id!r}"
+        )
         assert f"'startLine': {CORPUS_LINE}" in halt.effect.occurrence_id
 
     for receiver, owner in (

@@ -218,11 +218,7 @@ def test_true_left_continues_to_right_without_truth_testing_final_operand() -> N
 def test_halted_left_truth_test_propagates_and_never_reaches_right() -> None:
     evaluations: list[str] = []
     truth_calls: list[str] = []
-    effect = RaiseEffect.for_builtin("LeftTruthError",
-        
-        occurrence="test_bool_op_operand_sequence.py:1:0",
-        blame="test_bool_op_operand_sequence.py:1:0",
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('test_bool_op_operand_sequence.py:1:0'), exception_name='LeftTruthError', blame='test_bool_op_operand_sequence.py:1:0')
     left = _Operand("left", ExitSet.halted(effect), truth_calls)
     right = _Operand("right", _truth(True), truth_calls)
 
@@ -303,6 +299,7 @@ def test_halted_caller_truth_propagates_and_never_reaches_right() -> None:
     assert evaluations == ["left"]
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Halted)
+    assert exits.exits[0].effect.exception_type_coordinate == _identity('TypeError')
 
 
 def test_wrong_boundary_type_does_not_consume_caller_truth_halt() -> None:

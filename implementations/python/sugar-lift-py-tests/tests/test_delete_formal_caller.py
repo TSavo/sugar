@@ -180,6 +180,10 @@ def _assert_named_halt(outcome, expected: str) -> Halted:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity(expected)
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     assert halted.state is not None, (
         "formal delete halt omitted real pre-effect state "
         "(NativeOperationResolutionV1.project / reduce_body collapse)"

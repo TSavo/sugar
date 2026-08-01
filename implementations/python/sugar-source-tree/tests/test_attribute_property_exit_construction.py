@@ -16,6 +16,15 @@ from sugar_source_tree.nodes import Attribute, With
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+def _identity(name: str):
+    from sugar_lift_py_tests.floor.ground_exit import (
+        _builtin_exception_identity,
+    )
+
+    identity, _mro = _builtin_exception_identity(name)
+    return identity
+
+
 PANDAS_MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
@@ -64,6 +73,11 @@ def test_source_property_getter_publishes_authenticated_exceptional_exit(
     effect = halted[0].effect
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "ValueError"
+    assert effect.exception_type_coordinate == _identity('ValueError')
+    assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {effect.occurrence_id!r}"
+    )
     assert effect.producer_node_owner == "Attribute"
 
 
@@ -89,6 +103,11 @@ def test_property_getter_raise_keeps_imported_bare_exception_coordinate(
     halted = next(face for face in outcome.exits if isinstance(face, Halted))
     assert isinstance(halted.effect, RaiseEffect)
     assert halted.effect.exception_name == "CustomError"
+    assert halted.effect.exception_type_coordinate == _identity('CustomError')
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
 
 
 def test_source_property_getter_that_returns_completes_without_a_raise(
@@ -162,4 +181,9 @@ def test_pandas_303_abstract_method_property_is_the_concrete_reproducer() -> Non
     effect = halted.effect
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "AbstractMethodError"
+    assert effect.exception_type_coordinate == _identity('AbstractMethodError')
+    assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {effect.occurrence_id!r}"
+    )
     assert effect.producer_node_owner == "Attribute"

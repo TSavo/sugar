@@ -110,6 +110,10 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
     halted = next(exit_ for exit_ in retained.exits if isinstance(exit_, Halted))
     assert pending.pre_effect_state is not None
     assert halted.state is pending.pre_effect_state.state
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     assert observed == [(halted.effect, halted.state)]
     foreign = _helper_outcome("\n" + PLAIN_STORE)
     assert isinstance(foreign, NativeOperationExitCarrierV1)

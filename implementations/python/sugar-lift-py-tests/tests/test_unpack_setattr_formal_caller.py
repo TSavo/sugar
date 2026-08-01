@@ -216,6 +216,7 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
+    assert halted.effect.occurrence_id == str(site)
     # Authentic earlier-binding pre-effect state (post-#6640 / #6644).
     assert halted.state is not None
     assert pending.pre_effect_state.state is halted.state

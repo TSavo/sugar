@@ -262,6 +262,10 @@ def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
+    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
     assert halted.state is not None
     assert pending.pre_effect_state.state is halted.state
 
