@@ -68,10 +68,11 @@ Retirement paths (per offender class)
   value with no construction side effects; delete zero-work axis when
   re-entry construction is unrepresentable.
 
-Self-seed note: if production never calls the reporting projection, an
-empty caller set is a live signal. Filling the caller set with this
-auditor's own site is self-fabrication (mr_white / self-sealing instrument
-lane). This rename does **not** expand or "fix" that axis here.
+Self-seed note: if the owner module never calls the reporting projection,
+an empty caller set is a live signal (``R_missing_projection_callers``).
+Filling the caller set with this auditor's own site is self-fabrication
+(SYNTHESIZED-EVIDENCE). Callers are discovered from the owner module only;
+never self-seed.
 """
 
 from __future__ import annotations
@@ -97,12 +98,70 @@ from sourcefile_construction_door_evidence import (
     SourceFileSurfaceEvidence,
     _mint_test_owned_evidence,
 )
-from sourcefile_construction_door_symbol_graph import SymbolGraph
+from sourcefile_construction_door_symbol_graph import CallEdge, SymbolGraph
+
 
 
 def project_constructed_module(product: object) -> object:
     """The sole test-owned, product-only reporting projection."""
     return product.reporting_projection
+
+
+def discover_projection_call_edges(
+    *,
+    owner_path: Path,
+    owner_source: str | None = None,
+    projection_name: str = "project_constructed_module",
+) -> tuple[CallEdge, ...]:
+    """Static call edges that target the sole projection door in its owner module.
+
+    Empty is a measured finding: the door is unexercised. Callers are never
+    fabricated. The door is test-owned, so production trees cannot see it;
+    discovery walks the owning module (this auditor), not the production graph.
+    """
+    path = owner_path.resolve()
+    source = (
+        owner_source
+        if owner_source is not None
+        else path.read_text(encoding="utf-8")
+    )
+    tree = ast.parse(source, filename=str(path))
+    graph = SymbolGraph({"projection_owner": (path, tree)})
+    definitions = {
+        symbol
+        for symbol in graph.definitions.values()
+        if symbol.name == projection_name and symbol.path.resolve() == path
+    }
+    if not definitions:
+        return ()
+    return tuple(
+        edge
+        for edge in graph.calls
+        if set(edge.targets) & definitions
+    )
+
+
+def discover_projection_callers(
+    *,
+    owner_path: Path,
+    owner_source: str | None = None,
+    projection_name: str = "project_constructed_module",
+) -> tuple[EvidenceSite, ...]:
+    """Evidence sites for every static caller of the sole projection door.
+
+    A zero-length result is the honest empty measurement. It must remain empty
+    until a real caller exists; never replace it with the auditor itself.
+    """
+    return tuple(
+        EvidenceSite(
+            edge.path, edge.line, edge.caller.lexical, edge.caller.name
+        )
+        for edge in discover_projection_call_edges(
+            owner_path=owner_path,
+            owner_source=owner_source,
+            projection_name=projection_name,
+        )
+    )
 
 
 def _site(path: Path, node: ast.AST, owners: tuple[str, ...], symbol: str) -> EvidenceSite:
@@ -376,20 +435,29 @@ def audit_sourcefile_construction_door(
             "R_sourcefile_leaf_assertion_projection=1: downstream must consume "
             "ConstructedModule.leaf_assertion_rows directly"
         )
+    # Production must not grow a second projection door under the same name.
+    # The sole door is test-owned (project_constructed_module in this module).
     projection_symbols = tuple(
         symbol
         for symbol in graph.definitions.values()
         if symbol.name == "project_constructed_module"
     )
-    projection_call_edges = tuple(
+    production_projection_call_edges = tuple(
         edge
         for edge in graph.calls
         if any(target in projection_symbols for target in edge.targets)
     )
-    if len(projection_symbols) > 1:
+    if projection_symbols:
         contract_reds.append(
             "R_projection_definition_count="
-            f"{len(projection_symbols)}: expected exactly one canonical body"
+            f"{len(projection_symbols)}: production must not define "
+            "project_constructed_module; the sole door is test-owned"
+        )
+    if production_projection_call_edges:
+        contract_reds.append(
+            "R_production_projection_callers="
+            f"{len(production_projection_call_edges)}: production must not "
+            "route through a project_constructed_module door"
         )
     projection_bindings = tuple(
         binding
@@ -400,6 +468,22 @@ def audit_sourcefile_construction_door(
     if projection_bindings:
         contract_reds.append(
             f"R_projection_alias_or_reexport={len(projection_bindings)}"
+        )
+    # Owner-module callers of the test-owned door. Empty is a finding.
+    projection_owner_path = Path(
+        inspect.getsourcefile(project_constructed_module) or ""
+    ).resolve()
+    owner_projection_edges = discover_projection_call_edges(
+        owner_path=projection_owner_path
+    )
+    owner_projection_callers = discover_projection_callers(
+        owner_path=projection_owner_path
+    )
+    if not owner_projection_callers:
+        contract_reds.append(
+            "R_missing_projection_callers=1: zero static callers of "
+            "project_constructed_module in its owner module; empty is a "
+            "finding (never self-seed the auditor as a fake caller)"
         )
     backend_door = Backend.__dict__.get("materialize_module")
     backend_door_symbols = ()
@@ -542,7 +626,10 @@ def audit_sourcefile_construction_door(
         f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
         f"R_legacy_leaf_name_doors={len(legacy_paths)}",
         f"R_sourcefile_leaf_assertion_projection={source_file_leaf_projection}",
+        f"R_projection_definition_count={len(projection_symbols)}",
+        f"R_production_projection_callers={len(production_projection_call_edges)}",
         f"R_projection_alias_or_reexport={len(projection_bindings)}",
+        f"R_missing_projection_callers={int(not owner_projection_callers)}",
         "R_protocol_closure_dormant="
         f"{int(not observed_constructed_module)}",
         "R_privacy_roster_dormant="
@@ -562,7 +649,7 @@ def audit_sourcefile_construction_door(
             + "\n".join(contract_reds)
         )
 
-    projection_file = Path(inspect.getsourcefile(project_constructed_module) or "").resolve()
+    projection_file = projection_owner_path
     projection_line = inspect.getsourcelines(project_constructed_module)[1]
     owner = EvidenceSite(door_file, door_line, (SourceFile.__name__,), door.__name__)
     projection_def = EvidenceSite(projection_file, projection_line, (), project_constructed_module.__name__)
@@ -581,17 +668,11 @@ def audit_sourcefile_construction_door(
         for edge in door_edges
         if not edge.dynamic and set(edge.targets) == {source_file_symbol}
     ]
-    projection_edges = [
-        edge for edge in graph.calls
-        if any(target.path.resolve() == projection_file and target.line == projection_line for target in edge.targets)
-    ]
+    # Real callers of the test-owned door (owner module). Never self-seed.
+    projection_edges = list(owner_projection_edges)
     door_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in door_edges]
-    projection_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in projection_edges]
-    if not projection_calls:
-        audit_line = inspect.getsourcelines(audit_sourcefile_construction_door)[1]
-        projection_calls = [
-            EvidenceSite(Path(__file__).resolve(), audit_line, (), audit_sourcefile_construction_door.__name__)
-        ]
+    projection_calls = list(owner_projection_callers)
+
     projection_semantic_owners = set(projection_symbols)
     changed = True
     while changed:
@@ -661,7 +742,15 @@ def audit_sourcefile_construction_door(
     )
     assert len(owner_defs) == 1
     assert door_calls
-    assert len(projection_calls) > 0
+    assert projection_calls, (
+        "R_missing_projection_callers: zero static callers of "
+        "project_constructed_module; empty is a finding (do not self-seed)"
+    )
+    # Callers must be real call sites in the owner module (path match), never
+    # a fabricated EvidenceSite stamped at an arbitrary auditor line.
+    assert all(
+        site.path.resolve() == projection_owner_path for site in projection_calls
+    ), projection_calls
     canonical_call = EvidenceSite(
         canonical_edge.path,
         canonical_edge.line,
@@ -1086,8 +1175,16 @@ def audit_sourcefile_construction_door(
         if binding.kind == "reexport"
     )
     projection_wrapper_sites = []
+    owner_projection_tree = ast.parse(
+        projection_owner_path.read_text(encoding="utf-8"),
+        filename=str(projection_owner_path),
+    )
     for edge in projection_edges:
-        tree = parsed[edge.path]
+        tree = (
+            owner_projection_tree
+            if edge.path.resolve() == projection_owner_path
+            else parsed[edge.path]
+        )
         parents = _parents(tree)
         matching_calls = [
             node for node in ast.walk(tree)
@@ -1097,9 +1194,12 @@ def audit_sourcefile_construction_door(
             projection_wrapper_sites.append(
                 EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
             )
+    # Product-argument discipline applies to production routes only. The
+    # owner module may exercise the door (including the arity TypeError twin)
+    # without resolving product_symbols from the production graph.
     non_product_projection_callers = tuple(
         EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
-        for edge in projection_edges
+        for edge in production_projection_call_edges
         if len(edge.argument_producers) != 1
         or not (set(edge.argument_producers[0]) & product_symbols)
     )
@@ -1338,7 +1438,10 @@ def audit_sourcefile_construction_door(
             results[0], foreign_product, foreign_projection,
         ),
     )
-    assert projection_calls
+    assert projection_calls, (
+        "R_missing_projection_callers: zero static callers of "
+        "project_constructed_module; empty is a finding (do not self-seed)"
+    )
     assert projection_def.path.resolve() == projection_file
     assert len(inspect.signature(project_constructed_module).parameters) == 1, (
         "projection accepts exactly one constructed product; a foreign "

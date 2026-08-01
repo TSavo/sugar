@@ -14,9 +14,13 @@ DEFINITION
     1. SYNTHESIZED-EVIDENCE
        The checker invents the population or site it later asserts is non-empty
        / present. Canonical shape: ``if not observed: observed = [self/__file__/
-       this auditor]``. Worked exemplar: ``tests/sourcefile_construction_door_auditor.py`` inserting
-       ``audit_sourcefile_construction_door`` as a projection caller when the graph has none, then
-       ``assert projection_calls``.
+       this auditor]``. Historical worked exemplar (drained):
+       ``tests/sourcefile_construction_door_auditor.py`` inserted
+       ``audit_sourcefile_construction_door`` as a projection caller when the
+       graph had none, then ``assert projection_calls``. Replacement
+       architecture: empty observation is ``R_missing_projection_callers``
+       (contract red); callers are discovered from the owner module only,
+       never fabricated.
 
     2. TAUTOLOGICAL-ASSERT
        An ``assert`` that is true for all values of the language, or whose two

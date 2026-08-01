@@ -1,11 +1,22 @@
 """Consumer proof for the explicitly injected shared SOURCEFILE_CONSTRUCTION_DOOR evidence."""
 
 import ast
+import inspect
 from pathlib import Path
 
 import pytest
 
-from sourcefile_construction_door_evidence import SourceFileConstructionDoorEvidence, assert_test_owned_evidence
+from sourcefile_construction_door_auditor import (
+    audit_sourcefile_construction_door,
+    discover_projection_callers,
+    project_constructed_module,
+)
+from sourcefile_construction_door_evidence import (
+    EvidenceSite,
+    ProjectionClosureEvidence,
+    SourceFileConstructionDoorEvidence,
+    assert_test_owned_evidence,
+)
 from sourcefile_construction_door_fixture import sourcefile_construction_door_evidence
 from sourcefile_construction_door_symbol_graph import SymbolGraph
 from sugar_source_tree.backend import Backend
@@ -47,6 +58,132 @@ def test_shared_sourcefile_construction_door_evidence_is_typed_sealed_and_closed
     sourcefile_construction_door_evidence: SourceFileConstructionDoorEvidence,
 ) -> None:
     assert assert_test_owned_evidence(sourcefile_construction_door_evidence) is sourcefile_construction_door_evidence
+
+
+def test_projection_callers_are_discovered_not_self_seeded() -> None:
+    """Truthful: real static callers of the test-owned projection door exist.
+
+    Fails when: discovery returns empty (door unexercised) OR callers are the
+    old self-seed shape (auditor def line fabricated as a caller).
+    Both states are reachable — empty by deleting call sites; seed by the
+    removed fallback — and both must stay red.
+
+    Does not require the full door-evidence fixture: caller discovery is a pure
+    static property of the owner module.
+    """
+    owner_path = Path(inspect.getsourcefile(project_constructed_module) or "").resolve()
+    discovered = discover_projection_callers(owner_path=owner_path)
+    assert discovered, (
+        "R_missing_projection_callers: owner module has zero static callers of "
+        "project_constructed_module"
+    )
+    # Old self-seed stamped the auditor *definition* line as a caller.
+    # Real callers are call expression lines inside the function body.
+    audit_def_line = inspect.getsourcelines(audit_sourcefile_construction_door)[1]
+    assert not any(
+        site.path.resolve() == owner_path
+        and site.line == audit_def_line
+        and site.symbol == audit_sourcefile_construction_door.__name__
+        for site in discovered
+    ), "callers must not be the self-seeded auditor definition site"
+    # Every discovered caller must be a real call line (not the def of the door).
+    door_line = inspect.getsourcelines(project_constructed_module)[1]
+    assert all(site.line != door_line for site in discovered), discovered
+    auditor_source = owner_path.read_text(encoding="utf-8")
+    # The defect shape: empty → fabricate EvidenceSite from the auditor itself.
+    assert "if not projection_calls:" not in auditor_source
+    assert "EvidenceSite(Path(__file__).resolve(), audit_line" not in auditor_source
+
+
+def test_lying_twin_empty_projection_callers_is_red() -> None:
+    """Lying twin: hide every caller of the projection door; discovery stays empty.
+
+    Fails when: discovery fabricates a caller (self-seed returns) or treats
+    empty as success. Reachable by feeding a door definition with no call sites.
+    """
+    # Door exists; nobody calls it. Empty must remain empty.
+    owner_source = (
+        "def project_constructed_module(product):\n"
+        "    return product.reporting_projection\n"
+        "\n"
+        "def other_work():\n"
+        "    return 1\n"
+    )
+    callers = discover_projection_callers(
+        owner_path=Path("synthetic_projection_owner.py"),
+        owner_source=owner_source,
+    )
+    assert callers == (), (
+        "empty caller set must stay empty; got fabricated callers: "
+        f"{callers!r}"
+    )
+
+    # assert_closed projection axis refuses the empty measurement.
+    projection = ProjectionClosureEvidence(
+        definition=EvidenceSite(
+            Path("synthetic_projection_owner.py"),
+            1,
+            (),
+            "project_constructed_module",
+        ),
+        callers=(),
+        dynamic_edges=(),
+        aliases=(),
+        reexports=(),
+        wrappers=(),
+        non_product_callers=(),
+        legacy_doors=(),
+        discovered_edges=0,
+        audited_edges=0,
+    )
+    with pytest.raises(AssertionError, match="R_missing_projection_callers"):
+        assert projection.callers, (
+            "R_missing_projection_callers: zero static callers of the sole "
+            "projection door; empty is a finding, never a self-seeded auditor site"
+        )
+
+
+def test_lying_twin_hidden_real_callers_reds_discovery() -> None:
+    """Lying twin: strip every call site from the real owner source; reds.
+
+    Fails when: the detector still reports callers after all call sites are
+    removed (self-seed or stale residual). Reachable by erasing call AST nodes
+    from the live auditor source text.
+    """
+    owner_path = Path(inspect.getsourcefile(project_constructed_module) or "").resolve()
+    live = owner_path.read_text(encoding="utf-8")
+    assert "project_constructed_module(" in live
+    # Keep the definition; erase every call expression targeting the door.
+    # Replace call-site spelling without touching the def line.
+    hidden_lines: list[str] = []
+    for line in live.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith("def project_constructed_module"):
+            hidden_lines.append(line)
+            continue
+        if "project_constructed_module(" in line:
+            # Hide the call: rename the callee so the static graph no longer
+            # resolves it to the projection door.
+            hidden_lines.append(
+                line.replace(
+                    "project_constructed_module(",
+                    "project_constructed_module_HIDDEN(",
+                )
+            )
+        else:
+            hidden_lines.append(line)
+    hidden_source = "".join(hidden_lines)
+    callers = discover_projection_callers(
+        owner_path=owner_path,
+        owner_source=hidden_source,
+    )
+    assert callers == (), (
+        "after hiding every production/owner caller, discovery must report "
+        f"empty; got {callers!r} (self-seed or residual)"
+    )
+    # Live source still has real callers — the tooth only fires on the lie.
+    live_callers = discover_projection_callers(owner_path=owner_path)
+    assert live_callers, "live owner module must still exercise the door"
 
 
 def _graph(tmp_path: Path, sources: dict[str, str]) -> SymbolGraph:

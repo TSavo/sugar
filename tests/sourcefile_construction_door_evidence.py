@@ -224,14 +224,20 @@ class SourceFileConstructionDoorEvidence:
         )
 
         projection = self.projection
-        assert projection.callers
+        assert projection.callers, (
+            "R_missing_projection_callers: zero static callers of the sole "
+            "projection door; empty is a finding, never a self-seeded auditor site"
+        )
         assert projection.dynamic_edges == ()
         assert projection.aliases == ()
         assert projection.reexports == ()
         assert projection.wrappers == ()
         assert projection.non_product_callers == ()
         assert projection.legacy_doors == ()
-        assert projection.discovered_edges == projection.audited_edges > 0
+        assert projection.discovered_edges == projection.audited_edges > 0, (
+            "R_projection_edge_denominator: discovered/audited edges must match "
+            "and be non-empty (empty denominator means the door is unexercised)"
+        )
 
         zero = self.zero_work
         assert zero.constructor_events == 1
