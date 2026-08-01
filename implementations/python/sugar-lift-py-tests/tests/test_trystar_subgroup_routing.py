@@ -28,6 +28,7 @@ from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 
 def _desugar(source: str, *, name: str = "trystar_subgroup.py"):
@@ -588,20 +589,20 @@ def test_second_handler_reads_first_handler_temporal_binding():
 
     ve_leaf = RaiseEffect(
         exception_name="ValueError",
-        occurrence="leaf:ve",
+        occurrence=AuthenticatedRaiseLocus.of("leaf:ve"),
         exception_type_coordinate=ve_id,
         exception_type_mro=(ve_id,),
         raised_value=ve_typed,
     )
     te_leaf = RaiseEffect(
         exception_name="TypeError",
-        occurrence="leaf:te",
+        occurrence=AuthenticatedRaiseLocus.of("leaf:te"),
         exception_type_coordinate=te_id,
         exception_type_mro=(te_id,),
         raised_value=te_typed,
     )
     group = GroupedRaiseEffect(
-        "group:root", "g", (ve_leaf, te_leaf), occurrence="group:root"
+        "group:root", "g", (ve_leaf, te_leaf), occurrence=AuthenticatedRaiseLocus.of("group:root")
     )
 
     class Fixed(Sugar):
@@ -645,13 +646,13 @@ def test_second_handler_reads_first_handler_temporal_binding():
                 return Incomplete(
                     RaiseEffect(
                         exception_name="NameError",
-                        occurrence="read-x-missing",
+                        occurrence=AuthenticatedRaiseLocus.of("read-x-missing"),
                     )
                 )
             return Incomplete(
                 RaiseEffect(
                     exception_name="RuntimeError",
-                    occurrence="read-x-ok",
+                    occurrence=AuthenticatedRaiseLocus.of("read-x-ok"),
                 )
             )
 
@@ -831,12 +832,12 @@ def test_guarded_handler_faces_conjoin_body_guard():
     _ve_cls, ve_typed, ve_id = _synthetic_class("ValueError")
     leaf = RaiseEffect(
         exception_name="ValueError",
-        occurrence="leaf:ve",
+        occurrence=AuthenticatedRaiseLocus.of("leaf:ve"),
         exception_type_coordinate=ve_id,
         exception_type_mro=(ve_id,),
         raised_value=ve_typed,
     )
-    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence="group:root")
+    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence=AuthenticatedRaiseLocus.of("group:root"))
     body_atom = atomic("body.guard", [str_const("body")])
     handler_atom = atomic("handler.guard", [str_const("handler")])
 
@@ -870,7 +871,7 @@ def test_guarded_handler_faces_conjoin_body_guard():
                         handler_atom,
                         RaiseEffect(
                             exception_name="RuntimeError",
-                            occurrence="handler:re",
+                            occurrence=AuthenticatedRaiseLocus.of("handler:re"),
                         ),
                         None,
                     ),
@@ -935,12 +936,12 @@ def test_alternative_exceptional_faces_keep_separate_guards():
     _ve_cls, ve_typed, ve_id = _synthetic_class("ValueError")
     leaf = RaiseEffect(
         exception_name="ValueError",
-        occurrence="leaf:ve",
+        occurrence=AuthenticatedRaiseLocus.of("leaf:ve"),
         exception_type_coordinate=ve_id,
         exception_type_mro=(ve_id,),
         raised_value=ve_typed,
     )
-    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence="group:root")
+    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence=AuthenticatedRaiseLocus.of("group:root"))
     body_atom = atomic("body.guard", [str_const("body")])
     g1 = atomic("alt.one", [str_const("1")])
     g2 = atomic("alt.two", [str_const("2")])
@@ -961,12 +962,12 @@ def test_alternative_exceptional_faces_keep_separate_guards():
                 (
                     Halted(
                         g1,
-                        RaiseEffect(exception_name="KeyError", occurrence="a1"),
+                        RaiseEffect(exception_name="KeyError", occurrence=AuthenticatedRaiseLocus.of("a1")),
                         None,
                     ),
                     Halted(
                         g2,
-                        RaiseEffect(exception_name="OSError", occurrence="a2"),
+                        RaiseEffect(exception_name="OSError", occurrence=AuthenticatedRaiseLocus.of("a2")),
                         None,
                     ),
                 )

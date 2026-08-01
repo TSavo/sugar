@@ -46,6 +46,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 CODEX3 = (
     "codex-3 exceptional source-return transport: named halt must cross the "
@@ -404,7 +405,7 @@ def test_wrong_exception_observation_is_not_the_helper_effect() -> None:
     foreign = RaiseEffect(
         exception_name="ValueError",
         blame="foreign.py:1:0",
-        occurrence="foreign.py:1:0",
+        occurrence=AuthenticatedRaiseLocus.of("foreign.py:1:0"),
         exception_type_coordinate=_identity("ValueError"),
         exception_type_mro=(_identity("ValueError"),),
     )

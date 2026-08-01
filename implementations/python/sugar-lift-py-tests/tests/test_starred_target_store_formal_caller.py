@@ -43,6 +43,7 @@ from sugar_lift_py_tests.sugar.unpack_projection_targets import (
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 
 def _tree(source: str, name: str = "star_store.py") -> SourceFile:
@@ -403,7 +404,7 @@ def test_arity_valueerror_wrong_occurrence_is_not_truthful() -> None:
     truthful = _arity_mismatch_effect(sugar.desugar(None))
     foreign = replace(
         truthful,
-        occurrence="pytest.raises:foreign-boundary",
+        occurrence=AuthenticatedRaiseLocus.of("pytest.raises:foreign-boundary"),
         producer_node_owner="pytest.raises",
     )
     assert isinstance(foreign, RaiseEffect)

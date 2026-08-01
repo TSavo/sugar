@@ -50,6 +50,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 
 def _site():
@@ -710,7 +711,7 @@ def test_nameless_halt_stays_outside_matching_boundary_end_to_end():
         (
             Halted(
                 true_guard(),
-                RaiseEffect(occurrence="operation-origin"),
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of("operation-origin")),
             ),
         )
     )

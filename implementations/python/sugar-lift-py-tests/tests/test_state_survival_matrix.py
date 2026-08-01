@@ -97,6 +97,7 @@ from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -358,7 +359,7 @@ def test_c_wrong_occurrence_observation_refuses_twin() -> None:
     foreign = RaiseEffect(
         exception_name="IndexError",
         blame="foreign.py:1:0",
-        occurrence="foreign.py:1:0",
+        occurrence=AuthenticatedRaiseLocus.of("foreign.py:1:0"),
         exception_type_coordinate=_identity("IndexError"),
         exception_type_mro=(_identity("IndexError"),),
     )

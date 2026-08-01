@@ -66,6 +66,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -176,7 +177,7 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
                 RaiseValue(
                     RaiseEffect(
                         exception_type_coordinate=str_const("ValueError"),
-                        occurrence="attr_store.py:2:16",
+                        occurrence=AuthenticatedRaiseLocus.of("attr_store.py:2:16"),
                     )
                 )
             )

@@ -65,6 +65,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 CODEX1 = (
     "codex-1 carrier composition: delete halt pre_effect_state / earlier "
@@ -395,7 +396,7 @@ def test_wrong_exception_observation_is_not_the_delete_effect() -> None:
     foreign = RaiseEffect(
         exception_name="KeyError",
         blame="foreign.py:1:0",
-        occurrence="foreign.py:1:0",
+        occurrence=AuthenticatedRaiseLocus.of("foreign.py:1:0"),
         exception_type_coordinate=_identity("KeyError"),
         exception_type_mro=(_identity("KeyError"),),
     )
