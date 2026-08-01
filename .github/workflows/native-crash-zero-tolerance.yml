@@ -3,7 +3,6 @@ name: Python native-crash floor (discrimination)
 # Discrimination only. Full corpus R_native_crashes runs exclusively under
 # factory-zero-tolerance.yml (one heavy orchestrator).
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:

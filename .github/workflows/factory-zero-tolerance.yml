@@ -1,7 +1,6 @@
 name: Python sole-construction floors (R>0 red)
 
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
