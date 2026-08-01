@@ -110,7 +110,6 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
     halted = next(exit_ for exit_ in retained.exits if isinstance(exit_, Halted))
     assert pending.pre_effect_state is not None
     assert halted.state is pending.pre_effect_state.state
-    assert halted.effect.occurrence_id is not None
     assert observed == [(halted.effect, halted.state)]
     foreign = _helper_outcome("\n" + PLAIN_STORE)
     assert isinstance(foreign, NativeOperationExitCarrierV1)

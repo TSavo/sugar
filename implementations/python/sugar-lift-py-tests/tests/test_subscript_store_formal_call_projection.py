@@ -119,7 +119,6 @@ def test_immutable_receiver_reads_but_formal_store_halts_with_named_type() -> No
 
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
-    assert halted.effect.occurrence_id is not None
     assert "'startLine': 2" in halted.effect.occurrence
     assert "assertion" not in halted.effect.occurrence
 

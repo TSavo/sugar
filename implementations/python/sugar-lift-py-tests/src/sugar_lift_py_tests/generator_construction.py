@@ -1478,7 +1478,7 @@ class GeneratorConstructionV1:
             if (
                 isinstance(effect, RaiseEffect)
                 and effect.exception_type_coordinate == stop_identity
-                and effect.occurrence == str(step.occurrence)
+                and effect.occurrence_id == str(step.occurrence)
             ):
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)
@@ -1526,7 +1526,7 @@ class GeneratorConstructionV1:
             if (
                 isinstance(effect, RaiseEffect)
                 and effect.exception_type_coordinate == stop_identity
-                and effect.occurrence == str(step.occurrence)
+                and effect.occurrence_id == str(step.occurrence)
             ):
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)

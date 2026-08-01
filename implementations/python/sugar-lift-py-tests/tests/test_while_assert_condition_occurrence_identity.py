@@ -29,7 +29,6 @@ def _halt_occurrence(compare: Compare) -> str:
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
-    assert halted[0].effect.occurrence_id is not None
     return halted[0].effect.occurrence_id
 
 

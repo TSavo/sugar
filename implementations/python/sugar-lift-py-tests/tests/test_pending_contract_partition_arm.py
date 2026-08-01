@@ -81,7 +81,7 @@ def test_partition_join_puts_the_obligation_on_every_face():
     partitioned = ExitSet(
         (
             Completed(_guard("hot"), "then-value"),
-            Halted(_guard("cold"), RaiseEffect("ValueError", "boom")),
+            Halted(_guard("cold"), RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:545:0'))),
         )
     )
 
@@ -103,7 +103,7 @@ def test_partition_join_does_not_pick_one_face():
     partitioned = ExitSet(
         (
             Completed(_guard("hot"), "then-value"),
-            Halted(_guard("cold"), RaiseEffect("ValueError", "boom")),
+            Halted(_guard("cold"), RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:524:0'))),
         )
     )
 
@@ -181,7 +181,7 @@ def test_exitset_guarded_conserves_what_each_arm_owes():
         (
             Halted(
                 true_guard(),
-                RaiseEffect("ValueError", "boom"),
+                RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:504:0')),
                 None,
                 frozenset(),
                 (pending,),
@@ -205,7 +205,7 @@ def test_sequence_carries_the_prefix_obligation_onto_every_tail_exit():
         return ExitSet(
             (
                 Completed(_guard("ok"), "tail"),
-                Halted(_guard("bad"), RaiseEffect("KeyError", "k")),
+                Halted(_guard("bad"), RaiseEffect('KeyError', 'k', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:208:0'))),
             )
         )
 
@@ -307,7 +307,7 @@ def test_collapse_of_a_halted_arm_carries_its_obligations():
     """TRUTHFUL. `Incomplete(effect)` has a field for the debt; using the
     one-argument form here would drop it at the exit of the algebra."""
     pending = _carrier()
-    effect = RaiseEffect("ValueError", "boom")
+    effect = RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:484:0'))
     exits = ExitSet((Halted(true_guard(), effect, None, frozenset(), (pending,)),))
 
     collapsed = exits.collapse()
@@ -434,7 +434,7 @@ def test_the_nested_statement_splice_conserves_faces_and_obligations():
             (
                 Halted(
                     _guard("h"),
-                    RaiseEffect("ValueError", "boom"),
+                    RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:437:0')),
                     inner,
                     frozenset({face}),
                     (pending,),
@@ -481,7 +481,7 @@ def test_a_stateless_halt_that_owes_stays_loud():
         (
             Halted(
                 true_guard(),
-                RaiseEffect("ValueError", "boom"),
+                RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:310:0')),
                 None,
                 frozenset(),
                 (_carrier(),),
@@ -501,7 +501,7 @@ def test_an_arm_owing_nothing_never_reaches_the_refusal():
         _enrol_exit_obligations,
     )
 
-    clean = ExitSet((Halted(true_guard(), RaiseEffect("ValueError", "boom"), None),))
+    clean = ExitSet((Halted(true_guard(), RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:184:0')), None),))
 
     assert _enrol_exit_obligations(clean) is clean
 
@@ -521,7 +521,7 @@ def test_a_stateless_halt_that_owes_is_given_the_prefix_record():
     prefix = _ReducedBlock(("earlier-entry",), True, ())
     owing = Halted(
         true_guard(),
-        RaiseEffect("ValueError", "boom"),
+        RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:106:0')),
         None,
         frozenset(),
         (_carrier(),),
@@ -542,6 +542,6 @@ def test_a_stateless_halt_that_owes_nothing_keeps_its_state():
         _halt_state,
     )
 
-    clean = Halted(true_guard(), RaiseEffect("ValueError", "boom"), None)
+    clean = Halted(true_guard(), RaiseEffect('ValueError', 'boom', occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_pending_contract_partition_arm.py:84:0')), None)
 
     assert _halt_state(_ReducedBlock(("earlier-entry",), True, ()), clean) is None

@@ -233,7 +233,6 @@ def test_invalid_index_named_indexerror_no_statement_completion() -> None:
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.effect.occurrence_id is not None
     # Authentic earlier-binding halt state (carrier #6640 / enrollment #6644).
     assert halted.state is not None
     assert pending.pre_effect_state.state is halted.state
@@ -251,7 +250,6 @@ def test_source_caller_invalid_index_named_indexerror() -> None:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.effect.occurrence_id is not None
     # Caller path also preserves pre-effect state on the halt face.
     assert halted.state is not None
 

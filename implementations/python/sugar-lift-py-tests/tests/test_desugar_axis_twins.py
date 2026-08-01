@@ -49,7 +49,7 @@ class _FakeSugar:
 def _raise_effect(occurrence: str):
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    return RaiseEffect(exception_name="ValueError", occurrence=occurrence)
+    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occurrence), exception_name='ValueError')
 
 
 def _incomplete(occurrence: str):

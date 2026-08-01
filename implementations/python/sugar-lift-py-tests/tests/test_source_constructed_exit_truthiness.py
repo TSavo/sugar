@@ -6,7 +6,7 @@ from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
 
 def test_source_constructed_exit_retains_suppressed_and_unsuppressed_faces():
-    original = RaiseEffect(TermValue("boom"), None, None)
+    original = RaiseEffect(TermValue('boom'), None, None, occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_source_constructed_exit_truthiness.py:25:0'))
     incoming = ExitSet.halted(original, state=TermValue("before-exit"))
     result = SymbolicValue(ctor("fixture:exit-result", []))
 
@@ -22,7 +22,7 @@ def test_source_constructed_exit_retains_suppressed_and_unsuppressed_faces():
 
 
 def test_source_constructed_false_exit_restores_original_effect():
-    original = RaiseEffect(TermValue("boom"), None, None)
+    original = RaiseEffect(TermValue('boom'), None, None, occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_source_constructed_exit_truthiness.py:9:0'))
     incoming = ExitSet.halted(original, state=TermValue("before-exit"))
 
     routed = incoming.and_exit_truthiness(

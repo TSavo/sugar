@@ -127,15 +127,7 @@ def _raise(
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(
-            exception_name=name,
-            blame=occ,
-            occurrence=occ,
-            exception_type_coordinate=_identity(name),
-            exception_type_mro=(_identity(name),),
-            raised_value=raised_value,
-            producer_node_owner="TryFinallyBody.desugar",
-        ),
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_coordinate=_identity(name), exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner='TryFinallyBody.desugar'),
         _state(marker),
     )
 
@@ -327,7 +319,7 @@ def test_ordinary_cleanup_restores_incoming_result_and_state():
         binding = _observed_binding(face)
         if binding is not None:
             assert binding.effect is matching_effect
-            assert binding.effect.occurrence == "body.py:10:8:matching"
+            assert binding.effect.occurrence_id == "body.py:10:8:matching"
 
     for face in routed.exits:
         if isinstance(face, Halted) and isinstance(
@@ -395,7 +387,7 @@ def test_excinfo_binds_only_consumed_occurrence_after_finally():
     assert matching_effect in bound
     assert mismatch_effect not in bound
     assert all(
-        effect is matching_effect and effect.occurrence == "body.py:10:8:matching"
+        effect is matching_effect and effect.occurrence_id == "body.py:10:8:matching"
         for effect in bound
     )
     for face in routed.exits:

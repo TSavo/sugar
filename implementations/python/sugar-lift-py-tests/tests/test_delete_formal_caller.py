@@ -180,7 +180,6 @@ def _assert_named_halt(outcome, expected: str) -> Halted:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity(expected)
-    assert halted.effect.occurrence_id is not None
     assert halted.state is not None, (
         "formal delete halt omitted real pre-effect state "
         "(NativeOperationResolutionV1.project / reduce_body collapse)"

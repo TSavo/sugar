@@ -209,7 +209,7 @@ def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
     """Guard evaluation exits are paths, not a reason to discard the branch."""
     halted_guard = atomic("test.guard.halted", [])
     completed_guard = atomic("test.guard.completed", [])
-    effect = RaiseEffect(exception_name="GuardError", occurrence="guard:site")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('guard:site'), exception_name='GuardError')
     halted = Halted(halted_guard, effect, state="guard-state")
     guard_outcome = ExitSet(
         (

@@ -93,12 +93,7 @@ class _Raise(_FixedSugar):
         coordinate, mro = _builtin_exception_identity(name)
         super().__init__(
             Incomplete(
-                RaiseEffect(
-                    exception_name=name,
-                    occurrence=occurrence,
-                    exception_type_coordinate=coordinate,
-                    exception_type_mro=mro,
-                )
+                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(occurrence), exception_name=name, exception_type_coordinate=coordinate, exception_type_mro=mro)
             ),
             probe=probe,
         )
@@ -196,7 +191,7 @@ def test_runtime_selected_authenticates_completed_face_without_mutation():
 
 
 def test_runtime_selected_authenticates_halted_face_preserving_identity():
-    effect = RaiseEffect(exception_name="ValueError", occurrence="law.py:1:0")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('law.py:1:0'), exception_name='ValueError')
     state = object()
     incoming = Halted(true_guard(), effect, state)
 
@@ -220,7 +215,7 @@ def test_none_disposition_refuses_completed_face_without_mutation():
 
 
 def test_none_disposition_refuses_halted_face_without_mutation():
-    effect = RaiseEffect(exception_name="ValueError", occurrence="law.py:2:0")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('law.py:2:0'), exception_name='ValueError')
     state = object()
     incoming = Halted(true_guard(), effect, state)
 
@@ -294,7 +289,7 @@ def test_exit_face_binding_applied_per_face_without_rebuilding_exit():
         "X",
         Halted(
             true_guard(),
-            RaiseEffect(exception_name="KeyError", occurrence="k.py:1:0"),
+            RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('k.py:1:0'), exception_name='KeyError'),
         ),
     )
     assert completed.kind == "completed"
@@ -305,7 +300,7 @@ def test_exit_face_binding_applied_per_face_without_rebuilding_exit():
 def test_enter_halt_skips_body_and_exit():
     body_ran = []
     exit_ran = []
-    enter_halt = RaiseEffect(exception_name="OSError")
+    enter_halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:308:0'), exception_name='OSError')
     sugar = _resource(
         enter=_FixedSugar(Incomplete(enter_halt)),
         body=(_Pass(probe=body_ran),),
@@ -341,10 +336,7 @@ def test_completed_body_runs_exit_with_three_explicit_none_coordinates():
 def test_raised_body_routes_exact_face_coordinates_to_exit():
     """Face 3: type/value/traceback coordinates share the exact raised face."""
     face_id = "raised-face-17"
-    effect = RaiseEffect(
-        exception_name="ValueError",
-        occurrence="source.py:17:8",
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('source.py:17:8'), exception_name='ValueError')
     exit_sugar = _parametric_exit(face_id=face_id)
     type_coord, value_coord, traceback_coord = (
         argument.desugar().value for argument in exit_sugar.args
@@ -371,7 +363,7 @@ def test_falsy_source_exit_preserves_the_exact_original_halt():
     """Face 4: falsity restores the same effect and pre-effect state objects."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:4:2")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:4:2'), exception_name='ValueError')
     state = ObjectValue("native-resource", (), identity="before-raise")
     incoming = Halted(true_guard(), effect, state)
     routed = ExitSet((incoming,)).and_exit_truthiness(
@@ -388,7 +380,7 @@ def test_truthy_source_exit_suppresses_the_original_raise():
     """Face 5: source-testified truth consumes the raised edge."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:5:2")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:5:2'), exception_name='ValueError')
     routed = ExitSet((Halted(true_guard(), effect),)).and_exit_truthiness(
         ExitSet.completed(TermValue(True)), site="exit-site"
     )
@@ -399,7 +391,7 @@ def test_undecided_source_exit_keeps_both_faces_factored():
     """Face 6: UNKNOWN truth is neither false nor true; both arms survive."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:6:2")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:6:2'), exception_name='ValueError')
     routed = ExitSet((Halted(true_guard(), effect),)).and_exit_truthiness(
         ExitSet.completed(SymbolicValue(make_var("exit_result"))), site="exit-site"
     )
@@ -418,7 +410,7 @@ def test_never_suppresses_restores_body_halt():
 
 def test_typed_never_suppresses_preserves_conditional_raise_and_normal_face():
     guard = atomic("with_body_guard", [make_var("state")])
-    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:4:8")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:4:8'), exception_name='ValueError')
 
     class _ConditionalRaise(Sugar):
         def desugar(self, ctx=None):
@@ -639,7 +631,7 @@ def test_never_suppresses_needs_no_second_cleanup_algebra():
     faces = (
         Completed(true_guard(), _FloorValue("body")),
         Halted(
-            true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")
+            true_guard(), RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:642:0'), exception_name='ValueError'), _FloorValue("pre")
         ),
     )
     for disposition in (NeverSuppresses(), NeverSuppressesDispositionV1()):
@@ -667,12 +659,7 @@ def test_lying_the_equivalence_is_specific_to_never_suppresses():
     coordinate, mro = _builtin_exception_identity("ValueError")
     halted = Halted(
         true_guard(),
-        RaiseEffect(
-            exception_name="ValueError",
-            exception_type_coordinate=coordinate,
-            exception_type_mro=mro,
-            occurrence="equiv.py:1:0",
-        ),
+        RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('equiv.py:1:0'), exception_name='ValueError', exception_type_coordinate=coordinate, exception_type_mro=mro),
         _FloorValue("pre"),
     )
     suppressing = ExitSuppressionContract.suppresses(("ValueError",))
@@ -695,7 +682,7 @@ def test_exit_face_binding_completed_is_none_triple():
 
 
 def test_exit_face_binding_raised_is_not_none_triple():
-    effect = RaiseEffect(exception_name="ValueError", occurrence="src.py:3:4")
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('src.py:3:4'), exception_name='ValueError')
     face = Halted(true_guard(), effect)
     binding = ExitFaceBinding.from_body_exit("X", face)
     assert binding.kind == "raised"

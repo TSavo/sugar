@@ -362,7 +362,7 @@ def test_failure_entering_second_manager_still_exits_first():
     outgoing edge, not only the completed one.
     """
     outer_exit, inner_exit = [], []
-    halt = RaiseEffect(exception_name="OSError", occurrence="b.py:1:0")
+    halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('b.py:1:0'), exception_name='OSError')
     sugar = _nested_pair(
         _FixedSugar(Incomplete(halt)),
         outer_exit_probe=outer_exit,
@@ -380,7 +380,7 @@ def test_discrimination_first_exit_is_not_skipped_on_the_halted_edge():
     unran. Assert the wrong expectation and show it fails."""
     outer_exit, inner_exit = [], []
     sugar = _nested_pair(
-        _FixedSugar(Incomplete(RaiseEffect(exception_name="OSError"))),
+        _FixedSugar(Incomplete(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_with_multiple_managers.py:383:0'), exception_name='OSError'))),
         outer_exit_probe=outer_exit,
         inner_exit_probe=inner_exit,
     )
@@ -418,7 +418,7 @@ def test_body_halt_inside_nested_managers_runs_both_exits():
     """LAW: a halting BODY still exits B then A; the halt is preserved under
     NeverSuppresses."""
     outer_exit, inner_exit = [], []
-    halt = RaiseEffect(exception_name="ValueError", occurrence="body.py:2:4")
+    halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:2:4'), exception_name='ValueError')
     inner = _resource(
         body=(_FixedSugar(Incomplete(halt)),), slot="B", exit_probe=inner_exit
     )
@@ -432,7 +432,7 @@ def test_body_halt_inside_nested_managers_runs_both_exits():
 
 def test_discrimination_body_halt_is_not_suppressed_by_never_suppresses():
     outer_exit, inner_exit = [], []
-    halt = RaiseEffect(exception_name="ValueError", occurrence="body.py:2:4")
+    halt = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body.py:2:4'), exception_name='ValueError')
     inner = _resource(
         body=(_FixedSugar(Incomplete(halt)),), slot="B", exit_probe=inner_exit
     )

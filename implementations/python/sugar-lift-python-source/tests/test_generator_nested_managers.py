@@ -181,12 +181,7 @@ def test_nested_cleanup_runs_before_outer_resume_on_halt(tmp_path: Path) -> None
     machine = entered.machine
     assert isinstance(machine.steps[machine.cursor], NestedManagerExitStepV1)
     # Plant a throw at the post-yield suspension (halted body edge).
-    effect = RaiseEffect(
-        exception_name="RuntimeError",
-        blame="body",
-        occurrence="body:halt",
-        raised_value="boom",
-    )
+    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('body:halt'), exception_name='RuntimeError', blame='body', raised_value='boom')
     halted = machine.throw(effect)
     # Nested exit must have run: NestedEnteredBinding still present but exit was
     # called (one-shot nested protocol refuses double exit).

@@ -49,6 +49,7 @@ from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .name_error_effect import NameErrorEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .power_runtime_effect import PowerRuntimeEffect
+from .authenticated_raise_locus import AuthenticatedRaiseLocus, UndeterminedRaiseLocus
 from .raise_effect import RaiseEffect
 from .grouped_raise_effect import GroupedRaiseEffect, GroupedRaisePartition
 from .warning_effect import WarningEffect
@@ -125,6 +126,8 @@ __all__ = [
     "NameErrorEffect",
     "OSExitRuntimeEffect",
     "PowerRuntimeEffect",
+    "AuthenticatedRaiseLocus",
+    "UndeterminedRaiseLocus",
     "RaiseEffect",
     "GroupedRaiseEffect",
     "GroupedRaisePartition",

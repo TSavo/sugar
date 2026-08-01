@@ -83,7 +83,7 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
     assert isinstance(outcome.value, RaiseValue)
     assert outcome.value.effect.exception_name == "ValueError"
     assert outcome.value.effect.producer_node_owner == "TupleValue.subscript"
-    assert outcome.value.effect.occurrence == str(site)
+    assert outcome.value.effect.occurrence_id == str(site)
 
 
 def test_source_tuple_symbolic_slice_bound_stays_typed_loud(

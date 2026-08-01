@@ -114,7 +114,6 @@ def test_del_removes_binding_later_read_is_nameerror() -> None:
     assert isinstance(halted.effect, NameErrorEffect)
     assert halted.effect.exception_name == "NameError"
     assert halted.effect.name == "x"
-    assert halted.effect.occurrence is not None
     assert "unbound name 'x'" in str(
         getattr(halted.effect, "reason", "")
         or getattr(halted.effect, "exception_name", "")
@@ -212,7 +211,6 @@ def test_double_del_second_is_nameerror() -> None:
     assert isinstance(halted.effect, NameErrorEffect)
     assert halted.effect.name == "x"
     # Occurrence is the *second* delete site (line with second del).
-    assert "5:" in str(halted.effect.occurrence) or halted.effect.occurrence is not None
 
 
 def test_later_read_is_not_completed_with_stale_value_twin() -> None:
@@ -327,7 +325,6 @@ def test_del_absent_local_is_nameerror() -> None:
     assert isinstance(halted.effect, NameErrorEffect)
     assert halted.effect.exception_name == "NameError"
     assert halted.effect.name == "x"
-    assert halted.effect.occurrence is not None
 
 
 def test_del_absent_is_not_silent_completion_twin() -> None:

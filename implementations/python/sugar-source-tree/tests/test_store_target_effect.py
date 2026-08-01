@@ -202,7 +202,7 @@ def test_rhs_constructs_before_halted_receiver_and_store_does_not_continue():
     sugar = assignment.sugar()
     receiver_calls = []
     value_calls = []
-    halt = Incomplete(RaiseEffect(exception_name="ArbitraryError"))
+    halt = Incomplete(RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-source-tree/tests/test_store_target_effect.py:205:0'), exception_name='ArbitraryError'))
     rewritten = replace(
         sugar,
         receiver=_OutcomeSugar(halt, receiver_calls),

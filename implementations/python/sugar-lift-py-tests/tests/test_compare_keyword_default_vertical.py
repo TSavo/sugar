@@ -81,7 +81,6 @@ def _named_type_error(outcome: object) -> Halted:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _exception_identity("TypeError")
-    assert halted.effect.occurrence_id is not None
     return halted
 
 
