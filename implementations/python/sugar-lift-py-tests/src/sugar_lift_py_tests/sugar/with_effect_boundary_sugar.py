@@ -448,13 +448,32 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             refusal.unresolved_warning_producers = unresolved_members
             raise refusal
         if len(observations) != 1:
-            verdict = MatchDecided(False)
-            index = None
-        else:
-            index, observation = observations[0]
-            verdict = warning_effect_message_verdict(
-                observation.effect, expected, pattern
+            # LAW OF ONE: match/miss meaning is only warning_effect_message_verdict
+            # (the one matcher) after sugar produced one authenticated observation.
+            # pytest.warns is EXISTENTIAL — one written surface. Cardinality ≠ 1
+            # is not a settled miss: deciding MatchDecided(False) here would be a
+            # second mechanism (ad-hoc count → fabricated ExpectationNotMet).
+            # Sugar not written for multi-obs yet; throw, do not decide.
+            raise SugarNotWritten(
+                blame=site,
+                owner="WithEffectBoundarySugar.warning_observation",
+                observed=(
+                    f"{len(observations)} authenticated warning observations"
+                ),
+                requested=(
+                    "exactly one source-authenticated WarningObservationValue "
+                    "on the completed face"
+                ),
+                fix=(
+                    "write multi-observation warning-boundary sugar; never "
+                    "decide miss by cardinality alone"
+                ),
             )
+        index, observation = observations[0]
+        # ONE matcher: identity + optional message. No local MatchDecided mint.
+        verdict = warning_effect_message_verdict(
+            observation.effect, expected, pattern
+        )
 
         def successful(guard, faces):
             assert index is not None
@@ -548,6 +567,7 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
     # population predicate in its single owner rather than restating it here.
     if not body_es.exits:
         raise SugarNotWritten(
+            blame=site,
             owner="WithEffectBoundarySugar.warning_observation",
             observed="body has no authenticated exit edge",
             requested="a resolved ExitSet containing a Completed edge",
