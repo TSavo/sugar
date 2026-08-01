@@ -51,9 +51,7 @@ class ReduceContext:
         )
 
     @classmethod
-    def derived(
-        cls, source: "ReduceContext", *, owner: str
-    ) -> "ReduceContext":
+    def derived(cls, source: "ReduceContext", *, owner: str) -> "ReduceContext":
         """Front door for reduction that carries an existing temporal context."""
         return cls(
             temporal=source.temporal,

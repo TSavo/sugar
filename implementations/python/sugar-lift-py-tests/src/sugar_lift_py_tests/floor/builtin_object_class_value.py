@@ -16,7 +16,5 @@ class BuiltinObjectClassValue(ClassValue):
             )
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(
-                BuiltinSemanticCallable(operation=f"python.object.{name}")
-            )
+            return Complete(BuiltinSemanticCallable(operation=f"python.object.{name}"))
         return super().attribute(name, site)

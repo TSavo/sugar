@@ -140,9 +140,7 @@ def _resolve_export_uncached(
     if locus is not None and not _prefix_has_completed_fallthrough(
         module, locus, graph=graph, session=session
     ):
-        return _gap(
-            "dynamic-export", binding_cid, graph, module_name, exported_name
-        )
+        return _gap("dynamic-export", binding_cid, graph, module_name, exported_name)
     return _resolve_export_binding(
         graph,
         binding_cid,
@@ -311,9 +309,7 @@ def _resolve_export_binding(
             session=session,
         )
     if binding is not None and binding[0] == "dynamic":
-        call_method = _callable_instance_call_method(
-            body, binding[1], exported_name
-        )
+        call_method = _callable_instance_call_method(body, binding[1], exported_name)
         if call_method is not None:
             definition = _definition(module, call_method)
             return ResolvedPythonObjectV1(
@@ -590,9 +586,7 @@ def _resolve_star_export(
     target_tree = parsed_tree(target.source, target.source_seat)
     published = _target_star_published_names(target_tree.body)
     if exported_name not in published:
-        return _gap(
-            "dynamic-export", binding_cid, graph, module_name, exported_name
-        )
+        return _gap("dynamic-export", binding_cid, graph, module_name, exported_name)
     warrant = ReexportWarrantV1(
         from_module=module_name,
         from_source_cid=module.source_cid,
@@ -792,9 +786,7 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state):
         return body_state, body_locus
     if isinstance(statement, ast.If):
         body_state, body_locus = _export_block_with_locus(statement.body, name, state)
-        else_state, else_locus = _export_block_with_locus(
-            statement.orelse, name, state
-        )
+        else_state, else_locus = _export_block_with_locus(statement.orelse, name, state)
         joined = _join_export_states((body_state, else_state), statement)
         if joined is body_state and body_state is not state:
             return joined, body_locus
@@ -844,9 +836,7 @@ def _prefix_has_completed_fallthrough(
 
     if graph is None and session is None:
         return prefix_has_completed_fallthrough(module, locus)
-    return prefix_has_completed_fallthrough(
-        module, locus, graph=graph, session=session
-    )
+    return prefix_has_completed_fallthrough(module, locus, graph=graph, session=session)
 
 
 def _absolute_import(

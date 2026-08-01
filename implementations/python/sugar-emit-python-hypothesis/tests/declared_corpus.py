@@ -49,9 +49,7 @@ HOST_GRAMMAR = "host-grammar"
 # passing backend.
 OPTIONAL_PROVIDER = "optional-provider"
 
-OPTIONAL_LAW_CATEGORIES = frozenset(
-    {HEAVY_OPT_IN, HOST_GRAMMAR, OPTIONAL_PROVIDER}
-)
+OPTIONAL_LAW_CATEGORIES = frozenset({HEAVY_OPT_IN, HOST_GRAMMAR, OPTIONAL_PROVIDER})
 
 
 class DeclaredCorpusMissing(AssertionError):

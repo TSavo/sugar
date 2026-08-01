@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from .floor_value import FloorValue
 
+
 @dataclass(frozen=True)
 class BoolOpTruthSelection(FloorValue):
     """One evaluation's operand and its completed native truth result.
