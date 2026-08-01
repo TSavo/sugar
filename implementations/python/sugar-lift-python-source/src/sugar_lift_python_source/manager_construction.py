@@ -1571,43 +1571,40 @@ def construct_manager_behavior(
         # Typed floor projection failure — not a bare crash, not soft silence.
         # Multi-arm ExitSet is still a factory with Completed return arms: dig
         # the source outcome and project manager returns from those arms.
+        #
+        # ConstructionPanic carries prose in ``info.observed``, not a typed
+        # ExitSet payload. Discriminate by re-reducing the source body and
+        # matching the outcome type. NEVER substring-match panic message text
+        # — control flow driven by error-message prose is a SIN.
         owner = getattr(getattr(panic, "info", None), "owner", None) or "force-floor"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        if "ExitSet" in str(observed):
-            projected_force_floor_detail = str(observed)
-            from sugar_lift_py_tests.outcome import Complete, ExitSet
+        from sugar_lift_py_tests.outcome import Complete, ExitSet
 
-            outcome = call.reduce_source_outcome(reduce_ctx)
-            if isinstance(outcome, ExitSet):
-                manager_projection_arm_count = len(outcome.exits) - bool(
-                    keyword_actuals
-                )
-                projected_force_floor_detail = (
-                    f"ExitSet with {manager_projection_arm_count} arms"
-                )
-                projected = _project_manager_from_exitset(
-                    outcome,
-                    factory_prefix=factory_prefix,
-                    seen_calls=seen_calls,
-                    resolved_cid=resolved.cid,
-                )
-                if isinstance(projected, ManagerConstructionGapV1):
-                    return projected
-                result, factory_prefix = projected
-            elif isinstance(outcome, Complete):
-                projected = _project_factory_manager(
-                    outcome.value,
-                    factory_prefix=factory_prefix,
-                    seen_calls=seen_calls,
-                    resolved_cid=resolved.cid,
-                )
-                if isinstance(projected, ManagerConstructionGapV1):
-                    return projected
-                result, factory_prefix = projected
-            else:
-                return ManagerConstructionGapV1(
-                    "force-floor", resolved.cid, f"{owner}:{observed}"
-                )
+        outcome = call.reduce_source_outcome(reduce_ctx)
+        if isinstance(outcome, ExitSet):
+            manager_projection_arm_count = len(outcome.exits) - bool(keyword_actuals)
+            projected_force_floor_detail = (
+                f"ExitSet with {manager_projection_arm_count} arms"
+            )
+            projected = _project_manager_from_exitset(
+                outcome,
+                factory_prefix=factory_prefix,
+                seen_calls=seen_calls,
+                resolved_cid=resolved.cid,
+            )
+            if isinstance(projected, ManagerConstructionGapV1):
+                return projected
+            result, factory_prefix = projected
+        elif isinstance(outcome, Complete):
+            projected = _project_factory_manager(
+                outcome.value,
+                factory_prefix=factory_prefix,
+                seen_calls=seen_calls,
+                resolved_cid=resolved.cid,
+            )
+            if isinstance(projected, ManagerConstructionGapV1):
+                return projected
+            result, factory_prefix = projected
         else:
             return ManagerConstructionGapV1(
                 "force-floor", resolved.cid, f"{owner}:{observed}"

@@ -2123,10 +2123,17 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         caller_post = term_table.formula(formula)
 
                 target_candidates = []
-                targets = _tree.call_target_names(sf, span)
-                for name in targets:
-                    fn = _tree.find_function_by_name(sf, name)
-                    if fn is None:
+                targets = []
+                seen_targets = set()
+                for call in _tree.call_nodes_in_assert(sf, span):
+                    name = call.func.id
+                    if name in seen_targets:
+                        continue
+                    seen_targets.add(name)
+                    targets.append(name)
+                    try:
+                        fn = _tree.resolve_function_for_call(call)
+                    except _tree.FunctionBindingMiss:
                         continue
                     try:
                         def_memento, rows = _tree.function_contract_rows(fn, file_rel)
@@ -2204,6 +2211,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # call-site cue.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
                 sf = _tree.source_file(full_path)
@@ -2282,7 +2290,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue
                     seen.add(t)
                     targets.append(t)
-                    fn = _tree.find_function_by_name(sf, t)
+                    # Resolve by binding/coordinate at the call site — not
+                    # first-match-by-spelling. Miss is a named throw; soft skip
+                    # is an explicit catch of FunctionBindingMiss.
+                    try:
+                        fn = _tree.resolve_function_for_call(call)
+                    except _tree.FunctionBindingMiss:
+                        fn = None
                     # A call IS substitution: ground args fill the pre, so the
                     # dig serves the contract AS APPLIED at this call (a concrete
                     # iterable unrolls the callee's loop here; the fold
@@ -2292,17 +2306,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # applied dig is attempted even when the ABSTRACT universe is
                     # a gap: the applied substitution can succeed exactly where
                     # the abstract is still a hole (that is the whole point of
-                    # filling the pre).
-                    if (
-                        fn is not None
-                        and len(call.args) == len(fn.params)
-                        and _tree._args_are_ground(call)
-                    ):
+                    # filling the pre). Arity is the binder's job (vararg packs,
+                    # defaults fill) — never len(args)==len(params).
+                    if fn is not None and _tree._args_are_ground(call):
                         try:
-                            memento, rows = _tree.applied_contract_rows(
-                                fn, tuple(call.args), file_rel
+                            keywords = tuple(
+                                (keyword.arg, keyword.value)
+                                for keyword in call.keywords
+                                if keyword.arg is not None
                             )
-                        except SugarNotWritten:
+                            memento, rows = _tree.applied_contract_rows(
+                                fn, tuple(call.args), file_rel, keywords=keywords
+                            )
+                        except (SugarNotWritten, SourceCallBindingGap):
                             rows = None
                         if rows:
                             cued.append(_node(memento.to_rpc(), rows[0]))

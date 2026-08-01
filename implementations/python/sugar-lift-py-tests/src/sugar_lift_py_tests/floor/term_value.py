@@ -137,10 +137,9 @@ class TermValue(FloorValue):
         return getattr(super(), owner.rsplit(".", 1)[-1])(other, site)
 
     def less_than(self, other, site):
-        # A number stands on the ordering floor: two numbers are ordered or not, and
-        # it gives back the True or False literal -- the boolean IS the type.
-        # Ground cross-type is authenticated TypeError (Python defines no
-        # ordering). Symbolic falls to emit.
+        # A number stands on the ordering floor: two numbers fold to True/False
+        # Sugar. Ground cross-type is authenticated TypeError. Undecided peers
+        # refuse named (LAW_OF_ONE — no Complete(PredicateValue) invent).
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -158,6 +157,28 @@ class TermValue(FloorValue):
         if self._unorderable_ground_peer(other):
             return self._ground_ordering_type_error(site, owner="TermValue.less_than")
         return super().less_than(other, site)
+
+    def less_than_from_left(self, left, site):
+        """``left < self`` when the RHS is a number — Sugar fold or TypeError."""
+        if type(left) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if left.value < self.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        if self._unorderable_ground_peer(left):
+            return self._ground_ordering_type_error(
+                site, owner="TermValue.less_than_from_left"
+            )
+        return super().less_than_from_left(left, site)
 
     def less_equal(self, other, site):
         if type(other) is TermValue:

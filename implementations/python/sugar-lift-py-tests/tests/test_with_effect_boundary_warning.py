@@ -111,7 +111,8 @@ def _boundary(*entries, expected=None):
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),
         context_manager_edge=None,
-        site=None,
+        # Real blame coordinate: SugarNotWritten refuses blame=None.
+        site="with_effect_boundary_warning:test",
     )
 
 
@@ -140,14 +141,23 @@ def test_lying_warning_observation_fails_the_assertion():
     assert isinstance(face.effect, ExpectationNotMetEffect)
 
 
-def test_matching_warning_plus_extra_warning_fails_the_assertion():
-    routed = _boundary(
-        _warning("FutureWarning"), _warning("DeprecationWarning")
-    ).desugar()
-    assert len(routed.exits) == 1
-    face = routed.exits[0]
-    assert isinstance(face, Halted)
-    assert isinstance(face.effect, ExpectationNotMetEffect)
+def test_multi_authenticated_warning_observations_are_not_a_decided_miss():
+    """Cardinality ≠ 1 is sugar-not-written, never MatchDecided(False).
+
+    pytest.warns is existential. Two authenticated observations are evidence
+    nobody's multi-obs sugar has read yet. Fabricating ExpectationNotMetEffect
+    from len(observations) alone is a decided miss outside the three-valued
+    matcher — the lying twin of this package.
+    """
+    with pytest.raises(SugarNotWritten) as raised:
+        _boundary(
+            _warning("FutureWarning"), _warning("DeprecationWarning")
+        ).desugar()
+    gap = raised.value
+    assert gap.owner == "WithEffectBoundarySugar.warning_observation"
+    assert "2 authenticated warning observations" in gap.observed
+    assert "exactly one" in gap.requested
+    assert "cardinality" in gap.fix
 
 
 def test_unresolved_completed_face_is_undecided_not_false():
@@ -234,7 +244,7 @@ def _no_warning_from_exitset(body_es):
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),
         context_manager_edge=None,
-        site=None,
+        site="with_effect_boundary_warning:no_warning",
     )
 
 

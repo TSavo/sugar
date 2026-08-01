@@ -123,12 +123,22 @@ class NoneValue(FloorValue):
 
     def less_than(self, other, site):
         # None orders against nothing: any ground comparison is authenticated
-        # TypeError. Symbolic falls to super() emit.
+        # TypeError. Undecided peers refuse named (no FOL invent).
         if self._unorderable_ground_peer(other):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="NoneValue.less_than")
         return super().less_than(other, site)
+
+    def less_than_from_left(self, left, site):
+        """``left < None`` — TypeError when left is a decided ground peer."""
+        if self._unorderable_ground_peer(left):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(
+                site=site, owner="NoneValue.less_than_from_left"
+            )
+        return super().less_than_from_left(left, site)
 
     def _unorderable_ground_peer(self, other) -> bool:
         from sugar_lift_py_tests.floor.list_value import ListValue
