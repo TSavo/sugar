@@ -7,6 +7,7 @@ from typing import Any
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.context_manager_contract import _json_value
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.ir import (
     Formula,

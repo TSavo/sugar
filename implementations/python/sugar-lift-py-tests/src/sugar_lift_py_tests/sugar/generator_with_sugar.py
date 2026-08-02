@@ -125,7 +125,12 @@ class GeneratorWithSugar(Sugar):
 
         refusal = observed_entry_refusal()
         blame = str(manager_exit.value.instance_coordinate)
-        effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(f'generator-entry-refusal:{blame}'), exception_name=refusal.exception_name, blame=blame, raised_value=refusal.message)
+        effect = RaiseEffect.for_builtin(
+            refusal.exception_name,
+            occurrence=f"generator-entry-refusal:{blame}",
+            blame=blame,
+            raised_value=refusal.message,
+        )
         return ExitSet(
             (
                 Halted(
