@@ -10,8 +10,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict
+from typing import TYPE_CHECKING, Dict
 from typing import Never, NoReturn
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.sealed_ground import RefusalDecidability
 
 # ``owner`` is the panic board's DISPATCH KEY: every row is worked as
 # (owner × value category), so an owner that is not a name makes the row
@@ -92,8 +95,35 @@ class ConstructionGap:
     # this away once it decided pass/fail). Empty string when the producer
     # does not (yet) compute a callee resolution — never invented downstream.
     resolution_kind: str = ""
+    # Sealed RefusalDecidability (Criterion 3). Default kit-incomplete when
+    # omitted so legacy ConstructionGap(...) mints still carry a closed ground.
+    decidability: "RefusalDecidability | None" = None
 
     def __post_init__(self) -> None:
+        if self.decidability is None:
+            from sugar_lift_py_tests.sealed_ground import kit_incomplete
+
+            object.__setattr__(
+                self,
+                "decidability",
+                kit_incomplete(owner=self.owner, observed=self.observed),
+            )
+        else:
+            from sugar_lift_py_tests.sealed_ground import (
+                KitConstructionIncomplete,
+                is_refusal_decidability,
+                require_refusal_ground_holds,
+            )
+
+            if not is_refusal_decidability(self.decidability):
+                raise TypeError(
+                    "ConstructionGap.decidability must be RefusalDecidability: "
+                    f"shape={type(self.decidability).__name__}"
+                )
+            # Kit-incomplete always holds. Runtime grounds need world — checked
+            # only at construction_panic_gap(..., world=), not at bare rebuild.
+            if isinstance(self.decidability, KitConstructionIncomplete):
+                require_refusal_ground_holds(self.decidability, world=None)
         if not isinstance(self.gap_kind, GapKind):
             raise TypeError(
                 "ConstructionGap.gap_kind must be GapKind: owner=ConstructionGap "

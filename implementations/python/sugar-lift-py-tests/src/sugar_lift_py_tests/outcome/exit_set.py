@@ -1291,10 +1291,19 @@ def outcome_to_exitset(outcome) -> ExitSet:
         ).normalize()
 
     if isinstance(outcome, NativeOperationExitCarrierV1):
+        from sugar_lift_py_tests.sealed_ground import (
+            FormalDemandArtifact,
+            FormalDemandUndischarged,
+        )
+
         construction_panic_gap(
             owner="outcome_to_exitset",
             blame=outcome.demand.source_node,
-            observed="undischarged native operation demand",
+            observed=(
+                "undischarged native operation demand: "
+                f"{type(outcome).__name__} demand="
+                f"{type(outcome.demand).__name__}"
+            ),
             requested=(
                 "an ExitSet projected from authenticated caller actual operands"
             ),
@@ -1303,6 +1312,14 @@ def outcome_to_exitset(outcome) -> ExitSet:
                 "absence of a halted edge as normal completion"
             ),
             gap_kind=GapKind.FLOOR,
+            decidability=FormalDemandUndischarged(
+                artifact=FormalDemandArtifact(
+                    carrier_type_name=type(outcome).__name__,
+                    demand_type_name=type(outcome.demand).__name__,
+                    site=str(outcome.demand.source_node),
+                )
+            ),
+            world={"formal_demand_undischarged": True},
         )
 
     construction_panic_gap(
