@@ -846,7 +846,15 @@ def prefix_has_completed_fallthrough(
         # Cite path: admit static export without off-population construction.
         return True
 
-    exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
+    from sugar_source_tree.panic import SugarNotWritten
+
+    # Prefix sugar can SNW (e.g. decorated FunctionDef without publication).
+    # That is not "fallthrough completed"; it is incomplete prefix — cite as
+    # dynamic-export at the export door, never abort the open's population.
+    try:
+        exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
+    except SugarNotWritten:
+        return False
     if len(exits.exits) != 1:
         return False
     face = exits.exits[0]

@@ -1288,32 +1288,56 @@ def populate_source_derived_resource_refs(
         # function's intentionally empty ordinary body only manufactures the
         # misleading residual ``non-manager-result:BlockValue``.  The generator
         # transition remains independently loud when its steps are opaque.
+        from sugar_source_tree.panic import SugarNotWritten
+
         from .manager_construction import (
             ManagerConstructionGapV1,
             _install_source_call_frame,
             resolve_source_visible_frame,
         )
 
-        frame_result = resolve_source_visible_frame(
-            resolved,
-            graph=graph,
-            dependency_graphs=graphs,
-            session=session,
-        )
-        if not isinstance(frame_result, ManagerConstructionGapV1):
-            frame, generator_target = frame_result
-            if frame.generator_steps is not None:
-                _install_source_call_frame(context, call, frame)
-                # Seat the provider Call at the manager-use coordinate so a
-                # bare-Name With head resolves through its reaching binding
-                # rather than by spelling.  Direct Call heads already key the
-                # frame by their own span; the use-site seat is what carries
-                # assigned multi-manager projection.
-                context.source_manager_provider_calls[coordinate] = call
-                # Closed generator-backed resource contract: generator frame +
-                # native enter/exit definitions → one typed source-derived ref.
-                # Coordinates alone cannot construct the ref; non-generator
-                # frames refuse. No ObjectValue fabrication.
+        # CITE, never abort: frame projection can SNW deep in a dependency
+        # (decorated FunctionDef, incomplete body).  Failure already parks a
+        # gap; success must not discard the open's function roster for the
+        # recensus.  One receipt's body gap is not the enrolled file's zero.
+        try:
+            frame_result = resolve_source_visible_frame(
+                resolved,
+                graph=graph,
+                dependency_graphs=graphs,
+                session=session,
+            )
+        except SugarNotWritten as exc:
+            observed = getattr(exc, "observed", None) or str(exc)
+            _install_derivation_gap(
+                context,
+                coordinate,
+                receipt,
+                "source-body-gap",
+                str(observed),
+            )
+            continue
+        if isinstance(frame_result, ManagerConstructionGapV1):
+            # Membrane / export gap: cite the same way failure does.  Do NOT
+            # fall through into construct_manager_behavior (that re-resolves
+            # and re-MaterializeModule the dependency).
+            kind, detail = _gap_kind_and_detail(frame_result)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
+            continue
+        frame, generator_target = frame_result
+        if frame.generator_steps is not None:
+            _install_source_call_frame(context, call, frame)
+            # Seat the provider Call at the manager-use coordinate so a
+            # bare-Name With head resolves through its reaching binding
+            # rather than by spelling.  Direct Call heads already key the
+            # frame by their own span; the use-site seat is what carries
+            # assigned multi-manager projection.
+            context.source_manager_provider_calls[coordinate] = call
+            # Closed generator-backed resource contract: generator frame +
+            # native enter/exit definitions → one typed source-derived ref.
+            # Coordinates alone cannot construct the ref; non-generator
+            # frames refuse. No ObjectValue fabrication.
+            try:
                 _publish_generator_backed_resource_contract(
                     context,
                     coordinate,
@@ -1327,7 +1351,16 @@ def populate_source_derived_resource_refs(
                     distribution_index=distribution_index,
                     resolved_cid=resolved.cid,
                 )
-                continue
+            except SugarNotWritten as exc:
+                observed = getattr(exc, "observed", None) or str(exc)
+                _install_derivation_gap(
+                    context,
+                    coordinate,
+                    receipt,
+                    "source-body-gap",
+                    str(observed),
+                )
+            continue
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
         from sugar_lift_py_tests.temporal import builtin_name_temporal
 
@@ -1345,10 +1378,7 @@ def populate_source_derived_resource_refs(
                 "category",
             }
         )
-        frame_parameters = ()
-        if not isinstance(frame_result, ManagerConstructionGapV1):
-            _frame_for_params, _ = frame_result
-            frame_parameters = tuple(getattr(_frame_for_params, "parameters", ()) or ())
+        frame_parameters = tuple(getattr(frame, "parameters", ()) or ())
 
         def _actual_outcome(node, *, formal_name: str | None = None):
             # Substitution has already replaced every reaching lexical binding.
@@ -1501,14 +1531,25 @@ def populate_source_derived_resource_refs(
                 context, coordinate, receipt, "incomplete-call-actuals"
             )
             continue
-        behavior = construct_manager_behavior(
-            resolved,
-            graph=graph,
-            actuals=tuple(actuals),
-            keyword_actuals=tuple(keyword_actuals),
-            call_site=call.fragment,
-            session=session,
-        )
+        try:
+            behavior = construct_manager_behavior(
+                resolved,
+                graph=graph,
+                actuals=tuple(actuals),
+                keyword_actuals=tuple(keyword_actuals),
+                call_site=call.fragment,
+                session=session,
+            )
+        except SugarNotWritten as exc:
+            observed = getattr(exc, "observed", None) or str(exc)
+            _install_derivation_gap(
+                context,
+                coordinate,
+                receipt,
+                "source-body-gap",
+                str(observed),
+            )
+            continue
         from .manager_construction import ConstructedManagerBehaviorV1
         from .manager_protocol_construction import ConstructedManagerProtocolV1
 
@@ -1519,7 +1560,18 @@ def populate_source_derived_resource_refs(
             kind, detail = _gap_kind_and_detail(behavior)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
-        protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
+        try:
+            protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
+        except SugarNotWritten as exc:
+            observed = getattr(exc, "observed", None) or str(exc)
+            _install_derivation_gap(
+                context,
+                coordinate,
+                receipt,
+                "source-body-gap",
+                str(observed),
+            )
+            continue
         if not isinstance(protocol, ConstructedManagerProtocolV1):
             kind, detail = _gap_kind_and_detail(protocol)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
