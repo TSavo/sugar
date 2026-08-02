@@ -479,6 +479,36 @@ def main(argv: list[str] | None = None) -> int:
         typed_gaps = int(sum(partition.get("typed_gaps", {}).values()))
         conserves = bool(partition.get("conserves"))
 
+        # Discrimination lies (optional): one fault at a time so negative arms
+        # are OBSERVED, not reasoned. Env RECENSUS_PATH_SMOKE_LIE=
+        #   constructed_zero | swallow_panic | drop_opaque | crash_mid
+        # A tooth only ever seen GREEN is decoration, not an instrument.
+        lie = (os.environ.get("RECENSUS_PATH_SMOKE_LIE") or "").strip()
+        if lie == "constructed_zero":
+            _narrate("PATH_SMOKE LIE planted=constructed_zero")
+            constructed = 0
+        elif lie == "swallow_panic":
+            _narrate("PATH_SMOKE LIE planted=swallow_panic")
+            cpanic = 0
+            construction_panics = []
+            families.pop("ConstructionPanic", None)
+        elif lie == "drop_opaque":
+            _narrate("PATH_SMOKE LIE planted=drop_opaque")
+            # Vanish typed-gap residual; residual tooth must PATH_RED.
+            typed_gaps = 0
+            partition = dict(partition)
+            partition["typed_gaps"] = {
+                k: 0 for k in (partition.get("typed_gaps") or {})
+            }
+            partition["constructed"] = constructed
+        elif lie == "crash_mid":
+            _narrate("PATH_SMOKE LIE planted=crash_mid phase=after-conservation")
+            raise RuntimeError(
+                "planted crash mid-phase (discrimination arm: PATH_UNMEASURED)"
+            )
+        elif lie:
+            raise RuntimeError(f"unknown RECENSUS_PATH_SMOKE_LIE={lie!r}")
+
         smoke_counts = {
             "note": (
                 "smoke-scoped only — not R_construction_panics; "
