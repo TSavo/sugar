@@ -136,7 +136,7 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
         semantics=SimpleNamespace(exit=SimpleNamespace(disposition=disposition))
     )
     protocol = _CompletedProtocol()
-    coordinate, mro = _builtin_exception_identity("ValueError")
+    _, mro = _builtin_exception_identity("ValueError")
     sugar = _source_resource(
         manager=_FixedSugar(Complete(TermValue(1))),
         protocol=protocol,
@@ -147,7 +147,6 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
                     RaiseEffect.for_builtin("ValueError",
                         
                         occurrence="resource.py:4:8",
-                        exception_type_coordinate=coordinate,
                         exception_type_mro=mro,
                     )
                 )

@@ -659,12 +659,11 @@ def test_lying_the_equivalence_is_specific_to_never_suppresses():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
-    coordinate, mro = _builtin_exception_identity("ValueError")
+    _, mro = _builtin_exception_identity("ValueError")
     halted = Halted(
         true_guard(),
         RaiseEffect.for_builtin("ValueError",
             
-            exception_type_coordinate=coordinate,
             exception_type_mro=mro,
             occurrence="equiv.py:1:0",
         ),

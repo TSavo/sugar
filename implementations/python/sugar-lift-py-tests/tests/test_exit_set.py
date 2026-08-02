@@ -179,10 +179,9 @@ def test_and_exit_never_suppresses_restores_body_halt():
 def test_and_exit_proven_contract_consumes_named_halt():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
-    coordinate, mro = _builtin_exception_identity("ValueError")
+    _, mro = _builtin_exception_identity("ValueError")
     body = RaiseEffect.for_builtin("ValueError",
         
-        exception_type_coordinate=coordinate,
         exception_type_mro=mro,
         occurrence="exit_set.py:2:0",
     )
@@ -218,10 +217,9 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     condition = _guard("condition")
-    coordinate, mro = _builtin_exception_identity("ValueError")
+    _, mro = _builtin_exception_identity("ValueError")
     effect = RaiseEffect.for_builtin("ValueError",
         
-        exception_type_coordinate=coordinate,
         exception_type_mro=mro,
         occurrence="exit_set.py:3:0",
     )
@@ -236,10 +234,9 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
 def test_and_exit_membrane_suppresses_matcher_authority():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
-    coordinate, mro = _builtin_exception_identity("KeyError")
+    _, mro = _builtin_exception_identity("KeyError")
     body = RaiseEffect.for_builtin("KeyError",
         
-        exception_type_coordinate=coordinate,
         exception_type_mro=mro,
         occurrence="exit_set.py:1:0",
     )

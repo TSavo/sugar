@@ -178,15 +178,13 @@ def test_a_real_value_term_still_retains_the_question() -> None:
 
 def test_matching_halt_without_message_operand_retains_message_obligation() -> None:
     """Truthful twin: the raised VALUE exists, but its rendered message is open."""
-    identity = TermValue(1).to_term(owner="exception identity")
     raised_value = TermValue(7)
     effect = RaiseEffect.for_builtin("ValueError",
         
-        exception_type_coordinate=identity,
         occurrence=OCCURRENCE,
         raised_value=raised_value,
     )
-    expected = _AuthenticatedHandler(identity)
+    expected = _AuthenticatedHandler(effect.exception_type_coordinate)
 
     verdict = raise_effect_message_verdict(
         effect, expected, StringValue("boom")
@@ -202,24 +200,24 @@ def test_matching_halt_without_message_operand_retains_message_obligation() -> N
 
 def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
     """Lying twin: a source coordinate is not a rendered-message operand."""
-    identity = TermValue(1).to_term(owner="exception identity")
     effect = RaiseEffect.for_builtin("ValueError",
         
-        exception_type_coordinate=identity,
         occurrence=OCCURRENCE,
         raised_value=None,
     )
-    expected = _AuthenticatedHandler(identity)
+    expected = _AuthenticatedHandler(effect.exception_type_coordinate)
 
     with pytest.raises(SugarNotWritten) as raised:
         raise_effect_message_verdict(effect, expected, StringValue("boom"))
 
     assert raised.value.owner == "authenticated_exception_matching._message_term"
-    assert OCCURRENCE not in str(raised.value)
+    assert str(raised.value.blame) == OCCURRENCE
+    assert OCCURRENCE not in raised.value.observed
+    assert OCCURRENCE not in raised.value.requested
+    assert OCCURRENCE not in raised.value.fix
 
 
 def _effect_with_message(message: str) -> tuple[RaiseEffect, _AuthenticatedHandler]:
-    identity = TermValue(1).to_term(owner="exception identity")
     raised_value = CallSiteValue(
         "ValueError",
         (StringValue(message),),
@@ -227,15 +225,12 @@ def _effect_with_message(message: str) -> tuple[RaiseEffect, _AuthenticatedHandl
         ctor("call:ValueError", []),
         None,
     )
-    return (
-        RaiseEffect.for_builtin("ValueError",
-            
-            exception_type_coordinate=identity,
-            occurrence=OCCURRENCE,
-            raised_value=raised_value,
-        ),
-        _AuthenticatedHandler(identity),
+    effect = RaiseEffect.for_builtin(
+        "ValueError",
+        occurrence=OCCURRENCE,
+        raised_value=raised_value,
     )
+    return effect, _AuthenticatedHandler(effect.exception_type_coordinate)
 
 
 def test_written_empty_message_regex_is_not_an_absent_predicate() -> None:

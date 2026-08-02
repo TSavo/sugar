@@ -250,7 +250,6 @@ def _no_warning_from_exitset(body_es):
 
 def _raise_with_entries(*entries):
     """Exception edge: body statements then a real RaiseEffect halt."""
-    type_identity = _identity("TypeError")
     raised_value = CallSiteValue(
         target_name="raised",
         arg_values=(StringValue("operand failed"),),
@@ -269,7 +268,6 @@ def _raise_with_entries(*entries):
                 true_guard(),
                 RaiseEffect.for_builtin("TypeError",
                     
-                    exception_type_coordinate=type_identity,
                     occurrence="body.py:3:4",
                     raised_value=raised_value,
                 ),
@@ -424,7 +422,6 @@ def _pattern_boundary(*, semantics, expected, pattern, body):
 
 
 def _raise_after_warning(*, warning_message="deprecated operand"):
-    type_identity = _identity("TypeError")
     raised_value = CallSiteValue(
         target_name="renamed_error",
         arg_values=(StringValue("unsupported operand type for &:"),),
@@ -451,7 +448,6 @@ def _raise_after_warning(*, warning_message="deprecated operand"):
                 true_guard(),
                 RaiseEffect.for_builtin("TypeError",
                     
-                    exception_type_coordinate=type_identity,
                     occurrence="renamed.py:6:8",
                     raised_value=raised_value,
                 ),
