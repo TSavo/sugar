@@ -112,18 +112,28 @@ def test_standalone_floor_workflows_stay_discrimination_only():
 
 
 def test_orchestrator_still_runs_the_corpus_floors():
+    """Process axes are matrix jobs; static laws a sibling job; enrollment roll call."""
     text = _text("factory-zero-tolerance.yml")
-    assert "tools/run_sole_construction_floors.sh" in text
+    assert "run_one_process_floor_axis.sh" in text
+    assert "run_static_sole_construction_floors.sh" in text
+    assert "sole_construction_floor_enrollment.py" in text
+    assert "matrix:" in text
+    # Local serial convenience still lists the corpus instruments.
     floors = (ROOT / "tools" / "run_sole_construction_floors.sh").read_text()
+    static = (ROOT / "tools" / "run_static_sole_construction_floors.sh").read_text()
     for script in (
         "native_crash_zero_tolerance.py",
         "bare_exception_zero_tolerance.py",
         "timeout_zero_tolerance.py",
         "silent_zero_tolerance.py",
+    ):
+        assert script in floors, script
+        assert script in text, script
+    for script in (
         "factory_ownership_law.py",
         "construction_side_door_law.py",
     ):
-        assert script in floors, script
+        assert script in static, script
 
 
 def test_roster_cadence_matches_each_workflow_trigger():
@@ -168,3 +178,14 @@ def test_attendance_keys_off_measurement_body_not_lease(tmp_path):
     path.write_text(__import__("json").dumps(body), encoding="utf-8")
     attended, _ = module.receipts_attendance(tmp_path)
     assert "python-sole-construction-floors" in attended
+
+
+def test_floor_workflow_is_parallel_matrix_with_enrollment():
+    """Process axes must not serialize inside one job after lease deletion."""
+    text = _text("factory-zero-tolerance.yml")
+    assert "matrix:" in text
+    assert "floor-enrollment" in text or "floor-enrollment:" in text
+    assert "run_one_process_floor_axis.sh" in text
+    assert "run_static_sole_construction_floors.sh" in text
+    assert "run_sole_construction_floors.sh" not in text
+    assert LEASE_WRAPPER not in text
