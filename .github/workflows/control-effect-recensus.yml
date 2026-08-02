@@ -8,37 +8,22 @@ name: Control-effect recensus (authoritative scoreboard)
 # producer of R_construction_panics and of the desugar board that every drain
 # is ranked against.
 #
-# It appeared in NO WORKFLOW. Searching the repo for it returns docs, ledgers,
-# and two tests -- nothing that runs it. It was a hand-run tool.
+# #7055 banked LPT k=8 + compose seal (plan tool, mint_partial, dual-belt
+# attendance). CI still ran ONE serial job — the matrix wire was "follow-up".
+# A 200-file walk took 102s in one process; 1421 files ~12 min. This workflow
+# fans out k=8 workers over a content-addressed LPT prior; compose alone seals.
 #
-# That is why the product R for this project was last measured on 2026-07-26:
-# somebody ran it by hand that day, and every board cited since
-# (9a78828ee, 43d994888) is that artifact. On 2026-08-01 a campaign of ~35 PRs
-# landed and could not be evaluated, because the tip has no board and nothing
-# schedules one. The roll call added in #6975 could not catch it either: the
-# authority was not on the roster, so its silence was not even a question
-# anybody asked.
-#
-# The authority being unenrolled is the enrollment law broken at the one place
-# it matters most. Enrollment is existence.
+# LAW (never violate)
+# - Workers emit PARTIAL only (measurementClass=control-effect-recensus-shard).
+# - compose_control_effect_board is the sole mint of control-effect-recensus.
+# - Missing or failed seat → UNMEASURED envelope naming the missing shards;
+#   NEVER seal over the shards that finished.
+# - fail-fast: false so compose always sees the receipt set.
 #
 # WHY NIGHTLY AND NOT push:[main]
 #
-# This is a full-corpus recensus over pandas -- a heavy class. Putting it on
-# every push re-saturates the runner pool we just spent a day unclogging (184
-# queued runs against a max of 25). So it takes the same cadence as the walls
-# and the scoreboard sweep, and the roll call enforces the WINDOW rather than
-# tools/heavy_measurement_attendance.py --cadence nightly-window
-# reports it missing if it did not speak for its window. workflow_dispatch is
-# provided so a tip board can be demanded on purpose, which is exactly what a
-# drain campaign needs before and after it lands.
-#
-# SILENCE CONCEALS (mr_pink shape)
-#
-# A single step that fuses population auth + multi-hour measurement + attendance
-# write makes the Actions UI show one long "in progress" with no phase name.
-# PYTHONUNBUFFERED=1 keeps brown's recensus narration line-buffered into the
-# job log; separate steps name which phase is live so a stall is visible.
+# Full-corpus recensus over pandas — heavy class. Same cadence as walls;
+# workflow_dispatch for tip boards before/after drain campaigns.
 
 on:
   schedule:
@@ -53,15 +38,23 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  # Banked LPT k — keep fixed; change the split KEY (prior), not k (#7055).
+  RECENSUS_SHARD_COUNT: "8"
+
 jobs:
-  recensus:
-    name: control-effect recensus (R_construction_panics)
+  # ------------------------------------------------------------------ plan
+  # Resolve population, pin denominator, LPT-assign enrolled files into k bins.
+  # Does not measure. planCid is the content-addressed identity workers bind.
+  plan:
+    name: LPT plan k=${{ env.RECENSUS_SHARD_COUNT }}
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 720
-    env:
-      # Always-on: recensus phase lines must hit the job log as they print.
-      # Buffered stdout/stderr is silence wearing a progress costume.
-      PYTHONUNBUFFERED: "1"
+    timeout-minutes: 30
+    outputs:
+      root: ${{ steps.population.outputs.root }}
+      plan_cid: ${{ steps.plan.outputs.plan_cid }}
+      shard_count: ${{ steps.plan.outputs.shard_count }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,8 +62,6 @@ jobs:
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
 
-      # Phase 1 — resolve the authenticated population (denominator door).
-      # Kept separate from measurement so auth hang is not billed as "recensus".
       - name: "Phase: resolve authenticated pandas population"
         id: population
         shell: bash
@@ -85,60 +76,254 @@ jobs:
           echo "recensus population: authenticated pandas corpus at $PANDAS_CORPUS"
           echo "root=$PANDAS_CORPUS" >> "$GITHUB_OUTPUT"
 
-      # Phase 2 — production CLI measurement only. Narration comes from the
-      # script (brown); this step only ensures unbuffered env + named UI phase.
-      - name: "Phase: recensus measure (production CLI; no lease)"
+      - name: "Phase: pin + LPT plan (no measure)"
+        id: plan
         shell: bash
         env:
-          PYTHONUNBUFFERED: "1"
           PANDAS_CORPUS: ${{ steps.population.outputs.root }}
+          SUBTREE: ${{ github.event.inputs.corpus_subtree || '' }}
         run: |
           set -euo pipefail
-          echo "recensus phase=measure status=start corpus_root=$PANDAS_CORPUS commit=$GITHUB_SHA"
-          # -u is belt-and-suspenders with job/step PYTHONUNBUFFERED=1
+          OUT="$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
+          mkdir -p "$OUT"
+          # Emit enrolled file identities matching the worker's by_file keys:
+          #   {corpus_root.name}/{rel_posix}
+          # and pin aggregate / manifest shape for plan bind.
+          python -u - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+
+          corpus_root = Path(os.environ["PANDAS_CORPUS"]).resolve()
+          out = Path(os.environ["GITHUB_WORKSPACE"]) / ".sugar/pandas-control-effect"
+          subtree = (os.environ.get("SUBTREE") or "").strip()
+
+          sys.path.insert(0, str(Path("implementations/python/sugar-lift-py-tests/scripts").resolve()))
+          sys.path.insert(0, str(Path("tools").resolve()))
+          from sugar_lift_py_tests.corpus_pin import pin_corpus
+          from pandas_floor_summary import corpus_cid as corpus_manifest_shape_cid
+          from sugar_source_tree.tree import SourceTree
+          from sugar_lift_python_source.source_oracle import install_root_for
+
+          pin = pin_corpus(corpus_root)
+          paths = list(SourceTree(corpus_root).paths())
+          if subtree:
+              # Bounded dispatch: keep only files under optional subtree.
+              sub = (corpus_root / subtree).resolve()
+              paths = [p for p in paths if sub == p.resolve() or sub in p.resolve().parents]
+          enrolled = sorted(
+              f"{corpus_root.name}/{p.resolve().relative_to(corpus_root).as_posix()}"
+              for p in paths
+          )
+          if not enrolled:
+              print("::error::no enrolled files after pin/subtree filter", file=sys.stderr)
+              sys.exit(1)
+          manifest_shape_cid = corpus_manifest_shape_cid(list(pin.paths))
+          # Install root seats are recorded against (pandas/foo.py under site-packages).
+          installed = install_root_for(str(corpus_root))
+          locus_root = corpus_root if installed is None else Path(installed)
+          (out / "enrolled-files.json").write_text(
+              json.dumps(enrolled, indent=2) + "\n", encoding="utf-8"
+          )
+          (out / "pin-meta.json").write_text(
+              json.dumps(
+                  {
+                      "aggregateHash": pin.aggregate_hash,
+                      "manifestShapeCid": manifest_shape_cid,
+                      "distribution": pin.distribution,
+                      "version": pin.version,
+                      "enrolledCount": len(enrolled),
+                      "locusRoot": str(locus_root),
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          print(
+              f"enrolled={len(enrolled)} aggregate={pin.aggregate_hash[:16]}… "
+              f"manifest={manifest_shape_cid[:24]}… locus_root={locus_root}",
+              flush=True,
+          )
+          PY
+          META="$OUT/pin-meta.json"
+          AGG="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["aggregateHash"])' "$META")"
+          MANIFEST="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["manifestShapeCid"])' "$META")"
+          # LPT prior resolves enrolled keys as <locus_root>/<enrolled> so
+          # pandas/core/frame.py lands under site-packages/pandas/core/...
+          LOCUS="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["locusRoot"])' "$META")"
+          python -u tools/plan_control_effect_recensus_shards.py \
+            --enrolled-files "$OUT/enrolled-files.json" \
+            --corpus-root "$LOCUS" \
+            --shard-count "$RECENSUS_SHARD_COUNT" \
+            --measured-commit "$GITHUB_SHA" \
+            --aggregate-hash "$AGG" \
+            --manifest-shape-cid "$MANIFEST" \
+            --out "$OUT/plan.json"
+          PLAN_CID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["planCid"])' "$OUT/plan.json")"
+          K="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["shardCount"])' "$OUT/plan.json")"
+          echo "plan_cid=$PLAN_CID" >> "$GITHUB_OUTPUT"
+          echo "shard_count=$K" >> "$GITHUB_OUTPUT"
+          echo "recensus phase=plan status=done planCid=$PLAN_CID k=$K"
+
+      - name: Upload plan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-effect-recensus-plan
+          path: |
+            .sugar/pandas-control-effect/plan.json
+            .sugar/pandas-control-effect/enrolled-files.json
+            .sugar/pandas-control-effect/pin-meta.json
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------- shards
+  # One matrix seat per LPT bin. SCOREBOARD False — partial only. fail-fast
+  # false so a red seat still leaves a receipt set for compose UNMEASURED.
+  shard:
+    name: recensus shard s${{ matrix.shard }}
+    needs: plan
+    runs-on: [self-hosted, linux, x64]
+    # Per-seat budget: serial ~12 min → LPT k=8 pole ~2 min; leave headroom.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: control-effect-recensus-plan
+          path: .sugar/pandas-control-effect
+
+      - name: "Phase: measure shard partial only"
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ needs.plan.outputs.root }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
+          PLAN="$OUT/plan.json"
+          test -f "$PLAN" || { echo "::error::plan.json missing"; exit 1; }
+          K="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["shardCount"])' "$PLAN")"
+          if [[ "$K" != "$RECENSUS_SHARD_COUNT" ]]; then
+            echo "::error::plan shardCount=$K != RECENSUS_SHARD_COUNT=$RECENSUS_SHARD_COUNT"
+            exit 1
+          fi
+          echo "recensus phase=measure-shard status=start shard=$SHARD/$K corpus_root=$PANDAS_CORPUS commit=$GITHUB_SHA"
+          # Worker: --plan-json + --shard-index → PARTIAL only (never seals).
           python -u implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
-            "${{ github.event.inputs.corpus_subtree || '' }}$PANDAS_CORPUS" \
+            "$PANDAS_CORPUS" \
             --corpus-root "$PANDAS_CORPUS" \
             --repo "$GITHUB_WORKSPACE" \
             --commit "$GITHUB_SHA" \
-            --out-dir "$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
-          echo "recensus phase=measure status=done"
+            --out-dir "$OUT" \
+            --plan-json "$PLAN" \
+            --shard-index "$SHARD" \
+            --partial-out "$OUT/partial-s$(printf '%02d' "$SHARD").json"
+          echo "recensus phase=measure-shard status=done shard=$SHARD"
+          ls -la "$OUT"/partial-s*.json || true
 
-      # Phase 3 — dual-belt attendance: only a sealed board (status=sealed,
-      # measured=true, bodyCid) credits control-effect-recensus. Do NOT write a
-      # thin measurement.json with measurementClass alone (that zeros R_attendance
-      # while the board is unmeasured — #7049 smoke shape).
-      - name: "Phase: verify sealed board for attendance"
-        if: success()
+      - name: Upload shard partial
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-effect-recensus-partial-s${{ matrix.shard }}
+          path: .sugar/pandas-control-effect/partial-s*.json
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------- compose
+  # Sole seal door. Runs even when shards fail so missing seats become
+  # UNMEASURED (never a partial seal of the seats that finished).
+  compose:
+    name: compose seal (sole SCOREBOARD door)
+    needs: [plan, shard]
+    if: always() && needs.plan.result == 'success'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: control-effect-recensus-plan
+          path: .sugar/pandas-control-effect
+
+      - name: Download all shard partials
+        uses: actions/download-artifact@v4
+        with:
+          pattern: control-effect-recensus-partial-*
+          path: .sugar/pandas-control-effect/partials-raw
+          merge-multiple: true
+
+      - name: "Phase: compose board (UNMEASURED if any seat missing)"
         shell: bash
         run: |
           set -euo pipefail
-          echo "recensus phase=attendance status=start"
+          OUT="$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
+          PARTIALS="$OUT/partials"
+          mkdir -p "$PARTIALS"
+          # Normalize partial paths (merge-multiple may nest).
+          find "$OUT/partials-raw" -type f -name 'partial-*.json' -exec cp -f {} "$PARTIALS/" \; 2>/dev/null || true
+          # Also accept partials dropped next to plan if a runner laid them flat.
+          find "$OUT" -maxdepth 1 -type f -name 'partial-*.json' -exec cp -f {} "$PARTIALS/" \; 2>/dev/null || true
+          echo "recensus phase=compose status=start partials=$(ls -1 "$PARTIALS" 2>/dev/null | wc -l)"
+          ls -la "$PARTIALS" || true
+          # Compose exit 1 on UNMEASURED is the honest red — do not seal partial.
+          set +e
+          python -u implementations/python/sugar-lift-py-tests/scripts/compose_control_effect_board.py \
+            --plan "$OUT/plan.json" \
+            --partials-dir "$PARTIALS" \
+            --out "$OUT/recensus.json"
+          COMPOSE_RC=$?
+          set -e
+          echo "recensus phase=compose status=done rc=$COMPOSE_RC"
           python -u -c "
           import json, sys
           from pathlib import Path
           p = Path('.sugar/pandas-control-effect/recensus.json')
           if not p.is_file():
-              print('::error::sealed board missing at', p, file=sys.stderr)
+              print('::error::compose wrote no recensus.json', file=sys.stderr)
               sys.exit(1)
           body = json.loads(p.read_text())
-          ok = (
-              body.get('measurementClass') == 'control-effect-recensus'
-              and body.get('status') == 'sealed'
-              and body.get('measured') is True
-              and body.get('bodyCid')
-          )
-          if not ok:
-              print('::error::board not sealed for attendance', {
-                  'measurementClass': body.get('measurementClass'),
-                  'status': body.get('status'),
-                  'measured': body.get('measured'),
-                  'bodyCid': bool(body.get('bodyCid')),
-              }, file=sys.stderr)
+          status = body.get('status')
+          missing = body.get('missingShards')
+          print('compose body status=', status, 'missingShards=', missing,
+                'measurementClass=', body.get('measurementClass'),
+                'measured=', body.get('measured'),
+                'bodyCid=', (body.get('bodyCid') or '')[:24])
+          if status == 'sealed':
+              ok = (
+                  body.get('measurementClass') == 'control-effect-recensus'
+                  and body.get('measured') is True
+                  and body.get('bodyCid')
+              )
+              if not ok:
+                  print('::error::sealed board fails dual-belt attendance fields', file=sys.stderr)
+                  sys.exit(1)
+              sys.exit(0)
+          # UNMEASURED: omit measurementClass; name missing seats; never attend.
+          if body.get('measurementClass') is not None:
+              print('::error::UNMEASURED envelope must omit measurementClass', file=sys.stderr)
               sys.exit(1)
-          print('recensus attendance sealed bodyCid=', body.get('bodyCid')[:24], '...')
+          if not missing:
+              print('::error::UNMEASURED without missingShards', file=sys.stderr)
+              sys.exit(1)
+          print('::error::recensus UNMEASURED missingShards=', missing, file=sys.stderr)
+          sys.exit(1)
           "
-          echo "recensus phase=attendance status=done"
 
       - name: Upload the board
         if: always()
