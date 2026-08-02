@@ -482,6 +482,11 @@ def measure_file_via_enumerate(
     path = (workspace_root / file_rel).resolve()
     ast_fn = count_ast_function_defs(path)
 
+    def _is_process_control(error: BaseException) -> bool:
+        # ConstructionPanic is BaseException-by-design (I-want-the-panic).
+        # Catch it as residual; never swallow KeyboardInterrupt / SystemExit.
+        return isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit))
+
     # --- D2: roster ---
     try:
         function_nodes, function_gaps = demand_function_roster(
@@ -489,7 +494,9 @@ def measure_file_via_enumerate(
             file_rel=file_rel,
             source_cid=source_cid,
         )
-    except Exception as error:  # noqa: BLE001 — instrument failure before roster
+    except BaseException as error:  # noqa: BLE001 — includes ConstructionPanic
+        if _is_process_control(error):
+            raise
         # No roster banked. AST population still names the gap when parseable
         # (instrument-blind mass, not a silent zero when the file has functions).
         auth = int(ast_fn) if ast_fn is not None else 0
@@ -523,13 +530,17 @@ def measure_file_via_enumerate(
         )
 
     # --- D3: residual (must not erase roster) ---
+    # ConstructionPanic subclasses BaseException, not Exception. Catching only
+    # Exception re-raised the #7073 mass-erase (panic escaped, outer shell banked 0).
     try:
         audit, construction_gaps = demand_construction_residual(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
         )
-    except Exception as error:  # noqa: BLE001 — residual failed; roster stands
+    except BaseException as error:  # noqa: BLE001 — residual failed; roster stands
+        if _is_process_control(error):
+            raise
         return terminal_from_enumerate(
             file_rel=file_rel,
             function_nodes=function_nodes,
