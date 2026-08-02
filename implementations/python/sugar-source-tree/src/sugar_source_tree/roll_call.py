@@ -138,6 +138,32 @@ def discharge(source_file) -> MinorityReport:
             root_node.sugar()
         except SugarNotWritten:
             pass  # the gap is on the roll; the report reads it
+        except RecursionError:
+            # Honest residual (H-class): construction graph too deep / cyclic
+            # for this root. Convert to a named C3 refusal so the file is not
+            # erased as backend-defect "maximum recursion depth exceeded".
+            lc = root_node.line_col_span()
+            gap = SugarNotWritten(
+                owner="roll_call.discharge",
+                blame=root_node.fragment,
+                observed=(
+                    f"RecursionError while constructing {root_node.kind} at "
+                    f"{source_file.unit.filename}:{lc.start_line}:{lc.start_col}"
+                ),
+                requested=(
+                    "bounded construction depth or a written cycle break for "
+                    "this root's sugar graph"
+                ),
+                fix=(
+                    "name the recursive edge (substitute/sugar loop) and bound "
+                    "or split it; refuse specifically as ConstructionRecursionGap "
+                    "— do not let RecursionError abort the roll as backend-defect"
+                ),
+            )
+            # Board family discriminator (same field WithConstructionGap uses).
+            gap.kind = "ConstructionRecursionGap"
+            source_file.reporter.report_gap(root_node, gap)
+            continue
     return MinorityReport(reporter=source_file.reporter)
 
 
