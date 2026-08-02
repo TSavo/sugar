@@ -1098,6 +1098,7 @@ def main() -> int:
             bits = " ".join(f"{k}={v}" for k, v in postfix.items())
             _narrate(f"RECENSUS PROGRESS {n}/{total} {bits}")
 
+        lpt_prior_rows: list[tuple[Path, float, str]] = []
         try:
             bar = tqdm(
                 pending,
@@ -1353,22 +1354,14 @@ def main() -> int:
                         + "\n"
                     )
                     rc_stream.flush()
-                # Content-addressed LPT prior write-through (#7040 law for
-                # recensus). Every measured file_s must land on the shelf so
-                # the next plan is LPT, not equal-count. Hand-seed is not a
-                # standing property; this is. Prior must never kill the walk.
-                # ``path`` is the filesystem seat; ``file`` is the enrolled key.
-                try:
-                    from lpt_file_shards import ContentAddressedCostPrior
-
-                    ContentAddressedCostPrior().put_for_path(
-                        path,
-                        file_s,
-                        source="control-effect-recensus",
-                        path_hint=relative,
-                    )
-                except Exception:  # noqa: BLE001 — prior must not kill scan
-                    pass
+                # Buffer LPT prior rows — flush once at shard end (not per file).
+                # put_for_path re-reads full source bytes for the content CID and
+                # does an atomic json write; doing that on the lift hot path under
+                # k=8 concurrent seats interleaved disk with Materialize. No
+                # flock/fsync, but the re-read+write storm is real volume. Law
+                # is unchanged: every file_s still lands on the shelf before the
+                # process exits the lift phase.
+                lpt_prior_rows.append((path, file_s, relative))
                 # One-line cause for slow files (always for first/last/every-N,
                 # and always when wall exceeds 5s so a long open names its phase).
                 slow = file_s >= 5.0
@@ -1407,7 +1400,38 @@ def main() -> int:
                 live_bar.close()
             bar.close()
         finally:
+            # LPT prior write-through: once per shard/process, not per file.
+            # #7040 law — every measured file_s on the shelf; #7082 put the door
+            # on the hot path; batch so concurrent seats do not re-read source
+            # + write-write mid-lift (blonde 3.26× inflation suspect). Flush in
+            # finally so a mid-walk abort still banks what was measured.
+            if lpt_prior_rows:
+                try:
+                    from lpt_file_shards import ContentAddressedCostPrior
+
+                    prior = ContentAddressedCostPrior()
+                    written = 0
+                    for pth, cost, hint in lpt_prior_rows:
+                        if prior.put_for_path(
+                            pth,
+                            cost,
+                            source="control-effect-recensus",
+                            path_hint=hint,
+                        ):
+                            written += 1
+                    _narrate(
+                        "JOB_LOG phase=lpt-prior-write population=control-effect-recensus "
+                        f"status=ok files_written={written} files_buffered={len(lpt_prior_rows)} "
+                        f"mode=batch-end-of-lift prior_root={prior.root}"
+                    )
+                except Exception as exc:  # noqa: BLE001 — prior must not kill scan
+                    _narrate(
+                        "JOB_LOG phase=lpt-prior-write population=control-effect-recensus "
+                        f"status=failed reason={type(exc).__name__}:{exc} "
+                        "mode=batch-end-of-lift degraded=shelf-stale-next-plan"
+                    )
             progress_stream.close()
+
 
 
     # Tripwire: the lift loop must never rebind `families` to a row dict.
