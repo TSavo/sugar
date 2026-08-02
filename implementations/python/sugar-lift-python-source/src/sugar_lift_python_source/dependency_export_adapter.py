@@ -40,10 +40,41 @@ def _bind() -> None:
         g[name] = getattr(da, name)
 
 
-def _restamp_export_result(result: Any, binding_cid: str) -> Any:
-    """Reuse a cached structural resolution under a new import-binding CID."""
+def _export_terminal_result(result: Any) -> Any:
+    """Definition/gap only — no path warrants or import-binding CID.
+
+    Reexport hops carry path warrants and cannot share the pure-entry memo
+    (that memo keeps module-structural reexport warrants).  The terminal memo
+    is the shared definition identity both doors restamp onto.
+    """
     if isinstance(result, ResolvedPythonObjectV1):
-        return replace(result, import_binding_cid=binding_cid, cid="")
+        return replace(
+            result,
+            import_binding_cid="",
+            reexport_warrants=(),
+            cid="",
+        )
+    if isinstance(result, PythonObjectResolutionGapV1):
+        return replace(result, import_binding_cid="")
+    return result
+
+
+def _restamp_export_result(
+    result: Any,
+    binding_cid: str,
+    *,
+    warrants: tuple[ReexportWarrantV1, ...] | None = None,
+) -> Any:
+    """Reuse a cached resolution under a new binding / warrant path."""
+    if isinstance(result, ResolvedPythonObjectV1):
+        return replace(
+            result,
+            import_binding_cid=binding_cid,
+            reexport_warrants=(
+                warrants if warrants is not None else result.reexport_warrants
+            ),
+            cid="",
+        )
     if isinstance(result, PythonObjectResolutionGapV1):
         return replace(result, import_binding_cid=binding_cid)
     return result
@@ -61,29 +92,48 @@ def resolve_export(
 ) -> PythonObjectResolutionV1:
     """Resolve one static export.
 
-    Structural export resolution is pure in (distribution_artifact_cid,
-    module_name, exported_name), and repeating the full-module static export
-    walk per receipt was the residual megamodule wall (see
-    docs/audits/pandas-recensus-latency-bisect.md).  So it is memoized -- but
-    the memo is owned by the caller's ``session``, never by module state: the
-    resolution names live ``ReexportWarrantV1``/definition objects whose
-    validity is bounded by the construction that asked for them.  ``None``
-    opens a session bounded to this single call.
+    Two session memos share the key (distribution_artifact_cid, module_name,
+    exported_name):
+
+    * **pure-entry** (``export_resolutions``): how THIS module exports the name,
+      including module-structural reexport warrants.  Filled only on pure entry
+      (no path warrants / empty seen).
+    * **terminal** (``export_terminals``): definition/gap only.  Filled on every
+      successful resolve so a reexport hop with path warrants can hit after a
+      pure resolve of the same symbol (or after another hop) without re-running
+      prefix fallthrough.  Measured on _json: pure-entry hit for repeats, but
+      reexport hops with warrants skipped the memo and re-paid ~0.8s prefix.
+
+    ``seen`` still owns cycle detection and is checked before either memo.
     """
     _bind()
     session = session_or_new(session)
-    # Only the entry form used by resolve_import_binding is memoizable:
-    # non-empty warrants/seen encode path context that must not be shared.
-    cacheable = not warrants and not seen
+    if (module_name, exported_name) in seen:
+        return _gap(
+            "reexport-cycle", binding_cid, graph, module_name, exported_name
+        )
     cache_key = (
         graph.distribution_artifact_cid,
         module_name,
         exported_name,
     )
-    if cacheable:
+    pure_entry = not warrants and not seen
+    if pure_entry:
         hit = session.export_hit(cache_key)
         if hit is not None:
             return _restamp_export_result(hit, binding_cid)
+        # A prior reexport hop may have filled the terminal memo for this
+        # symbol without a pure-entry row (hops do not write export_resolutions).
+        terminal = session.export_terminal_hit(cache_key)
+        if terminal is not None:
+            return _restamp_export_result(terminal, binding_cid, warrants=())
+    else:
+        # Reexport hop / path context: share definition identity only.
+        terminal = session.export_terminal_hit(cache_key)
+        if terminal is not None:
+            return _restamp_export_result(
+                terminal, binding_cid, warrants=warrants
+            )
 
     result = _resolve_export_uncached(
         graph,
@@ -94,8 +144,13 @@ def resolve_export(
         seen,
         session=session,
     )
-    if cacheable:
-        session.remember_export(cache_key, result)
+    # Terminal definition/gap: always, so the next hop can hit.
+    session.remember_export_terminal(cache_key, _export_terminal_result(result))
+    # Pure-entry form (keeps module-structural warrants): pure door only.
+    if pure_entry:
+        session.remember_export(
+            cache_key, _restamp_export_result(result, binding_cid="")
+        )
     return result
 
 
