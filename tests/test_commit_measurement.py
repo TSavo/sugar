@@ -159,6 +159,88 @@ def test_empty_artifacts_partial_includes_panics_axis(tmp_path: Path) -> None:
     assert GATE.main(["--composition", str(path), "--require-complete"]) == 1
 
 
+def test_enrollment_unmeasured_body_is_not_measured(tmp_path: Path) -> None:
+    """#7034: crash mint banks UNMEASURED — compose must not cite totals.failed."""
+    body = {
+        "schemaVersion": 1,
+        "kind": "sole-construction-floor-axis-report",
+        "axisId": "native-crash",
+        "measurementClass": "python-sole-construction-floors",
+        "measuredCommit": "deadbeef",
+        "status": "unmeasured",
+        "exitCode": 2,
+        "identityResolved": True,
+        "measured": False,
+        "floorExitGreen": False,
+        "unmeasuredReason": (
+            "scan did not complete (exit=2); infrastructure/auth/init/crash "
+            "— not a residual reading"
+        ),
+        "totals": {"failed": 1, "unmeasured": 1},
+    }
+    (tmp_path / "native" / "floor-axis-report.json").parent.mkdir()
+    (tmp_path / "native" / "floor-axis-report.json").write_text(
+        json.dumps(body), encoding="utf-8"
+    )
+    # silent completed green so vector is partial on native + panics etc.
+    (tmp_path / "silent" / "floor-axis-report.json").parent.mkdir()
+    (tmp_path / "silent" / "floor-axis-report.json").write_text(
+        json.dumps(_floor_body("silent", failed=0)), encoding="utf-8"
+    )
+    v = CM.compose_tip_from_artifacts_dir("deadbeef", tmp_path)
+    assert isinstance(v, CM.PartialVector)
+    assert isinstance(v.axes["silent"], CM.Measured)
+    assert v.axes["silent"].value == 0
+    native = v.axes["native-crash"]
+    assert isinstance(native, CM.Unmeasured)
+    assert "scan did not complete" in native.reason
+    assert "not a residual" in native.reason
+    # Must not bank totals.failed=1 as Measured residual
+    assert not isinstance(native, CM.Measured)
+
+
+def test_no_total_while_any_axis_unmeasured() -> None:
+    v = CM.commit_measurement(
+        "sha",
+        "roster",
+        {
+            "silent": CM.measured(
+                0,
+                identity="silent",
+                unit=CM.UNIT_ASSERT_FUNCTION_LOCUS,
+                population_id="p",
+                population_size=1,
+                body=_body(0, 1),
+                value_field_path="totals.failed",
+                exit_code=0,
+            ),
+            "native-crash": CM.unmeasured("NeverFired: tip floors queued"),
+            "bare-exception": CM.unmeasured(
+                "EnrollmentUnmeasured: scan did not complete"
+            ),
+            "timeout": CM.unmeasured("WorkerRefusal: supervised-enum"),
+            "R_construction_panics": CM.unmeasured(
+                "NoBoard: recensus board absent"
+            ),
+        },
+    )
+    assert isinstance(v, CM.PartialVector)
+    with pytest.raises(AttributeError):
+        _ = v.total  # type: ignore[attr-defined]
+    payload = v.to_json()
+    assert "total" not in payload
+    reasons = {
+        name: payload["axes"][name]["reason"]
+        for name in payload["unmeasuredAxes"]
+    }
+    assert "NeverFired" in reasons["native-crash"]
+    assert "EnrollmentUnmeasured" in reasons["bare-exception"]
+    assert "WorkerRefusal" in reasons["timeout"]
+    assert "NoBoard" in reasons["R_construction_panics"]
+    # Four absences must not flatten to one identical string
+    assert len(set(reasons.values())) == 4
+
+
 def test_four_green_floors_without_panics_is_partial_not_complete(
     tmp_path: Path,
 ) -> None:

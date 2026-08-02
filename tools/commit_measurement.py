@@ -638,6 +638,26 @@ def _is_candidate_body(payload: Mapping[str, Any]) -> bool:
     return False
 
 
+def _body_declares_unmeasured(body: Mapping[str, Any]) -> str | None:
+    """#7034: enrollment mints status=unmeasured / measured=False with a reason.
+
+    A body that declares unmeasured must not be cited as Measured merely because
+    totals.failed is present — that was the crash-as-residual lie.
+    """
+    measured_flag = body.get("measured")
+    status = body.get("status")
+    if measured_flag is False or status == "unmeasured":
+        reason = body.get("unmeasuredReason") or body.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return reason.strip()
+        return (
+            "EnrollmentUnmeasured: axis body declares measured=False "
+            f"status={status!r} exitCode={body.get('exitCode')!r} "
+            "(scan did not complete — not a residual reading)"
+        )
+    return None
+
+
 def compose_tip_from_artifacts_dir(
     commit_sha: str,
     artifacts_dir: Path,
@@ -649,6 +669,9 @@ def compose_tip_from_artifacts_dir(
 
     Missing any enrolled axis (including R_construction_panics) → Unmeasured
     for that axis → PartialVector. Four green floors alone never Complete.
+
+    #7034 bodies with status=unmeasured / measured=False cite as Unmeasured
+    with unmeasuredReason — never Measured from totals.failed alone.
     """
     sha = _require_nonempty_str("commit_sha", commit_sha)
     specs: Sequence[TipAxisSpec] = (
@@ -668,28 +691,41 @@ def compose_tip_from_artifacts_dir(
     for spec in specs:
         identity = spec.identity
         value_path = spec.value_field_path
-        chosen: Mapping[str, Any] | None = None
+        chosen_measured: Mapping[str, Any] | None = None
+        chosen_unmeasured: Mapping[str, Any] | None = None
         for _path, body in bodies:
             if not _body_matches_spec(body, spec):
+                continue
+            um_reason = _body_declares_unmeasured(body)
+            if um_reason is not None:
+                chosen_unmeasured = body
                 continue
             try:
                 _lookup_path(body, value_path)
             except KeyError:
                 continue
-            chosen = body
+            chosen_measured = body
             break
-        if chosen is None:
+        if chosen_measured is None and chosen_unmeasured is not None:
+            reason = _body_declares_unmeasured(chosen_unmeasured) or "EnrollmentUnmeasured"
             axes[identity] = unmeasured(
-                f"NoReport: no produced body artifact for identity {identity!r} "
-                f"(unit={spec.unit}) at commit {sha}"
-                + (
-                    " — control-effect recensus board is the sole producer; "
-                    "four green process floors do not measure this axis"
-                    if identity == "R_construction_panics"
-                    else ""
-                )
+                f"{reason} identity={identity!r} unit={spec.unit} commit={sha}"
             )
             continue
+        if chosen_measured is None:
+            if identity == "R_construction_panics":
+                axes[identity] = unmeasured(
+                    f"NoBoard: no control-effect recensus board body for "
+                    f"identity {identity!r} (unit={spec.unit}) at commit {sha} "
+                    f"— sole producer of R_construction_panics; floors do not measure it"
+                )
+            else:
+                axes[identity] = unmeasured(
+                    f"NoReport: no produced completed body for identity "
+                    f"{identity!r} (unit={spec.unit}) at commit {sha}"
+                )
+            continue
+        chosen = chosen_measured
         pop_size = 0
         pop_id = f"{identity}:undeclared"
         try:
