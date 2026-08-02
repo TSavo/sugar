@@ -13,11 +13,14 @@ the SourceOracle's identity triple ``(source, filename, content CID)``
 file, never hashes text, never owns an address. There is no raw-string
 door and no ``read_text`` anywhere in the parser.
 
-A ``SourceFile`` parses at construction and holds its own tree. That is
-not a cache — it IS the file. There is no pool, no keyed store, no
-registry, no memo: enumerate a ``SourceTree`` and each ``SourceFile`` is
-built, yielded, and dropped when the caller lets go of it, so peak RSS is
-bounded by the largest file, not the corpus.
+A ``SourceFile`` parses at construction and holds its own tree. Enumeration
+protocol §4 makes that preparation **process-resident under the whole-file
+content CID**: the same content is prepared once; distinct demanded
+descendants reuse it; changing the file changes the CID and therefore
+misses. That is the law, not an optional memo — see
+``process_resident_file.py``. Peak RSS is bounded by the residency limit
+(``SUGAR_PROCESS_RESIDENT_FILE_LIMIT``), not by re-deriving every shared
+module once per consumer.
 
 Each enumeration is a QUERY into the backend: a ``SourceFile`` asking
 for its nodes, a node asking for its children — answered per access,
@@ -70,8 +73,41 @@ class SourceFile:
         reporter: AuditReporter = NULL_REPORTER,
         construction_context: object | None = None,
     ) -> None:
+        # Enumeration protocol §4: process-resident under whole-file content CID.
+        # Construction goes through residency so the same CID never pays
+        # MaterializeModule twice in one process.
+        from .process_resident_file import source_file_from_identity
+
+        # Always adopt the resident (or first-prepare) shell. Callers hold a
+        # view; the process holds the preparation under content CID.
+        resident = source_file_from_identity(
+            identity,
+            backend=backend,
+            reporter=reporter,
+            construction_context=construction_context,
+        )
+        self.unit = resident.unit
+        self.backend = resident.backend
+        self.reporter = resident.reporter
+        self.constructed_module = resident.constructed_module
+        self.root = resident.root
+        self.closed_roll_call = resident.closed_roll_call
+        self.provider_member_rows = resident.provider_member_rows
+        self.construction_event_receipt_cid = resident.construction_event_receipt_cid
+
+    @classmethod
+    def _prepare_uncached(
+        cls,
+        identity: Tuple[str, str, str],
+        *,
+        backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
+        construction_context: object | None = None,
+    ) -> "SourceFile":
+        """Full parse + MaterializeModule — only the residency miss path calls this."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
+        self = object.__new__(cls)
         source, filename, source_cid = identity
         site = filename
         with reduction_span(sugar="SourceFile", role="file", site=site):
@@ -84,9 +120,6 @@ class SourceFile:
                 )
             with reduction_span(sugar="BackendSelect", role="file", site=site):
                 self.backend = backend if backend is not None else _default_backend()
-            # The reporter enters the whole tree here: the root carries it and
-            # hands it to every child it resolves. An audit walk passes a
-            # CollectingReporter; everyone else takes the do-nothing default.
             self.reporter = reporter
             with reduction_span(sugar="MaterializeModule", role="file", site=site):
                 constructed_module = self.backend.materialize_module(self.unit, reporter)
@@ -97,6 +130,7 @@ class SourceFile:
             self.construction_event_receipt_cid = (
                 constructed_module.construction_event_receipt_cid
             )
+        return self
 
     @classmethod
     def from_path(

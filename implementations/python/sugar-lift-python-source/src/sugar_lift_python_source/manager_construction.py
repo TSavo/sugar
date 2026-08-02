@@ -947,10 +947,95 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     return reduce_block_to_exitset(sugars)
 
 
+# Top-level statement kinds that always complete and fall through under Python
+# module semantics (bind or no-op; never exit the module body). Used so export
+# admit does not run ``_module_prefix_outcome`` (MaterializeModule + ClassDef
+# sugar of every earlier definition) when the AST prefix is pure bindings —
+# measured residual ~1.9s of prefix_has_completed_fallthrough on tip 63356a636
+# for one pandas/io/json/_json.py open after session memos landed.
+_STATIC_FALLTHROUGH_STMT_TYPES: frozenset[type] | None = None
+
+
+def _static_fallthrough_stmt_types() -> frozenset[type]:
+    global _STATIC_FALLTHROUGH_STMT_TYPES
+    if _STATIC_FALLTHROUGH_STMT_TYPES is not None:
+        return _STATIC_FALLTHROUGH_STMT_TYPES
+    import ast
+
+    kinds: set[type] = {
+        ast.Import,
+        ast.ImportFrom,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Assign,
+        ast.AnnAssign,
+        ast.Pass,
+        ast.Expr,
+        ast.Delete,
+        ast.Global,
+        ast.Nonlocal,
+    }
+    type_alias = getattr(ast, "TypeAlias", None)
+    if type_alias is not None:
+        kinds.add(type_alias)
+    _STATIC_FALLTHROUGH_STMT_TYPES = frozenset(kinds)
+    return _STATIC_FALLTHROUGH_STMT_TYPES
+
+
+def _ast_stmt_always_falls_through(statement) -> bool:
+    """True when this top-level statement cannot prevent later bindings.
+
+    Decorated FunctionDef/ClassDef still bind (incomplete sugar is a Floor gap,
+    not a module exit).  Pure-branch Ifs (``if TYPE_CHECKING:`` and any If
+    whose every arm always falls through) fall through when both arms do.
+    Open control flow (Try/For/While/With/Match/Raise/Return/Assert) needs the
+    full prefix producer.
+    """
+    import ast
+
+    if type(statement) in _static_fallthrough_stmt_types():
+        return True
+    if isinstance(statement, ast.If):
+        body_ok = all(_ast_stmt_always_falls_through(s) for s in statement.body)
+        else_ok = all(_ast_stmt_always_falls_through(s) for s in statement.orelse)
+        return body_ok and else_ok
+    return False
+
+
+def _static_prefix_always_fallthrough(module, locus) -> bool:
+    """AST-only admit: pure-binding prefix needs no MaterializeModule/sugar.
+
+    Parses ``module.source`` once (stdlib ``ast``, not SourceFile).  When every
+    statement strictly before ``locus`` always falls through, export resolve
+    may admit without ``_module_prefix_outcome``.  That path re-sugared every
+    ClassDef before each export locus (prefix_has_completed_fallthrough ~1.9s
+    of a ~7s _json open on tip after SourceFile session memos).
+    """
+    import ast
+
+    from .canonical import blake3_512_of
+
+    if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
+        raise ValueError("module prefix source CID mismatch")
+    try:
+        tree = ast.parse(module.source)
+    except SyntaxError:
+        return False
+    locus_key = (locus.lineno, locus.col_offset)
+    for statement in tree.body:
+        key = (statement.lineno, statement.col_offset)
+        if key >= locus_key:
+            break
+        if not _ast_stmt_always_falls_through(statement):
+            return False
+    return True
+
+
 def prefix_has_completed_fallthrough(
     module, locus, *, graph=None, session=None
 ) -> bool:
-    """Admit an export only through the authenticated module-prefix producer.
+    """Admit an export when the module prefix normally completes.
 
     POPULATION MEMBRANE: when ``graph`` is stdlib (off enrolled population),
     never ``MaterializeModule`` the module to prove fallthrough.  Static export
@@ -958,6 +1043,11 @@ def prefix_has_completed_fallthrough(
     citation; frame projection then cites via ``call-target-off-population``
     instead of rebuilding.  Running the prefix producer here is what turned
     one pandas open into 35× ``SourceFile(enum.py)``.
+
+    STATIC FALLTHROUGH: when the AST prefix is pure bindings (imports, defs,
+    classes, assigns, pure-branch Ifs such as TYPE_CHECKING), admit without
+    ``_module_prefix_outcome`` / ClassDef.sugar.  Full producer remains the
+    authority for open control flow (Try/For/Raise/…).
     """
     from sugar_lift_py_tests.outcome import Completed, true_guard
 
@@ -976,6 +1066,11 @@ def prefix_has_completed_fallthrough(
     cached = session.fallthrough_hit(fallthrough_key)
     if cached is not None:
         return cached
+
+    # Cheap door: pure-binding AST prefix always falls through — no sugar.
+    if _static_prefix_always_fallthrough(module, locus):
+        session.remember_fallthrough(fallthrough_key, True)
+        return True
 
     # Prefix sugar can SNW (e.g. decorated FunctionDef without publication).
     # That is not "fallthrough completed"; it is incomplete prefix — cite as
