@@ -546,6 +546,29 @@ def source_audit_from_roll_call(full_path: Path, file_rel: str) -> dict:
     return source_audit_from_report(report, file_rel)
 
 
+def source_audit_membership_from_registration(
+    full_path: Path, file_rel: str
+) -> dict:
+    """Roll-call **membership** only: materialize + register, no sugar discharge.
+
+    Used by R_silent, which keys on whether a disk locus is in
+    ``warranted ∪ unresolved``. Both statuses are roster members; discharge
+    only splits Blue/Yellow and does not change membership of
+    ``(file, line, col, kind)`` for nodes already registered at materialize.
+
+    Full discharge remains :func:`source_audit_from_roll_call` for report feeds
+    that need present-vs-minority. Silent twin tests assert identical
+    ``silent_offenders`` under both doors.
+    """
+    from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.roll_call import minority_report
+
+    reporter = CollectingReporter()
+    sf = SourceFile.from_path(str(full_path), reporter=reporter)
+    report = minority_report(sf)
+    return source_audit_from_report(report, file_rel)
+
+
 def _root_of(full_path: Path, file_rel: str) -> Path:
     """The root ``file_rel`` is stated against -- the locus's own denominator."""
     resolved = Path(full_path).resolve()
