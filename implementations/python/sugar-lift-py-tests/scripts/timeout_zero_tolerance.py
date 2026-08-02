@@ -70,12 +70,11 @@ def audit_paths(
     *,
     root: Path,
     file_timeout: int,
-    workers: int = 1,
-    checkpoint_path: Path | None = None,
     progress_path: Path | None = None,
-    progress_stdout: bool = False,
 ) -> AuditSummary:
-    del workers, checkpoint_path, progress_stdout
+    """Measure every path. Durable reuse is the content-addressed process-floor
+    terminal cache, not a side checkpoint journal.
+    """
     if file_timeout > 30:
         raise ValueError("per-file timeout may not exceed 30 seconds")
     terminals = scan_paths(paths, root=root, file_timeout=float(file_timeout))
@@ -112,13 +111,10 @@ def main() -> int:
     )
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
-    parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--json", type=Path)
-    parser.add_argument("--checkpoint-jsonl", type=Path)
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
-    parser.add_argument("--progress-stdout", action="store_true")
     args = parser.parse_args()
 
     boot_error = production_lift_bootstrap_error()

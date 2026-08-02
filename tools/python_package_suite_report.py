@@ -116,6 +116,26 @@ def pytest_addoption(parser):
         metavar="LABEL",
         help="free-form label recorded in the report (e.g. the CI job name)",
     )
+    group.addoption(
+        "--suite-shard-index",
+        action="store",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "0-based shard index when the suite runs as parallel CI jobs. "
+            "Recorded in the report for enrollment roll call; each shard "
+            "writes its own identity-bound report (no shared aggregate)."
+        ),
+    )
+    group.addoption(
+        "--suite-shard-count",
+        action="store",
+        type=int,
+        default=None,
+        metavar="N",
+        help="enrolled shard count (roster size) for this campaign",
+    )
 
 
 class SuiteReporter:
@@ -202,6 +222,8 @@ class SuiteReporter:
             "label": self.config.getoption("--suite-label"),
             "order": self.config.getoption("--suite-order"),
             "shuffleSeed": self.shuffle_seed,
+            "shardIndex": self.config.getoption("--suite-shard-index"),
+            "shardCount": self.config.getoption("--suite-shard-count"),
             "pytestExitStatus": int(exitstatus),
             # THE REPORT ITSELF CARRIES ITS IDENTITY.
             #

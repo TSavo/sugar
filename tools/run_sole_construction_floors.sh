@@ -67,6 +67,17 @@ echo "process-floor population: authenticated pandas corpus at $PANDAS_CORPUS"
 FLOOR_SCRATCH="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}/.sugar/ci-floors"
 export SUGAR_FLOOR_WORKSPACE="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}"
 echo "process-floor scratch: $FLOOR_SCRATCH (never under population)"
+# Content-addressed process-floor terminal shelf:
+# tip × corpusManifestCid × axis × fileContentCid × demandTableCid × fileTimeoutMs
+# → terminal row. Three process floors share one body; 2nd/3rd axes hit.
+# Disable: SUGAR_PROCESS_FLOOR_CACHE_DIR=off
+if [ -z "${SUGAR_PROCESS_FLOOR_CACHE_DIR+x}" ]; then
+  export SUGAR_PROCESS_FLOOR_CACHE_DIR="${SUGAR_FLOOR_WORKSPACE}/.cache/process-floor-terminals"
+fi
+if [ -z "${SUGAR_MEASUREMENT_TIP:-}" ] && [ -n "${GITHUB_SHA:-}" ]; then
+  export SUGAR_MEASUREMENT_TIP="${GITHUB_SHA}"
+fi
+echo "process-floor cache: dir=${SUGAR_PROCESS_FLOOR_CACHE_DIR} tip=${SUGAR_MEASUREMENT_TIP:-unpinned}"
 # Axis names: R_axis only — never "R_axis = 0" (false banked zero on pre-measure crash).
 axis "R_native_crashes" \
   python "$SCRIPTS/native_crash_zero_tolerance.py" "$PANDAS_CORPUS" \

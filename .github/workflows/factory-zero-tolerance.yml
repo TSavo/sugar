@@ -8,83 +8,47 @@ on:
 permissions:
   contents: read
 
-# NO `concurrency:` BLOCK. THE GROUP WAS THE DEFECT, NOT THE FIX.
-#
-# The header that used to sit here said "GitHub keeps only one pending run per
-# group, so six independent workflows cancel each other even with
-# cancel-in-progress: false" -- and then kept the group anyway, as if being the
-# ONLY workflow in it were protection. It is not. One pending slot is one
-# pending slot even with a single occupant: on a PR with rapid pushes this
-# workflow was cancelled three times inside two minutes (20:26:50, 20:27:52,
-# 20:28:35) while every lighter job completed.
-#
-# That is the worst version of the defect, because these are FLOORS. A floor
-# that never ran looks exactly like a floor that found nothing: R=0 and R
-# unmeasured are the same silence from outside. Five suite runs and these three
-# floor runs vanished that way before anybody noticed.
-#
-# So: GitHub retains every run, and tools/heavy_measurement_lease.py decides
-# who measures. The corpus scanners below are heavy -- they are the reason the
-# box cannot host two censuses -- and they now run inside one machine-wide
-# flock, with a receipt, and with an attendance roll call that can tell silence
-# from a clean bill.
+# NO `concurrency:` BLOCK. GitHub retains every run. There is no machine-wide
+# heavy-measurement lease — jobs run in parallel.
 
 jobs:
   python-sole-construction-floors:
     name: python-sole-construction-floors
     runs-on: [self-hosted, Linux, X64]
-    # The floor set plus its wait for the lease. See python-package-suite.yml.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      # ONE environment definition, shared read-only with the authoritative
-      # suite job. The floors stay distinct instruments — they measure R on
-      # their own axes and stay red-with-teeth — but they no longer define,
-      # install, or sweep their own idea of the package. See
-      # .github/workflows/python-package-suite.yml.
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
-      - name: The complete floor set, under the machine-wide heavy lease
+      - name: The complete floor set
+        id: floors
         shell: bash
         run: |
           set -uo pipefail
           set +e
-          python3 tools/heavy_measurement_lease.py \
-            --class python-sole-construction-floors \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            -- bash tools/run_sole_construction_floors.sh
-          leased_exit=$?
+          bash tools/run_sole_construction_floors.sh
+          floor_exit=$?
           set -e
-          # 75 is the lease REFUSING, not a floor being green. These are floors:
-          # "no output" must never be readable as "nothing to report".
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the floors did NOT run. R is UNMEASURED, not 0."
-            exit 75
-          fi
-          exit "$leased_exit"
+          echo "floor_exit=$floor_exit" >> "$GITHUB_OUTPUT"
+          python3 -c "
+          import json, os
+          from pathlib import Path
+          body = {
+              'schemaVersion': 1,
+              'measurementClass': 'python-sole-construction-floors',
+              'measuredCommit': os.environ.get('GITHUB_SHA'),
+              'status': 'completed',
+              'exitCode': $floor_exit,
+              'totals': {'failed': 0 if $floor_exit == 0 else 1},
+          }
+          Path('floor-measurement.json').write_text(json.dumps(body, indent=2) + '\n')
+          "
+          exit "$floor_exit"
 
-      # These floors ARE a zero claim: R = 0 on every axis. So the gate demands
-      # the one status that can carry one. `cancelled-before-measurement` and
-      # `interrupted-during-measurement` are red here, loudly, rather than
-      # quietly reading as a clean floor -- which is exactly what three
-      # evicted runs on one PR looked like from the outside.
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --require-commit "$GITHUB_SHA" \
-            --require-zero-claim \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # The receipt is the artifact that distinguishes "ran and found nothing"
-      # from "never ran". Uploaded even when a floor is red.
-      - name: Upload the floor-set lease receipt
+      - name: Upload floor measurement body
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-sole-construction-floors-lease
-          path: lease-record.json
+          name: python-sole-construction-floors-measurement
+          path: floor-measurement.json
           if-no-files-found: error

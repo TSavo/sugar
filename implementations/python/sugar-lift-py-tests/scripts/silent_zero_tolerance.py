@@ -44,6 +44,20 @@ Auditor over (disk census × roll call). Type cannot close open source
 populations. Retirement: every disk locus is constructed into the roll call
 or classified; then silence at stable zero on the **corpus** population.
 
+## Performance (membership only)
+
+Silent keys on **membership** of disk loci in ``warranted ∪ unresolved``.
+Both statuses are roster members; sugar **discharge** only splits Blue/Yellow
+and does not change membership for nodes registered at tree materialize.
+
+Production path therefore uses **register-only** roster construction
+(``source_audit_membership_from_registration``), not full ``discharge`` /
+per-root ``sugar()``. Discharge remains available for the identity twin and
+for report feeds that need present-vs-minority.
+
+Empty disk census (no asserts, no function bodies) contributes 0 by predicate
+construction — skip tree construction entirely for those files.
+
 In-process enum scan. Progress and engine logs never mix.
 """
 
@@ -146,6 +160,11 @@ def silent_offenders(
     ]
 
 
+def disk_census_empty(census: DiskCensus) -> bool:
+    """No asserts and no function bodies → R_silent contribution is 0 by predicate."""
+    return not census.asserts and not census.bodies
+
+
 def r_silent(offenders: Sequence[SilentOffender]) -> int:
     return sum(row.count for row in offenders)
 
@@ -165,13 +184,38 @@ def format_report(offenders: Sequence[SilentOffender]) -> str:
     return "\n".join(lines)
 
 
-def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...]]:
+def _audit_file_discharge(
+    path: Path, *, rel: str
+) -> tuple[str, tuple[SilentOffender, ...]]:
+    """Reference path: full register + sugar discharge (identity twin only)."""
     from sugar_lift_py_tests.idd.lift_coverage_census import census_source
     from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
 
     source = path.read_text(encoding="utf-8", errors="replace")
     census = census_source(source, file=rel)
+    if disk_census_empty(census):
+        return "completed", ()
     audit = source_audit_from_roll_call(path, rel)
+    return "completed", tuple(silent_offenders(census, audit))
+
+
+def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...]]:
+    """Production path: disk census + register-only roster membership.
+
+    Does not call ``sugar()`` / discharge. Membership of disk loci in the
+    roll-call key set is identical to the discharge path (see twin tests).
+    """
+    from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+    from sugar_lift_py_tests.tree_enumerate import (
+        source_audit_membership_from_registration,
+    )
+
+    source = path.read_text(encoding="utf-8", errors="replace")
+    census = census_source(source, file=rel)
+    # Empty disk census → 0 silent by construction; skip tree work entirely.
+    if disk_census_empty(census):
+        return "completed", ()
+    audit = source_audit_membership_from_registration(path, rel)
     return "completed", tuple(silent_offenders(census, audit))
 
 

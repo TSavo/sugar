@@ -2,37 +2,26 @@ name: Python package suite (authoritative)
 
 # THE DEFECT THIS FIXES
 #
-# `sugar-lift-py-tests` had no PR-gate coverage. `python-sole-construction-floors`
-# runs targeted law scripts with `--noconftest` -- not the suite. The only
-# workflow that touched the whole `sugar-lift-py-tests/tests` directory was
-# `restored-suite-scoreboard`, nightly cron / manual dispatch only. `make
-# test-python` was in no workflow at all. So the unit tests for
-# `ExitSet.and_exit` did not run against #6270, the PR that rewrote that
-# algebra.
+# One cold pytest over ~3864 tests is one process on one core while 31 cores
+# idle. That serialization starved every measurement for hours. T: "32 cores
+# and 25 runners, and this idea that we should be serializing anything in the
+# CI process is just pure insanity."
 #
-# This workflow is the ONE authoritative whole-package sweep. Nothing else may
-# define, install, or run "the Python suite": the environment comes from
-# ./.github/actions/python-test-environment, and the zero-tolerance floors
-# consume that same action rather than building their own.
+# DESIGN (settled): 32 deterministic file shards. Each job writes its OWN
+# identity-bound suite-report.json. Completeness is ENROLLMENT (roster + roll
+# call), not merge into a shared hub. Identity gate runs PER SHARD. Campaign
+# claim: all N attended and each is identity-resolved.
 #
-# IT DOES NOT GATE ON VERDICTS; IT DOES GATE ON IDENTITY. ~131 known failures
-# exist. Turning that red into a merge gate is a merge-policy change and this
-# wiring is a measurement-ownership change, so the job records pytest's exit
-# status as evidence and does not exit on it.
+# Canonical order is collection order WITHIN a shard's file set only.
+# Discrimination (scheduled) is within-shard. No package-wide recombine.
 #
-# Identity is a different question from verdicts. A measurement that cannot say
-# which authenticated source and which test-input universe produced its
-# verdicts is not a lenient measurement, it is not a measurement -- so the
-# identity gate DOES fail the job, and the authoritative artifact is not
-# published when it does. The SCHEDULED discrimination job also fails, because
-# order-dependence is not a known failure -- it is a claim that our verdicts
-# are not verdicts.
+# No machine-wide heavy-measurement lease (deleted). Jobs run in parallel.
+# Shard count lives in tools/python_package_suite_shards.py (SHARD_COUNT=32).
 
 on:
   push:
     branches: [main]
   schedule:
-    # Discrimination cadence: canonical vs reversed vs shuffled, each cold.
     - cron: "41 7 * * *"
   workflow_dispatch:
     inputs:
@@ -44,30 +33,9 @@ on:
 permissions:
   contents: read
 
-# NO `concurrency:` BLOCK. THAT IS THE FIX.
-#
-# This workflow had its own ref-independent group with cancel-in-progress:
-# false, and it was starved inside that group anyway: five runs (dea47f1f8,
-# e0a78ec52, d243fcacf, 6d9db3a8f, f0cddfd76) cancelled, zero artifacts, until
-# 30174018299 finally landed one behind a merge freeze. `cancel-in-progress:
-# false` only protects a run that has already STARTED; GitHub keeps exactly ONE
-# pending run per group, so every new push EVICTS the queued one. Our own merge
-# rate was the thing killing the measurement.
-#
-# So the queue and the serialization are separated:
-#
-#   GitHub queue: preserve every requested measurement  (no group -- here)
-#   BX lease:     only one heavy measurement executes   (tools/heavy_measurement_lease.py)
-#
-# Every run is retained and every run eventually measures. Overlap is settled
-# on the box by an flock the kernel releases even on SIGKILL, not by a queue
-# that drops the thing it was asked to remember.
+# NO concurrency group — every run retained.
 
 jobs:
-  # The gate's own discrimination twins. Six teeth, both faces each, no
-  # environment and no lease: pure JSON in, verdict out, seconds. It runs
-  # BEFORE the environment is prepared so a weakened identity gate is red on
-  # its own terms rather than red-by-absence three hours later.
   identity-gate-twins:
     name: identity gate teeth (both faces)
     runs-on: [self-hosted, Linux, X64]
@@ -84,6 +52,9 @@ jobs:
     timeout-minutes: 60
     outputs:
       identity-hash: ${{ steps.env.outputs.identity-hash }}
+      shard-matrix: ${{ steps.shards.outputs.matrix }}
+      shard-list: ${{ steps.shards.outputs.list }}
+      shard-count: ${{ steps.shards.outputs.count }}
     steps:
       - uses: actions/checkout@v6
       - name: Prepare immutable Python test environment
@@ -91,6 +62,18 @@ jobs:
         uses: ./.github/actions/python-test-environment
         with:
           identity-artifact: "true"
+      - name: Emit deterministic shard matrix
+        id: shards
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(python3 tools/python_package_suite_shards.py --emit-matrix-json)"
+          list="$(python3 tools/python_package_suite_shards.py --emit-shard-list-json)"
+          count="$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' <<<"$list")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "suite shard matrix count=$count"
       - name: Publish environment identity to the run summary
         shell: bash
         run: |
@@ -100,18 +83,20 @@ jobs:
             echo
             echo '`environmentIdentityHash`: `${{ steps.env.outputs.identity-hash }}`'
             echo
+            echo "suite shards: `${{ steps.shards.outputs.count }}` (enrollment roster)"
+            echo
             echo 'Runs that do not share this hash are not comparable measurements.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # One CI job per shard. Own report. Own identity gate. No singleton writer.
   python-package-suite:
-    name: python-package-suite (canonical)
+    name: suite canonical shard ${{ matrix.shard }}
     needs: prepare-python-test-environment
     runs-on: [self-hosted, Linux, X64]
-    # Measurement budget PLUS lease wait. Runs now queue on the box instead of
-    # being evicted from GitHub's pending slot, so the job must be allowed to
-    # sit in that queue; a job timeout shorter than the wait would recreate the
-    # dropped-measurement defect one layer down.
-    timeout-minutes: 360
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-python-test-environment.outputs.shard-matrix) }}
     steps:
       - uses: actions/checkout@v6
 
@@ -119,22 +104,9 @@ jobs:
         id: env
         uses: ./.github/actions/python-test-environment
 
-      # The suite exercises the real lift over RPC. `tests/conftest.py` already
-      # resolves the binary in a session fixture and exits(2) if it cannot, so
-      # this step is not what makes the sweep work -- it is what keeps the
-      # sweep's WALL TIME a measurement of the suite rather than of a cold
-      # Rust build that happened to land inside it. Resolved through the one
-      # door, bin/sugarbin, by source stamp: shelf hit unless Rust inputs moved.
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
 
-      # The stamp is READ OFF THE RESOLVED BINARY, not recomputed beside it.
-      # `<binary>.sugarbin.json` is written by the build that produced this
-      # exact file and verified against its sha256 on every shelf hit, so it is
-      # the source identity the measured binary ACTUALLY has. The identity gate
-      # requires it to equal the environment identity's sourceStamp: a suite
-      # that measures one binary while reporting another source universe is the
-      # unresolved-identity defect wearing a populated field.
       - name: Resolve the sugar binary and read its source identity
         id: binary
         shell: bash
@@ -144,7 +116,7 @@ jobs:
           echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
           manifest="$sugar_bin.sugarbin.json"
           if [ ! -f "$manifest" ]; then
-            echo "::error::resolved binary $sugar_bin has no $manifest; its source identity is unknown."
+            echo "::error::resolved binary $sugar_bin has no $manifest"
             exit 1
           fi
           stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
@@ -153,74 +125,68 @@ jobs:
             *) echo "::error::binary manifest sourceStamp is malformed: $stamp"; exit 1 ;;
           esac
           echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
-          echo "measured binary sourceStamp: $stamp"
 
-      # ONE cold process. Whole package. Canonical collection order.
-      # `-p no:cacheprovider` so no run inherits another's cache; `-p
-      # no:randomly` so canonical means canonical.
-      #
-      # And ONE AT A TIME ON THE BOX. The wall time of this sweep is a claim
-      # about the suite; measured beside a pandas census it is a claim about
-      # nothing. The lease is machine-wide, so the NumPy wall, the pandas wall,
-      # the sole-construction floors and the restored-suite sweep all wait for
-      # this one, and it waits for them -- while GitHub keeps every run.
-      - name: Whole-package sweep (under the machine-wide heavy lease)
+      - name: Shard ${{ matrix.shard }} sweep (own identity-bound report)
         id: sweep
         shell: bash
         working-directory: implementations/python
         env:
-          # tools/ for the suite report plugin; checkout roots from the env
-          # action (first-party must NOT come from site-packages).
           PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
+          SUITE_IDENTITY_PATH: ${{ steps.env.outputs.identity-path }}
+          SUITE_BINARY_STAMP: ${{ steps.binary.outputs.stamp }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ needs.prepare-python-test-environment.outputs.shard-count }}
         run: |
           set -uo pipefail
-          cat > "$RUNNER_TEMP/sweep.sh" <<'SWEEP'
-          set -uo pipefail
-          python -m pytest sugar-lift-py-tests/tests -q \
-            -p no:cacheprovider -p no:randomly \
-            -p python_package_suite_report \
-            --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
-            --suite-identity="$SUITE_IDENTITY_PATH" \
-            --suite-commit="$GITHUB_SHA" \
-            --suite-binary-stamp="$SUITE_BINARY_STAMP" \
-            --suite-order=canonical \
-            --suite-label=python-package-suite-canonical \
-            2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
-          exit "${PIPESTATUS[0]}"
-          SWEEP
-          set +e
-          SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
-          SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
-          python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
-            --class python-package-suite \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --embed-into "$GITHUB_WORKSPACE/suite-report.json" \
-            -- bash "$RUNNER_TEMP/sweep.sh"
-          leased_exit=$?
-          set -e
-          # 75 is the lease refusing, not pytest failing. The distinction is the
-          # whole point: an unmeasured suite must never read as a measured one.
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the suite did NOT run."
-            echo "pytest_exit=lease-refused" >> "$GITHUB_OUTPUT"
-            exit 75
+          mapfile -t paths < <(
+            python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
+              --repo-root "$GITHUB_WORKSPACE" \
+              --shard-count "$SHARD_COUNT" \
+              --shard-index "$SHARD" \
+              --emit-paths-for-cwd
+          )
+          echo "shard $SHARD / $SHARD_COUNT paths (${#paths[@]}):"
+          printf '  %s\n' "${paths[@]:-}"
+          if [ "${#paths[@]}" -eq 0 ]; then
+            python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
+              --shard-count "$SHARD_COUNT" \
+              --shard-index "$SHARD" \
+              --mint-empty-report "$GITHUB_WORKSPACE/suite-report.json" \
+              --suite-identity "$SUITE_IDENTITY_PATH" \
+              --suite-commit "$GITHUB_SHA" \
+              --suite-binary-stamp "$SUITE_BINARY_STAMP" \
+              --suite-order canonical
+            echo "empty shard $SHARD" | tee "$GITHUB_WORKSPACE/suite.log"
+            echo "pytest_exit=0" >> "$GITHUB_OUTPUT"
+          else
+            set +e
+            python -m pytest "${paths[@]}" -q \
+              -p no:cacheprovider -p no:randomly \
+              -p python_package_suite_report \
+              --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
+              --suite-identity="$SUITE_IDENTITY_PATH" \
+              --suite-commit="$GITHUB_SHA" \
+              --suite-binary-stamp="$SUITE_BINARY_STAMP" \
+              --suite-order=canonical \
+              --suite-shard-index="$SHARD" \
+              --suite-shard-count="$SHARD_COUNT" \
+              --suite-label="python-package-suite-canonical-shard-$(printf '%02d' "$SHARD")" \
+              2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
+            pytest_exit="${PIPESTATUS[0]}"
+            set -e
+            echo "pytest_exit=$pytest_exit" >> "$GITHUB_OUTPUT"
           fi
-          echo "pytest_exit=$leased_exit" >> "$GITHUB_OUTPUT"
           test -s "$GITHUB_WORKSPACE/suite.log"
           test -s "$GITHUB_WORKSPACE/suite-report.json"
-
-      # No timing claim is accepted if the lease was not acquired. This is that
-      # sentence with teeth: red unless the artifact's own embedded receipt
-      # shows request -> acquisition -> release around THIS commit.
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record suite-report.json \
-            --require-commit "$GITHUB_SHA" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          # Attendance marker for heavy roll call (measurementClass).
+          python3 -c "
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['GITHUB_WORKSPACE']) / 'suite-report.json'
+          body = json.loads(p.read_text())
+          body['measurementClass'] = 'python-package-suite'
+          p.write_text(json.dumps(body, indent=2) + '\n')
+          "
 
       - name: Publish the node-ID vector
         if: always()
@@ -233,23 +199,7 @@ jobs:
             --node-id-dir suite-node-ids \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # EVERY IDENTITY FIELD RESOLVED -- CHECKED ON THE ARTIFACT, BEFORE IT IS
-      # CALLED AUTHORITATIVE.
-      #
-      # Run 30175741263 was complete and conserved (1212 collected, 1212
-      # verdicts) and concluded `success` while its sourceStamp was the object
-      # `{"unavailable": "CalledProcessError: ..."}` and its testExtraInputHash
-      # was null. Conservation is not authority: this step is where the run
-      # proves WHICH source and WHICH test-input universe produced the
-      # verdicts, and it reads suite-report.json as serialized -- a value that
-      # was populated in the sweep but lost on the way to the file is caught
-      # here and nowhere else.
-      #
-      # Deliberately NOT `if: always()` in the sense of being toothless: this
-      # step fails the job, and the authoritative upload below does not run
-      # when it does.
-      - name: Identity gate (R_identity = 0)
-        id: identity-gate
+      - name: Identity gate (per-shard R_identity = 0)
         if: always()
         shell: bash
         run: |
@@ -260,80 +210,81 @@ jobs:
             | tee identity-gate.md \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Artifacts carry the node-ID lists. The step summary carries counts.
-      # Counts are summaries of the lists; the lists are the evidence.
-      #
-      # This name means authoritative. It is published only when the identity
-      # gate passed on the serialized report.
-      - name: Upload authoritative suite artifacts
+      - name: Upload authoritative shard artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: python-package-suite-canonical
+          name: python-package-suite-canonical-shard-${{ matrix.shard }}
           path: |
             suite.log
             suite-report.json
             suite-node-ids/
-            lease-record.json
             identity-gate.md
           if-no-files-found: error
 
-      # Evidence is never thrown away -- it is just not allowed to wear the
-      # authoritative name. A consumer that downloads this one is holding a
-      # provisional receipt and the artifact says so in its own name.
-      - name: Upload provisional (identity-unresolved) suite artifacts
+      - name: Upload provisional (identity-unresolved) shard artifact
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: python-package-suite-canonical-PROVISIONAL-identity-unresolved
+          name: python-package-suite-canonical-shard-${{ matrix.shard }}-PROVISIONAL-identity-unresolved
           path: |
             suite.log
             suite-report.json
             suite-node-ids/
-            lease-record.json
             identity-gate.md
           if-no-files-found: warn
 
-      # Deliberately no `exit $pytest_exit`. See the header: this job reports.
-      - name: Report, do not gate
+      - name: Report, do not gate on pytest verdict
         if: always()
         shell: bash
         run: |
-          echo "pytest exit status ${{ steps.sweep.outputs.pytest_exit }} recorded as evidence."
-          echo "This job does not gate merges; it owns the measurement."
+          echo "pytest exit ${{ steps.sweep.outputs.pytest_exit }} recorded as evidence."
+          echo "Identity + enrollment gate completeness; verdicts do not gate merges."
+
+  # Completeness: all shards attended. Missing shard = UNMEASURED. No merge.
+  python-package-suite-attendance:
+    name: suite shard enrollment (all attended)
+    if: always() && !cancelled()
+    needs: [prepare-python-test-environment, python-package-suite]
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-package-suite-canonical-shard-*
+          path: runs
+      - name: Roll call — enrollment is existence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/python_package_suite_shard_attendance.py \
+            --reports-dir runs \
+            --shard-count '${{ needs.prepare-python-test-environment.outputs.shard-count }}' \
+            --require-commit "$GITHUB_SHA" \
+            --order canonical \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
   python-package-suite-discrimination:
-    name: python-package-suite (${{ matrix.order }})
-    # Scheduled cadence only -- plus explicit dispatch. Per-merge CI pays for
-    # exactly one sweep; order-dependence is caught nightly, not by tripling
-    # every merge's cost.
+    name: suite ${{ matrix.order }} shard ${{ matrix.shard }}
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.discrimination)
     needs: prepare-python-test-environment
     runs-on: [self-hosted, Linux, X64]
-    # Measurement budget PLUS lease wait. Runs now queue on the box instead of
-    # being evicted from GitHub's pending slot, so the job must be allowed to
-    # sit in that queue; a job timeout shorter than the wait would recreate the
-    # dropped-measurement defect one layer down.
-    timeout-minutes: 360
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         order: [reversed, shuffled]
+        shard: ${{ fromJSON(needs.prepare-python-test-environment.outputs.shard-list) }}
     steps:
       - uses: actions/checkout@v6
-
       - name: Prepare immutable Python test environment
         id: env
         uses: ./.github/actions/python-test-environment
-
-      # Same binary, resolved the same way and warmed the same way, so the only
-      # difference between the canonical run and these is the order. Anything
-      # else differing would make a divergence uninterpretable.
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-
       - name: Resolve the sugar binary and read its source identity
         id: binary
         shell: bash
@@ -342,75 +293,56 @@ jobs:
           sugar_bin="$(bin/sugarbin --profile release)"
           echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
           manifest="$sugar_bin.sugarbin.json"
-          if [ ! -f "$manifest" ]; then
-            echo "::error::resolved binary $sugar_bin has no $manifest; its source identity is unknown."
-            exit 1
-          fi
           stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
           echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
-
-      # A SEPARATE COLD PROCESS per order. Sharing a process would let the
-      # first order warm exactly the caches whose influence we are measuring.
-      # Under the same lease as the canonical arm. A discrimination arm that
-      # ran beside another census would differ from canonical for a reason
-      # that is not the order -- which would make the one job in this file
-      # with teeth un-interpretable.
-      - name: Whole-package sweep (${{ matrix.order }}, under the heavy lease)
+      - name: Shard sweep (${{ matrix.order }})
         shell: bash
         working-directory: implementations/python
         env:
-          # tools/ for the suite report plugin; checkout roots from the env
-          # action (first-party must NOT come from site-packages).
           PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
+          SUITE_IDENTITY_PATH: ${{ steps.env.outputs.identity-path }}
+          SUITE_BINARY_STAMP: ${{ steps.binary.outputs.stamp }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ needs.prepare-python-test-environment.outputs.shard-count }}
+          SUITE_ORDER: ${{ matrix.order }}
         run: |
           set -uo pipefail
-          cat > "$RUNNER_TEMP/sweep-${{ matrix.order }}.sh" <<'SWEEP'
-          set -uo pipefail
-          python -m pytest sugar-lift-py-tests/tests -q \
-            -p no:cacheprovider -p no:randomly \
-            -p python_package_suite_report \
-            --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
-            --suite-identity="$SUITE_IDENTITY_PATH" \
-            --suite-commit="$GITHUB_SHA" \
-            --suite-binary-stamp="$SUITE_BINARY_STAMP" \
-            --suite-order="$SUITE_ORDER" \
-            --suite-shuffle-seed="$GITHUB_RUN_ID" \
-            --suite-label="python-package-suite-$SUITE_ORDER" \
-            2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
-          exit "${PIPESTATUS[0]}"
-          SWEEP
-          set +e
-          SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
-          SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
-          SUITE_ORDER='${{ matrix.order }}' \
-          python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
-            --class python-package-suite \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --embed-into "$GITHUB_WORKSPACE/suite-report.json" \
-            -- bash "$RUNNER_TEMP/sweep-${{ matrix.order }}.sh"
-          leased_exit=$?
-          set -e
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the ${{ matrix.order }} arm did NOT run."
-            exit 75
+          mapfile -t paths < <(
+            python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
+              --repo-root "$GITHUB_WORKSPACE" \
+              --shard-count "$SHARD_COUNT" \
+              --shard-index "$SHARD" \
+              --emit-paths-for-cwd
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
+              --shard-count "$SHARD_COUNT" \
+              --shard-index "$SHARD" \
+              --mint-empty-report "$GITHUB_WORKSPACE/suite-report.json" \
+              --suite-identity "$SUITE_IDENTITY_PATH" \
+              --suite-commit "$GITHUB_SHA" \
+              --suite-binary-stamp "$SUITE_BINARY_STAMP" \
+              --suite-order "$SUITE_ORDER"
+            echo "empty shard $SHARD ($SUITE_ORDER)" | tee "$GITHUB_WORKSPACE/suite.log"
+          else
+            set +e
+            python -m pytest "${paths[@]}" -q \
+              -p no:cacheprovider -p no:randomly \
+              -p python_package_suite_report \
+              --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
+              --suite-identity="$SUITE_IDENTITY_PATH" \
+              --suite-commit="$GITHUB_SHA" \
+              --suite-binary-stamp="$SUITE_BINARY_STAMP" \
+              --suite-order="$SUITE_ORDER" \
+              --suite-shuffle-seed="$GITHUB_RUN_ID" \
+              --suite-shard-index="$SHARD" \
+              --suite-shard-count="$SHARD_COUNT" \
+              --suite-label="python-package-suite-${SUITE_ORDER}-shard-$(printf '%02d' "$SHARD")" \
+              2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
+            set -e
           fi
-          echo "pytest exit $leased_exit"
           test -s "$GITHUB_WORKSPACE/suite-report.json"
-
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record suite-report.json \
-            --require-commit "$GITHUB_SHA" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # Same law as the canonical arm: an arm whose identity is unresolved
-      # cannot be compared against anything, so it is not published under the
-      # name the comparison job reads.
-      - name: Identity gate (R_identity = 0)
+      - name: Identity gate (per-shard)
         if: always()
         shell: bash
         run: |
@@ -420,58 +352,86 @@ jobs:
             --require-commit "$GITHUB_SHA" \
             | tee identity-gate.md \
             | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload discrimination artifacts
+      - name: Upload discrimination shard artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: python-package-suite-${{ matrix.order }}
+          name: python-package-suite-${{ matrix.order }}-shard-${{ matrix.shard }}
           path: |
             suite.log
             suite-report.json
-            lease-record.json
             identity-gate.md
           if-no-files-found: error
 
   discrimination-verdict:
-    name: identical verdict sets across orders
+    name: identical within-shard verdict sets across orders
     if: >-
       always() && !cancelled() && (
         github.event_name == 'schedule' ||
         (github.event_name == 'workflow_dispatch' && inputs.discrimination)
       )
-    needs: [python-package-suite, python-package-suite-discrimination]
+    needs:
+      - prepare-python-test-environment
+      - python-package-suite
+      - python-package-suite-discrimination
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
-          pattern: python-package-suite-*
+          pattern: python-package-suite-*-shard-*
           path: runs
-      # THIS ONE HAS TEETH. A verdict that changes with execution order is not
-      # a verdict. Red here means one of the two runs lied and we do not know
-      # which; fix the dependence, do not re-run for green.
-      # Were the three arms actually serialized? Same kernel must mean the same
-      # lock inode, and no two acquisition intervals may overlap. If the lease
-      # file is not shared between runner containers this is where it shows up
-      # -- otherwise the mechanism could be pure theatre and every arm would
-      # still look green.
-      - name: Lease scope check (one machine, one lock, no overlap)
+      - name: Enrollment for each order
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --scope-check runs/python-package-suite-canonical/lease-record.json \
-            --scope-check runs/python-package-suite-reversed/lease-record.json \
-            --scope-check runs/python-package-suite-shuffled/lease-record.json \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          count='${{ needs.prepare-python-test-environment.outputs.shard-count }}'
+          for order in canonical reversed shuffled; do
+            python3 tools/python_package_suite_shard_attendance.py \
+              --reports-dir runs \
+              --shard-count "$count" \
+              --require-commit "$GITHUB_SHA" \
+              --order "$order" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Within-shard order-independence (no merged hub)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "tools")
+          from python_package_suite_shard_attendance import find_shard_reports
+          from python_suite_discrimination import compare
 
-      - name: Require identical verdict sets
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tools/python_suite_discrimination.py \
-            --baseline runs/python-package-suite-canonical/suite-report.json \
-            --candidate runs/python-package-suite-reversed/suite-report.json \
-            --candidate runs/python-package-suite-shuffled/suite-report.json \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          runs = Path("runs")
+          count = int("${{ needs.prepare-python-test-environment.outputs.shard-count }}")
+          by_order = {
+              order: find_shard_reports(runs, order)
+              for order in ("canonical", "reversed", "shuffled")
+          }
+          crimes = []
+          for i in range(count):
+              if i not in by_order["canonical"]:
+                  crimes.append(f"shard {i:02d}: canonical missing")
+                  continue
+              _, baseline = by_order["canonical"][i]
+              for order in ("reversed", "shuffled"):
+                  if i not in by_order[order]:
+                      crimes.append(f"shard {i:02d}: {order} missing")
+                      continue
+                  _, candidate = by_order[order][i]
+                  for line in compare(baseline, candidate):
+                      crimes.append(f"shard {i:02d}: {line}")
+          if crimes:
+              print("### discrimination: DIVERGENT or incomplete\n")
+              for c in crimes:
+                  print(f"- `{c}`")
+                  print(f"::error::{c}", file=sys.stderr)
+              sys.exit(1)
+          print(
+              f"### discrimination: identical verdict sets within each of "
+              f"{count} shards (no shared aggregate)"
+          )
+          PY
