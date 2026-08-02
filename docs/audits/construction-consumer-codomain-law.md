@@ -38,13 +38,26 @@ Static proxy enrolled: scan Expression-ish `_construct_sugar` Call returns;
 flag Sugar-not-CTS. **Do not** union every `*Sugar` mint into the term set —
 that lie hid ObjectPlace pre-promote.
 
-### Reach honesty (what static still cannot follow)
+### Reach honesty (stated boundary — makes the zero meaningful)
 
-- `getattr` / variable factories / runtime type mutations
-- mints outside enrolled roots
+**This is not a failure of the instrument. It is its stated boundary.**
+Stating it is what makes `R_total=0` meaningful — same discipline as the first
+caveat, which turned out to be exactly where the fifth lie lived.
 
-Those remain **runtime-only**: `require_constructed_term_sugar` TypeError at
-the slot + sealed-board / discharge twins. Do not force a static answer.
+| Half | What is measured | What catches residual |
+| --- | --- | --- |
+| **Static (this floor)** | closed-door isinstance siblings + Expression mint→term proxy (`R_expression_construct_not_term`) | this instrument, red while R > 0 |
+| **Dynamic (not this floor)** | `getattr` / variable factories / runtime type mutations / mints outside enrolled roots | `require_constructed_term_sugar` TypeError at the slot **plus** sealed-board / discharge twins |
+
+Do not force a static answer for the dynamic half.
+
+### Honest position at close (anyone reading the zero)
+
+**`R_total=0` under extended static reach**, with **dynamic getattr paths caught
+by the board rather than the floor**. Anyone reading the zero should know
+which half is which. The sixth lie of the Expression-mint class is caught
+forwards by this instrument; a sixth of the pure-getattr class is still a
+board finding until a stronger substrate can name it statically.
 
 ## Bankable zero language (load-bearing)
 
@@ -60,7 +73,8 @@ packages, and Expression `_construct_sugar` mint→term proxy. **Do not read
 `R_total=0` as "the class is closed forever".** It means: at this tip, every
 produced sibling is accepted by every closed door we can see statically, and
 every Expression-ish construct mint we can name is a ConstructedTermSugar.
-Remaining gaps may still be dynamic-only (getattr factories, etc.).
+Remaining gaps may still be dynamic-only (getattr factories, etc.) — board
+half, not floor half.
 
 ## CI law (enrollment is existence)
 
