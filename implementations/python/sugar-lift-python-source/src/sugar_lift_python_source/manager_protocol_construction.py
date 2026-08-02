@@ -114,7 +114,23 @@ class ConstructedManagerProtocolV1:
 
     def exit_outcome_for(self, entered: EnteredManagerStateValue, ctx: object = None):
         if not isinstance(entered, EnteredManagerStateValue):
-            raise TypeError(type(entered).__name__)
+            # Naked TypeError(type(entered).__name__) named neither the door nor
+            # the artifact we need — instrument noise on the board.
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=self.exit_face_id,
+                owner="ManagerProtocol.exit_outcome_for",
+                observed=(
+                    f"exit_outcome_for received {type(entered).__name__}, not "
+                    f"EnteredManagerStateValue"
+                ),
+                requested="EnteredManagerStateValue from the matching enter face",
+                fix=(
+                    "carry enter's EnteredManagerStateValue into exit; do not "
+                    "raise bare TypeError with only the type name"
+                ),
+            )
         return _call_protocol_method(
             entered.receiver_state,
             "__exit__",
@@ -702,9 +718,18 @@ def exit_generator_resource_outcome_for(protocol, entered, *, ctx: object = None
     from sugar_source_tree.panic import SugarNotWritten
 
     if not isinstance(entered, EnteredGeneratorManagerStateV1):
-        raise TypeError(
-            "GeneratorBackedManagerProtocolV1.exit_outcome_for requires "
-            f"EnteredGeneratorManagerStateV1, not {type(entered).__name__}"
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed=(
+                f"exit_outcome_for received {type(entered).__name__}, not "
+                f"EnteredGeneratorManagerStateV1"
+            ),
+            requested="EnteredGeneratorManagerStateV1 from the matching enter face",
+            fix=(
+                "carry enter's EnteredGeneratorManagerStateV1 into exit; do not "
+                "raise bare TypeError with only the type name"
+            ),
         )
     if entered.protocol_construction_cid != protocol.protocol_construction_cid:
         raise SugarNotWritten(

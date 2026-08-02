@@ -11938,7 +11938,27 @@ def _construct_binding_projection(state):
             ),
             state.target_cid,
         )
-    raise TypeError(type(state))
+    # Missing arm over BindingState: name the species and the constructor door.
+    # A bare TypeError(type(state)) aborts the file as instrument noise and
+    # names neither the union nor the unwritten arm.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner="_construct_binding_projection",
+        blame=f"binding-state:{type(state).__name__}",
+        observed=(
+            f"binding state species {type(state).__name__} has no projection "
+            f"constructor arm"
+        ),
+        requested=(
+            "Node | UnboundBinding | GuardedBinding | LoopProjectedBinding "
+            "(with formula-bearing guards)"
+        ),
+        fix=(
+            f"write _construct_binding_projection arm for {type(state).__name__} "
+            f"or project it before this door; do not raise TypeError"
+        ),
+    )
 
 
 class GuardedBindingRead(Expression):
