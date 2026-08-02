@@ -85,16 +85,22 @@ class SubscriptOperation:
         del ctx
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
+        index = self.index
+        if hasattr(index, "to_term"):
+            index_term = index.to_term(owner=f"{self.owner} index")
+        elif hasattr(index, "term"):
+            index_term = index.term
+        else:
+            raise TypeError(
+                f"SubscriptOperation.subscript_symbolic needs index.to_term "
+                f"(got {type(index).__name__})"
+            )
         return Complete(
             SymbolicValue(
                 ctor(
                     "py.subscript",
-                    [
-                        receiver.term,
-                        floor_to_term(self.index, owner=f"{self.owner} index"),
-                    ],
+                    [receiver.term, index_term],
                 )
             )
         )
