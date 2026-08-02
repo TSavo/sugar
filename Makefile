@@ -584,14 +584,19 @@ self-attest:
 	echo "self-attest: PASS (manifest artifacts pinned + verified)"; \
 	rm -rf $$tmp
 
-# Pin-and-assert gate over the rust stdlib coretests accounting sweep. Runs the
-# HERMETIC sweep (no --dissolve -> deterministic: no nightly harness compiles, no
-# per-file dissolution cap) and asserts the result EXACTLY equals the pinned
-# snapshot (implementations/rust/coretests-invariants.json). CI goes red when a
-# commit fails to move the numbers as it claimed (a drain that didn't drain, a
-# regression, a silent drop, or a corpus change). Corpus = rust $(CORETESTS_RUST_VER)
-# coretests via rust-src, pinned independent of the runner's default stable so the
-# assertion-multiset CID stays stable. Self-provisions the toolchain (idempotent).
+# Hermetic coretests MEASUREMENT (no equality pin).
+#
+# Runs the HERMETIC sweep (no --dissolve → deterministic) and produces a live R
+# vector under a declared scope. Floors (silent/unclassified/panicked/missing +
+# accounting identity) must be 0. Residual (refused/inactive) is R>0 red until
+# stable zero — drain pressure, never green-at-N. discharged is context only.
+# assertion_multiset_cid is a drift membrane on the body, not a residual pin.
+#
+# There is NO coretests-invariants.json. Counts are re-derived each run; they
+# are never seeded from authored state. Incomplete/crashed sweep → UNMEASURED.
+#
+# Corpus = rust $(CORETESTS_RUST_VER) coretests via rust-src. Self-provisions
+# the toolchain (idempotent). Does NOT take the machine-wide heavy lease.
 CORETESTS_RUST_VER ?= 1.96.0
 CORETESTS_SOURCE_AUDIT_CORPUS ?= examples/rust-coretests-report/corpus
 
@@ -633,8 +638,19 @@ coretests-invariants:
 	rustup toolchain install $(CORETESTS_RUST_VER) --component rust-src --profile minimal 2>/dev/null || true; \
 	coretests_sweep="$$(bin/sugarbin --profile release --bin coretests_sweep)" || exit $$?; \
 	CORPUS="$$(rustc +$(CORETESTS_RUST_VER) --print sysroot)/lib/rustlib/src/rust/library/coretests/tests"; \
-	"$$coretests_sweep" "$$CORPUS" --rustc-cfg > /tmp/coretests-hermetic.out; \
-	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
+	out="$${CORETESTS_SWEEP_OUT:-/tmp/coretests-hermetic.out}"; \
+	body="$${CORETESTS_MEASUREMENT_BODY:-/tmp/coretests-measurement.json}"; \
+	set +e; \
+	"$$coretests_sweep" "$$CORPUS" --rustc-cfg > "$$out"; \
+	sweep_exit=$$?; \
+	set -e; \
+	python3 scripts/check-coretests-invariants.py \
+	  --sweep-stdout "$$out" \
+	  --body-out "$$body" \
+	  --sweep-exit "$$sweep_exit" \
+	  --toolchain "$(CORETESTS_RUST_VER)" \
+	  --corpus "$$CORPUS" \
+	  --require-commit "$${GITHUB_SHA:-}"
 
 # Real python/pandas kit through sugar-lsp --in-process (PyCon demo path).
 # Same battleaxe family as the witness corpus. Its legacy ambient interpreter
