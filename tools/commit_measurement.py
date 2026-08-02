@@ -6,17 +6,33 @@ Cite-compose only. SCOREBOARD_AUTHORITY = False. Never recompute product R.
     AxisReading = Measured(...) | Unmeasured(reason)
     commit_measurement(...) -> CompleteVector | PartialVector
 
-Measured is authenticated by WHAT IT PRODUCED + declared population:
+Measured is authenticated by WHAT IT PRODUCED + declared population + unit:
 
   - identity: which measurement class this axis is
+  - unit: what the integer counts (incommensurable across axes)
   - population_id + population_size: declared denominator
   - body_cid: content address of the report body
   - value_field_path / value / exit_code
 
-There is no machine-wide lease. No lease_receipt_cid in the seal (deleted with
-the lease architecture). Free-floating value without a body is unconstructible.
+There is no machine-wide lease. Free-floating value without a body is
+unconstructible. Axes with different units are not comparable and must not be
+summed into a single residual.
 
-CompleteVector has .total. PartialVector has no .total.
+Criterion-2 tip enrollment (``CRITERION2_AXIS_SPECS`` / ``TIP_AXIS_SPECS``):
+
+  silent              assert-function-locus  (locus over asserts / fn bodies)
+  native-crash        corpus-file            (file over corpus)
+  bare-exception      corpus-file
+  timeout             corpus-file
+  R_construction_panics  construction-panic  (control-effect recensus board ONLY)
+
+The four process floors do **not** observe panics that resolve to typed gaps
+(they complete with exit 0). A vector with four green floors and no
+R_construction_panics body is PARTIAL — never Complete. That axis comes from
+the control-effect recensus board, which is the sole producer.
+
+CompleteVector has no scalar .total across mixed units.
+PartialVector has no .total.
 Unmeasured is a third value, not zero.
 
 One door: ``commit_measurement`` / ``compose_tip_from_artifacts_dir``.
@@ -30,8 +46,37 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Sequence, Union
 
+# ---------------------------------------------------------------------------
+# Units — incommensurable. Presenting two Measured.values without their units
+# is the misreading that treats silent loci as if they were corpus files.
+# ---------------------------------------------------------------------------
+
+UNIT_CORPUS_FILE = "corpus-file"
+"""Residual count of files over the authenticated corpus (native/bare/timeout)."""
+
+UNIT_ASSERT_FUNCTION_LOCUS = "assert-function-locus"
+"""Residual count of loci over asserts and function bodies (silent floor)."""
+
+UNIT_CONSTRUCTION_PANIC = "construction-panic"
+"""Residual construction panics from the control-effect recensus board only."""
+
+UNIT_SUITE_NODE = "suite-node"
+"""Failed / residual suite node-ids (package suite; not criterion-2)."""
+
+KNOWN_UNITS = frozenset(
+    {
+        UNIT_CORPUS_FILE,
+        UNIT_ASSERT_FUNCTION_LOCUS,
+        UNIT_CONSTRUCTION_PANIC,
+        UNIT_SUITE_NODE,
+    }
+)
+
+# Free-floating board residual names CM must not invent. Citing an *enrolled*
+# axis (R_construction_panics) from its producer body is allowed; inventing
+# R_construction / R_desugar as if CM were a second scoreboard is not.
 FORBIDDEN_BOARD_AXIS_NAMES = frozenset(
     {
         "R_construction",
@@ -68,6 +113,17 @@ def _require_int(name: str, value: object, *, min_value: int | None = None) -> i
     return value
 
 
+def _require_unit(unit: object) -> str:
+    u = _require_nonempty_str("unit", unit)
+    if u not in KNOWN_UNITS:
+        raise CommitMeasurementError(
+            f"unit {u!r} is not a known measurement unit; "
+            f"known={sorted(KNOWN_UNITS)}. Axes with different units are not "
+            f"comparable — do not invent a free-floating unit to force a sum."
+        )
+    return u
+
+
 def content_cid(payload: bytes | str | Mapping[str, Any]) -> str:
     if isinstance(payload, Mapping):
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -94,13 +150,15 @@ def _lookup_path(body: Mapping[str, Any], field_path: str) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class Measured:
-    """Measured axis: identity + declared population + body_cid of produced report.
+    """Measured axis: identity + unit + population + body_cid of produced report.
 
-    No lease receipt. Sealed construction only via measured(body=...).
+    ``unit`` is load-bearing: silent (locus) and native (file) are not the same
+    kind of number. No lease receipt. Sealed via measured(body=...).
     """
 
     value: int
     identity: str
+    unit: str
     population_id: str
     population_size: int
     body_cid: str
@@ -117,6 +175,7 @@ class Measured:
         object.__setattr__(
             self, "identity", _require_nonempty_str("identity", self.identity)
         )
+        object.__setattr__(self, "unit", _require_unit(self.unit))
         object.__setattr__(
             self,
             "population_id",
@@ -133,7 +192,6 @@ class Measured:
         )
         _require_int("exit_code", self.exit_code)
 
-    # Back-compat alias used by older JSON readers / tests
     @property
     def body_artifact_cid(self) -> str:
         return self.body_cid
@@ -166,19 +224,21 @@ def measured(
     value: int,
     *,
     identity: str,
+    unit: str,
     population_id: str,
     population_size: int,
     body: Mapping[str, Any],
     value_field_path: str,
     exit_code: int,
 ) -> Measured:
-    """Build Measured from parsed body + declared population. No lease param."""
+    """Build Measured from parsed body + declared population + unit. No lease."""
     if not isinstance(body, Mapping):
         raise CommitMeasurementError(
             f"Measured requires a parsed body mapping; got {type(body).__name__}. "
             "NoReport is Unmeasured."
         )
     path_s = _require_nonempty_str("value_field_path", value_field_path)
+    unit_s = _require_unit(unit)
     try:
         raw = _lookup_path(body, path_s)
     except KeyError as exc:
@@ -196,6 +256,7 @@ def measured(
     return Measured(
         value,
         identity,
+        unit_s,
         population_id,
         population_size,
         content_cid(body),
@@ -212,13 +273,13 @@ def unmeasured(reason: str) -> Unmeasured:
 def measured_from_body(
     *,
     identity: str,
+    unit: str,
     population_id: str,
     population_size: int,
     body: Mapping[str, Any],
     body_cid: str | None = None,
     value_field_path: str,
     exit_code: int = 0,
-    # ignored legacy kwargs so call sites mid-transition do not crash
     commit_sha: str | None = None,
     body_artifact_cid: str | None = None,
     collected_field_path: str | None = None,
@@ -259,6 +320,7 @@ def measured_from_body(
         return measured(
             raw_value,
             identity=identity,
+            unit=unit,
             population_id=population_id,
             population_size=pop_size,
             body=body,
@@ -269,6 +331,18 @@ def measured_from_body(
         return unmeasured(str(exc))
 
 
+def _axis_name_forbidden(key: str) -> bool:
+    """Board residual names CM must not invent — enrolled cite identities ok."""
+    if key in CRITERION2_ENROLLED_IDENTITIES:
+        return False
+    if key in FORBIDDEN_BOARD_AXIS_NAMES:
+        return True
+    # Unenrolled R_construction* / R_desugar* names still look like a second board.
+    if key.startswith("R_construction") or key.startswith("R_desugar"):
+        return True
+    return False
+
+
 def _require_axes_map(axes: object) -> dict[str, AxisReading]:
     if not isinstance(axes, Mapping) or not axes:
         raise CommitMeasurementError(
@@ -277,11 +351,12 @@ def _require_axes_map(axes: object) -> dict[str, AxisReading]:
     out: dict[str, AxisReading] = {}
     for name, reading in axes.items():
         key = _require_nonempty_str("axis name", name)
-        if key in FORBIDDEN_BOARD_AXIS_NAMES or key.startswith("R_construction"):
+        if _axis_name_forbidden(key):
             raise CommitMeasurementError(
                 f"axis {key!r} is a corpus-board residual name; "
                 f"CommitMeasurement is cite-compose only "
-                f"(SCOREBOARD_AUTHORITY=False)."
+                f"(SCOREBOARD_AUTHORITY=False). Enrolled criterion-2 cite "
+                f"identities: {sorted(CRITERION2_ENROLLED_IDENTITIES)}."
             )
         if not isinstance(reading, (Measured, Unmeasured)):
             raise CommitMeasurementError(
@@ -292,8 +367,26 @@ def _require_axes_map(axes: object) -> dict[str, AxisReading]:
     return out
 
 
+def _measured_json(r: Measured) -> dict[str, Any]:
+    return {
+        "status": "measured",
+        "value": r.value,
+        "unit": r.unit,
+        "identity": r.identity,
+        "populationId": r.population_id,
+        "populationSize": r.population_size,
+        "bodyCid": r.body_cid,
+        "bodyArtifactCid": r.body_cid,
+        "valueFieldPath": r.value_field_path,
+        "collected": r.population_size,
+        "exitCode": r.exit_code,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class CompleteVector:
+    """Every enrolled axis Measured. No scalar total across mixed units."""
+
     commit_sha: str
     population_roster_id: str
     axes: Mapping[str, Measured]
@@ -312,7 +405,7 @@ class CompleteVector:
         sealed: dict[str, Measured] = {}
         for name, reading in self.axes.items():
             key = _require_nonempty_str("axis name", name)
-            if key in FORBIDDEN_BOARD_AXIS_NAMES:
+            if _axis_name_forbidden(key):
                 raise CommitMeasurementError(f"forbidden board axis {key!r}")
             if not isinstance(reading, Measured):
                 raise CommitMeasurementError(
@@ -327,7 +420,22 @@ class CompleteVector:
 
     @property
     def total(self) -> int:
-        return sum(r.value for r in self.axes.values())
+        # Heterogeneous units (locus vs file vs construction-panic) must not
+        # collapse to one integer — that is the false-comparable reading.
+        units = {r.unit for r in self.axes.values()}
+        raise CommitMeasurementError(
+            "CompleteVector has no scalar total across measurement units; "
+            "read each Measured.value with its .unit. "
+            f"units_present={sorted(units)}. Use values_by_unit() only as a "
+            "per-unit bag, never as a cross-unit sum of residuals."
+        )
+
+    def values_by_unit(self) -> dict[str, int]:
+        """Per-unit bag of values. Not a criterion residual; not cross-unit."""
+        out: dict[str, int] = {}
+        for r in self.axes.values():
+            out[r.unit] = out.get(r.unit, 0) + r.value
+        return dict(sorted(out.items()))
 
     def is_complete(self) -> bool:
         return True
@@ -339,22 +447,10 @@ class CompleteVector:
             "commitSha": self.commit_sha,
             "populationRosterId": self.population_roster_id,
             "rosterCid": self.population_roster_id,
-            "total": self.total,
-            "axes": {
-                name: {
-                    "status": "measured",
-                    "value": r.value,
-                    "identity": r.identity,
-                    "populationId": r.population_id,
-                    "populationSize": r.population_size,
-                    "bodyCid": r.body_cid,
-                    "bodyArtifactCid": r.body_cid,
-                    "valueFieldPath": r.value_field_path,
-                    "collected": r.population_size,
-                    "exitCode": r.exit_code,
-                }
-                for name, r in self.axes.items()
-            },
+            # Explicit: no scalar total. Callers that sum axes are wrong.
+            "total": None,
+            "valuesByUnit": self.values_by_unit(),
+            "axes": {name: _measured_json(r) for name, r in self.axes.items()},
         }
 
 
@@ -396,18 +492,7 @@ class PartialVector:
         axes_out: dict[str, Any] = {}
         for name, r in self.axes.items():
             if isinstance(r, Measured):
-                axes_out[name] = {
-                    "status": "measured",
-                    "value": r.value,
-                    "identity": r.identity,
-                    "populationId": r.population_id,
-                    "populationSize": r.population_size,
-                    "bodyCid": r.body_cid,
-                    "bodyArtifactCid": r.body_cid,
-                    "valueFieldPath": r.value_field_path,
-                    "collected": r.population_size,
-                    "exitCode": r.exit_code,
-                }
+                axes_out[name] = _measured_json(r)
             else:
                 axes_out[name] = {"status": "unmeasured", "reason": r.reason}
         return {
@@ -445,20 +530,130 @@ def _load_json(path: Path) -> Mapping[str, Any] | None:
     return payload if isinstance(payload, Mapping) else None
 
 
-TIP_AXIS_SPECS: tuple[tuple[str, str], ...] = (
-    ("python-package-suite", "totals.failed"),
-    ("python-sole-construction-floors", "totals.failed"),
+# ---------------------------------------------------------------------------
+# Criterion-2 tip enrollment
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class TipAxisSpec:
+    """One enrolled tip axis: identity, unit, cite path, body match rules."""
+
+    identity: str
+    unit: str
+    value_field_path: str
+    # Floor axis reports: match body["axisId"]
+    match_axis_id: str | None = None
+    # Campaign / recensus: match body["measurementClass"]
+    match_measurement_class: str | None = None
+    # Board field presence (R_construction_panics top-level on recensus JSON)
+    match_field: str | None = None
+
+
+# Four process floors + R_construction_panics. Absence of any → Partial.
+# static-laws is enrollment for sole-construction campaign attendance, not
+# criterion-2 process completeness (mr_blue: panics invisible to the four).
+CRITERION2_AXIS_SPECS: tuple[TipAxisSpec, ...] = (
+    TipAxisSpec(
+        identity="silent",
+        unit=UNIT_ASSERT_FUNCTION_LOCUS,
+        value_field_path="totals.failed",
+        match_axis_id="silent",
+        match_measurement_class="python-sole-construction-floors",
+    ),
+    TipAxisSpec(
+        identity="native-crash",
+        unit=UNIT_CORPUS_FILE,
+        value_field_path="totals.failed",
+        match_axis_id="native-crash",
+        match_measurement_class="python-sole-construction-floors",
+    ),
+    TipAxisSpec(
+        identity="bare-exception",
+        unit=UNIT_CORPUS_FILE,
+        value_field_path="totals.failed",
+        match_axis_id="bare-exception",
+        match_measurement_class="python-sole-construction-floors",
+    ),
+    TipAxisSpec(
+        identity="timeout",
+        unit=UNIT_CORPUS_FILE,
+        value_field_path="totals.failed",
+        match_axis_id="timeout",
+        match_measurement_class="python-sole-construction-floors",
+    ),
+    TipAxisSpec(
+        identity="R_construction_panics",
+        unit=UNIT_CONSTRUCTION_PANIC,
+        value_field_path="R_construction_panics",
+        match_measurement_class="control-effect-recensus",
+        match_field="R_construction_panics",
+    ),
 )
+
+CRITERION2_ENROLLED_IDENTITIES: frozenset[str] = frozenset(
+    s.identity for s in CRITERION2_AXIS_SPECS
+)
+
+# Tip compose door uses criterion-2 enrollment. Complete ⇒ every C2 axis
+# Measured, including R_construction_panics from the recensus board.
+TIP_AXIS_SPECS: tuple[TipAxisSpec, ...] = CRITERION2_AXIS_SPECS
+
+
+def _body_matches_spec(body: Mapping[str, Any], spec: TipAxisSpec) -> bool:
+    if spec.match_axis_id is not None:
+        if body.get("axisId") == spec.match_axis_id:
+            return True
+        # Reject other floor-axis reports that share measurementClass.
+        if body.get("kind") == "sole-construction-floor-axis-report":
+            return False
+        if body.get("axisId") is not None and body.get("axisId") != spec.match_axis_id:
+            return False
+    if spec.match_field is not None and spec.match_field in body:
+        return True
+    if spec.match_measurement_class is not None:
+        cls = body.get("measurementClass") or body.get("leaseClass")
+        if isinstance(body.get("leaseRecord"), Mapping):
+            cls = cls or body["leaseRecord"].get("leaseClass")
+        if cls == spec.match_measurement_class and spec.match_axis_id is None:
+            return True
+        # Recensus measurement.json is a thin attendance stub without the board
+        # field — only accept class match when the value path is present.
+        if cls == spec.match_measurement_class and spec.match_field is not None:
+            return spec.match_field in body
+    return False
+
+
+def _is_candidate_body(payload: Mapping[str, Any]) -> bool:
+    if "totals" in payload or "failedNodeIds" in payload:
+        return True
+    if "R_construction_panics" in payload:
+        return True
+    if payload.get("measurementClass") == "control-effect-recensus":
+        return True
+    if payload.get("kind") == "sole-construction-floor-axis-report":
+        return True
+    if payload.get("axisId") in CRITERION2_ENROLLED_IDENTITIES:
+        return True
+    return False
 
 
 def compose_tip_from_artifacts_dir(
     commit_sha: str,
     artifacts_dir: Path,
     *,
-    population_roster_id: str = "heavy-roster:per-commit",
+    population_roster_id: str = "criterion2-roster:per-commit",
+    axis_specs: Sequence[TipAxisSpec] | None = None,
 ) -> CommitMeasurement:
-    """Cite tip axes from produced report bodies (no lease)."""
+    """Cite criterion-2 tip axes from produced report bodies (no lease).
+
+    Missing any enrolled axis (including R_construction_panics) → Unmeasured
+    for that axis → PartialVector. Four green floors alone never Complete.
+    """
     sha = _require_nonempty_str("commit_sha", commit_sha)
+    specs: Sequence[TipAxisSpec] = (
+        tuple(axis_specs) if axis_specs is not None else TIP_AXIS_SPECS
+    )
     root = Path(artifacts_dir)
     bodies: list[tuple[Path, Mapping[str, Any]]] = []
     if root.is_dir():
@@ -466,31 +661,33 @@ def compose_tip_from_artifacts_dir(
             payload = _load_json(path)
             if payload is None:
                 continue
-            if "totals" in payload or "failedNodeIds" in payload:
+            if _is_candidate_body(payload):
                 bodies.append((path, payload))
 
     axes: dict[str, AxisReading] = {}
-    for identity, value_path in TIP_AXIS_SPECS:
+    for spec in specs:
+        identity = spec.identity
+        value_path = spec.value_field_path
         chosen: Mapping[str, Any] | None = None
         for _path, body in bodies:
-            cls = body.get("measurementClass") or body.get("leaseClass")
-            if isinstance(body.get("leaseRecord"), Mapping):
-                cls = cls or body["leaseRecord"].get("leaseClass")
-            if cls == identity or (
-                cls is None
-                and identity == "python-package-suite"
-                and "failedNodeIds" in body
-            ):
-                try:
-                    _lookup_path(body, value_path)
-                    chosen = body
-                    break
-                except KeyError:
-                    continue
+            if not _body_matches_spec(body, spec):
+                continue
+            try:
+                _lookup_path(body, value_path)
+            except KeyError:
+                continue
+            chosen = body
+            break
         if chosen is None:
             axes[identity] = unmeasured(
                 f"NoReport: no produced body artifact for identity {identity!r} "
-                f"at commit {sha}"
+                f"(unit={spec.unit}) at commit {sha}"
+                + (
+                    " — control-effect recensus board is the sole producer; "
+                    "four green process floors do not measure this axis"
+                    if identity == "R_construction_panics"
+                    else ""
+                )
             )
             continue
         pop_size = 0
@@ -502,6 +699,12 @@ def compose_tip_from_artifacts_dir(
                 pop_id = f"{identity}:collected"
         except KeyError:
             pass
+        # Recensus boards often expose corpus size under enrolledFiles / etc.
+        for alt in ("enrolledFiles", "populationSize", "fileCount"):
+            if type(chosen.get(alt)) is int and chosen[alt] >= 0:
+                pop_size = int(chosen[alt])
+                pop_id = f"{identity}:{alt}"
+                break
         if isinstance(chosen.get("populationId"), str) and chosen["populationId"]:
             pop_id = str(chosen["populationId"])
         if type(chosen.get("populationSize")) is int and chosen["populationSize"] >= 0:
@@ -513,6 +716,7 @@ def compose_tip_from_artifacts_dir(
             exit_code = 1
         axes[identity] = measured_from_body(
             identity=identity,
+            unit=spec.unit,
             population_id=pop_id,
             population_size=pop_size,
             body=chosen,
@@ -526,7 +730,7 @@ def compose_tip_from_receipts_dir(
     commit_sha: str,
     receipts_dir: Path,
     *,
-    roster_cid: str = "heavy-roster:per-commit",
+    roster_cid: str = "criterion2-roster:per-commit",
 ) -> CommitMeasurement:
     """Lease-free alias kept for attendance workflow call sites."""
     return compose_tip_from_artifacts_dir(

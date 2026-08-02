@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import Any, Mapping, NoReturn
+
+from sugar_lift_py_tests.sealed_ground import (
+    RefusalDecidability,
+    kit_incomplete,
+    require_refusal_ground_holds,
+)
 
 from .info import ConstructionGap, GapKind, GapLocus
 
@@ -53,22 +59,33 @@ def construction_panic_gap(
     fix: str,
     gap_kind: GapKind = GapKind.FLOOR,
     gap_locus: GapLocus = GapLocus.CONSTRUCTION,
+    decidability: RefusalDecidability | None = None,
+    world: Mapping[str, Any] | None = None,
 ) -> NoReturn:
     """Mouth for residual floor/temporal None arms.
 
     ``blame`` may be the one tree SourceFragment (RuntimeEffectSite) or prose.
     ConstructionGap.blame is prose: project at this boundary, nowhere earlier.
     Status/audit-row authority lives on construction testimony (#6029), not here.
+
+    ``decidability`` is a sealed RefusalDecidability ground (Criterion 3).
+    Omitted → ``KitConstructionIncomplete`` (OUR missing arm). Runtime-undecided
+    grounds require ``world`` and must ``holds(world)`` or the mint refuses as
+    over-decidable source.
     """
+    if decidability is None:
+        decidability = kit_incomplete(owner=owner, observed=observed)
+    require_refusal_ground_holds(decidability, world)
     prose = _blame_prose(blame)
     info = ConstructionGap(
         owner=owner,
         blame=prose,
-        observed=observed,
+        observed=observed if isinstance(observed, str) else repr(observed),
         requested=requested,
         fix=fix,
         gap_kind=gap_kind,
         gap_locus=gap_locus,
+        decidability=decidability,
     )
     construction_panic(info)
 
