@@ -262,7 +262,7 @@ def test_dual_name_assigned_stack_seats_each_item_coordinate(tmp_path: Path):
     table-wide fallback is forbidden. Missing seats / construction gaps fail
     with MISSING PRODUCER — never catch-and-continue.
     """
-    from sugar_source_tree.panic import WithConstructionGap
+    from sugar_source_tree.panic import SugarNotWritten
 
     dist = _distribution(tmp_path, _STACK_PKG)
     consumer = (
@@ -275,7 +275,7 @@ def test_dual_name_assigned_stack_seats_each_item_coordinate(tmp_path: Path):
     )
     try:
         tree, context, _ = _populate(tmp_path, consumer, dist=dist)
-    except WithConstructionGap as gap:
+    except SugarNotWritten as gap:
         # Honest red: projection never seated the Name coordinates. Do not
         # recover; restate as the dual-Name producer handoff for codex-3.
         pytest.fail(

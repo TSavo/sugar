@@ -32,7 +32,7 @@ def test_resource_open_is_runtime_selected_named_residual():
         _fn("def A(f):\n    with open(f):\n        pass\n    return f\n").sugar()
     panic = ei.value
     assert isinstance(panic, SugarNotWritten)
-    assert type(panic).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(panic).__name__ == "SugarNotWritten"
     assert panic.kind == "runtime-selected"
 
 
@@ -47,7 +47,7 @@ def test_resource_open_is_not_silent_dissolve():
 def test_resource_named_residual_distinct_from_bare_sugar_not_written():
     with pytest.raises(SugarNotWritten) as ei:
         _fn("def A(z):\n    with open(z):\n        pass\n    return z\n").sugar()
-    assert type(ei.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(ei.value).__name__ == "SugarNotWritten"
     assert issubclass(type(ei.value), SugarNotWritten)
 
 
@@ -57,7 +57,7 @@ def test_assertion_manager_without_provider_contract_is_typed_loud():
             "def A(z):\n    with pytest.raises(ValueError):\n        raise ValueError\n"
             "    return z\n"
         ).sugar()
-    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(caught.value).__name__ == "SugarNotWritten"
 
 
 def test_suppress_manager_without_provider_contract_is_typed_loud():
@@ -66,7 +66,7 @@ def test_suppress_manager_without_provider_contract_is_typed_loud():
             "def A(z):\n    with contextlib.suppress(KeyError):\n        raise KeyError\n"
             "    return z\n"
         ).sugar()
-    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(caught.value).__name__ == "SugarNotWritten"
 
 
 def test_with_item_parametric_exit_uses_manager_ref_and_exit_refs():

@@ -74,7 +74,7 @@ from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBound
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 # ---------------------------------------------------------------- tree fixture
@@ -620,7 +620,7 @@ def test_undecided_later_item_stays_named_and_does_not_contaminate_sibling(
     assert later.use_site == _coordinate(site.items[1].context_expr)
     assert later.use_site != first.use_site
 
-    with pytest.raises(ContextManagerResolutionConstructionGap) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         next(source_file.functions()).sugar()
     assert caught.value.kind == "runtime-selected"
     assert caught.value.coordinate == later.use_site

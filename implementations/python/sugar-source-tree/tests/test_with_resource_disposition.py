@@ -36,7 +36,7 @@ def test_errstate_without_published_cm_contract_stays_loud():
             "    return z\n"
         ).sugar()
     # Honest residual — never WithResourceSugar / NeverSuppresses without a ref.
-    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(caught.value).__name__ == "SugarNotWritten"
     assert caught.value.kind == "unresolved-symbol"
     assert "NeverSuppresses" not in type(caught.value).__name__
 
@@ -51,7 +51,7 @@ def test_option_context_without_provider_contract_is_typed_loud():
             "        z = z\n"
             "    return z\n"
         ).sugar()
-    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(caught.value).__name__ == "SugarNotWritten"
 
 
 def test_open_still_runtime_selected():
@@ -59,7 +59,7 @@ def test_open_still_runtime_selected():
     with pytest.raises(SugarNotWritten) as caught:
         _fn("def A(f):\n    with open(f):\n        pass\n    return f\n").sugar()
     assert type(caught.value).__name__ in (
-        "ContextManagerResolutionConstructionGap",
+        "SugarNotWritten",
         "RuntimeSelectedContextManager",
     )
 
@@ -72,4 +72,4 @@ def test_pytest_raises_without_provider_contract_is_typed_loud():
             "        raise ValueError\n"
             "    return z\n"
         ).sugar()
-    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(caught.value).__name__ == "SugarNotWritten"
