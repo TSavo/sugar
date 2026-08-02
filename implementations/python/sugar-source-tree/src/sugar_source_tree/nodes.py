@@ -9320,13 +9320,46 @@ class IfExp(Expression):
         conditional VALUE the phi produces. It desugars to a GuardedValue that
         DISTRIBUTES (a return/equality splits into per-arm implications, each arm
         resolved per-atom), so the conditional never becomes a single mixed-sort
-        term; the compiler stays Python-ignorant and only ever sees ir.eq."""
-        from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+        term; the compiler stays Python-ignorant and only ever sees ir.eq.
 
+        Arms must be ConstructedTermSugar so IfExpSugar can project to_term.
+        A spread collection arm (``[a, *xs] if c else ys``) is a real Python
+        shape but is NOT yet a term construction — refuse with SugarNotWritten,
+        never a raw TypeError from a type assertion.
+        """
+        from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+        from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+        from sugar_source_tree.panic import SugarNotWritten
+
+        test = self.test.sugar()
+        body = self.body.sugar()
+        orelse = self.orelse.sugar()
+        for arm_name, arm in (("test", test), ("body", body), ("orelse", orelse)):
+            if isinstance(arm, ConstructedTermSugar):
+                continue
+            raise SugarNotWritten(
+                blame=self.fragment,
+                owner="IfExp._construct_sugar",
+                observed=(
+                    f"IfExp.{arm_name} constructed {type(arm).__name__}, which is "
+                    "not ConstructedTermSugar (e.g. SpreadCollectionSugar for "
+                    "`[a, *xs] if c else ys`)"
+                ),
+                requested=(
+                    "IfExp arms that are ordinary constructed terms so "
+                    "IfExpSugar can project to_term and distribute"
+                ),
+                fix=(
+                    f"write IfExp+{type(arm).__name__} construction (promote the "
+                    "arm sugar to ConstructedTermSugar with to_term), or keep "
+                    "this coordinate loud until that sugar exists — never a "
+                    "bare TypeError from a type assertion"
+                ),
+            )
         return IfExpSugar(
-            test=self.test.sugar(),
-            body=self.body.sugar(),
-            orelse=self.orelse.sugar(),
+            test=test,
+            body=body,
+            orelse=orelse,
             site=self.fragment,
             branch_slot=branch_result_slot(self.test),
         )
