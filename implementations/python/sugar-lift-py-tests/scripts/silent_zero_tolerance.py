@@ -382,7 +382,7 @@ def main() -> int:
         paths = require_explicit_scan_roots(roots)
     except ValueError as error:
         print(f"SILENT ZERO-TOLERANCE RED: {error}")
-        return 1
+        return 2
 
     try:
         _base, engine_path, progress_path = prepare_floor_io(
@@ -394,7 +394,7 @@ def main() -> int:
         )
     except (OSError, ValueError) as error:
         print(format_unmeasured_axis("R_silent", reason=str(error)))
-        return 1
+        return 2
     summary = audit_paths(
         paths,
         root=args.repo_root,

@@ -85,25 +85,102 @@ def _class_from_payload(path: Path, payload: dict) -> str | None:
     return None
 
 
-def receipts_attendance(receipts_dir):
-    """Which classes produced an identity-bound measurement body."""
+def _log(msg: str) -> None:
+    """Unbuffered measurement narration — silence conceals hang vs work."""
+    print(msg, flush=True)
+    try:
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def receipts_attendance(receipts_dir, *, partial_path: Path | None = None):
+    """Which classes produced an identity-bound measurement body.
+
+    Narrates expected roster, walk progress, and running attended/missing
+    counts. Writes *partial_path* after each classification so a mid-walk
+    crash still leaves testimony of what was already seen.
+    """
+    root = Path(receipts_dir)
+    paths = sorted(root.rglob("*.json"))
+    total = len(paths)
+    _log(
+        f"attendance phase=scan_receipts status=start paths={total} "
+        f"receipts_dir={root}"
+    )
     attended, testimony = {}, []
-    for path in sorted(Path(receipts_dir).rglob("*.json")):
+    classified = 0
+    skipped = 0
+    for index, path in enumerate(paths, start=1):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            skipped += 1
+            if index == 1 or index == total or index % 25 == 0:
+                _log(
+                    f"attendance progress path={index}/{total} "
+                    f"classified={classified} skipped={skipped} "
+                    f"attended={len(attended)}"
+                )
             continue
         if not isinstance(payload, dict):
+            skipped += 1
             continue
         # Skip pure lease records if any linger in old artifacts
         if payload.get("leaseClass") and "acquired" in payload and "measurementClass" not in payload:
             if "failedNodeIds" not in payload and "totals" not in payload:
+                skipped += 1
                 continue
         cls = _class_from_payload(path, payload)
         if cls is None:
+            skipped += 1
+            if index == 1 or index == total or index % 25 == 0:
+                _log(
+                    f"attendance progress path={index}/{total} "
+                    f"classified={classified} skipped={skipped} "
+                    f"attended={len(attended)}"
+                )
             continue
+        classified += 1
+        first = cls not in attended
         testimony.append((cls, str(path), True))
         attended.setdefault(cls, str(path))
+        if first:
+            _log(
+                f"attendance spoke class={cls} path={path} "
+                f"running_attended={len(attended)} path_index={index}/{total}"
+            )
+        if index == 1 or index == total or index % 25 == 0:
+            _log(
+                f"attendance progress path={index}/{total} "
+                f"classified={classified} skipped={skipped} "
+                f"attended={len(attended)}"
+            )
+        if partial_path is not None:
+            try:
+                partial_path.parent.mkdir(parents=True, exist_ok=True)
+                partial_path.write_text(
+                    json.dumps(
+                        {
+                            "phase": "scan_receipts",
+                            "pathsSeen": index,
+                            "pathsTotal": total,
+                            "attended": dict(attended),
+                            "classified": classified,
+                            "skipped": skipped,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            except OSError as error:
+                _log(f"attendance partial_write_failed: {error}")
+    _log(
+        f"attendance phase=scan_receipts status=done paths={total} "
+        f"classified={classified} skipped={skipped} attended={len(attended)}"
+    )
     return attended, testimony
 
 
@@ -143,6 +220,12 @@ def workflow_runs(commit, repo=None):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError, OSError):
+            pass
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--receipts-dir", default=None)
@@ -153,13 +236,42 @@ def main(argv=None):
         choices=(PER_COMMIT, NIGHTLY_WINDOW),
         default=PER_COMMIT,
     )
+    parser.add_argument(
+        "--partial-json",
+        type=Path,
+        default=None,
+        help="Write running attendance partial during receipt scan (crash-safe).",
+    )
     args = parser.parse_args(argv)
+
+    obliged = owed(args.cadence)
+    _log(
+        f"attendance phase=roster status=start cadence={args.cadence} "
+        f"commit={args.commit} expected_count={len(obliged)}"
+    )
+    for index, cls in enumerate(obliged, start=1):
+        _log(
+            f"attendance expected index={index}/{len(obliged)} class={cls} "
+            f"workflow={HEAVY_ROSTER[cls]!r}"
+        )
 
     attended, testimony = ({}, [])
     if args.receipts_dir:
-        attended, testimony = receipts_attendance(args.receipts_dir)
+        partial = args.partial_json
+        if partial is None:
+            partial = Path(args.receipts_dir) / "attendance-partial.json"
+        attended, testimony = receipts_attendance(
+            args.receipts_dir, partial_path=partial
+        )
+    else:
+        _log("attendance phase=scan_receipts status=skip reason=no_receipts_dir")
 
+    _log("attendance phase=workflow_api status=start")
     runs = workflow_runs(args.commit, args.repo) if not attended else None
+    if runs is None and not attended:
+        _log("attendance phase=workflow_api status=unavailable_or_skipped")
+    elif runs is not None:
+        _log(f"attendance phase=workflow_api status=done runs={len(runs)}")
     run_state = {}
     if runs:
         for run in runs:
@@ -170,8 +282,17 @@ def main(argv=None):
                         f"{run.get('status')}/{run.get('conclusion')} (#{run.get('databaseId')})"
                     )
 
-    obliged = owed(args.cadence)
     minority = [c for c in obliged if c not in attended]
+    _log(
+        f"attendance phase=compose status=start "
+        f"expected={len(obliged)} attended={len([c for c in obliged if c in attended])} "
+        f"missing={len(minority)} testimony_rows={len(testimony)}"
+    )
+    for cls in obliged:
+        if cls in attended:
+            _log(f"attendance result class={cls} spoke=yes body={attended[cls]}")
+        else:
+            _log(f"attendance result class={cls} spoke=NO status=UNMEASURED")
 
     print(f"### heavy-measurement attendance ({args.cadence}) for `{args.commit}`")
     print()
@@ -199,6 +320,7 @@ def main(argv=None):
         else "R_attendance_nightly"
     )
     print(f"**{axis} = {len(minority)}**")
+    _log(f"attendance phase=compose status=done {axis}={len(minority)}")
     not_asked = [c for c in HEAVY_ROSTER if c not in obliged]
     if not_asked:
         print()

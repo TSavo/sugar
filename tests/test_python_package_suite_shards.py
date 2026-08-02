@@ -35,7 +35,8 @@ def test_shard_assignment_is_deterministic_and_covers_every_file() -> None:
     files = mod.list_suite_test_files(ROOT)
     assert len(files) >= 100, f"expected a real suite tree, got {len(files)} files"
 
-    count = 32
+    count = mod.SHARD_COUNT
+    assert count == 8, f"suite fan-out sized to 8 by measurement; got {count}"
     covered: list[str] = []
     for i in range(count):
         covered.extend(mod.files_for_shard(files, i, count))
@@ -251,3 +252,17 @@ def test_workflow_has_no_shared_suite_report_merge_and_uses_enrollment() -> None
     assert "suite-report.json" in text  # per-shard path still that filename
     assert "python-package-suite-canonical-shard-" in text
     assert "python_package_suite_shard_attendance" in text
+    # Right-sized fan-out + shared env (not 32× full env prep).
+    assert 'SUITE_SHARD_COUNT: "8"' in text
+    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7]" in text
+    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15" not in text
+    assert "python-test-env-prepare" in text
+    assert "python-test-environment-from-wheelhouse" in text
+    assert "python-test-wheelhouse" in text
+    # Matrix shards consume shared house; they must not re-run the full builder.
+    # Prepare job is the only place that uses the full action.
+    shard_job = text.split("python-package-suite:")[1].split(
+        "python-package-suite-attendance:"
+    )[0]
+    assert "python-test-environment-from-wheelhouse" in shard_job
+    assert "uses: ./.github/actions/python-test-environment\n" not in shard_job
