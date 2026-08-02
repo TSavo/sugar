@@ -339,7 +339,13 @@ def test_memo_disablement_changes_performance_only(tmp_path: Path) -> None:
     assert first_enabled == second_enabled == first_disabled == second_disabled
 
     # Discrimination: disablement is real -- it costs work, and only work.
-    assert not disabled.export_resolutions and not disabled.frame_results
+    assert (
+        not disabled.export_resolutions
+        and not disabled.frame_results
+        and not disabled.module_packs
+        and not disabled.prefix_files
+        and not disabled.prefix_fallthrough
+    )
     assert disabled_counter.count > enabled_counter.count, (
         f"disabled did {disabled_counter.count} materializations vs enabled "
         f"{enabled_counter.count}; the switch is not doing anything"
@@ -400,6 +406,9 @@ def leaky_process_memo(monkeypatch):
     frames: dict = {}
     holds: dict = {}
     active: set = set()
+    modules: dict = {}
+    prefixes: dict = {}
+    fallthroughs: dict = {}
 
     def leaky_init(self, *, enabled: bool = True) -> None:
         self.enabled = enabled
@@ -407,6 +416,9 @@ def leaky_process_memo(monkeypatch):
         self.frame_results = frames
         self.frame_holds = holds
         self.frame_active = active
+        self.module_packs = modules
+        self.prefix_files = prefixes
+        self.prefix_fallthrough = fallthroughs
 
     monkeypatch.setattr(SourceResolutionSession, "__init__", leaky_init)
 

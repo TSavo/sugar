@@ -686,6 +686,64 @@ def _enroll_imported_decorator_frames(
         _install_source_call_frame(context, decorator, decorator_frame)
 
 
+def _materialize_module_pack(module, *, session: SourceResolutionSession):
+    """One SourceFile + pin pack per module source body per session (frame door).
+
+    Frame memo is definition-scoped; without this pack, N definitions in the
+    same module rebuild the same SourceFile N times (enum.py measured 35x on
+    one pandas/io/json/_json.py open — ~45% of an 85s wall).
+
+    Prefix fallthrough keeps its own SourceFile: prefix mutates unit target-
+    pattern state per locus and cannot share the frame pack.
+    """
+    from sugar_source_tree.backend import materialize
+    from sugar_source_tree.binding_state import (
+        ConstructionTestimonyReporterV1,
+        SubstitutionTraceBuilderV1,
+    )
+    from sugar_source_tree.reporter import NULL_REPORTER
+
+    from sugar_lift_python_source.value_pins import scan_module_value_pins
+    from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
+
+    pack = session.module_hit(module.source_cid)
+    if pack is not None:
+        return pack
+    # frame_projection: dual-mode factories may nest With only on non-CM
+    # branches; soft-require those so call-frame projection can complete.
+    context = TreeConstructionContextV1.for_source_call_construction(
+        frame_projection=True
+    )
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    producer_reporter = ConstructionTestimonyReporterV1(
+        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+    )
+    producer_root = materialize(
+        source_file.unit, source_file.root.ref, producer_reporter
+    )
+    pin_scan = scan_module_value_pins(
+        source_file.root, source=module.source, source_path=module.source_seat
+    )
+    mutable_global_bindings = tuple(
+        MutableGlobalBindingV1(
+            source_cid=pin.source_cid,
+            binding_occurrence=pin.binding_occurrence,
+            name=pin.name,
+            kind=pin.kind,
+            term=pin.term,
+            line=pin.line,
+            col=pin.col,
+        )
+        for pin in pin_scan.mutable_global_pins
+    )
+    pack = (source_file, producer_root, mutable_global_bindings)
+    session.remember_module(module.source_cid, pack)
+    return pack
+
+
 def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     """Execute the authenticated module prefix through its exact definitions."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -709,15 +767,20 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
 
     if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
         raise ValueError("module prefix source CID mismatch")
-    construction_context = TreeConstructionContextV1.for_source_call_construction()
-    producer_reporter = ConstructionTestimonyReporterV1(
-        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
-    )
-    source_file = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
-        reporter=producer_reporter,
-        construction_context=construction_context,
-    )
+    session = session_or_new(session)
+    source_file = session.prefix_file_hit(module.source_cid)
+    if source_file is None:
+        construction_context = TreeConstructionContextV1.for_source_call_construction()
+        producer_reporter = ConstructionTestimonyReporterV1(
+            NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+        )
+        source_file = SourceFile(
+            (module.source, module.source_seat, module.source_cid),
+            reporter=producer_reporter,
+            construction_context=construction_context,
+        )
+        session.remember_prefix_file(module.source_cid, source_file)
+    construction_context = source_file.unit.construction_context
     locus_key = (locus.lineno, locus.col_offset)
     prefix = tuple(
         statement
@@ -760,7 +823,6 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
 
     dependency_graphs = {}
     if graph is not None:
-        session = session_or_new(session)
         dependency_graphs[module.module_name.split(".", 1)[0]] = graph
         for definition in prefix_classes:
             _seat_import_value_use_receipts(
@@ -825,15 +887,28 @@ def prefix_has_completed_fallthrough(
     """Admit an export only through the authenticated module-prefix producer."""
     from sugar_lift_py_tests.outcome import Completed, true_guard
 
+    session = session_or_new(session)
+    fallthrough_key = (
+        module.source_cid,
+        getattr(locus, "lineno", None),
+        getattr(locus, "col_offset", None),
+    )
+    hit = session.fallthrough_hit(fallthrough_key)
+    if hit is not None:
+        return hit
+
     exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
     if len(exits.exits) != 1:
+        session.remember_fallthrough(fallthrough_key, False)
         return False
     face = exits.exits[0]
-    return (
+    ok = (
         isinstance(face, Completed)
         and face.guard == true_guard()
         and bool(getattr(face.value, "can_fall_through", False))
     )
+    session.remember_fallthrough(fallthrough_key, ok)
+    return ok
 
 
 @dataclass(frozen=True)
@@ -1744,46 +1819,14 @@ def _resolve_source_visible_frame_uncached(
     dependency_graphs: dict[str, DependencyArtifactGraph] | None,
     session: SourceResolutionSession,
 ) -> tuple[object, Node, object] | ManagerConstructionGapV1:
-    from sugar_source_tree.backend import materialize
-    from sugar_source_tree.binding_state import (
-        ConstructionTestimonyReporterV1,
-        SubstitutionTraceBuilderV1,
+    # One SourceFile + producer materialize per module source body per session.
+    # Frame memo is definition-scoped; without this pack, N definitions in the
+    # same module rebuild the same SourceFile N times (enum.py measured 35x on
+    # one pandas/io/json/_json.py open — ~45% of an 85s wall).
+    source_file, producer_root, mutable_global_bindings = _materialize_module_pack(
+        module, session=session
     )
-    from sugar_source_tree.reporter import NULL_REPORTER
-
-    # frame_projection: dual-mode factories may nest With only on non-CM
-    # branches; soft-require those so call-frame projection can complete.
-    context = TreeConstructionContextV1.for_source_call_construction(
-        frame_projection=True
-    )
-    source_file = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
-        construction_context=context,
-    )
-    producer_reporter = ConstructionTestimonyReporterV1(
-        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
-    )
-    producer_root = materialize(
-        source_file.unit, source_file.root.ref, producer_reporter
-    )
-    from sugar_lift_python_source.value_pins import scan_module_value_pins
-    from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
-
-    pin_scan = scan_module_value_pins(
-        source_file.root, source=module.source, source_path=module.source_seat
-    )
-    mutable_global_bindings = tuple(
-        MutableGlobalBindingV1(
-            source_cid=pin.source_cid,
-            binding_occurrence=pin.binding_occurrence,
-            name=pin.name,
-            kind=pin.kind,
-            term=pin.term,
-            line=pin.line,
-            col=pin.col,
-        )
-        for pin in pin_scan.mutable_global_pins
-    )
+    context = source_file.unit.construction_context
 
     def with_mutable_globals(frame):
         return replace(frame, mutable_global_bindings=mutable_global_bindings)

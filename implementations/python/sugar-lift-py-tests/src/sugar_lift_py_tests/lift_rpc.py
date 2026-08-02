@@ -203,13 +203,19 @@ def open_source_file_for_construction(
     call_contract_refs=None,
     construction_context=None,
     populate_derived: bool = True,
+    session=None,
 ):
     """Open a SourceFile the way production enumerate does — never bare context.
 
     Injects ``TreeConstructionContextV1`` (bound or provisional) and, by default,
     freezes source-derived manager refs at exact use-sites. Callers that already
     hold a frozen context (shared demand table across a census) may pass it.
+
+    One ``SourceResolutionSession`` owns every resolution memo for this open
+    (export, frame, module materialize, prefix fallthrough). Default: mint one
+    for this call. Never process-global; never per nested resolve.
     """
+    from sugar_lift_python_source.resolution_session import session_or_new
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
@@ -222,17 +228,25 @@ def open_source_file_for_construction(
             contract_refs=contract_refs,
             call_contract_refs=call_contract_refs,
         )
+    # One session per file open. Nested resolve_import_binding /
+    # resolve_source_visible_frame / prefix fallthrough must share it or every
+    # module_pack / frame_result dies with the call (enum.py rebuilt 35x).
+    session = session_or_new(session)
     source_file = SourceFile(
         workspace_path_source(str(path), root=str(root)),
         reporter=reporter,
         construction_context=construction_context,
     )
+    # Stash before populate so the session survives a mid-open SugarNotWritten.
+    source_file._resolution_session = session  # type: ignore[attr-defined]
     if populate_derived:
         from sugar_lift_python_source.manager_summary_derivation import (
             populate_source_derived_resource_refs,
         )
 
-        populate_source_derived_resource_refs(source_file, root=root, path=path)
+        populate_source_derived_resource_refs(
+            source_file, root=root, path=path, session=session
+        )
     return source_file
 
 
@@ -1801,9 +1815,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_python_source.manager_summary_derivation import (
                     populate_source_derived_resource_refs,
                 )
+                from sugar_lift_python_source.resolution_session import (
+                    SourceResolutionSession,
+                )
 
                 populate_source_derived_resource_refs(
-                    source_file, root=root, path=source_path
+                    source_file,
+                    root=root,
+                    path=source_path,
+                    session=SourceResolutionSession(),
                 )
                 for function in source_file.functions():
                     function_sugar = function.sugar()
@@ -2035,9 +2055,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_python_source.manager_summary_derivation import (
                     populate_source_derived_resource_refs,
                 )
+                from sugar_lift_python_source.resolution_session import (
+                    SourceResolutionSession,
+                )
 
                 populate_source_derived_resource_refs(
-                    tree_file, root=root, path=full_path
+                    tree_file,
+                    root=root,
+                    path=full_path,
+                    session=SourceResolutionSession(),
                 )
                 nodes = []
                 for fn in tree_file.functions():

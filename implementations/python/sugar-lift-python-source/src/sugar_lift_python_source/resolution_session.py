@@ -48,6 +48,9 @@ class SourceResolutionSession:
         "frame_results",
         "frame_holds",
         "frame_active",
+        "module_packs",
+        "prefix_files",
+        "prefix_fallthrough",
     )
 
     def __init__(self, *, enabled: bool = True) -> None:
@@ -64,6 +67,14 @@ class SourceResolutionSession:
         # typed-loud exactly like the local recursive case, and never loops.
         # Re-entrancy is a property of THIS traversal, so it is session state.
         self.frame_active: set[tuple] = set()
+        # module.source_cid -> (source_file, producer_root, mutable_global_bindings)
+        # Frame-path materialize: N definitions in one module must not rebuild
+        # the same SourceFile N times (enum.py measured 35x on one open).
+        self.module_packs: dict[str, Any] = {}
+        # module.source_cid -> SourceFile for prefix fallthrough (no frame_projection)
+        self.prefix_files: dict[str, Any] = {}
+        # (source_cid, lineno, col_offset) -> bool fallthrough verdict
+        self.prefix_fallthrough: dict[tuple, bool] = {}
 
     # -- export resolution memo ------------------------------------------
 
@@ -86,6 +97,35 @@ class SourceResolutionSession:
             self.frame_holds[key] = hold
         self.frame_results[key] = result
 
+    # -- module materialize memo (by source_cid) -------------------------
+
+    def module_hit(self, source_cid: str) -> Any | None:
+        """Return the session's materialize pack for this source body, or None."""
+        return self.module_packs.get(source_cid) if self.enabled else None
+
+    def remember_module(self, source_cid: str, pack: Any) -> None:
+        """Hold one materialize pack for this source body for the session life."""
+        if self.enabled:
+            self.module_packs[source_cid] = pack
+
+    # -- prefix fallthrough memo -----------------------------------------
+
+    def prefix_file_hit(self, source_cid: str) -> Any | None:
+        return self.prefix_files.get(source_cid) if self.enabled else None
+
+    def remember_prefix_file(self, source_cid: str, source_file: Any) -> None:
+        if self.enabled:
+            self.prefix_files[source_cid] = source_file
+
+    def fallthrough_hit(self, key: tuple) -> bool | None:
+        if not self.enabled:
+            return None
+        return self.prefix_fallthrough.get(key)
+
+    def remember_fallthrough(self, key: tuple, value: bool) -> None:
+        if self.enabled:
+            self.prefix_fallthrough[key] = value
+
 
 def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionSession:
     """Resolve the caller's session, or open one bounded to this single call.
@@ -93,5 +133,9 @@ def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionS
     ``None`` never means "share the process": it means "this call is its own
     session". The memo then dies with the call, which is slower and always
     correct.
+
+    Production file open must thread ONE session through the whole resolve
+    graph (``open_source_file_for_construction`` → populate → resolve_*). A
+    memo that lives on a per-call session is born empty and dies immediately.
     """
     return SourceResolutionSession() if session is None else session
