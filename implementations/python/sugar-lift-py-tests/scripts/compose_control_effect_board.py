@@ -80,6 +80,8 @@ def build_plan(
     prior_hits: int,
     prior_misses: int,
     estimated_loads: Sequence[float],
+    demand_table_cid: str | None = None,
+    demand_table_path: str | None = None,
 ) -> dict[str, Any]:
     enrolled = sorted(enrolled_files)
     bin_lists = [list(b) for b in bins]
@@ -110,6 +112,12 @@ def build_plan(
         "bins": bin_lists,
         "estimatedLoadS": [float(x) for x in estimated_loads],
     }
+    # Prebuilt provisional demand table: content-addressed once at plan time;
+    # every shard LOADS it so cold processes never re-walk the corpus (k=8).
+    if demand_table_cid is not None:
+        plan["demandTableCid"] = demand_table_cid
+    if demand_table_path is not None:
+        plan["demandTablePath"] = demand_table_path
     plan["planCid"] = canonical_cid({k: v for k, v in plan.items() if k != "planCid"})
     return plan
 

@@ -36,11 +36,10 @@ So this instrument states its denominator before it states any number:
 One process. Two named axes (never merged into one R):
 
     SourceTree(corpus).paths()
-      → provisional_contract_refs_from_demands(corpus)  (once)
-      → open_source_file_for_construction (context + source-derived CM refs)
-      → functions()
-      → fn.sugar()                    # axis 1: construction families
-      → sugar.desugar(None)           # axis 2: desugar refusals + typed red
+      → mint prebuilt demand table ONCE (or LOAD plan-time artifact)
+      → install into process memo (shards: zero walk)
+      → measure_file_via_enumerate(contract_refs=…)  # D2/D3 sugar.enumerate
+      → (legacy path) open_source_file_for_construction + sugar/desugar
 
 Construction R answers "is the tree total?". Desugar R answers "is meaning
 reducible?". Yield/YieldFrom construct then refuse at desugar — correct; they
@@ -755,6 +754,25 @@ def main() -> int:
         default=None,
         help="where to write the shard partial JSON (default: <out-dir>/partial-sXX.json)",
     )
+    parser.add_argument(
+        "--demand-table-path",
+        type=Path,
+        default=None,
+        help=(
+            "load a plan-time prebuilt provisional demand table (content-addressed). "
+            "Shards MUST use this so cold processes do not re-walk 1421 files. "
+            "Corpus pin on the table must match the observed pin or refuse."
+        ),
+    )
+    parser.add_argument(
+        "--write-demand-table",
+        type=Path,
+        default=None,
+        help=(
+            "after deriving the provisional demand table once, write the "
+            "content-addressed artifact for shards to load"
+        ),
+    )
     args = parser.parse_args()
     if args.shard_index is not None and args.plan_json is None:
         parser.error("--shard-index requires --plan-json")
@@ -942,21 +960,97 @@ def main() -> int:
     # files; each file still gets a fresh TreeConstructionContextV1 so
     # source-derived manager refs do not leak between files. Deriving this from
     # anything but the root is the corpus-context drift defect.
-    from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
+    #
+    # k=8 law: the walk is O(corpus) per cold process. Plan time derives once
+    # and writes a content-addressed artifact; every shard LOADS it so D2 never
+    # re-walks. Process memo alone is not enough — each shard is a new process.
+    from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
+    from sugar_lift_py_tests.prebuilt_demand_table import (
+        DemandTableArtifactRefusal,
+        DemandTablePinMismatch,
+        install_prebuilt_demand_table,
+        load_prebuilt_demand_table,
+        mint_prebuilt_demand_table,
+        write_prebuilt_demand_table,
+    )
 
-    # Demand-table walk can take minutes with only a BEGIN/END pair — that is
-    # blind by construction. Alive heartbeats every ≤30s hit the job log.
-    _narrate(
-        f"RECENSUS DEMAND_TABLE deriving provisional refs from workspace_root={workspace_root}"
-    )
-    contract_refs = _phase_call(
-        "demand_table_derivation",
-        lambda: provisional_contract_refs_from_demands(workspace_root),
-    )
-    _narrate(
-        "RECENSUS DEMAND_TABLE ready "
-        f"(type={type(contract_refs).__name__})"
-    )
+    pin_identity = {
+        "distribution": observed_pin.distribution,
+        "version": observed_pin.version,
+        "fileCount": observed_pin.file_count,
+        "aggregateHash": observed_pin.aggregate_hash,
+    }
+    demand_table_cid: str | None = None
+    # Plan may carry demandTableCid / demandTablePath for shard workers.
+    plan_demand_path = args.demand_table_path
+    plan_demand_cid = None
+    if shard_plan is not None:
+        plan_demand_cid = shard_plan.get("demandTableCid")
+        if plan_demand_path is None and shard_plan.get("demandTablePath"):
+            plan_demand_path = Path(str(shard_plan["demandTablePath"]))
+
+    if plan_demand_path is not None:
+        _narrate(
+            f"RECENSUS DEMAND_TABLE loading prebuilt path={plan_demand_path} "
+            f"planCid={plan_demand_cid or 'none'}"
+        )
+        try:
+            prebuilt = load_prebuilt_demand_table(
+                plan_demand_path,
+                expected_corpus_pin=pin_identity,
+                expected_content_cid=plan_demand_cid,
+            )
+        except (DemandTablePinMismatch, DemandTableArtifactRefusal) as refuse:
+            print(str(refuse), file=sys.stderr, flush=True)
+            return 78
+        contract_refs = _phase_call(
+            "demand_table_load",
+            lambda: install_prebuilt_demand_table(
+                prebuilt, root=workspace_root
+            ),
+        )
+        demand_table_cid = prebuilt.content_cid
+        _narrate(
+            "RECENSUS DEMAND_TABLE loaded "
+            f"contentCid={demand_table_cid} rows={len(prebuilt.rows)} "
+            f"(zero corpus walk)"
+        )
+    else:
+        # Demand-table walk can take minutes with only a BEGIN/END pair — that
+        # is blind by construction. Alive heartbeats every ≤30s hit the job log.
+        _narrate(
+            f"RECENSUS DEMAND_TABLE deriving provisional refs from "
+            f"workspace_root={workspace_root}"
+        )
+
+        def _derive_and_maybe_write():
+            table = mint_prebuilt_demand_table(
+                workspace_root, corpus_pin=pin_identity
+            )
+            write_path = args.write_demand_table
+            if write_path is None and args.out_dir is not None:
+                # Default artifact next to board outputs so shards can find it.
+                write_path = Path(args.out_dir) / "provisional-demand-table.json"
+            if write_path is not None:
+                write_prebuilt_demand_table(table, write_path)
+                _narrate(
+                    f"RECENSUS DEMAND_TABLE wrote path={write_path} "
+                    f"contentCid={table.content_cid}"
+                )
+            refs = install_prebuilt_demand_table(table, root=workspace_root)
+            return refs, table.content_cid
+
+        contract_refs, demand_table_cid = _phase_call(
+            "demand_table_derivation",
+            _derive_and_maybe_write,
+        )
+        # Also keep the process memo path warm for any code that still calls
+        # provisional_contract_refs_from_demands directly.
+        install_provisional_contract_refs(workspace_root, contract_refs)
+        _narrate(
+            "RECENSUS DEMAND_TABLE ready "
+            f"(type={type(contract_refs).__name__} contentCid={demand_table_cid})"
+        )
 
     from pandas_census_checkpoint import Checkpoint
 
@@ -1246,6 +1340,7 @@ def main() -> int:
                     row = measure_file_via_enumerate(
                         workspace_root=corpus_root,
                         file_rel=relative,
+                        contract_refs=contract_refs,
                     )
                 except (ImportError, AttributeError) as error:
                     # An arm that cannot resolve its dispatch target is UNWRITTEN,
