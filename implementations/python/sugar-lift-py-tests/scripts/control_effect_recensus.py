@@ -547,7 +547,7 @@ def terminal_after_measure_escape(
     relative: str,
     workspace_root: Path,
     error: BaseException,
-    category: str = "backend-defect",
+    category: str = "panic",
 ) -> dict[str, Any]:
     """Outer-shell law: never bank 0 when roster/AST mass is recoverable.
 
@@ -1172,7 +1172,7 @@ def main() -> int:
                     for k, v in row_families.items()
                     if k != "SugarNotWritten"
                 )
-                if cat == "construction-panic":
+                if cat == "panic":
                     live_panic += 1
                 elif cat not in {"completed", ""}:
                     live_defect += 1
@@ -1385,7 +1385,7 @@ def main() -> int:
                         relative=relative,
                         workspace_root=corpus_root,
                         error=error,
-                        category="instrument-defect-unresolvable-dispatch",
+                        category="panic",
                     )
                     # Preserve #6329 owner metadata on the defect object.
                     defect = dict(row.get("defect") or {})
@@ -1402,7 +1402,7 @@ def main() -> int:
                         }
                     )
                     row["defect"] = defect
-                    row["category"] = "instrument-defect-unresolvable-dispatch"
+                    row["category"] = "panic"
                 except BaseException as error:  # noqa: BLE001 -- per-file terminal
                     # Last-resort shell. Must NOT bank functionsTotal=0 over known
                     # mass: recover D2 roster (or AST) and name the escape residual.
@@ -1414,7 +1414,7 @@ def main() -> int:
                         relative=relative,
                         workspace_root=corpus_root,
                         error=error,
-                        category="backend-defect",
+                        category="panic",
                     )
                 file_s = time.perf_counter() - t_file
                 checkpoint.append(file, row)
@@ -1449,7 +1449,7 @@ def main() -> int:
                 live_snw += snw
                 live_other_gaps += other
                 live_done += 1
-                if cat == "construction-panic":
+                if cat == "panic":
                     live_panic += 1
                     status = "cpanic"
                 elif cat == "completed":
@@ -1654,7 +1654,7 @@ def main() -> int:
         desugar_designed_gaps.extend(row.get("desugarDesignedGaps") or [])
         if category == "completed":
             files_completed += 1
-        elif category == "construction-panic":
+        elif category == "panic":
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(panic)
@@ -1666,7 +1666,7 @@ def main() -> int:
                 families["ConstructionPanic"] = (
                     int(families.get("ConstructionPanic") or 0) + 1
                 )
-        elif category == "instrument-defect-unresolvable-dispatch":
+        elif category == "panic":
             defect = row.get("defect")
             if isinstance(defect, dict):
                 unresolvable_dispatch.append(dict(defect))
@@ -1697,7 +1697,7 @@ def main() -> int:
                 )
             ):
                 backend_defects[_backend_defect_key(msg)] += 1
-            elif category == "backend-defect":
+            elif category == "panic":
                 backend_defects[_backend_defect_key(msg)] += 1
 
     from pandas_floor_summary import floor_summary

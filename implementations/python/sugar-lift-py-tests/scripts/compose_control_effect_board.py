@@ -194,7 +194,7 @@ def mint_partial(
     for file, raw in terminals:
         cat = str(raw.get("category") or "")
         families.update(raw.get("families") or {})
-        if cat == "construction-panic":
+        if cat == "panic":
             panic = raw.get("panic")
             if isinstance(panic, dict):
                 panics.append(dict(panic))
@@ -338,11 +338,7 @@ def aggregate_terminal_rows(
                 clean_refuse_reasons.append(f"{file}:{reason}")
         else:
             functions_clean += int(row.get("functionsClean") or 0)
-        if category in {"backend-defect", "instrument-defect-unresolvable-dispatch", "panic"}:
-            r_instrument_blind += 1
-            # Mass on instrument-blind rows is residual, not silent zero.
-            if category != "completed":
-                r_instrument_blind_functions += ft
+        # R_instrument_blind taxonomy deleted — panic is panic.
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
         desugar_categories.update(row.get("desugarCategories") or {})
@@ -357,30 +353,20 @@ def aggregate_terminal_rows(
 
         if category == "completed":
             files_completed += 1
-        elif category == "construction-panic":
+        else:
+            # construct-or-panic: anything not completed is a panic (no kind labels)
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(dict(panic))
-            if "ConstructionPanic" not in (row.get("families") or {}):
-                families["ConstructionPanic"] = (
-                    int(families.get("ConstructionPanic") or 0) + 1
-                )
-        elif category == "instrument-defect-unresolvable-dispatch":
-            defect = row.get("defect")
+            defect = row.get("defect") or panic
             if isinstance(defect, dict):
-                unresolvable_dispatch.append(dict(defect))
-            defects.append(
-                dict(defect)
-                if isinstance(defect, dict)
-                else {"file": file, "type": category, "message": category}
-            )
-        else:
-            defect = row.get("defect")
-            defects.append(
-                dict(defect)
-                if isinstance(defect, dict)
-                else {"file": file, "type": category, "message": category}
-            )
+                defects.append(dict(defect))
+            elif panic is not None:
+                defects.append({"file": file, "type": "panic", "message": str(panic)})
+            else:
+                defects.append(
+                    {"file": file, "type": str(category), "message": str(category)}
+                )
 
     files_complete = (
         len(measured_rows) == len(file_names)
