@@ -673,14 +673,16 @@ test-3809-dod-scoreboard:
 # vector. It carries ~131 known failures, so adding it here would be a
 # merge-policy change wearing a wiring-fix hat. Drive those node IDs to zero
 # first; then add it here deliberately, in a PR that says so.
-ci: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires test-showcases self-attest coretests-invariants
+# coretests-invariants stays a Makefile target for hand/Rust work; not in
+# default per-commit `make ci` (Rust client not ready; do not gate Python).
+ci: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires test-showcases self-attest
 	@echo ""
 	@echo "==== ci: PASS ===="
 
 .PHONY: ci-core
 # The non-showcase portion of the acid test. GitHub Actions runs this beside
 # deterministic showcase shards; `ci` remains the one-command local surface.
-ci-core: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires self-attest coretests-invariants
+ci-core: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires self-attest
 	@echo ""
 	@echo "==== ci-core: PASS ===="
 
