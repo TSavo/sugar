@@ -76,6 +76,13 @@ def emit_process_matrix_json() -> str:
     return json.dumps({"include": include})
 
 
+# Exit-code vocabulary for enrollment mint (scan-complete vs infrastructure):
+#   0 — scan completed; residual green (R=0)
+#   1 — scan completed; residual red (R>0)
+#   2+ — scan did NOT complete (auth/init/crash/IO); UNMEASURED, not residual
+SCAN_COMPLETED_EXITS = frozenset({0, 1})
+
+
 def mint_axis_report(
     *,
     axis_id: str,
@@ -83,9 +90,41 @@ def mint_axis_report(
     commit_sha: str,
     exit_code: int,
     kind: str,
+    scan_completed: bool | None = None,
+    unmeasured_reason: str | None = None,
 ) -> dict:
+    """Mint an identity-bound axis body.
+
+    ``measured=True`` only when the scan completed with a body (exit 0 or 1 by
+    default). Auth/init/crash (exit >= 2, or scan_completed=False) mints
+    UNMEASURED with a named reason — never banked as attended residual green.
+    """
     if axis_id not in enrolled_ids():
         raise ValueError(f"axis_id {axis_id!r} is not enrolled")
+    code = int(exit_code)
+    if scan_completed is None:
+        scan_completed = code in SCAN_COMPLETED_EXITS
+    if scan_completed:
+        return {
+            "schemaVersion": 1,
+            "kind": REPORT_KIND,
+            "axisId": axis_id,
+            "display": display,
+            "axisKind": kind,
+            "measurementClass": CAMPAIGN_CLASS,
+            "measuredCommit": commit_sha,
+            "status": "completed",
+            "exitCode": code,
+            "identityResolved": True,
+            "measured": True,
+            "floorExitGreen": code == 0,
+            "unmeasuredReason": None,
+            "totals": {"failed": 0 if code == 0 else 1},
+        }
+    reason = unmeasured_reason or (
+        f"scan did not complete (exit={code}); infrastructure/auth/init/crash "
+        "— not a residual reading"
+    )
     return {
         "schemaVersion": 1,
         "kind": REPORT_KIND,
@@ -94,12 +133,13 @@ def mint_axis_report(
         "axisKind": kind,
         "measurementClass": CAMPAIGN_CLASS,
         "measuredCommit": commit_sha,
-        "status": "completed",
-        "exitCode": int(exit_code),
+        "status": "unmeasured",
+        "exitCode": code,
         "identityResolved": True,
-        "measured": True,
-        "floorExitGreen": int(exit_code) == 0,
-        "totals": {"failed": 0 if int(exit_code) == 0 else 1},
+        "measured": False,
+        "floorExitGreen": False,
+        "unmeasuredReason": reason,
+        "totals": {"failed": 1, "unmeasured": 1},
     }
 
 
@@ -214,19 +254,29 @@ def check_attendance(
             )
             continue
         row = rows[0]
-        if not row.get("identityResolved") or not row.get("measured"):
-            unresolved.append(axis.axis_id)
-            _log(
-                f"floor_enrollment result index={index}/{len(ENROLLED)} "
-                f"axis={axis.axis_id} spoke=partial status=UNRESOLVED"
-            )
-            continue
         if str(row.get("measuredCommit", "")).strip() != require_commit:
             wrong_commit.append(axis.axis_id)
             _log(
                 f"floor_enrollment result index={index}/{len(ENROLLED)} "
                 f"axis={axis.axis_id} spoke=partial status=WRONG_COMMIT "
                 f"got={row.get('measuredCommit')!r}"
+            )
+            continue
+        # Crash/auth/init: status=unmeasured measured=False — NOT residual red.
+        if row.get("status") == "unmeasured" or not row.get("measured"):
+            unresolved.append(axis.axis_id)
+            reason = row.get("unmeasuredReason") or "no scan body"
+            _log(
+                f"floor_enrollment result index={index}/{len(ENROLLED)} "
+                f"axis={axis.axis_id} spoke=yes status=UNMEASURED "
+                f"reason={reason!r} exit={row.get('exitCode')}"
+            )
+            continue
+        if not row.get("identityResolved"):
+            unresolved.append(axis.axis_id)
+            _log(
+                f"floor_enrollment result index={index}/{len(ENROLLED)} "
+                f"axis={axis.axis_id} spoke=partial status=UNRESOLVED"
             )
             continue
         attended.append(axis.axis_id)
@@ -301,6 +351,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--kind", default="process")
     parser.add_argument("--commit-sha", default="")
     parser.add_argument("--exit-code", type=int, default=0)
+    parser.add_argument(
+        "--scan-completed",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Force measured/unmeasured mint (default: exit 0/1 measured, >=2 unmeasured).",
+    )
+    parser.add_argument(
+        "--unmeasured-reason",
+        default=None,
+        help="Named reason when minting UNMEASURED (auth/init/crash).",
+    )
     parser.add_argument("--check-attendance", type=Path)
     parser.add_argument("--require-commit", default="")
     parser.add_argument("--write-campaign-body", type=Path)
@@ -343,6 +404,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             commit_sha=args.commit_sha,
             exit_code=args.exit_code,
             kind=args.kind,
+            scan_completed=args.scan_completed,
+            unmeasured_reason=args.unmeasured_reason,
         )
         args.mint_report.parent.mkdir(parents=True, exist_ok=True)
         args.mint_report.write_text(

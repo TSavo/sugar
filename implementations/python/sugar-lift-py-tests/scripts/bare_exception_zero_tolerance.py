@@ -129,7 +129,7 @@ def main() -> int:
         paths = require_explicit_scan_roots(args.paths)
     except ValueError as error:
         print(f"BARE-EXCEPTION ZERO-TOLERANCE RED: {error}")
-        return 1
+        return 2
     print(
         "BARE-EXCEPTION POPULATION: "
         f"roots={[str(p) for p in args.paths]} files={len(paths)}"
@@ -145,7 +145,7 @@ def main() -> int:
         )
     except (OSError, ValueError) as error:
         print(format_unmeasured_axis("R_bare_exceptions", reason=str(error)))
-        return 1
+        return 2
     progress_path.write_text(
         f"# bare-exception supervised enum scan\n"
         f"# engine={engine_path}\n"
