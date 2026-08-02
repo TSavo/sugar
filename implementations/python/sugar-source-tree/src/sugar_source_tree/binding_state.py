@@ -1541,13 +1541,47 @@ def binding_state_read_node(
     if isinstance(state, LoopProjectedBinding):
         # A single completion face is the TOTAL post-value (a no-break loop
         # exits only by NormalExhaustion), so read straight through it. A
-        # multi-face join stays loud rather than silently pick one arm.
+        # multi-face join stays loud rather than silently pick one arm —
+        # honest unwritten: C3 named refusal, not TypeError-as-backend-defect.
         if len(state.completed_faces) == 1:
             return binding_state_read_node(
                 state.completed_faces[0].state, make_read=make_read
             )
-        raise TypeError(type(state))
-    raise TypeError(type(state))
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="binding_state_read_node",
+            blame=(
+                f"LoopProjectedBinding(target_cid={state.target_cid},"
+                f"faces={len(state.completed_faces)})"
+            ),
+            observed=(
+                f"LoopProjectedBinding with {len(state.completed_faces)} completed "
+                f"faces (target_cid={state.target_cid!r}); multi-face join has no "
+                f"single read projection"
+            ),
+            requested=(
+                "either one NormalExhaustion face (read through) or a written "
+                "multi-face LoopProjectedBinding read that names each arm"
+            ),
+            fix=(
+                "write LoopProjectedBinding multi-face read as typed projection "
+                "(or collapse faces earlier); do not raise TypeError — that "
+                "aborts the file as backend-defect instead of a named C3 gap"
+            ),
+        )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner="binding_state_read_node",
+        blame=f"binding-state:{type(state).__name__}",
+        observed=f"binding state species {type(state).__name__} has no read projection",
+        requested="Node | UnboundBinding | GuardedBinding | single-face LoopProjectedBinding",
+        fix=(
+            f"write binding_state_read_node arm for {type(state).__name__} or "
+            f"project it before the read site"
+        ),
+    )
 
 
 def join_binding_state(

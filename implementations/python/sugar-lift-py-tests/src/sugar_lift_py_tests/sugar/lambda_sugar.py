@@ -21,19 +21,64 @@ class LambdaSugar(ConstructedTermSugar):
     site: object = dataclass_field(compare=False)
 
     def __post_init__(self) -> None:
+        from sugar_source_tree.panic import SugarNotWritten
+
         frame = self.source_call_frame
         if tuple(frame.parameters) != self.formals:
-            raise TypeError("LambdaSugar formals require their authenticated source frame")
+            raise SugarNotWritten(
+                owner="LambdaSugar.formals",
+                blame=self.site,
+                observed=(
+                    f"frame.parameters={tuple(frame.parameters)!r} "
+                    f"!= formals={self.formals!r}"
+                ),
+                requested="formals identical to the authenticated source_call_frame",
+                fix=(
+                    "construct LambdaSugar only from Lambda._construct_sugar with "
+                    "the producer frame; do not invent formals"
+                ),
+            )
         if tuple(coordinate.cid for coordinate in frame.formal_coordinates) != (
             self.formal_coordinate_cids
         ):
-            raise TypeError(
-                "LambdaSugar formal coordinates require producer-authenticated testimony"
+            raise SugarNotWritten(
+                owner="LambdaSugar.formal_coordinate_cids",
+                blame=self.site,
+                observed="formal_coordinate_cids disagree with frame.formal_coordinates",
+                requested="producer-authenticated formal coordinate CID tuple",
+                fix="carry coordinate CIDs from the source_visible_call_frame only",
             )
         if frame.definition_fragment_cid != self.site.seal().cid:
-            raise TypeError("LambdaSugar source frame requires its exact lambda occurrence")
+            raise SugarNotWritten(
+                owner="LambdaSugar.source_call_frame",
+                blame=self.site,
+                observed=(
+                    f"frame.definition_fragment_cid={frame.definition_fragment_cid!r} "
+                    f"!= lambda site cid={self.site.seal().cid!r}"
+                ),
+                requested="source frame pinned to this exact lambda occurrence",
+                fix="mint the frame at the Lambda node; do not reuse another definition",
+            )
         if self.body.site.seal().cid != self.body_fragment_cid:
-            raise TypeError("LambdaSugar body requires its exact source body testimony")
+            raise SugarNotWritten(
+                owner="LambdaSugar.body",
+                blame=getattr(self.body, "site", self.site),
+                observed=(
+                    f"body site cid={self.body.site.seal().cid!r} "
+                    f"!= body_fragment_cid={self.body_fragment_cid!r} "
+                    f"(body type={type(self.body).__name__})"
+                ),
+                requested=(
+                    "body sugar whose site.seal().cid equals the exact source "
+                    "body fragment CID captured at construction"
+                ),
+                fix=(
+                    "construct the body from the Lambda expression body node "
+                    "before rewrite; a substituted/rewritten body with a different "
+                    "fragment is an honest gap until rewrite preserves body "
+                    "occurrence identity — refuse specifically, never TypeError"
+                ),
+            )
 
     @classmethod
     def witnesses(cls):

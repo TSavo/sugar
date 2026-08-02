@@ -298,6 +298,36 @@ def _honest_functions_clean(
     )
 
 
+def _classify_honest_residual(
+    error: BaseException,
+) -> tuple[str, str, bool]:
+    """Return (type_name, message, is_honest_residual) for residual errors.
+
+    Honest residuals (E/H/L/Λ class after the 159 lies): named refusals that
+    name the artifact they cannot see. Instrument-blind TypeError/AttributeError
+    remain dishonest until converted to SugarNotWritten at the source.
+    """
+    name = type(error).__name__
+    msg = str(error)
+    # Already-named CM / With construction gaps (E-class).
+    if name in {
+        "ContextManagerResolutionConstructionGap",
+        "WithConstructionGap",
+        "SugarNotWritten",
+    } or "CONTEXT MANAGER RESOLUTION GAP" in msg:
+        return name if name != "Exception" else "ContextManagerResolutionConstructionGap", msg, True
+    if name == "RecursionError" or "maximum recursion depth" in msg:
+        return "ConstructionRecursionGap", msg, True
+    if "LoopProjectedBinding" in msg or "LoopProjectedBinding" in name:
+        return "LoopProjectedBindingReadGap", msg, True
+    if "LambdaSugar" in msg or name == "LambdaSugar":
+        return "LambdaBodyTestimonyGap", msg, True
+    # SugarNotWritten subclasses often report via str with owner line.
+    if "SUGAR NOT WRITTEN" in msg or "SugarNotWritten" in name:
+        return name, msg, True
+    return name, msg, False
+
+
 def terminal_from_enumerate(
     *,
     file_rel: str,
@@ -390,15 +420,17 @@ def terminal_from_enumerate(
         )
 
     if residual_phase_failed and residual_error is not None:
+        err_type, err_msg, honest = _classify_honest_residual(residual_error)
         defects.append(
             {
                 "file": file_rel,
-                "type": type(residual_error).__name__,
-                "message": str(residual_error),
+                "type": err_type,
+                "message": err_msg,
                 "phase": "residual",
+                "honestResidual": honest,
             }
         )
-        families[f"residual:{type(residual_error).__name__}"] += 1
+        families[f"residual:{err_type}"] += 1
 
     clean, clean_refused, clean_reason = _honest_functions_clean(
         functions_total=functions_total,
@@ -412,6 +444,10 @@ def terminal_from_enumerate(
         category = "backend-defect"
         if construction_panics:
             category = "construction-panic"
+        elif residual_error is not None and _classify_honest_residual(residual_error)[2]:
+            # C3: honest unwritten refuses specifically as designed-gap, not
+            # instrument-blind backend-defect.
+            category = "designed-gap"
     elif construction_panics and not panics:
         category = "construction-panic"
     elif defects and not function_nodes:
@@ -422,9 +458,12 @@ def terminal_from_enumerate(
         category = "completed"
 
     # Mid-residual failure with banked roster: still construction-panic if panics,
-    # else backend-defect — but functionsTotal stays roster size.
+    # designed-gap if honest residual, else backend-defect — functionsTotal stays.
     if residual_phase_failed and not construction_panics:
-        category = "backend-defect"
+        if residual_error is not None and _classify_honest_residual(residual_error)[2]:
+            category = "designed-gap"
+        else:
+            category = "backend-defect"
 
     row = _empty_shell(
         file_rel=file_rel,
@@ -500,16 +539,18 @@ def measure_file_via_enumerate(
         # No roster banked. AST population still names the gap when parseable
         # (instrument-blind mass, not a silent zero when the file has functions).
         auth = int(ast_fn) if ast_fn is not None else 0
+        err_type, err_msg, honest = _classify_honest_residual(error)
         return _empty_shell(
             file_rel=file_rel,
-            category="backend-defect",
+            category="designed-gap" if honest else "backend-defect",
             functions_total=auth,
             functions_enumerated=0,
             defect={
                 "file": file_rel,
-                "type": type(error).__name__,
-                "message": str(error),
+                "type": err_type,
+                "message": err_msg,
                 "phase": "roster",
+                "honestResidual": honest,
             },
             functions_clean=None if auth > 0 else 0,
             clean_ratio_refused=auth > 0,
