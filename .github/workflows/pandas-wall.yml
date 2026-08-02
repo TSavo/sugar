@@ -49,6 +49,10 @@ jobs:
         shell: bash
         env:
           SUGAR_ENGINE_LOG: ${{ github.workspace }}/.sugar/pandas-wall-logs/engine.jsonl
+          # WARNING heartbeats only — per-span DEBUG is write-only hot-path
+          # serialisation (~1 MB/file). Same cut as recensus #7039 (43% faster).
+          # Opt in full flood: SUGAR_ENGINE_TRACE_EVENTS=1.
+          SUGAR_ENGINE_TRACE_EVENTS: "0"
           SUGAR_ENGINE_HEARTBEAT_SECONDS: "5"
           SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
           SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/pandas-wall-logs/transport.jsonl

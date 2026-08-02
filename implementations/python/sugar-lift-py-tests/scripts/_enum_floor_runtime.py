@@ -5,10 +5,18 @@ One process. One door:
     path_source → SourceFile → functions → sugar
 
 I/O never mixed:
-  engine log  → JSONL file (sugar construction telemetry)
+  engine log  → JSONL file (WARNING heartbeats by default; see TRACE)
   progress    → optional tqdm file (local tail)
   job log     → ALWAYS: named phase + running counts (≤30s silence)
   result/print → floor summary lines only
+
+Engine log default is SUGAR_ENGINE_TRACE_EVENTS=0: WARNING heartbeats,
+cycle_suspected, and errors only — enough to name a stall. Per-span DEBUG
+enter/exit is write-only for floor R (R is the floor axis, not engine.jsonl)
+and costs json.dumps+FileHandler on every sugar enter/exit on the reduction
+hot path. Set engine_trace=True / SUGAR_ENGINE_TRACE_EVENTS=1 only when
+debugging a named stall needs the full flood. Never re-raise the logger to
+DEBUG after configure — that made TRACE=0 a no-op (#7039 recensus lesson).
 
 DOCTRINE: if it can run >30s, emit a named phase or count to the JOB LOG
 within 30s and every 30s after. TTY-gated tqdm and file-only progress are
@@ -42,9 +50,25 @@ def silence_console_logging() -> None:
     logging.lastResort = None  # type: ignore[assignment]
 
 
-def configure_engine_log(path: Path) -> None:
+def configure_engine_log(path: Path, *, engine_trace: bool = False) -> None:
+    """Attach engine JSONL for stall-naming; default TRACE off.
+
+    Default is WARNING-only (``SUGAR_ENGINE_TRACE_EVENTS=0``): heartbeats,
+    cycle_suspected, and errors. Per-span DEBUG enter/exit is opt-in via
+    ``engine_trace=True`` — floor axes do not read those events for R, and
+    they pay ``json.dumps`` on the reduction hot path.
+
+    Critical: do **not** re-raise ``LOGGER`` to DEBUG after
+    ``configure_live_log``. Handler-only WARNING still serialises every
+    DEBUG span before the record is dropped; logger level must follow TRACE
+    so ``isEnabledFor(DEBUG)`` short-circuits. Same lesson as recensus #7039
+    (43% wall-time cut on scoreboard from killing this flood).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     os.environ["SUGAR_ENGINE_LOG"] = str(path.resolve())
+    # Force measurement default: do not inherit ambient TRACE=1. Full span
+    # flood is explicit engine_trace only.
+    os.environ["SUGAR_ENGINE_TRACE_EVENTS"] = "1" if engine_trace else "0"
     from sugar_lift_py_tests import engine_log
 
     logger = engine_log.LOGGER
@@ -53,7 +77,9 @@ def configure_engine_log(path: Path) -> None:
     engine_log._LIVE_HANDLER = None  # type: ignore[attr-defined]
     engine_log.configure_live_log(str(path.resolve()))
     logger.propagate = False
-    logger.setLevel(logging.DEBUG)
+    # configure_live_log already set level from TRACE. Pin it again so a
+    # future editor cannot reintroduce setLevel(DEBUG) and re-enable the flood.
+    logger.setLevel(logging.DEBUG if engine_trace else logging.WARNING)
 
 
 def python_paths(roots: Sequence[Path]) -> list[Path]:

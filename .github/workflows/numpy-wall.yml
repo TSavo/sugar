@@ -49,6 +49,9 @@ jobs:
         shell: bash
         env:
           SUGAR_ENGINE_LOG: ${{ github.workspace }}/.sugar/numpy-wall-logs/engine.jsonl
+          # WARNING heartbeats only — per-span DEBUG is write-only hot-path
+          # serialisation. Same cut as recensus #7039. Opt in: TRACE_EVENTS=1.
+          SUGAR_ENGINE_TRACE_EVENTS: "0"
           SUGAR_ENGINE_HEARTBEAT_SECONDS: "5"
           SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
           SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/numpy-wall-logs/transport.jsonl
