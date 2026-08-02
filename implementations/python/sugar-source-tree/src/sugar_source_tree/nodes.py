@@ -2628,34 +2628,55 @@ class Node(Typed):
     def end_col_offset(self) -> int:
         return self.line_col_span().end_col
 
-    def children(self) -> Iterator[tuple[str, Optional[int], "Node"]]:
-        """Yield (field_name, index-or-None, child) in declared grammar order."""
+    def _child_edges(self) -> tuple[tuple[str, Optional[int], "Node"], ...]:
+        """Resolved child edges once per construction-cache key.
+
+        ``children()`` and ``walk()`` used to each re-getattr every ``_child_fields``
+        entry.  The tree is immutable after materialize; re-deriving the edge list
+        is pure recompute.  Memoize on the unit construction cache (same key as
+        field data) so the second consumer of a node pays zero field getattr.
+        """
+        cache = self._construction_cache()
+        key = cache.key(
+            self.ref,
+            self.reporter,
+            self.control_context,
+            self.unit.construction_context,
+        )
+        row = cache.fields.setdefault(key, {})
+        cached = row.get("__child_edges__")
+        if cached is not None:
+            return cached  # type: ignore[no-any-return]
+        edges: list[tuple[str, Optional[int], Node]] = []
         for name in type(self)._child_fields:
             value = getattr(self, name)
             if value is None:
                 continue
             if isinstance(value, Node):
-                yield name, None, value
+                edges.append((name, None, value))
             else:
                 for i, item in enumerate(value):
                     if item is not None:
-                        yield name, i, item
+                        edges.append((name, i, item))
+        frozen = tuple(edges)
+        row["__child_edges__"] = frozen
+        return frozen
+
+    def children(self) -> Iterator[tuple[str, Optional[int], "Node"]]:
+        """Yield (field_name, index-or-None, child) in declared grammar order."""
+        yield from self._child_edges()
 
     def walk(self) -> Iterator["Node"]:
-        """Pre-order walk over the constructed graph. Iterative — never recursive."""
+        """Pre-order walk over the constructed graph. Iterative — never recursive.
+
+        Expands each node via ``_child_edges()`` so a walk that follows a
+        ``children()`` consumer (or a second walk) does not re-getattr fields.
+        """
         stack: list[Node] = [self]
         while stack:
             node = stack.pop()
             yield node
-            children = []
-            for field_name in type(node)._child_fields:
-                value = getattr(node, field_name)
-                if value is None:
-                    continue
-                if isinstance(value, Node):
-                    children.append(value)
-                else:
-                    children.extend(child for child in value if child is not None)
+            children = [child for _name, _index, child in node._child_edges()]
             stack.extend(reversed(children))
 
     def __repr__(self) -> str:  # pragma: no cover
