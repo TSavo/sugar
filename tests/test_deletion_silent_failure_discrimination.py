@@ -83,6 +83,10 @@ def _produced_keys(
 ) -> frozenset[str]:
     keys: set[str] = set()
     for node in ast.walk(function):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            for key in node.value.keys:
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    keys.add(key.value)
         targets: tuple[ast.expr, ...]
         if isinstance(node, ast.AugAssign):
             targets = (node.target,)
@@ -365,8 +369,8 @@ def consume(cm):
 
     live = _exclusive_unproduced_reads(
         producer_source=RECENSUS.read_text(encoding="utf-8"),
-        producer_function="_tally_cm_resolutions",
-        producer_container="buckets",
+        producer_function="_with_census_partition",
+        producer_container="__returned_mapping__",
         consumers=(
             (
                 str(RECENSUS.relative_to(ROOT)),
