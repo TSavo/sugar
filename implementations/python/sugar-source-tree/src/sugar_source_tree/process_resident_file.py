@@ -13,12 +13,11 @@ answers from residency; different bytes mint a different CID and miss.
 
 Boundary (load-bearing):
     Shared product is the **content-derived preparation** — SourceUnit +
-    MaterializeModule tree + unit construction_cache for that body. It is not a
+    MaterializeModule tree + unit construction_cache for that body, and the
+    **lexical import pass** (call/value rows) for that content. It is not a
     consumer workspace projection shell carrying another open's live seating
-    authority. Consumer ``construction_context`` seating tables that are bound
-    at first prepare of a CID remain the module's tables for that content;
-    seats are keyed by content coordinates, so additional descendants reuse
-    preparation rather than inventing a second body.
+    authority or reporter. Seat-bound receipts are minted per demand with the
+    caller's root/path; the pass product is not.
 
 Identity is not the key. ``h = h(p)``: the whole-file content CID *is* the key.
 """
@@ -61,10 +60,21 @@ _RESIDENT: collections.OrderedDict[str, ProcessResidentFileContext] = (
 # Teeth: prepare counts even after eviction from the LRU window
 _PREPARE_COUNTS: dict[str, int] = {}
 
+# §4 module temporal context: lexical import preparation (call + value rows).
+# Content-derived; not a consumer projection shell. Keyed by content CID plus
+# the module's package role (relative-import meaning), never by who asked.
+_LEXICAL: collections.OrderedDict[tuple, Any] = collections.OrderedDict()
+_LEXICAL_PREPARE_COUNTS: dict[str, int] = {}
+
 
 def prepare_count_for(source_cid: str) -> int:
-    """How many times this content CID has paid full prepare in this process."""
+    """How many times this content CID has paid full SourceFile prepare."""
     return int(_PREPARE_COUNTS.get(source_cid, 0))
+
+
+def lexical_prepare_count_for(source_cid: str) -> int:
+    """How many times this content CID has paid the lexical import walk."""
+    return int(_LEXICAL_PREPARE_COUNTS.get(source_cid, 0))
 
 
 def resident_size() -> int:
@@ -75,6 +85,8 @@ def clear_process_resident_files() -> None:
     """Test door: drop residency and prepare counters."""
     _RESIDENT.clear()
     _PREPARE_COUNTS.clear()
+    _LEXICAL.clear()
+    _LEXICAL_PREPARE_COUNTS.clear()
 
 
 def _remember(source_cid: str, ctx: ProcessResidentFileContext) -> None:
@@ -147,3 +159,66 @@ def source_file_from_identity(
         ),
     )
     return sf
+
+
+def _lexical_key(
+    source_cid: str,
+    module_is_package: bool,
+    module_identities: dict | None,
+) -> tuple:
+    """Content CID + package role + identity map — not seat/path spelling.
+
+    Protocol §4 keys preparation by content CID. Package role matters for
+    ``__init__.py`` vs module file of the same bytes; asker path does not.
+    """
+    identities = module_identities or {}
+    id_items = tuple(sorted((str(k), str(v)) for k, v in identities.items()))
+    return (source_cid, module_is_package, id_items)
+
+
+def get_or_prepare_lexical_import_pass(
+    module,
+    *,
+    root,
+    path,
+    source: str,
+    source_cid: str,
+    module_identities: dict | None = None,
+) -> Any:
+    """§4: lexical import pass once per content CID (+ package role).
+
+    Returns the content-derived ``_Pass`` product (rows, value_rows, outcomes).
+    Callers mint seat-bound receipts with their own root/path. The pass itself
+    is pure in file content + package role + identity map — not who asks.
+    """
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import (
+        _run_lexical_import_pass_on_module,
+    )
+
+    root_p = Path(root)
+    path_p = Path(path)
+    module_is_package = path_p.name == "__init__.py"
+    key = _lexical_key(source_cid, module_is_package, module_identities)
+    hit = _LEXICAL.get(key)
+    if hit is not None:
+        _LEXICAL.move_to_end(key)
+        return hit
+
+    _LEXICAL_PREPARE_COUNTS[source_cid] = (
+        _LEXICAL_PREPARE_COUNTS.get(source_cid, 0) + 1
+    )
+    runner = _run_lexical_import_pass_on_module(
+        module,
+        root=root_p,
+        path=path_p,
+        source=source,
+        source_cid=source_cid,
+        module_identities=module_identities,
+    )
+    _LEXICAL[key] = runner
+    _LEXICAL.move_to_end(key)
+    while len(_LEXICAL) > _resident_limit():
+        _LEXICAL.popitem(last=False)
+    return runner
