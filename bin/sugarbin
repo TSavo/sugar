@@ -708,15 +708,6 @@ stamp_for_filename() {
 
 # Hex body of a source stamp. Accepts blake3-512_<hex> (current, path-safe)
 # and legacy blake3-512:<hex>. Never leaves a `:` in the result.
-stamp_digest() {
-  local stamp="$1"
-  case "$stamp" in
-    blake3-512_*) printf '%s\n' "${stamp#blake3-512_}" ;;
-    blake3-512:*) printf '%s\n' "${stamp#blake3-512:}" ;;
-    *) printf '%s\n' "${stamp##*[:_]}" ;;
-  esac
-}
-
 artifact_name() {
   local identity="$1"
   printf '%s-%s-%s-%s\n' "$bin_name" "$(platform_key)" "$profile" "$(stamp_for_filename "$identity")"
@@ -816,14 +807,6 @@ if data.get("sha256") != actual:
 PY
 }
 
-github_repo() {
-  if [[ -n "${SUGAR_BINARY_REPO:-}" ]]; then
-    printf '%s\n' "$SUGAR_BINARY_REPO"
-    return 0
-  fi
-  gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || return 1
-}
-
 cache_dir() {
   printf '%s\n' "${SUGAR_BINARY_CACHE_DIR:-$HOME/.cache/sugar/binaries}"
 }
@@ -904,227 +887,6 @@ require_writable_build_root() {
   rm -f "$probe"
 }
 
-shelf_tag_for_stamp() {
-  local stamp="$1"
-  if [[ -n "${SUGAR_BINARY_SHELF_TAG:-}" ]]; then
-    printf '%s\n' "$SUGAR_BINARY_SHELF_TAG"
-    return 0
-  fi
-  local digest
-  digest="$(stamp_digest "$stamp")"
-  printf 'sugar-binary-shelf-v2-%s-%s-%.24s\n' "$(platform_key)" "$profile" "$digest"
-}
-
-shelf_has_complete_artifact() {
-  local shelf_assets="$1" name="$2"
-  { grep -Fxq "$name.gz" <<<"$shelf_assets" || grep -Fxq "$name" <<<"$shelf_assets"; } \
-    && grep -Fxq "$name.sugarbin.json" <<<"$shelf_assets" \
-    && grep -Fxq "$name.metadata.json" <<<"$shelf_assets"
-}
-
-shelf_asset_names() {
-  local shelf_tag="$1" repo="$2"
-  # Prefer the assets array shape; fall back if older gh returns the field bare.
-  gh release view "$shelf_tag" --repo "$repo" --json assets --jq '
-    if type == "object" and has("assets") then .assets[].name
-    elif type == "array" then .[].name
-    else empty end
-  ' 2>/dev/null || true
-}
-
-purge_incomplete_shelf_asset() {
-  local shelf_tag="$1" repo="$2" asset_name="$3" release_id payload ids id
-  release_id="$(gh api "repos/$repo/releases/tags/$shelf_tag" --jq .id 2>/dev/null)" || return 0
-  [[ -n "$release_id" ]] || return 0
-  payload="$(gh api --paginate --slurp "repos/$repo/releases/$release_id/assets?per_page=100" 2>/dev/null)" || return 0
-  ids="$(python3 -c '
-import json
-import sys
-
-name = sys.argv[1]
-pages = json.load(sys.stdin)
-for page in pages:
-    for asset in page:
-        if asset.get("name") == name and asset.get("state") == "starter":
-            print(asset["id"])
-' "$asset_name" <<<"$payload")"
-  for id in $ids; do
-    if gh api --method DELETE "repos/$repo/releases/assets/$id" >/dev/null 2>&1; then
-      log "removed incomplete starter asset $asset_name before retry"
-    fi
-  done
-}
-
-upload_shelf_file() {
-  local shelf_tag="$1" repo="$2" file="$3" stamp_short="$4"
-  local attempt=1 max_attempts=4 err asset_name
-  asset_name="$(basename "$file")"
-  while [[ "$attempt" -le "$max_attempts" ]]; do
-    # Content-addressed assets are immutable. A concurrent publisher winning
-    # this name is success, never permission to delete and replace its bytes.
-    if grep -Fxq "$asset_name" <<<"$(shelf_asset_names "$shelf_tag" "$repo")"; then
-      return 0
-    fi
-    # A release can be replaced between resolution and upload. Re-resolve (or
-    # recreate) it on every attempt instead of retrying a stale upload URL.
-    if ! ensure_shelf_release "$shelf_tag" "$repo" "$stamp_short"; then
-      log "upload attempt $attempt/$max_attempts could not resolve shelf release $shelf_tag"
-      sleep $((attempt * 2))
-      attempt=$((attempt + 1))
-      continue
-    fi
-    err="$(mktemp)"
-    if gh release upload "$shelf_tag" "$file" --repo "$repo" >"$err" 2>&1; then
-      rm -f "$err"
-      return 0
-    fi
-    # The upload and another publisher may race after the preflight listing.
-    # The immutable name appearing is sufficient evidence that work is done.
-    if grep -Fxq "$asset_name" <<<"$(shelf_asset_names "$shelf_tag" "$repo")"; then
-      rm -f "$err"
-      return 0
-    fi
-    # GitHub can accept every byte, leave the asset in its hidden `starter`
-    # state, and return 404. That object is not published immutable content;
-    # remove only this incomplete state so the next attempt has a clean name.
-    purge_incomplete_shelf_asset "$shelf_tag" "$repo" "$asset_name"
-    log "upload attempt $attempt/$max_attempts failed for $asset_name: $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
-    rm -f "$err"
-    sleep $((attempt * 2))
-    attempt=$((attempt + 1))
-  done
-  return 1
-}
-
-ensure_shelf_release() {
-  local shelf_tag="$1" repo="$2" stamp_short="$3"
-  local attempt=1 max_attempts=4 err
-  while [[ "$attempt" -le "$max_attempts" ]]; do
-    if gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1; then
-      return 0
-    fi
-    err="$(mktemp)"
-    if gh release create "$shelf_tag" \
-      --repo "$repo" \
-      --title "Sugar binary shelf $(platform_key) $profile $stamp_short" \
-      --notes "Content-addressed Sugar binaries for one source/platform/profile family." \
-      >"$err" 2>&1; then
-      rm -f "$err"
-      return 0
-    fi
-    # Race: peer created the same shelf tag between view and create.
-    if gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1; then
-      log "shelf release $shelf_tag appeared during create race; continuing"
-      rm -f "$err"
-      return 0
-    fi
-    log "create shelf attempt $attempt/$max_attempts failed for $shelf_tag: $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
-    rm -f "$err"
-    sleep $((attempt * 2))
-    attempt=$((attempt + 1))
-  done
-  return 1
-}
-
-publish_if_absent() {
-  local bin="$1" stamp="$2" name="$3" manifest
-  manifest="$(artifact_manifest_path "$bin")"
-  [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
-  command -v gh >/dev/null 2>&1 || { log "gh not found; cannot publish $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
-  local repo shelf_tag stamp_short
-  repo="$(github_repo)" || { log "gh repo identity unavailable; cannot publish $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
-  shelf_tag="$(shelf_tag_for_stamp "$stamp")"
-  stamp_short="$(stamp_digest "$stamp")"; stamp_short="${stamp_short:0:24}"
-  # Ensure the shelf release exists. Concurrent prepares can race create; treat
-  # "already exists" (view succeeds after create fails) as success.
-  if ! ensure_shelf_release "$shelf_tag" "$repo" "$stamp_short"; then
-    log "could not create shelf release $shelf_tag"
-    [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1
-  fi
-  local shelf_assets
-  shelf_assets="$(shelf_asset_names "$shelf_tag" "$repo")"
-  if shelf_has_complete_artifact "$shelf_assets" "$name"; then
-    log "shelf already has $name"
-    return 0
-  fi
-  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot publish compressed shelf artifact $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
-  local actor sha tmp asset meta
-  # GITHUB_TOKEN is an installation token and cannot read `/user`. Actions
-  # already supplies the initiating identity without another API round trip.
-  actor="${GITHUB_ACTOR:-${USER:-unknown}}"
-  sha="$(sha256_file "$bin")"
-  tmp="$(mktemp -d)"
-  asset="$tmp/$name.gz"
-  meta="$tmp/$name.metadata.json"
-  # Release uploads of 100+ MiB raw debug executables repeatedly strand a
-  # full-size `starter` asset and return 404. The shelf wire representation is
-  # compressed; the manifest and checksum remain over executable bytes.
-  gzip -9 -c "$bin" >"$asset"
-  python3 - "$meta" "$repo" "$actor" "$stamp" "$(artifact_name "$stamp")" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
-import json
-import sys
-from datetime import datetime, timezone
-
-path, repo, actor, stamp, artifact, platform, profile, sha256, binary = sys.argv[1:]
-with open(path, "w", encoding="utf-8") as out:
-    json.dump(
-        {
-            "artifact": artifact,
-            "repo": repo,
-            "actor": actor,
-            "buildStamp": stamp,
-            "platform": platform,
-            "profile": profile,
-            "sha256": sha256,
-            "source": binary,
-            "publishedAt": datetime.now(timezone.utc).isoformat(),
-        },
-        out,
-        indent=2,
-        sort_keys=True,
-    )
-    out.write("\n")
-PY
-  cp "$manifest" "$tmp/$name.sugarbin.json"
-  # Upload one file at a time. Multi-asset `gh release upload` can leave a
-  # partial shelf (metadata without binary) and still fail the whole batch;
-  # require-publish then hard-fails even though the runner has a good local bin.
-  local publish_status=0
-  upload_shelf_file "$shelf_tag" "$repo" "$asset" "$stamp_short" || publish_status=$?
-  if [[ "$publish_status" == 0 ]]; then
-    upload_shelf_file "$shelf_tag" "$repo" "$meta" "$stamp_short" || publish_status=$?
-  fi
-  if [[ "$publish_status" == 0 ]]; then
-    upload_shelf_file "$shelf_tag" "$repo" "$tmp/$name.sugarbin.json" "$stamp_short" || publish_status=$?
-  fi
-  rm -rf "$tmp"
-  # Race / eventual consistency: another runner may have completed the shelf.
-  shelf_assets="$(shelf_asset_names "$shelf_tag" "$repo")"
-  if shelf_has_complete_artifact "$shelf_assets" "$name"; then
-    log "published $name as $actor to $shelf_tag"
-    return 0
-  fi
-  if [[ "$publish_status" == 0 ]]; then
-    log "published $name as $actor to $shelf_tag (assets not yet listed)"
-    return 0
-  fi
-  log "publish failed for $name in $shelf_tag"
-  [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]]
-}
-
-verify_attestation_if_present() {
-  local bin="$1" stamp="$2"
-  command -v gh >/dev/null 2>&1 || return 0
-  local repo
-  repo="$(github_repo)" || return 0
-  local head
-  head="$(attestation_git_head)"
-  [[ -n "$head" ]] || { log "attestation skipped for $(basename "$bin"): git head unavailable; stamp tooth remains decisive"; return 0; }
-  gh attestation verify "$bin" --repo "$repo" --source-digest "$head" >/dev/null 2>&1 \
-    && log "attestation verified for $(basename "$bin")" \
-    || log "attestation absent or unverifiable for $(basename "$bin"); stamp tooth remains decisive"
-}
-
 materialize_cached_artifact() {
   local cached="$1" stamp="$2" identity="$3"
   local cached_manifest target target_manifest staged staged_manifest
@@ -1141,56 +903,6 @@ materialize_cached_artifact() {
   mv -f "$staged_manifest" "$target_manifest"
   verify_artifact_manifest "$target" "$stamp" "$identity" "materialized cache artifact" || return 1
   printf '%s\n' "$target"
-}
-
-pull_from_shelf() {
-  local stamp="$1" identity="$2" name="$3"
-  local dir download_dir candidate candidate_dir manifest
-  dir="$(cache_dir)"
-  candidate_dir="$dir/$name"
-  candidate="$candidate_dir/$bin_name"
-  manifest="$(artifact_manifest_path "$candidate")"
-  if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
-    log "prebuilt cache hit for $name"
-    materialize_cached_artifact "$candidate" "$stamp" "$identity"
-    return 0
-  fi
-  [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
-  command -v gh >/dev/null 2>&1 || { log "gh not found; skipping shelf pull"; return 1; }
-  local repo shelf_tag found=0
-  repo="$(github_repo)" || { log "gh repo identity unavailable; skipping shelf pull"; return 1; }
-  download_dir="$dir/.downloads/$name"
-  shelf_tag="$(shelf_tag_for_stamp "$stamp")"
-  local -a shelf_tags=("$shelf_tag")
-  [[ -n "${SUGAR_BINARY_SHELF_TAG:-}" || "$shelf_tag" == "$legacy_shelf_tag" ]] || shelf_tags+=("$legacy_shelf_tag")
-  local candidate_tag
-  for candidate_tag in "${shelf_tags[@]}"; do
-    rm -rf "$download_dir"
-    mkdir -p "$download_dir"
-    if gh release download "$candidate_tag" --repo "$repo" --pattern "$name" --pattern "$name.gz" --pattern "$name.sugarbin.json" --dir "$download_dir" >/dev/null 2>&1; then
-      found=1
-      break
-    fi
-  done
-  if [[ "$found" != 1 ]]; then
-    log "shelf miss for $name"
-    return 1
-  fi
-  local downloaded="$download_dir/$name" downloaded_gz="$download_dir/$name.gz" downloaded_manifest="$download_dir/$name.sugarbin.json"
-  if [[ ! -f "$downloaded" && -f "$downloaded_gz" ]]; then
-    command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack shelf artifact $name"; return 1; }
-    gzip -dc "$downloaded_gz" >"$downloaded"
-  fi
-  [[ -f "$downloaded" && -f "$downloaded_manifest" ]] || { log "shelf assets lack a verifiable executable manifest for $name"; return 1; }
-  chmod +x "$downloaded"
-  mkdir -p "$candidate_dir"
-  cp "$downloaded" "$candidate"
-  cp "$downloaded_manifest" "$manifest"
-  chmod 0755 "$candidate_dir" "$candidate"
-  chmod 0644 "$manifest"
-  verify_artifact_manifest "$candidate" "$stamp" "$identity" "downloaded shelf artifact" || return 1
-  verify_attestation_if_present "$candidate" "$stamp"
-  materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }
 
 build_from_source() {
@@ -1341,8 +1053,9 @@ except OSError:
 # others must have r-x on the cell directory
 if (cell_mode & 0o005) != 0o005:
     raise SystemExit(1)
-# others must have r-- on each artifact
-if any((mode & 0o004) != 0o004 for mode in artifact_modes):
+# others must have r-- on each artifact, and must NOT have write (CAS bytes
+# are immutable; 0666 is the lying "shared but rewriteable" face).
+if any((mode & 0o006) != 0o004 for mode in artifact_modes):
     raise SystemExit(1)
 PY
 }
@@ -1444,17 +1157,25 @@ publish_to_filesystem_shelf() {
   local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta shelf_root content_key shelf_name
   manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
-  # Cell address = h(payload). For binaries, hash the executable bytes (not
-  # sourceStamp). sourceStamp is recorded in the stamp ref and metadata only.
-  # Leaf name for CAS is the binary name only — embedding sourceStamp in the
-  # leaf would re-introduce stamp into the address (same bytes, two cells).
+  # Cell address = h(payload) for EVERY kind. Never trust a caller-supplied
+  # content key as the address without re-hashing the bytes at this door —
+  # filing p under h'≠h(p) is the publish-time form of the CAS lie.
+  # sourceStamp (binary) remains a mutable stamp→content ref only.
+  # Leaf name for binary CAS is the binary name only — embedding sourceStamp
+  # in the leaf would re-introduce stamp into the address.
+  content_key="$(blake3_512_file "$bin")" || return 1
   if [[ "$kind" == binary ]]; then
-    content_key="$(blake3_512_file "$bin")" || return 1
     shelf_name="$bin_name"
   else
-    # Non-binary: caller already passes content key as stamp.
-    content_key="$stamp"
     shelf_name="$name"
+    # Caller may pass a claimed content key as `stamp`. It is testimony to
+    # check, not the address. Normalize path-safe `_` vs legacy `:` form.
+    local claimed="$stamp"
+    claimed="${claimed/blake3-512:/blake3-512_}"
+    if [[ -n "$claimed" && "$claimed" != "$content_key" ]]; then
+      log "crime=cas-publish-key-payload-mismatch owner=bin/sugarbin claimed=$claimed payload=$content_key illegal shape=non-binary publish trusted a caller content key that is not h(payload) replacement=pass the blake3-512 of the payload bytes, or omit the claim and let publish hash"
+      return 1
+    fi
   fi
   cell="$(filesystem_shelf_cell "$kind" "$content_key" "$shelf_name" "$runtime")"
   if filesystem_shelf_complete "$cell" "$shelf_name"; then
@@ -1855,13 +1576,21 @@ PY
 }
 
 publish_payload_artifact() {
-  local kind="$1" key="$2" runtime="$3" input="$4" name="$5" staging payload status
+  local kind="$1" key="$2" runtime="$3" input="$4" name="$5" staging payload status actual_key claimed
   [[ -f "$input" ]] || { log "artifact input is not a file: $input"; return 1; }
   staging="$(mktemp -d "${TMPDIR:-/tmp}/sugarbin-artifact-publish.XXXXXX")"
   payload="$staging/$name"
   cp "$input" "$payload"
-  write_payload_artifact_manifest "$payload" "$kind" "$key" "$runtime" || { status=$?; rm -rf "$staging"; return "$status"; }
-  publish_to_filesystem_shelf "$payload" "$key" "$name" "$kind" "$runtime"
+  # ONE DOOR: address is h(payload). Caller key is checked, not believed.
+  actual_key="$(blake3_512_file "$payload")" || { rm -rf "$staging"; return 1; }
+  claimed="${key/blake3-512:/blake3-512_}"
+  if [[ "$claimed" != "$actual_key" ]]; then
+    log "crime=cas-publish-key-payload-mismatch owner=bin/sugarbin claimed=$claimed payload=$actual_key illegal shape=artifact publish trusted a caller content key that is not h(payload) replacement=pass the blake3-512 of the payload bytes"
+    rm -rf "$staging"
+    return 1
+  fi
+  write_payload_artifact_manifest "$payload" "$kind" "$actual_key" "$runtime" || { status=$?; rm -rf "$staging"; return "$status"; }
+  publish_to_filesystem_shelf "$payload" "$actual_key" "$name" "$kind" "$runtime"
   status=$?
   rm -rf "$staging"
   return "$status"
@@ -1888,7 +1617,16 @@ pull_payload_artifact() {
     log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
     return 2
   fi
-  if ! verify_payload_artifact_manifest "$payload" "$manifest" "$kind" "$key" "$runtime"; then
+  # CAS membership: payload under address h must satisfy h(payload)=h.
+  local actual_key claimed
+  actual_key="$(blake3_512_file "$payload")" || { rm -rf "$staging"; return 2; }
+  claimed="${key/blake3-512:/blake3-512_}"
+  if [[ "$actual_key" != "$claimed" ]]; then
+    log "crime=cas-address-payload-mismatch owner=bin/sugarbin cell=$cell address=$claimed payload=$actual_key replacement=evict the CAS cell; a content-addressed shelf cannot host p under h≠h(p)"
+    rm -rf "$staging"
+    return 2
+  fi
+  if ! verify_payload_artifact_manifest "$payload" "$manifest" "$kind" "$claimed" "$runtime"; then
     rm -rf "$staging"
     log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
     return 2

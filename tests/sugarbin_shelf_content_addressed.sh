@@ -29,10 +29,19 @@ if grep -E 'printf.*platform_key.*profile.*stamp_for_filename "\$stamp".*\$name'
   echo 'binary filesystem_shelf_cell still stamps path by sourceStamp' >&2
   exit 1
 fi
-# publish computes content key from payload bytes
+# publish computes content key from payload bytes for EVERY kind (not only binary)
 publish_body="$(sed -n '/^publish_to_filesystem_shelf()/,/^evict_shelf_cell()/p' "$sugarbin")"
 grep -Fq 'blake3_512_file' <<<"$publish_body" || {
   echo 'publish does not content-hash the payload' >&2
+  exit 1
+}
+# C: non-binary must not trust content_key="$stamp" without re-hash refuse.
+if grep -Fq 'content_key="$stamp"' <<<"$publish_body"; then
+  echo 'publish still sets content_key from caller stamp without re-hash' >&2
+  exit 1
+fi
+grep -Fq 'crime=cas-publish-key-payload-mismatch' "$sugarbin" || {
+  echo 'missing publish-time CAS key/payload mismatch crime' >&2
   exit 1
 }
 grep -Fq 'write_filesystem_shelf_stamp_ref' <<<"$publish_body" || {
