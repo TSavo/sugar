@@ -2579,6 +2579,15 @@ class Node(Typed):
         """Project parser machinery before constructed-value testimony."""
         return value
 
+    def _authenticated_new_constructor_shape(self):
+        """Source-owned ``__new__`` allocation shape, or None.
+
+        Only ``ClassDef`` implements a real shape. Every other node answers
+        None so callers never AttributeError when an allocation door is
+        mis-routed to a non-class definition (L0a / construct-or-panic).
+        """
+        return None
+
     def _construct_sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
