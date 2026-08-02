@@ -96,7 +96,8 @@ def test_process_one_axis_binds_corpus_and_host_cache() -> None:
     assert '"$PANDAS_CORPUS"' in text or "'$PANDAS_CORPUS'" in text
     assert "--out-dir" in text
     # Host-durable cache — not workspace-only (job-private under parallel jobs).
-    assert "HOME" in text and "process-floor-terminals" in text
+    assert "process-floor-terminals" in text
+    assert "GITHUB_WORKSPACE" in text or "HOME" in text
 
 
 def test_enrollment_missing_axis_is_unmeasured(tmp_path: Path) -> None:

@@ -74,19 +74,33 @@ jobs:
         uses: ./.github/actions/python-test-environment-from-wheelhouse
         with:
           wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
-      # Host path ($HOME/...) only shares when matrix jobs land the same
-      # self-hosted user. Fleet-wide: restore/save CA terminal shelf via
+      # Local path is workspace-writable (HOME/.cache is not always mkdir-able
+      # on self-hosted — run 30731778056). Fleet-wide: restore/save via
       # actions/cache. Key is tip; MeasurementKey still gates corpus/file
       # content so a restored shelf cannot serve wrong population.
+      # CA shelf path must be WRITABLE by the runner user.
+      # Run 30731778056: mkdir "${HOME}/.cache/sugar/..." → Permission denied
+      # under /home/runner/.cache on self-hosted (HOME not a safe cache root).
+      # Fleet share is actions/cache restore/save, not host HOME — so use the
+      # job workspace (always writable) as the local mount point.
       - name: Resolve process-floor CA shelf path
         id: shelf
         shell: bash
         run: |
           set -euo pipefail
-          dir="${HOME}/.cache/sugar/process-floor-terminals"
+          # Prefer explicit pin; else workspace-local (writable on every runner).
+          if [ -n "${SUGAR_PROCESS_FLOOR_CACHE_DIR:-}" ] && [ "${SUGAR_PROCESS_FLOOR_CACHE_DIR}" != "off" ]; then
+            dir="${SUGAR_PROCESS_FLOOR_CACHE_DIR}"
+          else
+            dir="${GITHUB_WORKSPACE}/.cache/sugar/process-floor-terminals"
+          fi
+          echo "process-floor shelf phase=resolve status=start dir=$dir home=${HOME:-} workspace=${GITHUB_WORKSPACE}"
           mkdir -p "$dir"
+          # Prove write (Permission denied surfaces here with a named phase, not later).
+          touch "$dir/.write-check" && rm -f "$dir/.write-check"
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "SUGAR_PROCESS_FLOOR_CACHE_DIR=$dir" >> "$GITHUB_ENV"
+          echo "process-floor shelf phase=resolve status=done dir=$dir"
       - name: Restore process-floor CA terminal shelf (fleet)
         uses: actions/cache/restore@v4
         with:
@@ -98,7 +112,7 @@ jobs:
         id: floor
         shell: bash
         env:
-          # Tip pins the CA terminal key. Dir from shelf step (HOME + GHA cache).
+          # Tip pins the CA terminal key. Dir from shelf step (workspace + GHA cache).
           SUGAR_MEASUREMENT_TIP: ${{ github.sha }}
           SUGAR_PROCESS_FLOOR_CACHE_DIR: ${{ steps.shelf.outputs.dir }}
         run: |
