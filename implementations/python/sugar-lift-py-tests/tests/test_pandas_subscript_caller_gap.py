@@ -329,7 +329,7 @@ def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> Non
     assert isinstance(halted, Halted)
     # ListValue[1] on len-1 list is IndexError (not TypeError). Presence-only
     # used to green either; the value pin must name IndexError or it is a false tooth.
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert halted.effect.exception_type_coordinate == _Expected("IndexError").identity
     assert halted.effect.occurrence == str(carrier.demand.source_node.wire())
 
 

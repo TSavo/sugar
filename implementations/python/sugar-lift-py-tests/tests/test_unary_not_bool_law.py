@@ -53,6 +53,13 @@ from sugar_source_tree.nodes import UnaryOp
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+
+def _identity(name: str):
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const(name)],
+    )
+
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"

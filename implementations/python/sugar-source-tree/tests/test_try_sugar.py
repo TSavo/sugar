@@ -34,6 +34,17 @@ def _fn(src):
     return next(source_file_with_preconstruction(Path(path)).functions())
 
 
+def _exception_identity(function, name: str):
+    occurrence = next(
+        node
+        for node in function.walk()
+        if node.kind == "Name" and node.id == name
+    )
+    identity = function.unit.exception_type_identity(occurrence)
+    assert identity is not None
+    return identity
+
+
 def _incompletes(v):
     from sugar_lift_py_tests.outcome import Incomplete
 
@@ -227,20 +238,19 @@ def test_bare_reraise_reemits_the_exact_inflight_raise():
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    out = (
-        _fn(
-            "def A():\n"
-            "    try:\n"
-            "        raise ValueError\n"
-            "    except ValueError:\n"
-            "        raise\n"
-        )
-        .sugar()
-        .desugar()
+    function = _fn(
+        "def A():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError:\n"
+        "        raise\n"
     )
+    out = function.sugar().desugar()
     assert isinstance(out, Incomplete)
     assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_type_coordinate == _identity('ValueError')
+    assert out.effect.exception_type_coordinate == _exception_identity(
+        function, "ValueError"
+    )
     assert out.effect.exception_name == "ValueError"
     assert out.effect.occurrence.endswith(":6:8")
 
@@ -513,24 +523,23 @@ def test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit():
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    out = (
-        _fn(
-            "class ArbitraryCleanupFault(Exception):\n"
-            "    pass\n"
-            "def A():\n"
-            "    for item in [1]:\n"
-            "        try:\n"
-            "            break\n"
-            "        finally:\n"
-            "            raise ArbitraryCleanupFault\n"
-            "    return 11\n"
-        )
-        .sugar()
-        .desugar()
+    function = _fn(
+        "class ArbitraryCleanupFault(Exception):\n"
+        "    pass\n"
+        "def A():\n"
+        "    for item in [1]:\n"
+        "        try:\n"
+        "            break\n"
+        "        finally:\n"
+        "            raise ArbitraryCleanupFault\n"
+        "    return 11\n"
     )
+    out = function.sugar().desugar()
     assert isinstance(out, Incomplete)
     assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_type_coordinate == _identity('ArbitraryCleanupFault')
+    assert out.effect.exception_type_coordinate == _exception_identity(
+        function, "ArbitraryCleanupFault"
+    )
     assert out.effect.exception_name == "ArbitraryCleanupFault"
 
 

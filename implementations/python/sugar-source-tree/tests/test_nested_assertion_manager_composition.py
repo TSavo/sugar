@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.context_manager_contract import (
     CallParameterV1,
     EffectBoundarySemanticsV1,

@@ -15,6 +15,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import LoopControlEffect, RaiseEffect
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract

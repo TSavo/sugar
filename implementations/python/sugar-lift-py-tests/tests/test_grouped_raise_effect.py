@@ -1,3 +1,6 @@
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
+
+
 def _identity(module: str, name: str):
     from sugar_lift_py_tests.ir import ctor, str_const
 
