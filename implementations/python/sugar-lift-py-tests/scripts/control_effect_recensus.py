@@ -81,10 +81,10 @@ debugging a named stall needs the full stack flood.
 
 from __future__ import annotations
 
-# Worker / walk only. Sole seal door is compose_control_effect_board.py
-# (SCOREBOARD_AUTHORITY = True). Serial seal retired: this module never mints
-# measurementClass=control-effect-recensus; it emits terminals (+ optional
-# partials) and always seals through compose (k=1 or LPT N).
+# Terminals come from sugar.enumerate only (recensus_enumerate_consumer).
+# Sole seal door is compose_control_effect_board.py (SCOREBOARD_AUTHORITY=True).
+# _measure_file is a RETIRED side door — not on the production path.
+# Law: protocol/specs/2026-08-02-recensus-as-enumerate-consumer.md
 SCOREBOARD_AUTHORITY = False
 
 _PANDAS_3_0_3_AGGREGATE_HASH = (
@@ -606,309 +606,18 @@ def _measure_file(
     contract_refs=None,
     on_function: "Callable[[int, int, str, float | None], None] | None" = None,
 ) -> dict[str, Any]:
-    from sugar_lift_py_tests.audit_only import collect_construction_panic
-    from sugar_lift_py_tests.desugar_axis import DesugarAxis
-    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
-    from sugar_lift_python_source.source_oracle import workspace_path_source
-    from sugar_source_tree.file_open_profile import (
-        begin_file_open_profile,
-        end_file_open_profile,
-        summarize_module_materialize,
+    """RETIRED side door — not on the scoreboard path.
+
+    Production terminals: ``recensus_enumerate_consumer.measure_file_via_enumerate``
+    (sugar.enumerate only). Law:
+    ``protocol/specs/2026-08-02-recensus-as-enumerate-consumer.md``.
+    """
+    raise RuntimeError(
+        "control_effect_recensus._measure_file is a retired side door "
+        "(protocol/specs/2026-08-02-recensus-as-enumerate-consumer.md). "
+        "Use sugar.enumerate via recensus_enumerate_consumer; "
+        "do not re-open a private SourceFile walk."
     )
-    from sugar_source_tree.panic import SugarNotWritten
-    from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
-
-    functions_total = 0
-    functions_clean = 0
-    functions_enumerated = 0
-    families: Counter[str] = Counter()
-    construction_seen: set[tuple[str, str, object, object]] = set()
-    backend_defects: Counter[str] = Counter()
-    cm_resolutions: Counter[str] = Counter()
-    unrecognized_cm_kinds: Counter[str] = Counter()
-    # Populate-path SNWs (often transitive / CM derivation) stay loud here —
-    # they must NEVER erase a successful SourceFile function denominator.
-    populate_residuals: list[dict[str, Any]] = []
-    desugar_axis = DesugarAxis()
-    # Phase timers — measured live and PERSISTED (running-counts + row), not
-    # only painted on the progress bar and thrown away.
-    timing: dict[str, Any] = {
-        "t_context_s": 0.0,
-        "t_open_s": 0.0,
-        "t_populate_s": 0.0,
-        "t_cm_tally_s": 0.0,
-        "t_enumerate_s": 0.0,
-        "t_sugar_loop_s": 0.0,
-        "t_gap_tally_s": 0.0,
-        "slowest_fn": None,
-        "slowest_fn_s": 0.0,
-        "sugar_fn_count": 0,
-    }
-    if workspace_root is None:
-        # No silent ``path.parent``. That default made a one-file run derive its
-        # demand table from a DIFFERENT tree than the full run, so the same file
-        # measured alone and measured in the corpus produced different With
-        # resolutions. A bounded run must inherit the corpus root, or not run.
-        raise ValueError(
-            "control_effect_recensus._measure_file requires an explicit "
-            "workspace_root: the demand table must come from the corpus root, "
-            "never from the measured file's parent directory"
-        )
-    root = workspace_root
-    # The demand table comes from the corpus root; the LOCUS is stated against
-    # the root its seats were recorded against. Same value for a first-party
-    # tree, different for an installed one.
-    address_root = locus_root if locus_root is not None else workspace_root
-
-    def tally_construction(
-        kind: str, node: object | None = None, line: object = "?"
-    ) -> None:
-        key = _occurrence_key(kind, relative, node=node, line=line)
-        if key in construction_seen:
-            return
-        construction_seen.add(key)
-        families[kind] += 1
-
-    def construct():
-        nonlocal functions_total, functions_clean, functions_enumerated
-        reporter = CollectingReporter()
-        # Fresh context per file so source_derived refs stay file-local; the
-        # demand/gap table (contract_refs) may be shared across the census.
-        t0 = time.perf_counter()
-        construction_context = tree_construction_context_for_workspace(
-            root, contract_refs=contract_refs
-        )
-        timing["t_context_s"] = round(time.perf_counter() - t0, 6)
-
-        # Split open vs populate so a slow file names which phase owns the 85s.
-        # Same production path as open_source_file_for_construction; timed.
-        t0 = time.perf_counter()
-        try:
-            source_file = SourceFile(
-                workspace_path_source(str(path), root=str(address_root)),
-                reporter=reporter,
-                construction_context=construction_context,
-            )
-        except SugarNotWritten as gap:
-            timing["t_open_s"] = round(time.perf_counter() - t0, 6)
-            tally_construction(type(gap).__name__, line=0)
-            return reporter
-        timing["t_open_s"] = round(time.perf_counter() - t0, 6)
-
-        t0 = time.perf_counter()
-        try:
-            from sugar_lift_python_source.manager_summary_derivation import (
-                populate_source_derived_resource_refs,
-            )
-
-            populate_source_derived_resource_refs(
-                source_file, root=address_root, path=path
-            )
-        except SugarNotWritten as gap:
-            # Populate can SNW on a TRANSITIVE module (decorator publication,
-            # pytest attribute, …) AFTER SourceFile already constructed this
-            # file's functions. Returning here used to bank functionsTotal=0
-            # for a file that just built ~50 functions (#7060 night finding:
-            # 708/1284 zero-function rows). Keep the refusal LOUD as a named
-            # populate residual; do NOT discard the successful SourceFile.
-            timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
-            owner = str(getattr(gap, "owner", None) or type(gap).__name__)
-            blame = getattr(gap, "blame", None)
-            blame_line: object = 0
-            blame_file = relative
-            if blame is not None:
-                unit = getattr(blame, "unit", None)
-                if unit is not None and getattr(unit, "filename", None):
-                    blame_file = str(unit.filename)
-                span = getattr(blame, "line_col_span", None)
-                if span is not None:
-                    try:
-                        span_v = span() if callable(span) else span
-                        blame_line = getattr(span_v, "start_line", 0) or 0
-                    except Exception:  # noqa: BLE001 — best-effort locus
-                        blame_line = 0
-            residual = {
-                "phase": "populate",
-                "owner": owner,
-                "observed": str(getattr(gap, "observed", None) or gap),
-                "requested": str(getattr(gap, "requested", None) or ""),
-                "fix": str(getattr(gap, "fix", None) or ""),
-                "blameFile": blame_file,
-                "blameLine": blame_line,
-            }
-            populate_residuals.append(residual)
-            # Family key is owner-qualified so the gap stays named and loud —
-            # never a silent zero-function outcome.
-            tally_construction(
-                f"populate:{owner}",
-                line=blame_line,
-            )
-            # Fall through: enumerate functions this SourceFile already holds.
-        else:
-            timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
-
-        # Effective resolution set for THIS source unit only: source-derived
-        # over contract_refs (same door as With construction). Never tally the
-        # whole shared provisional table without source_cid — that multiplies.
-        # After a populate residual the CM table may be partial; still tally
-        # what is present — partial CM residual is not a zero-function lie.
-        t0 = time.perf_counter()
-        file_cm_resolutions, file_unrecognized_kinds = _tally_cm_resolutions(
-            construction_context,
-            source_cid=source_file.unit.source_cid,
-        )
-        cm_resolutions.update(file_cm_resolutions)
-        unrecognized_cm_kinds.update(file_unrecognized_kinds)
-        timing["t_cm_tally_s"] = round(time.perf_counter() - t0, 6)
-
-        # Materialize the function population BEFORE the per-function walk.
-        # ConstructionPanic is BaseException and escapes this loop; if we
-        # increment functions_total inside the loop, a mid-file panic freezes a
-        # PARTIAL denominator that is later summed into the board, and Clean%
-        # is computed over a silently shrunken set. The full declared count is
-        # the denominator; enumeration progress is a separate measurement.
-        t0 = time.perf_counter()
-        declared_functions = tuple(source_file.functions())
-        timing["t_enumerate_s"] = round(time.perf_counter() - t0, 6)
-        functions_total = len(declared_functions)
-        functions_enumerated = 0
-        t_sugar = time.perf_counter()
-        for function in declared_functions:
-            functions_enumerated += 1
-            try:
-                span = function.line_col_span()
-                line: object = span.start_line
-                where = f"{relative}:{span.start_line}:{span.start_col}"
-            except Exception:  # noqa: BLE001 -- name is best-effort display
-                line = "?"
-                where = f"{relative}:?"
-            fn_name = f"{getattr(function, 'name', '?')}:{line}"
-            # Announce the function BEFORE constructing it (elapsed=None), so a
-            # hang shows the exact function it is stuck on -- not the one before.
-            if on_function is not None:
-                on_function(functions_enumerated - 1, functions_clean, fn_name, None)
-            t_fn = time.perf_counter()
-            try:
-                sugar = function.sugar()
-                functions_clean += 1
-            except SugarNotWritten:
-                # Do NOT tally type here — report_gap already recorded the
-                # occurrence on the reporter. Catch+reporter double-tally is
-                # what turned 196 With gaps into a false 392.
-                sugar = None
-            if sugar is not None:
-                desugar_axis.measure(sugar, where=where)
-            fn_s = time.perf_counter() - t_fn
-            timing["sugar_fn_count"] = functions_enumerated
-            if fn_s >= float(timing["slowest_fn_s"] or 0.0):
-                timing["slowest_fn_s"] = round(fn_s, 6)
-                timing["slowest_fn"] = fn_name
-            # Report completion WITH this function's own construction time, so
-            # `last=` is per-function and a slow/blowup function is obvious.
-            if on_function is not None:
-                on_function(functions_enumerated, functions_clean, fn_name, fn_s)
-        timing["t_sugar_loop_s"] = round(time.perf_counter() - t_sugar, 6)
-        # Sole construction-gap source: reporter occurrences, site-deduped.
-        # BackendDefect is table hygiene — own counter, never construction R.
-        t0 = time.perf_counter()
-        for node, panic in reporter.gaps:
-            kind = type(panic).__name__
-            if kind == "BackendDefect" or "BackendDefect" in kind:
-                backend_defects[_backend_defect_key(panic)] += 1
-                continue
-            tally_construction(kind, node=node)
-        timing["t_gap_tally_s"] = round(time.perf_counter() - t0, 6)
-        return reporter
-
-    profile_bag = begin_file_open_profile()
-    try:
-        _reporter, panic_row = collect_construction_panic(relative, construct)
-    finally:
-        end_file_open_profile()
-    module_summary = summarize_module_materialize(profile_bag)
-    timing["module_materialize"] = module_summary
-    # Explicit materialize wall (sum of materialize_module calls). Nested inside
-    # populate/open wall-clock, but first-class so running-counts answers
-    # "rebuilds" without digging module_materialize.top.
-    timing["t_materialize_s"] = float(module_summary.get("materialize_s") or 0.0)
-    timing["materialize_calls"] = int(module_summary.get("materializeCalls") or 0)
-    # Dominant phase for one-line cause naming.
-    phase_seconds = {
-        "context": float(timing["t_context_s"]),
-        "open": float(timing["t_open_s"]),
-        "populate": float(timing["t_populate_s"]),
-        "materialize": float(timing["t_materialize_s"]),
-        "cm_tally": float(timing["t_cm_tally_s"]),
-        "enumerate": float(timing["t_enumerate_s"]),
-        "sugar_loop": float(timing["t_sugar_loop_s"]),
-        "gap_tally": float(timing["t_gap_tally_s"]),
-    }
-    dominant = max(phase_seconds.items(), key=lambda item: item[1])
-    timing["dominant_phase"] = dominant[0]
-    timing["dominant_phase_s"] = round(dominant[1], 4)
-
-    # Two quantities, never one column: resolution residual (R-bearing) and AST
-    # site prevalence (denominator, never R).
-    resolution_row = {
-        "cmResolutions": dict(cm_resolutions),
-        "unrecognizedCmResolutionKinds": dict(unrecognized_cm_kinds),
-        "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
-        "astSites": dict(_ast_site_prevalence(path)),
-    }
-    functions_not_enumerated = max(0, functions_total - functions_enumerated)
-    function_accounting = {
-        "functionsTotal": functions_total,
-        "functionsClean": functions_clean,
-        "functionsEnumerated": functions_enumerated,
-        "functionsNotEnumerated": functions_not_enumerated,
-        "functionsEnumerationComplete": functions_not_enumerated == 0
-        and (panic_row is None or functions_total == functions_enumerated),
-    }
-    # Populate residuals are first-class: CM/derivation gaps that must stay
-    # loud without rewriting the function denominator to zero.
-    populate_row = {
-        "populateResiduals": list(populate_residuals),
-        "R_populate_residuals": len(populate_residuals),
-    }
-    timing_row = {"timing": timing}
-    if panic_row is not None:
-        # File-level ConstructionPanic is BaseException: it escapes construct()
-        # via collect_construction_panic and never lands in reporter.gaps, so
-        # tally_construction never sees it. Enroll it here — the family set is
-        # derived from what measure actually observed, not invented at aggregate.
-        panic_families = dict(families)
-        panic_families["ConstructionPanic"] = (
-            int(panic_families.get("ConstructionPanic") or 0) + 1
-        )
-        return {
-            "category": "construction-panic",
-            "panic": {
-                "file": relative,
-                "type": "ConstructionPanic",
-                "message": panic_row.message,
-                "gap": panic_row.info,
-            },
-            **function_accounting,
-            "families": panic_families,
-            "backendDefects": dict(backend_defects),
-            "R_backend_defects": sum(backend_defects.values()),
-            **populate_row,
-            **resolution_row,
-            **desugar_axis.row(),
-            **timing_row,
-        }
-    return {
-        "category": "completed",
-        **function_accounting,
-        "families": dict(families),
-        "backendDefects": dict(backend_defects),
-        "R_backend_defects": sum(backend_defects.values()),
-        **populate_row,
-        **resolution_row,
-        **desugar_axis.row(),
-        **timing_row,
-    }
 
 
 def main() -> int:
@@ -1512,13 +1221,16 @@ def main() -> int:
                     _set_bars(post, refresh=True)
 
                 try:
-                    row = _measure_file(
-                        path,
-                        relative=relative,
-                        workspace_root=workspace_root,
-                        locus_root=locus_root,
-                        contract_refs=contract_refs,
-                        on_function=_on_function,
+                    # AUTHORITY: sugar.enumerate only. No private SourceFile walk.
+                    # workspace_root for enumerate is the corpus root; at.file is
+                    # the path relative to that root (not the pin-prefixed key).
+                    from recensus_enumerate_consumer import (
+                        measure_file_via_enumerate,
+                    )
+
+                    row = measure_file_via_enumerate(
+                        workspace_root=corpus_root,
+                        file_rel=relative,
                     )
                 except (ImportError, AttributeError) as error:
                     # An arm that cannot resolve its dispatch target is UNWRITTEN,
