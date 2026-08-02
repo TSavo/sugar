@@ -170,8 +170,41 @@ def _silence_console_logging() -> None:
     logging.lastResort = None  # type: ignore[assignment]
 
 
+class _EngineStdoutHeartbeat(logging.Handler):
+    """Mirror engine log activity to the job log without TTY gating.
+
+    Full JSONL stays on disk (SUGAR_ENGINE_LOG). CI needs a live heartbeat so a
+    long lift is not a silent 95% CPU wedge. Rate-limited to avoid flooding.
+    """
+
+    def __init__(self, *, min_interval_s: float = 2.0) -> None:
+        super().__init__()
+        self._min_interval_s = min_interval_s
+        self._last_emit = 0.0
+        self._suppressed = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        now = time.monotonic()
+        if now - self._last_emit < self._min_interval_s:
+            self._suppressed += 1
+            return
+        self._last_emit = now
+        try:
+            msg = self.format(record)
+            extra = (
+                f" suppressed={self._suppressed}" if self._suppressed else ""
+            )
+            self._suppressed = 0
+            print(
+                f"RECENSUS ENGINE heartbeat{extra} {msg[:240]}",
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001
+            self.handleError(record)
+
+
 def _configure_engine_log(path: Path) -> None:
-    """Engine JSONL only — never stdout/stderr."""
+    """Engine JSONL on disk + rate-limited stdout heartbeat for CI job logs."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # Prefer the kit's own sink; also pin env so late imports see it.
     os.environ["SUGAR_ENGINE_LOG"] = str(path.resolve())
@@ -185,6 +218,10 @@ def _configure_engine_log(path: Path) -> None:
     engine_log.configure_live_log(str(path.resolve()))
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
+    # SCOREBOARD_AUTHORITY: never leave engine heartbeats file-only in CI.
+    heartbeat = _EngineStdoutHeartbeat(min_interval_s=2.0)
+    heartbeat.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(heartbeat)
 
 
 def _occurrence_key(
@@ -695,8 +732,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--progress-stdout",
-        action="store_true",
-        help="also paint tqdm on this process's stderr (still write --progress)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "mirror progress heartbeats to stdout (default: ON). "
+            "SCOREBOARD_AUTHORITY never TTY-gates this — CI is not a TTY. "
+            "Use --no-progress-stdout only for interactive local quiet."
+        ),
     )
     args = parser.parse_args()
 
@@ -957,11 +999,28 @@ def main() -> int:
         "[{elapsed}<{remaining}, {rate_fmt}] {postfix}"
     )
 
+    _last_progress_stdout = 0.0
+
     def _set_bars(postfix: dict[str, object], *, refresh: bool = True) -> None:
+        nonlocal _last_progress_stdout
         bar.set_postfix(postfix, refresh=refresh)
         if live_bar is not None:
             live_bar.set_postfix(postfix, refresh=refresh)
         progress_stream.flush()
+        # File-side tqdm is invisible in CI. Mirror heartbeats to stdout without
+        # TTY gating — rate-limited so per-function postfix does not flood.
+        if not args.progress_stdout or not refresh:
+            return
+        now = time.monotonic()
+        status = str(postfix.get("status") or "")
+        force = status not in {"lifting…", "ok", "…"}
+        if not force and now - _last_progress_stdout < 2.0:
+            return
+        _last_progress_stdout = now
+        n = getattr(bar, "n", live_done)
+        total = getattr(bar, "total", len(file_names)) or len(file_names)
+        bits = " ".join(f"{k}={v}" for k, v in postfix.items())
+        _narrate(f"RECENSUS PROGRESS {n}/{total} {bits}")
 
     try:
         bar = tqdm(
@@ -977,7 +1036,8 @@ def main() -> int:
             smoothing=0.05,
             bar_format=bar_format,
         )
-        # Optional second bar on stderr for an interactive terminal.
+        # Interactive TTY only: second tqdm bar on stderr. Never gate *all*
+        # progress on isatty — CI is not a TTY and that was the silent wedge.
         live_bar = None
         if args.progress_stdout and sys.stderr.isatty():
             live_bar = tqdm(
@@ -991,6 +1051,13 @@ def main() -> int:
                 smoothing=0.05,
                 bar_format=bar_format,
             )
+        _narrate(
+            "RECENSUS PROGRESS_ROUTE "
+            f"file={progress_path.resolve()} "
+            f"stdout_mirror={args.progress_stdout} "
+            f"tty_stderr_bar={live_bar is not None} "
+            f"(SCOREBOARD never TTY-gates stdout heartbeats)"
+        )
 
         t_lift = _phase_begin("per_file_lift")
         _narrate(
