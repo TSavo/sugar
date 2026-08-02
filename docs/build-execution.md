@@ -76,7 +76,7 @@ select `--host bx`; they do not own synchronization, provisioning, artifact
 resolution, or execution policy. `bpytest` additionally selects the managed
 `python-unit` task.
 
-### Quiet gate for wall-clock timing
+### Quiet gate + exclusive timing lease for wall-clock numbers
 
 A wall-clock number taken under host contention is not a measurement. For
 timing runs on battleaxe, arm the quiet gate:
@@ -86,11 +86,14 @@ SUGAR_BX_REQUIRE_QUIET=1 bin/brun -- <command>
 # or: SUGAR_BX_MAX_LOADAVG=8 bin/brun -- <command>
 ```
 
-When armed, the bx backend samples remote 1-minute loadavg **before** the
-command, refuses with **exit 76** if `load1` exceeds the ceiling (default
-`max(2.0, nproc/4)`), and prints load before/after on stderr. Ordinary builds
-leave the gate unset. Canonical timing shapes (single file, N-file walk, LPT
-k=8) live in `docs/contributing/battleaxe-timing.md`.
+When armed, the bx backend takes an exclusive remote flock
+(`/var/tmp/sugar-bx-timing-measurement.lease`), samples load **under that
+lock**, refuses with **exit 76** if `load1` exceeds the ceiling (default
+`max(2.0, nproc/4)`), refuses with **exit 77** if the lease cannot be acquired
+within `SUGAR_BX_TIMING_LEASE_WAIT_S` (default 7200; `0` = non-blocking), and
+prints load before/after with `lease=held` on stderr. Ordinary builds leave
+the gate unset. Canonical timing shapes (single file, N-file walk, LPT k=8)
+live in `docs/contributing/battleaxe-timing.md`.
 
 ## Capabilities and named tasks
 

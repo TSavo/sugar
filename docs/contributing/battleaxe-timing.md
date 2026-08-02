@@ -19,21 +19,36 @@ Wrappers live in the repo (they are **not** on PATH in a bare shell):
 repo-relative cwd, forwards env with `--env`, and can rsync results back with
 `--sync-back`. Do **not** invent a second remote runner.
 
-## Quiet gate (mandatory for every timing number)
+## Quiet gate + exclusive lease (mandatory for every timing number)
 
 ```bash
 export SUGAR_BX_REQUIRE_QUIET=1
 # optional explicit ceiling (also arms the gate alone):
 # export SUGAR_BX_MAX_LOADAVG=8
+# optional: refuse immediately instead of queueing behind another measurement
+# export SUGAR_BX_TIMING_LEASE_WAIT_S=0
 ```
+
+**Rule:** a measurement that cannot testify to its own conditions is not a
+measurement. Load-at-start alone is not enough — six agents can all pass a free
+check then co-run and recreate contention on battleaxe.
 
 When armed, `bin/brun` / `bin/sugarbin run --host bx`:
 
-1. Samples **remote** 1-minute loadavg and `nproc` **before** the command.
-2. **Refuses with exit 76** if `load1 > max` (default `max = max(2.0, nproc/4)` → 8.0 on 32-core battleaxe).
-3. Prints `bx-load-gate phase=before …` and `phase=after …` on stderr.
+1. Takes an **exclusive remote flock** on
+   `/var/tmp/sugar-bx-timing-measurement.lease` (queue up to
+   `SUGAR_BX_TIMING_LEASE_WAIT_S`, default 7200s; `0` → exit **77** immediately
+   if another quiet-gated measurement holds it).
+2. Under that lock, samples **remote** 1-minute loadavg and `nproc`.
+3. **Refuses with exit 76** if `load1 > max` (default `max = max(2.0, nproc/4)`
+   → 8.0 on 32-core battleaxe).
+4. Runs the command while still holding the lease.
+5. Prints `bx-load-gate phase=before|after … lease=held` and
+   `bx-timing-lease phase=acquired|release` on stderr.
 
-Ordinary builds leave the gate **unset**. Timing runs always arm it.
+Ordinary builds leave the gate **unset** (no lease, no load check). Timing
+runs always arm it. **Serialized measurement is enforced by the tool**, not by
+people agreeing not to overlap.
 
 ## One-time remote env (pinned pandas corpus)
 
@@ -148,16 +163,36 @@ Full k=8 board seal remains the compose job in
 `.github/workflows/control-effect-recensus.yml` (sole SCOREBOARD door). Local
 k=8 timing of a single seat is for latency, not for a sealed board.
 
+### Fleet roles (same door, different SLICE / SHARD / FILE_REL)
+
+**Everyone:** from repo root, `SUGAR_BX_REQUIRE_QUIET=1`, invoke **`bin/brun` by
+path** (not on PATH). One-time: `bin/brun -- bash scripts/bootstrap-venv-py312.sh`.
+Shared PYTHONPATH + CORPUS block as above. Exclusive lease serializes you —
+do not invent a parallel runner. Exit 76/77 = no number.
+
+| Agent | Job | Shape |
+| --- | --- | --- |
+| **mr_orange** | full 1421-file walk | §2 with `SLICE="$CORPUS"` (full package root) |
+| **mr_black** | 200-file before/after | §2 with a 200-file enrolled list or a bounded subtree; same tip+pin both legs; arm quiet both legs |
+| **mr_blonde** | LPT k=8 | §3; plan first, then seats `SHARD=0..7` (serialized by lease — queue, don't co-fire) |
+| **mr_white** | correctness re-run | §2 full or pin-matched slice; compare verdicts/CIDs not wall-clock alone |
+| **mr_pink** | RSS over a walk | §2 + wrap remote body with `/usr/bin/time -v` or `ps` RSS sampling **inside** the quiet-gated brun command so RSS and wall share the same lease/load testimony |
+| **mr_brown** | D3 hang repro | §1 single file (or smallest slice that reproduces); `FILE_REL=…`; keep quiet gate so hang timing is not Mac noise |
+
+Do not each invent argv. Copy from this file. Cite stderr `load1_before` /
+`load1_after` / `lease=held` with every number.
+
 ## How to read the result
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Command finished; stderr has `bx-load-gate phase=before` and `phase=after`. JSON at sync-back path. |
-| 76 | **Refused — host not quiet.** No number. Do not cite. Wait and retry. |
+| 0 | Command finished; stderr has `bx-timing-lease phase=acquired`, `bx-load-gate phase=before|after … lease=held`. JSON at sync-back path. |
+| 76 | **Refused — host not quiet** (under lease). No number. Do not cite. Wait and retry. |
+| 77 | **Refused — another measurement holds the exclusive lease** (or wait timed out). No number. Queue or set wait; do not invent a second runner. |
 | other | Remote command failure; also not a trusted number. |
 
-A JSON body without a 0 exit, or without the before load line, is not a timing
-receipt.
+A JSON body without a 0 exit, or without the before load line with `lease=held`,
+is not a timing receipt.
 
 ## Forbidden
 
