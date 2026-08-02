@@ -215,6 +215,13 @@ def open_source_file_for_construction(
     omitted, this door mints one session for the population so multi-receipt
     amortization is real; multi-file owners should pass one shared session so
     the same dependency definition is not re-projected per consumer file.
+
+    Roster-floor law: after SourceFile construction succeeds, N =
+    ``len(functions())`` is banked on the open as ``function_roster_floor``.
+    Any subsequent populate ``Exception`` is residualized and the SourceFile is
+    returned — the board may not undercut N without naming why. Open failure
+    *before* SourceFile still raises (empty denominator). Process-control
+    exceptions (``BaseException`` outside ``Exception``) still halt.
     """
     from sugar_lift_python_source.resolution_session import session_or_new
     from sugar_lift_python_source.source_oracle import workspace_path_source
@@ -234,6 +241,14 @@ def open_source_file_for_construction(
         reporter=reporter,
         construction_context=construction_context,
     )
+    # ROSTER FLOOR LAW (#7062 class close, #7075 second costume generalized):
+    # If SourceFile produced N functions, the board may never report fewer
+    # than N without naming why. Bank N *before* populate. Populate failure
+    # becomes a residual; it cannot erase the denominator. Open-path failure
+    # *before* this line still raises — correctly empty. A third costume is
+    # not another allowlist entry: any Exception after the bank is residual.
+    _bank_function_roster_floor(source_file)
+
     if populate_derived:
         from sugar_lift_python_source.manager_summary_derivation import (
             populate_source_derived_resource_refs,
@@ -242,57 +257,72 @@ def open_source_file_for_construction(
         # File-open is a multi-resolve owner: one session for every receipt in
         # this population. session_or_new keeps an explicit shared session.
         session = session_or_new(resolution_session)
-        # After SourceFile succeeds, populate must never erase the function
-        # roster. Per-receipt doors cite SugarNotWritten and TypeError (#7063
-        # + TypeError costume of #7062). This outer belt catches either if it
-        # still escapes — residual stays loud, roster stays. Open-path failure
-        # before SourceFile still raises — correctly empty denominator.
-        # Named classes only: never bare except (panics stay loud).
-        from sugar_source_tree.panic import SugarNotWritten
-
+        # Catch Exception, not BaseException: KeyboardInterrupt / SystemExit /
+        # GeneratorExit still halt the process. Do not enumerate SNW/TypeError
+        # here — that was the two-costume allowlist that left the class open.
         try:
             populate_source_derived_resource_refs(
                 source_file, root=root, path=path, session=session
             )
-        except (SugarNotWritten, TypeError) as populate_gap:
+        except Exception as populate_gap:  # noqa: BLE001 — floor law; see above
             _record_populate_path_residual(source_file, populate_gap)
     return source_file
 
 
-def _record_populate_path_residual(
-    source_file, error: BaseException
-) -> None:
-    """Keep a populate-path gap loud without discarding the open roster.
+def _bank_function_roster_floor(source_file) -> int:
+    """Bank N = len(SourceFile.functions()) as load-bearing open state.
 
-    Named residual on the construction context when present so boards can see
-    the gap; absence of a context still returns the SourceFile (denominator
-    law). Never a silent swallow.
+    The floor is the proof that construction already succeeded. Callers and
+    residual paths read it; populate cannot lower it. Returning the open after
+    a residual keeps ``functions()`` live; the banked floor is the invariant
+    pin when a board path would otherwise invent zero.
+    """
+    n = len(tuple(source_file.functions()))
+    try:
+        object.__setattr__(source_file, "function_roster_floor", n)
+    except (AttributeError, TypeError):
+        # If the SourceFile type forbids attributes, the live functions()
+        # roster still carries the denominator after residual return.
+        pass
+    unit = getattr(source_file, "unit", None) or getattr(
+        getattr(source_file, "root", None), "unit", None
+    )
+    context = getattr(unit, "construction_context", None) if unit is not None else None
+    if context is not None:
+        try:
+            object.__setattr__(context, "function_roster_floor", n)
+        except (AttributeError, TypeError):
+            pass
+    return n
+
+
+def _record_populate_path_residual(source_file, error: BaseException) -> None:
+    """Name a populate-path failure without discarding the banked roster floor.
+
+    Residual is always typed by the *actual* exception class name — no allowlist
+    of costumes. SugarNotWritten keeps its structured owner/observed/fix fields
+    when present; every other Exception is residualized generically so a third
+    costume cannot reintroduce the zero-function lie.
     """
     from sugar_source_tree.panic import SugarNotWritten
 
+    err_type = type(error).__name__
     if isinstance(error, SugarNotWritten):
-        err_type = "SugarNotWritten"
         owner = str(getattr(error, "owner", None) or err_type)
         observed = str(getattr(error, "observed", None) or error)
         requested = str(getattr(error, "requested", None) or "")
         fix = str(getattr(error, "fix", None) or "")
-    elif isinstance(error, TypeError):
-        err_type = "TypeError"
+    else:
         owner = "open_source_file_for_construction.populate"
-        observed = str(error)
+        observed = str(error) if str(error) else err_type
         requested = (
-            "per-receipt cite of construction TypeError inside populate "
-            "(source-body-type-error); outer belt must not erase SourceFile"
+            "populate residual after successful SourceFile; function_roster_floor "
+            f"preserved at {getattr(source_file, 'function_roster_floor', '?')}"
         )
         fix = (
-            "catch TypeError beside SugarNotWritten at resolve_source_visible_frame "
-            "and related populate doors; keep the enrolled function roster"
+            "cite this residual; never discard the banked SourceFile function "
+            "roster. The floor law forbids empty denominators after construction"
         )
-    else:
-        raise TypeError(
-            f"_record_populate_path_residual got unexpected {type(error).__name__}; "
-            f"callers must catch only SugarNotWritten and TypeError"
-        ) from error
 
     unit = getattr(source_file, "unit", None) or getattr(
         getattr(source_file, "root", None), "unit", None
@@ -305,6 +335,7 @@ def _record_populate_path_residual(
         "observed": observed,
         "requested": requested,
         "fix": fix,
+        "functionRosterFloor": getattr(source_file, "function_roster_floor", None),
     }
     if context is None:
         return
