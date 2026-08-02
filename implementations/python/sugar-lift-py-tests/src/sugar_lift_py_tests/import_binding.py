@@ -819,12 +819,14 @@ class _Pass:
                 if scope.kind == "ClassDef"
                 else state
             )
-            local_names = _function_locals(node)
+            # One tree visit: locals + global/nonlocal declarations.
+            # Previously _function_locals and _function_declarations each did a
+            # full recursive children() walk of the same immutable body.
+            local_names, globals_, _nonlocals = _function_scope_bindings(node)
             for name in local_names:
                 inner[name] = frozenset({_UNBOUND})
             for param in node.params:
                 inner[param.name] = frozenset({_NON_IMPORT})
-            globals_, _nonlocals = _function_declarations(node)
             for name in globals_:
                 inner[name] = self.module_state.get(name, frozenset({_UNBOUND}))
             self.statements(node.body, inner, node)
@@ -942,11 +944,16 @@ class _Pass:
         raise UnsupportedStatementVariant(type(node).__name__)
 
 
-def _function_locals(node: Node) -> set[str]:
-    """Collect lexical bindings from the adapter's typed tree.
+def _function_scope_bindings(
+    node: Node,
+) -> tuple[set[str], set[str], set[str]]:
+    """One visit: local bindings, global names, nonlocal names.
 
     Nested scopes are barriers.  Binding sites are read from their typed roles;
     identifier spelling is never treated as evidence that a read is a store.
+
+    Replaces the old dual walk (``_function_locals`` + ``_function_declarations``)
+    that each did a full recursive ``children()`` pass over the same immutable body.
     """
     globals_: set[str] = set()
     nonlocals: set[str] = set()
@@ -990,29 +997,19 @@ def _function_locals(node: Node) -> set[str]:
             visit(descendant)
 
     visit(node, root=True)
-    return names - globals_ - nonlocals
+    locals_ = names - globals_ - nonlocals
+    return locals_, globals_, nonlocals
+
+
+def _function_locals(node: Node) -> set[str]:
+    """Local names only — thin projection of the single scope walk."""
+    locals_, _globals, _nonlocals = _function_scope_bindings(node)
+    return locals_
 
 
 def _function_declarations(node: Node) -> tuple[set[str], set[str]]:
-    globals_: set[str] = set()
-    nonlocals: set[str] = set()
-
-    def visit(child: Node, *, root: bool = False) -> None:
-        if not root and child.kind in (
-            "FunctionDef",
-            "AsyncFunctionDef",
-            "ClassDef",
-            "Lambda",
-        ):
-            return
-        if child.kind == "Global":
-            globals_.update(child.names)
-        elif child.kind == "Nonlocal":
-            nonlocals.update(child.names)
-        for _, _, descendant in child.children():
-            visit(descendant)
-
-    visit(node, root=True)
+    """Global/nonlocal declarations — thin projection of the single scope walk."""
+    _locals, globals_, nonlocals = _function_scope_bindings(node)
     return globals_, nonlocals
 
 
