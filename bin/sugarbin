@@ -945,7 +945,7 @@ build_from_source() {
   require_writable_build_root "$build_root" || return 1
   built="$build_root/$profile/$bin_name"
   # SUGAR_BUILD_STAMP is the authenticated sourceStamp (source matter only).
-  # SUGAR_BUILD_GIT_HEAD remains a version/attestation label, not a shelf key.
+  # monorepo_head remains a version/attestation label, not a shelf key.
   monorepo_head="$(attestation_git_head)"
   [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
   # Cargo can sit for minutes with no stdout in CI. Heartbeat to the job log
