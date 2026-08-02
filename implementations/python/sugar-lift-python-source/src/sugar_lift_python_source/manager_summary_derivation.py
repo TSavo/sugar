@@ -1229,6 +1229,18 @@ def populate_source_derived_resource_refs(
     # Multi-resolve owner entry: one session for every receipt in this loop.
     # Do not call session_or_new inside the receipt loop.
     session = session_or_new(session)
+    # Population membrane: pin enrolls the consumer distribution (first path
+    # segment under the locus root), not test-only deps (pytest) or stdlib.
+    # Without this, one open of pandas/tests/io/json/test_pandas.py projected
+    # 40 pytest frames (~3.8s) after the stdlib-only membrane.
+    if session.enrolled_distributions is None:
+        try:
+            rel = Path(path).resolve().relative_to(Path(root).resolve())
+            top = rel.parts[0] if rel.parts else None
+        except ValueError:
+            top = None
+        if top and top.isidentifier() and top not in {"tests", "test", "src"}:
+            session.enrolled_distributions = frozenset({top})
     context = source_file.root.unit.construction_context
     if context is None:
         return

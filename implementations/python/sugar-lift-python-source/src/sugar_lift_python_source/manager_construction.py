@@ -823,10 +823,10 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     # Defensive membrane: stdlib must never reach MaterializeModule here.
     # Callers should short-circuit in prefix_has_completed_fallthrough; if they
     # do not, refuse loudly rather than rebuild an unenrolled module.
-    if graph is not None and getattr(graph, "artifact_kind", None) == "stdlib":
+    if graph is not None and _graph_is_off_population(graph, session=session):
         raise RuntimeError(
             "population membrane: _module_prefix_outcome must not MaterializeModule "
-            f"stdlib seat {module.source_seat!r}; cite via "
+            f"off-population seat {module.source_seat!r}; cite via "
             "prefix_has_completed_fallthrough / call-target-off-population"
         )
     session = session_or_new(session)
@@ -1051,13 +1051,13 @@ def prefix_has_completed_fallthrough(
     """
     from sugar_lift_py_tests.outcome import Completed, true_guard
 
-    if graph is not None and getattr(graph, "artifact_kind", None) == "stdlib":
+    session = session_or_new(session)
+    if graph is not None and _graph_is_off_population(graph, session=session):
         # Cite path: admit static export without off-population construction.
         return True
 
     from sugar_source_tree.panic import SugarNotWritten
 
-    session = session_or_new(session)
     fallthrough_key = (
         module.source_cid,
         getattr(locus, "lineno", None),
@@ -1240,29 +1240,61 @@ class ManagerConstructionGapV1:
     detail: str
 
 
+def _graph_is_off_population(
+    graph: "DependencyArtifactGraph",
+    *,
+    session: SourceResolutionSession | None = None,
+) -> bool:
+    """True when ``graph`` is outside the enrolled measurement population.
+
+    - stdlib is always off-pin (CPython is not the corpus pin).
+    - when ``session.enrolled_distributions`` is set, any distribution whose
+      name is not in that set is off-pin (pytest on a pandas test open was
+      40 frames / ~3.8s after the stdlib-only membrane — same law, broader door).
+    - when enrolled is None, legacy stdlib-only membrane (backward compatible).
+    """
+    if getattr(graph, "artifact_kind", None) == "stdlib":
+        return True
+    enrolled = None if session is None else session.enrolled_distributions
+    if enrolled is None:
+        return False
+    name = getattr(graph, "distribution_name", None)
+    return name is not None and name not in enrolled
+
+
 def _off_population_materialize_gap(
     resolved: "ResolvedPythonObjectV1",
     *,
     graph: "DependencyArtifactGraph",
+    session: SourceResolutionSession | None = None,
 ) -> ManagerConstructionGapV1 | None:
     """Population membrane: off-pin success must cite, never rebuild.
 
     Failure already parks an opaque obligation.  Success against authenticated
-    stdlib used to call ``resolve_source_visible_frame`` and fully
-    ``MaterializeModule`` the unenrolled source (enum.py 35× on one pandas
-    open).  That corrupts measurement integrity: the pin enrolls corpus files,
-    not CPython.  Return a typed gap so every caller takes the same cite path
-    failure already uses.
+    off-pin sources used to call ``resolve_source_visible_frame`` and fully
+    ``MaterializeModule`` the unenrolled source (enum.py 35× stdlib; pytest
+    raises 40× on one pandas test open).  That corrupts measurement integrity:
+    the pin enrolls corpus files, not CPython and not test-only distributions.
+    Return a typed gap so every caller takes the same cite path failure already
+    uses.
     """
-    if graph.artifact_kind != "stdlib":
+    if not _graph_is_off_population(graph, session=session):
         return None
+    if graph.artifact_kind == "stdlib":
+        detail = (
+            f"stdlib module {resolved.module_name!r} is off enrolled population; "
+            "cite via opaque membrane, do not MaterializeModule"
+        )
+    else:
+        dist = getattr(graph, "distribution_name", "?")
+        detail = (
+            f"distribution {dist!r} module {resolved.module_name!r} is off "
+            "enrolled population; cite via opaque membrane, do not MaterializeModule"
+        )
     return ManagerConstructionGapV1(
         "call-target-off-population",
         resolved.cid,
-        (
-            f"stdlib module {resolved.module_name!r} is off enrolled population; "
-            "cite via opaque membrane, do not MaterializeModule"
-        ),
+        detail,
     )
 
 
@@ -1985,7 +2017,9 @@ def resolve_source_visible_frame(
     # success must cite, never rebuild.  Placed AFTER artifact identity checks
     # and BEFORE any SourceFile / MaterializeModule.  Failure already cites via
     # _install_opaque_call_obligation; success must take the same door.
-    off_pop = _off_population_materialize_gap(resolved, graph=graph)
+    off_pop = _off_population_materialize_gap(
+        resolved, graph=graph, session=session
+    )
     if off_pop is not None:
         return off_pop
     definition = resolved.definition

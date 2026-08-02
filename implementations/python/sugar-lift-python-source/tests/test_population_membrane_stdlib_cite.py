@@ -171,13 +171,14 @@ def test_population_membrane_json_open_never_materializes_any_stdlib() -> None:
 
 
 def test_off_population_gap_helper_names_stdlib() -> None:
-    """Unit tooth: stdlib graphs return the off-population gap; distributions do not."""
+    """Unit tooth: stdlib graphs return the off-population gap; pin distributions do not."""
     from sugar_lift_python_source.dependency_artifact import (
         DependencyArtifactGraph,
     )
     from sugar_lift_python_source.manager_construction import (
         _off_population_materialize_gap,
     )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
     # Minimal resolved stand-in: only cid + module_name are read by the helper.
     class _Resolved:
@@ -197,3 +198,25 @@ def test_off_population_gap_helper_names_stdlib() -> None:
     )
     assert gap_re is not None
     assert gap_re.kind == "call-target-off-population"
+
+    # Legacy (enrolled=None): pin distributions stay on-population.
+    import importlib.metadata
+
+    pytest_dist = importlib.metadata.distribution("pytest")
+    pytest_graph = DependencyArtifactGraph.authenticate(pytest_dist)
+    gap_legacy = _off_population_materialize_gap(
+        type("R", (), {"cid": "p", "module_name": "_pytest.raises"})(),
+        graph=pytest_graph,
+    )
+    assert gap_legacy is None, "without enrolled pin, distributions stay on-population"
+
+    # Enrolled pin: foreign distribution is off-population.
+    session = SourceResolutionSession(enrolled_distributions=frozenset({"pandas"}))
+    gap_pin = _off_population_materialize_gap(
+        type("R", (), {"cid": "p", "module_name": "_pytest.raises"})(),
+        graph=pytest_graph,
+        session=session,
+    )
+    assert gap_pin is not None
+    assert gap_pin.kind == "call-target-off-population"
+    assert "pytest" in gap_pin.detail
