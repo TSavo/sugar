@@ -625,6 +625,10 @@ def _body_matches_spec(body: Mapping[str, Any], spec: TipAxisSpec) -> bool:
 
 
 def _is_candidate_body(payload: Mapping[str, Any]) -> bool:
+    # recensus-path-smoke is PATH integrity only — never a panics/board candidate.
+    cls = payload.get("measurementClass") or payload.get("leaseClass")
+    if cls == "recensus-path-smoke" or payload.get("kind") == "recensus-path-smoke-verdict":
+        return False
     if "totals" in payload or "failedNodeIds" in payload:
         return True
     if "R_construction_panics" in payload:

@@ -1,0 +1,98 @@
+# Recensus PATH smoke — production-path integrity over a planted micro-population.
+#
+# COVERAGE HONESTY (binding):
+#   This job measures the RECENSUS PRODUCTION PATH (per_file_lift → aggregation
+#   → with-census conservation → sealed path body) over ~4 planted files in
+#   under 60s. It retires the SERIAL ROT TAX that made path defects cost one
+#   full 73-minute corpus walk each.
+#
+#   It does NOT measure Class B corpus scale (thousands of with-items).
+#   It does NOT mint authoritative R_construction_panics.
+#   Smoke PASS is NOT S0.1 / full recensus PASS.
+#   Smoke FAIL is still CI red for the path-integrity class.
+#
+# ENROLLMENT: measurementClass = recensus-path-smoke only.
+#   Never control-effect-recensus. The roll call / CommitMeasurement must not
+#   accept smoke as the authoritative board speaking.
+#
+# SCOREBOARD_AUTHORITY: unchanged. Sole bankable panics producer remains
+# control_effect_recensus on the authenticated pandas corpus (nightly/dispatch).
+
+name: Recensus path smoke
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recensus-path-smoke:
+    name: recensus-path-smoke (PATH integrity)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    env:
+      PYTHONUNBUFFERED: "1"
+      RECENSUS_PATH_SMOKE_OUT: ${{ github.workspace }}/.sugar/recensus-path-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
+
+      - name: "Phase: recensus-path-smoke (planted micro-population)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path-smoke phase=measure status=start commit=$GITHUB_SHA"
+          # Same production doors as the full recensus; tiny enrolled population.
+          python -u implementations/python/sugar-lift-py-tests/scripts/recensus_path_smoke.py
+          echo "path-smoke phase=measure status=done"
+          # Refuse product-shaped keys on the sealed body (advisor wall 1).
+          python -u - <<'PY'
+          import json, sys
+          from pathlib import Path
+          p = Path(".sugar/recensus-path-smoke/path_verdict.json")
+          body = json.loads(p.read_text(encoding="utf-8"))
+          banned = [
+              "R_construction_panics",
+              "R_construction",
+              "R_desugar",
+              "controlEffectStableZero",
+              "floorSummary",
+          ]
+          bad = [k for k in banned if k in body]
+          if bad:
+              print(f"PATH_RED: product keys present on smoke body: {bad}", file=sys.stderr)
+              sys.exit(1)
+          if body.get("measurementClass") != "recensus-path-smoke":
+              print(
+                  f"PATH_RED: wrong measurementClass {body.get('measurementClass')!r}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          if body.get("pathVerdict") != "PATH_OK":
+              print(
+                  f"PATH_RED: pathVerdict={body.get('pathVerdict')!r} "
+                  f"failedTooth={body.get('failedTooth')!r}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print(
+              f"path-smoke gate PATH_OK teeth="
+              f"{sorted(k for k,v in body.get('teeth',{}).items() if v.get('pass'))}"
+          )
+          PY
+
+      - name: Upload path-smoke seal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recensus-path-smoke
+          path: .sugar/recensus-path-smoke/**
+          if-no-files-found: warn
