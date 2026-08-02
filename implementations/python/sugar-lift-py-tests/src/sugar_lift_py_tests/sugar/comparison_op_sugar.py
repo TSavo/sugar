@@ -284,7 +284,15 @@ class ComparisonOpSugar(ConstructedTermSugar):
 
     def __post_init__(self) -> None:
         if self.op_kind not in COMPARISON_KINDS:
-            raise ValueError(f"unknown comparison operator {self.op_kind!r}")
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="ComparisonOpSugar",
+                blame=self.site,
+                observed=f"comparison operator {self.op_kind!r} has no ComparisonOpSugar arm",
+                requested="a written comparison kind in COMPARISON_KINDS",
+                fix=f"enroll {self.op_kind!r} in ComparisonOpSugar or refuse earlier",
+            )
         require_constructed_term_sugar(self.left, owner="ComparisonOpSugar.left")
         require_constructed_term_sugar(self.right, owner="ComparisonOpSugar.right")
 

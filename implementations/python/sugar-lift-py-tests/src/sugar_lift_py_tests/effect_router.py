@@ -461,7 +461,15 @@ def route(
             "must keep a runtime-selected exit loud before routing, never "
             "let it arrive here for the router to guess a policy"
         )
-    raise TypeError(f"unknown context-manager contract: {type(contract).__name__}")
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="effect_router.route",
+        blame=site if site is not None else "effect_router.route",
+        observed=f"context-manager contract species {type(contract).__name__} has no route arm",
+        requested="Expects | Suppresses | NeverSuppresses (RuntimeSelected must not reach the router)",
+        fix=f"write route arm for {type(contract).__name__} or keep it loud before routing",
+    )
 
 
 def route_except(

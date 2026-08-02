@@ -422,7 +422,15 @@ def _ordered_binding_keys(names):
     ordered.extend(name for name in internal_names if name in names)
     if len(ordered) != len(names):
         unknown = next(name for name in names if name not in ordered)
-        raise TypeError(f"unsupported binding-map key: {type(unknown).__name__}")
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame="binding-map",
+            owner="_ordered_binding_keys",
+            observed=f"binding-map key species {type(unknown).__name__} is not a str name",
+            requested="str binding names only (plus known internal marker keys)",
+            fix="do not put non-str keys in the binding map; project to str names first",
+        )
     return ordered
 
 

@@ -406,7 +406,13 @@ def require_floor_dispatch_surface(
     )
     if missing:
         joined = ", ".join(missing)
-        raise TypeError(
-            f"{cls.__name__} is missing floor operation method(s): {joined}"
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="require_floor_dispatch_surface",
+            blame=cls.__name__,
+            observed=f"{cls.__name__} is missing floor operation method(s): {joined}",
+            requested="every FLOOR_OPERATION_METHOD_NAMES method present on the floor class",
+            fix=f"implement missing methods on {cls.__name__}: {joined}",
         )
     return cls

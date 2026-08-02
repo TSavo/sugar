@@ -127,4 +127,12 @@ def effect_status(effect: Effect) -> EffectStatus:
 
 
 def _unhandled_effect(effect: Never) -> NoReturn:
-    raise TypeError(f"unhandled Effect arm: {type(effect).__name__}")
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="effect._unhandled_effect",
+        blame=f"effect:{type(effect).__name__}",
+        observed=f"Effect species {type(effect).__name__} has no dispatch arm",
+        requested="a written Effect class with effect_status/effect_reason arms",
+        fix=f"write the Effect arm for {type(effect).__name__}; do not raise bare TypeError",
+    )

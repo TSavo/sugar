@@ -151,18 +151,36 @@ def _projection_term(state, *, owner: str):
             not isinstance(state.target_cid, str)
             or not state.target_cid.startswith("blake3-512:")
         ):
-            raise TypeError(
-                "loop guarded binding projection requires authenticated target CID"
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="_projection_term",
+                blame=owner,
+                observed="LoopGuardedProjection has no authenticated target CID (blake3-512:…)",
+                requested="LoopGuardedProjection.target_cid as blake3-512 CID string",
+                fix="carry authenticated loop target CID through projection construction",
             )
         faces = []
         for face in state.completed_faces:
             if face.guard_formula is None:
-                raise TypeError(
-                    "loop guarded binding projection requires exact guard testimony"
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="_projection_term",
+                    blame=owner,
+                    observed="LoopGuardedProjection face has no exact guard formula",
+                    requested="guard_formula testimony on each completed face",
+                    fix="do not project CID-only guards; carry exact formula through the loop face",
                 )
             if not isinstance(face.exit_partition_arity, int):
-                raise TypeError(
-                    "loop guarded binding projection requires exit-family arity"
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="_projection_term",
+                    blame=owner,
+                    observed="LoopGuardedProjection face has no integer exit_partition_arity",
+                    requested="exit_partition_arity: int on each completed face",
+                    fix="carry exit-family arity through loop projection construction",
                 )
             guard_cid = blake3_512_of(
                 encode_jcs(formula_to_value(face.guard_formula)).encode("utf-8")
@@ -184,9 +202,17 @@ def _projection_term(state, *, owner: str):
             (str_const(state.target_cid), *faces),
             symbol_kind="coordinate",
         )
-    raise TypeError(
-        "guarded binding read requires constructed projection testimony, got "
-        f"{type(state).__name__}"
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="_projection_term",
+        blame=owner,
+        observed=(
+            f"binding projection species {type(state).__name__} has no "
+            f"_projection_term arm"
+        ),
+        requested="Sugar | UnboundProjection | GuardedProjection | LoopGuardedProjection",
+        fix=f"write _projection_term arm for {type(state).__name__}",
     )
 
 
