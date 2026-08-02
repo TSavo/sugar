@@ -15,7 +15,7 @@ red_axes=()
 green_axes=()
 axis_index=0
 # Count axis() invocations for progress (updated as axes are declared below).
-AXIS_TOTAL=20
+AXIS_TOTAL=22
 
 axis() {
   local name="$1"; shift
@@ -88,6 +88,14 @@ axis "R_bare_construction_door discrimination" \
   "$TESTS/tests/test_construction_context_door_law.py" -v --tb=line
 axis "R_bare_construction_door = 0" \
   python -u "$SCRIPTS/construction_context_door_law.py"
+
+# Fifth hierarchy-lie class: construction extends the graph; consuming doors
+# lag the closed codomain → TypeError erases file rosters. Static, seconds,
+# no corpus. Enrollment is existence — not a one-shot audit.
+axis "R_construction_consumer_codomain discrimination" \
+  python -u "$SCRIPTS/construction_consumer_codomain_law.py" --self-test
+axis "R_construction_consumer_codomain = 0" \
+  python -u "$SCRIPTS/construction_consumer_codomain_law.py"
 
 echo
 echo "static_floors phase=end green=${#green_axes[@]} red=${#red_axes[@]}"

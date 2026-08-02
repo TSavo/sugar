@@ -150,6 +150,12 @@ axis "R_bare_construction_door discrimination" \
 axis "R_bare_construction_door = 0" \
   python "$SCRIPTS/construction_context_door_law.py"
 
+# Fifth hierarchy-lie class (static, seconds). See construction_consumer_codomain_law.py.
+axis "R_construction_consumer_codomain discrimination" \
+  python "$SCRIPTS/construction_consumer_codomain_law.py" --self-test
+axis "R_construction_consumer_codomain = 0" \
+  python "$SCRIPTS/construction_consumer_codomain_law.py"
+
 echo
 echo "sole-construction floors: ${#green_axes[@]} green, ${#red_axes[@]} red"
 if [ ${#red_axes[@]} -gt 0 ]; then
