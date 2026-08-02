@@ -13,6 +13,20 @@ ATTENDANCE = ROOT / "tools" / "python_package_suite_shard_attendance.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "python-package-suite.yml"
 
 
+def _identity_gate_receipt(report: dict) -> str:
+    conservation = report["conservation"]
+    return (
+        "### Suite identity gate: R_identity = 0\n\n"
+        f"- measuredCommit: `{report['measuredCommit']}`\n"
+        f"- sourceStamp: `{report['sourceStamp']}`\n"
+        f"- binarySourceStamp: `{report['binarySourceStamp']}` (agrees)\n"
+        f"- testExtraInputHash: `{report['testExtraInputHash']}`\n"
+        f"- environmentIdentityHash: `{report['environmentIdentityHash']}`\n"
+        f"- conservation: `{conservation['collected']}` collected, "
+        f"`{conservation['verdicts']}` verdicts, buckets sum to collected\n"
+    )
+
+
 def _run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, *argv],
@@ -134,6 +148,9 @@ def test_missing_shard_makes_attendance_red_not_a_smaller_pass() -> None:
             (d / "suite-report.json").write_text(
                 json.dumps(report(i)) + "\n", encoding="utf-8"
             )
+            (d / "identity-gate.md").write_text(
+                _identity_gate_receipt(report(i)), encoding="utf-8"
+            )
         result = _run(
             [
                 str(ATTENDANCE),
@@ -227,6 +244,9 @@ def test_full_roster_attendance_is_green() -> None:
             (d / "suite-report.json").write_text(
                 json.dumps(report(i)) + "\n", encoding="utf-8"
             )
+            (d / "identity-gate.md").write_text(
+                _identity_gate_receipt(report(i)), encoding="utf-8"
+            )
         result = _run(
             [
                 str(ATTENDANCE),
@@ -242,6 +262,93 @@ def test_full_roster_attendance_is_green() -> None:
         )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "R_suite_shard_attendance = 0" in result.stdout
+
+
+def test_empty_or_unparseable_identity_gate_is_not_attendance(tmp_path: Path) -> None:
+    stamp = "blake3-512_" + ("ab" * 64)
+    extras = "cd" * 32
+    identity = {
+        "environmentIdentityHash": "ee" * 32,
+        "sourceStamp": {"value": stamp},
+        "dependencyAuthority": {
+            "testExtraInputHash": extras,
+            "declared": {"optional-dependencies": {"test": ["pytest"]}},
+        },
+    }
+    report = {
+        "schemaVersion": 1,
+        "label": "python-package-suite-canonical-shard-00",
+        "order": "canonical",
+        "shardIndex": 0,
+        "shardCount": 1,
+        "measuredCommit": "abc1234",
+        "sourceStamp": stamp,
+        "testExtraInputHash": extras,
+        "environmentIdentityHash": identity["environmentIdentityHash"],
+        "binarySourceStamp": stamp,
+        "environmentIdentity": identity,
+        "runnerIdentity": {"githubSha": "abc1234"},
+        "collectedNodeIds": [],
+        "executedOrderNodeIds": [],
+        "failedNodeIds": [],
+        "errorNodeIds": [],
+        "skippedNodeIds": [],
+        "xfailedNodeIds": [],
+        "xpassedNodeIds": [],
+        "passedNodeIds": [],
+        "collectionErrorNodeIds": [],
+        "notReportedNodeIds": [],
+        "counts": {
+            "collected": 0,
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "collectionError": 0,
+            "notReported": 0,
+        },
+        "conservation": {
+            "collected": 0,
+            "verdicts": 0,
+            "executedOrder": 0,
+            "buckets": {
+                "passed": 0,
+                "failed": 0,
+                "error": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "notReported": 0,
+            },
+            "collectionError": 0,
+        },
+    }
+    for label, receipt in (("empty", ""), ("unparseable", "not a gate\n")):
+        root = tmp_path / label
+        shard = root / "python-package-suite-canonical-shard-0"
+        shard.mkdir(parents=True)
+        (shard / "suite-report.json").write_text(
+            json.dumps(report) + "\n", encoding="utf-8"
+        )
+        (shard / "identity-gate.md").write_text(receipt, encoding="utf-8")
+        result = _run(
+            [
+                str(ATTENDANCE),
+                "--reports-dir",
+                str(root),
+                "--shard-count",
+                "1",
+                "--require-commit",
+                "abc1234",
+                "--order",
+                "canonical",
+            ]
+        )
+        assert result.returncode != 0, (label, result.stdout)
+        assert "R_suite_shard_attendance = 1" in result.stdout
+        assert label in result.stdout + result.stderr
 
 
 def test_workflow_has_no_shared_suite_report_merge_and_uses_enrollment() -> None:

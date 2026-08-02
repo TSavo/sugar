@@ -60,6 +60,55 @@ def test_write_lpt_prior_name_is_defined_with_path() -> None:
     assert hasattr(mod.SuiteReporter, "_write_lpt_prior")
 
 
+def test_enabled_lpt_prior_writes_content_addressed_cost(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """An enabled shelf persists a duration under the measured file's CID."""
+    mod = _load_suite_report()
+    prior_root = tmp_path / "prior"
+    monkeypatch.setenv("SUGAR_LPT_PRIOR_DIR", str(prior_root))
+    test_path = tmp_path / "pkg" / "tests" / "test_x.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text("def test_one():\n    pass\n", encoding="utf-8")
+    identity_path = tmp_path / "environment-identity.json"
+    identity_path.write_text(
+        json.dumps(
+            {
+                "environmentIdentityHash": "a" * 64,
+                "sourceStamp": {"value": "stamp"},
+                "dependencyAuthority": {"testExtraInputHash": "b" * 64},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reporter = mod.SuiteReporter(
+        _FakeConfig(
+            {
+                "suite_identity": str(identity_path),
+                "suite_commit": "c" * 40,
+            },
+            rootpath=tmp_path,
+        )
+    )
+    reporter._file_duration_s = {"pkg/tests/test_x.py": 1.25}
+    reporter._write_lpt_prior()
+
+    from lpt_file_shards import ContentAddressedCostPrior
+
+    hit = ContentAddressedCostPrior(prior_root).get_for_path(test_path)
+    assert hit is not None, "enabled LPT shelf must write the measured file's CID"
+    assert hit.cost_s == 1.25
+    assert hit.source == "suite-pytest-call-duration"
+    assert len(list(prior_root.glob("*.json"))) == 1
+    output = capsys.readouterr().out
+    assert "status=ok" in output
+    assert "files_written=1" in output
+    assert "files_measured=1" in output
+    assert "unresolved_paths=0" in output
+
+
 class _FakeConfig:
     def __init__(self, options: dict, *, rootpath: Path):
         self._options = options

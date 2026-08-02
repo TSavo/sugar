@@ -35,7 +35,7 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 from python_package_suite_shards import SHARD_COUNT, roster_ids  # noqa: E402
-from python_suite_identity_gate import gate  # noqa: E402
+from python_suite_identity_gate import gate, render_resolved_receipt  # noqa: E402
 
 
 class ShardAttendanceError(RuntimeError):
@@ -123,6 +123,30 @@ def attendance(
             for crime in gate_crimes:
                 crimes.append(f"  {crime}")
             # Present but unresolved is not attendance.
+            missing.append(shard_id)
+            continue
+        receipt_path = path.with_name("identity-gate.md")
+        try:
+            receipt = receipt_path.read_text(encoding="utf-8")
+        except OSError as error:
+            crimes.append(
+                f"{shard_id} at {receipt_path}: identity gate receipt missing: {error}"
+            )
+            missing.append(shard_id)
+            continue
+        if not receipt:
+            crimes.append(
+                f"{shard_id} at {receipt_path}: identity gate receipt empty; "
+                "presence is not testimony"
+            )
+            missing.append(shard_id)
+            continue
+        expected_receipt = render_resolved_receipt(report) + "\n"
+        if receipt != expected_receipt:
+            crimes.append(
+                f"{shard_id} at {receipt_path}: identity gate receipt "
+                "unparseable or disagrees with suite-report.json"
+            )
             missing.append(shard_id)
             continue
         # Shard self-description must match enrollment seat when present.

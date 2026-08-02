@@ -75,6 +75,21 @@ IDENTITY_FIELDS = (
 UNAVAILABLE_KEYS = ("unavailable", "unresolved")
 
 
+def render_resolved_receipt(report: dict) -> str:
+    """Canonical successful gate receipt consumed by shard attendance."""
+    conservation = report.get("conservation") or {}
+    return (
+        "### Suite identity gate: R_identity = 0\n\n"
+        f"- measuredCommit: `{report.get('measuredCommit')}`\n"
+        f"- sourceStamp: `{report.get('sourceStamp')}`\n"
+        f"- binarySourceStamp: `{report.get('binarySourceStamp')}` (agrees)\n"
+        f"- testExtraInputHash: `{report.get('testExtraInputHash')}`\n"
+        f"- environmentIdentityHash: `{report.get('environmentIdentityHash')}`\n"
+        f"- conservation: `{conservation.get('collected')}` collected, "
+        f"`{conservation.get('verdicts')}` verdicts, buckets sum to collected"
+    )
+
+
 def unavailable_marker(node, path="$"):
     """Return the JSON path of the first unavailable marker, or None.
 
@@ -404,17 +419,7 @@ def main(argv=None):
         )
         return 1
 
-    print("### Suite identity gate: R_identity = 0\n")
-    print(f"- measuredCommit: `{report.get('measuredCommit')}`")
-    print(f"- sourceStamp: `{report.get('sourceStamp')}`")
-    print(f"- binarySourceStamp: `{report.get('binarySourceStamp')}` (agrees)")
-    print(f"- testExtraInputHash: `{report.get('testExtraInputHash')}`")
-    print(f"- environmentIdentityHash: `{report.get('environmentIdentityHash')}`")
-    conservation = report.get("conservation") or {}
-    print(
-        f"- conservation: `{conservation.get('collected')}` collected, "
-        f"`{conservation.get('verdicts')}` verdicts, buckets sum to collected"
-    )
+    print(render_resolved_receipt(report))
     return 0
 
 

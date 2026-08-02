@@ -19,14 +19,38 @@ ENR = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = ENR
 _SPEC.loader.exec_module(ENR)
 
+from sugar_lift_py_tests.conservation_mint import (  # noqa: E402
+    ConservedBody,
+    seal_after_validation,
+)
+
 
 def _seat(base: str, shard: int = 0) -> str:
     return f"{base}-s{shard:02d}"
 
 
+def _witness():
+    outcome = seal_after_validation(
+        measured_payload={"kind": "test-source-body"},
+        input_key_manifest=[{"key": "same"}],
+        output_key_manifest=[{"key": "same"}],
+        validator_stage_id="test-floor-validator/v1",
+        validator_source_path=Path(__file__),
+        validate=lambda: None,
+    )
+    assert isinstance(outcome, ConservedBody)
+    return outcome.witness
+
+
+def _mint_axis_report(**kwargs):
+    if kwargs.get("residual_count") is not None:
+        kwargs.setdefault("conservation_witness", _witness())
+    return ENR.mint_axis_report(**kwargs)
+
+
 def test_crash_before_scan_mints_unmeasured_not_completed() -> None:
     """Plant infrastructure death (exit 2): body must be UNMEASURED, not residual."""
-    report = ENR.mint_axis_report(
+    report = _mint_axis_report(
         axis_id=_seat("silent"),
         display="R_silent[s00]",
         commit_sha="deadbeef",
@@ -49,14 +73,23 @@ def test_crash_before_scan_mints_unmeasured_not_completed() -> None:
 def test_genuine_nonzero_residual_requires_count_not_exit_invent() -> None:
     """Measured residual must carry magnitude from floor summary — not exit=1 invent."""
     with pytest.raises(ValueError, match="residual_count|floor summary|invent"):
-        ENR.mint_axis_report(
+        _mint_axis_report(
             axis_id=_seat("native-crash"),
             display="R_native_crashes[s00]",
             commit_sha="deadbeef",
             exit_code=1,
             kind="process",
         )
-    report = ENR.mint_axis_report(
+    with pytest.raises(ValueError, match="conservation witness"):
+        ENR.mint_axis_report(
+            axis_id=_seat("native-crash"),
+            display="R_native_crashes[s00]",
+            commit_sha="deadbeef",
+            exit_code=1,
+            kind="process",
+            residual_count=47,
+        )
+    report = _mint_axis_report(
         axis_id=_seat("native-crash"),
         display="R_native_crashes[s00]",
         commit_sha="deadbeef",
@@ -77,7 +110,7 @@ def test_genuine_nonzero_residual_requires_count_not_exit_invent() -> None:
 
 
 def test_green_residual_is_measured_with_zero_count() -> None:
-    report = ENR.mint_axis_report(
+    report = _mint_axis_report(
         axis_id=_seat("timeout"),
         display="R_timeouts[s00]",
         commit_sha="deadbeef",
@@ -93,7 +126,9 @@ def test_green_residual_is_measured_with_zero_count() -> None:
     assert report["totals"]["failed"] == 0
 
 
-def test_load_residual_from_pandas_floor_summary(tmp_path: Path) -> None:
+def test_pandas_floor_summary_without_conservation_witness_is_refused(
+    tmp_path: Path,
+) -> None:
     summary = {
         "kind": "pandas-floor-summary-v1",
         "floor": "native-crash",
@@ -101,43 +136,40 @@ def test_load_residual_from_pandas_floor_summary(tmp_path: Path) -> None:
     }
     path = tmp_path / "floor-summary.json"
     path.write_text(json.dumps(summary), encoding="utf-8")
-    assert (
+    with pytest.raises(ValueError, match="did not complete measurement"):
         ENR.load_residual_count_from_floor_summary(
             path, residual_key="R_native_crashes"
         )
-        == 12
-    )
 
 
-def test_load_residual_from_floor_residual_v1(tmp_path: Path) -> None:
+def test_unwitnessed_floor_residual_v1_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "static.json"
     path.write_text(
         json.dumps(
-            {
-                "kind": "floor-residual-v1",
-                "residualKey": "R_static_sole_construction",
+                {
+                    "kind": "floor-residual-v1",
+                    "measurement": "measured",
+                    "residualKey": "R_static_sole_construction",
                 "residualCount": 3,
             }
         ),
         encoding="utf-8",
     )
-    assert (
+    with pytest.raises(ValueError, match="conservationWitness"):
         ENR.load_residual_count_from_floor_summary(
             path, residual_key="R_static_sole_construction"
         )
-        == 3
-    )
 
 
 def test_crash_and_residual_never_look_alike() -> None:
-    crash = ENR.mint_axis_report(
+    crash = _mint_axis_report(
         axis_id=_seat("bare-exception"),
         display="R_bare_exceptions[s00]",
         commit_sha="c",
         exit_code=2,
         kind="process",
     )
-    residual = ENR.mint_axis_report(
+    residual = _mint_axis_report(
         axis_id=_seat("bare-exception"),
         display="R_bare_exceptions[s00]",
         commit_sha="c",
@@ -160,7 +192,7 @@ def test_enrollment_roll_call_unmeasured_not_residual_red(tmp_path: Path) -> Non
         if axis.axis_id == _seat("silent") or axis.axis_id.startswith("silent-"):
             if axis.axis_id != _seat("silent"):
                 # only plant unmeasured on silent-s00; other silent seats green
-                report = ENR.mint_axis_report(
+                report = _mint_axis_report(
                     axis_id=axis.axis_id,
                     display=axis.display,
                     commit_sha="tip",
@@ -169,7 +201,7 @@ def test_enrollment_roll_call_unmeasured_not_residual_red(tmp_path: Path) -> Non
                     residual_count=0,
                 )
             else:
-                report = ENR.mint_axis_report(
+                report = _mint_axis_report(
                     axis_id=axis.axis_id,
                     display=axis.display,
                     commit_sha="tip",
@@ -178,7 +210,7 @@ def test_enrollment_roll_call_unmeasured_not_residual_red(tmp_path: Path) -> Non
                     unmeasured_reason="planted crash before measurement",
                 )
         else:
-            report = ENR.mint_axis_report(
+            report = _mint_axis_report(
                 axis_id=axis.axis_id,
                 display=axis.display,
                 commit_sha="tip",
@@ -203,7 +235,7 @@ def test_residual_magnitude_drives_residual_red_not_exit_alone(
     """residualCount>0 is residual red even if someone mints exit=0 wrongly."""
     for axis in ENR.ENROLLED:
         if axis.axis_id == _seat("native-crash"):
-            report = ENR.mint_axis_report(
+            report = _mint_axis_report(
                 axis_id=axis.axis_id,
                 display=axis.display,
                 commit_sha="tip",
@@ -212,7 +244,7 @@ def test_residual_magnitude_drives_residual_red_not_exit_alone(
                 residual_count=5,
             )
         else:
-            report = ENR.mint_axis_report(
+            report = _mint_axis_report(
                 axis_id=axis.axis_id,
                 display=axis.display,
                 commit_sha="tip",
@@ -227,3 +259,25 @@ def test_residual_magnitude_drives_residual_red_not_exit_alone(
     assert code == 0
     assert summary["status"] == "complete"
     assert _seat("native-crash") in summary["residualRed"]
+
+
+def test_campaign_seal_requires_complete_witnessed_enrollment() -> None:
+    complete = {
+        "status": "complete",
+        "attended": list(ENR.enrolled_ids()),
+        "residualRed": [],
+    }
+    measured = ENR.mint_campaign_body(complete, commit_sha="tip")
+    assert measured["measurement"] == "measured"
+    assert measured["conservationWitness"]["status"] == "passed"
+
+    incomplete = {
+        "status": "UNMEASURED",
+        "attended": list(ENR.enrolled_ids())[:-1],
+        "residualRed": [],
+    }
+    refused = ENR.mint_campaign_body(incomplete, commit_sha="tip")
+    assert refused["measurement"] == "unmeasured"
+    assert refused["measured"] is False
+    assert "totals" not in refused
+    assert "conservationFailure" in refused

@@ -52,6 +52,21 @@ def _enroll_mod():
     return mod
 
 
+def _witness():
+    from sugar_lift_py_tests.conservation_mint import ConservedBody, seal_after_validation
+
+    outcome = seal_after_validation(
+        measured_payload={"kind": "test-source-body"},
+        input_key_manifest=[{"key": "same"}],
+        output_key_manifest=[{"key": "same"}],
+        validator_stage_id="test-floor-validator/v1",
+        validator_source_path=Path(__file__),
+        validate=lambda: None,
+    )
+    assert isinstance(outcome, ConservedBody)
+    return outcome.witness
+
+
 def test_workflow_is_parallel_matrix_not_serial_monolith() -> None:
     workflow = WORKFLOW.read_text()
     assert "tools/heavy_measurement_lease.py" not in workflow
@@ -110,6 +125,7 @@ def test_enrollment_missing_axis_is_unmeasured(tmp_path: Path) -> None:
         exit_code=0,
         kind="process",
         residual_count=0,
+        conservation_witness=_witness(),
     )
     path = tmp_path / "floor-axis-silent-s00" / mod.REPORT_FILENAME
     path.parent.mkdir(parents=True)
@@ -133,6 +149,7 @@ def test_enrollment_complete_with_all_axes(tmp_path: Path) -> None:
             kind=axis.kind,
             # Magnitude from floor summary identity — not invented from exit.
             residual_count=3 if is_timeout else 0,
+            conservation_witness=_witness(),
         )
         path = tmp_path / f"floor-axis-{axis.axis_id}" / mod.REPORT_FILENAME
         path.parent.mkdir(parents=True)

@@ -13,12 +13,14 @@ SCRIPTS="$TESTS/scripts"
 
 red_axes=()
 green_axes=()
+all_axes=()
 axis_index=0
 # Count axis() invocations for progress (updated as axes are declared below).
 AXIS_TOTAL=22
 
 axis() {
   local name="$1"; shift
+  all_axes+=("$name")
   axis_index=$((axis_index + 1))
   echo "static_floors phase=axis index=${axis_index}/${AXIS_TOTAL} name=${name} status=start"
   echo "::group::[${axis_index}/${AXIS_TOTAL}] $name"
@@ -28,7 +30,7 @@ axis() {
     echo "static_floors phase=axis index=${axis_index}/${AXIS_TOTAL} name=${name} status=green running_green=${#green_axes[@]} running_red=${#red_axes[@]}"
   else
     local status=$?
-    red_axes+=("$name (exit $status)")
+    red_axes+=("$name")
     echo "::error::$name is RED (exit $status)"
     echo "static_floors phase=axis index=${axis_index}/${AXIS_TOTAL} name=${name} status=red exit=${status} running_green=${#green_axes[@]} running_red=${#red_axes[@]}"
   fi
@@ -102,28 +104,14 @@ echo "static_floors phase=end green=${#green_axes[@]} red=${#red_axes[@]}"
 echo "static sole-construction floors: ${#green_axes[@]} green, ${#red_axes[@]} red"
 # Residual magnitude for enrollment mint — count of red static axes, not exit invent.
 residual_json="${SUGAR_STATIC_FLOOR_RESIDUAL_JSON:-floor-static-residual.json}"
-python3 -u -c "
-import json
-from pathlib import Path
-path = Path('''${residual_json}''')
-red = ${#red_axes[@]}
-path.write_text(
-    json.dumps(
-        {
-            'kind': 'floor-residual-v1',
-            'residualKey': 'R_static_sole_construction',
-            'residualCount': red,
-            'greenAxes': ${#green_axes[@]},
-            'redAxes': red,
-        },
-        indent=2,
-        sort_keys=True,
-    )
-    + '\n',
-    encoding='utf-8',
-)
-print(f'static_floors residual_written path={path} residualCount={red}', flush=True)
-"
+mint_args=(--out "$residual_json")
+for name in "${all_axes[@]}"; do mint_args+=(--input-axis "$name"); done
+for name in "${green_axes[@]}"; do mint_args+=(--green-axis "$name"); done
+for name in "${red_axes[@]}"; do mint_args+=(--red-axis "$name"); done
+if ! python3 -u tools/static_floor_residual_report.py "${mint_args[@]}"; then
+  echo "::error::static floor conservation refused; residual is UNMEASURED"
+  exit 2
+fi
 if [ ${#red_axes[@]} -gt 0 ]; then
   echo "RED AXES:"
   printf '  - %s\n' "${red_axes[@]}"
