@@ -203,13 +203,20 @@ def open_source_file_for_construction(
     call_contract_refs=None,
     construction_context=None,
     populate_derived: bool = True,
+    resolution_session=None,
 ):
     """Open a SourceFile the way production enumerate does — never bare context.
 
     Injects ``TreeConstructionContextV1`` (bound or provisional) and, by default,
     freezes source-derived manager refs at exact use-sites. Callers that already
     hold a frozen context (shared demand table across a census) may pass it.
+
+    ``resolution_session`` owns every source-resolution memo for this open. When
+    omitted, this door mints one session for the population so multi-receipt
+    amortization is real; multi-file owners should pass one shared session so
+    the same dependency definition is not re-projected per consumer file.
     """
+    from sugar_lift_python_source.resolution_session import session_or_new
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
@@ -232,7 +239,12 @@ def open_source_file_for_construction(
             populate_source_derived_resource_refs,
         )
 
-        populate_source_derived_resource_refs(source_file, root=root, path=path)
+        # File-open is a multi-resolve owner: one session for every receipt in
+        # this population. session_or_new keeps an explicit shared session.
+        session = session_or_new(resolution_session)
+        populate_source_derived_resource_refs(
+            source_file, root=root, path=path, session=session
+        )
     return source_file
 
 
@@ -1793,6 +1805,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
             rows = []
             construction_context = TreeConstructionContextV1(_BOUND_CONTRACT_REFS)
+            # One session for the whole package walk: the same dependency
+            # definition projected for many consumer files amortizes once.
+            from sugar_lift_python_source.resolution_session import (
+                SourceResolutionSession,
+            )
+
+            package_session = SourceResolutionSession()
             for source_path in sorted(root.rglob("*.py")):
                 identity = path_source(str(source_path))
                 source_file = _TreeSourceFile(
@@ -1803,7 +1822,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
 
                 populate_source_derived_resource_refs(
-                    source_file, root=root, path=source_path
+                    source_file,
+                    root=root,
+                    path=source_path,
+                    session=package_session,
                 )
                 for function in source_file.functions():
                     function_sugar = function.sugar()
@@ -2035,9 +2057,16 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_python_source.manager_summary_derivation import (
                     populate_source_derived_resource_refs,
                 )
+                from sugar_lift_python_source.resolution_session import (
+                    SourceResolutionSession,
+                )
 
+                # Single-file multi-resolve owner: one session for every receipt.
                 populate_source_derived_resource_refs(
-                    tree_file, root=root, path=full_path
+                    tree_file,
+                    root=root,
+                    path=full_path,
+                    session=SourceResolutionSession(),
                 )
                 nodes = []
                 for fn in tree_file.functions():

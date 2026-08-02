@@ -41,14 +41,16 @@ def populate_source_visible_call_frames(
 ) -> None:
     """Populate exact-use source frames and one closed classification row.
 
-    ``session`` owns every resolution memo for this population.  The default
-    opens one bounded to this source file, so no frame projected for one file
-    (or one project) can ever answer for another.
+    ``session`` owns every resolution memo for this population. Multi-resolve
+    owners must pass one shared session so amortization reaches every receipt.
+    The default opens one bounded to this single population call only — no
+    frame projected under that isolated session can answer for another call.
     """
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
     from .resolution_session import session_or_new
 
+    # Multi-resolve owner entry: one session for every receipt in this loop.
     session = session_or_new(session)
     context = source_file.unit.construction_context
     if context is None:
