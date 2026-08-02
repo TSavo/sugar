@@ -54,6 +54,7 @@ class SourceCallPreconstructionGapV1:
         "value-call-target",
         "call-target-source-absent",
         "call-target-export-unresolved",
+        "call-target-off-population",
         "non-manager-result",
         "call-binding",
         "dynamic-call-target",

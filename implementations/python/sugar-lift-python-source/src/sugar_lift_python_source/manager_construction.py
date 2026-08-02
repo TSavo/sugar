@@ -709,6 +709,15 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
 
     if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
         raise ValueError("module prefix source CID mismatch")
+    # Defensive membrane: stdlib must never reach MaterializeModule here.
+    # Callers should short-circuit in prefix_has_completed_fallthrough; if they
+    # do not, refuse loudly rather than rebuild an unenrolled module.
+    if graph is not None and getattr(graph, "artifact_kind", None) == "stdlib":
+        raise RuntimeError(
+            "population membrane: _module_prefix_outcome must not MaterializeModule "
+            f"stdlib seat {module.source_seat!r}; cite via "
+            "prefix_has_completed_fallthrough / call-target-off-population"
+        )
     construction_context = TreeConstructionContextV1.for_source_call_construction()
     producer_reporter = ConstructionTestimonyReporterV1(
         NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
@@ -822,8 +831,20 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
 def prefix_has_completed_fallthrough(
     module, locus, *, graph=None, session=None
 ) -> bool:
-    """Admit an export only through the authenticated module-prefix producer."""
+    """Admit an export only through the authenticated module-prefix producer.
+
+    POPULATION MEMBRANE: when ``graph`` is stdlib (off enrolled population),
+    never ``MaterializeModule`` the module to prove fallthrough.  Static export
+    locus + definition coordinate is enough for a ResolvedPythonObjectV1
+    citation; frame projection then cites via ``call-target-off-population``
+    instead of rebuilding.  Running the prefix producer here is what turned
+    one pandas open into 35× ``SourceFile(enum.py)``.
+    """
     from sugar_lift_py_tests.outcome import Completed, true_guard
+
+    if graph is not None and getattr(graph, "artifact_kind", None) == "stdlib":
+        # Cite path: admit static export without off-population construction.
+        return True
 
     exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
     if len(exits.exits) != 1:
@@ -932,11 +953,18 @@ class ConstructedManagerBehaviorV1:
 #     The export door DID authenticate an object in this artifact, but projecting
 #     its frame failed.  A defect in the door, not a coverage gap -- and invisible
 #     for as long as it shares a bucket with the other three.
+# ``call-target-off-population``
+#     The export door authenticated a defining source, but that source is outside
+#     the enrolled measurement population (stdlib / off-pin).  Cite via the opaque
+#     obligation path; do NOT MaterializeModule / ClassDef.sugar the unenrolled
+#     module.  Successful resolution used to be punished with a full rebuild
+#     while failure already cited -- the population membrane closes that hole.
 
 _CALL_TARGET_GAP_PRECEDENCE = (
     "call-graph-cycle",
     "value-call-target",
     "call-target-export-unresolved",
+    "call-target-off-population",
     "call-target-source-absent",
 )
 
@@ -952,6 +980,7 @@ class _ExternalCallTargetGap:
     kind: Literal[
         "call-target-source-absent",
         "call-target-export-unresolved",
+        "call-target-off-population",
         "call-graph-cycle",
     ]
 
@@ -965,12 +994,39 @@ class ManagerConstructionGapV1:
         "value-call-target",
         "call-target-source-absent",
         "call-target-export-unresolved",
+        "call-target-off-population",
         "non-manager-result",
         "call-binding",
         "force-floor",
     ]
     resolved_object_cid: str
     detail: str
+
+
+def _off_population_materialize_gap(
+    resolved: "ResolvedPythonObjectV1",
+    *,
+    graph: "DependencyArtifactGraph",
+) -> ManagerConstructionGapV1 | None:
+    """Population membrane: off-pin success must cite, never rebuild.
+
+    Failure already parks an opaque obligation.  Success against authenticated
+    stdlib used to call ``resolve_source_visible_frame`` and fully
+    ``MaterializeModule`` the unenrolled source (enum.py 35× on one pandas
+    open).  That corrupts measurement integrity: the pin enrolls corpus files,
+    not CPython.  Return a typed gap so every caller takes the same cite path
+    failure already uses.
+    """
+    if graph.artifact_kind != "stdlib":
+        return None
+    return ManagerConstructionGapV1(
+        "call-target-off-population",
+        resolved.cid,
+        (
+            f"stdlib module {resolved.module_name!r} is off enrolled population; "
+            "cite via opaque membrane, do not MaterializeModule"
+        ),
+    )
 
 
 def _factory_return_faces_from_entries(
@@ -1687,6 +1743,13 @@ def resolve_source_visible_frame(
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
+    # POPULATION MEMBRANE (measurement integrity): off-pin authenticated
+    # success must cite, never rebuild.  Placed AFTER artifact identity checks
+    # and BEFORE any SourceFile / MaterializeModule.  Failure already cites via
+    # _install_opaque_call_obligation; success must take the same door.
+    off_pop = _off_population_materialize_gap(resolved, graph=graph)
+    if off_pop is not None:
+        return off_pop
     definition = resolved.definition
     cache_key = (
         graph.distribution_artifact_cid,
@@ -2037,11 +2100,14 @@ def _resolve_source_visible_frame_uncached(
             del exc
             continue
         if isinstance(projected, ManagerConstructionGapV1):
-            kind = (
-                "call-graph-cycle"
-                if projected.kind == "call-graph-cycle"
-                else "call-target-export-unresolved"
-            )
+            if projected.kind == "call-graph-cycle":
+                kind = "call-graph-cycle"
+            elif projected.kind == "call-target-off-population":
+                # Cite: success against authenticated stdlib is not a door
+                # defect and not coverage-absent — it is off-population.
+                kind = "call-target-off-population"
+            else:
+                kind = "call-target-export-unresolved"
             _install_opaque_call_obligation(
                 context,
                 call,
@@ -2670,6 +2736,8 @@ def _resolve_external_call_frame(
         # reported as a bug in the export door.
         if projected.kind == "call-graph-cycle":
             return _ExternalCallTargetGap("call-graph-cycle")
+        if projected.kind == "call-target-off-population":
+            return _ExternalCallTargetGap("call-target-off-population")
         return _ExternalCallTargetGap("call-target-export-unresolved")
     frame, _target = projected
     return frame

@@ -214,6 +214,8 @@ class WithConstructionGapKind(str, Enum):
     VALUE_CALL_TARGET = "value-call-target"
     CALL_TARGET_SOURCE_ABSENT = "call-target-source-absent"
     CALL_TARGET_EXPORT_UNRESOLVED = "call-target-export-unresolved"
+    # Authenticated stdlib / off-pin: cite, never MaterializeModule (membrane).
+    CALL_TARGET_OFF_POPULATION = "call-target-off-population"
     ENTER_MISSING = "enter-missing"
     EXIT_MISSING = "exit-missing"
     METHOD_CONSTRUCTION = "method-construction"
