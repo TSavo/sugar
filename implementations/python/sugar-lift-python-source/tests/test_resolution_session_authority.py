@@ -400,6 +400,7 @@ def leaky_process_memo(monkeypatch):
     frames: dict = {}
     holds: dict = {}
     active: set = set()
+    modules: dict = {}
 
     def leaky_init(self, *, enabled: bool = True) -> None:
         self.enabled = enabled
@@ -407,6 +408,7 @@ def leaky_process_memo(monkeypatch):
         self.frame_results = frames
         self.frame_holds = holds
         self.frame_active = active
+        self.module_materializations = modules
 
     monkeypatch.setattr(SourceResolutionSession, "__init__", leaky_init)
 

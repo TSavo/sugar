@@ -71,6 +71,7 @@ class SourceResolutionSession:
         "frame_results",
         "frame_holds",
         "frame_active",
+        "module_materializations",
     )
 
     def __init__(self, *, enabled: bool = True) -> None:
@@ -87,6 +88,12 @@ class SourceResolutionSession:
         # typed-loud exactly like the local recursive case, and never loops.
         # Re-entrancy is a property of THIS traversal, so it is session state.
         self.frame_active: set[tuple] = set()
+        # Module SourceFile + producer root + pin roster for one authenticated
+        # module under this session. Frame projection is per-definition, but
+        # materializing the whole module per definition multiplied in-population
+        # megamodules (pandas/_config/config.py ×18 in one _json.py open). The
+        # value is live context-bound, so it lives here — never process-global.
+        self.module_materializations: dict[tuple, Any] = {}
 
     # -- export resolution memo ------------------------------------------
 
@@ -108,6 +115,15 @@ class SourceResolutionSession:
         if hold is not None:
             self.frame_holds[key] = hold
         self.frame_results[key] = result
+
+    # -- module materialize memo (shared across definitions in one module) --
+
+    def module_materialize_hit(self, key: tuple) -> Any | None:
+        return self.module_materializations.get(key) if self.enabled else None
+
+    def remember_module_materialize(self, key: tuple, product: Any) -> None:
+        if self.enabled:
+            self.module_materializations[key] = product
 
 
 def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionSession:
