@@ -80,8 +80,14 @@ _RETAINED_BY_MEMENTO = {}
 # control_effect_recensus, but ``measure_file_via_enumerate`` never received
 # that table: each D2 ``sugar.enumerate level=functions`` re-derived via
 # ``tree_construction_context_for_workspace`` → hang-looking multi-minute
-# per file. Process memo makes the paid scan real amortization.
+# per file. Process memo makes the paid scan real amortization within one
+# process; k=8 still pays ×k cold startups unless shards LOAD a prebuilt
+# table (see ``prebuilt_demand_table`` + ``install_provisional_contract_refs``).
 _PROVISIONAL_CONTRACT_REFS_BY_ROOT: Dict[str, Any] = {}
+# How many times ``_preconstruction_demand_rows`` actually walked a corpus.
+# Unit tests count this (do not time it): a cold process given a prebuilt
+# table must leave this at zero after install + measure.
+_PRECONSTRUCTION_WALK_COUNT = 0
 
 
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
@@ -128,8 +134,17 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def provisional_contract_refs_from_demand_rows(rows):
-    """Project one already-authenticated demand table into construction refs."""
+def provisional_contract_refs_from_demand_rows(
+    rows,
+    *,
+    table_cid: str | None = None,
+    catalog_cid: str | None = None,
+):
+    """Project one already-authenticated demand table into construction refs.
+
+    No corpus walk. When ``table_cid`` is omitted, the table is content-addressed
+    from the CM demand rows so two identical row sets share one CID.
+    """
     from types import MappingProxyType
 
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -138,11 +153,14 @@ def provisional_contract_refs_from_demand_rows(rows):
         SourceFragmentCoordinateV1,
         _hash_json,
     )
+    from sugar_lift_python_source.canonical import cid_of_json
 
     resolutions = {}
+    cm_rows = []
     for row in rows:
         if row.get("kind") != "context-manager-demand":
             continue
+        cm_rows.append(row)
         site = SourceFragmentCoordinateV1.decode(row["useSite"])
         preimage = {
             key: row[key]
@@ -155,8 +173,12 @@ def provisional_contract_refs_from_demand_rows(rows):
             row.get("gapKind") or "runtime-selected",
             (),
         )
-    catalog_cid = "blake3-512:" + ("c" * 128)
-    table_cid = "blake3-512:" + ("t" * 128)
+    if table_cid is None:
+        table_cid = cid_of_json(
+            {"kind": "provisional-demand-table-rows", "rows": cm_rows}
+        )
+    if catalog_cid is None:
+        catalog_cid = table_cid
     return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(resolutions))
 
 
@@ -176,6 +198,8 @@ def provisional_contract_refs_from_demands(root: Path):
 
     Process-memoized by resolved root: the walk is O(corpus), not O(file). A
     second open of the same workspace root must not re-scan every module.
+    Prefer ``install_provisional_contract_refs`` / prebuilt load for cold
+    shard processes so the walk is not paid again.
     """
     key = str(Path(root).resolve())
     cached = _PROVISIONAL_CONTRACT_REFS_BY_ROOT.get(key)
@@ -188,9 +212,30 @@ def provisional_contract_refs_from_demands(root: Path):
     return refs
 
 
+def install_provisional_contract_refs(root: Path, refs) -> None:
+    """Seed the process demand-table memo without walking the corpus.
+
+    Shards load a plan-time prebuilt table and call this once. Subsequent
+    ``provisional_contract_refs_from_demands`` / D2 enumerate hits the memo.
+    """
+    key = str(Path(root).resolve())
+    _PROVISIONAL_CONTRACT_REFS_BY_ROOT[key] = refs
+
+
 def clear_provisional_contract_refs_memo() -> None:
     """Drop process demand-table memo (tests / hermetic process reuse)."""
     _PROVISIONAL_CONTRACT_REFS_BY_ROOT.clear()
+
+
+def preconstruction_walk_count() -> int:
+    """How many times the corpus was walked for provisional demand rows."""
+    return _PRECONSTRUCTION_WALK_COUNT
+
+
+def reset_preconstruction_walk_count() -> None:
+    """Zero the walk counter (tests only)."""
+    global _PRECONSTRUCTION_WALK_COUNT
+    _PRECONSTRUCTION_WALK_COUNT = 0
 
 
 def tree_construction_context_for_workspace(
@@ -563,7 +608,12 @@ def _preconstruction_demand_rows(root: Path) -> List[Dict[str, Any]]:
     contract.  Its call coordinate supplies the authenticated import binding,
     but must not also enroll an independent function-contract demand for the
     same use site.
+
+    Each call is one corpus walk (counted by ``preconstruction_walk_count``).
+    Cold shards must load a prebuilt table instead of re-entering this door.
     """
+    global _PRECONSTRUCTION_WALK_COUNT
+    _PRECONSTRUCTION_WALK_COUNT += 1
     call_rows = _call_contract_demand_rows(root)
     calls_by_site = {
         json.dumps(row["useSite"], sort_keys=True): row

@@ -285,8 +285,19 @@ def measure_file_via_enumerate(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None = None,
+    contract_refs=None,
 ) -> dict[str, Any]:
-    """Produce one terminal solely from sugar.enumerate demands."""
+    """Produce one terminal solely from sugar.enumerate demands.
+
+    ``contract_refs`` — when provided, installed into the process provisional
+    demand-table memo BEFORE D2 so ``tree_construction_context_for_workspace``
+    does not re-walk the corpus. Plan-time prebuilt tables are the production
+    source; omitting this re-derives (process-memoized after first cold pay).
+    """
+    if contract_refs is not None:
+        from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
+
+        install_provisional_contract_refs(Path(workspace_root), contract_refs)
     function_nodes, function_gaps = demand_function_roster(
         workspace_root=workspace_root,
         file_rel=file_rel,
