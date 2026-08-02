@@ -1,4 +1,4 @@
-"""Unconstructed with-item plant: must residual (typed gap), never vanish."""
+"""Unconstructed with-item plant: must remain accounted, never vanish."""
 
 
 def run():
