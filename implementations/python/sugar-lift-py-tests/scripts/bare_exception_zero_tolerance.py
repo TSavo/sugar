@@ -178,11 +178,15 @@ def main() -> int:
 
     offenders = tuple(row.offender for row in rows if row.offender is not None)
     if args.json is not None:
-        from pandas_floor_summary import floor_summary, relative_files, write_json
+        from pandas_floor_summary import relative_files, write_floor_summary_or_residual
 
         files = relative_files(paths, args.repo_root)
-        payload = floor_summary(
+        residual_count = len(offenders)
+        write_floor_summary_or_residual(
+            args.json,
             floor="bare-exception",
+            residual_key="R_bare_exceptions",
+            residual_count=residual_count,
             files=files,
             rows=[
                 {
@@ -193,7 +197,7 @@ def main() -> int:
                 for row in rows
             ],
             totals={
-                "R_bare_exceptions": len(offenders),
+                "R_bare_exceptions": residual_count,
                 "completed": sum(
                     row.category == OUTCOME_COMPLETED for row in rows
                 ),
@@ -207,7 +211,6 @@ def main() -> int:
             },
             measured=True,
         )
-        write_json(args.json, payload)
     print(
         "BARE-EXCEPTION SURFACE: "
         f"discovered={len(rows)} "

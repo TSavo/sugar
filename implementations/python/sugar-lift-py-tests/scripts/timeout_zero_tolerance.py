@@ -164,11 +164,15 @@ def main() -> int:
     rows = summary.rows
     offenders = summary.offenders
     if args.json is not None:
-        from pandas_floor_summary import floor_summary, relative_files, write_json
+        from pandas_floor_summary import relative_files, write_floor_summary_or_residual
 
         files = relative_files(paths, args.repo_root)
-        payload = floor_summary(
+        residual_count = len(offenders)
+        write_floor_summary_or_residual(
+            args.json,
             floor="timeout",
+            residual_key="R_timeouts",
+            residual_count=residual_count,
             files=files,
             rows=[
                 {
@@ -181,7 +185,7 @@ def main() -> int:
                 for row in rows
             ],
             totals={
-                "R_timeouts": len(offenders),
+                "R_timeouts": residual_count,
                 "completed": sum(row.category == "completed" for row in rows),
                 "typedGaps": sum(row.category == "typed-gap" for row in rows),
                 "nativeCrashes": sum(row.category == "native-crash" for row in rows),
@@ -189,7 +193,6 @@ def main() -> int:
             },
             measured=True,
         )
-        write_json(args.json, payload)
     print(
         "TIMEOUT SURFACE: "
         f"discovered={len(rows)} "
