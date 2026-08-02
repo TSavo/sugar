@@ -2474,7 +2474,7 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
 def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     tmp_path,
 ):
-    from sugar_source_tree.panic import WithConstructionGap
+    from sugar_source_tree.panic import SugarNotWritten
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2484,7 +2484,7 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
 
     assert len(context.source_derived_contract_refs) == 1
     with_node = next(node for node in tree.nodes() if node.kind == "With")
-    with pytest.raises(WithConstructionGap) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         with_node.sugar()
 
     # Dual-mode RaisesExc constructs through enter; exit residual is stage-keyed
@@ -2506,7 +2506,7 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     tmp_path,
 ):
-    from sugar_source_tree.panic import WithConstructionGap
+    from sugar_source_tree.panic import SugarNotWritten
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2516,7 +2516,7 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
 
     assert len(context.source_derived_contract_refs) == 1
     with_node = next(node for node in tree.nodes() if node.kind == "With")
-    with pytest.raises(WithConstructionGap) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         with_node.sugar()
 
     # Legacy multi-actual form still refuses; residual names the same exit-face
@@ -3672,7 +3672,7 @@ def test_attribute_exception_class_as_binding_projects_consumed_effect(tmp_path)
 
 def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
     """Lying twin: ``boundary(factory())`` cannot borrow Attribute-path proof."""
-    from sugar_source_tree.panic import WithConstructionGap
+    from sugar_source_tree.panic import SugarNotWritten
 
     distribution = _distribution(
         tmp_path,
@@ -3711,7 +3711,7 @@ def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
         sugar = with_node.sugar()
     except Exception as caught:
         assert type(caught).__name__ in {
-            "WithConstructionGap",
+            "SugarNotWritten",
             "ContextManagerResolutionConstructionGap",
             "SugarNotWritten",
         }, type(caught).__name__

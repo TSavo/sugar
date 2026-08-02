@@ -368,10 +368,10 @@ def test_external_error_raised_emits_complete_consumer_testimony() -> None:
 
 def test_adjacent_computed_class_raises_stays_typed_opaque() -> None:
     """Lying twin: an unfollowable computed class cannot borrow sibling proof."""
-    from sugar_source_tree.panic import WithConstructionGap
+    from sugar_source_tree.panic import SugarNotWritten
 
     with_node = _with_at(33)
-    with pytest.raises(WithConstructionGap) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         with_node.sugar()
 
     assert caught.value.coordinate.start_line == 33

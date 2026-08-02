@@ -731,7 +731,7 @@ def test_unsupported_semantics_gap_does_not_construct_resource(tmp_path):
 
     with pytest.raises(SugarNotWritten) as caught:
         _function_sugar(path_source(str(path)), unsupported)
-    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert type(caught.value).__name__ == "SugarNotWritten"
     assert caught.value.kind == "unsupported-cm-schema"
 
 
