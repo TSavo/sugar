@@ -37,7 +37,7 @@ def test_with_census_emits_the_complete_closed_vocabulary_and_conserves():
         member.value for member in WithConstructionGapKind
     )
     assert partition["typed_gap_kinds_total"] == len(WithConstructionGapKind)
-    assert partition["typed_gap_kinds_total"] == 41
+    assert partition["typed_gap_kinds_total"] == 42
     assert partition["accounted"] == partition["with_items_total"] == 10
     assert partition["unrecognized_resolution_kinds"] == {}
     assert partition["reconciliation"] == "10 = 2 constructed + 8 typed gaps"

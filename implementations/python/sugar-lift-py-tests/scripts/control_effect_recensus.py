@@ -427,13 +427,13 @@ def _with_census_partition(
     from sugar_source_tree.panic import WithConstructionGapKind
 
     vocabulary = tuple(member.value for member in WithConstructionGapKind)
-    # ENTER_MAY_HALT / EXIT_MAY_HALT are source-derived resource lifecycle
-    # gaps, added with the generator-backed resource contract. Keep the exact
-    # cardinality tooth current; do not replace it with an open-ended bucket.
-    if len(vocabulary) != 41:
+    # Closed cardinality tooth: every WithConstructionGapKind member is a
+    # partition key. Bump when a new kind is enrolled (OPAQUE_EXIT_TRUTHINESS
+    # made 42). Do not replace with an open-ended bucket.
+    if len(vocabulary) != 42:
         raise ValueError(
             "WithConstructionGapKind vocabulary changed: "
-            f"expected 41 members, found {len(vocabulary)}"
+            f"expected 42 members, found {len(vocabulary)}"
         )
     allowed = {"derived-contract", *(f"gap:{kind}" for kind in vocabulary)}
     unexpected = sorted(set(cm_resolutions) - allowed)
@@ -1129,6 +1129,7 @@ def main() -> int:
         live_defect = 0
         live_fns = 0
         live_clean = 0
+        live_clean_refused = False  # any file refused clean → no clean% identity
         live_snw = 0  # SugarNotWritten (missing sugar)
         live_other_gaps = 0  # other typed gaps (e.g. RuntimeSelectedContextManager)
         already_done = len(file_names) - len(pending)
@@ -1138,7 +1139,13 @@ def main() -> int:
                 raw = crow.get("result") or {}
                 cat = str(raw.get("category") or "")
                 live_fns += int(raw.get("functionsTotal") or 0)
-                live_clean += int(raw.get("functionsClean") or 0)
+                _seed_clean = raw.get("functionsClean")
+                if raw.get("cleanRatioRefused") or (
+                    _seed_clean is None and int(raw.get("functionsTotal") or 0) > 0
+                ):
+                    live_clean_refused = True
+                elif _seed_clean is not None:
+                    live_clean += int(_seed_clean)
                 # NOT `families`: that name is main's accumulating Counter, and
                 # rebinding it to this plain dict made the later
                 # `families["ConstructionPanic"] += 1` a KeyError crash — the whole
@@ -1283,7 +1290,8 @@ def main() -> int:
                         f"counts completed≈{live_done - live_panic - live_defect} "
                         f"snw={live_snw} other_gaps={live_other_gaps} "
                         f"cpanic={live_panic} defect={live_defect} "
-                        f"fn_clean/total={live_clean}/{live_fns}"
+                        f"fn_clean/total="
+                        f"{'?' if live_clean_refused else live_clean}/{live_fns}"
                     )
                 t_file = time.perf_counter()
                 fn_stat = {
@@ -1299,9 +1307,19 @@ def main() -> int:
                 ) -> None:
                     # live_clean/live_fns are the completed-file base; add this
                     # file's running counts so `fn=` climbs per function, live.
+                    # Never mint identity clean% when clean is refused.
                     shown_fns = live_fns + in_total
-                    shown_clean = live_clean + in_clean
-                    clean_pct = (100.0 * shown_clean / shown_fns) if shown_fns else 0.0
+                    if live_clean_refused:
+                        fn_disp = f"?/{shown_fns}"
+                        clean_disp = "n/a"
+                    else:
+                        shown_clean = live_clean + in_clean
+                        fn_disp = f"{shown_clean}/{shown_fns}"
+                        clean_disp = (
+                            f"{(100.0 * shown_clean / shown_fns):.0f}"
+                            if shown_fns
+                            else "0"
+                        )
                     if elapsed is not None:
                         fn_stat["fn_seen"] += 1
                         fn_stat["fn_time"] += elapsed
@@ -1324,8 +1342,8 @@ def main() -> int:
                         "gaps": live_other_gaps,
                         "cpanic": live_panic,
                         "defect": live_defect,
-                        "fn": f"{shown_clean}/{shown_fns}",
-                        "clean%": f"{clean_pct:.0f}",
+                        "fn": fn_disp,
+                        "clean%": clean_disp,
                     }
                     _set_bars(post, refresh=True)
 
@@ -1348,6 +1366,8 @@ def main() -> int:
                     # typed refusal, and not in any family below -- so absorbing it
                     # into `backend-defect` would leave the row short with nothing
                     # saying so. Own category, named, loud, red (#6329).
+                    # measure_file_via_enumerate must not raise after roster bank;
+                    # these arms only fire when the consumer itself cannot load.
                     row = {
                         "category": "instrument-defect-unresolvable-dispatch",
                         "defect": {
@@ -1360,8 +1380,14 @@ def main() -> int:
                                 "the target or delete the arm"
                             ),
                         },
+                        "functionsTotal": 0,
+                        "functionsClean": None,
+                        "cleanRatioRefused": True,
+                        "functionsEnumerated": 0,
+                        "R_instrument_blind": 1,
                     }
                 except Exception as error:  # noqa: BLE001 -- per-file terminal
+                    # Consumer should bank mass itself; this is a last-resort shell.
                     row = {
                         "category": "backend-defect",
                         "defect": {
@@ -1369,6 +1395,11 @@ def main() -> int:
                             "type": type(error).__name__,
                             "message": str(error),
                         },
+                        "functionsTotal": 0,
+                        "functionsClean": None,
+                        "cleanRatioRefused": True,
+                        "functionsEnumerated": 0,
+                        "R_instrument_blind": 1,
                     }
                 file_s = time.perf_counter() - t_file
                 checkpoint.append(file, row)
@@ -1376,7 +1407,16 @@ def main() -> int:
 
                 cat = str(row.get("category") or "?")
                 fn = int(row.get("functionsTotal") or 0)
-                clean = int(row.get("functionsClean") or 0)
+                # functionsClean may be null when clean ratio is refused.
+                # Law: never treat null clean as 0-of-N and mint clean%=100.
+                _raw_clean = row.get("functionsClean")
+                if row.get("cleanRatioRefused") or (
+                    _raw_clean is None and fn > 0
+                ):
+                    live_clean_refused = True
+                    clean = 0
+                else:
+                    clean = int(_raw_clean) if _raw_clean is not None else 0
                 # NEVER rebind the name `families` — that is main()'s accumulating
                 # Counter for board aggregation. Assigning row.get("families") here
                 # replaced the Counter with a plain dict; after the last file,
@@ -1389,7 +1429,8 @@ def main() -> int:
                     int(v) for k, v in row_families.items() if k != "SugarNotWritten"
                 )
                 live_fns += fn
-                live_clean += clean
+                if not live_clean_refused:
+                    live_clean += clean
                 live_snw += snw
                 live_other_gaps += other
                 live_done += 1
@@ -1402,7 +1443,16 @@ def main() -> int:
                     live_defect += 1
                     status = cat
 
-                clean_pct = (100.0 * live_clean / live_fns) if live_fns else 0.0
+                # ANY RATIO WHOSE NUMERATOR DEFAULTS TO ITS DENOMINATOR IS NOT
+                # A MEASUREMENT. Refuse clean% when clean is unmeasured.
+                if live_clean_refused:
+                    fn_display = f"?/{live_fns}"
+                    clean_pct_display = "n/a"
+                else:
+                    fn_display = f"{live_clean}/{live_fns}"
+                    clean_pct_display = (
+                        f"{(100.0 * live_clean / live_fns):.0f}" if live_fns else "0"
+                    )
                 _set_bars(
                     {
                         "file": relative,
@@ -1412,8 +1462,8 @@ def main() -> int:
                         "gaps": live_other_gaps,
                         "cpanic": live_panic,
                         "defect": live_defect,
-                        "fn": f"{live_clean}/{live_fns}",
-                        "clean%": f"{clean_pct:.0f}",
+                        "fn": fn_display,
+                        "clean%": clean_pct_display,
                     },
                     refresh=True,
                 )
@@ -1572,7 +1622,10 @@ def main() -> int:
         category = str(row.get("category"))
         floor_rows.append({"file": file, "category": category})
         functions_total += int(row.get("functionsTotal") or 0)
-        functions_clean += int(row.get("functionsClean") or 0)
+        # Null clean is refusal, not zero — do not collapse into 0-of-total.
+        _agg_clean = row.get("functionsClean")
+        if _agg_clean is not None and not row.get("cleanRatioRefused"):
+            functions_clean += int(_agg_clean)
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
         desugar_categories.update(row.get("desugarCategories") or {})
