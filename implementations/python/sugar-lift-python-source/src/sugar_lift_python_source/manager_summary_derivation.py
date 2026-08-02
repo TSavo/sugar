@@ -1200,8 +1200,10 @@ def populate_source_derived_resource_refs(
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows.
 
-    ``session`` owns every resolution memo for this population; the default
-    opens one bounded to this source file.
+    ``session`` owns every resolution memo for this population. Multi-resolve
+    owners (file-open, package enumeration) must pass one shared session so
+    export/frame amortization is real across receipts and consumer files. The
+    default opens one bounded to this single population call only.
     """
     from pathlib import Path
 
@@ -1224,6 +1226,8 @@ def populate_source_derived_resource_refs(
     from .manager_protocol_construction import construct_manager_protocol
     from .resolution_session import session_or_new
 
+    # Multi-resolve owner entry: one session for every receipt in this loop.
+    # Do not call session_or_new inside the receipt loop.
     session = session_or_new(session)
     context = source_file.root.unit.construction_context
     if context is None:
