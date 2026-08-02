@@ -404,9 +404,12 @@ def test_disablement_preserves_parked_obligation_verdicts(tmp_path: Path) -> Non
 @pytest.fixture
 def leaky_process_memo(monkeypatch):
     """Restore the defect: every session shares ONE set of process-wide tables."""
+    from collections import OrderedDict
+
     exports: dict = {}
-    frames: dict = {}
-    holds: dict = {}
+    # OrderedDict: production remember_frame/frame_hit use move_to_end + LRU.
+    frames: OrderedDict = OrderedDict()
+    holds: OrderedDict = OrderedDict()
     active: set = set()
     modules: dict = {}
 

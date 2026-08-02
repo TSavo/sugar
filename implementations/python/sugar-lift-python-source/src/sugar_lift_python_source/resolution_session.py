@@ -73,6 +73,11 @@ Legitimacy (why this is not process-global free-for-all):
   never parked under a process-global content map. §4 residency covers pure
   content-derived prep (SourceFile body, lexical import pass); visible-frame
   projection stays on the session object the walk owns.
+* ``frame_results`` / ``frame_holds`` are LRU-capped (default 512, same order
+  of magnitude as process-resident file limit). A hold exists only while its
+  memo row is served — walk-scoped sessions must not retain every projected
+  SourceFile for the whole corpus (that was the unbounded-accumulation
+  disease: shared session degraded across opens while fresh stayed flat).
 * Measured (orange, tip #7078): cross-file shared session is ~15% on a mixed
   20-file lib sample (frame_results after 20 files ≈ 1 — almost no shared
   definitions). Same-content re-open under the same walk session is the
@@ -86,12 +91,32 @@ Callers that need isolation pass an explicit ``SourceResolutionSession()`` or
 
 from __future__ import annotations
 
+import collections
+import os
 from pathlib import Path
 from typing import Any
 
 # Resolved workspace root path -> walk-owned session. Not content-keyed; not a
 # substitute for §4 residency. Cleared only by tests (clear_walk_sessions).
 _WALK_SESSIONS: dict[str, "SourceResolutionSession"] = {}
+
+# Default matches process-resident file LRU (#7071). A walk-scoped session that
+# retained frame_holds for every projected SourceFile forever recreated the
+# "shared context degrades across opens" disease at corpus scale.
+_DEFAULT_FRAME_MEMO_LIMIT = 512
+
+
+def _frame_memo_limit() -> int:
+    """Cap for session frame_results (+ co-evicted frame_holds).
+
+    Env ``SUGAR_SESSION_FRAME_MEMO_LIMIT`` (default 512). Hold lifetime must
+    track the memo row it guards — never longer (see remember_frame).
+    """
+    raw = os.environ.get("SUGAR_SESSION_FRAME_MEMO_LIMIT", str(_DEFAULT_FRAME_MEMO_LIMIT))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _DEFAULT_FRAME_MEMO_LIMIT
 
 
 class SourceResolutionSession:
@@ -134,11 +159,18 @@ class SourceResolutionSession:
         # Same key -> definition/gap only (no warrants). Shared by reexport hops
         # that carry path warrants and cannot use export_resolutions.
         self.export_terminals: dict[tuple[str, str, str], Any] = {}
-        # definition coordinate -> (frame, target) | ManagerConstructionGapV1
-        self.frame_results: dict[tuple, Any] = {}
-        # Keep the SourceFile that owns cached (frame, target) node identity
-        # alive for exactly as long as this session serves that memo.
-        self.frame_holds: dict[tuple, Any] = {}
+        # definition coordinate -> (frame, target) | ManagerConstructionGapV1.
+        # OrderedDict LRU: walk-scoped sessions must not retain every projected
+        # definition forever. Access order tracks hits/remembers; oldest keys
+        # evict with their frame_holds (hold outlives memo by zero extra time).
+        self.frame_results: collections.OrderedDict[tuple, Any] = (
+            collections.OrderedDict()
+        )
+        # SourceFile that owns cached (frame, target) node identity — alive for
+        # exactly as long as frame_results serves that key, not one moment longer.
+        self.frame_holds: collections.OrderedDict[tuple, Any] = (
+            collections.OrderedDict()
+        )
         # In-progress definition coordinates.  A cross-module call graph that
         # re-enters a definition already being projected is a cycle: it stays
         # typed-loud exactly like the local recursive case, and never loops.
@@ -192,14 +224,46 @@ class SourceResolutionSession:
     # -- source-visible frame memo ---------------------------------------
 
     def frame_hit(self, key: tuple) -> Any | None:
-        return self.frame_results.get(key) if self.enabled else None
+        if not self.enabled:
+            return None
+        hit = self.frame_results.get(key)
+        if hit is not None:
+            # LRU access: keep hold + memo co-ordered.
+            self.frame_results.move_to_end(key)
+            if key in self.frame_holds:
+                self.frame_holds.move_to_end(key)
+        return hit
 
     def remember_frame(self, key: tuple, result: Any, hold: Any = None) -> None:
+        """Memo one frame result; pin hold for exactly the memo's lifetime.
+
+        Hold invariant: a ``frame_holds`` entry outlives its ``frame_results``
+        row by zero extra time. Walk-scoped sessions used to retain every
+        projected SourceFile for the whole 1421-file walk; that unbounded hold
+        is the accumulation disease (shared context degrades across opens).
+        LRU co-evicts hold when the memo row is dropped.
+        """
         if not self.enabled:
             return
         if hold is not None:
             self.frame_holds[key] = hold
+            self.frame_holds.move_to_end(key)
         self.frame_results[key] = result
+        self.frame_results.move_to_end(key)
+        self._evict_frame_memo_lru()
+
+    def _evict_frame_memo_lru(self) -> None:
+        """Drop oldest frame memos until at limit; release holds in lockstep."""
+        limit = _frame_memo_limit()
+        while len(self.frame_results) > limit:
+            old_key, _ = self.frame_results.popitem(last=False)
+            self.frame_holds.pop(old_key, None)
+        # Holds without a memo row are dead weight (should not happen if
+        # remember_frame is the only writer; scrub anyway).
+        if len(self.frame_holds) > len(self.frame_results):
+            for dead in list(self.frame_holds.keys()):
+                if dead not in self.frame_results:
+                    del self.frame_holds[dead]
 
     # -- module materialize memo (shared across definitions in one module) --
 
