@@ -37,6 +37,9 @@ def test_wall_workflows_preserve_structured_wall_evidence() -> None:
         upload = re.search(r"(?m)^\s*- name: Upload .+ wall artifacts\s*$", workflow)
         required_before_mint = (
             f"SUGAR_ENGINE_LOG: ${{{{ github.workspace }}}}/{log_dir}/engine.jsonl",
+            # Measurement path: WARNING heartbeats only. TRACE=1 re-enables
+            # per-span json.dumps on the reduction hot path (recensus #7039).
+            'SUGAR_ENGINE_TRACE_EVENTS: "0"',
             'SUGAR_ENGINE_HEARTBEAT_SECONDS: "5"',
             'SUGAR_ENGINE_CYCLE_THRESHOLD: "8"',
             f"SUGAR_KIT_LOG: ${{{{ github.workspace }}}}/{log_dir}/transport.jsonl",

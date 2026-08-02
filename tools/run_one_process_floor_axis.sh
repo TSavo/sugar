@@ -9,6 +9,9 @@
 #   0 — scan completed, residual green
 #   1 — scan completed, residual red
 #   2+ — scan did not complete (auth/init/crash) → report UNMEASURED
+#
+# Residual *magnitude* is never invented from exit code. Completed scans write
+# floor-summary.json; mint cites totals[R_*] under identity into residualCount.
 
 set -uo pipefail
 
@@ -82,10 +85,14 @@ echo "process-floor lpt_prior: dir=${SUGAR_LPT_PRIOR_DIR}"
 export PYTHONUNBUFFERED=1
 echo "JOB_LOG phase=process-floor-${axis_seat} status=start population=$PANDAS_CORPUS"
 
+FLOOR_SUMMARY="${FLOOR_SCRATCH}/floor-summary.json"
+mkdir -p "$FLOOR_SCRATCH"
+
 set +e
 python -u "$SCRIPT" "$PANDAS_CORPUS" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH" \
+  --json "$FLOOR_SUMMARY" \
   --shard-index "$shard_index" \
   --shard-count "$shard_count"
 exit_code=$?
@@ -111,6 +118,14 @@ mint_args=(
 )
 if [ "$exit_code" -ge 2 ]; then
   mint_args+=(--no-scan-completed --unmeasured-reason "process floor exit=${exit_code} (auth/init/bootstrap/crash — not residual)")
+else
+  # Completed scan: residual magnitude from floor summary under identity.
+  if [ ! -s "$FLOOR_SUMMARY" ]; then
+    echo "::error::floor summary missing after completed scan: $FLOOR_SUMMARY"
+    mint_args+=(--no-scan-completed --unmeasured-reason "floor-summary.json absent after exit=${exit_code}; residual magnitude not cited")
+  else
+    mint_args+=(--residual-from-summary "$FLOOR_SUMMARY")
+  fi
 fi
 
 python3 tools/sole_construction_floor_enrollment.py "${mint_args[@]}"

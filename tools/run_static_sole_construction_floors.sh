@@ -92,6 +92,30 @@ axis "R_bare_construction_door = 0" \
 echo
 echo "static_floors phase=end green=${#green_axes[@]} red=${#red_axes[@]}"
 echo "static sole-construction floors: ${#green_axes[@]} green, ${#red_axes[@]} red"
+# Residual magnitude for enrollment mint — count of red static axes, not exit invent.
+residual_json="${SUGAR_STATIC_FLOOR_RESIDUAL_JSON:-floor-static-residual.json}"
+python3 -u -c "
+import json
+from pathlib import Path
+path = Path('''${residual_json}''')
+red = ${#red_axes[@]}
+path.write_text(
+    json.dumps(
+        {
+            'kind': 'floor-residual-v1',
+            'residualKey': 'R_static_sole_construction',
+            'residualCount': red,
+            'greenAxes': ${#green_axes[@]},
+            'redAxes': red,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + '\n',
+    encoding='utf-8',
+)
+print(f'static_floors residual_written path={path} residualCount={red}', flush=True)
+"
 if [ ${#red_axes[@]} -gt 0 ]; then
   echo "RED AXES:"
   printf '  - %s\n' "${red_axes[@]}"
