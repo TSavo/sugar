@@ -175,7 +175,17 @@ def _emit(level: int, event: str, frame: _Frame, **fields) -> None:
 
 
 def configure_live_log(path: str | None = None) -> None:
-    """Attach an immediate JSONL file sink outside pytest's log capture."""
+    """Attach an immediate JSONL file sink outside pytest's log capture.
+
+    ``SUGAR_ENGINE_TRACE_EVENTS`` defaults to on (``"1"``) for diagnostic
+    callers that opt into a live sink. Measurement drivers that attach a
+    sink for stall-naming only must set it to ``0`` / ``false`` / ``off``
+    *before* calling this — then DEBUG enter/exit spans never reach
+    ``json.dumps`` (``LOGGER.isEnabledFor`` short-circuits). WARNING
+    heartbeats, cycle_suspected, and ERROR terminals still write so a stall
+    stays nameable. Raising only the FileHandler level while leaving the
+    logger at DEBUG still pays serialisation on the reduction hot path.
+    """
     global _LIVE_HANDLER
     selected = path or os.environ.get("SUGAR_ENGINE_LOG")
     if not selected or _LIVE_HANDLER is not None:
@@ -184,10 +194,13 @@ def configure_live_log(path: str | None = None) -> None:
     trace_events = os.environ.get(
         "SUGAR_ENGINE_TRACE_EVENTS", "1"
     ).strip().lower() not in {"0", "false", "no", "off"}
-    handler.setLevel(logging.DEBUG if trace_events else logging.WARNING)
+    # Handler *and* logger level must follow TRACE. Handler-only WARNING still
+    # runs json.dumps on every DEBUG enter/exit before the record is dropped.
+    level = logging.DEBUG if trace_events else logging.WARNING
+    handler.setLevel(level)
     handler.setFormatter(logging.Formatter("%(message)s"))
     LOGGER.addHandler(handler)
-    LOGGER.setLevel(logging.DEBUG)
+    LOGGER.setLevel(level)
     _LIVE_HANDLER = handler
 
 
