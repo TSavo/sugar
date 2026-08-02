@@ -13,6 +13,7 @@ from dataclasses import replace
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import EffectMatcher, Suppresses
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.ir import atomic, ctor, str_const

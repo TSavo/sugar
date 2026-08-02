@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import (
     BytesValue,
     ListValue,

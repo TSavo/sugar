@@ -13,6 +13,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import FloorValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
@@ -20,7 +21,7 @@ from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import BoolOp
@@ -55,7 +56,7 @@ class _Operand(FloorValue):
 
 
 @dataclass(frozen=True)
-class _ProbeSugar(Sugar):
+class _ProbeSugar(ConstructedTermSugar):
     label: str
     value: FloorValue
     evaluations: list[str] = field(compare=False)
@@ -68,6 +69,10 @@ class _ProbeSugar(Sugar):
         del ctx
         self.evaluations.append(self.label)
         return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        del owner
+        return str_const(self.label)
 
 
 @dataclass(frozen=True)
@@ -155,6 +160,10 @@ class _ExpectedType:
         return self._identity
 
 
+def _identity(name: str):
+    return _ExpectedType(name).exception_type_identity()
+
+
 def test_left_operand_is_evaluated_and_truth_tested_exactly_once() -> None:
     evaluations: list[str] = []
     truth_calls: list[str] = []
@@ -218,7 +227,14 @@ def test_true_left_continues_to_right_without_truth_testing_final_operand() -> N
 def test_halted_left_truth_test_propagates_and_never_reaches_right() -> None:
     evaluations: list[str] = []
     truth_calls: list[str] = []
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('test_bool_op_operand_sequence.py:1:0'), exception_name='LeftTruthError', blame='test_bool_op_operand_sequence.py:1:0')
+    effect = RaiseEffect(
+        exception_type_coordinate=_identity("LeftTruthError"),
+        occurrence=AuthenticatedRaiseLocus.of(
+            "test_bool_op_operand_sequence.py:1:0"
+        ),
+        exception_name="LeftTruthError",
+        blame="test_bool_op_operand_sequence.py:1:0",
+    )
     left = _Operand("left", ExitSet.halted(effect), truth_calls)
     right = _Operand("right", _truth(True), truth_calls)
 
@@ -299,7 +315,7 @@ def test_halted_caller_truth_propagates_and_never_reaches_right() -> None:
     assert evaluations == ["left"]
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Halted)
-    assert exits.exits[0].effect.exception_type_coordinate == _identity('TypeError')
+    assert exits.exits[0].effect.exception_type_coordinate == _identity("TypeError")
 
 
 def test_wrong_boundary_type_does_not_consume_caller_truth_halt() -> None:

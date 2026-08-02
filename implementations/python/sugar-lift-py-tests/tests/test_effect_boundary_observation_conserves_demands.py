@@ -36,6 +36,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, atomic, ctor, make_var, num

@@ -47,6 +47,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor.raise_value import (
     FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS,
     RaiseValue,

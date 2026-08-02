@@ -18,6 +18,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue

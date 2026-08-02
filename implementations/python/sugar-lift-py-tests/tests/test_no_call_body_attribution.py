@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.no_call_body_attribution import (
@@ -729,4 +730,3 @@ def test_undischarged_with_none_coordinates_is_constructible() -> None:
         ((None, None),),
     )
     assert body.exceptional_exit_coordinates == ((None, None),)
-

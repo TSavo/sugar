@@ -49,6 +49,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
+from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -60,6 +61,11 @@ MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 )
+
+
+def _identity(name: str):
+    coordinate, _ = _builtin_exception_identity(name)
+    return coordinate
 
 
 def _tree(source: str, name: str = "setattr_caller.py") -> SourceFile:

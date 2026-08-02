@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity

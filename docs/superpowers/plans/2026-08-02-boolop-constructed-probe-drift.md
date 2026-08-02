@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the 12 BoolOp operand-sequence tests without reopening the deliberately closed `ConstructedTermSugar` door, then enumerate other caller drift introduced by `df07b3f88`.
+**Goal:** Restore the 12 BoolOp operand-sequence tests without reopening the deliberately closed `ConstructedTermSugar` door, then bind the test-only names left by two measured mechanical rewrites.
 
-**Architecture:** The product contract stays unchanged. The test-only evaluation probe joins the existing `ConstructedTermSugar` hierarchy and supplies canonical fixed testimony; a bounded commit audit reports other stale caller shapes without fixing them.
+**Architecture:** The product contract stays unchanged. The test-only evaluation probe joins the existing `ConstructedTermSugar` hierarchy and supplies canonical fixed testimony; test-only missing bindings are repaired at their files and tied to raw two-commit evidence.
 
 **Tech Stack:** Python 3.12, dataclasses, pytest, git history.
 
@@ -12,7 +12,7 @@
 
 - Work only in `/Users/tsavo/.herdr/worktrees/provekit/hockney-work`.
 - Do not loosen `BoolOpSugar.values` or its runtime admission.
-- Do not fix other `df07b3f88` caller drift in this lane.
+- Do not widen history beyond `bf847eb93` and `1eeb80bb3`.
 - Run only focused local tests; no broad suite or corpus scan.
 
 ---
@@ -57,28 +57,30 @@ Run all of `test_bool_op_operand_sequence.py` with `--noconftest`. Expected:
 
 Run `test_constructed_term_sugar.py::test_constructed_term_nested_children_are_closed_at_construction` with the `bool-op` parameter. Expected: the good constructed child is admitted and arbitrary `Sugar` remains rejected.
 
-### Task 2: Audit the source commit for sibling drift
+### Task 2: Repair bounded test-only rewrite casualties
 
 **Files:**
-- Read: commit `df07b3f88`
-- Read: callers of every narrowed annotation, removed parameter, and new runtime admission found in that commit
+- Modify: fourteen tests that load `AuthenticatedRaiseLocus` without importing it
+- Modify: five tests retaining ten unbound `_identity` loads
+- Create: `.receipts/authenticated-raise-rewrite-casualties/RECEIPT.md`
 
 **Interfaces:**
-- Consumes: the exact `df07b3f88` diff and repository callers on current `origin/main`
-- Produces: a door-by-door list with measured caller sites and current/stale status
+- Consumes: exact AST load/binding deltas for `bf847eb93` and `1eeb80bb3`
+- Produces: zero unbound locus/identity loads in the measured current test files, plus raw coordinates and first-terminal chains
 
-- [ ] **Step 1: Extract candidate doors from the bounded diff**
+- [ ] **Step 1: Bind the fourteen locus test files**
 
-Inspect only changed Python production files for type narrowing, signature
-removal, and new `isinstance`/admission checks.
+Import `AuthenticatedRaiseLocus` from its defining module in every measured
+test file. Do not alter the product constructor to admit unbound callers.
 
-- [ ] **Step 2: Trace every candidate to its callers**
+- [ ] **Step 2: Repair the five remaining identity expectations**
 
-For each candidate, compare old and new signatures and search current Python
-callers for the removed or rejected shape.
+Use existing builtin identity testimony for builtin exceptions. For the
+source-defined cleanup exception, derive identity from the typed source name;
+do not fabricate a builtin coordinate from spelling.
 
-- [ ] **Step 3: Report without repairing sibling doors**
+- [ ] **Step 3: Verify bindings and preserve raw evidence**
 
-State the number of doors inspected, the site count for each stale caller set,
-and what the audit does not claim. Commit only the focused BoolOp fixture repair
-and these design/plan receipts.
+Run the AST binding detector to zero, run the 12 BoolOp tests, compile all
+changed tests, and preserve all 187 introducer coordinates, current survivors,
+and first-terminal chains. Do not infer a suite-failure count.
