@@ -66,6 +66,26 @@ class SourceFile:
     something structurally invalid). Never silence, never a bare None.
     """
 
+    def __new__(
+        cls,
+        identity: Tuple[str, str, str],
+        backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
+        construction_context: object | None = None,
+    ):
+        # L0c / enumeration protocol §4: one prepared shell per content CID.
+        # Return the process-resident instance so the same module content is not
+        # reconstructed once per dependency seat. MaterializeModule runs only
+        # on the residency miss path inside source_file_from_identity.
+        from .process_resident_file import source_file_from_identity
+
+        return source_file_from_identity(
+            identity,
+            backend=backend,
+            reporter=reporter,
+            construction_context=construction_context,
+        )
+
     def __init__(
         self,
         identity: Tuple[str, str, str],
@@ -73,27 +93,19 @@ class SourceFile:
         reporter: AuditReporter = NULL_REPORTER,
         construction_context: object | None = None,
     ) -> None:
-        # Enumeration protocol §4: process-resident under whole-file content CID.
-        # Construction goes through residency so the same CID never pays
-        # MaterializeModule twice in one process.
-        from .process_resident_file import source_file_from_identity
-
-        # Always adopt the resident (or first-prepare) shell. Callers hold a
-        # view; the process holds the preparation under content CID.
-        resident = source_file_from_identity(
-            identity,
-            backend=backend,
-            reporter=reporter,
-            construction_context=construction_context,
-        )
-        self.unit = resident.unit
-        self.backend = resident.backend
-        self.reporter = resident.reporter
-        self.constructed_module = resident.constructed_module
-        self.root = resident.root
-        self.closed_roll_call = resident.closed_roll_call
-        self.provider_member_rows = resident.provider_member_rows
-        self.construction_event_receipt_cid = resident.construction_event_receipt_cid
+        # When ``__new__`` returns the resident shell, Python still calls
+        # ``__init__``. The shell is already prepared; only rebind consumer
+        # seating (construction_context / reporter).
+        del identity, backend
+        if not hasattr(self, "unit"):
+            raise RuntimeError(
+                "SourceFile must be prepared by process_resident "
+                "source_file_from_identity before __init__ rebind"
+            )
+        if construction_context is not None:
+            object.__setattr__(self.unit, "construction_context", construction_context)
+        if reporter is not None and reporter is not NULL_REPORTER:
+            self.reporter = reporter
 
     @classmethod
     def _prepare_uncached(
