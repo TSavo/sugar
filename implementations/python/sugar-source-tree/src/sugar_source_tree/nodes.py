@@ -4111,7 +4111,7 @@ class ClassDef(Statement):
                 fix="carry the parser-owned ClassDef name occurrence as binding_target",
             )
 
-    def _method_descriptor_kind(self, method: "FunctionDef") -> Optional[str]:
+    def _method_descriptor_kind(self, method: "FunctionDef | AsyncFunctionDef") -> Optional[str]:
         """Authenticate one language descriptor decorator by lexical binding.
 
         The decorator spelling is only a lookup key.  A same-named module
@@ -4230,11 +4230,59 @@ class ClassDef(Statement):
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
 
-    def _construct_sugar(self):
-        """Construct source-visible class structure through child method Sugars.
 
-        Instantiation/receiver fields remain a typed coordinate gap in the
-        resulting floor value.  No class body is interpreted beside this door.
+    def _construct_class_method_member(self, method):
+        """Enroll one method through the FunctionDef construction door only.
+
+        ClassDef owns member *membership* and field construction (L1b). Method
+        bodies are FunctionDef / AsyncFunctionDef construction — not reimplemented
+        here. AsyncFunctionDef shares the FunctionDef door (same formals/body shape).
+        """
+        from sugar_lift_py_tests.floor import ConstructedClassMethodV1
+
+        if isinstance(method, FunctionDef):
+            # White FunctionDef door — ClassDef does not reimplement method bodies.
+            body = method.sugar()
+            frame = method.source_visible_call_frame()
+        elif isinstance(method, AsyncFunctionDef):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            # Membership is recognized (not "unsupported class member"). Body
+            # construction is the FunctionDef door (async arm not written yet).
+            raise SugarNotWritten(
+                blame=method.fragment,
+                owner="ClassDef._construct_class_method_member",
+                observed="AsyncFunctionDef method body construction",
+                requested="AsyncFunctionDef construction through the FunctionDef door",
+                fix=(
+                    "write AsyncFunctionDef body construction on the FunctionDef "
+                    "door; ClassDef L1b owns fields/nested/conditionals only"
+                ),
+            )
+        else:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=method.fragment,
+                owner="ClassDef._construct_class_method_member",
+                observed=f"class method species {type(method).__name__}",
+                requested="FunctionDef or AsyncFunctionDef",
+                fix="route method bodies through the FunctionDef construction door",
+            )
+        return ConstructedClassMethodV1(
+            method.name,
+            method.fragment.seal().cid,
+            body,
+            frame,
+            self._method_descriptor_kind(method),
+        )
+
+    def _construct_sugar(self):
+        """Construct source-visible class structure through body members.
+
+        L1b (this door): fields, nested ClassDef, conditional fields.
+        Methods (FunctionDef / AsyncFunctionDef) enroll through the FunctionDef
+        construction door — ClassDef does not reimplement method bodies.
         """
         if (
             not isinstance(self.binding_target, Name)
@@ -4249,7 +4297,11 @@ class ClassDef(Statement):
                 requested="the exact identifier child bound by this ClassDef",
                 fix="carry the parser-owned ClassDef name occurrence as binding_target",
             )
-        methods = tuple(item for item in self.body if isinstance(item, FunctionDef))
+        methods = tuple(
+            item
+            for item in self.body
+            if isinstance(item, (FunctionDef, AsyncFunctionDef))
+        )
         docstring_cid = None
         if self.body:
             first = self.body[0]
@@ -4271,7 +4323,7 @@ class ClassDef(Statement):
         unsupported = tuple(
             item
             for index, item in enumerate(self.body)
-            if not isinstance(item, (FunctionDef, ClassDef, If, Pass))
+            if not isinstance(item, (FunctionDef, AsyncFunctionDef, ClassDef, If, Pass))
             and not (
                 index == 0
                 and isinstance(item, Expr)
@@ -4382,20 +4434,13 @@ class ClassDef(Statement):
             return tuple(fields)
 
         constructed = tuple(
-            ConstructedClassMethodV1(
-                method.name,
-                method.fragment.seal().cid,
-                method.sugar(),
-                method.source_visible_call_frame(),
-                self._method_descriptor_kind(method),
-            )
-            for method in methods
+            self._construct_class_method_member(method) for method in methods
         )
         fields = conditional_fields(
             tuple(
                 item
                 for index, item in enumerate(self.body)
-                if not isinstance(item, (FunctionDef, Pass))
+                if not isinstance(item, (FunctionDef, AsyncFunctionDef, Pass))
                 and not (
                     index == 0
                     and isinstance(item, Expr)
