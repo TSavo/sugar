@@ -10,11 +10,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Dict
+from typing import Dict
 from typing import Never, NoReturn
 
-if TYPE_CHECKING:
-    
 # ``owner`` is the panic board's DISPATCH KEY: every row is worked as
 # (owner × value category), so an owner that is not a name makes the row
 # undispatchable. Two shapes are not names and are rejected at construction:
