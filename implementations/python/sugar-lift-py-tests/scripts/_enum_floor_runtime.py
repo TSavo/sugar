@@ -16,6 +16,7 @@ import logging
 import os
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence, TextIO, TypeVar
@@ -203,8 +204,41 @@ def iter_with_tqdm(
         progress.flush()
 
 
+def floor_workspace_root() -> Path:
+    """Writable workspace for floor scratch — never the scan population.
+
+    Population roots (authenticated pandas under site-packages) are read-only
+    vendor trees. Scratch under that root mutates the thing being measured and
+    fails when the tree is not writable (S0.2 / run 30727525884).
+
+    Prefer explicit SUGAR_FLOOR_WORKSPACE, then CI workspace/tmp env, else
+    process temp. Callers may still pass --out-dir; that path is still checked
+    against the population root and refused if nested under it.
+    """
+    for key in ("SUGAR_FLOOR_WORKSPACE", "GITHUB_WORKSPACE", "RUNNER_TEMP"):
+        raw = os.environ.get(key)
+        if raw:
+            return Path(raw)
+    return Path(tempfile.gettempdir()) / "sugar-floor-workspace"
+
+
 def default_out_dir(repo_root: Path, floor: str) -> Path:
-    return repo_root / ".sugar" / "ci-floors" / floor
+    """Scratch directory for one floor. ``repo_root`` is the population root.
+
+    Historically this returned ``repo_root / .sugar / ci-floors / floor``, which
+    wrote into vendor site-packages when --repo-root was the pandas corpus.
+    Scratch is always under floor_workspace_root(); population is never the base.
+    """
+    del repo_root  # population root must not host scratch
+    return floor_workspace_root() / ".sugar" / "ci-floors" / floor
+
+
+def _is_path_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def prepare_floor_io(
@@ -215,14 +249,62 @@ def prepare_floor_io(
     engine_log: Path | None,
     progress: Path | None,
 ) -> tuple[Path, Path, Path]:
+    """Open engine/progress logs under workspace scratch, not the population.
+
+    ``repo_root`` is the population root (relative loci / corpus). Scratch must
+    never nest under it — even when mkdir would succeed, mutating a vendor
+    corpus is wrong.
+    """
+    population = repo_root
     base = out_dir or default_out_dir(repo_root, floor)
-    base.mkdir(parents=True, exist_ok=True)
+    if _is_path_under(base, population):
+        raise ValueError(
+            "floor scratch must not live under the population root "
+            f"(population={population}, scratch={base}). "
+            "Pass --out-dir under a workspace/tmp path, or set "
+            "SUGAR_FLOOR_WORKSPACE / GITHUB_WORKSPACE / RUNNER_TEMP."
+        )
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OSError(
+            f"floor scratch mkdir failed under workspace path {base}: {error}. "
+            "Scratch is never under the population; check workspace permissions."
+        ) from error
     engine_path = engine_log or (base / "engine.jsonl")
     progress_path = progress or (base / "progress.log")
+    if _is_path_under(engine_path, population) or _is_path_under(
+        progress_path, population
+    ):
+        raise ValueError(
+            "engine/progress paths must not live under the population root "
+            f"(population={population})."
+        )
     silence_console_logging()
     configure_engine_log(engine_path)
     return base, engine_path, progress_path
 
+
+def format_completed_axis_report(axis: str, r_value: int) -> str:
+    """Print R only after a completed measurement. Never invent a zero.
+
+    Incomplete / crashed floors must use :func:`format_unmeasured_axis` so a
+    reader cannot bank ``R_axis = 0`` that was never taken.
+    """
+    return f"{axis} = {r_value}"
+
+
+def format_unmeasured_axis(axis: str, *, reason: str) -> str:
+    """Lease-gate vocabulary: unmeasured / completed-with-error / no-value.
+
+    Deliberately does **not** contain the substring ``{axis} = 0`` or bare
+    `` = 0`` — readers (and greps) bank that pattern as a completed zero.
+    """
+    return (
+        f"{axis}: unmeasured "
+        f"(status=completed-with-error; reason={reason!r}; value=no-value). "
+        f"Measurement did not complete; residual is not a completed zero."
+    )
 
 def timed_enum_file(
     path: Path,

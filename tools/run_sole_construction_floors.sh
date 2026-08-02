@@ -27,14 +27,16 @@ green_axes=()
 
 axis() {
   local name="$1"; shift
+  # Axis names must NOT embed "= 0". A pre-measure crash still paints the group
+  # header; embedding a zero there banks a number that was never taken (S0.2).
   echo "::group::$name"
   if "$@"; then
     green_axes+=("$name")
-    echo "$name: GREEN"
+    echo "$name: GREEN (measurement completed)"
   else
     local status=$?
     red_axes+=("$name (exit $status)")
-    echo "::error::$name is RED (exit $status)"
+    echo "::error::$name is RED (exit $status). If the body printed unmeasured/no-value, residual is not a completed zero."
   fi
   echo "::endgroup::"
 }
@@ -59,22 +61,31 @@ PANDAS_CORPUS="$(
   exit 1
 }
 echo "process-floor population: authenticated pandas corpus at $PANDAS_CORPUS"
-# --repo-root must be the corpus root (not the Sugar checkout): relative loci
-# and supervised-enum corpus_root are derived from it.
-axis "R_native_crashes = 0" \
+# --repo-root is the population (relative loci). Scratch must NOT nest under it
+# (vendor site-packages is read-only; mutating the population is wrong even when
+# mkdir succeeds). Workspace/tmp only — same vocabulary as prepare_floor_io.
+FLOOR_SCRATCH="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}/.sugar/ci-floors"
+export SUGAR_FLOOR_WORKSPACE="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}"
+echo "process-floor scratch: $FLOOR_SCRATCH (never under population)"
+# Axis names: R_axis only — never "R_axis = 0" (false banked zero on pre-measure crash).
+axis "R_native_crashes" \
   python "$SCRIPTS/native_crash_zero_tolerance.py" "$PANDAS_CORPUS" \
-  --repo-root "$PANDAS_CORPUS"
-axis "R_bare_exceptions = 0" \
+  --repo-root "$PANDAS_CORPUS" \
+  --out-dir "$FLOOR_SCRATCH/native-crash"
+axis "R_bare_exceptions" \
   python "$SCRIPTS/bare_exception_zero_tolerance.py" "$PANDAS_CORPUS" \
-  --repo-root "$PANDAS_CORPUS"
-axis "R_timeouts = 0" \
+  --repo-root "$PANDAS_CORPUS" \
+  --out-dir "$FLOOR_SCRATCH/bare-exception"
+axis "R_timeouts" \
   python "$SCRIPTS/timeout_zero_tolerance.py" "$PANDAS_CORPUS" \
-  --repo-root "$PANDAS_CORPUS"
+  --repo-root "$PANDAS_CORPUS" \
+  --out-dir "$FLOOR_SCRATCH/timeout"
 # R_silent is Criterion 2's fourth simultaneous term — same population as the
 # three process floors. Kit-default silent was a false green (unmeasured corpus).
-axis "R_silent = 0" \
+axis "R_silent" \
   python "$SCRIPTS/silent_zero_tolerance.py" "$PANDAS_CORPUS" \
-  --repo-root "$PANDAS_CORPUS"
+  --repo-root "$PANDAS_CORPUS" \
+  --out-dir "$FLOOR_SCRATCH/silent"
 
 axis "All permanent axes are bound" \
   python -m pytest tests/test_python_sole_construction_ci.py -q
