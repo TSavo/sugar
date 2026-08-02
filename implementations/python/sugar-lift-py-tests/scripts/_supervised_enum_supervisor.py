@@ -33,6 +33,11 @@ _WORKER = Path(__file__).resolve().parent / "_supervised_enum_worker.py"
 # Floors run 30728650857: POPULATION → refused: None at ~30.0s exactly.
 _DEFAULT_CONTEXT_INIT_TIMEOUT = 1800.0
 
+# tools/job_log_heartbeat.py — job log, not file, ≤30s silence.
+_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
 
 @dataclass(frozen=True)
 class FileTerminal:
@@ -250,52 +255,90 @@ class SupervisedEnumSupervisor:
 
         # Drain progress heartbeats until context-ready, a named refusal, or
         # the context-init budget (NOT the 30s per-file lift budget).
+        # Worker progress used to update last_progress only — invisible in CI.
+        from job_log_heartbeat import JobLogHeartbeat
+
         deadline = time.monotonic() + self.context_init_timeout
         last_progress: Mapping[str, Any] | None = None
         started = time.monotonic()
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                error = self._named_context_init_failure(
-                    response=None,
-                    last_progress=last_progress,
-                    elapsed=time.monotonic() - started,
-                    timed_out=True,
-                )
-                self._kill()
-                raise error
-            message = self._readline(timeout=remaining)
-            if message is None:
-                timed_out = time.monotonic() >= deadline
-                if (
-                    not timed_out
-                    and self._proc is not None
-                    and self._proc.poll() is None
-                ):
+        beat = JobLogHeartbeat("supervised-enum-context-init")
+        beat.watch()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    error = self._named_context_init_failure(
+                        response=None,
+                        last_progress=last_progress,
+                        elapsed=time.monotonic() - started,
+                        timed_out=True,
+                    )
+                    self._kill()
+                    raise error
+                message = self._readline(timeout=min(remaining, 5.0))
+                if message is None:
+                    timed_out = time.monotonic() >= deadline
+                    if (
+                        not timed_out
+                        and self._proc is not None
+                        and self._proc.poll() is None
+                    ):
+                        # Alive but silent — job-log watch covers ≤30s.
+                        continue
+                    error = self._named_context_init_failure(
+                        response=None,
+                        last_progress=last_progress,
+                        elapsed=time.monotonic() - started,
+                        timed_out=timed_out
+                        or (self._proc is not None and self._proc.poll() is None),
+                    )
+                    self._kill()
+                    raise error
+                kind = message.get("kind")
+                if kind == "initialize-progress":
+                    last_progress = message
+                    # Running counts as they arrive — to the job log, not only memory.
+                    n = message.get("n") or message.get("done") or message.get("files")
+                    total = message.get("total") or message.get("files_total")
+                    phase = str(message.get("phase") or "context-init")
+                    beat.phase = f"supervised-enum-{phase}"
+                    if total is not None:
+                        beat.total = int(total)
+                    beat.tick(
+                        n=int(n) if n is not None else beat.n + 1,
+                        force=True,
+                        status="progress",
+                        **{
+                            k: v
+                            for k, v in message.items()
+                            if k
+                            not in {
+                                "kind",
+                                "n",
+                                "done",
+                                "files",
+                                "total",
+                                "files_total",
+                                "phase",
+                            }
+                            and isinstance(v, (str, int, float, bool))
+                        },
+                    )
                     continue
+                if kind == "context-ready":
+                    beat.stop(status="context-ready")
+                    return
                 error = self._named_context_init_failure(
-                    response=None,
+                    response=message,
                     last_progress=last_progress,
                     elapsed=time.monotonic() - started,
-                    timed_out=timed_out
-                    or (self._proc is not None and self._proc.poll() is None),
+                    timed_out=False,
                 )
                 self._kill()
                 raise error
-            kind = message.get("kind")
-            if kind == "initialize-progress":
-                last_progress = message
-                continue
-            if kind == "context-ready":
-                return
-            error = self._named_context_init_failure(
-                response=message,
-                last_progress=last_progress,
-                elapsed=time.monotonic() - started,
-                timed_out=False,
-            )
-            self._kill()
-            raise error
+        except BaseException:
+            beat.stop(status="failed")
+            raise
 
     def stop(self) -> None:
         proc = self._proc
@@ -548,11 +591,30 @@ class SupervisedEnumSupervisor:
                 pending.append((index, path, rel, key))
 
         if pending:
+            from job_log_heartbeat import JobLogHeartbeat
+
+            lift_beat = JobLogHeartbeat(
+                "supervised-enum-lift",
+                total=len(pending),
+            )
+            lift_beat.watch()
             try:
                 self.start()
-                for index, path, rel, key in pending:
+                for done_i, (index, path, rel, key) in enumerate(pending, start=1):
+                    lift_beat.tick(
+                        n=done_i,
+                        force=(done_i == 1 or done_i == len(pending)),
+                        status="lifting",
+                        file=rel,
+                    )
                     measured = self.lift_file(path, rel)
                     ordered[index] = measured
+                    lift_beat.tick(
+                        n=done_i,
+                        force=True,
+                        status=measured.category,
+                        file=rel,
+                    )
                     if cache is not None:
                         payload = terminal_to_payload(
                             file=measured.file,
@@ -563,6 +625,10 @@ class SupervisedEnumSupervisor:
                             terminal=measured.terminal,
                         )
                         cache.store(key, payload)
+                lift_beat.stop(status="ok")
+            except BaseException:
+                lift_beat.stop(status="failed")
+                raise
             finally:
                 self.stop()
 
@@ -571,7 +637,8 @@ class SupervisedEnumSupervisor:
                 "PROCESS-FLOOR-CACHE: "
                 f"root={cache.root} tip={tip} "
                 f"hits={hits} misses={len(pending)} refuses={refuses} "
-                f"corpusManifestCid={corpus_cid[:48]}…"
+                f"corpusManifestCid={corpus_cid[:48]}…",
+                flush=True,
             )
 
         rows: list[FileTerminal] = []

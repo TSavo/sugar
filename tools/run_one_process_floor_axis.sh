@@ -43,13 +43,17 @@ fi
 
 echo "process-floor axis=$axis_id population=$PANDAS_CORPUS"
 echo "process-floor cache: dir=${SUGAR_PROCESS_FLOOR_CACHE_DIR} tip=${SUGAR_MEASUREMENT_TIP:-unpinned}"
+# Job-log doctrine: unbuffered stdout so phase/count lines hit Actions live.
+export PYTHONUNBUFFERED=1
+echo "JOB_LOG phase=process-floor-${axis_id} status=start population=$PANDAS_CORPUS"
 
 set +e
-python "$SCRIPT" "$PANDAS_CORPUS" \
+python -u "$SCRIPT" "$PANDAS_CORPUS" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH"
 exit_code=$?
 set -e
+echo "JOB_LOG phase=process-floor-${axis_id} status=end exit_code=$exit_code"
 
 commit="${GITHUB_SHA:-unpinned}"
 case "$axis_id" in

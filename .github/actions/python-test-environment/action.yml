@@ -108,6 +108,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named phases on the JOB LOG — this step can exceed 30s (cargo metadata).
+        echo "JOB_LOG phase=python-test-env-identity status=start"
         env_dir="$RUNNER_TEMP/sugar-python-test-environment"
         mkdir -p "$env_dir"
         identity="$env_dir/environment-identity.json"
@@ -121,11 +123,13 @@ runs:
         # in memory and lost on the way to disk is the same defect as a field
         # never resolved, and only the file travels to the next job.
         python3 tools/python_suite_identity_gate.py --environment-identity "$identity"
+        echo "JOB_LOG phase=python-test-env-identity status=ok hash=$hash"
 
     - name: Build third-party wheelhouse from the declared dependency authority
       shell: bash
       run: |
         set -euo pipefail
+        echo "JOB_LOG phase=python-test-env-wheelhouse status=start"
         env_dir="$RUNNER_TEMP/sugar-python-test-environment"
         rm -rf "$env_dir/wheelhouse"
         mkdir -p "$env_dir/wheelhouse"
@@ -158,12 +162,14 @@ runs:
           exit 1
         fi
         echo "third-party wheelhouse: ${#third_party[@]} wheels (stripped $removed first-party)"
+        echo "JOB_LOG phase=python-test-env-wheelhouse status=ok wheels=${#third_party[@]} stripped=$removed"
 
     - name: Install immutable third-party environment + bind checkout PYTHONPATH
       id: install
       shell: bash
       run: |
         set -euo pipefail
+        echo "JOB_LOG phase=python-test-env-install status=start"
         env_dir="$RUNNER_TEMP/sugar-python-test-environment"
         venv="$env_dir/venv"
         # A previous job's leftovers are read-only by construction; clear the
@@ -215,6 +221,7 @@ runs:
         echo "python=$venv/bin/python" >> "$GITHUB_OUTPUT"
         echo "env-dir=$env_dir" >> "$GITHUB_OUTPUT"
         echo "checkout-pythonpath=$checkout_pythonpath" >> "$GITHUB_OUTPUT"
+        echo "JOB_LOG phase=python-test-env-install status=ok env_dir=$env_dir"
 
     - name: Upload environment identity
       if: inputs.identity-artifact == 'true'

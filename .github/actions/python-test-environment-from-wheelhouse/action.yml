@@ -55,6 +55,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "JOB_LOG phase=python-test-env-from-wheelhouse status=start"
         wheelhouse="${{ inputs.wheelhouse-path }}"
         if [ ! -d "$wheelhouse" ]; then
           echo "::error::wheelhouse path missing: $wheelhouse"
@@ -119,3 +120,4 @@ runs:
         echo "checkout-pythonpath=$checkout_pythonpath" >> "$GITHUB_OUTPUT"
         echo "identity-path=$identity_out" >> "$GITHUB_OUTPUT"
         echo "shared-wheelhouse install: ${#wheels[@]} third-party wheels; checkout PYTHONPATH bound"
+        echo "JOB_LOG phase=python-test-env-from-wheelhouse status=ok wheels=${#wheels[@]}"
