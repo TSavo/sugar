@@ -2671,15 +2671,28 @@ class Node(Typed):
         """Yield (field_name, index-or-None, child) in declared grammar order."""
         yield from self._child_edges()
 
-    def walk(self) -> Iterator["Node"]:
+    def walk(self, *, unique: bool = True) -> Iterator["Node"]:
         """Pre-order walk over the constructed graph. Iterative — never recursive.
 
         Expands each node via ``_child_edges()`` so a walk that follows a
         ``children()`` consumer (or a second walk) does not re-getattr fields.
+
+        Default ``unique=True`` visits each node object **once** (DAG walk by
+        identity). The graph is a DAG by design — e.g. successive
+        ``self.attr = …`` stores share prior ``ReceiverFieldStoreState`` —
+        so walking it as a tree is exponential in sharing depth and is the
+        setup_method/nanops combinatorial blowup. Callers that need one
+        yield per *path* (rare) pass ``unique=False``.
         """
         stack: list[Node] = [self]
+        seen: set[int] | None = set() if unique else None
         while stack:
             node = stack.pop()
+            if seen is not None:
+                nid = id(node)
+                if nid in seen:
+                    continue
+                seen.add(nid)
             yield node
             children = [child for _name, _index, child in node._child_edges()]
             stack.extend(reversed(children))
