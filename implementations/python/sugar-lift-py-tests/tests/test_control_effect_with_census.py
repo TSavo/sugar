@@ -37,7 +37,7 @@ def test_with_census_emits_the_complete_closed_vocabulary_and_conserves():
         member.value for member in WithConstructionGapKind
     )
     assert partition["typed_gap_kinds_total"] == len(WithConstructionGapKind)
-    assert partition["typed_gap_kinds_total"] == 39
+    assert partition["typed_gap_kinds_total"] == 41
     assert partition["accounted"] == partition["with_items_total"] == 10
     assert partition["unrecognized_resolution_kinds"] == {}
     assert partition["reconciliation"] == "10 = 2 constructed + 8 typed gaps"
@@ -173,3 +173,38 @@ def test_shape_drift_is_a_separately_named_refusal():
             SimpleNamespace(aggregate_hash=module._PANDAS_3_0_3_AGGREGATE_HASH),
             "sha256:" + "0" * 64,
         )
+
+
+def test_manifest_shape_cid_uses_pin_population_same_door(tmp_path):
+    """Shape CID binds the pin's enrolled paths — not a re-walk or content API.
+
+    The TypeError at recensus was the instrument speaking once enrollment
+    existed: corpus_manifest_cid is the content door (root, abs paths) ->
+    (blake3, count). The shape axis is path names only, over the same
+    population pin_corpus already authenticated.
+    """
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from pandas_floor_summary import corpus_cid
+    from sugar_lift_py_tests.corpus_pin import pin_corpus
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "b.py").write_text("y = 2\n", encoding="utf-8")
+    observed = pin_corpus(root, distribution="pkg", version="test-pin")
+
+    # Same door: pin.paths is the authenticated population.
+    assert corpus_cid(list(observed.paths)) == corpus_cid(
+        [entry.path for entry in observed.files]
+    )
+    # Content API has a different arity and preimage — must not be the shape door.
+    from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
+
+    content_cid, count = corpus_manifest_cid(
+        root, [root / p for p in observed.paths]
+    )
+    assert count == len(observed.paths) == 2
+    assert content_cid != corpus_cid(list(observed.paths))
+    assert not content_cid.startswith("sha256:a223")
