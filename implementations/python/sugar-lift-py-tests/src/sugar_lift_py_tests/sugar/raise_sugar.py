@@ -3,7 +3,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect import (
+    AuthenticatedRaiseLocus,
+    RaiseEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
@@ -113,8 +117,23 @@ class RaiseSugar(Sugar):
                         producer_node_owner="RaiseSugar.desugar",
                     )
                 )
+            mro = (
+                mro_reader()
+                if callable(mro_reader)
+                else getattr(raised_value, "exception_type_mro", None)
+            )
             return Incomplete(
-                RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of(blame), exception_name=self.exception_name, blame=blame, source_sha256=source_sha256, exception_type_mro=mro_reader() if callable(mro_reader) else getattr(raised_value, 'exception_type_mro', None), raised_value=raised_value, cause_value=cause_value, context_effect=context_effect)
+                RaiseEffect(
+                    exception_type_coordinate=coordinate,
+                    occurrence=AuthenticatedRaiseLocus.of(blame),
+                    exception_name=self.exception_name,
+                    blame=blame,
+                    source_sha256=source_sha256,
+                    exception_type_mro=mro,
+                    raised_value=raised_value,
+                    cause_value=cause_value,
+                    context_effect=context_effect,
+                )
             )
 
         def after_exception(raised_value):
