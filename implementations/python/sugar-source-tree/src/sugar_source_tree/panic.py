@@ -257,7 +257,14 @@ class WithConstructionGap(SugarNotWritten):
 
 
 class ContextManagerResolutionConstructionGap(WithConstructionGap):
-    """A prereq-2 typed resolution gap consumed unchanged by ``With``."""
+    """A prereq-2 typed resolution gap consumed unchanged by ``With``.
+
+    Criterion 3 mint: every such panic carries
+    ``decidability=EnrolledDemandUnresolved`` with world from the resolution
+    table (gap present ⇒ ``enrolled_demand_unresolved=True``). That is
+    R_source_undecidable_refusals — derivation ran; the enrolled demand has no
+    source-derived ``ContextManagerContractRefV1``. Not KitConstructionIncomplete.
+    """
 
     _LABEL = "CONTEXT MANAGER RESOLUTION GAP"
 
@@ -267,6 +274,7 @@ class ContextManagerResolutionConstructionGap(WithConstructionGap):
         kind: str,
         demand_cid: str,
         candidate_member_cids: tuple[str, ...],
+        resolution: object | None = None,
         **kwargs,
     ) -> None:
         gap_kind = WithConstructionGapKind.parse(kind)
@@ -284,6 +292,67 @@ class ContextManagerResolutionConstructionGap(WithConstructionGap):
             self.kind = kind
         else:
             self.kind = gap_kind.value
+        # Sealed ground — always from the table row when present; else fields.
+        self.decidability = _enrolled_demand_unresolved_for_cm_gap(
+            kind=kind,
+            demand_cid=demand_cid,
+            resolution=resolution,
+            coordinate=getattr(self, "coordinate", None),
+        )
+
+
+def _format_cm_use_site(site: object) -> str:
+    """Prose coordinate for EnrolledDemandArtifact.use_site (not a bucket key)."""
+    if site is None:
+        return ""
+    source_cid = getattr(site, "source_cid", None)
+    start_line = getattr(site, "start_line", None)
+    start_col = getattr(site, "start_col", None)
+    if (
+        isinstance(source_cid, str)
+        and isinstance(start_line, int)
+        and isinstance(start_col, int)
+    ):
+        end_line = getattr(site, "end_line", start_line)
+        end_col = getattr(site, "end_col", start_col)
+        return f"{source_cid}@{start_line}:{start_col}-{end_line}:{end_col}"
+    return str(site)
+
+
+def _enrolled_demand_unresolved_for_cm_gap(
+    *,
+    kind: str,
+    demand_cid: str,
+    resolution: object | None,
+    coordinate: object | None,
+):
+    """Mint C3 ground for a CM resolution-table gap (holds when still a gap)."""
+    # Prefer the table row's one door when the resolution object is present.
+    ground_fn = getattr(resolution, "enrolled_demand_unresolved_ground", None)
+    if callable(ground_fn):
+        return ground_fn()
+
+    from sugar_lift_py_tests.sealed_ground import (
+        enrolled_demand_unresolved,
+        require_refusal_ground_holds,
+    )
+
+    if resolution is not None:
+        demand_cid = str(getattr(resolution, "demand_cid", demand_cid) or demand_cid)
+        kind = str(getattr(resolution, "kind", kind) or kind)
+        site = getattr(resolution, "use_site", None) or coordinate
+    else:
+        site = coordinate
+    ground = enrolled_demand_unresolved(
+        demand_family="context-manager",
+        demand_cid=demand_cid,
+        use_site=_format_cm_use_site(site),
+        gap_kind=kind,
+        expected_ref_type="ContextManagerContractRefV1",
+    )
+    # World from the resolution table: we only raise when the row is a gap.
+    require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": True})
+    return ground
 
 
 class UnsupportedContextManagerSemantics(WithConstructionGap):

@@ -733,6 +733,17 @@ def test_unresolved_ref_stays_typed_loud(tmp_path):
         _function_sugar(path_source(str(path)), unresolved)
     assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
     assert caught.value.kind == "unresolved-symbol"
+    # Criterion 3: CM resolution gap mints EnrolledDemandUnresolved, not kit-incomplete
+    from sugar_lift_py_tests.sealed_ground import EnrolledDemandUnresolved
+
+    ground = caught.value.decidability
+    assert isinstance(ground, EnrolledDemandUnresolved)
+    assert ground.artifact.demand_family == "context-manager"
+    assert ground.artifact.expected_ref_type == "ContextManagerContractRefV1"
+    assert ground.artifact.gap_kind == "unresolved-symbol"
+    assert ground.artifact.demand_cid == _cid("d")
+    assert ground.holds({"enrolled_demand_unresolved": True})
+    assert ground.holds({"enrolled_demand_unresolved": False}) is False
 
 
 def test_unsupported_semantics_gap_does_not_construct_resource(tmp_path):
@@ -786,7 +797,9 @@ def test_missing_manager_derivation_is_typed_construction_gap(tmp_path):
         "        pass\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.sealed_ground import EnrolledDemandUnresolved
     from sugar_source_tree.panic import (
+        ContextManagerResolutionConstructionGap,
         WithConstructionGap,
         WithConstructionGapKind,
     )
@@ -801,6 +814,15 @@ def test_missing_manager_derivation_is_typed_construction_gap(tmp_path):
     with pytest.raises(WithConstructionGap) as caught:
         next(source.functions()).sugar()
     assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+    # C3: NO_DERIVED_CONTRACT path mints EnrolledDemandUnresolved (holds can be False)
+    assert isinstance(caught.value, ContextManagerResolutionConstructionGap)
+    ground = caught.value.decidability
+    assert isinstance(ground, EnrolledDemandUnresolved)
+    assert ground.artifact.demand_family == "context-manager"
+    assert ground.artifact.expected_ref_type == "ContextManagerContractRefV1"
+    assert ground.artifact.gap_kind == "no-derived-contract"
+    assert ground.holds({"enrolled_demand_unresolved": True}) is True
+    assert ground.holds({"enrolled_demand_unresolved": False}) is False
 
 
 def test_selected_with_defers_resolution_validation_until_construction(tmp_path):
@@ -813,7 +835,9 @@ def test_selected_with_defers_resolution_validation_until_construction(tmp_path)
         "        return entered\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.sealed_ground import EnrolledDemandUnresolved
     from sugar_source_tree.panic import (
+        ContextManagerResolutionConstructionGap,
         WithConstructionGap,
         WithConstructionGapKind,
     )
@@ -836,6 +860,10 @@ def test_selected_with_defers_resolution_validation_until_construction(tmp_path)
         substituted.sugar()
     assert caught.value.owner == "With._construct_sugar"
     assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+    assert isinstance(caught.value, ContextManagerResolutionConstructionGap)
+    assert isinstance(caught.value.decidability, EnrolledDemandUnresolved)
+    # Tooth: ground can be FALSE when the demand is resolved (not kit-incomplete)
+    assert caught.value.decidability.holds({"enrolled_demand_unresolved": False}) is False
 
 
 def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):

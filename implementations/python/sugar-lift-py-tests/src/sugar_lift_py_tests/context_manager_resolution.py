@@ -292,6 +292,10 @@ class ContextManagerResolutionGapV1:
     ``target_symbol`` and ``detail`` are DATA: they ride the row for a human
     reading one row, and are never a bucket key.  A measurement a vendor rename
     can move is not a measurement.
+
+    Criterion 3: each gap is an enrolled demand after derivation with no
+    contract ref.  :meth:`enrolled_demand_unresolved_ground` is the sealed
+    ground for R_source_undecidable_refusals (not kit-incomplete).
     """
 
     demand_cid: str
@@ -302,6 +306,28 @@ class ContextManagerResolutionGapV1:
     # In-process only.  Not read from or written to the wire, so no preimage
     # and no CID changes: the authenticated table hashes the bytes present.
     detail: str | None = None
+
+    def enrolled_demand_unresolved_ground(self):
+        """C3 sealed ground for this table row (holds when still a gap)."""
+        from sugar_lift_py_tests.sealed_ground import (
+            enrolled_demand_unresolved,
+            require_refusal_ground_holds,
+        )
+
+        site = self.use_site
+        use_site = (
+            f"{site.source_cid}@{site.start_line}:{site.start_col}"
+            f"-{site.end_line}:{site.end_col}"
+        )
+        ground = enrolled_demand_unresolved(
+            demand_family="context-manager",
+            demand_cid=self.demand_cid,
+            use_site=use_site,
+            gap_kind=self.kind,
+            expected_ref_type="ContextManagerContractRefV1",
+        )
+        require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": True})
+        return ground
 
 
 ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolutionGapV1

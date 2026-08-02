@@ -2819,11 +2819,18 @@ def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
 def _install_derivation_gap(
     context, coordinate, receipt, kind: str, detail: str | None = None
 ) -> None:
+    """Publish a CM resolution gap for this enrolled demand.
+
+    Derivation ran; the demand has no ``ContextManagerContractRefV1``.
+    Criterion 3: the row is R_source_undecidable_refusals territory — the
+    ground is constructible via ``gap.enrolled_demand_unresolved_ground()``
+    and is minted on consume in ``With._raise_resolution_gap``.
+    """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
     )
 
-    context.source_derived_contract_refs[coordinate] = ContextManagerResolutionGapV1(
+    gap = ContextManagerResolutionGapV1(
         receipt.demand.get("cid", receipt.use["cid"]),
         coordinate,
         receipt.target_symbol,
@@ -2831,3 +2838,7 @@ def _install_derivation_gap(
         (),
         detail,
     )
+    # Prove the C3 ground is mintable from the live table world (still a gap).
+    # Does not raise; With consumption mints the panic with the same ground.
+    gap.enrolled_demand_unresolved_ground()
+    context.source_derived_contract_refs[coordinate] = gap

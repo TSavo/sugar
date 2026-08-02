@@ -6901,11 +6901,30 @@ class With(Statement):
         try:
             return context.contract_refs.require(coordinate)
         except ContractRefProtocolError:
-            from .panic import WithConstructionGap, WithConstructionGapKind
+            # Criterion 3: enrolled With demand with no table row is the same
+            # exhaustion class as a published ContextManagerResolutionGapV1 —
+            # EnrolledDemandUnresolved, not kit-incomplete. Mint via the CM
+            # resolution construction gap so decidability is always attached.
+            from sugar_lift_py_tests.context_manager_resolution import (
+                ContextManagerResolutionGapV1,
+            )
+            from .panic import (
+                ContextManagerResolutionConstructionGap,
+                WithConstructionGapKind,
+            )
 
-            panic = WithConstructionGap(
+            synthetic_gap = ContextManagerResolutionGapV1(
+                demand_cid=coordinate.cid,
+                use_site=coordinate,
+                target_symbol=None,
+                kind=WithConstructionGapKind.NO_DERIVED_CONTRACT.value,
+                candidate_member_cids=(),
+            )
+            panic = ContextManagerResolutionConstructionGap(
                 blame=self.fragment,
-                gap_kind=WithConstructionGapKind.NO_DERIVED_CONTRACT,
+                kind=synthetic_gap.kind,
+                demand_cid=synthetic_gap.demand_cid,
+                candidate_member_cids=(),
                 coordinate=coordinate,
                 owner="With._construct_sugar",
                 observed=(
@@ -6914,6 +6933,7 @@ class With(Statement):
                 ),
                 requested="one resolved authenticated ContextManagerContractRefV1",
                 fix="publish or derive the exact typed CM contract before construction",
+                resolution=synthetic_gap,
             )
             self.reporter.report_gap(self, panic)
             raise panic
@@ -6950,6 +6970,12 @@ class With(Statement):
         # `kind` is the structural key and stays alone; `detail` rides the
         # OBSERVED line so the panic still names the blocking callee(s) that the
         # fused `kind:detail` key used to smuggle into the key itself.
+        #
+        # Criterion 3: a ContextManagerResolutionGapV1 means derivation ran and
+        # the enrolled demand still has no contract ref. That is
+        # EnrolledDemandUnresolved (R_source_undecidable_refusals), not
+        # KitConstructionIncomplete (missing AST arm). Naming a type in prose
+        # is not enough — the sealed ground is the mint.
         detail = getattr(resolution, "detail", None)
         panic = ContextManagerResolutionConstructionGap(
             blame=resolution.use_site,
@@ -6964,6 +6990,7 @@ class With(Statement):
             ),
             requested="one resolved authenticated ContextManagerContractRefV1",
             fix="publish or resolve the exact typed CM contract before construction",
+            resolution=resolution,
         )
         self.reporter.report_gap(self, panic)
         raise panic
