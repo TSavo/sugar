@@ -253,10 +253,13 @@ def _with_census_partition(
     from sugar_source_tree.panic import WithConstructionGapKind
 
     vocabulary = tuple(member.value for member in WithConstructionGapKind)
-    if len(vocabulary) != 39:
+    # ENTER_MAY_HALT / EXIT_MAY_HALT are source-derived resource lifecycle
+    # gaps, added with the generator-backed resource contract. Keep the exact
+    # cardinality tooth current; do not replace it with an open-ended bucket.
+    if len(vocabulary) != 41:
         raise ValueError(
             "WithConstructionGapKind vocabulary changed: "
-            f"expected 39 members, found {len(vocabulary)}"
+            f"expected 41 members, found {len(vocabulary)}"
         )
     allowed = {"derived-contract", *(f"gap:{kind}" for kind in vocabulary)}
     unexpected = sorted(set(cm_resolutions) - allowed)
@@ -693,7 +696,13 @@ def main() -> int:
         require_pin,
         write_pin,
     )
-    from sugar_lift_py_tests.authenticated_pytest import corpus_manifest_cid
+    # Path-shape CID only (relative path names). Content authentication is the
+    # pin aggregate. Do NOT call demand_table_identity.corpus_manifest_cid here:
+    # that is the content manifest (root, abs paths) -> (blake3, count), a
+    # different preimage than the enrolled shape axis a223.... Paths MUST come
+    # from the pin's enrolled population — the same door as pin_corpus /
+    # SourceTree — never a re-walk or guessed alternate set.
+    from pandas_floor_summary import corpus_cid as corpus_manifest_shape_cid
     from sugar_source_tree.tree import SourceTree
 
     # Pin FIRST. A run that cannot name its corpus has no denominator, and a
@@ -706,9 +715,9 @@ def main() -> int:
         )
         if args.require_corpus_pin is not None:
             require_pin(load_pin(args.require_corpus_pin), observed_pin)
-        manifest_shape_cid = corpus_manifest_cid(
-            [entry.path for entry in observed_pin.files]
-        )
+        # Same door as "recensus population: authenticated … at …": pin.files
+        # is the authenticated corpus population already resolved above.
+        manifest_shape_cid = corpus_manifest_shape_cid(list(observed_pin.paths))
         _authenticate_declared_pandas_corpus(observed_pin, manifest_shape_cid)
     except CorpusPinDefect as defect:
         print(str(defect), file=sys.stderr, flush=True)
