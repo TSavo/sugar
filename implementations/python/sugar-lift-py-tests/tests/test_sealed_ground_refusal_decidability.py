@@ -1,4 +1,4 @@
-"""Teeth for RefusalDecidability sealed grounds (Criterion 3 axis-2 unblock)."""
+"""Teeth for RefusalDecidability sealed grounds (Criterion 3 R split)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import pytest
 from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 from sugar_lift_py_tests.gap.panic import construction_panic_gap, ConstructionPanic
 from sugar_lift_py_tests.sealed_ground import (
+    EnrolledDemandArtifact,
+    EnrolledDemandUnresolved,
     FloorRuntimeTypeArtifact,
     FormalDemandArtifact,
     FormalDemandUndischarged,
@@ -15,6 +17,7 @@ from sugar_lift_py_tests.sealed_ground import (
     KitIncompleteArtifact,
     MappingKeyEqualityArtifact,
     RuntimeTypeUndecided,
+    enrolled_demand_unresolved,
     is_refusal_decidability,
     kit_incomplete,
     require_refusal_ground_holds,
@@ -110,3 +113,34 @@ def test_formal_demand_ground() -> None:
         require_refusal_ground_holds(
             ground, {"formal_demand_undischarged": False}
         )
+
+
+def test_enrolled_demand_unresolved_is_c3_door_not_kit_incomplete() -> None:
+    """CM resolution residual: gap in table, not our missing AST arm."""
+    ground = enrolled_demand_unresolved(
+        demand_family="context-manager",
+        demand_cid="demand:blake3-512:test",
+        use_site="pandas/io/json/_json.py:100:8",
+        gap_kind="no-derived-contract",
+        expected_ref_type="ContextManagerContractRefV1",
+    )
+    assert isinstance(ground, EnrolledDemandUnresolved)
+    assert isinstance(ground.artifact, EnrolledDemandArtifact)
+    assert ground.artifact.expected_ref_type == "ContextManagerContractRefV1"
+    assert ground.holds({"enrolled_demand_unresolved": True}) is True
+    assert ground.holds({"enrolled_demand_unresolved": False}) is False
+    require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": True})
+    with pytest.raises(TypeError, match="does not hold"):
+        # Contract ref present → refusing over resolvable source is illegal
+        require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": False})
+    with pytest.raises(TypeError, match="requires world"):
+        require_refusal_ground_holds(ground, world=None)
+
+
+def test_kit_incomplete_is_not_c3_finality_door() -> None:
+    """Always-holds ground: R_kit_incomplete only — hierarchy lies mint the same."""
+    ground = kit_incomplete(owner="WithSugar", observed="hierarchy-lie-shape")
+    assert ground.holds() is True
+    require_refusal_ground_holds(ground)
+    # Distinct type from EnrolledDemandUnresolved so residual class can split R
+    assert not isinstance(ground, EnrolledDemandUnresolved)
