@@ -122,15 +122,27 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
 
 
 @dataclass(frozen=True)
-class SpreadCollectionSugar(Sugar):
+class SpreadCollectionSugar(ConstructedTermSugar):
     """A display containing spread operands, as encoded by the reference lifter.
 
     ``elements`` is ``(wrapper-or-None, child-sugar)`` in source order.
+
+    ConstructedTermSugar: a list/tuple/set display with ``*`` IS nested
+    construction testimony — the same meaning ListSugar/TupleSugar/SetSugar
+    admit without stars. Parent slots that require ConstructedTermSugar are
+    truthful; this class was missing the base and ``to_term``. Promoting is
+    not a convenience widen of the slot.
     """
 
     kind: str
     elements: tuple
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for _wrapper, sugar in self.elements:
+            require_constructed_term_sugar(
+                sugar, owner="SpreadCollectionSugar.elements"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -140,6 +152,26 @@ class SpreadCollectionSugar(Sugar):
             body="len([*z])",
             truthful="len(z)",
             lying="len(z) + 1",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        element_terms = []
+        for wrapper, sugar in self.elements:
+            term = require_constructed_term_sugar(
+                sugar, owner="SpreadCollectionSugar.elements"
+            ).to_term(owner=owner)
+            if wrapper is not None:
+                term = ctor(wrapper, [term])
+            element_terms.append(term)
+        return ctor(
+            f"python:{self.kind}-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor(f"python:{self.kind}-elements", tuple(element_terms)),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -160,11 +192,23 @@ class SpreadCollectionSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class SpreadDictSugar(Sugar):
-    """A dict display whose entries include reference ``None``-key spreads."""
+class SpreadDictSugar(ConstructedTermSugar):
+    """A dict display whose entries include reference ``None``-key spreads.
+
+    ConstructedTermSugar for the same reason as SpreadCollectionSugar: ``{**d}``
+    is a constructed dict term, not an over-wide slot.
+    """
 
     entries: tuple  # (key-sugar-or-None, value-sugar), source order
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for key, value in self.entries:
+            if key is not None:
+                require_constructed_term_sugar(key, owner="SpreadDictSugar.entries.key")
+            require_constructed_term_sugar(
+                value, owner="SpreadDictSugar.entries.value"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -174,6 +218,30 @@ class SpreadDictSugar(Sugar):
             body="len({**z})",
             truthful="len(z)",
             lying="len(z) + 1",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        entry_terms = []
+        for key, value in self.entries:
+            value_term = require_constructed_term_sugar(
+                value, owner="SpreadDictSugar.entries.value"
+            ).to_term(owner=owner)
+            if key is None:
+                key_term = ctor("None", [])
+            else:
+                key_term = require_constructed_term_sugar(
+                    key, owner="SpreadDictSugar.entries.key"
+                ).to_term(owner=owner)
+            entry_terms.append(ctor("python:dict-entry", (key_term, value_term)))
+        return ctor(
+            "python:dict-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor("python:dict-entries", tuple(entry_terms)),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

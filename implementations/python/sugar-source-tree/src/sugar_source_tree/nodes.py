@@ -9323,9 +9323,9 @@ class IfExp(Expression):
         term; the compiler stays Python-ignorant and only ever sees ir.eq.
 
         Arms must be ConstructedTermSugar so IfExpSugar can project to_term.
-        A spread collection arm (``[a, *xs] if c else ys``) is a real Python
-        shape but is NOT yet a term construction — refuse with SugarNotWritten,
-        never a raw TypeError from a type assertion.
+        SpreadCollectionSugar IS ConstructedTermSugar (to_term admitted) — a
+        ``[a, *xs] if c else ys`` arm constructs. Any arm that is still only
+        Sugar refuses with SugarNotWritten, never a raw TypeError.
         """
         from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
         from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -9342,8 +9342,7 @@ class IfExp(Expression):
                 owner="IfExp._construct_sugar",
                 observed=(
                     f"IfExp.{arm_name} constructed {type(arm).__name__}, which is "
-                    "not ConstructedTermSugar (e.g. SpreadCollectionSugar for "
-                    "`[a, *xs] if c else ys`)"
+                    "not ConstructedTermSugar"
                 ),
                 requested=(
                     "IfExp arms that are ordinary constructed terms so "
