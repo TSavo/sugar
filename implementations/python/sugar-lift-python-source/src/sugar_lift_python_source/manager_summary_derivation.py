@@ -1201,9 +1201,17 @@ def populate_source_derived_resource_refs(
     """Preconstruct imported resource managers and freeze exact use-site rows.
 
     ``session`` owns every resolution memo for this population. Multi-resolve
-    owners (file-open, package enumeration) must pass one shared session so
-    export/frame amortization is real across receipts and consumer files. The
-    default opens one bounded to this single population call only.
+    owners (file-open, package enumeration, census walk via ``walk_session_for``)
+    must pass one shared session so export/frame amortization is real across
+    receipts, consumer files, and same-content re-open under one workspace.
+
+    Second open of the same content (after §4 SourceFile + lexical residency):
+    prepare and lexical walks are free; this loop still re-seats into a fresh
+    consumer ``construction_context``. Frame/export projection is free only
+    when the same session is threaded (walk session). Live frame Nodes and
+    protocol-bearing CM refs are session-bound — they must not be parked under
+    a process-global content CID (same law as ``resolve_source_visible_frame``).
+    Pure gap rows alone would be content-CID-able; they are not the residual wall.
     """
     from pathlib import Path
 
