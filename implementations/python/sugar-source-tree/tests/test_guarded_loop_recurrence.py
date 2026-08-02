@@ -300,5 +300,13 @@ def test_binding_state_read_node_reads_through_single_face_projection():
             ),
         ),
     )
-    with pytest.raises(TypeError):
-        binding_state_read_node(multi, make_read=lambda s: sentinel)
+    # Multi-face routes through make_read (GuardedBindingRead door) — does not
+    # silently pick BreakExit or NormalExhaustion; the full join is retained.
+    seen: list[object] = []
+
+    def capture(state: object) -> object:
+        seen.append(state)
+        return sentinel
+
+    assert binding_state_read_node(multi, make_read=capture) is sentinel
+    assert seen == [multi]

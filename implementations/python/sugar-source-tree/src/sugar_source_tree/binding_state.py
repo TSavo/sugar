@@ -1530,7 +1530,7 @@ def unwrap_binding_state(value):
 def binding_state_read_node(
     state: BindingState,
     *,
-    make_read: Callable[[UnboundBinding | GuardedBinding], Node],
+    make_read: Callable[[BindingState], Node],
 ) -> Node:
     """Project binding availability into the tree's ordinary Node currency.
 
@@ -1548,36 +1548,17 @@ def binding_state_read_node(
         return make_read(state)
     if isinstance(state, LoopProjectedBinding):
         # A single completion face is the TOTAL post-value (a no-break loop
-        # exits only by NormalExhaustion), so read straight through it. A
-        # multi-face join stays loud rather than silently pick one arm —
-        # honest unwritten: C3 named refusal, not TypeError-as-backend-defect.
+        # exits only by NormalExhaustion), so read straight through it.
         if len(state.completed_faces) == 1:
             return binding_state_read_node(
                 state.completed_faces[0].state, make_read=make_read
             )
-        from sugar_source_tree.panic import SugarNotWritten
-
-        raise SugarNotWritten(
-            owner="binding_state_read_node",
-            blame=(
-                f"LoopProjectedBinding(target_cid={state.target_cid},"
-                f"faces={len(state.completed_faces)})"
-            ),
-            observed=(
-                f"LoopProjectedBinding with {len(state.completed_faces)} completed "
-                f"faces (target_cid={state.target_cid!r}); multi-face join has no "
-                f"single read projection"
-            ),
-            requested=(
-                "either one NormalExhaustion face (read through) or a written "
-                "multi-face LoopProjectedBinding read that names each arm"
-            ),
-            fix=(
-                "write LoopProjectedBinding multi-face read as typed projection "
-                "(or collapse faces earlier); do not raise TypeError — that "
-                "aborts the file as backend-defect instead of a named C3 gap"
-            ),
-        )
+        # Multi-face join (loop that can break): do not pick one arm. Route
+        # the whole LoopProjectedBinding through the read door so
+        # GuardedBindingRead → LoopGuardedProjection names every face
+        # (completion_kind + guard + arity). make_read is
+        # Name._make_binding_read, which already accepts BindingState.
+        return make_read(state)
     from sugar_source_tree.panic import SugarNotWritten
 
     raise SugarNotWritten(
