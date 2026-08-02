@@ -67,6 +67,13 @@ def test_workflow_is_parallel_matrix_not_serial_monolith() -> None:
     assert "sole_construction_floor_enrollment.py" in workflow
     # Must not re-serialize all process axes via the local monolith in CI.
     assert "run_sole_construction_floors.sh" not in workflow
+    # Shared env: prepare once; matrix jobs consume wheelhouse (not N× full prep).
+    assert "python-test-env-prepare" in workflow
+    assert "python-test-wheelhouse" in workflow
+    assert "python-test-environment-from-wheelhouse" in workflow
+    process_job = workflow.split("process-floor:")[1].split("static-floors:")[0]
+    assert "python-test-environment-from-wheelhouse" in process_job
+    assert "uses: ./.github/actions/python-test-environment\n" not in process_job
 
 
 def test_static_job_binds_every_static_axis() -> None:

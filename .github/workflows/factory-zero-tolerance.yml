@@ -11,10 +11,31 @@ permissions:
 # NO concurrency group. NO machine-wide lease (#7008).
 # Process axes run as a matrix of jobs — wall clock is max(axis), not sum.
 # Completeness is enrollment roll call, not a merged residual hub.
+#
+# SHARED ENV: each of 5 jobs was paying 91–163s env prep for 116–184s total
+# job time — same identical wheelhouse N times. Prepare once; axes install
+# --no-index from the artifact (same law as suite + showcase #7020).
 
 jobs:
+  python-test-env-prepare:
+    name: python test env (shared wheelhouse)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare immutable Python test environment (once)
+        id: env
+        uses: ./.github/actions/python-test-environment
+      - name: Upload third-party wheelhouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ steps.env.outputs.env-dir }}/wheelhouse/
+          if-no-files-found: error
+
   process-floor:
     name: process-floor ${{ matrix.axis }}
+    needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     # silent is the long pole (~11min today); others ~30s once cache warm.
     timeout-minutes: 360
@@ -36,8 +57,15 @@ jobs:
             display: R_timeouts
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare immutable Python test environment
-        uses: ./.github/actions/python-test-environment
+      - name: Download shared third-party wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Install from shared wheelhouse (no network resolve)
+        uses: ./.github/actions/python-test-environment-from-wheelhouse
+        with:
+          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
       # Host path ($HOME/...) only shares when matrix jobs land the same
       # self-hosted user. Fleet-wide: restore/save CA terminal shelf via
       # actions/cache. Key is tip; MeasurementKey still gates corpus/file
@@ -94,12 +122,20 @@ jobs:
 
   static-floors:
     name: static-floors
+    needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare immutable Python test environment
-        uses: ./.github/actions/python-test-environment
+      - name: Download shared third-party wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Install from shared wheelhouse (no network resolve)
+        uses: ./.github/actions/python-test-environment-from-wheelhouse
+        with:
+          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
       - name: Static AST / discrimination floors (parallel to process matrix)
         id: static
         shell: bash

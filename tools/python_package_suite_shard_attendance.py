@@ -17,7 +17,7 @@ measurement classes: enrollment is existence.
 Usage:
     python3 tools/python_package_suite_shard_attendance.py \\
         --reports-dir runs/ \\
-        --shard-count 32 \\
+        --shard-count 8 \\
         --require-commit "$GITHUB_SHA" \\
         --order canonical
 """

@@ -2,25 +2,25 @@ name: Python package suite (authoritative)
 
 # THE DEFECT THIS FIXES
 #
-# One cold pytest over ~3864 tests is one process on one core while 31 cores
-# idle. That serialization starved every measurement for hours. T: "32 cores
-# and 25 runners, and this idea that we should be serializing anything in the
-# CI process is just pure insanity."
+# One cold pytest over ~3864 tests is one process on one core while peers idle.
+# That serialization starved every measurement for hours. Fan-out is correct.
 #
-# DESIGN (settled): 32 deterministic file shards. Each job writes its OWN
-# identity-bound suite-report.json. Completeness is ENROLLMENT (roster + roll
-# call), not merge into a shared hub. Identity gate runs PER SHARD. Campaign
-# claim: all N attended and each is identity-resolved.
+# SIZING (measured, not guessed): 32 shards made pytest work ~25s mean / ~71s
+# max, but paid 89–156s env prep PER JOB and stampeded cold sugarbin. Setup
+# dominated work. Eight shards keep the sweep in minutes and cut the env tax
+# and stampede fourfold. Not a retreat from parallelism — right-size to the box.
 #
-# Canonical order is collection order WITHIN a shard's file set only.
-# Discrimination (scheduled) is within-shard. No package-wide recombine.
+# SHARED ENV: the python-test-environment wheelhouse is IDENTICAL across shards.
+# Prepare it once, upload the third-party wheelhouse + tip identity, shards
+# install --no-index (same shape as showcase #7020). First-party still binds
+# from each job's checkout via PYTHONPATH (never site-packages).
 #
-# No machine-wide heavy-measurement lease (deleted). Jobs run in parallel.
-# Shard count lives in tools/python_package_suite_shards.py (SHARD_COUNT=32)
-# and is mirrored as the static matrix + SUITE_SHARD_COUNT env below — NOT as
-# a prepare-job output. A prepare job that only published the roster while
-# also building a Python env was a 35–126s dead edge: shards re-prep env
-# themselves and never consumed the prepare identity.
+# DESIGN: 8 deterministic file shards. Each job writes its OWN identity-bound
+# suite-report.json. Completeness is ENROLLMENT (roster + roll call), not merge
+# into a shared hub. Identity gate runs PER SHARD.
+#
+# Shard count lives in tools/python_package_suite_shards.py (SHARD_COUNT=8)
+# and is mirrored as the static matrix + SUITE_SHARD_COUNT env below.
 
 on:
   push:
@@ -50,30 +50,68 @@ jobs:
         shell: bash
         run: python3 tests/test_python_suite_identity_gate_twins.py
 
-  # SHARD ROSTER is static (must match tools/python_package_suite_shards.py
-  # SHARD_COUNT=32). Emitting it from a prepare job that also built a Python
-  # env forced every shard to wait 35–126s for an environment it never
-  # consumed — each shard already runs python-test-environment itself.
-  # Static matrix = suite jobs start immediately. No prepare gate. No lease.
+  # ONE env prep for the whole suite matrix. Shards need: prepare (not a
+  # roster emit — matrix is static). They never re-run the full builder.
+  python-test-env-prepare:
+    name: python test env (shared wheelhouse + identity)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    outputs:
+      identity-hash: ${{ steps.env.outputs.identity-hash }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare immutable Python test environment (once)
+        id: env
+        uses: ./.github/actions/python-test-environment
+        with:
+          identity-artifact: "false"
+      - name: Upload third-party wheelhouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ steps.env.outputs.env-dir }}/wheelhouse/
+          if-no-files-found: error
+      - name: Upload tip environment identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-test-environment-identity
+          path: ${{ steps.env.outputs.identity-path }}
+          if-no-files-found: error
 
   # One CI job per shard. Own report. Own identity gate. No singleton writer.
   python-package-suite:
     name: suite canonical shard ${{ matrix.shard }}
+    needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       # Single source of truth for enrollment roll call; keep == SHARD_COUNT.
-      SUITE_SHARD_COUNT: "32"
+      SUITE_SHARD_COUNT: "8"
     steps:
       - uses: actions/checkout@v6
 
-      - name: Prepare immutable Python test environment
+      - name: Download shared third-party wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ runner.temp }}/python-test-wheelhouse
+
+      - name: Download tip environment identity
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-environment-identity
+          path: ${{ runner.temp }}/python-test-identity
+
+      - name: Install from shared wheelhouse (no network resolve)
         id: env
-        uses: ./.github/actions/python-test-environment
+        uses: ./.github/actions/python-test-environment-from-wheelhouse
+        with:
+          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
+          identity-path: ${{ runner.temp }}/python-test-identity/environment-identity.json
 
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
@@ -220,7 +258,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     env:
-      SUITE_SHARD_COUNT: "32"
+      SUITE_SHARD_COUNT: "8"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -243,20 +281,34 @@ jobs:
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.discrimination)
+    needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         order: [reversed, shuffled]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
-      SUITE_SHARD_COUNT: "32"
+      SUITE_SHARD_COUNT: "8"
     steps:
       - uses: actions/checkout@v6
-      - name: Prepare immutable Python test environment
+      - name: Download shared third-party wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Download tip environment identity
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-environment-identity
+          path: ${{ runner.temp }}/python-test-identity
+      - name: Install from shared wheelhouse (no network resolve)
         id: env
-        uses: ./.github/actions/python-test-environment
+        uses: ./.github/actions/python-test-environment-from-wheelhouse
+        with:
+          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
+          identity-path: ${{ runner.temp }}/python-test-identity/environment-identity.json
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
       - name: Resolve the sugar binary and read its source identity
@@ -348,7 +400,7 @@ jobs:
       - python-package-suite
       - python-package-suite-discrimination
     env:
-      SUITE_SHARD_COUNT: "32"
+      SUITE_SHARD_COUNT: "8"
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
