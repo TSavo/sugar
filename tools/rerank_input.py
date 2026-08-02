@@ -14,9 +14,13 @@ module extends that discipline to **re-rank inputs**: every axis entering an
 advisor re-rank must be either:
 
   MeasuredAxis(value, provenance)  — instrument + commit + body/field path
+                                       + declared scan_scope (population)
   UnmeasuredAxis(reason)           — third value, not zero, not a chat integer
 
 A bare int has no constructor. A chat-sourced claim has no Measured door.
+An R without a declared root set (InstrumentScanScope provenance) has no
+Measured door either — advisor S1.1 re-rank requires population as well as
+instrument and commit (vendor 23→~0 class).
 
 THIS MODULE DOES NOT
 ====================
@@ -70,6 +74,61 @@ def _require_int_ge0(name: str, value: object) -> int:
 
 
 @dataclass(frozen=True, slots=True)
+class ScanScopeRecord:
+    """Declared instrument population — required on every Measured axis.
+
+    Mirrors InstrumentScanScope.to_provenance(): an R is meaningless without
+    declared_roots; self_exclusion and auth_pin_exclusion are structural True.
+    """
+
+    declared_roots: tuple[str, ...]
+    self_exclusion: bool
+    auth_pin_exclusion: bool
+
+    def __post_init__(self) -> None:
+        if not self.declared_roots:
+            raise RerankInputError(
+                "scan_scope.declared_roots must be non-empty; an R without a "
+                "declared population is unconstructible (wrong-population class)"
+            )
+        cleaned: list[str] = []
+        for root in self.declared_roots:
+            cleaned.append(_require_nonempty_str("scan_scope.declared_roots item", root))
+        object.__setattr__(self, "declared_roots", tuple(cleaned))
+        if self.self_exclusion is not True:
+            raise RerankInputError(
+                "scan_scope.self_exclusion must be True by construction; "
+                "cannot rank product R that admits instrument-self"
+            )
+        if self.auth_pin_exclusion is not True:
+            raise RerankInputError(
+                "scan_scope.auth_pin_exclusion must be True by construction; "
+                "cannot rank product R that admits auth-pin inventory"
+            )
+
+    def to_json(self) -> dict:
+        return {
+            "declaredRoots": list(self.declared_roots),
+            "selfExclusion": True,
+            "authPinExclusion": True,
+        }
+
+
+def scan_scope_record(
+    *,
+    declared_roots: tuple[str, ...] | list[str],
+    self_exclusion: bool = True,
+    auth_pin_exclusion: bool = True,
+) -> ScanScopeRecord:
+    """One door for re-rank scan-scope provenance."""
+    return ScanScopeRecord(
+        declared_roots=tuple(declared_roots),
+        self_exclusion=self_exclusion,
+        auth_pin_exclusion=auth_pin_exclusion,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentProvenance:
     """Where a Measured axis number came from — not a chat message.
 
@@ -78,6 +137,7 @@ class InstrumentProvenance:
     commit_sha: commit at which that instrument was run.
     body_artifact_cid: content address of the report body that owns the value.
     value_field_path: field path inside that body (cite-compose).
+    scan_scope: declared population (InstrumentScanScope provenance).
     receipt_cid: optional lease receipt CID when the run was under heavy lease.
     """
 
@@ -85,6 +145,7 @@ class InstrumentProvenance:
     commit_sha: str
     body_artifact_cid: str
     value_field_path: str
+    scan_scope: ScanScopeRecord
     receipt_cid: str | None = None
 
     def __post_init__(self) -> None:
@@ -106,6 +167,12 @@ class InstrumentProvenance:
             "value_field_path",
             _require_nonempty_str("value_field_path", self.value_field_path),
         )
+        if not isinstance(self.scan_scope, ScanScopeRecord):
+            raise RerankInputError(
+                "InstrumentProvenance requires ScanScopeRecord "
+                f"(got {type(self.scan_scope).__name__}); re-rank MUST declare "
+                "root set + self/auth-pin exclusion by construction"
+            )
         if self.receipt_cid is not None:
             object.__setattr__(
                 self,
@@ -119,6 +186,7 @@ class InstrumentProvenance:
             "commitSha": self.commit_sha,
             "bodyArtifactCid": self.body_artifact_cid,
             "valueFieldPath": self.value_field_path,
+            "scanScope": self.scan_scope.to_json(),
         }
         if self.receipt_cid is not None:
             out["receiptCid"] = self.receipt_cid
@@ -195,14 +263,16 @@ def measured_axis(
     commit_sha: str,
     body_artifact_cid: str,
     value_field_path: str,
+    scan_scope: ScanScopeRecord,
     receipt_cid: str | None = None,
 ) -> MeasuredAxis:
-    """One door for a measured re-rank axis — provenance required."""
+    """One door for a measured re-rank axis — provenance + population required."""
     prov = InstrumentProvenance(
         instrument_id=instrument_id,
         commit_sha=commit_sha,
         body_artifact_cid=body_artifact_cid,
         value_field_path=value_field_path,
+        scan_scope=scan_scope,
         receipt_cid=receipt_cid,
     )
     return MeasuredAxis(axis, value, prov, _SEAL)

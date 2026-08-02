@@ -37,6 +37,14 @@ def test_chat_cite_is_unmeasured_not_integer() -> None:
     assert not hasattr(RI.PartialRerankInput, "rankable_axes")
 
 
+def _scope() -> RI.ScanScopeRecord:
+    return RI.scan_scope_record(
+        declared_roots=("implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor",),
+        self_exclusion=True,
+        auth_pin_exclusion=True,
+    )
+
+
 def test_measured_requires_instrument_and_commit() -> None:
     with pytest.raises(RI.RerankInputError, match="instrument_id"):
         RI.measured_axis(
@@ -46,6 +54,7 @@ def test_measured_requires_instrument_and_commit() -> None:
             commit_sha="abc",
             body_artifact_cid="body:1",
             value_field_path="R",
+            scan_scope=_scope(),
         )
     m = RI.measured_axis(
         "criterion4.swallowed_throw",
@@ -54,9 +63,29 @@ def test_measured_requires_instrument_and_commit() -> None:
         commit_sha="deadbeef",
         body_artifact_cid="blake2b-256:abc",
         value_field_path="R_swallowed_throw_second_mechanism",
+        scan_scope=_scope(),
     )
     assert m.value == 1
     assert m.provenance.instrument_id.endswith("swallowed_throw_second_mechanism_law.py")
+    assert m.provenance.scan_scope.self_exclusion is True
+    assert "scanScope" in m.provenance.to_json()
+
+
+def test_measured_requires_scan_scope_with_exclusions() -> None:
+    with pytest.raises(RI.RerankInputError, match="declared_roots"):
+        RI.scan_scope_record(declared_roots=())
+    with pytest.raises(RI.RerankInputError, match="self_exclusion"):
+        RI.scan_scope_record(
+            declared_roots=("x",),
+            self_exclusion=False,
+            auth_pin_exclusion=True,
+        )
+    with pytest.raises(RI.RerankInputError, match="auth_pin_exclusion"):
+        RI.scan_scope_record(
+            declared_roots=("x",),
+            self_exclusion=True,
+            auth_pin_exclusion=False,
+        )
 
 
 def test_direct_measured_axis_without_seal_refuses() -> None:
@@ -65,6 +94,7 @@ def test_direct_measured_axis_without_seal_refuses() -> None:
         commit_sha="sha",
         body_artifact_cid="b",
         value_field_path="R",
+        scan_scope=_scope(),
     )
     with pytest.raises(RI.RerankInputError, match="sealed"):
         RI.MeasuredAxis("ax", 1, prov, object())
@@ -78,6 +108,7 @@ def test_complete_exposes_rankable_partial_does_not() -> None:
         commit_sha="deadbeef",
         body_artifact_cid="body:1",
         value_field_path="R",
+        scan_scope=_scope(),
     )
     complete = RI.rerank_input("deadbeef", {"criterion4.finite_cap_opaque": m})
     assert isinstance(complete, RI.CompleteRerankInput)

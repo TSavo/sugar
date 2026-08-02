@@ -399,7 +399,41 @@ def production_roots(python_root: Path) -> list[tuple[str, Path]]:
     return roots
 
 
+def _swallowed_scan_scope(python_root: Path):
+    """Declared production package population with structural self/auth-pin exclusion."""
+    try:
+        from sugar_lift_py_tests.idd.instrument_scan_scope import instrument_scan_scope
+    except ImportError:
+        import importlib.util
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "sugar_lift_py_tests"
+            / "idd"
+            / "instrument_scan_scope.py"
+        )
+        spec = importlib.util.spec_from_file_location("instrument_scan_scope", path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        import sys
+
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        instrument_scan_scope = mod.instrument_scan_scope
+    roots = [root for _prefix, root in production_roots(python_root)]
+    if not roots:
+        raise ValueError(
+            "swallowed-throw production roots empty; refuse undeclared population"
+        )
+    return instrument_scan_scope(
+        declared_roots=roots,
+        instrument_self=Path(__file__).resolve(),
+    )
+
+
 def scan_python_root(python_root: Path) -> list[SwallowOffender]:
+    scope = _swallowed_scan_scope(python_root)
     offenders: list[SwallowOffender] = []
     for prefix, root in production_roots(python_root):
         if not root.is_dir():
@@ -430,6 +464,8 @@ def scan_python_root(python_root: Path) -> list[SwallowOffender]:
             continue
         for path in paths:
             if "__pycache__" in path.parts:
+                continue
+            if not scope.admits(path):
                 continue
             rel = f"{prefix}/{path.relative_to(root).as_posix()}"
             offenders.extend(scan_file(path, rel=rel))

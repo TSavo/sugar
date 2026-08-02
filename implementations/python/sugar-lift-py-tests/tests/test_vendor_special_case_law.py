@@ -110,6 +110,51 @@ _LANG = {
     assert _SCANNER.scan_roots((sugar,)) == []
 
 
+def test_planted_instrument_self_and_auth_pin_excluded_from_r(tmp_path: Path) -> None:
+    """Scope teeth wired into the vendor scanner (21 of the false 23)."""
+    root = tmp_path / "pop"
+    root.mkdir()
+    (root / "authenticated_pytest.py").write_text(
+        'PINS = {"numpy": "1", "pandas": "2"}\n_SET = {"numpy", "pandas"}\n',
+        encoding="utf-8",
+    )
+    (root / "no_call_body_attribution.py").write_text(
+        'expected = {"pandas": "3.0.3"}\n',
+        encoding="utf-8",
+    )
+    # Plant the instrument module under the population root; self-exclusion
+    # must refuse it even when expanded multi-root would have scored it.
+    planted_self = root / _SCANNER_PATH.name
+    planted_self.write_text(
+        'VENDORS = {"numpy", "pandas"}\nTABLE = {"pytest.fixture"}\n',
+        encoding="utf-8",
+    )
+    (root / "product_bad.py").write_text(
+        'if target == "pandas.DataFrame":\n    pass\n',
+        encoding="utf-8",
+    )
+    scope = _SCANNER.instrument_scan_scope(
+        declared_roots=(root,),
+        instrument_self=planted_self,
+    )
+    offenders = _SCANNER.scan_with_scope(scope)
+    pin_or_self = [
+        row
+        for row in offenders
+        if "authenticated_pytest" in row.path
+        or "no_call_body_attribution" in row.path
+        or row.path.endswith(_SCANNER_PATH.name)
+        or _SCANNER_PATH.name in row.path
+    ]
+    assert pin_or_self == [], pin_or_self
+    assert any(
+        row.kind == "vendor-name-match" and row.vendor == "pandas" for row in offenders
+    )
+    prov = scope.to_provenance()
+    assert prov["selfExclusion"] is True
+    assert prov["authPinExclusion"] is True
+
+
 def test_unreadable_or_invalid_source_is_structured_not_crash(tmp_path: Path) -> None:
     """Windows portability: auditor must not process-crash on bad files (#5253)."""
     sugar = tmp_path / "sugar"
