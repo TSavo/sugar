@@ -33,6 +33,8 @@ def test_measure_file_persists_phase_timers(tmp_path: Path) -> None:
     timing = row["timing"]
     for key in (
         "t_open_s",
+        "t_materialize_s",
+        "materialize_calls",
         "t_populate_s",
         "t_enumerate_s",
         "t_sugar_loop_s",
@@ -82,7 +84,10 @@ def test_running_counts_line_includes_timing_fields(tmp_path: Path) -> None:
     assert lines, "running-counts.jsonl must have at least one file row"
     row = json.loads(lines[-1])
     assert "t_open_s" in row
+    assert "t_materialize_s" in row
+    assert "materialize_calls" in row
     assert "t_populate_s" in row
+    assert "t_enumerate_s" in row
     assert "t_sugar_loop_s" in row
     assert "dominant_phase" in row
     assert "module_materialize" in row
