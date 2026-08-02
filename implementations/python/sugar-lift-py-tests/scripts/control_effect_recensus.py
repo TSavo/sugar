@@ -627,6 +627,9 @@ def _measure_file(
     backend_defects: Counter[str] = Counter()
     cm_resolutions: Counter[str] = Counter()
     unrecognized_cm_kinds: Counter[str] = Counter()
+    # Populate-path SNWs (often transitive / CM derivation) stay loud here —
+    # they must NEVER erase a successful SourceFile function denominator.
+    populate_residuals: list[dict[str, Any]] = []
     desugar_axis = DesugarAxis()
     # Phase timers — measured live and PERSISTED (running-counts + row), not
     # only painted on the progress bar and thrown away.
@@ -703,15 +706,53 @@ def _measure_file(
                 source_file, root=address_root, path=path
             )
         except SugarNotWritten as gap:
-            # Derivation can hit a real missing sugar before any function walk.
+            # Populate can SNW on a TRANSITIVE module (decorator publication,
+            # pytest attribute, …) AFTER SourceFile already constructed this
+            # file's functions. Returning here used to bank functionsTotal=0
+            # for a file that just built ~50 functions (#7060 night finding:
+            # 708/1284 zero-function rows). Keep the refusal LOUD as a named
+            # populate residual; do NOT discard the successful SourceFile.
             timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
-            tally_construction(type(gap).__name__, line=0)
-            return reporter
-        timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
+            owner = str(getattr(gap, "owner", None) or type(gap).__name__)
+            blame = getattr(gap, "blame", None)
+            blame_line: object = 0
+            blame_file = relative
+            if blame is not None:
+                unit = getattr(blame, "unit", None)
+                if unit is not None and getattr(unit, "filename", None):
+                    blame_file = str(unit.filename)
+                span = getattr(blame, "line_col_span", None)
+                if span is not None:
+                    try:
+                        span_v = span() if callable(span) else span
+                        blame_line = getattr(span_v, "start_line", 0) or 0
+                    except Exception:  # noqa: BLE001 — best-effort locus
+                        blame_line = 0
+            residual = {
+                "phase": "populate",
+                "owner": owner,
+                "observed": str(getattr(gap, "observed", None) or gap),
+                "requested": str(getattr(gap, "requested", None) or ""),
+                "fix": str(getattr(gap, "fix", None) or ""),
+                "blameFile": blame_file,
+                "blameLine": blame_line,
+            }
+            populate_residuals.append(residual)
+            # Family key is owner-qualified so the gap stays named and loud —
+            # never a silent zero-function outcome.
+            tally_construction(
+                f"populate:{owner}",
+                line=blame_line,
+            )
+            # Fall through: enumerate functions this SourceFile already holds.
+        else:
+            timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
 
         # Effective resolution set for THIS source unit only: source-derived
         # over contract_refs (same door as With construction). Never tally the
         # whole shared provisional table without source_cid — that multiplies.
+        # After a populate residual the CM table may be partial; still tally
+        # what is present — partial CM residual is not a zero-function lie.
         t0 = time.perf_counter()
         file_cm_resolutions, file_unrecognized_kinds = _tally_cm_resolutions(
             construction_context,
@@ -824,6 +865,12 @@ def _measure_file(
         "functionsEnumerationComplete": functions_not_enumerated == 0
         and (panic_row is None or functions_total == functions_enumerated),
     }
+    # Populate residuals are first-class: CM/derivation gaps that must stay
+    # loud without rewriting the function denominator to zero.
+    populate_row = {
+        "populateResiduals": list(populate_residuals),
+        "R_populate_residuals": len(populate_residuals),
+    }
     timing_row = {"timing": timing}
     if panic_row is not None:
         # File-level ConstructionPanic is BaseException: it escapes construct()
@@ -846,6 +893,7 @@ def _measure_file(
             "families": panic_families,
             "backendDefects": dict(backend_defects),
             "R_backend_defects": sum(backend_defects.values()),
+            **populate_row,
             **resolution_row,
             **desugar_axis.row(),
             **timing_row,
@@ -856,6 +904,7 @@ def _measure_file(
         "families": dict(families),
         "backendDefects": dict(backend_defects),
         "R_backend_defects": sum(backend_defects.values()),
+        **populate_row,
         **resolution_row,
         **desugar_axis.row(),
         **timing_row,
