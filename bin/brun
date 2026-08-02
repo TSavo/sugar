@@ -27,12 +27,17 @@ Environment (shared with bcargo so roots, caps and test harnesses apply):
   BCARGO_SSH, BCARGO_RSYNC        Override the ssh/rsync binaries (test harness)
 
 Quiet gate (wall-clock timing only — opt-in; ordinary builds leave unset):
-  SUGAR_BX_REQUIRE_QUIET=1   Sample remote 1-min loadavg BEFORE the command.
-                             Refuse with exit 76 if load1 > max(2, nproc/4).
-                             Print load BEFORE and AFTER on stderr.
+  SUGAR_BX_REQUIRE_QUIET=1   Exclusive remote timing lease + load sample under
+                             the lock. Refuse exit 76 if load1 > max(2, nproc/4).
+                             Print load BEFORE and AFTER on stderr (lease=held).
   SUGAR_BX_MAX_LOADAVG=N     Explicit ceiling (also arms the gate alone).
-                             A number taken under contention is not a measurement.
-                             See docs/contributing/battleaxe-timing.md.
+  SUGAR_BX_TIMING_LEASE_PATH Remote flock path
+                             (default /var/tmp/sugar-bx-timing-measurement.lease)
+  SUGAR_BX_TIMING_LEASE_WAIT_S  Seconds to wait for the lease (default 7200).
+                             0 = refuse immediately with exit 77 if busy.
+  Exit 76 = host not quiet. Exit 77 = another measurement holds the lease.
+  A measurement that cannot testify to its own conditions is not a measurement.
+  See docs/contributing/battleaxe-timing.md.
 EOF
 }
 

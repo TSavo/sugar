@@ -157,10 +157,23 @@ sugar_bx_require_docker_ready() {
 }
 
 # Exit 76: host not quiet enough for a trusted wall-clock measurement.
+# Exit 77: another quiet-gated timing measurement holds the exclusive lease.
 # A number taken under contention is not a slow measurement — it is not a
 # measurement. Timing runs must set SUGAR_BX_REQUIRE_QUIET=1 (or an explicit
 # SUGAR_BX_MAX_LOADAVG). Ordinary builds leave both unset and are not gated.
 # Sample is always the *remote* box load (via sugar_bx_ssh), never the laptop.
+#
+# Concurrency: load-at-start alone is not enough — six agents can all pass a
+# quiet check then co-run and recreate contention on battleaxe. Quiet-gated
+# ambient runs take an exclusive remote flock
+# (/var/tmp/sugar-bx-timing-measurement.lease by default), re-sample load
+# under that lock, then run. Serialize, do not rely on people.
+sugar_bx_quiet_armed() {
+  local require="${SUGAR_BX_REQUIRE_QUIET:-0}"
+  local max_env="${SUGAR_BX_MAX_LOADAVG:-}"
+  [[ -n "$max_env" || "$require" == 1 || "$require" == true || "$require" == yes ]]
+}
+
 sugar_bx_sample_load() {
   # Prints: load1 nproc  (one line). Uses /proc/loadavg on Linux; falls back
   # to python getloadavg on platforms without it (local-mode macOS tests).
@@ -177,54 +190,31 @@ sugar_bx_sample_load() {
 }
 
 sugar_bx_require_quiet() {
-  local require="${SUGAR_BX_REQUIRE_QUIET:-0}"
-  local max_env="${SUGAR_BX_MAX_LOADAVG:-}"
-  # No gate unless the caller asked for a quiet measurement.
-  if [[ -z "$max_env" && "$require" != 1 && "$require" != true && "$require" != yes ]]; then
-    SUGAR_BX_LOAD_BEFORE=""
+  # Arm the quiet gate. Authoritative load sample + exclusive lease happen
+  # inside sugar_bx_run_ambient under flock so concurrent brun callers cannot
+  # both pass a free load check and then co-measure.
+  SUGAR_BX_QUIET_ARMED=0
+  SUGAR_BX_LOAD_BEFORE=""
+  if ! sugar_bx_quiet_armed; then
     return 0
   fi
-  local sample load1 nproc max
-  set +e
-  sample="$(sugar_bx_sample_load 2>&1)"
-  local sample_status=$?
-  set -e
-  if [[ "$sample_status" != 0 ]]; then
-    printf 'sugarbin: crime=load-sample-failed host=%s status=%s detail=%s replacement=fix ssh to %s; cannot certify a quiet box without a load reading\n' \
-      "$SUGAR_BX_HOST" "$sample_status" "${sample:-<no output>}" "$SUGAR_BX_HOST" >&2
-    return 76
-  fi
-  sample="$(printf '%s' "$sample" | tr -d '\r' | tail -n 1)"
-  load1="${sample%% *}"
-  nproc="${sample##* }"
-  if [[ -z "$load1" || -z "$nproc" || "$load1" == "$sample" ]]; then
-    printf 'sugarbin: crime=load-sample-unparseable host=%s sample=%s replacement=expect \"load1 nproc\" from remote sample\n' \
-      "$SUGAR_BX_HOST" "${sample:-<empty>}" >&2
-    return 76
-  fi
-  SUGAR_BX_LOAD_BEFORE="$load1"
-  SUGAR_BX_NPROC="$nproc"
-  if [[ -n "$max_env" ]]; then
-    max="$max_env"
-  else
-    # Default: 25% of cores, floor 2.0 — battleaxe 32c → 8.0. Contended Mac
-    # (load 13 on 8 cores) is always over; quiet bx (load ~2 on 32) always under.
-    max="$(awk -v n="$nproc" 'BEGIN{ m=n/4.0; if (m < 2.0) m=2.0; printf "%.2f", m }')"
-  fi
-  printf 'sugarbin: bx-load-gate phase=before host=%s load1=%s nproc=%s max=%s\n' \
-    "$SUGAR_BX_HOST" "$load1" "$nproc" "$max" >&2
-  # Refuse when load1 > max (strict). Equality is allowed.
-  if awk -v l="$load1" -v m="$max" 'BEGIN{ exit !(l+0 > m+0) }'; then
-    printf 'sugarbin: crime=host-not-quiet host=%s load1=%s nproc=%s max=%s replacement=wait for load1<=%s on %s (or raise SUGAR_BX_MAX_LOADAVG with cause). A wall-clock number taken under contention manufactured tonight'\''s fake 87%% regression — refuse rather than report.\n' \
-      "$SUGAR_BX_HOST" "$load1" "$nproc" "$max" "$max" "$SUGAR_BX_HOST" >&2
-    return 76
-  fi
+  SUGAR_BX_QUIET_ARMED=1
+  SUGAR_BX_LOAD_MAX="${SUGAR_BX_MAX_LOADAVG:-}"
+  SUGAR_BX_TIMING_LEASE="${SUGAR_BX_TIMING_LEASE_PATH:-/var/tmp/sugar-bx-timing-measurement.lease}"
+  # Default wait 2h (queue). Set SUGAR_BX_TIMING_LEASE_WAIT_S=0 to refuse
+  # immediately with exit 77 when another measurement holds the lease.
+  SUGAR_BX_TIMING_LEASE_WAIT="${SUGAR_BX_TIMING_LEASE_WAIT_S:-7200}"
+  printf 'sugarbin: bx-load-gate phase=arm host=%s max=%s lease=%s wait_s=%s\n' \
+    "$SUGAR_BX_HOST" "${SUGAR_BX_LOAD_MAX:-auto(nproc/4,floor=2)}" \
+    "$SUGAR_BX_TIMING_LEASE" "$SUGAR_BX_TIMING_LEASE_WAIT" >&2
   return 0
 }
 
 sugar_bx_report_load_after() {
-  # Best-effort after sample when a quiet gate was armed. Never fails the run:
-  # the before-gate already certified start conditions; after is telemetry.
+  # After-load is printed under the lease by the remote wrapper when quiet is
+  # armed. This local hook is a no-op for quiet runs (remote already testified)
+  # and a no-op when the gate was never armed.
+  [[ "${SUGAR_BX_QUIET_ARMED:-0}" == 1 ]] && return 0
   [[ -n "${SUGAR_BX_LOAD_BEFORE:-}" ]] || return 0
   local sample load1
   set +e
@@ -244,17 +234,82 @@ sugar_bx_run_ambient() {
       [[ -z "$inner" ]] && inner="$prefix" || inner="$inner:$prefix"
     done
   fi
-  local cmd="cd $(sugar_bx_quote "$remote_cwd") && "
-  [[ -n "$inner" ]] && cmd+="PATH=$(sugar_bx_quote "$inner"):\$PATH "
+  local prefix_cmd="cd $(sugar_bx_quote "$remote_cwd") && "
+  [[ -n "$inner" ]] && prefix_cmd+="PATH=$(sugar_bx_quote "$inner"):\$PATH "
   if ((${#SUGAR_BX_ENV_NAMES[@]} != 0)); then
-    for name in "${SUGAR_BX_ENV_NAMES[@]}"; do [[ ${!name+x} == x ]] && cmd+="$name=$(sugar_bx_quote "${!name}") "; done
+    for name in "${SUGAR_BX_ENV_NAMES[@]}"; do [[ ${!name+x} == x ]] && prefix_cmd+="$name=$(sugar_bx_quote "${!name}") "; done
   fi
-  cmd+="exec"
+  local run_cmd=""
   for arg in "$@"; do
     if [[ "$arg" == "$SUGAR_BX_REPO_ROOT" ]]; then arg="$SUGAR_BX_REPO"; elif [[ "$arg" == "$SUGAR_BX_REPO_ROOT"/* ]]; then arg="$SUGAR_BX_REPO/${arg#"$SUGAR_BX_REPO_ROOT"/}"; fi
-    cmd+=" $(sugar_bx_quote "$arg")"
+    run_cmd+=" $(sugar_bx_quote "$arg")"
   done
-  sugar_bx_ssh "bash -lc $(sugar_bx_quote "$cmd")"
+
+  # Ungated path: one-shot exec (unchanged contract).
+  if [[ "${SUGAR_BX_QUIET_ARMED:-0}" != 1 ]]; then
+    sugar_bx_ssh "bash -lc $(sugar_bx_quote "${prefix_cmd}exec${run_cmd}")"
+    return $?
+  fi
+
+  # Quiet path: exclusive remote lease, then load sample under the lock, then
+  # measure. Do not exec-replace the shell that holds the flock fd.
+  local lock wait_s max_lit host_lit measured_cmd wrapper
+  lock="${SUGAR_BX_TIMING_LEASE:-/var/tmp/sugar-bx-timing-measurement.lease}"
+  wait_s="${SUGAR_BX_TIMING_LEASE_WAIT:-7200}"
+  max_lit="${SUGAR_BX_LOAD_MAX:-}"
+  host_lit="$SUGAR_BX_HOST"
+  # prefix_cmd already ends with spaces/env; run_cmd starts with a leading space.
+  measured_cmd="${prefix_cmd}${run_cmd# }"
+  wrapper="set -euo pipefail
+LOCK=$(sugar_bx_quote "$lock")
+WAIT=$(sugar_bx_quote "$wait_s")
+MAX_LIT=$(sugar_bx_quote "$max_lit")
+HOST=$(sugar_bx_quote "$host_lit")
+touch \"\$LOCK\" || { printf 'sugarbin: crime=timing-lease-uncreatable path=%s\\n' \"\$LOCK\" >&2; exit 77; }
+exec 9>>\"\$LOCK\"
+if ! command -v flock >/dev/null 2>&1; then
+  printf 'sugarbin: crime=timing-lease-flock-missing host=%s replacement=install util-linux flock on battleaxe\\n' \"\$HOST\" >&2
+  exit 77
+fi
+printf 'sugarbin: bx-timing-lease phase=waiting host=%s path=%s wait_s=%s\\n' \"\$HOST\" \"\$LOCK\" \"\$WAIT\" >&2
+if ! flock -w \"\$WAIT\" 9; then
+  printf 'sugarbin: crime=timing-lease-busy host=%s path=%s wait_s=%s replacement=another quiet-gated measurement holds the exclusive lease — serialize; do not co-measure on battleaxe. exit 77\\n' \\
+    \"\$HOST\" \"\$LOCK\" \"\$WAIT\" >&2
+  exit 77
+fi
+printf 'sugarbin: bx-timing-lease phase=acquired host=%s path=%s\\n' \"\$HOST\" \"\$LOCK\" >&2
+if [[ -r /proc/loadavg ]]; then
+  read -r l1 _rest </proc/loadavg
+else
+  l1=\$(python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || echo 0)
+fi
+n=\$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+if [[ -n \"\$MAX_LIT\" ]]; then
+  max=\"\$MAX_LIT\"
+else
+  max=\$(awk -v n=\"\$n\" 'BEGIN{ m=n/4.0; if (m < 2.0) m=2.0; printf \"%.2f\", m }')
+fi
+printf 'sugarbin: bx-load-gate phase=before host=%s load1=%s nproc=%s max=%s lease=held\\n' \\
+  \"\$HOST\" \"\$l1\" \"\$n\" \"\$max\" >&2
+if awk -v l=\"\$l1\" -v m=\"\$max\" 'BEGIN{ exit !(l+0 > m+0) }'; then
+  printf 'sugarbin: crime=host-not-quiet host=%s load1=%s nproc=%s max=%s lease=held replacement=wait for load1<=%s (or raise SUGAR_BX_MAX_LOADAVG with cause). A measurement that cannot testify to its own conditions is not a measurement.\\n' \\
+    \"\$HOST\" \"\$l1\" \"\$n\" \"\$max\" \"\$max\" >&2
+  exit 76
+fi
+set +e
+${measured_cmd}
+st=\$?
+set -e
+if [[ -r /proc/loadavg ]]; then
+  read -r l2 _rest </proc/loadavg
+else
+  l2=\$(python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || echo unknown)
+fi
+printf 'sugarbin: bx-load-gate phase=after host=%s load1_before=%s load1_after=%s nproc=%s lease=held\\n' \\
+  \"\$HOST\" \"\$l1\" \"\$l2\" \"\$n\" >&2
+printf 'sugarbin: bx-timing-lease phase=release host=%s path=%s status=%s\\n' \"\$HOST\" \"\$LOCK\" \"\$st\" >&2
+exit \"\$st\""
+  sugar_bx_ssh "bash -lc $(sugar_bx_quote "$wrapper")"
 }
 
 sugar_bx_docker_bind_source() {
