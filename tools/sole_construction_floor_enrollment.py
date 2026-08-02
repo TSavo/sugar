@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Sole-construction floor enrollment — completeness by roll call, not sum of R.
 
-T: serializing floors on a multi-runner fleet is pure insanity. Each process
-axis is its own CI job; wall clock is max(axis), not sum(axes). Completeness
-is enrollment: a missing axis is UNMEASURED, never a smaller green set.
+T: serializing floors on a multi-runner fleet is pure insanity. Process axes
+run as a matrix; wall clock is max(job), not sum. Completeness is enrollment:
+a missing seat is UNMEASURED, never a smaller green set.
 
-Process axes (expensive, parallel matrix — one job each):
-  silent | native-crash | bare-exception | timeout
+Process population is file-sharded with LPT (k=8) on a measured cost prior —
+same key as the suite. Each (axis × file-shard) is an enrolled seat:
+  silent-s00..s07 | native-crash-s00.. | bare-exception-s00.. | timeout-s00..
 
 Static laws (cheap AST / discrimination): one parallel job that does not wait
 on the process matrix.
 
 Each job writes an identity-bound floor-axis-report.json. Attendance checks
-the enrolled roster; residual red is the axis job's own exit code.
+the enrolled roster; residual red is the seat job's own exit code.
 """
 
 from __future__ import annotations
@@ -31,6 +32,9 @@ REPORT_FILENAME = "floor-axis-report.json"
 CAMPAIGN_CLASS = "python-sole-construction-floors"
 CAMPAIGN_BODY = "floor-measurement.json"
 
+# File-shard k — keep with suite. Split key is LPT, not raising k.
+PROCESS_FILE_SHARD_COUNT = 8
+
 
 @dataclass(frozen=True, slots=True)
 class FloorAxis:
@@ -40,7 +44,7 @@ class FloorAxis:
     script: str | None = None  # process floors only
 
 
-PROCESS_AXES: tuple[FloorAxis, ...] = (
+PROCESS_AXIS_BASE: tuple[FloorAxis, ...] = (
     FloorAxis("silent", "R_silent", "process", "silent_zero_tolerance.py"),
     FloorAxis(
         "native-crash", "R_native_crashes", "process", "native_crash_zero_tolerance.py"
@@ -54,25 +58,54 @@ PROCESS_AXES: tuple[FloorAxis, ...] = (
     FloorAxis("timeout", "R_timeouts", "process", "timeout_zero_tolerance.py"),
 )
 
+# Back-compat alias: base axes without file-shard seats.
+PROCESS_AXES = PROCESS_AXIS_BASE
+
+
+def process_shard_seats(
+    shard_count: int = PROCESS_FILE_SHARD_COUNT,
+) -> tuple[FloorAxis, ...]:
+    seats: list[FloorAxis] = []
+    for axis in PROCESS_AXIS_BASE:
+        for shard in range(shard_count):
+            seats.append(
+                FloorAxis(
+                    f"{axis.axis_id}-s{shard:02d}",
+                    f"{axis.display}[s{shard:02d}]",
+                    "process",
+                    axis.script,
+                )
+            )
+    return tuple(seats)
+
+
 # One enrollment slot for the cheap static job (ownership, side doors, …).
 STATIC_AXIS = FloorAxis("static-laws", "R_static_sole_construction", "static")
 
-ENROLLED: tuple[FloorAxis, ...] = PROCESS_AXES + (STATIC_AXIS,)
+ENROLLED: tuple[FloorAxis, ...] = process_shard_seats() + (STATIC_AXIS,)
 
 
 def enrolled_ids() -> tuple[str, ...]:
     return tuple(a.axis_id for a in ENROLLED)
 
 
-def emit_process_matrix_json() -> str:
-    include = [
-        {
-            "axis": a.axis_id,
-            "display": a.display,
-            "script": a.script,
-        }
-        for a in PROCESS_AXES
-    ]
+def emit_process_matrix_json(
+    shard_count: int = PROCESS_FILE_SHARD_COUNT,
+) -> str:
+    """GitHub Actions matrix include: base axis × LPT file shard."""
+    include = []
+    for axis in PROCESS_AXIS_BASE:
+        for shard in range(shard_count):
+            include.append(
+                {
+                    "axis": axis.axis_id,
+                    "axisSeat": f"{axis.axis_id}-s{shard:02d}",
+                    "display": f"{axis.display}[s{shard:02d}]",
+                    "script": axis.script,
+                    "shard": shard,
+                    "shardCount": shard_count,
+                }
+            )
     return json.dumps({"include": include})
 
 

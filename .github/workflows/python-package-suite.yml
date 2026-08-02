@@ -19,6 +19,10 @@ name: Python package suite (authoritative)
 # suite-report.json. Completeness is ENROLLMENT (roster + roll call), not merge
 # into a shared hub. Identity gate runs PER SHARD.
 #
+# Shard count k=8 lives in tools/python_package_suite_shards.py.
+# Split key is LPT on a content-addressed per-file cost prior (not
+# path-index%8). Live by-count k=8 showed 1115s vs 45s shards; LPT
+# targets T/k. No prior → equal-count + JOB_LOG; run writes prior.
 # Shard count lives in tools/python_package_suite_shards.py (SHARD_COUNT=8)
 # and is mirrored as the static matrix + SUITE_SHARD_COUNT env below.
 
@@ -106,6 +110,24 @@ jobs:
           name: python-test-environment-identity
           path: ${{ runner.temp }}/python-test-identity
 
+
+      - name: Resolve LPT file-cost prior path
+        id: lpt
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${GITHUB_WORKSPACE}/.cache/sugar/lpt-file-costs"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_LPT_PRIOR_DIR=$dir" >> "$GITHUB_ENV"
+          echo "JOB_LOG phase=lpt-prior status=resolve dir=$dir"
+      - name: Restore LPT file-cost prior (content-addressed)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-file-costs-${{ github.sha }}
+          restore-keys: |
+            lpt-file-costs-
       - name: Install from shared wheelhouse (no network resolve)
         id: env
         uses: ./.github/actions/python-test-environment-from-wheelhouse
@@ -242,6 +264,14 @@ jobs:
             suite-node-ids/
             identity-gate.md
           if-no-files-found: warn
+
+
+      - name: Save LPT file-cost prior (content-addressed)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-file-costs-${{ github.sha }}-suite-${{ matrix.shard }}
 
       - name: Report, do not gate on pytest verdict
         if: always()

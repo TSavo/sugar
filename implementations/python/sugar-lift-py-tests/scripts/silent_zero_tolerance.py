@@ -88,6 +88,8 @@ from _enum_floor_runtime import (  # noqa: E402
     require_explicit_scan_roots,
     require_python_paths,
     with_file_timeout,
+    add_lpt_shard_args,
+    apply_lpt_file_shard,
 )
 
 
@@ -406,6 +408,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
+    add_lpt_shard_args(parser)
     parser.add_argument("--progress-stdout", action="store_true")
     args = parser.parse_args()
 
@@ -414,6 +417,13 @@ def main() -> int:
         # refuse empty args. Kit production_roots is never an implied default.
         roots = list(args.live_root) + list(args.paths)
         paths = require_explicit_scan_roots(roots)
+        paths = apply_lpt_file_shard(
+            paths,
+            root=args.repo_root,
+            shard_index=args.shard_index,
+            shard_count=args.shard_count,
+            population="process-floor-silent",
+        )
     except ValueError as error:
         print(f"SILENT ZERO-TOLERANCE RED: {error}")
         return 2

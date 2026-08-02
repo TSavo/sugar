@@ -88,6 +88,52 @@ def require_python_paths(roots: Sequence[Path]) -> list[Path]:
     return paths
 
 
+def add_lpt_shard_args(parser) -> None:
+    """CLI for LPT file sharding (k=8 default; same key as suite)."""
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=None,
+        help="0-based LPT/equal-count file shard (omit = full population)",
+    )
+    parser.add_argument(
+        "--shard-count",
+        type=int,
+        default=8,
+        help="file shard count k (default 8; do not raise without env evidence)",
+    )
+
+
+def apply_lpt_file_shard(
+    paths: Sequence[Path],
+    *,
+    root: Path,
+    shard_index: int | None,
+    shard_count: int,
+    population: str,
+) -> list[Path]:
+    """Filter paths to one LPT shard; no-op when shard_index is None."""
+    if shard_index is None:
+        return list(paths)
+    if not (0 <= shard_index < shard_count):
+        raise ValueError(
+            f"shard_index {shard_index} out of range for shard_count {shard_count}"
+        )
+    tools = Path(__file__).resolve().parents[4] / "tools"
+    if tools.is_dir() and str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    from lpt_file_shards import filter_paths_for_shard
+
+    return filter_paths_for_shard(
+        paths,
+        root=root,
+        shard_index=shard_index,
+        shard_count=shard_count,
+        population=population,
+        narrate=True,
+    )
+
+
 def require_explicit_scan_roots(roots: Sequence[Path]) -> list[Path]:
     """Refuse empty path sets so a floor cannot green on a defaulted population.
 
