@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Budget-gated gh: refuse when core remaining is below the floor (exit 79).
+#
+# Same law as measurement load gate: a call that cannot testify to the budget
+# it spends is not a safe call. Agents and scripts should prefer this over bare
+# `gh` for list/view/api polling.
+#
+# Usage:
+#   bin/gh-budget                          # report budget only
+#   bin/gh-budget --floor 800
+#   bin/gh-budget pr view 1 --json url     # check budget, then gh ...
+#   GH_RATE_BUDGET_FLOOR=1000 bin/gh-budget api rate_limit
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+budget_py="$root/tools/gh_rate_budget.py"
+
+if [[ $# -eq 0 || "${1:-}" == "--floor" || "${1:-}" == "--json" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  exec python3 "$budget_py" "$@"
+fi
+
+# First optional --floor N for the gate, rest is gh argv.
+floor_args=()
+if [[ "${1:-}" == "--floor" ]]; then
+  floor_args=(--floor "$2")
+  shift 2
+fi
+
+exec python3 "$budget_py" "${floor_args[@]}" -- wrap -- gh "$@"

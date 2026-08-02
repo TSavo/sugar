@@ -45,6 +45,12 @@ on:
   push:
     branches:
       - main
+    # Coalesce: pure documentation tips must not consume a full core matrix
+    # per merge (2026-08-02: ~70 merges × fan-out → 421 queued runs). Product
+    # paths still always run. Heavy corpus instruments stay schedule/dispatch
+    # only — see docs/contributing/github-api-budget.md.
+    paths-ignore:
+      - "docs/**"
 
 # NO `concurrency:` BLOCK. `cancel-in-progress: false` is not enough: GitHub
 # keeps only ONE pending run per group and replaces a queued run with a newer
@@ -52,6 +58,7 @@ on:
 # discarded the CI vector of four merged commits (329576c3d, ef19b8175,
 # c11767c5e, df408100e). Every commit must retain its own run. Runner
 # scheduling provides queuing; GitHub concurrency must not discard evidence.
+# Do not "fix" backlog by concurrency-dropping pending main runs.
 
 permissions:
   contents: read
