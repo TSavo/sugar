@@ -671,6 +671,14 @@ def _measure_file(
         and (panic_row is None or functions_total == functions_enumerated),
     }
     if panic_row is not None:
+        # File-level ConstructionPanic is BaseException: it escapes construct()
+        # via collect_construction_panic and never lands in reporter.gaps, so
+        # tally_construction never sees it. Enroll it here — the family set is
+        # derived from what measure actually observed, not invented at aggregate.
+        panic_families = dict(families)
+        panic_families["ConstructionPanic"] = (
+            int(panic_families.get("ConstructionPanic") or 0) + 1
+        )
         return {
             "category": "construction-panic",
             "panic": {
@@ -680,7 +688,7 @@ def _measure_file(
                 "gap": panic_row.info,
             },
             **function_accounting,
-            "families": dict(families),
+            "families": panic_families,
             "backendDefects": dict(backend_defects),
             "R_backend_defects": sum(backend_defects.values()),
             **resolution_row,
@@ -788,6 +796,18 @@ def main() -> int:
         type=Path,
         default=None,
         help="tqdm progress only (default: <out-dir>/progress.log)",
+    )
+    parser.add_argument(
+        "--aggregate-only",
+        action="store_true",
+        help=(
+            "Rebuild the sealed board from an existing COMPLETE checkpoint "
+            "without re-walking files. Recovery is not a shortcut past "
+            "identity: pin, shape CID, commit/sourceStamp, and denominator "
+            "flags are still computed the normal way. Incomplete checkpoint "
+            "(pending files) is UNMEASURED — never a Complete board. "
+            "running-counts.jsonl alone is orientation, not a board body."
+        ),
     )
     parser.add_argument(
         "--progress-stdout",
@@ -975,6 +995,26 @@ def main() -> int:
         f"total={len(file_names)} already_done={len(file_names) - len(pending)} "
         f"pending={len(pending)} path={checkpoint_path.resolve()}"
     )
+    if args.aggregate_only:
+        if pending:
+            _narrate(
+                "RECENSUS AGGREGATE-ONLY REFUSED: checkpoint incomplete "
+                f"pending={len(pending)}/{len(file_names)} — walk did not finish; "
+                "running-counts.jsonl is orientation only, not a sealed board. "
+                "Do not bank as Measured."
+            )
+            print(
+                "aggregate-only requires a complete checkpoint (zero pending); "
+                f"pending={len(pending)} of {len(file_names)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+        _narrate(
+            "RECENSUS AGGREGATE-ONLY: complete checkpoint; skipping lift; "
+            "board identity still from pin+commit+denominator (not from "
+            "running-counts alone)"
+        )
     defects: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
@@ -1004,340 +1044,359 @@ def main() -> int:
     started = time.time()
     measured_now: list[tuple[str, dict[str, Any]]] = []
 
-    try:
-        from tqdm import tqdm
-    except ImportError as error:  # pragma: no cover
-        raise SystemExit(
-            "tqdm is required: python3 -m pip install 'tqdm>=4.66'"
-        ) from error
+    if not args.aggregate_only:
+        try:
+            from tqdm import tqdm
+        except ImportError as error:  # pragma: no cover
+            raise SystemExit(
+                "tqdm is required: python3 -m pip install 'tqdm>=4.66'"
+            ) from error
 
-    live_done = 0
-    live_panic = 0  # ConstructionPanic only (file-level kit panic)
-    live_defect = 0
-    live_fns = 0
-    live_clean = 0
-    live_snw = 0  # SugarNotWritten (missing sugar)
-    live_other_gaps = 0  # other typed gaps (e.g. RuntimeSelectedContextManager)
-    already_done = len(file_names) - len(pending)
-    # Seed running totals from checkpoint so resume doesn't look like "0 gaps".
-    if checkpoint is not None and already_done:
-        for crow in checkpoint.rows():
-            raw = crow.get("result") or {}
-            cat = str(raw.get("category") or "")
-            live_fns += int(raw.get("functionsTotal") or 0)
-            live_clean += int(raw.get("functionsClean") or 0)
-            # NOT `families`: that name is main's accumulating Counter, and
-            # rebinding it to this plain dict made the later
-            # `families["ConstructionPanic"] += 1` a KeyError crash — the whole
-            # run lost, at the exact moment a panic row appeared.
-            row_families = raw.get("families") or {}
-            live_snw += int(row_families.get("SugarNotWritten") or 0)
-            live_other_gaps += sum(
-                int(v) for k, v in row_families.items() if k != "SugarNotWritten"
-            )
-            if cat == "construction-panic":
-                live_panic += 1
-            elif cat not in {"completed", ""}:
-                live_defect += 1
-            live_done += 1
+        live_done = 0
+        live_panic = 0  # ConstructionPanic only (file-level kit panic)
+        live_defect = 0
+        live_fns = 0
+        live_clean = 0
+        live_snw = 0  # SugarNotWritten (missing sugar)
+        live_other_gaps = 0  # other typed gaps (e.g. RuntimeSelectedContextManager)
+        already_done = len(file_names) - len(pending)
+        # Seed running totals from checkpoint so resume doesn't look like "0 gaps".
+        if checkpoint is not None and already_done:
+            for crow in checkpoint.rows():
+                raw = crow.get("result") or {}
+                cat = str(raw.get("category") or "")
+                live_fns += int(raw.get("functionsTotal") or 0)
+                live_clean += int(raw.get("functionsClean") or 0)
+                # NOT `families`: that name is main's accumulating Counter, and
+                # rebinding it to this plain dict made the later
+                # `families["ConstructionPanic"] += 1` a KeyError crash — the whole
+                # run lost, at the exact moment a panic row appeared.
+                row_families = raw.get("families") or {}
+                live_snw += int(row_families.get("SugarNotWritten") or 0)
+                live_other_gaps += sum(
+                    int(v)
+                    for k, v in row_families.items()
+                    if k != "SugarNotWritten"
+                )
+                if cat == "construction-panic":
+                    live_panic += 1
+                elif cat not in {"completed", ""}:
+                    live_defect += 1
+                live_done += 1
 
-    progress_path.parent.mkdir(parents=True, exist_ok=True)
-    progress_stream: TextIO = progress_path.open("w", encoding="utf-8")
-    # Header so `tail -f progress.log` is self-describing.
-    progress_stream.write(
-        f"# pandas enum progress\n"
-        f"# corpus={args.corpus}\n"
-        f"# engine_log={engine_path.resolve()}\n"
-        f"# checkpoint={checkpoint_path.resolve()}\n"
-        f"# result={result_path.resolve()}\n"
-        f"# already_done={already_done} pending={len(pending)} total={len(file_names)}\n"
-        f"# postfix: file=current path | snw=SugarNotWritten | gaps=other typed | "
-        f"cpanic=ConstructionPanic | fn=clean/total functions\n"
-    )
-    progress_stream.flush()
-
-    bar_format = (
-        "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
-        "[{elapsed}<{remaining}, {rate_fmt}] {postfix}"
-    )
-
-    _last_progress_stdout = 0.0
-
-    def _set_bars(postfix: dict[str, object], *, refresh: bool = True) -> None:
-        nonlocal _last_progress_stdout
-        bar.set_postfix(postfix, refresh=refresh)
-        if live_bar is not None:
-            live_bar.set_postfix(postfix, refresh=refresh)
-        progress_stream.flush()
-        # File-side tqdm is invisible in CI. ALWAYS mirror to the job log —
-        # never TTY-gate, never hide behind --progress-stdout (that flag only
-        # controls the optional interactive stderr bar). Cap silence at 30s.
-        if not refresh:
-            return
-        now = time.monotonic()
-        status = str(postfix.get("status") or "")
-        force = status not in {"lifting…", "ok", "…"}
-        if not force and now - _last_progress_stdout < _JOB_LOG_MAX_SILENCE_S:
-            return
-        if force and now - _last_progress_stdout < 2.0 and status in {
-            "done",
-            "cpanic",
-        }:
-            # Allow dense end-of-file lines without flooding.
-            pass
-        _last_progress_stdout = now
-        n = getattr(bar, "n", live_done)
-        total = getattr(bar, "total", len(file_names)) or len(file_names)
-        bits = " ".join(f"{k}={v}" for k, v in postfix.items())
-        _narrate(f"RECENSUS PROGRESS {n}/{total} {bits}")
-
-    try:
-        bar = tqdm(
-            pending,
-            total=len(file_names),
-            initial=already_done,
-            unit="file",
-            desc="pandas enum",
-            file=progress_stream,
-            dynamic_ncols=False,
-            ncols=320,
-            mininterval=0.15,
-            smoothing=0.05,
-            bar_format=bar_format,
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        progress_stream: TextIO = progress_path.open("w", encoding="utf-8")
+        # Header so `tail -f progress.log` is self-describing.
+        progress_stream.write(
+            f"# pandas enum progress\n"
+            f"# corpus={args.corpus}\n"
+            f"# engine_log={engine_path.resolve()}\n"
+            f"# checkpoint={checkpoint_path.resolve()}\n"
+            f"# result={result_path.resolve()}\n"
+            f"# already_done={already_done} pending={len(pending)} total={len(file_names)}\n"
+            f"# postfix: file=current path | snw=SugarNotWritten | gaps=other typed | "
+            f"cpanic=ConstructionPanic | fn=clean/total functions\n"
         )
-        # Interactive TTY only: second tqdm bar on stderr. Never gate *all*
-        # progress on isatty — CI is not a TTY and that was the silent wedge.
-        live_bar = None
-        if args.progress_stdout and sys.stderr.isatty():
-            live_bar = tqdm(
+        progress_stream.flush()
+
+        bar_format = (
+            "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
+            "[{elapsed}<{remaining}, {rate_fmt}] {postfix}"
+        )
+
+        _last_progress_stdout = 0.0
+
+        def _set_bars(postfix: dict[str, object], *, refresh: bool = True) -> None:
+            nonlocal _last_progress_stdout
+            bar.set_postfix(postfix, refresh=refresh)
+            if live_bar is not None:
+                live_bar.set_postfix(postfix, refresh=refresh)
+            progress_stream.flush()
+            # File-side tqdm is invisible in CI. ALWAYS mirror to the job log —
+            # never TTY-gate, never hide behind --progress-stdout (that flag only
+            # controls the optional interactive stderr bar). Cap silence at 30s.
+            if not refresh:
+                return
+            now = time.monotonic()
+            status = str(postfix.get("status") or "")
+            force = status not in {"lifting…", "ok", "…"}
+            if not force and now - _last_progress_stdout < _JOB_LOG_MAX_SILENCE_S:
+                return
+            if force and now - _last_progress_stdout < 2.0 and status in {
+                "done",
+                "cpanic",
+            }:
+                # Allow dense end-of-file lines without flooding.
+                pass
+            _last_progress_stdout = now
+            n = getattr(bar, "n", live_done)
+            total = getattr(bar, "total", len(file_names)) or len(file_names)
+            bits = " ".join(f"{k}={v}" for k, v in postfix.items())
+            _narrate(f"RECENSUS PROGRESS {n}/{total} {bits}")
+
+        try:
+            bar = tqdm(
+                pending,
                 total=len(file_names),
                 initial=already_done,
                 unit="file",
                 desc="pandas enum",
-                file=sys.stderr,
-                dynamic_ncols=True,
+                file=progress_stream,
+                dynamic_ncols=False,
+                ncols=320,
                 mininterval=0.15,
                 smoothing=0.05,
                 bar_format=bar_format,
             )
-        _narrate(
-            "RECENSUS PROGRESS_ROUTE "
-            f"file={progress_path.resolve()} "
-            f"stdout_mirror={args.progress_stdout} "
-            f"tty_stderr_bar={live_bar is not None} "
-            f"(SCOREBOARD never TTY-gates stdout heartbeats)"
-        )
-
-        t_lift = _phase_begin("per_file_lift")
-        _narrate(
-            "RECENSUS LIFT ENTER "
-            f"pending={len(pending)} total={len(file_names)} "
-            f"progress_every_n={_PROGRESS_EVERY_N}"
-        )
-        for file in bar:
-            path = by_file[file]
-            # Same identity in a bounded run and in the full run: relative to
-            # the corpus ROOT, never to whatever slice this invocation measured.
-            relative = path.resolve().relative_to(corpus_root).as_posix()
-            # index is 1-based among pending within this invocation; live_done
-            # includes checkpoint resume so overall position is known.
-            file_index = live_done + 1
-            # Show the file we are about to open — before the work starts.
-            _set_bars(
-                {
-                    "file": relative,
-                    "status": "lifting…",
-                    "snw": live_snw,
-                    "gaps": live_other_gaps,
-                    "cpanic": live_panic,
-                    "defect": live_defect,
-                    "fn": f"{live_clean}/{live_fns}",
-                },
-                refresh=True,
-            )
-            if (
-                file_index == 1
-                or file_index % _PROGRESS_EVERY_N == 0
-                or file_index == len(file_names)
-            ):
-                _narrate(
-                    "RECENSUS FILE BEGIN "
-                    f"{file_index}/{len(file_names)} file={relative} "
-                    f"elapsed_s={time.time() - started:.1f} "
-                    f"counts completed≈{live_done - live_panic - live_defect} "
-                    f"snw={live_snw} other_gaps={live_other_gaps} "
-                    f"cpanic={live_panic} defect={live_defect} "
-                    f"fn_clean/total={live_clean}/{live_fns}"
+            # Interactive TTY only: second tqdm bar on stderr. Never gate *all*
+            # progress on isatty — CI is not a TTY and that was the silent wedge.
+            live_bar = None
+            if args.progress_stdout and sys.stderr.isatty():
+                live_bar = tqdm(
+                    total=len(file_names),
+                    initial=already_done,
+                    unit="file",
+                    desc="pandas enum",
+                    file=sys.stderr,
+                    dynamic_ncols=True,
+                    mininterval=0.15,
+                    smoothing=0.05,
+                    bar_format=bar_format,
                 )
-            t_file = time.perf_counter()
-            fn_stat = {
-                "slow_s": 0.0,
-                "slow_name": "-",
-                "fn_seen": 0,
-                "fn_time": 0.0,
-                "file_start": time.perf_counter(),
-            }
-
-            def _on_function(
-                in_total: int, in_clean: int, fn_name: str, elapsed: "float | None"
-            ) -> None:
-                # live_clean/live_fns are the completed-file base; add this
-                # file's running counts so `fn=` climbs per function, live.
-                shown_fns = live_fns + in_total
-                shown_clean = live_clean + in_clean
-                clean_pct = (100.0 * shown_clean / shown_fns) if shown_fns else 0.0
-                if elapsed is not None:
-                    fn_stat["fn_seen"] += 1
-                    fn_stat["fn_time"] += elapsed
-                    if elapsed > fn_stat["slow_s"]:
-                        fn_stat["slow_s"] = elapsed
-                        fn_stat["slow_name"] = fn_name
-                seen = fn_stat["fn_seen"] or 1
-                avg = fn_stat["fn_time"] / seen
-                wall = time.perf_counter() - fn_stat["file_start"]
-                rate = fn_stat["fn_seen"] / wall if wall > 0 else 0.0
-                post = {
-                    "file": relative,
-                    "func": fn_name,
-                    "status": "lifting…" if elapsed is None else "ok",
-                    "last": "…" if elapsed is None else f"{elapsed:.3f}s",
-                    "avg": f"{avg:.3f}s",
-                    "fn/s": f"{rate:.1f}",
-                    "slowest": f"{fn_stat['slow_name']} {fn_stat['slow_s']:.2f}s",
-                    "snw": live_snw,
-                    "gaps": live_other_gaps,
-                    "cpanic": live_panic,
-                    "defect": live_defect,
-                    "fn": f"{shown_clean}/{shown_fns}",
-                    "clean%": f"{clean_pct:.0f}",
-                }
-                _set_bars(post, refresh=True)
-
-            try:
-                row = _measure_file(
-                    path,
-                    relative=relative,
-                    workspace_root=workspace_root,
-                    locus_root=locus_root,
-                    contract_refs=contract_refs,
-                    on_function=_on_function,
-                )
-            except (ImportError, AttributeError) as error:
-                # An arm that cannot resolve its dispatch target is UNWRITTEN,
-                # wearing a working arm's clothes. It is not a panic, not a
-                # typed refusal, and not in any family below -- so absorbing it
-                # into `backend-defect` would leave the row short with nothing
-                # saying so. Own category, named, loud, red (#6329).
-                row = {
-                    "category": "instrument-defect-unresolvable-dispatch",
-                    "defect": {
-                        "file": relative,
-                        "type": type(error).__name__,
-                        "message": str(error),
-                        "owner": "kit dispatch target",
-                        "fix": (
-                            "the arm imports a name that does not exist; write "
-                            "the target or delete the arm"
-                        ),
-                    },
-                }
-            except Exception as error:  # noqa: BLE001 -- per-file terminal
-                row = {
-                    "category": "backend-defect",
-                    "defect": {
-                        "file": relative,
-                        "type": type(error).__name__,
-                        "message": str(error),
-                    },
-                }
-            file_s = time.perf_counter() - t_file
-            checkpoint.append(file, row)
-            measured_now.append((file, row))
-
-            cat = str(row.get("category") or "?")
-            fn = int(row.get("functionsTotal") or 0)
-            clean = int(row.get("functionsClean") or 0)
-            families = row.get("families") or {}
-            snw = int(families.get("SugarNotWritten") or 0)
-            other = sum(int(v) for k, v in families.items() if k != "SugarNotWritten")
-            live_fns += fn
-            live_clean += clean
-            live_snw += snw
-            live_other_gaps += other
-            live_done += 1
-            if cat == "construction-panic":
-                live_panic += 1
-                status = "cpanic"
-            elif cat == "completed":
-                status = "done"
-            else:
-                live_defect += 1
-                status = cat
-
-            clean_pct = (100.0 * live_clean / live_fns) if live_fns else 0.0
-            _set_bars(
-                {
-                    "file": relative,
-                    "status": status,
-                    "last": f"{file_s:.2f}s",
-                    "snw": live_snw,
-                    "gaps": live_other_gaps,
-                    "cpanic": live_panic,
-                    "defect": live_defect,
-                    "fn": f"{live_clean}/{live_fns}",
-                    "clean%": f"{clean_pct:.0f}",
-                },
-                refresh=True,
+            _narrate(
+                "RECENSUS PROGRESS_ROUTE "
+                f"file={progress_path.resolve()} "
+                f"stdout_mirror={args.progress_stdout} "
+                f"tty_stderr_bar={live_bar is not None} "
+                f"(SCOREBOARD never TTY-gates stdout heartbeats)"
             )
+
+            t_lift = _phase_begin("per_file_lift")
+            _narrate(
+                "RECENSUS LIFT ENTER "
+                f"pending={len(pending)} total={len(file_names)} "
+                f"progress_every_n={_PROGRESS_EVERY_N}"
+            )
+            for file in bar:
+                path = by_file[file]
+                # Same identity in a bounded run and in the full run: relative to
+                # the corpus ROOT, never to whatever slice this invocation measured.
+                relative = path.resolve().relative_to(corpus_root).as_posix()
+                # index is 1-based among pending within this invocation; live_done
+                # includes checkpoint resume so overall position is known.
+                file_index = live_done + 1
+                # Show the file we are about to open — before the work starts.
+                _set_bars(
+                    {
+                        "file": relative,
+                        "status": "lifting…",
+                        "snw": live_snw,
+                        "gaps": live_other_gaps,
+                        "cpanic": live_panic,
+                        "defect": live_defect,
+                        "fn": f"{live_clean}/{live_fns}",
+                    },
+                    refresh=True,
+                )
+                if (
+                    file_index == 1
+                    or file_index % _PROGRESS_EVERY_N == 0
+                    or file_index == len(file_names)
+                ):
+                    _narrate(
+                        "RECENSUS FILE BEGIN "
+                        f"{file_index}/{len(file_names)} file={relative} "
+                        f"elapsed_s={time.time() - started:.1f} "
+                        f"counts completed≈{live_done - live_panic - live_defect} "
+                        f"snw={live_snw} other_gaps={live_other_gaps} "
+                        f"cpanic={live_panic} defect={live_defect} "
+                        f"fn_clean/total={live_clean}/{live_fns}"
+                    )
+                t_file = time.perf_counter()
+                fn_stat = {
+                    "slow_s": 0.0,
+                    "slow_name": "-",
+                    "fn_seen": 0,
+                    "fn_time": 0.0,
+                    "file_start": time.perf_counter(),
+                }
+
+                def _on_function(
+                    in_total: int, in_clean: int, fn_name: str, elapsed: "float | None"
+                ) -> None:
+                    # live_clean/live_fns are the completed-file base; add this
+                    # file's running counts so `fn=` climbs per function, live.
+                    shown_fns = live_fns + in_total
+                    shown_clean = live_clean + in_clean
+                    clean_pct = (100.0 * shown_clean / shown_fns) if shown_fns else 0.0
+                    if elapsed is not None:
+                        fn_stat["fn_seen"] += 1
+                        fn_stat["fn_time"] += elapsed
+                        if elapsed > fn_stat["slow_s"]:
+                            fn_stat["slow_s"] = elapsed
+                            fn_stat["slow_name"] = fn_name
+                    seen = fn_stat["fn_seen"] or 1
+                    avg = fn_stat["fn_time"] / seen
+                    wall = time.perf_counter() - fn_stat["file_start"]
+                    rate = fn_stat["fn_seen"] / wall if wall > 0 else 0.0
+                    post = {
+                        "file": relative,
+                        "func": fn_name,
+                        "status": "lifting…" if elapsed is None else "ok",
+                        "last": "…" if elapsed is None else f"{elapsed:.3f}s",
+                        "avg": f"{avg:.3f}s",
+                        "fn/s": f"{rate:.1f}",
+                        "slowest": f"{fn_stat['slow_name']} {fn_stat['slow_s']:.2f}s",
+                        "snw": live_snw,
+                        "gaps": live_other_gaps,
+                        "cpanic": live_panic,
+                        "defect": live_defect,
+                        "fn": f"{shown_clean}/{shown_fns}",
+                        "clean%": f"{clean_pct:.0f}",
+                    }
+                    _set_bars(post, refresh=True)
+
+                try:
+                    row = _measure_file(
+                        path,
+                        relative=relative,
+                        workspace_root=workspace_root,
+                        locus_root=locus_root,
+                        contract_refs=contract_refs,
+                        on_function=_on_function,
+                    )
+                except (ImportError, AttributeError) as error:
+                    # An arm that cannot resolve its dispatch target is UNWRITTEN,
+                    # wearing a working arm's clothes. It is not a panic, not a
+                    # typed refusal, and not in any family below -- so absorbing it
+                    # into `backend-defect` would leave the row short with nothing
+                    # saying so. Own category, named, loud, red (#6329).
+                    row = {
+                        "category": "instrument-defect-unresolvable-dispatch",
+                        "defect": {
+                            "file": relative,
+                            "type": type(error).__name__,
+                            "message": str(error),
+                            "owner": "kit dispatch target",
+                            "fix": (
+                                "the arm imports a name that does not exist; write "
+                                "the target or delete the arm"
+                            ),
+                        },
+                    }
+                except Exception as error:  # noqa: BLE001 -- per-file terminal
+                    row = {
+                        "category": "backend-defect",
+                        "defect": {
+                            "file": relative,
+                            "type": type(error).__name__,
+                            "message": str(error),
+                        },
+                    }
+                file_s = time.perf_counter() - t_file
+                checkpoint.append(file, row)
+                measured_now.append((file, row))
+
+                cat = str(row.get("category") or "?")
+                fn = int(row.get("functionsTotal") or 0)
+                clean = int(row.get("functionsClean") or 0)
+                # NEVER rebind the name `families` — that is main()'s accumulating
+                # Counter for board aggregation. Assigning row.get("families") here
+                # replaced the Counter with a plain dict; after the last file,
+                # aggregation did families["ConstructionPanic"] += 1 and KeyError'd
+                # (landmine two: 1421/1421 walk, zero board). Same class as the
+                # seed-path defect above — always use a row-local name.
+                row_families = row.get("families") or {}
+                snw = int(row_families.get("SugarNotWritten") or 0)
+                other = sum(
+                    int(v) for k, v in row_families.items() if k != "SugarNotWritten"
+                )
+                live_fns += fn
+                live_clean += clean
+                live_snw += snw
+                live_other_gaps += other
+                live_done += 1
+                if cat == "construction-panic":
+                    live_panic += 1
+                    status = "cpanic"
+                elif cat == "completed":
+                    status = "done"
+                else:
+                    live_defect += 1
+                    status = cat
+
+                clean_pct = (100.0 * live_clean / live_fns) if live_fns else 0.0
+                _set_bars(
+                    {
+                        "file": relative,
+                        "status": status,
+                        "last": f"{file_s:.2f}s",
+                        "snw": live_snw,
+                        "gaps": live_other_gaps,
+                        "cpanic": live_panic,
+                        "defect": live_defect,
+                        "fn": f"{live_clean}/{live_fns}",
+                        "clean%": f"{clean_pct:.0f}",
+                    },
+                    refresh=True,
+                )
+                if live_bar is not None:
+                    live_bar.update(1)
+
+                # Durable running counts — crash at file 900 still leaves 899 rows
+                # on checkpoint AND a jsonl tail of counts on stdout-equivalent disk.
+                running = {
+                    "schema": "control-effect-recensus-running-v1",
+                    "index": live_done,
+                    "total": len(file_names),
+                    "file": relative,
+                    "category": cat,
+                    "file_s": round(file_s, 4),
+                    "elapsed_s": round(time.time() - started, 3),
+                    "snw": live_snw,
+                    "other_gaps": live_other_gaps,
+                    "cpanic": live_panic,
+                    "defect": live_defect,
+                    "fn_clean": live_clean,
+                    "fn_total": live_fns,
+                    "phase": "per_file_lift",
+                }
+                with running_counts_path.open("a", encoding="utf-8") as rc_stream:
+                    rc_stream.write(
+                        json.dumps(running, sort_keys=True, separators=(",", ":"))
+                        + "\n"
+                    )
+                    rc_stream.flush()
+                if (
+                    live_done == 1
+                    or live_done % _PROGRESS_EVERY_N == 0
+                    or live_done == len(file_names)
+                ):
+                    _narrate(
+                        "RECENSUS FILE END "
+                        f"{live_done}/{len(file_names)} file={relative} "
+                        f"category={cat} file_s={file_s:.3f} "
+                        f"elapsed_s={time.time() - started:.1f} "
+                        f"snw={live_snw} other_gaps={live_other_gaps} "
+                        f"cpanic={live_panic} defect={live_defect} "
+                        f"fn_clean/total={live_clean}/{live_fns}"
+                    )
+
+            _phase_end("per_file_lift", t_lift)
             if live_bar is not None:
-                live_bar.update(1)
+                live_bar.close()
+            bar.close()
+        finally:
+            progress_stream.close()
 
-            # Durable running counts — crash at file 900 still leaves 899 rows
-            # on checkpoint AND a jsonl tail of counts on stdout-equivalent disk.
-            running = {
-                "schema": "control-effect-recensus-running-v1",
-                "index": live_done,
-                "total": len(file_names),
-                "file": relative,
-                "category": cat,
-                "file_s": round(file_s, 4),
-                "elapsed_s": round(time.time() - started, 3),
-                "snw": live_snw,
-                "other_gaps": live_other_gaps,
-                "cpanic": live_panic,
-                "defect": live_defect,
-                "fn_clean": live_clean,
-                "fn_total": live_fns,
-                "phase": "per_file_lift",
-            }
-            with running_counts_path.open("a", encoding="utf-8") as rc_stream:
-                rc_stream.write(
-                    json.dumps(running, sort_keys=True, separators=(",", ":"))
-                    + "\n"
-                )
-                rc_stream.flush()
-            if (
-                live_done == 1
-                or live_done % _PROGRESS_EVERY_N == 0
-                or live_done == len(file_names)
-            ):
-                _narrate(
-                    "RECENSUS FILE END "
-                    f"{live_done}/{len(file_names)} file={relative} "
-                    f"category={cat} file_s={file_s:.3f} "
-                    f"elapsed_s={time.time() - started:.1f} "
-                    f"snw={live_snw} other_gaps={live_other_gaps} "
-                    f"cpanic={live_panic} defect={live_defect} "
-                    f"fn_clean/total={live_clean}/{live_fns}"
-                )
 
-        _phase_end("per_file_lift", t_lift)
-        if live_bar is not None:
-            live_bar.close()
-        bar.close()
-    finally:
-        progress_stream.close()
-
+    # Tripwire: the lift loop must never rebind `families` to a row dict.
+    if not isinstance(families, Counter):
+        raise TypeError(
+            "families rebinding defect before aggregation: expected Counter, "
+            f"got {type(families).__name__}. Never assign row.get('families') "
+            "to the name families — use row_families (landmine two)."
+        )
     t_agg = _phase_begin("aggregation")
     measured_rows = [(row["file"], row["result"]) for row in checkpoint.rows()]
     # The denominator, stated before any rate is quoted. Checkpoint already
@@ -1378,10 +1437,14 @@ def main() -> int:
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(panic)
-            # Occurrence-keyed already if present in families; avoid a bare +1
-            # that has no site identity.
+            # Measure now enrolls ConstructionPanic into the row's families
+            # (file-level BaseException path). Prefer that; only fill if a
+            # legacy checkpoint row still omits it. Use get+assign so a plain
+            # dict can never KeyError (Counter already tolerated missing keys).
             if "ConstructionPanic" not in (row.get("families") or {}):
-                families["ConstructionPanic"] += 1
+                families["ConstructionPanic"] = (
+                    int(families.get("ConstructionPanic") or 0) + 1
+                )
         elif category == "instrument-defect-unresolvable-dispatch":
             defect = row.get("defect")
             if isinstance(defect, dict):

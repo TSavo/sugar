@@ -44,6 +44,9 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_gap(
     row = module._measure_file(path, relative="fixture.py", workspace_root=tmp_path)
     assert row["category"] == "construction-panic"
     assert row["panic"]["type"] == "ConstructionPanic"
+    # File-level ConstructionPanic must be enrolled in families at measure time
+    # so aggregation does not invent a family the walk never named.
+    assert row["families"].get("ConstructionPanic", 0) >= 1
 
 
 def test_mid_file_construction_panic_does_not_shrink_function_denominator(
