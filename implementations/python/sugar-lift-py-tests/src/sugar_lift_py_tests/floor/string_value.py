@@ -462,7 +462,22 @@ class StringValue(GuardStableValue):
                     **runtime_effect_evidence("py.sequence_concat", other, site),
                 )
             )
-        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+        if type(other) is SymbolicValue:
+            # str + symbolic: same native-operation ExitSet carrier as
+            # SymbolicValue.add(StringValue). Do not re-enter as
+            # SymbolicValue(str_term).add(symbolic) — that pair SNWs and was
+            # the reverse face of enum.py:75-style materialize aborts.
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="add",
+                operands=(self, other),
+                coordinates=(None, getattr(other, "formal_coordinate", None)),
+            )
+        if type(other) in (CallSiteValue, ImportAliasValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
