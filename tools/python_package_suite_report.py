@@ -35,6 +35,7 @@ import platform
 import random
 import sys
 import time
+from pathlib import Path
 
 # Phase of a report that failed decides failure-vs-error, the same split the
 # terminal summary shows: a call-phase failure is a FAILED test, a setup- or
@@ -310,7 +311,18 @@ class SuiteReporter:
             self._beat = None
         # Write content-addressed LPT prior so the NEXT run packs by measured
         # cost (cold equal-count seeds the shelf; second run is LPT).
-        self._write_lpt_prior()
+        # Never let prior write fail the suite report — missing import or shelf
+        # IO must not kill suite-report.json (freeze tip: NameError on Path).
+        try:
+            self._write_lpt_prior()
+        except Exception as error:  # noqa: BLE001 — report is load-bearing
+            try:
+                narrate(
+                    f"JOB_LOG phase=lpt-prior-write status=failed "
+                    f"error={type(error).__name__}:{error!s}"
+                )
+            except Exception:  # noqa: BLE001
+                pass
         path = self.config.getoption("--suite-report")
         if not path:
             return
@@ -459,19 +471,42 @@ class SuiteReporter:
         return commit
 
     def _write_lpt_prior(self) -> None:
-        """Persist per-file pytest call seconds into the CA LPT cost shelf."""
+        """Persist per-file pytest call seconds into the CA LPT cost shelf.
+
+        LOUD on every outcome. Silent no-op is forbidden: a disabled shelf, a
+        failed write, or zero files resolved must announce mode=degraded so LPT
+        cold equal-count is visible (not a clean pretend that the prior exists).
+        """
+        measured = len(self._file_duration_s)
         if not self._file_duration_s:
+            narrate(
+                "JOB_LOG phase=lpt-prior-write population=suite-pytest "
+                "status=skipped reason=no-file-durations mode=no-write "
+                "degraded=equal-count-next-run"
+            )
             return
         try:
             from lpt_file_shards import ContentAddressedCostPrior
-        except ImportError:
+        except ImportError as error:
+            narrate(
+                "JOB_LOG phase=lpt-prior-write population=suite-pytest "
+                f"status=unavailable reason=ImportError:{error!s} "
+                "mode=no-write degraded=equal-count-next-run"
+            )
             return
         prior = ContentAddressedCostPrior()
         if not prior.enabled:
+            narrate(
+                "JOB_LOG phase=lpt-prior-write population=suite-pytest "
+                "status=prior-disabled root=None mode=no-write "
+                "degraded=equal-count-next-run "
+                "(SUGAR_LPT_PRIOR_DIR=off or no writable prior root)"
+            )
             return
         # nodeid file keys are usually relative to pytest rootdir (cwd).
         root = Path(self.config.rootpath)
         written = 0
+        unresolved = 0
         for file_key, cost in self._file_duration_s.items():
             candidates = [
                 root / file_key,
@@ -484,6 +519,7 @@ class SuiteReporter:
                 )
             path = next((p for p in candidates if p.is_file()), None)
             if path is None:
+                unresolved += 1
                 continue
             if prior.put_for_path(
                 path,
@@ -492,9 +528,18 @@ class SuiteReporter:
                 path_hint=file_key,
             ):
                 written += 1
+        if written == 0:
+            narrate(
+                "JOB_LOG phase=lpt-prior-write population=suite-pytest "
+                f"status=zero-files-written files_measured={measured} "
+                f"unresolved_paths={unresolved} prior_root={prior.root} "
+                "mode=no-write degraded=equal-count-next-run"
+            )
+            return
         narrate(
-            f"JOB_LOG phase=lpt-prior-write population=suite-pytest "
-            f"files_written={written} files_measured={len(self._file_duration_s)}"
+            "JOB_LOG phase=lpt-prior-write population=suite-pytest "
+            f"status=ok files_written={written} files_measured={measured} "
+            f"unresolved_paths={unresolved} prior_root={prior.root} mode=write-through"
         )
 
 
