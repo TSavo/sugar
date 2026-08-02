@@ -46,6 +46,8 @@ sync_paths=(
   protocol
   docs/perf
   docs/self-application
+  docs/contributing
+  docs/ledgers
   scripts
   bootstrap
   conformance
@@ -275,6 +277,9 @@ sugar_bx_run_ambient() {
   measured_cmd="${prefix_cmd}${run_cmd# }"
   # Pin gate under lease after load. Identity mode (version+fileCount) default.
   # All remote expansions use \$ so local $? does not fire while building wrapper.
+  # REPO_CWD: pin check MUST run in the synced checkout — relative
+  # .venv-py312/bin/python and docs/ledgers/pins/… are unresolvable from $HOME
+  # (crime=corpus-pin-python-missing under load1=7 was this cwd bug, not a missing venv).
   wrapper="set -euo pipefail
 LOCK=$(sugar_bx_quote "$lock")
 WAIT=$(sugar_bx_quote "$wait_s")
@@ -283,6 +288,8 @@ HOST=$(sugar_bx_quote "$host_lit")
 SKIP_PIN=$(sugar_bx_quote "$pin_skip")
 PIN_PATH=$(sugar_bx_quote "$pin_path")
 PIN_PY=$(sugar_bx_quote "$pin_py")
+REPO_CWD=$(sugar_bx_quote "$remote_cwd")
+cd \"\$REPO_CWD\" || { printf 'sugarbin: crime=corpus-pin-cwd-missing path=%s\\n' \"\$REPO_CWD\" >&2; exit 78; }
 touch \"\$LOCK\" || { printf 'sugarbin: crime=timing-lease-uncreatable path=%s\\n' \"\$LOCK\" >&2; exit 77; }
 exec 9>>\"\$LOCK\"
 if ! command -v flock >/dev/null 2>&1; then

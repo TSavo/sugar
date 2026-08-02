@@ -98,6 +98,38 @@ def test_system_python_combo_exit_78() -> None:
     assert "crime=corpus-pin-mismatch" in r.stderr
 
 
+def test_venv_python_path_does_not_follow_symlink(tmp_path: Path) -> None:
+    """Venv shims are symlinks; resolve() would strip site-packages.
+
+    The gate must pass the shim path into subprocess, not the bare uv
+    interpreter it points at. abspath only.
+    """
+    import importlib.util
+    import os
+
+    bare = tmp_path / "uv-python"
+    bare.write_text("#!/bin/sh\nexit 0\n")
+    bare.chmod(0o755)
+    venv_bin = tmp_path / ".venv-py312" / "bin"
+    venv_bin.mkdir(parents=True)
+    shim = venv_bin / "python"
+    shim.symlink_to(bare)
+
+    spec = importlib.util.spec_from_file_location("bx_corpus_pin_gate", GATE)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    out = mod._venv_python_path(shim)
+    # Absolute, still under the venv bin, not the bare target.
+    assert out.is_absolute()
+    assert out.name == "python"
+    assert ".venv-py312" in out.parts
+    assert out != bare.resolve()
+    # Same as abspath (no follow).
+    assert out == Path(os.path.abspath(shim))
+
+
 def test_banked_pin_file_loads_expected_identity() -> None:
     pin = ROOT / "docs" / "ledgers" / "pins" / "pandas-3.0.3.pin.json"
     assert pin.is_file(), "banked pin missing from checkout"
