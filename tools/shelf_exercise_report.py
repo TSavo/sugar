@@ -89,14 +89,19 @@ SHELF_OPS = frozenset({"pull", "publish", "crime"})
 
 # sugarbin log lines that are positive shelf-path testimony (not mere resolve).
 _LOG_EXERCISE = (
-    re.compile(r"sugarbin:\s*filesystem shelf hit\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-hit source=filesystem-shelf\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-hit source=prebuilt-cache\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-hit source=peer-publish"),
+    re.compile(r"sugarbin:\s*phase=resolve-miss source=filesystem-shelf\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-miss source=prebuilt-cache\b"),
+    re.compile(r"sugarbin:\s*filesystem shelf hit\b"),  # legacy
     re.compile(r"sugarbin:\s*filesystem shelf miss\b"),
     re.compile(r"sugarbin:\s*filesystem shelf already has content\b"),
     re.compile(r"sugarbin:\s*published \S+ content \S+ to filesystem shelf\b"),
     re.compile(r"sugarbin:\s*filesystem shelf publish raced\b"),
     re.compile(r"sugarbin:\s*filesystem shelf publication failed\b"),
     re.compile(r"sugarbin:\s*evicting regenerable shelf cell\b"),
-    re.compile(r"sugarbin:\s*prebuilt cache hit\b"),  # local cache in front of shelf path
+    re.compile(r"sugarbin:\s*prebuilt cache hit\b"),
     re.compile(r"sugarbin:\s*prebuilt cache rejected\b"),
 )
 # Crimes that mean the shelf path was entered and refused.
@@ -107,6 +112,11 @@ _LOG_CRIME = re.compile(
 )
 # Evidence the binary resolve path ran at all (so NEVER_TOUCHED is claimable).
 _LOG_RESOLVE = (
+    re.compile(r"sugarbin:\s*phase=resolve-start\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-hit\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-miss\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-wait\b"),
+    re.compile(r"sugarbin:\s*phase=resolve-build"),
     re.compile(r"sugarbin:\s*local target cache hit\b"),
     re.compile(r"sugarbin:\s*building \S+ once for this session\b"),
     re.compile(r"sugarbin:\s*no matching \S+ binary for stamp\b"),

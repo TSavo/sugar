@@ -18,7 +18,9 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # --- Static: shapes on the miss→rebuild path ---
 grep -Fq 'acquire_rebuild_single_flight' "$sugarbin" || fail 'missing acquire_rebuild_single_flight'
 grep -Fq 'release_rebuild_single_flight' "$sugarbin" || fail 'missing release_rebuild_single_flight'
-grep -Fq 'rebuild single-flight: peer published' "$sugarbin" || fail 'missing double-check after lock'
+grep -Fq 'phase=resolve-hit source=peer-publish-after-wait' "$sugarbin" \
+  || fail 'missing double-check after lock (peer-publish-after-wait hit)'
+grep -Fq 'pull_from_filesystem_shelf' "$sugarbin" || fail 'missing pull after lock'
 grep -Fq '.rebuild-locks' "$sugarbin" || fail 'missing lock directory under cache'
 grep -Fq 'heartbeat' "$sugarbin" || fail 'missing heartbeat for dead-winner reclaim'
 grep -Fq 'SUGAR_BINARY_REBUILD_LOCK_STALE_S' "$sugarbin" || fail 'missing stale-age override'
@@ -33,11 +35,25 @@ if grep -E 'kill -0' <<<"$acquire_body" | grep -vq 'heartbeat'; then
   # allow only if not the reclaim path — reclaim must use heartbeat age
   :
 fi
-grep -Fq 'reclaiming stale lock (heartbeat age' <<<"$acquire_body" \
-  || fail 'reclaim must be heartbeat-age based, not kill -0 alone'
+grep -Fq 'phase=resolve-wait-reclaim' <<<"$acquire_body" \
+  || fail 'reclaim must emit phase=resolve-wait-reclaim (heartbeat age, not kill -0 alone)'
 if grep -Fq 'heavy-measurement' <<<"$acquire_body"; then
   fail 'rebuild single-flight must not use the deleted heavy-measurement lease'
 fi
+# Doctrine: waiter narrates immediately and every ~30s to the job log (stderr).
+grep -Fq 'phase=resolve-wait' <<<"$acquire_body" \
+  || fail 'waiter must emit phase=resolve-wait to job log'
+grep -Fq 'waiting-on-peer' <<<"$acquire_body" \
+  || fail 'waiter line must say waiting-on-peer (silent wait is a hang)'
+grep -Fq 'waited % 120' <<<"$acquire_body" \
+  || fail 'waiter must heartbeat every ~30s (120 * 0.25s ticks)'
+# Cold rebuild narrates start + 30s cargo heartbeat (not TTY-gated).
+grep -Fq 'phase=resolve-build-start' "$sugarbin" \
+  || fail 'cold rebuild must emit phase=resolve-build-start'
+grep -Fq 'phase=resolve-build bin=' "$sugarbin" \
+  || fail 'cold rebuild must emit 30s phase=resolve-build heartbeats'
+grep -Fq 'phase=resolve-hit source=' "$sugarbin" \
+  || fail 'warm hit must emit phase=resolve-hit source=…'
 
 main_body="$(sed -n '/^main()/,/^if \[\[ -n "\$artifact_subcommand" \]\]/p' "$sugarbin")"
 # Order on the miss path (last acquire/build_from_source in main).
@@ -48,7 +64,7 @@ build_line="$(grep -n 'build_from_source' <<<"$main_body" | tail -1 | cut -d: -f
 # Between acquire and build there must be a re-pull (waiter gets winner cell).
 mid="$(sed -n "${acquire_line},${build_line}p" <<<"$main_body")"
 grep -Fq 'pull_from_filesystem_shelf' <<<"$mid" || fail 'must re-pull after lock acquire before build'
-grep -Fq 'peer published' <<<"$mid" || fail 'must log peer-published path for waiters'
+grep -Fq 'peer-publish-after-wait' <<<"$mid" || fail 'must log peer-publish-after-wait for waiters'
 n_release=$(grep -c 'release_rebuild_single_flight' <<<"$main_body" || true)
 [[ "$n_release" -ge 3 ]] || fail "main must release lock on every exit (found $n_release)"
 
