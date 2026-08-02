@@ -7026,9 +7026,9 @@ class With(Statement):
             return context.contract_refs.require(coordinate)
         except ContractRefProtocolError:
             # Construct or panic: no contract ref means construction is unwritten.
-            from .panic import SugarNotWritten
+            from .panic import ContextManagerResolutionConstructionGap
 
-            panic = SugarNotWritten(
+            panic = ContextManagerResolutionConstructionGap(
                 blame=self.fragment,
                 owner="With._construct_sugar",
                 observed=(
@@ -7036,7 +7036,11 @@ class With(Statement):
                     f"{coordinate}"
                 ),
                 requested="one resolved authenticated ContextManagerContractRefV1",
-                fix="publish or derive the exact typed CM contract before construction",
+                fix=(
+                    "publish or derive the exact typed CM contract before construction; "
+                    "With constructs only through the require door"
+                ),
+                use_site=coordinate,
             )
             self.reporter.report_gap(self, panic)
             raise panic
@@ -7068,22 +7072,32 @@ class With(Statement):
         return None
 
     def _raise_resolution_gap(self, resolution) -> None:
-        from .panic import SugarNotWritten
+        from .panic import ContextManagerResolutionConstructionGap
 
-        # Construct or panic. Name what failed in observed; no kind taxonomy.
+        # Construct or panic. Name the With door and the contract that was needed.
         detail = getattr(resolution, "detail", None)
         what = getattr(resolution, "kind", None)
+        target = getattr(resolution, "target_symbol", None)
         observed = "authenticated preconstruction resolution has no contract ref"
         if what:
             observed = f"{observed}: {what}"
+        if target:
+            observed = f"{observed} for manager {target!r}"
         if detail:
             observed = f"{observed} [{detail}]"
-        panic = SugarNotWritten(
+        panic = ContextManagerResolutionConstructionGap(
             blame=resolution.use_site,
             owner="With._construct_sugar",
             observed=observed,
             requested="one resolved authenticated ContextManagerContractRefV1",
-            fix="publish or resolve the exact typed CM contract before construction",
+            fix=(
+                "publish or resolve the exact typed CM contract before construction; "
+                "With constructs only through the require door"
+            ),
+            use_site=getattr(resolution, "use_site", None),
+            target_symbol=target if isinstance(target, str) else None,
+            resolution_kind=what if isinstance(what, str) else None,
+            demand_cid=getattr(resolution, "demand_cid", None),
         )
         self.reporter.report_gap(self, panic)
         raise panic
