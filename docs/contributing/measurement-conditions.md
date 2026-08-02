@@ -9,6 +9,13 @@ board number may be cited. The incidents below are the argument; the three
 gates are the instrument. Nobody will remember the night in a month — this
 file is how the law outlives it.
 
+**Sibling law (instrument shape):** even under quiet / lease / pin, a type,
+door, ground, or ratio that can only return one answer is not a check — it is
+a constant dressed as a judgment. See
+`docs/contributing/instrument-constant-checks.md` (ConstructedTerm /
+`require_target_pattern` / GuardedBinding / `If.substitute`, and unearned
+`clean%` / zero-function rosters / abort-as-fast).
+
 ## The law
 
 A number taken from a correctness instrument is **not evidence** unless the
