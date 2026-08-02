@@ -708,29 +708,33 @@ class Backend:
             )
             raise AssertionError("unreachable")
 
-        # This is the sole completed traversal.  Every roster below is a
-        # projection of these exact constructed node objects, never a reread.
-        constructed_nodes = tuple(root.walk())
+        # ONE pre-order walk produces constructed_nodes AND parent_positions.
+        # The old shape did root.walk() then a second full getattr of every
+        # _child_fields for the parent map — rediscovering edges the walk just
+        # traversed (tens of thousands of Node.__getattr__ calls per module).
+        # The tree is immutable; parent is a fact of that walk, not a second pass.
+        constructed_nodes_list: list[Node] = []
+        parent_positions: list[int | None] = []
+        function_nodes_list: list[Node] = []
+        # (node, parent_position) — same pre-order as Node.walk().
+        walk_stack: list[tuple[Node, int | None]] = [(root, None)]
+        while walk_stack:
+            node, parent_position = walk_stack.pop()
+            position = len(constructed_nodes_list)
+            constructed_nodes_list.append(node)
+            parent_positions.append(parent_position)
+            if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                function_nodes_list.append(node)
+            # _child_edges: one getattr of fields + memo for later walk/children.
+            child_nodes = [child for _n, _i, child in node._child_edges()]
+            # Parent of each child is this position; reverse for left-first order.
+            for child in reversed(child_nodes):
+                walk_stack.append((child, position))
+        constructed_nodes = tuple(constructed_nodes_list)
+        function_nodes = tuple(function_nodes_list)
         positions = {
             id(node): position for position, node in enumerate(constructed_nodes)
         }
-        parent_positions: list[int | None] = [None] * len(constructed_nodes)
-        for position, node in enumerate(constructed_nodes):
-            for field_name in type(node)._child_fields:
-                child_value = getattr(node, field_name)
-                if child_value is None:
-                    continue
-                if isinstance(child_value, Node):
-                    parent_positions[positions[id(child_value)]] = position
-                else:
-                    for child in child_value:
-                        if child is not None:
-                            parent_positions[positions[id(child)]] = position
-        function_nodes = tuple(
-            node
-            for node in constructed_nodes
-            if isinstance(node, (FunctionDef, AsyncFunctionDef))
-        )
         unit.bind_typed_module(
             root,
             constructed_nodes=constructed_nodes,
