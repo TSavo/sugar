@@ -39,8 +39,23 @@ def _eprint(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+def _venv_python_path(python: Path) -> Path:
+    """Absolute path of the measurement interpreter WITHOUT following symlinks.
+
+    ``.venv-py312/bin/python`` is a symlink onto the uv/Homebrew CPython
+    binary. ``Path.resolve()`` follows that link and lands on the bare
+    interpreter, which has no venv ``site-packages`` and therefore cannot
+    import the pinned pandas (or worse: imports the wrong system one).
+    Venv activation is keyed by the path used to *launch* the process, so
+    we must pass the shim itself — only make it absolute via abspath.
+    """
+    return Path(os.path.abspath(python))
+
+
 def _resolve_corpus_via_python(python: Path, distribution: str) -> Path:
     """Import distribution with *python* and return its package root."""
+    # Do not resolve() the venv shim — see _venv_python_path.
+    python = _venv_python_path(python)
     code = (
         "import importlib, pathlib, sys\n"
         f"m = importlib.import_module({distribution!r})\n"
@@ -58,7 +73,8 @@ def _resolve_corpus_via_python(python: Path, distribution: str) -> Path:
             f"distribution={distribution} detail={exc} "
             f"replacement=use .venv-py312/bin/python after "
             f"`bin/brun -- bash scripts/bootstrap-venv-py312.sh` "
-            f"(system python often has the wrong pandas)"
+            f"(system python often has the wrong pandas; never Path.resolve the "
+            f"venv shim — that drops site-packages onto the bare uv interpreter)"
         )
         raise SystemExit(EXIT_PIN) from exc
     root = Path(out.strip())
@@ -278,7 +294,11 @@ def main(argv: list[str] | None = None) -> int:
                 "replacement=pass --corpus-root or --python (.venv-py312/bin/python)"
             )
             return EXIT_PIN
-        root = _resolve_corpus_via_python(args.python.resolve(), distribution)
+        # abspath only — never Path.resolve() on the venv python shim
+        # (uv/Homebrew symlink follows into a bare interpreter with no
+        # site-packages; that is crime=corpus-pin-import-failed against a
+        # live 3.0.3 venv that would otherwise import cleanly).
+        root = _resolve_corpus_via_python(args.python, distribution)
     root = root.resolve()
 
     _eprint(

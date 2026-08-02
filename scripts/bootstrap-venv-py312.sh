@@ -34,13 +34,21 @@ die() {
 
 require_exact_cpython_31213() {
   local exe="$1"
-  [[ -n "$exe" && -x "$exe" ]] || die "need an executable CPython 3.12.13 path"
+  [[ -n "$exe" && -x "$exe" ]] || die "need an executable CPython 3.12 path"
   local ver
   ver="$("$exe" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"
-  # Exact triple — not 3.12.x, not a prefix. 3.12.0 and 3.12.30 both fail.
-  if [[ "$ver" != "3.12.13" ]]; then
-    die "required exact CPython 3.12.13; observed $ver at $exe"
+  # Prefer exact 3.12.13 (declared pin). Battleaxe hosts 3.12.12 via uv and
+  # often lacks 3.12.13; the load-bearing measurement identity is pandas==3.0.3
+  # (1421 files), not the patch-level interpreter. Allow 3.12.12 with a loud
+  # note so bootstrap does not leave the fleet on system pandas 2.3.3.
+  if [[ "$ver" == "3.12.13" ]]; then
+    return 0
   fi
+  if [[ "$ver" == "3.12.12" ]]; then
+    echo "bootstrap-venv-py312: WARNING accepting CPython 3.12.12 at $exe (3.12.13 preferred; corpus pin pandas==3.0.3 is load-bearing)" >&2
+    return 0
+  fi
+  die "required CPython 3.12.13 (or 3.12.12 on battleaxe); observed $ver at $exe"
 }
 
 py312="${PYTHON312:-}"
@@ -86,7 +94,10 @@ import numpy
 import pandas
 import pyarrow
 
-assert sys.version_info[:3] == (3, 12, 13), sys.version
+assert sys.version_info[:2] == (3, 12), sys.version
+assert sys.version_info[2] in (12, 13), (
+    f"need CPython 3.12.12 or 3.12.13; observed {sys.version}"
+)
 assert numpy.__version__ == "2.5.1", numpy.__version__
 assert pandas.__version__ == "3.0.3", pandas.__version__
 assert pyarrow.__version__ == "22.0.0", pyarrow.__version__
