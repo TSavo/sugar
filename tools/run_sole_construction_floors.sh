@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
-# The complete Python sole-construction floor set, as ONE measured section.
+# LOCAL / serial convenience: run the full sole-construction floor set in-process.
 #
-# WHY THIS IS A SCRIPT AND NOT TWENTY WORKFLOW STEPS
+# CI is parallel: .github/workflows/factory-zero-tolerance.yml runs each process
+# axis as its own job + a static-laws job, with enrollment roll call. Prefer
+# that on push. This script remains for workstation re-runs and binding checks.
 #
-# It used to be twenty steps, each `if: always()`, so that one red axis never
-# hid the others: the complete floor set always comes from one pinned run.
-# Putting those twenty steps behind the machine-wide heavy lease one at a time
-# would have taken and released the lease twenty times, letting a pandas census
-# interleave between axes -- and then the "one pinned run" property would be a
-# fiction. One lease, one pass over every axis, one verdict.
-#
-# `if: always()` semantics are preserved here, not abandoned: EVERY axis runs,
-# failures are collected rather than short-circuited, and the script exits
-# non-zero at the end if any axis was red. R > 0 ⇒ CI red, on every axis, and
-# silence on an axis is never mistaken for zero.
+# `if: always()` semantics: EVERY axis runs, failures collected, exit non-zero
+# if any axis was red. R > 0 ⇒ red on every residual axis.
 #
 # Usage: tools/run_sole_construction_floors.sh   (from the repo root)
 
@@ -67,12 +60,12 @@ echo "process-floor population: authenticated pandas corpus at $PANDAS_CORPUS"
 FLOOR_SCRATCH="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}/.sugar/ci-floors"
 export SUGAR_FLOOR_WORKSPACE="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}"
 echo "process-floor scratch: $FLOOR_SCRATCH (never under population)"
-# Content-addressed process-floor terminal shelf:
+# Content-addressed process-floor terminal shelf (#7009):
 # tip × corpusManifestCid × axis × fileContentCid × demandTableCid × fileTimeoutMs
-# → terminal row. Three process floors share one body; 2nd/3rd axes hit.
+# Host-durable default so serial local runs and parallel CI jobs share hits.
 # Disable: SUGAR_PROCESS_FLOOR_CACHE_DIR=off
 if [ -z "${SUGAR_PROCESS_FLOOR_CACHE_DIR+x}" ]; then
-  export SUGAR_PROCESS_FLOOR_CACHE_DIR="${SUGAR_FLOOR_WORKSPACE}/.cache/process-floor-terminals"
+  export SUGAR_PROCESS_FLOOR_CACHE_DIR="${HOME}/.cache/sugar/process-floor-terminals"
 fi
 if [ -z "${SUGAR_MEASUREMENT_TIP:-}" ] && [ -n "${GITHUB_SHA:-}" ]; then
   export SUGAR_MEASUREMENT_TIP="${GITHUB_SHA}"

@@ -8,44 +8,164 @@ on:
 permissions:
   contents: read
 
-# NO `concurrency:` BLOCK. GitHub retains every run. There is no machine-wide
-# heavy-measurement lease — jobs run in parallel.
+# NO concurrency group. NO machine-wide lease (#7008).
+# Process axes run as a matrix of jobs — wall clock is max(axis), not sum.
+# Completeness is enrollment roll call, not a merged residual hub.
 
 jobs:
-  python-sole-construction-floors:
-    name: python-sole-construction-floors
+  process-floor:
+    name: process-floor ${{ matrix.axis }}
     runs-on: [self-hosted, Linux, X64]
+    # silent is the long pole (~11min today); others ~30s once cache warm.
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - axis: silent
+            script: silent_zero_tolerance.py
+            display: R_silent
+          - axis: native-crash
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes
+          - axis: bare-exception
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions
+          - axis: timeout
+            script: timeout_zero_tolerance.py
+            display: R_timeouts
     steps:
       - uses: actions/checkout@v4
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
-      - name: The complete floor set
-        id: floors
+      # Host path ($HOME/...) only shares when matrix jobs land the same
+      # self-hosted user. Fleet-wide: restore/save CA terminal shelf via
+      # actions/cache. Key is tip; MeasurementKey still gates corpus/file
+      # content so a restored shelf cannot serve wrong population.
+      - name: Resolve process-floor CA shelf path
+        id: shelf
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${HOME}/.cache/sugar/process-floor-terminals"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_PROCESS_FLOOR_CACHE_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Restore process-floor CA terminal shelf (fleet)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.shelf.outputs.dir }}
+          key: process-floor-term-${{ github.sha }}
+          restore-keys: |
+            process-floor-term-
+      - name: Run process floor ${{ matrix.axis }}
+        id: floor
+        shell: bash
+        env:
+          # Tip pins the CA terminal key. Dir from shelf step (HOME + GHA cache).
+          SUGAR_MEASUREMENT_TIP: ${{ github.sha }}
+          SUGAR_PROCESS_FLOOR_CACHE_DIR: ${{ steps.shelf.outputs.dir }}
+        run: |
+          set -uo pipefail
+          chmod +x tools/run_one_process_floor_axis.sh
+          set +e
+          bash tools/run_one_process_floor_axis.sh "${{ matrix.axis }}" "${{ matrix.script }}"
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          # Always keep the identity report for enrollment even when residual red.
+          test -f floor-axis-report.json
+          exit "$code"
+      # Save after every attempt so partial fills warm peers / next runs.
+      # Concurrent saves of the same key: first wins; content is CA so safe.
+      - name: Save process-floor CA terminal shelf (fleet)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.shelf.outputs.dir }}
+          key: process-floor-term-${{ github.sha }}
+      - name: Upload axis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: floor-axis-${{ matrix.axis }}
+          path: floor-axis-report.json
+          if-no-files-found: error
+
+  static-floors:
+    name: static-floors
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
+      - name: Static AST / discrimination floors (parallel to process matrix)
+        id: static
         shell: bash
         run: |
           set -uo pipefail
+          chmod +x tools/run_static_sole_construction_floors.sh
           set +e
-          bash tools/run_sole_construction_floors.sh
-          floor_exit=$?
+          bash tools/run_static_sole_construction_floors.sh
+          code=$?
           set -e
-          echo "floor_exit=$floor_exit" >> "$GITHUB_OUTPUT"
-          python3 -c "
-          import json, os
-          from pathlib import Path
-          body = {
-              'schemaVersion': 1,
-              'measurementClass': 'python-sole-construction-floors',
-              'measuredCommit': os.environ.get('GITHUB_SHA'),
-              'status': 'completed',
-              'exitCode': $floor_exit,
-              'totals': {'failed': 0 if $floor_exit == 0 else 1},
-          }
-          Path('floor-measurement.json').write_text(json.dumps(body, indent=2) + '\n')
-          "
-          exit "$floor_exit"
+          python3 tools/sole_construction_floor_enrollment.py \
+            --mint-report floor-axis-report.json \
+            --axis-id static-laws \
+            --display R_static_sole_construction \
+            --kind static \
+            --commit-sha "${GITHUB_SHA}" \
+            --exit-code "$code"
+          exit "$code"
+      - name: Upload static axis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: floor-axis-static-laws
+          path: floor-axis-report.json
+          if-no-files-found: error
 
-      - name: Upload floor measurement body
+  floor-enrollment:
+    name: floor-enrollment
+    needs: [process-floor, static-floors]
+    if: always()
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all axis reports
+        uses: actions/download-artifact@v4
+        with:
+          path: floor-axis-artifacts
+          pattern: floor-axis-*
+          merge-multiple: false
+      - name: Enrollment roll call (missing axis = UNMEASURED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/sole_construction_floor_enrollment.py \
+            --check-attendance floor-axis-artifacts \
+            --require-commit "${GITHUB_SHA}" \
+            --write-campaign-body floor-measurement.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          # Fail attendance if incomplete (tool exit already).
+          # Also fail if any residual-red axis attended: residual red is campaign red.
+          python3 - <<'PY'
+          import json, sys
+          from pathlib import Path
+          body = json.loads(Path("floor-measurement.json").read_text())
+          enr = body.get("enrollment") or {}
+          if enr.get("status") != "complete":
+              print("UNMEASURED: enrollment incomplete", enr, file=sys.stderr)
+              sys.exit(1)
+          residual = enr.get("residualRed") or []
+          if residual:
+              print(f"RESIDUAL RED axes: {residual}", file=sys.stderr)
+              sys.exit(1)
+          print("enrollment complete; all axes residual-green")
+          PY
+      - name: Upload campaign measurement body
         if: always()
         uses: actions/upload-artifact@v4
         with:

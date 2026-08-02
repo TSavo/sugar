@@ -84,8 +84,14 @@ def resolve_measurement_tip() -> str:
 def resolve_cache_root() -> Path | None:
     """Durable store root, or None to disable the cache.
 
-    Prefer explicit ``SUGAR_PROCESS_FLOOR_CACHE_DIR``. In GitHub Actions default
-    to a workspace-local dir so the three process floors in one job share hits.
+    Prefer explicit ``SUGAR_PROCESS_FLOOR_CACHE_DIR``.
+
+    Default is **host-durable** ``$HOME/.cache/sugar/process-floor-terminals`` so
+    parallel CI matrix jobs (separate workspaces) still share hits. A
+    workspace-local path is job-private on GitHub Actions and would force every
+    process-floor axis to cold-lift — slower under parallelization.
+
+    Disable: ``SUGAR_PROCESS_FLOOR_CACHE_DIR=off``.
     """
     explicit = os.environ.get("SUGAR_PROCESS_FLOOR_CACHE_DIR")
     if explicit is not None:
@@ -93,6 +99,15 @@ def resolve_cache_root() -> Path | None:
         if text in {"", "0", "off", "none", "disabled"}:
             return None
         return Path(text).expanduser().resolve()
+    home = os.environ.get("HOME")
+    if home:
+        return (
+            Path(home).expanduser().resolve()
+            / ".cache"
+            / "sugar"
+            / "process-floor-terminals"
+        )
+    # Last resort: workspace (job-local; poor for multi-job fan-out).
     workspace = os.environ.get("GITHUB_WORKSPACE")
     if workspace:
         return Path(workspace).resolve() / ".cache" / "process-floor-terminals"
