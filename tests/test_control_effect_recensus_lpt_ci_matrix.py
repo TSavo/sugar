@@ -1,0 +1,55 @@
+"""CI matrix wire for recensus LPT k=8 (banked law #7055; matrix was follow-up).
+
+The compose door, plan tool, and worker --plan-json/--shard-index path already
+exist. This tooth locks the workflow fan-out so the serial walk cannot return
+silently:
+
+  plan → matrix shard s00..s07 (fail-fast: false) → compose sole seal
+
+CRITICAL: compose runs when shards fail; missing seat → UNMEASURED, never a
+partial seal of the seats that finished.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github/workflows/control-effect-recensus.yml"
+
+
+def test_recensus_workflow_is_lpt_k8_matrix_not_serial_monolith() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    # Three jobs: plan, shard matrix, compose.
+    assert "jobs:" in text
+    assert "plan:" in text
+    assert "shard:" in text
+    assert "compose:" in text
+    # LPT k fixed at 8 (same constant as tools/lpt_file_shards.DEFAULT_SHARD_COUNT).
+    assert "RECENSUS_SHARD_COUNT: \"8\"" in text or "RECENSUS_SHARD_COUNT: '8'" in text
+    assert "matrix:" in text
+    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7]" in text
+    assert "fail-fast: false" in text
+    # Workers emit partials only.
+    assert "--plan-json" in text
+    assert "--shard-index" in text
+    assert "plan_control_effect_recensus_shards.py" in text
+    # Sole seal door.
+    assert "compose_control_effect_board.py" in text
+    # Compose must not be gated on all shards green (UNMEASURED path).
+    assert "if: always()" in text
+    assert "needs.plan.result" in text
+    # No single serial measure job without matrix (the pre-wire shape).
+    # The old name "Phase: recensus measure (production CLI; no lease)" was one job.
+    assert "Phase: recensus measure (production CLI; no lease)" not in text
+    assert "Phase: measure shard partial only" in text
+
+
+def test_compose_unmeasured_law_still_named_in_workflow() -> None:
+    """Workflow copy must restate: never seal over finished shards alone."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "UNMEASURED" in text
+    assert "missing" in text.lower()
+    # Attendance dual-belt only on sealed board.
+    assert "measurementClass" in text
+    assert "bodyCid" in text
