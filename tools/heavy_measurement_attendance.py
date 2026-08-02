@@ -86,12 +86,32 @@ def _is_recensus_path_smoke(path: Path, payload: dict) -> bool:
     return False
 
 
+def _control_effect_recensus_sealed(payload: dict) -> bool:
+    """Dual belt B: class credit requires sealed + measured + bodyCid.
+
+    UNMEASURED envelopes (and any incomplete body) must not zero R_attendance.
+    Same lie class as recensus-path-smoke under PATH_HINTS (#7049 / banked law).
+    """
+    return (
+        payload.get("status") == "sealed"
+        and payload.get("measured") is True
+        and bool(payload.get("bodyCid"))
+    )
+
+
 def _class_from_payload(path: Path, payload: dict) -> str | None:
     # BEFORE roster / path hints: smoke never maps to control-effect-recensus.
     if _is_recensus_path_smoke(path, payload):
         return None
     mc = payload.get("measurementClass")
+    # Shard partials never attend as the board.
+    if mc == "control-effect-recensus-shard":
+        return None
     if isinstance(mc, str) and mc in HEAVY_ROSTER:
+        if mc == "control-effect-recensus" and not _control_effect_recensus_sealed(
+            payload
+        ):
+            return None
         return mc
     # Identity-bound body markers (suite report, etc.)
     identity_bound = bool(
@@ -108,6 +128,10 @@ def _class_from_payload(path: Path, payload: dict) -> str | None:
     text = str(path).replace("\\", "/")
     for cls, hints in PATH_HINTS.items():
         if any(h in text for h in hints):
+            if cls == "control-effect-recensus" and not _control_effect_recensus_sealed(
+                payload
+            ):
+                return None
             return cls
     return None
 

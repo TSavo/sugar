@@ -98,9 +98,9 @@ def test_exactly_one_module_claims_to_be_the_authority() -> None:
         for path, declared in _board_producers().items()
         if declared is True
     )
-    assert claimants == ["scripts/control_effect_recensus.py"], (
-        "the Python corpus board has exactly one authority; claimants were "
-        f"{claimants}"
+    assert claimants == ["scripts/compose_control_effect_board.py"], (
+        "the Python corpus board has exactly one authority (the compose seal "
+        f"door); claimants were {claimants}"
     )
 
 
