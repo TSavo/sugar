@@ -15,7 +15,7 @@ Compare construction is partitioned by law — not one monomorphic refusal:
 - **equality** (`==` / `!=`): ``__eq__`` / ``__ne__`` may complete or raise
 - **identity** (`is` / `is not`): total object identity; never user-code dispatch
 - **chaining** (`a < b < c`): pair laws composed under short-circuit ``And`` at
-  ``Compare._construct_sugar`` (BoolOpSugar over adjacent pair sugars)
+  ``Compare._construct_sugar`` (ChainedCompareSugar carrying adjacent values)
 """
 
 from __future__ import annotations
@@ -320,18 +320,22 @@ class ComparisonOpSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        left = self.left.desugar(ctx)
-        right = lambda l: self.right.desugar(ctx).and_then(  # noqa: E731
-            lambda r: self._apply(
-                l.project_operation_receiver(
-                    ctx, owner="ComparisonOpSugar left operation receiver"
-                ),
-                r.project_operation_receiver(
-                    ctx, owner="ComparisonOpSugar right operation receiver"
-                ),
+        return self.left.desugar(ctx).and_then(
+            lambda left: self.right.desugar(ctx).and_then(
+                lambda right: self.apply_reduced(left, right, ctx)
             )
         )
-        return left.and_then(right)
+
+    def apply_reduced(self, left, right, ctx: object = None) -> Outcome:
+        """Apply this leg's existing law to operands already evaluated once."""
+        return self._apply(
+            left.project_operation_receiver(
+                ctx, owner="ComparisonOpSugar left operation receiver"
+            ),
+            right.project_operation_receiver(
+                ctx, owner="ComparisonOpSugar right operation receiver"
+            ),
+        )
 
     def _membership(self, container, item):
         """Membership law: container owns containment; undecided dispatch dual-edges."""

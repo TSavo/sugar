@@ -72,10 +72,14 @@ class EqualityOpSugar(ConstructedTermSugar):
         # whether it equals the right. That is all `==` desugars to.
         return self.left.desugar(ctx).and_then(
             lambda left: self.right.desugar(ctx).and_then(
-                lambda right: _equals_and_refine(
-                    left, right, self.site, ctx, self.left_coordinate
-                )
+                lambda right: self.apply_reduced(left, right, ctx)
             )
+        )
+
+    def apply_reduced(self, left, right, ctx: object = None) -> Outcome:
+        """Apply equality/refinement to operands already evaluated once."""
+        return _equals_and_refine(
+            left, right, self.site, ctx, self.left_coordinate
         )
 
 
