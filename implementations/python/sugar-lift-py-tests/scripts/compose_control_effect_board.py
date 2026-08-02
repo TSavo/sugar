@@ -37,6 +37,22 @@ COMPOSE_SCHEMA = "control-effect-recensus-compose/v1"
 PARTIAL_SCHEMA = "control-effect-recensus-shard-partial/v1"
 PLAN_SCHEMA = "control-effect-recensus-shard-plan/v1"
 
+# The three receipt edges are intentionally concrete.  V1 is not a general
+# provenance framework; these names are the only paths the seal authenticates.
+EDGE_ENUMERATE_FILE = "enumerate-roster-to-file-terminal/v1"
+EDGE_WITH_PARTITION = "canonical-with-tally-to-partition/v1"
+EDGE_TERMINAL_SEAL = "terminal-rows-to-aggregate-seal/v1"
+STAGE_ENUMERATE_FILE_TERMINAL = "recensus-enumerate-file-terminal/v1"
+STAGE_WITH_TALLY_PARTITION = "control-effect-with-tally-partition/v1"
+STAGE_TERMINAL_AGGREGATE_SEAL = "compose-terminal-aggregate-seal/v1"
+_CONSTRUCTION_PANIC_TYPE = "sugar_lift_py_tests.gap.panic.ConstructionPanic"
+_TERMINAL_KINDS = frozenset({"constructed", "construction-panic"})
+_TERMINAL_CONVENTION = {
+    "observed_chain_length": "number of observed terminals in order",
+    "blocking_terminal_count": "number of terminals that blocked construction",
+    "final_terminal": "last observed terminal, separate from both counts",
+}
+
 _PANDAS_3_0_3_AGGREGATE_HASH = (
     "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
 )
@@ -80,6 +96,531 @@ def canonical_cid(obj: Mapping[str, Any]) -> str:
 
 def shard_file_set_cid(files: Sequence[str]) -> str:
     return _blake3_512("\n".join(sorted(files)).encode("utf-8"))
+
+
+def _canonical_key_manifest(keys: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    rows = [dict(key) for key in keys]
+    return sorted(
+        rows,
+        key=lambda row: json.dumps(
+            row, sort_keys=True, separators=(",", ":"), default=str
+        ),
+    )
+
+
+def key_manifest_cid(keys: Sequence[Mapping[str, Any]]) -> str:
+    """CID over the canonical members, never over a count alone."""
+    return canonical_cid({"keys": _canonical_key_manifest(keys)})
+
+
+def _render_key(key: Mapping[str, Any]) -> str:
+    return json.dumps(dict(key), sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _key_diff(
+    input_keys: Sequence[Mapping[str, Any]],
+    output_keys: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    inputs = Counter(_render_key(key) for key in input_keys)
+    outputs = Counter(_render_key(key) for key in output_keys)
+    representatives = {
+        _render_key(key): dict(key) for key in [*input_keys, *output_keys]
+    }
+    missing = [
+        representatives[rendered]
+        for rendered, multiplicity in sorted((inputs - outputs).items())
+        for _ in range(multiplicity)
+    ]
+    extra = [
+        representatives[rendered]
+        for rendered, multiplicity in sorted((outputs - inputs).items())
+        for _ in range(multiplicity)
+    ]
+    duplicate = [
+        {
+            "side": side,
+            "key": representatives[rendered],
+            "multiplicity": multiplicity,
+        }
+        for side, counter in (("input", inputs), ("output", outputs))
+        for rendered, multiplicity in sorted(counter.items())
+        if multiplicity > 1
+    ]
+    return missing, extra, duplicate
+
+
+def key_edge_witness(
+    *,
+    stage_id: str,
+    input_keys: Sequence[Mapping[str, Any]],
+    output_keys: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Producer witness shape.  Compose recomputes every diagnostic."""
+    inputs = _canonical_key_manifest(input_keys)
+    outputs = _canonical_key_manifest(output_keys)
+    missing, extra, duplicate = _key_diff(inputs, outputs)
+    return {
+        "stageId": stage_id,
+        "inputKeyManifest": inputs,
+        "inputKeyCount": len(inputs),
+        "inputKeyCid": key_manifest_cid(inputs),
+        "outputKeyManifest": outputs,
+        "outputKeyCount": len(outputs),
+        "outputKeyCid": key_manifest_cid(outputs),
+        "missingKeys": missing,
+        "extraKeys": extra,
+        "duplicateKeys": duplicate,
+    }
+
+
+def _source_file_cid(path: Path) -> str:
+    return _blake3_512(path.read_bytes())
+
+
+def _loaded_stage_map() -> tuple[dict[str, dict[str, str]], list[dict[str, Any]]]:
+    here = Path(__file__).resolve().parent
+    specs = {
+        STAGE_ENUMERATE_FILE_TERMINAL: (
+            "recensus_enumerate_consumer.measure_file_via_enumerate",
+            here / "recensus_enumerate_consumer.py",
+        ),
+        STAGE_WITH_TALLY_PARTITION: (
+            "control_effect_recensus._tally_cm_resolutions->_with_census_partition",
+            here / "control_effect_recensus.py",
+        ),
+        STAGE_TERMINAL_AGGREGATE_SEAL: (
+            "compose_control_effect_board.aggregate_terminal_rows->seal_board_from_aggregate",
+            Path(__file__).resolve(),
+        ),
+    }
+    stage_map: dict[str, dict[str, str]] = {}
+    failures: list[dict[str, Any]] = []
+    for stage_id, (qualname, path) in specs.items():
+        try:
+            source_cid = _source_file_cid(path)
+        except OSError as error:
+            failures.append(
+                {
+                    "stageId": stage_id,
+                    "reason": "loaded stage source unavailable",
+                    "observedEventType": f"{type(error).__module__}.{type(error).__qualname__}",
+                    "message": str(error),
+                }
+            )
+            continue
+        stage_map[stage_id] = {
+            "moduleQualname": qualname,
+            "sourceFileCid": source_cid,
+        }
+    return stage_map, failures
+
+
+def _read_key_manifest(
+    witness: Mapping[str, Any], field: str, *, edge_id: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    raw = witness.get(field)
+    if not isinstance(raw, list):
+        return [], [{"edgeId": edge_id, "reason": f"{field} absent or not a list"}]
+    keys: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for index, key in enumerate(raw):
+        if not isinstance(key, dict) or not isinstance(key.get("sourceCid"), str):
+            failures.append(
+                {
+                    "edgeId": edge_id,
+                    "reason": f"{field}[{index}] lacks content-pinned sourceCid",
+                    "key": key,
+                }
+            )
+            continue
+        keys.append(dict(key))
+    return keys, failures
+
+
+def _validate_edge_witness(
+    edge_id: str,
+    witness: object,
+    *,
+    expected_stage_id: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    if not isinstance(witness, dict):
+        return None, [{"edgeId": edge_id, "reason": "edge witness absent"}]
+    failures: list[dict[str, Any]] = []
+    if witness.get("stageId") != expected_stage_id:
+        failures.append(
+            {
+                "edgeId": edge_id,
+                "reason": (
+                    f"stageId absent or wrong: got={witness.get('stageId')!r} "
+                    f"want={expected_stage_id!r}"
+                ),
+            }
+        )
+    inputs, input_failures = _read_key_manifest(
+        witness, "inputKeyManifest", edge_id=edge_id
+    )
+    outputs, output_failures = _read_key_manifest(
+        witness, "outputKeyManifest", edge_id=edge_id
+    )
+    failures.extend(input_failures)
+    failures.extend(output_failures)
+    attested = key_edge_witness(
+        stage_id=expected_stage_id,
+        input_keys=inputs,
+        output_keys=outputs,
+    )
+    for field in (
+        "inputKeyCount",
+        "inputKeyCid",
+        "outputKeyCount",
+        "outputKeyCid",
+    ):
+        if witness.get(field) != attested[field]:
+            failures.append(
+                {
+                    "edgeId": edge_id,
+                    "reason": f"{field} mismatch",
+                    "claimed": witness.get(field),
+                    "observed": attested[field],
+                }
+            )
+    if attested["missingKeys"] or attested["extraKeys"] or attested["duplicateKeys"]:
+        failures.append({"edgeId": edge_id, "reason": "key conservation failed", **attested})
+    return attested, failures
+
+
+def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    if row.get("instrumentFailure"):
+        raw = row.get("instrumentFailure")
+        failures.append(
+            dict(raw)
+            if isinstance(raw, dict)
+            else {"file": file, "reason": "instrumentFailure", "message": str(raw)}
+        )
+        return failures
+    input_key = row.get("inputKey")
+    if not isinstance(input_key, dict) or not isinstance(input_key.get("sourceCid"), str):
+        failures.append({"file": file, "reason": "inputKey lacks sourceCid"})
+    expected_row_id = (
+        canonical_cid({"inputKey": input_key}) if isinstance(input_key, dict) else None
+    )
+    if row.get("rowId") != expected_row_id:
+        failures.append(
+            {
+                "file": file,
+                "reason": "stable rowId mismatch",
+                "claimed": row.get("rowId"),
+                "observed": expected_row_id,
+            }
+        )
+    if row.get("stageId") != STAGE_ENUMERATE_FILE_TERMINAL:
+        failures.append({"file": file, "reason": "terminal stageId absent or wrong"})
+    observed_type = row.get("observedEventType")
+    if not isinstance(observed_type, str) or "." not in observed_type:
+        failures.append(
+            {"file": file, "reason": "observedEventType is not fully qualified"}
+        )
+    terminal_kind = row.get("terminalKind")
+    if terminal_kind not in _TERMINAL_KINDS:
+        failures.append(
+            {"file": file, "reason": f"terminalKind is not closed: {terminal_kind!r}"}
+        )
+        return failures
+    category = row.get("category")
+    expected_category = "completed" if terminal_kind == "constructed" else "panic"
+    if category != expected_category:
+        failures.append(
+            {
+                "file": file,
+                "reason": "legacy category disagrees with terminalKind",
+                "category": category,
+                "terminalKind": terminal_kind,
+            }
+        )
+    chain_length = row.get("observed_chain_length")
+    blocking_count = row.get("blocking_terminal_count")
+    if not isinstance(chain_length, int) or chain_length < 1:
+        failures.append({"file": file, "reason": "observed_chain_length absent"})
+    if blocking_count != (1 if terminal_kind == "construction-panic" else 0):
+        failures.append({"file": file, "reason": "blocking_terminal_count disagrees"})
+    if row.get("final_terminal") != terminal_kind:
+        failures.append({"file": file, "reason": "final_terminal disagrees"})
+    if terminal_kind == "construction-panic":
+        if observed_type != _CONSTRUCTION_PANIC_TYPE:
+            failures.append(
+                {
+                    "file": file,
+                    "reason": "ordinary exception relabelled as construction-panic",
+                    "observedEventType": observed_type,
+                }
+            )
+        panic = row.get("panic")
+        required = {
+            "owner",
+            "coordinate",
+            "observed",
+            "requested",
+            "fix",
+            "entrance",
+            "construction_trace",
+        }
+        if not isinstance(panic, dict) or not required.issubset(panic):
+            failures.append(
+                {
+                    "file": file,
+                    "reason": "non-authenticated ConstructionPanic payload",
+                    "missing": sorted(required - set(panic or {}))
+                    if isinstance(panic, dict)
+                    else sorted(required),
+                }
+            )
+        elif not isinstance(panic.get("construction_trace"), list):
+            failures.append({"file": file, "reason": "construction_trace is not ordered"})
+        elif chain_length != len(panic["construction_trace"]):
+            failures.append(
+                {"file": file, "reason": "observed_chain_length disagrees with trace"}
+            )
+    return failures
+
+
+def attest_frontier_rows(
+    measured_rows: Sequence[tuple[str, Mapping[str, Any]]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Authenticate V1 terminal membership at the sole compose door."""
+    failures: list[dict[str, Any]] = []
+    stage_map, stage_failures = _loaded_stage_map()
+    failures.extend(stage_failures)
+    combined_inputs: dict[str, list[dict[str, Any]]] = {
+        EDGE_ENUMERATE_FILE: [],
+        EDGE_WITH_PARTITION: [],
+    }
+    combined_outputs: dict[str, list[dict[str, Any]]] = {
+        EDGE_ENUMERATE_FILE: [],
+        EDGE_WITH_PARTITION: [],
+    }
+    terminal_inputs: list[dict[str, Any]] = []
+    constructed: list[dict[str, Any]] = []
+    panicked: list[dict[str, Any]] = []
+    terminal_rows: list[dict[str, Any]] = []
+    expected_stages = {
+        EDGE_ENUMERATE_FILE: STAGE_ENUMERATE_FILE_TERMINAL,
+        EDGE_WITH_PARTITION: STAGE_WITH_TALLY_PARTITION,
+    }
+    for file, raw in measured_rows:
+        row = dict(raw)
+        failures.extend(_terminal_row_failures(file, row))
+        key = row.get("inputKey")
+        if isinstance(key, dict) and isinstance(key.get("sourceCid"), str):
+            terminal_inputs.append(dict(key))
+            if row.get("terminalKind") == "constructed":
+                constructed.append(dict(key))
+            elif row.get("terminalKind") == "construction-panic":
+                panicked.append(dict(key))
+        terminal_rows.append(
+            {
+                field: row.get(field)
+                for field in (
+                    "rowId",
+                    "inputKey",
+                    "stageId",
+                    "observedEventType",
+                    "terminalKind",
+                    "observed_chain_length",
+                    "blocking_terminal_count",
+                    "final_terminal",
+                    "panic",
+                )
+                if field in row
+            }
+        )
+        edge_witnesses = row.get("edgeWitnesses")
+        if not isinstance(edge_witnesses, dict):
+            failures.append({"file": file, "reason": "edgeWitnesses absent"})
+            continue
+        for edge_id, stage_id in expected_stages.items():
+            attested, edge_failures = _validate_edge_witness(
+                edge_id,
+                edge_witnesses.get(edge_id),
+                expected_stage_id=stage_id,
+            )
+            failures.extend({"file": file, **failure} for failure in edge_failures)
+            if attested is not None:
+                combined_inputs[edge_id].extend(attested["inputKeyManifest"])
+                combined_outputs[edge_id].extend(attested["outputKeyManifest"])
+
+    edges: dict[str, dict[str, Any]] = {}
+    for edge_id, stage_id in expected_stages.items():
+        edge = key_edge_witness(
+            stage_id=stage_id,
+            input_keys=combined_inputs[edge_id],
+            output_keys=combined_outputs[edge_id],
+        )
+        edges[edge_id] = edge
+        if edge["missingKeys"] or edge["extraKeys"] or edge["duplicateKeys"]:
+            failures.append(
+                {
+                    "edgeId": edge_id,
+                    "reason": "composed key conservation failed",
+                    **edge,
+                }
+            )
+
+    terminal_edge = key_edge_witness(
+        stage_id=STAGE_TERMINAL_AGGREGATE_SEAL,
+        input_keys=terminal_inputs,
+        output_keys=[*constructed, *panicked],
+    )
+    edges[EDGE_TERMINAL_SEAL] = terminal_edge
+    if (
+        terminal_edge["missingKeys"]
+        or terminal_edge["extraKeys"]
+        or terminal_edge["duplicateKeys"]
+    ):
+        failures.append(
+            {
+                "edgeId": EDGE_TERMINAL_SEAL,
+                "reason": "final disjoint union failed",
+                **terminal_edge,
+            }
+        )
+    constructed_rendered = {_render_key(key) for key in constructed}
+    panicked_rendered = {_render_key(key) for key in panicked}
+    overlap = sorted(constructed_rendered & panicked_rendered)
+    if overlap:
+        failures.append(
+            {
+                "edgeId": EDGE_TERMINAL_SEAL,
+                "reason": "constructed and construction-panic manifests overlap",
+                "overlapKeys": [json.loads(row) for row in overlap],
+            }
+        )
+    attestation = {
+        "schema": "control-effect-frontier-attestation/v1",
+        "stageMap": stage_map,
+        "edges": edges,
+        "terminalRows": terminal_rows,
+        "constructedKeyManifest": _canonical_key_manifest(constructed),
+        "constructedKeyCid": key_manifest_cid(constructed),
+        "constructionPanicKeyManifest": _canonical_key_manifest(panicked),
+        "constructionPanicKeyCid": key_manifest_cid(panicked),
+        "instrumentFailures": list(failures),
+        "terminalConvention": dict(_TERMINAL_CONVENTION),
+        "finalSeal": {
+            "inputKeyManifest": _canonical_key_manifest(terminal_inputs),
+            "inputKeyCid": key_manifest_cid(terminal_inputs),
+            "constructedAndPanicDisjoint": not overlap,
+            "conserves": not terminal_edge["missingKeys"]
+            and not terminal_edge["extraKeys"]
+            and not terminal_edge["duplicateKeys"]
+            and not overlap,
+        },
+    }
+    return attestation, failures
+
+
+def _frontier_manifests_for_common_seal(
+    frontier_attestation: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Project untrusted final-edge members; the callback validates them."""
+    if not isinstance(frontier_attestation, Mapping):
+        return [], []
+    edges = frontier_attestation.get("edges")
+    if not isinstance(edges, Mapping):
+        return [], []
+    edge = edges.get(EDGE_TERMINAL_SEAL)
+    if not isinstance(edge, Mapping):
+        return [], []
+    inputs = edge.get("inputKeyManifest")
+    outputs = edge.get("outputKeyManifest")
+    return (
+        [dict(row) for row in inputs if isinstance(row, Mapping)]
+        if isinstance(inputs, list)
+        else [],
+        [dict(row) for row in outputs if isinstance(row, Mapping)]
+        if isinstance(outputs, list)
+        else [],
+    )
+
+
+def _validate_frontier_attestation_for_common_seal(
+    frontier_attestation: Mapping[str, Any] | None,
+    *,
+    expected_panic_count: int,
+) -> None:
+    """Schema-local equality check executed by the universal mint door."""
+    if not isinstance(frontier_attestation, Mapping):
+        raise ValueError("frontier attestation absent")
+    if frontier_attestation.get("schema") != "control-effect-frontier-attestation/v1":
+        raise ValueError("frontier attestation schema is unsupported")
+    if frontier_attestation.get("instrumentFailures") != []:
+        raise ValueError("frontier attestation carries instrument failures")
+
+    stage_map = frontier_attestation.get("stageMap")
+    stage = (
+        stage_map.get(STAGE_TERMINAL_AGGREGATE_SEAL)
+        if isinstance(stage_map, Mapping)
+        else None
+    )
+    expected_source_cid = _source_file_cid(Path(__file__).resolve())
+    if not isinstance(stage, Mapping) or stage.get("sourceFileCid") != expected_source_cid:
+        raise ValueError("compose validator stage source CID is absent or stale")
+
+    edges = frontier_attestation.get("edges")
+    if not isinstance(edges, Mapping):
+        raise ValueError("frontier attestation edges absent")
+    expected_edges = {
+        EDGE_ENUMERATE_FILE: STAGE_ENUMERATE_FILE_TERMINAL,
+        EDGE_WITH_PARTITION: STAGE_WITH_TALLY_PARTITION,
+        EDGE_TERMINAL_SEAL: STAGE_TERMINAL_AGGREGATE_SEAL,
+    }
+    validated: dict[str, dict[str, Any]] = {}
+    for edge_id, stage_id in expected_edges.items():
+        attested, failures = _validate_edge_witness(
+            edge_id,
+            edges.get(edge_id),
+            expected_stage_id=stage_id,
+        )
+        if failures or attested is None:
+            raise ValueError(
+                f"frontier edge {edge_id} failed common-seal validation: {failures}"
+            )
+        validated[edge_id] = attested
+
+    terminal = validated[EDGE_TERMINAL_SEAL]
+    constructed = frontier_attestation.get("constructedKeyManifest")
+    panicked = frontier_attestation.get("constructionPanicKeyManifest")
+    if not isinstance(constructed, list) or not isinstance(panicked, list):
+        raise ValueError("frontier terminal partition manifests absent")
+    if len(panicked) != expected_panic_count:
+        raise ValueError(
+            "aggregate panic magnitude disagrees with authenticated panic keys: "
+            f"aggregate={expected_panic_count} attested={len(panicked)}"
+        )
+    final_edge = key_edge_witness(
+        stage_id=STAGE_TERMINAL_AGGREGATE_SEAL,
+        input_keys=terminal["inputKeyManifest"],
+        output_keys=[*constructed, *panicked],
+    )
+    if (
+        final_edge["missingKeys"]
+        or final_edge["extraKeys"]
+        or final_edge["duplicateKeys"]
+    ):
+        raise ValueError("frontier final disjoint union does not conserve")
+    overlap = {
+        _render_key(row) for row in constructed if isinstance(row, Mapping)
+    } & {_render_key(row) for row in panicked if isinstance(row, Mapping)}
+    if overlap:
+        raise ValueError("frontier constructed and panic manifests overlap")
+    final_seal = frontier_attestation.get("finalSeal")
+    if (
+        not isinstance(final_seal, Mapping)
+        or final_seal.get("conserves") is not True
+        or final_seal.get("constructedAndPanicDisjoint") is not True
+        or final_seal.get("inputKeyCid") != terminal["inputKeyCid"]
+    ):
+        raise ValueError("frontier final seal testimony is absent or stale")
 
 
 def build_plan(
@@ -428,6 +969,7 @@ def seal_board_from_aggregate(
     elapsed_seconds: float | None = None,
     source_stamp: Mapping[str, Any] | None = None,
     with_census: Mapping[str, Any] | None = None,
+    frontier_attestation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mint the sealed authoritative board body. Sole mint of the class."""
     file_names = list(agg["enrolled_files"])
@@ -598,15 +1140,43 @@ def seal_board_from_aggregate(
         "perShardCids": dict(sorted((per_shard_cids or {}).items())),
         "composeSchema": COMPOSE_SCHEMA,
     }
+    if frontier_attestation is not None:
+        body["frontierAttestation"] = dict(frontier_attestation)
+        body["frontierWidth"] = len(
+            frontier_attestation.get("constructionPanicKeyManifest") or []
+        )
     if source_stamp is not None:
         body["sourceStamp"] = dict(source_stamp)
         # Host/load noise stays in sourceStamp; bodyCid excludes it.
     if compose_cid is not None:
         body["composeCid"] = compose_cid
-    # One door only: function counts on an authoritative board must carry the
-    # three sealed fact CIDs. A bare functionsTotal without them panics.
+    from sugar_lift_py_tests.conservation_mint import (
+        ConservationFailure,
+        seal_after_validation,
+    )
+
+    input_manifest, output_manifest = _frontier_manifests_for_common_seal(
+        frontier_attestation
+    )
+    outcome = seal_after_validation(
+        measured_payload=body,
+        input_key_manifest=input_manifest,
+        output_key_manifest=output_manifest,
+        validator_stage_id=STAGE_TERMINAL_AGGREGATE_SEAL,
+        validator_source_path=Path(__file__).resolve(),
+        validate=lambda: _validate_frontier_attestation_for_common_seal(
+            frontier_attestation,
+            expected_panic_count=r_construction_panics,
+        ),
+    )
+    if isinstance(outcome, ConservationFailure):
+        return outcome.to_wire()
+    body = outcome.to_wire()
+
+    # Both seals are required: schema-local function facts and the universal
+    # passed-conservation witness. Neither can substitute for the other.
     require_sealed_board_function_fields(body)
-    # bodyCid over seal-domain fields (exclude host-volatile sourceStamp).
+    # bodyCid over the sealed domain, including conservationWitness.
     seal_domain = {
         k: v
         for k, v in body.items()
@@ -622,6 +1192,7 @@ def unmeasured_envelope(
     missing_shards: Sequence[str],
     unmeasured_reasons: Mapping[str, str],
     measured_commit: str | None = None,
+    instrument_failures: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Attendance testimony only. NEVER measurementClass=control-effect-recensus."""
     env: dict[str, Any] = {
@@ -635,10 +1206,12 @@ def unmeasured_envelope(
         "planCid": (plan or {}).get("planCid"),
         "missingShards": list(missing_shards),
         "unmeasuredReasons": dict(unmeasured_reasons),
+        "instrumentFailures": [dict(row) for row in instrument_failures],
         "denominator": {"complete": False},
     }
     assert "measurementClass" not in env
     assert "R_construction_panics" not in env
+    assert "frontierWidth" not in env
     assert "bodyCid" not in env
     return env
 
@@ -731,6 +1304,17 @@ def compose_from_partials(
 
     enrolled = list(plan["enrolledFiles"])
     measured_rows = [(f, row_by_file[f]) for f in enrolled if f in row_by_file]
+    frontier_attestation, instrument_failures = attest_frontier_rows(measured_rows)
+    if instrument_failures:
+        return "unmeasured", unmeasured_envelope(
+            plan=plan,
+            missing_shards=["compose"],
+            unmeasured_reasons={
+                "compose": "frontier attestation refused; see instrumentFailures"
+            },
+            measured_commit=str(plan.get("measuredCommit") or ""),
+            instrument_failures=instrument_failures,
+        )
     agg = aggregate_terminal_rows(
         measured_rows,
         enrolled_files=enrolled,
@@ -781,7 +1365,21 @@ def compose_from_partials(
         elapsed_seconds=elapsed_seconds,
         source_stamp=source_stamp,
         with_census=with_census,
+        frontier_attestation=frontier_attestation,
     )
+    if board.get("measurement") != "measured":
+        failure = board.get("conservationFailure")
+        return "unmeasured", unmeasured_envelope(
+            plan=plan,
+            missing_shards=["compose"],
+            unmeasured_reasons={
+                "compose": "common conservation mint refused the census board"
+            },
+            measured_commit=str(plan.get("measuredCommit") or ""),
+            instrument_failures=[failure]
+            if isinstance(failure, Mapping)
+            else [{"reason": "common conservation mint refused without diagnostic"}],
+        )
     return "sealed", board
 
 
