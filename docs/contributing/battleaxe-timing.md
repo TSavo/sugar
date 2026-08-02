@@ -1,5 +1,10 @@
 # Battleaxe timing measurements (canonical door)
 
+**Law:** [measurement-conditions.md](./measurement-conditions.md) —
+*a measurement must testify to its own conditions* (quiet box, exclusive
+lease, correct corpus). This file is the **invocation cookbook**; that file is
+the **law and the incidents**.
+
 **Wall-clock numbers for pandas recensus / open / walk / k=8 are taken on
 battleaxe only.** Not on the Mac. The Mac is an 8-core laptop that hosts the
 agent fleet; a number taken there under load is not a slow measurement — it is
