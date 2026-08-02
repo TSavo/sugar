@@ -306,8 +306,6 @@ def aggregate_terminal_rows(
     desugar_construction_panics: list[dict[str, Any]] = []
     desugar_defects: list[dict[str, Any]] = []
     desugar_designed_gaps: list[dict[str, Any]] = []
-    # C3: EnrolledDemandUnresolved inhabitants (mint-live → board-visible)
-    source_undecidable_refusals: list[dict[str, Any]] = []
     unresolvable_dispatch: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
     defects: list[dict[str, Any]] = []
@@ -340,10 +338,7 @@ def aggregate_terminal_rows(
                 clean_refuse_reasons.append(f"{file}:{reason}")
         else:
             functions_clean += int(row.get("functionsClean") or 0)
-        if int(row.get("R_instrument_blind") or 0) or category in {
-            "backend-defect",
-            "instrument-defect-unresolvable-dispatch",
-        }:
+        if category in {"backend-defect", "instrument-defect-unresolvable-dispatch", "panic"}:
             r_instrument_blind += 1
             # Mass on instrument-blind rows is residual, not silent zero.
             if category != "completed":
@@ -359,32 +354,7 @@ def aggregate_terminal_rows(
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
         desugar_defects.extend(row.get("desugarDefects") or [])
         desugar_designed_gaps.extend(row.get("desugarDesignedGaps") or [])
-        # C3 C: bank sealed refusals from terminal rows (A/B already projected).
-        row_c3 = row.get("sourceUndecidableRefusals")
-        if isinstance(row_c3, list) and row_c3:
-            for item in row_c3:
-                if isinstance(item, dict):
-                    source_undecidable_refusals.append(dict(item))
-        else:
-            # Fallback: defect row carries decidabilityKind when list omitted.
-            defect_probe = row.get("defect")
-            if (
-                isinstance(defect_probe, dict)
-                and defect_probe.get("decidabilityKind") == "EnrolledDemandUnresolved"
-            ):
-                source_undecidable_refusals.append(
-                    {
-                        "file": file,
-                        "type": defect_probe.get("type"),
-                        "message": defect_probe.get("message"),
-                        "decidabilityKind": "EnrolledDemandUnresolved",
-                        "demandFamily": defect_probe.get("demandFamily") or "",
-                        "demandCid": defect_probe.get("demandCid") or "",
-                        "useSite": defect_probe.get("useSite") or "",
-                        "gapKind": defect_probe.get("gapKind") or "",
-                        "expectedRefType": defect_probe.get("expectedRefType") or "",
-                    }
-                )
+
         if category == "completed":
             files_completed += 1
         elif category == "construction-panic":
@@ -430,7 +400,6 @@ def aggregate_terminal_rows(
         "desugar_construction_panics": desugar_construction_panics,
         "desugar_defects": desugar_defects,
         "desugar_designed_gaps": desugar_designed_gaps,
-        "source_undecidable_refusals": source_undecidable_refusals,
         "unresolvable_dispatch": unresolvable_dispatch,
         "construction_panics": construction_panics,
         "defects": defects,
@@ -584,10 +553,6 @@ def seal_board_from_aggregate(
         "defects": defects,
         "instrumentDefects": list(defects),
         "R_instrument_defects": len(defects),
-        "R_instrument_blind": int(agg.get("r_instrument_blind") or 0),
-        "R_instrument_blind_functions": int(
-            agg.get("r_instrument_blind_functions") or 0
-        ),
         "constructionPanics": construction_panics,
         "R_construction_panics": len(construction_panics),
         # Function fields only via sealed types — bare ints cannot land here.
@@ -644,15 +609,6 @@ def seal_board_from_aggregate(
         "R_desugar_construction_panics": len(agg["desugar_construction_panics"]),
         "desugarDefects": list(agg["desugar_defects"]),
         "R_desugar_defects": len(agg["desugar_defects"]),
-        "desugarDesignedGaps": list(agg["desugar_designed_gaps"]),
-        "R_desugar_designed_gaps": len(agg["desugar_designed_gaps"]),
-        # Criterion 3 sealed axis: EnrolledDemandUnresolved mints (CM first).
-        "sourceUndecidableRefusals": list(
-            agg.get("source_undecidable_refusals") or []
-        ),
-        "R_source_undecidable_refusals": len(
-            agg.get("source_undecidable_refusals") or []
-        ),
         "unresolvableDispatchTargets": list(agg["unresolvable_dispatch"]),
         "R_unresolvable_dispatch_targets": len(agg["unresolvable_dispatch"]),
         "elapsedSeconds": elapsed_seconds,

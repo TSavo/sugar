@@ -67,7 +67,6 @@ def test_residual_failure_preserves_roster_functions_total(monkeypatch) -> None:
     assert row["functionsEnumerated"] == 3
     assert row["rosterPreservedAfterResidualFailure"] is True
     assert row["category"] == "backend-defect"
-    assert row["R_instrument_blind"] == 1
     # Clean must not claim 3/3 perfection after residual failure.
     assert row["functionsClean"] is None
     assert row["cleanRatioRefused"] is True
@@ -107,7 +106,6 @@ def test_roster_failure_banks_ast_population_not_silent_zero(monkeypatch) -> Non
     assert row["functionsTotal"] == 12
     assert row["functionsEnumerated"] == 0
     assert row["functionsEnumerationComplete"] is False
-    assert row["R_instrument_blind"] == 1
     assert row["functionsClean"] is None
     assert row["cleanRatioRefused"] is True
 
@@ -187,7 +185,6 @@ def test_compose_refuses_tautological_clean_on_board() -> None:
                 "functionsClean": None,
                 "cleanRatioRefused": True,
                 "cleanRefuseReason": "roster demand failed",
-                "R_instrument_blind": 1,
                 "defect": {"file": "blind.py", "type": "RuntimeError", "message": "x"},
                 "families": {},
             },
@@ -203,8 +200,6 @@ def test_compose_refuses_tautological_clean_on_board() -> None:
     assert status == "sealed"
     # Population includes instrument-blind mass (10), not dropped to 2.
     assert body["functionsTotal"] == 12
-    assert body["R_instrument_blind"] == 1
-    assert body["R_instrument_blind_functions"] == 10
     # Clean ratio refused — not 2/2 perfection.
     assert body["cleanRatioRefused"] is True
     assert body["functionsConstructClean"] is None
@@ -331,5 +326,4 @@ def test_outer_shell_escape_banks_ast_when_roster_demand_also_fails(
     )
     assert row["functionsTotal"] == 2  # AST FunctionDef count
     assert row["functionsEnumerated"] == 0
-    assert row.get("R_instrument_blind") == 1
     assert row.get("cleanRatioRefused") is True

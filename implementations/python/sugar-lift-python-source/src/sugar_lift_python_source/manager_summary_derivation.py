@@ -2822,7 +2822,7 @@ def _install_derivation_gap(
     """Publish a CM resolution gap for this enrolled demand.
 
     Derivation ran; the demand has no ``ContextManagerContractRefV1``.
-    Criterion 3: the row is R_source_undecidable_refusals territory — the
+    Unwritten: the row means no contract ref — the
     ground is constructible via ``gap.enrolled_demand_unresolved_ground()``
     and is minted on consume in ``With._raise_resolution_gap``.
     """

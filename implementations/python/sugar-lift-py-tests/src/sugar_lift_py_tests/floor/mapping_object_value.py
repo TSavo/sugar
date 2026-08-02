@@ -196,11 +196,7 @@ class MappingObjectValue(ObjectValue):
             _closed_member_equal(key, candidate) for candidate, _ in self.entries
         )
         if any(decision is None for decision in decisions):
-            from sugar_lift_py_tests.sealed_ground import (
-                KeyEqualityUndecided,
-                MappingKeyEqualityArtifact,
-            )
-
+            
             construction_panic_gap(
                 owner="MappingObjectValue.get",
                 blame=blame,

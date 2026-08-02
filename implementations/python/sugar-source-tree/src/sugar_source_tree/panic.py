@@ -39,7 +39,6 @@ tree (#5940 builds the tree in isolation).
 
 from __future__ import annotations
 
-from enum import Enum
 
 
 def _render_blame(blame: object) -> str:
@@ -170,245 +169,35 @@ class ConstructedValueTestimonyNotWritten(SugarNotWritten):
     _LABEL = "CONSTRUCTED VALUE TESTIMONY NOT WRITTEN"
 
 
-class WithConstructionGapKind(str, Enum):
-    RUNTIME_SELECTED = "runtime-selected"
-    UNRESOLVED_SYMBOL = "unresolved-symbol"
-    AMBIGUOUS_SYMBOL = "ambiguous-symbol"
-    WRONG_CONTRACT_KIND = "wrong-contract-kind"
-    SIGNATURE_MISMATCH = "signature-mismatch"
-    UNAUTHENTICATED_MEMBER = "unauthenticated-member"
-    PAYLOAD_CID_MISMATCH = "payload-cid-mismatch"
-    UNSUPPORTED_CM_SCHEMA = "unsupported-cm-schema"
-    NO_DERIVED_CONTRACT = "no-derived-contract"
-    STALE_DERIVED_CONTRACT = "stale-derived-contract"
-    UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS = "unsupported-context-manager-semantics"
-    UNSUPPORTED_WITH_BINDING_TARGET = "unsupported-with-binding-target"
-    ASYNC_CONTEXT_MANAGER_UNSUPPORTED = "async-context-manager-unsupported"
-    # Export-resolution kinds that ride the same preconstruction table into With.
-    # A missing member here crashed the pandas control-effect census for 780/1415
-    # files with ``ValueError: 'dynamic-export' is not a valid WithConstructionGapKind``
-    # — instrument defect, not residual silence.
-    DYNAMIC_EXPORT = "dynamic-export"
-    STATIC_EXPORT_ABSENT = "static-export-absent"
-    UNSUPPORTED_STATEMENT = "unsupported-statement"
-    MALFORMED_IMPORT_BINDING = "malformed-import-binding"
-    ARTIFACT_MODULE_ABSENT = "artifact-module-absent"
-    TARGET_OUTSIDE_BINDING = "target-outside-binding"
-    AMBIGUOUS_STATIC_EXPORT = "ambiguous-static-export"
-    OPAQUE_SOURCE = "opaque-source"
-    REEXPORT_CYCLE = "reexport-cycle"
-    # Source-derived preconstruction kinds.  Each is minted by a typed Literal
-    # (`ManagerConstructionGapV1`, `ManagerProtocolConstructionGapV1`,
-    # `DerivedManagerSummaryGapV1`), so this is a closed structural vocabulary,
-    # not a name table -- the derivation layer used to fuse `kind:detail` into
-    # one string and hand the wire decoder a kind it would have REFUSED.
-    INCOMPLETE_CALL_ACTUALS = "incomplete-call-actuals"
-    ARTIFACT_MISMATCH = "artifact-mismatch"
-    DEFINITION_MISSING = "definition-missing"
-    NON_MANAGER_RESULT = "non-manager-result"
-    CALL_BINDING = "call-binding"
-    FORCE_FLOOR = "force-floor"
-    # The four conditions that `opaque-call-target` fused into one name; see
-    # `manager_construction.py` for what decides each.
-    CALL_GRAPH_CYCLE = "call-graph-cycle"
-    VALUE_CALL_TARGET = "value-call-target"
-    CALL_TARGET_SOURCE_ABSENT = "call-target-source-absent"
-    CALL_TARGET_EXPORT_UNRESOLVED = "call-target-export-unresolved"
-    # Authenticated stdlib / off-pin: cite, never MaterializeModule (membrane).
-    CALL_TARGET_OFF_POPULATION = "call-target-off-population"
-    ENTER_MISSING = "enter-missing"
-    EXIT_MISSING = "exit-missing"
-    METHOD_CONSTRUCTION = "method-construction"
-    GENERATOR_MISSING = "generator-missing"
-    GENERATOR_PROTOCOL = "generator-protocol"
-    ENTER_MAY_HALT = "enter-may-halt"
-    EXIT_MAY_HALT = "exit-may-halt"
-    OPAQUE_EXIT_TRUTHINESS = "opaque-exit-truthiness"
-    # Catch-all: never crash the census on a newly minted resolution kind.
-    # The original string is preserved on ``ContextManagerResolutionConstructionGap.resolution_kind``.
-    UNRECOGNIZED_RESOLUTION_KIND = "unrecognized-resolution-kind"
-
-    @classmethod
-    def parse(cls, kind: str) -> "WithConstructionGapKind":
-        try:
-            return cls(kind)
-        except ValueError:
-            return cls.UNRECOGNIZED_RESOLUTION_KIND
+# Taxonomy deleted. Construct or panic.
 
 
-class WithConstructionGap(SugarNotWritten):
-    def __init__(
-        self,
-        *,
-        gap_kind: WithConstructionGapKind,
-        demand_cid: str | None = None,
-        candidate_member_cids: tuple[str, ...] = (),
-        member_cid: str | None = None,
-        coordinate: object | None = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(**kwargs)
-        self.gap_kind = gap_kind
-        self.kind = gap_kind.value
-        self.demand_cid = demand_cid
-        self.candidate_member_cids = candidate_member_cids
-        self.member_cid = member_cid
-        self.coordinate = coordinate
+class UnsupportedContextManagerSemantics(SugarNotWritten):
+    """Manager semantics not constructible — write the arm or stay loud."""
 
-
-class ContextManagerResolutionConstructionGap(WithConstructionGap):
-    """A prereq-2 typed resolution gap consumed unchanged by ``With``.
-
-    Criterion 3 mint: every such panic carries
-    ``decidability=EnrolledDemandUnresolved`` with world from the resolution
-    table (gap present ⇒ ``enrolled_demand_unresolved=True``). That is
-    R_source_undecidable_refusals — derivation ran; the enrolled demand has no
-    source-derived ``ContextManagerContractRefV1``. Not KitConstructionIncomplete.
-    """
-
-    _LABEL = "CONTEXT MANAGER RESOLUTION GAP"
-
-    def __init__(
-        self,
-        *,
-        kind: str,
-        demand_cid: str,
-        candidate_member_cids: tuple[str, ...],
-        resolution: object | None = None,
-        **kwargs,
-    ) -> None:
-        gap_kind = WithConstructionGapKind.parse(kind)
-        # Preserve the wire kind even when it falls into UNRECOGNIZED_*.
-        self.resolution_kind = kind
-        super().__init__(
-            gap_kind=gap_kind,
-            demand_cid=demand_cid,
-            candidate_member_cids=candidate_member_cids,
-            **kwargs,
-        )
-        # ``self.kind`` is what census buckets on. Prefer the original resolution
-        # kind so ``dynamic-export`` stays ``dynamic-export``, not collapsed.
-        if gap_kind is WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND:
-            self.kind = kind
-        else:
-            self.kind = gap_kind.value
-        # Sealed ground — always from the table row when present; else fields.
-        self.decidability = _enrolled_demand_unresolved_for_cm_gap(
-            kind=kind,
-            demand_cid=demand_cid,
-            resolution=resolution,
-            coordinate=getattr(self, "coordinate", None),
-        )
-
-
-def _format_cm_use_site(site: object) -> str:
-    """Prose coordinate for EnrolledDemandArtifact.use_site (not a bucket key)."""
-    if site is None:
-        return ""
-    source_cid = getattr(site, "source_cid", None)
-    start_line = getattr(site, "start_line", None)
-    start_col = getattr(site, "start_col", None)
-    if (
-        isinstance(source_cid, str)
-        and isinstance(start_line, int)
-        and isinstance(start_col, int)
-    ):
-        end_line = getattr(site, "end_line", start_line)
-        end_col = getattr(site, "end_col", start_col)
-        return f"{source_cid}@{start_line}:{start_col}-{end_line}:{end_col}"
-    return str(site)
-
-
-def _enrolled_demand_unresolved_for_cm_gap(
-    *,
-    kind: str,
-    demand_cid: str,
-    resolution: object | None,
-    coordinate: object | None,
-):
-    """Mint C3 ground for a CM resolution-table gap (holds when still a gap)."""
-    # Prefer the table row's one door when the resolution object is present.
-    ground_fn = getattr(resolution, "enrolled_demand_unresolved_ground", None)
-    if callable(ground_fn):
-        return ground_fn()
-
-    from sugar_lift_py_tests.sealed_ground import (
-        enrolled_demand_unresolved,
-        require_refusal_ground_holds,
-    )
-
-    if resolution is not None:
-        demand_cid = str(getattr(resolution, "demand_cid", demand_cid) or demand_cid)
-        kind = str(getattr(resolution, "kind", kind) or kind)
-        site = getattr(resolution, "use_site", None) or coordinate
-    else:
-        site = coordinate
-    ground = enrolled_demand_unresolved(
-        demand_family="context-manager",
-        demand_cid=demand_cid,
-        use_site=_format_cm_use_site(site),
-        gap_kind=kind,
-        expected_ref_type="ContextManagerContractRefV1",
-    )
-    # World from the resolution table: we only raise when the row is a gap.
-    require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": True})
-    return ground
-
-
-class UnsupportedContextManagerSemantics(WithConstructionGap):
     _LABEL = "UNSUPPORTED CONTEXT MANAGER SEMANTICS"
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(
-            gap_kind=WithConstructionGapKind.UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS,
-            **kwargs,
-        )
 
+class UnsupportedWithBindingTarget(SugarNotWritten):
+    """With-as binding target not constructible — write the arm or stay loud."""
 
-class UnsupportedWithBindingTarget(WithConstructionGap):
     _LABEL = "UNSUPPORTED WITH BINDING TARGET"
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(
-            gap_kind=WithConstructionGapKind.UNSUPPORTED_WITH_BINDING_TARGET,
-            **kwargs,
-        )
 
+class AsyncContextManagerUnsupported(SugarNotWritten):
+    """Async with not constructible yet — write the arm or stay loud."""
 
-class AsyncContextManagerUnsupported(WithConstructionGap):
     _LABEL = "ASYNC CONTEXT MANAGER UNSUPPORTED"
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(
-            gap_kind=WithConstructionGapKind.ASYNC_CONTEXT_MANAGER_UNSUPPORTED,
-            **kwargs,
-        )
 
 
 class SubstituteNotWritten(SourceTreePanic):
-    """Nobody has written this node's substitution yet. Raised by the abstract
-    ``Node.substitute()``; every concrete class either OVERRIDES it (a leaf
-    returns itself, a compound recurses into its children, a scope-owner masks
-    its bound names before recursing, a ``Name`` binds) or inherits this throw.
-
-    There is deliberately NO permissive "recurse by default": a silent default
-    would let a newly-added scope-owning node CAPTURE -- substitute an outer
-    name into a body that rebinds it -- and never say so. So substitution is
-    written per node, coverage visible in the hierarchy, and the one hazard
-    (a binder that has not been taught to mask) cannot slip in quietly: an
-    unwritten node is loud here, not a silent wrong answer.
-    """
+    """Nobody has written this node's substitution yet."""
 
     _LABEL = "SUBSTITUTE NOT WRITTEN"
 
 
 class BackendDefect(SourceTreePanic):
-    """The backend, or its adapter's translation of it, produced something
-    structurally invalid: an out-of-range position, a degenerate span, a
-    coordinate collision, a malformed root, output that is not even valid
-    for the language it claims to parse. The fix is on the backend/adapter
-    side, never "add vocabulary".
-    """
+    """Backend or adapter produced something structurally invalid."""
 
     _LABEL = "BACKEND DEFECT"
 
@@ -417,11 +206,7 @@ def vocabulary_missing(
     *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "VocabularyMissing":
     raise VocabularyMissing(
-        blame=blame,
-        owner=owner,
-        observed=observed,
-        requested=requested,
-        fix=fix,
+        blame=blame, owner=owner, observed=observed, requested=requested, fix=fix,
     )
 
 
@@ -429,9 +214,5 @@ def backend_defect(
     *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "BackendDefect":
     raise BackendDefect(
-        blame=blame,
-        owner=owner,
-        observed=observed,
-        requested=requested,
-        fix=fix,
+        blame=blame, owner=owner, observed=observed, requested=requested, fix=fix,
     )

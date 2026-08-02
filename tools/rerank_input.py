@@ -442,15 +442,7 @@ ENROLLED_RERANK_AXIS_IDS: tuple[str, ...] = (
     "criterion5.missing_lying_twins",
     "criterion5.honest_with_hatch_unsealed",
     "criterion5.opt_outs",
-    # Criterion 3 — split R (see docs/path-forward.md Criterion 3 section)
-    # naming_nothing: superseded by #7022 sealed grounds; held on #6988 disposition
-    "criterion3.naming_nothing_drained_but_held",
-    # kit incomplete: NOT C3 finality — write sugar/floor or delete hierarchy-lie arm
-    "criterion3.R_kit_incomplete",
-    # true C3: runtime sealed grounds that holds(world) + enrolled honest residual classes
-    "criterion3.R_source_undecidable_refusals",
-    # floor: mints where holds(world) was false (must stay empty)
-    "criterion3.R_refusals_over_decidable_source",
+
     # Criterion 1 — authenticated denominator
     "criterion1.authenticated_denominator",
 )

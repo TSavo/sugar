@@ -25,7 +25,7 @@
 |---|---|---|---|
 | **1** | Every pandas file/function on sole tree→sugar path | Complete recensus denominator: every enrolled file has a terminal; no silent skip; construction path is the board door | **Unmeasured at tip** until S1 board banks |
 | **2** | R(construction panics)=R(native)=R(timeout)=R(silent/unaccounted)=0 **simultaneously** | Corpus process floors + board on **same pin** | Process floors: sole-construction; panics: recensus board |
-| **3** | Source-visible constructs; source-undecidable refuses **naming** the artifact it cannot see | Split R only (below). Hierarchy-lie refusals are **not** C3 progress | Law rewritten 2026-08-02; instrument re-scope held on #6988 |
+| **3** | Source-visible constructs; unwritten refuses by panic naming what is missing | construct or panic | taxonomy deleted 2026-08-02 |
 | **4** | No second mechanisms (spelling, swallow, fabricate, …) | Live parent-vector **citations** + climb to constructors where possible | Parent numbers **were unsound**; re-derive after S2 |
 | **5** | Truthful **and** lying twins per semantic family | Every owned residual family has both faces; enrollment = existence | **Barely touched** campaign-wide; not optional |
 
@@ -195,51 +195,6 @@
 
 ---
 
-## Criterion 3 — R split (law; do not collapse)
-
-**Criterion text:** Source-visible behaviour CONSTRUCTS; source-undecidable behaviour is specifically refused, **naming the artifact it cannot see** — not fabricated, not soft-failed.
-
-### The confusion that almost banked defects as progress
-
-#6988's AST naming auditor (`R_refusals_naming_nothing`) only checks that `observed` interpolates a type/path. **Naming a type is not the same as being legitimately undecidable.** Brown's post-campaign board: **~159 of 169** defect rows were **hierarchy lies** (wrong type/identity checks), not honest source-undecidable refusals. That auditor would have greenlit those lies as good C3 refusals. One unpark away from counting our own defects as criterion progress.
-
-#7022 sealed grounds (`RefusalDecidability`) climb past the prose auditor for axis-1 shape — but the default ground **`KitConstructionIncomplete.holds()` is always True**, so an honest kit gap and a type-hierarchy bug still mint identically. The default erases the distinction the criterion exists to measure.
-
-### Two R axes (never one number)
-
-| Axis | What counts | Drains by | C3 finality? |
-|---|---|---|---|
-| **`R_kit_incomplete`** | Mints whose sealed ground is `KitConstructionIncomplete` (OUR missing sugar/floor arm, or a false arm that should not exist) | Write the sugar/floor **or** prove a hierarchy lie and **delete the false arm** | **No** |
-| **`R_source_undecidable_refusals`** | Mints with **runtime** sealed grounds that `holds(world)`, **plus** residual classes enrolled as honestly undecidable (today: CM resolution gaps; others only when enrolled) | Produce the missing artifact when source decides it, or keep the named refusal with a ground that still holds | **Yes** — this is C3 |
-
-`R_refusals_over_decidable_source` (mint where `holds(world)` is false) remains a **measurement floor**, not a progress counter to lower by softening refusals: those mints must not exist.
-
-### Unrepeatable rule
-
-> **A refusal that exists because a type was wrong is a defect wearing a refusal.**
-> It drains by **fixing the type** (hierarchy / identity / membrane), **never** by improving the prose.
-
-Hierarchy-lie drains (brown's 152–159 class) are **type-ladder work**. They must not enroll as C3 progress when the refusal message is renamed.
-
-### Missing door (makes C3 measurable)
-
-CM resolution residuals currently have nowhere honest to land: derivation returns `ContextManagerResolutionGapV1`, but panic/SNW defaults to `KitConstructionIncomplete` — same bucket as bugs.
-
-**New sealed ground (named; enroll in `sealed_ground.py`):**
-
-| Member | Artifact | `holds(world)` | Why not kit-incomplete |
-|---|---|---|---|
-| **`EnrolledDemandUnresolved`** | `EnrolledDemandArtifact`: `demand_family` (e.g. `context-manager`), `demand_cid`, `use_site`, `gap_kind` (structural key from the resolution table), `expected_ref_type` (e.g. `ContextManagerContractRefV1`) | True iff the enrolled demand is still a **gap**, not a contract ref, in the resolution world at mint | Machinery **ran**; the enrolled demand has **no source-derived ref** after derivation. That is exhaustion of source-derived resolution, not a missing `match` arm on AST |
-
-Until CM (and sibling) residuals mint this ground, **C3 is re-scoped on paper only** — residual mass still collapses into `R_kit_incomplete`.
-
-**If.substitute class:** default residual is `R_kit_incomplete` (carry `branch_result_slot` through substitute). Enroll under `R_source_undecidable_refusals` only if, after the carry law exists, something still severs authenticated identity for undecidable reasons — then name that artifact with a runtime ground, do not leave it as kit-incomplete prose.
-
-### Disposition of #6988
-
-Advisor holds. Axis-1 AST shell **superseded** by #7022. Do not merge as the C3 instrument. See PR comment on #6988 for full finding.
-
----
 
 ## Standing rules (advisor enforces)
 
@@ -250,7 +205,6 @@ Advisor holds. Axis-1 AST shell **superseded** by #7022. Do not merge as the C3 
 5. **Never pipe then `$?`.**
 6. **Parent vector 208 is dead** as a plan input until 1.1.
 7. **Off-plan work:** advisor says **OFF-PLAN** before any celebration.
-8. **Criterion 3:** never count hierarchy-lie refusals or bare `KitConstructionIncomplete` renames as C3 progress; only `R_source_undecidable_refusals`.
 
 ---
 
@@ -273,7 +227,6 @@ Advisor holds. Axis-1 AST shell **superseded** by #7022. Do not merge as the C3 
 |---|---|---|---|
 | 2026-08-01 | `8857e4071` | Plan v1 written; runs 30720169468 + 30720199631 in_progress | — |
 | | | Parent R_total=208 retired as planning input | — |
-| 2026-08-02 | tip | C3 R-split law + `EnrolledDemandUnresolved` door named; #6988 finding posted (not closed); hierarchy-lie ≠ C3 progress | advisor disposition of #6988 |
 
 ### Active ranking
 
