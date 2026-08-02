@@ -210,3 +210,126 @@ def test_compose_refuses_tautological_clean_on_board() -> None:
     assert body["functionsConstructClean"] is None
     assert body["denominator"]["functions"].get("cleanRatioRefused") is True
     assert body["denominator"]["functions"].get("clean") is None
+
+
+
+def test_consumer_source_forbids_clean_equal_total_assignment() -> None:
+    """Static tooth: no bare functions_clean = functions_total default.
+
+    ANY RATIO WHOSE NUMERATOR DEFAULTS TO ITS DENOMINATOR IS NOT A MEASUREMENT.
+    Makes the class unrepresentable rather than fixing today's instance.
+    """
+    import ast
+
+    path = SCRIPTS / "recensus_enumerate_consumer.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    crimes: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        if node.targets[0].id not in {"functions_clean", "functionsClean"}:
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id in {
+            "functions_total",
+            "functionsTotal",
+        }:
+            crimes.append(
+                f"L{node.lineno}: {node.targets[0].id} = {node.value.id} "
+                "(identity default - not a measurement)"
+            )
+    assert not crimes, (
+        "ANY RATIO WHOSE NUMERATOR DEFAULTS TO ITS DENOMINATOR IS NOT A "
+        "MEASUREMENT.\n" + "\n".join(crimes)
+    )
+
+
+def test_outer_shell_escape_banks_recovered_roster_not_zero(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Outer last-resort must not bank functionsTotal=0 over a recoverable roster.
+
+    Latent hole: except Exception banked 0 whenever measure_file escaped. Make
+    that shape unrepresentable - recover D2 (or AST) mass and name residual.
+    """
+    recensus = _load(
+        "control_effect_recensus",
+        SCRIPTS / "control_effect_recensus.py",
+    )
+    src = tmp_path / "multi.py"
+    src.write_text(
+        "def a():\n    return 1\n\ndef b():\n    return 2\n\ndef c():\n    return 3\n",
+        encoding="utf-8",
+    )
+
+    # Escape shape: a BaseException that is not process control.
+    class NewBaseExceptionGap(BaseException):
+        pass
+
+    nodes = [
+        {"memento": {"function_name": "a"}},
+        {"memento": {"function_name": "b"}},
+        {"memento": {"function_name": "c"}},
+    ]
+
+    def fake_roster(**_k):
+        return nodes, []
+
+    monkeypatch.setattr(CONSUMER, "demand_function_roster", fake_roster)
+    # Also patch the name as imported by the helper after its import.
+    import recensus_enumerate_consumer as consumer_mod
+
+    monkeypatch.setattr(consumer_mod, "demand_function_roster", fake_roster)
+
+    row = recensus.terminal_after_measure_escape(
+        path=src,
+        relative="multi.py",
+        workspace_root=tmp_path,
+        error=NewBaseExceptionGap("escaped past consumer"),
+        category="backend-defect",
+    )
+    assert row["functionsTotal"] == 3, (
+        f"outer shell must bank recovered roster, got {row.get('functionsTotal')}"
+    )
+    assert row.get("rosterPreservedAfterResidualFailure") is True
+    assert row.get("cleanRatioRefused") is True
+    assert row.get("functionsClean") is None
+    defect = row.get("defect") or {}
+    assert defect.get("type") == "NewBaseExceptionGap" or "NewBaseExceptionGap" in str(
+        row.get("families") or {}
+    )
+
+
+def test_outer_shell_escape_banks_ast_when_roster_demand_also_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If D2 recovery also fails, AST mass still forbids silent zero."""
+    recensus = _load(
+        "control_effect_recensus",
+        SCRIPTS / "control_effect_recensus.py",
+    )
+    src = tmp_path / "multi.py"
+    src.write_text(
+        "def a():\n    return 1\n\ndef b():\n    return 2\n",
+        encoding="utf-8",
+    )
+
+    def boom_roster(**_k):
+        raise RuntimeError("roster recovery failed too")
+
+    import recensus_enumerate_consumer as consumer_mod
+
+    monkeypatch.setattr(consumer_mod, "demand_function_roster", boom_roster)
+
+    row = recensus.terminal_after_measure_escape(
+        path=src,
+        relative="multi.py",
+        workspace_root=tmp_path,
+        error=RuntimeError("outer escape"),
+        category="backend-defect",
+    )
+    assert row["functionsTotal"] == 2  # AST FunctionDef count
+    assert row["functionsEnumerated"] == 0
+    assert row.get("R_instrument_blind") == 1
+    assert row.get("cleanRatioRefused") is True
