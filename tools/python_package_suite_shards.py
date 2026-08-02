@@ -36,10 +36,11 @@ import json
 import sys
 from pathlib import Path
 
-# 32 shards: ~416 test files → ~13 files each. Under GitHub's 256-job matrix
-# cap (1/8 of the ceiling). On a 32-core box, one cold pytest per core is the
-# natural fan-out without drowning the runner scheduler in 64+ tiny jobs.
-SHARD_COUNT = 32
+# 8 shards: measurement sized the fan-out. Pytest work is ~25s mean / ~71s max
+# per shard; 32-way paid 89–156s env prep N times and stampeded cold sugarbin.
+# Eight keeps the sweep in minutes while cutting env tax and stampede 4×.
+# Env is prepared once (shared wheelhouse artifact); shards install --no-index.
+SHARD_COUNT = 8
 
 # Relative to repo root. Collected pytest targets are files under this tree.
 TESTS_REL = Path("implementations/python/sugar-lift-py-tests/tests")

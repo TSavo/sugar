@@ -1,0 +1,121 @@
+name: Install Python test environment from shared wheelhouse
+description: >-
+  Consumer half of python-test-environment. Installs third-party wheels from a
+  pre-built wheelhouse (no network resolve/build), binds first-party packages
+  to the SYNCED CHECKOUT via PYTHONPATH, and optionally reuses a tip-minted
+  environment-identity.json from the prepare job.
+
+# WHY THIS EXISTS
+#
+# Suite shards and floor axes each used to run the full python-test-environment
+# action: ~90–160s of pip wheel + venv install per job, identical work N times.
+# Measurement showed pytest work ~25s mean vs env prep ~89–156s. Prepare once
+# (full action uploads wheelhouse + identity); N consumers install --no-index
+# from the artifact. First-party still never enters site-packages.
+
+inputs:
+  python-version:
+    description: Interpreter patch pin (must match prepare job).
+    required: false
+    default: "3.12.13"
+  wheelhouse-path:
+    description: Directory of third-party wheels (downloaded artifact).
+    required: true
+  identity-path:
+    description: >-
+      Path to environment-identity.json minted by the prepare job for this tip.
+      When empty, identity is not installed (callers that need it must pass it).
+    required: false
+    default: ""
+
+outputs:
+  identity-path:
+    description: Path to environment-identity.json in the prepared env dir.
+    value: ${{ steps.install.outputs.identity-path }}
+  python:
+    description: Absolute path to the prepared interpreter.
+    value: ${{ steps.install.outputs.python }}
+  env-dir:
+    description: Root of the prepared environment.
+    value: ${{ steps.install.outputs.env-dir }}
+  checkout-pythonpath:
+    description: Absolute managed first-party PYTHONPATH for the synced checkout.
+    value: ${{ steps.install.outputs.checkout-pythonpath }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install third-party from shared wheelhouse + bind checkout PYTHONPATH
+      id: install
+      shell: bash
+      run: |
+        set -euo pipefail
+        wheelhouse="${{ inputs.wheelhouse-path }}"
+        if [ ! -d "$wheelhouse" ]; then
+          echo "::error::wheelhouse path missing: $wheelhouse"
+          exit 1
+        fi
+        shopt -s nullglob
+        wheels=( "$wheelhouse"/*.whl )
+        if [ "${#wheels[@]}" -eq 0 ]; then
+          echo "::error::shared wheelhouse has no .whl files at $wheelhouse"
+          ls -la "$wheelhouse" || true
+          exit 1
+        fi
+        # Refuse first-party wheels if a bad prepare uploaded them.
+        for whl in "$wheelhouse"/sugar_lift_*.whl "$wheelhouse"/sugar_source_tree-*.whl; do
+          if [ -e "$whl" ]; then
+            echo "::error::first-party wheel in shared house (false provenance): $whl"
+            exit 1
+          fi
+        done
+
+        env_dir="$RUNNER_TEMP/sugar-python-test-environment"
+        rm -rf "$env_dir"
+        mkdir -p "$env_dir"
+        venv="$env_dir/venv"
+        python -m venv "$venv"
+        "$venv/bin/python" -m pip install --quiet --upgrade pip wheel
+        # Install wheel files by path (no resolve). Same as the full action's
+        # third-party install half — not a second dependency authority.
+        "$venv/bin/python" -m pip install --quiet --no-index \
+          "${wheels[@]}"
+        "$venv/bin/python" -m pip freeze --all > "$env_dir/resolved-distributions.txt"
+
+        for pkg in sugar-lift-py-tests sugar-lift-python-source sugar-source-tree; do
+          if "$venv/bin/python" -m pip show "$pkg" >/dev/null 2>&1; then
+            echo "::error::first-party package $pkg present in venv; must resolve from checkout only"
+            exit 1
+          fi
+        done
+
+        checkout_pythonpath="$(
+          python3 tools/managed_checkout_pythonpath.py --repo-root .
+        )"
+        echo "PYTHONPATH=${checkout_pythonpath}" >> "$GITHUB_ENV"
+        echo "SUGAR_CHECKOUT_PYTHONPATH=${checkout_pythonpath}" >> "$GITHUB_ENV"
+
+        identity_out="$env_dir/environment-identity.json"
+        if [ -n "${{ inputs.identity-path }}" ]; then
+          if [ ! -f "${{ inputs.identity-path }}" ]; then
+            echo "::error::identity-path not a file: ${{ inputs.identity-path }}"
+            exit 1
+          fi
+          cp "${{ inputs.identity-path }}" "$identity_out"
+          echo "SUGAR_PYTHON_ENV_IDENTITY=$identity_out" >> "$GITHUB_ENV"
+          python3 tools/python_suite_identity_gate.py --environment-identity "$identity_out"
+        fi
+
+        chmod -R a-w "$venv/lib"
+        echo "PYTHONDONTWRITEBYTECODE=1" >> "$GITHUB_ENV"
+        echo "$venv/bin" >> "$GITHUB_PATH"
+        echo "python=$venv/bin/python" >> "$GITHUB_OUTPUT"
+        echo "env-dir=$env_dir" >> "$GITHUB_OUTPUT"
+        echo "checkout-pythonpath=$checkout_pythonpath" >> "$GITHUB_OUTPUT"
+        echo "identity-path=$identity_out" >> "$GITHUB_OUTPUT"
+        echo "shared-wheelhouse install: ${#wheels[@]} third-party wheels; checkout PYTHONPATH bound"
