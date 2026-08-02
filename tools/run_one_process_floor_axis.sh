@@ -50,8 +50,14 @@ PANDAS_CORPUS="$(
 FLOOR_SCRATCH="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}/.sugar/ci-floors/${axis_id}"
 export SUGAR_FLOOR_WORKSPACE="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}"
 
+# Prefer workspace (writable in CI). HOME/.cache failed mkdir on self-hosted
+# (run 30731778056 Permission denied). Fleet share is actions/cache, not HOME.
 if [ -z "${SUGAR_PROCESS_FLOOR_CACHE_DIR+x}" ]; then
-  export SUGAR_PROCESS_FLOOR_CACHE_DIR="${HOME}/.cache/sugar/process-floor-terminals"
+  if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+    export SUGAR_PROCESS_FLOOR_CACHE_DIR="${GITHUB_WORKSPACE}/.cache/sugar/process-floor-terminals"
+  else
+    export SUGAR_PROCESS_FLOOR_CACHE_DIR="${HOME}/.cache/sugar/process-floor-terminals"
+  fi
 fi
 if [ -z "${SUGAR_MEASUREMENT_TIP:-}" ] && [ -n "${GITHUB_SHA:-}" ]; then
   export SUGAR_MEASUREMENT_TIP="${GITHUB_SHA}"

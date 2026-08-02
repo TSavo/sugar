@@ -86,10 +86,10 @@ def resolve_cache_root() -> Path | None:
 
     Prefer explicit ``SUGAR_PROCESS_FLOOR_CACHE_DIR``.
 
-    Default is **host-durable** ``$HOME/.cache/sugar/process-floor-terminals`` so
-    parallel CI matrix jobs (separate workspaces) still share hits. A
-    workspace-local path is job-private on GitHub Actions and would force every
-    process-floor axis to cold-lift — slower under parallelization.
+    Default in GHA is **workspace-writable**
+    ``$GITHUB_WORKSPACE/.cache/sugar/process-floor-terminals`` (HOME/.cache is
+    not always mkdir-able on self-hosted runners). Fleet share is actions/cache
+    restore/save on that path, not host HOME.
 
     Disable: ``SUGAR_PROCESS_FLOOR_CACHE_DIR=off``.
     """
@@ -99,6 +99,16 @@ def resolve_cache_root() -> Path | None:
         if text in {"", "0", "off", "none", "disabled"}:
             return None
         return Path(text).expanduser().resolve()
+    # In GHA prefer workspace — always writable; fleet share is actions/cache.
+    # HOME/.cache is not mkdir-able on some self-hosted runners (30731778056).
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        return (
+            Path(workspace).resolve()
+            / ".cache"
+            / "sugar"
+            / "process-floor-terminals"
+        )
     home = os.environ.get("HOME")
     if home:
         return (
@@ -107,10 +117,6 @@ def resolve_cache_root() -> Path | None:
             / "sugar"
             / "process-floor-terminals"
         )
-    # Last resort: workspace (job-local; poor for multi-job fan-out).
-    workspace = os.environ.get("GITHUB_WORKSPACE")
-    if workspace:
-        return Path(workspace).resolve() / ".cache" / "process-floor-terminals"
     return None
 
 
