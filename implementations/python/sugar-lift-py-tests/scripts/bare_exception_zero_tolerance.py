@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """R_bare_exceptions — permanent baseline-free untyped-failure floor.
 
-Supervised persistent enum worker: reuses process across healthy files;
-restarts on native crash / timeout. Enumeration protocol only.
+Classifier over the supervised :class:`FileTerminal` stream (category
+``bare-exception``). Full corpus CI uses ``process_floor_shared_pass.py``
+(one lift, three projections). This CLI stays for discrimination / solo runs.
 """
 
 from __future__ import annotations
@@ -29,19 +30,18 @@ from _enum_floor_runtime import (  # noqa: E402
     require_explicit_scan_roots,
     require_python_paths,
 )
+from _process_floor_shared_pass import (  # noqa: E402
+    BareExceptionOffender,
+    project_bare_exception,
+    shared_process_floor_pass,
+)
 from _production_lift_child import (  # noqa: E402
     NON_FAILURE_OUTCOMES,
     OUTCOME_COMPLETED,
     OUTCOME_TYPED_GAP,
     production_lift_bootstrap_error,
 )
-from _supervised_enum_supervisor import FileTerminal, scan_paths  # noqa: E402
-
-
-class BareExceptionOffender(NamedTuple):
-    file: str
-    returncode: int
-    stderr_tail: str
+from _supervised_enum_supervisor import FileTerminal  # noqa: E402
 
 
 class ChildResult(NamedTuple):
@@ -80,17 +80,7 @@ def r_bare_exceptions(offenders: Sequence[BareExceptionOffender]) -> int:
 
 
 def _from_terminal(row: FileTerminal) -> ChildResult:
-    if row.category == "bare-exception":
-        return ChildResult(
-            row.file,
-            "bare-exception",
-            BareExceptionOffender(
-                row.file,
-                row.returncode if row.returncode is not None else 1,
-                row.stderr_tail,
-            ),
-        )
-    return ChildResult(row.file, row.category, None)
+    return ChildResult(row.file, row.category, project_bare_exception(row))
 
 
 def main() -> int:
@@ -148,21 +138,20 @@ def main() -> int:
     except (OSError, ValueError) as error:
         print(format_unmeasured_axis("R_bare_exceptions", reason=str(error)))
         return 1
-    progress_path.write_text(
-        f"# bare-exception supervised enum scan\n"
-        f"# engine={engine_path}\n"
-        f"# files={len(paths)}\n",
-        encoding="utf-8",
-    )
-    terminals = scan_paths(
+    shared = shared_process_floor_pass(
         paths, root=args.repo_root, file_timeout=float(args.file_timeout)
     )
-    rows = tuple(_from_terminal(t) for t in terminals)
-    with progress_path.open("a", encoding="utf-8") as progress:
-        for t in terminals:
+    rows = tuple(_from_terminal(t) for t in shared.terminals)
+    with progress_path.open("w", encoding="utf-8") as progress:
+        progress.write(
+            f"# bare-exception projection (shared pass)\n"
+            f"# engine={engine_path}\n"
+            f"# files={len(paths)}\n"
+        )
+        for t in shared.terminals:
             progress.write(f"{t.file}\t{t.category}\trestarts={t.worker_restarts}\n")
 
-    offenders = tuple(row.offender for row in rows if row.offender is not None)
+    offenders = shared.bare_exceptions
     print(
         "BARE-EXCEPTION SURFACE: "
         f"discovered={len(rows)} "

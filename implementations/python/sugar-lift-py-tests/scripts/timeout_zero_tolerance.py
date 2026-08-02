@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """R_timeouts — permanent baseline-free bounded-termination floor.
 
-Supervised persistent enum worker. A file exceeding the wall clock kills only
-that worker (caches restart); the file is a timeout offender and the scan continues.
+Classifier over the supervised :class:`FileTerminal` stream (category
+``timeout``). Full corpus CI uses ``process_floor_shared_pass.py`` (one lift,
+three projections). This CLI stays for discrimination / solo runs.
 """
 
 from __future__ import annotations
@@ -27,13 +28,13 @@ from _enum_floor_runtime import (  # noqa: E402
     require_explicit_scan_roots,
     require_python_paths,
 )
+from _process_floor_shared_pass import (  # noqa: E402
+    TimeoutOffender,
+    project_timeout,
+    shared_process_floor_pass,
+)
 from _production_lift_child import production_lift_bootstrap_error  # noqa: E402
-from _supervised_enum_supervisor import FileTerminal, scan_paths  # noqa: E402
-
-
-class TimeoutOffender(NamedTuple):
-    file: str
-    timeout_seconds: float
+from _supervised_enum_supervisor import FileTerminal  # noqa: E402
 
 
 class ChildResult(NamedTuple):
@@ -56,13 +57,9 @@ def r_timeouts(offenders: Sequence[TimeoutOffender]) -> int:
 
 
 def _from_terminal(row: FileTerminal, *, file_timeout: float) -> ChildResult:
-    if row.category == "timeout":
-        return ChildResult(
-            row.file,
-            "timeout",
-            timeout_offender(file=row.file, timeout_seconds=file_timeout),
-        )
-    return ChildResult(row.file, row.category, None)
+    return ChildResult(
+        row.file, row.category, project_timeout(row, file_timeout=file_timeout)
+    )
 
 
 def audit_paths(
@@ -75,21 +72,21 @@ def audit_paths(
     progress_path: Path | None = None,
     progress_stdout: bool = False,
 ) -> AuditSummary:
+    """Project timeout residuals from the **shared** supervised pass."""
     del workers, checkpoint_path, progress_stdout
-    if file_timeout > 30:
-        raise ValueError("per-file timeout may not exceed 30 seconds")
-    terminals = scan_paths(paths, root=root, file_timeout=float(file_timeout))
+    shared = shared_process_floor_pass(
+        paths, root=root, file_timeout=float(file_timeout)
+    )
     if progress_path is not None:
         progress_path.parent.mkdir(parents=True, exist_ok=True)
         with progress_path.open("w", encoding="utf-8") as stream:
-            stream.write(f"# timeout supervised enum scan files={len(paths)}\n")
-            for t in terminals:
+            stream.write(f"# timeout projection (shared pass) files={len(paths)}\n")
+            for t in shared.terminals:
                 stream.write(f"{t.file}\t{t.category}\n")
-    rows = tuple(_from_terminal(t, file_timeout=float(file_timeout)) for t in terminals)
-    return AuditSummary(
-        rows=rows,
-        offenders=tuple(row.offender for row in rows if row.offender is not None),
+    rows = tuple(
+        _from_terminal(t, file_timeout=float(file_timeout)) for t in shared.terminals
     )
+    return AuditSummary(rows=rows, offenders=shared.timeouts)
 
 
 def main() -> int:

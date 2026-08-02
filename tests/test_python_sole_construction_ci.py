@@ -12,6 +12,9 @@ because an earlier one was honestly red. The `if: always()` guarantee is now
 carried by the script's `axis` helper, which runs EVERY axis, collects the red
 ones, and fails at the end -- so the check below is that each axis goes through
 that helper, rather than that each has its own YAML step.
+
+Process axes (native / bare / timeout) share ONE supervised production pass
+(process_floor_shared_pass.py) — three projections, not three lifts.
 """
 
 from pathlib import Path
@@ -27,12 +30,9 @@ AXIS_COMMANDS = {
     "R_construction_panic_catches_outside_membrane = 0": (
         "construction_panic_catch_law.py"
     ),
-    # Criterion-2 process floors: axis names carry no "= 0" (pre-measure crash
-    # must not paint a bankable zero in the group header).
+    # Criterion-2 process floors: one shared pass projects three R axes.
+    "R_process_floors_shared_pass": "process_floor_shared_pass.py",
     "R_silent": "silent_zero_tolerance.py",
-    "R_native_crashes": "native_crash_zero_tolerance.py",
-    "R_bare_exceptions": "bare_exception_zero_tolerance.py",
-    "R_timeouts": "timeout_zero_tolerance.py",
     "R_vendor_special_case = 0": "vendor_special_case_law.py",
     "R_factory_walk_unclassified = 0": "factory_walk_unclassified_law.py",
     "R_finite_cap_opaque_completions = 0": ("finite_cap_opaque_completion_law.py"),
@@ -71,49 +71,44 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
                 "binding CI must census the checked-in production surface"
             )
         if axis in {
-            "R_native_crashes",
-            "R_bare_exceptions",
-            "R_timeouts",
+            "R_process_floors_shared_pass",
             "R_silent",
         }:
             # Process floors + Criterion-2 silent must name a population.
-            # Bare silent_zero_tolerance used to default to kit production_roots
-            # (~444 files) — false green while authenticated pandas was unmeasured.
             assert "PANDAS_CORPUS" in step or "authenticated_pandas" in step, (
                 f"{axis} must pass an explicit corpus path; silent default "
                 "to kit production_roots is a wrong-population false green"
             )
-            # Not only the script name: a path argument must follow.
             assert '"$PANDAS_CORPUS"' in step or "'$PANDAS_CORPUS'" in step, (
                 f"{axis} must pass \"$PANDAS_CORPUS\" as the scan root"
             )
-            # Scratch must not default under the population root.
             assert "--out-dir" in step or "FLOOR_SCRATCH" in step, (
                 f"{axis} must direct floor scratch outside the population "
                 "(S0.2: mkdir under site-packages/pandas is measurement crime)"
             )
-            # Group header must not embed a bankable zero.
             assert " = 0" not in step.split("\n", 1)[0], (
                 f"{axis} group name must not embed '= 0' (pre-measure crash bank)"
             )
 
 
-def test_process_floors_resolve_authenticated_pandas_population() -> None:
-    """The floor set must authenticate pandas before the four corpus axes."""
+def test_process_floors_share_one_supervised_pass() -> None:
+    """native / bare / timeout must not each re-lift the corpus in CI."""
     floors = FLOOR_SET.read_text()
-    assert "authenticated_pandas_corpus" in floors, (
-        "process floors must resolve the authenticated pandas corpus root"
-    )
+    assert "process_floor_shared_pass.py" in floors
+    assert "authenticated_pandas_corpus" in floors
     assert "PANDAS_CORPUS=" in floors
-    # Order: corpus resolved once, then all four Criterion-2 population axes use it.
-    corpus_at = floors.find("PANDAS_CORPUS=")
-    native_at = floors.find('axis "R_native_crashes"')
-    bare_at = floors.find('axis "R_bare_exceptions"')
-    timeout_at = floors.find('axis "R_timeouts"')
+    # Solo zero-tolerance CLIs must not appear as separate serial corpus axes.
+    for solo_axis in (
+        'axis "R_native_crashes"',
+        'axis "R_bare_exceptions"',
+        'axis "R_timeouts"',
+    ):
+        assert solo_axis not in floors
+    # Shared pass before silent (still a separate door).
+    shared_at = floors.find('axis "R_process_floors_shared_pass"')
     silent_at = floors.find('axis "R_silent"')
-    assert 0 <= corpus_at < native_at < bare_at < timeout_at < silent_at, (
-        "PANDAS_CORPUS must be bound before native/bare/timeout/silent axes"
-    )
+    corpus_at = floors.find("PANDAS_CORPUS=")
+    assert 0 <= corpus_at < shared_at < silent_at
 
 
 def test_no_axis_is_skipped_after_an_earlier_honest_red() -> None:

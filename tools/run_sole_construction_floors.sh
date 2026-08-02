@@ -49,7 +49,13 @@ axis "R_ownership = 0" python "$SCRIPTS/factory_ownership_law.py"
 axis "R_construction_panic_catches_outside_membrane = 0" \
   python "$SCRIPTS/construction_panic_catch_law.py"
 
-# Heavy supervised enum floors — sequential, inside the one lease interval.
+# Heavy supervised enum floors — ONE shared production pass for the three
+# process classifiers (native_crash / bare_exception / timeout). They read the
+# same FileTerminal stream; three independent scan_paths calls re-lifted the
+# corpus ~3× for no soundness reason. process_floor_shared_pass.py lifts once
+# and projects three R axes. Coverage is total (every corpus file → one
+# terminal); redundant PASSES are removed, not files.
+#
 # Population: authenticated pandas corpus (NOT kit production_roots).
 # Silent default to sugar-lift-py-tests src+scripts was a false green: R=0 on
 # ~444 kit files while the corpus process floors never entered pandas.
@@ -67,21 +73,16 @@ echo "process-floor population: authenticated pandas corpus at $PANDAS_CORPUS"
 FLOOR_SCRATCH="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}/.sugar/ci-floors"
 export SUGAR_FLOOR_WORKSPACE="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}"
 echo "process-floor scratch: $FLOOR_SCRATCH (never under population)"
-# Axis names: R_axis only — never "R_axis = 0" (false banked zero on pre-measure crash).
-axis "R_native_crashes" \
-  python "$SCRIPTS/native_crash_zero_tolerance.py" "$PANDAS_CORPUS" \
+# Shared pass prints R_native_crashes / R_bare_exceptions / R_timeouts as three
+# completed axes (not one merged residual). Group name has no bankable zero.
+axis "R_process_floors_shared_pass" \
+  python "$SCRIPTS/process_floor_shared_pass.py" "$PANDAS_CORPUS" \
   --repo-root "$PANDAS_CORPUS" \
-  --out-dir "$FLOOR_SCRATCH/native-crash"
-axis "R_bare_exceptions" \
-  python "$SCRIPTS/bare_exception_zero_tolerance.py" "$PANDAS_CORPUS" \
-  --repo-root "$PANDAS_CORPUS" \
-  --out-dir "$FLOOR_SCRATCH/bare-exception"
-axis "R_timeouts" \
-  python "$SCRIPTS/timeout_zero_tolerance.py" "$PANDAS_CORPUS" \
-  --repo-root "$PANDAS_CORPUS" \
-  --out-dir "$FLOOR_SCRATCH/timeout"
+  --out-dir "$FLOOR_SCRATCH/process-shared"
 # R_silent is Criterion 2's fourth simultaneous term — same population as the
 # three process floors. Kit-default silent was a false green (unmeasured corpus).
+# Still a separate door (census_source + roll-call); empty-census skip is a
+# follow-up after fraction measurement — not folded into the shared lift.
 axis "R_silent" \
   python "$SCRIPTS/silent_zero_tolerance.py" "$PANDAS_CORPUS" \
   --repo-root "$PANDAS_CORPUS" \

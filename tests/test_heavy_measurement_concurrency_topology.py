@@ -180,19 +180,28 @@ def test_standalone_floor_workflows_stay_discrimination_only():
 def test_orchestrator_still_runs_the_corpus_floors():
     """The floor set moved into one leased script -- ONE lease interval for the
     whole set, so no census interleaves between two axes and the complete set
-    still comes from one pinned run. It must not have lost an axis on the way."""
+    still comes from one pinned run. It must not have lost an axis on the way.
+
+    Process axes (native/bare/timeout) share one supervised pass
+    (process_floor_shared_pass.py) rather than three independent lifts.
+    """
     text = _text("factory-zero-tolerance.yml")
     assert "tools/run_sole_construction_floors.sh" in text
     floors = (ROOT / "tools" / "run_sole_construction_floors.sh").read_text()
     for script in (
-        "native_crash_zero_tolerance.py",
-        "bare_exception_zero_tolerance.py",
-        "timeout_zero_tolerance.py",
+        "process_floor_shared_pass.py",
         "silent_zero_tolerance.py",
         "factory_ownership_law.py",
         "construction_side_door_law.py",
     ):
         assert script in floors, f"the leased floor set must invoke {script}"
+    # Solo process CLIs are discrimination/solo doors — not three serial corpus lifts.
+    for solo_axis in (
+        'axis "R_native_crashes"',
+        'axis "R_bare_exceptions"',
+        'axis "R_timeouts"',
+    ):
+        assert solo_axis not in floors
 
 
 def test_roster_cadence_matches_each_workflow_trigger():

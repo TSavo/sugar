@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """R_native_crashes — permanent baseline-free corpus process floor.
 
-Supervised persistent enum worker. A signal death is attributed to the file
-currently in flight; the worker restarts and the census continues so every
-file still gets a terminal row.
+Classifier over the supervised :class:`FileTerminal` stream (category
+``native-crash``). Full corpus measurement in CI goes through
+``process_floor_shared_pass.py`` (one lift, three projections). This CLI remains
+for discrimination tests and solo re-runs; ``audit_paths`` uses the shared pass
+so a solo run is still one lift, not a third redundant protocol.
 """
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ from __future__ import annotations
 SCOREBOARD_AUTHORITY = False
 
 import argparse
-import os
 from pathlib import Path
 import signal
 import sys
@@ -30,15 +31,13 @@ from _enum_floor_runtime import (  # noqa: E402
     require_explicit_scan_roots,
     require_python_paths,
 )
+from _process_floor_shared_pass import (  # noqa: E402
+    NativeCrashOffender,
+    project_native_crash,
+    shared_process_floor_pass,
+)
 from _production_lift_child import production_lift_bootstrap_error  # noqa: E402
-from _supervised_enum_supervisor import FileTerminal, scan_paths  # noqa: E402
-
-
-class NativeCrashOffender(NamedTuple):
-    file: str
-    returncode: int
-    signal: str
-    stderr_tail: str
+from _supervised_enum_supervisor import FileTerminal  # noqa: E402
 
 
 class ChildResult(NamedTuple):
@@ -61,6 +60,7 @@ class AuditSummary(NamedTuple):
 def native_crash_offender(
     *, file: str, returncode: int, stderr: str
 ) -> NativeCrashOffender | None:
+    """Discrimination twin helper (subprocess-shaped); shared pass uses terminals."""
     if returncode >= 0:
         return None
     signal_number = -returncode
@@ -100,17 +100,11 @@ def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
 
 
 def _from_terminal(row: FileTerminal) -> ChildResult:
+    offender = project_native_crash(row)
     if row.category == "native-crash":
         rc = row.returncode if row.returncode is not None else -1
-        offender = native_crash_offender(
-            file=row.file, returncode=rc, stderr=row.stderr_tail
-        )
-        if offender is None and row.signal_name:
-            offender = NativeCrashOffender(
-                row.file, rc, row.signal_name, row.stderr_tail
-            )
         return ChildResult(row.file, "native-crash", rc, row.stderr_tail, offender)
-    if row.category in {"bare-exception"}:
+    if row.category == "bare-exception":
         return ChildResult(
             row.file, "non-native-red", row.returncode, row.stderr_tail, None
         )
@@ -127,24 +121,26 @@ def audit_paths(
     progress_path: Path | None = None,
     progress_stdout: bool = False,
 ) -> AuditSummary:
+    """Project native-crash residuals from the **shared** supervised pass."""
     del workers, checkpoint_path, progress_stdout
-    if file_timeout > 30:
-        raise ValueError("per-file timeout may not exceed 30 seconds")
-    terminals = scan_paths(paths, root=root, file_timeout=float(file_timeout))
+    shared = shared_process_floor_pass(
+        paths, root=root, file_timeout=float(file_timeout)
+    )
     if progress_path is not None:
         progress_path.parent.mkdir(parents=True, exist_ok=True)
         with progress_path.open("w", encoding="utf-8") as stream:
-            stream.write(f"# native-crash supervised enum scan files={len(paths)}\n")
-            for t in terminals:
+            stream.write(
+                f"# native-crash projection (shared pass) files={len(paths)}\n"
+            )
+            for t in shared.terminals:
                 stream.write(f"{t.file}\t{t.category}\n")
-    rows = tuple(_from_terminal(t) for t in terminals)
-    offenders = tuple(row.offender for row in rows if row.offender is not None)
+    rows = tuple(_from_terminal(t) for t in shared.terminals)
     return AuditSummary(
         discovered=len(rows),
         completed=sum(row.category in {"completed", "typed-gap"} for row in rows),
         timeouts=sum(row.category == "timeout" for row in rows),
         non_native_red=sum(row.category == "non-native-red" for row in rows),
-        offenders=offenders,
+        offenders=shared.native_crashes,
         rows=rows,
     )
 
