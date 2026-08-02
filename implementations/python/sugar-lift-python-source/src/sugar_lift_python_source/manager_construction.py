@@ -604,21 +604,81 @@ class _ModuleClassDefinitionBindingSugar:
         return outcome.and_then(bind)
 
 
+def _session_lexical_import_runner(session: SourceResolutionSession, module):
+    """One lexical import walk per source body per session.
+
+    Prefer the prefix-door SourceFile when the export path already built it —
+    measured residual after #7066 was still 2× SourceFile(config) from call-door
+    and value-door each re-running ``_run_lexical_import_pass`` (fresh Materialize).
+    One walk fills both roster doors.
+    """
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import (
+        _run_lexical_import_pass,
+        _run_lexical_import_pass_on_module,
+    )
+
+    hit = session.lexical_pass_hit(module.source_cid)
+    if hit is not None:
+        return hit
+    root = Path(".")
+    path = Path(module.source_seat)
+    source_file = session.prefix_file_hit(module.source_cid)
+    if source_file is not None:
+        runner = _run_lexical_import_pass_on_module(
+            source_file.root,
+            root=root,
+            path=path,
+            source=module.source,
+            source_cid=module.source_cid,
+            module_identities={},
+        )
+    else:
+        runner = _run_lexical_import_pass(
+            root,
+            path,
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
+    session.remember_lexical_pass(module.source_cid, runner)
+    return runner
+
+
 def _session_import_use_receipts(session: SourceResolutionSession, module):
     """Call-door import-use roster once per source body per session."""
     from pathlib import Path
+    from types import MappingProxyType
 
-    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_py_tests.import_binding import (
+        _LexicalRevalidationSnapshotV1,
+        _REVALIDATION_SNAPSHOTS,
+        _hash,
+        _mint_import_use_receipts,
+        _revalidation_cache_key,
+    )
 
     hit = session.import_use_hit(module.source_cid)
     if hit is not None:
         return hit
-    receipts, _ = authenticated_import_use_receipts(
-        Path("."),
-        Path(module.source_seat),
-        module.source,
-        module.source_cid,
-        module_identities={},
+    runner = _session_lexical_import_runner(session, module)
+    root = Path(".")
+    path = Path(module.source_seat)
+    identities: dict = {}
+    cache_key = _revalidation_cache_key(root, path, module.source_cid, identities)
+    if cache_key not in _REVALIDATION_SNAPSHOTS:
+        _REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(
+            row_cids=frozenset(_hash(row) for row in runner.rows),
+            outcomes=MappingProxyType(dict(runner.outcomes)),
+        )
+    receipts = _mint_import_use_receipts(
+        runner.rows,
+        root=root,
+        path=path,
+        source=module.source,
+        source_cid=module.source_cid,
+        module_identities=identities,
     )
     session.remember_import_use(module.source_cid, receipts)
     return receipts
@@ -627,18 +687,36 @@ def _session_import_use_receipts(session: SourceResolutionSession, module):
 def _session_import_value_receipts(session: SourceResolutionSession, module):
     """Value-door import roster once per source body per session."""
     from pathlib import Path
+    from types import MappingProxyType
 
-    from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
+    from sugar_lift_py_tests.import_binding import (
+        _LexicalRevalidationSnapshotV1,
+        _VALUE_REVALIDATION_SNAPSHOTS,
+        _hash,
+        _mint_import_use_receipts,
+        _revalidation_cache_key,
+    )
 
     hit = session.import_value_hit(module.source_cid)
     if hit is not None:
         return hit
-    receipts, _ = authenticated_import_value_use_receipts(
-        Path("."),
-        Path(module.source_seat),
-        module.source,
-        module.source_cid,
-        module_identities={},
+    runner = _session_lexical_import_runner(session, module)
+    root = Path(".")
+    path = Path(module.source_seat)
+    identities: dict = {}
+    cache_key = _revalidation_cache_key(root, path, module.source_cid, identities)
+    if cache_key not in _VALUE_REVALIDATION_SNAPSHOTS:
+        _VALUE_REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(
+            row_cids=frozenset(_hash(row) for row in runner.value_rows),
+            outcomes=MappingProxyType(dict(runner.value_outcomes)),
+        )
+    receipts = _mint_import_use_receipts(
+        runner.value_rows,
+        root=root,
+        path=path,
+        source=module.source,
+        source_cid=module.source_cid,
+        module_identities=identities,
     )
     session.remember_import_value(module.source_cid, receipts)
     return receipts
