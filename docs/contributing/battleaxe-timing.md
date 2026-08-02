@@ -47,14 +47,21 @@ export SUGAR_BX_REQUIRE_QUIET=1
 
 When `SUGAR_BX_REQUIRE_QUIET=1`, `bin/brun` / `bin/sugarbin run --host bx`:
 
-1. Exclusive remote flock `/var/tmp/sugar-bx-timing-measurement.lease`
-2. Under lock: sample load1 → **76** if over ceiling
-3. Under lock: run `tools/bx_corpus_pin_gate.py` against
+1. Remote shell **cd into the synced checkout root** (`SUGAR_BX_REPO`) before
+   any pin path is touched. Relative pin/python paths
+   (`docs/ledgers/pins/…`, `.venv-py312/bin/python`) are then resolved under
+   that root (absolute paths pass through). Checking the pin file *before*
+   this cd always exits **78** even when the pin is synced — only absolute
+   `/tmp` pins worked; that was a gate bug, not a missing pin.
+2. Exclusive remote flock `/var/tmp/sugar-bx-timing-measurement.lease`
+3. Under lock: sample load1 → **76** if over ceiling
+4. Under lock: run `tools/bx_corpus_pin_gate.py` against
    `.venv-py312` + banked pin → **78** if version/fileCount mismatch
    (identity mode: version + file count; prints expected aggregate in the
    receipt). `control_effect_recensus` also exits **78** on pin/aggregate refuse.
-4. Run the measurement while still holding the lease
-5. Print load before/after (`lease=held`) and pin `phase=ok` on stderr
+5. Run the measurement while still holding the lease (measure still cds to
+   the caller's repo-relative cwd via `prefix_cmd`)
+6. Print load before/after (`lease=held`) and pin `phase=ok` on stderr
 
 ## One-time remote env (pinned pandas corpus)
 

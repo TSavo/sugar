@@ -277,9 +277,13 @@ sugar_bx_run_ambient() {
   measured_cmd="${prefix_cmd}${run_cmd# }"
   # Pin gate under lease after load. Identity mode (version+fileCount) default.
   # All remote expansions use \$ so local $? does not fire while building wrapper.
-  # REPO_CWD: pin check MUST run in the synced checkout — relative
-  # .venv-py312/bin/python and docs/ledgers/pins/… are unresolvable from $HOME
-  # (crime=corpus-pin-python-missing under load1=7 was this cwd bug, not a missing venv).
+  #
+  # REPO_ROOT first, then pin existence. Relative pin/python paths are
+  # repo-root-relative (docs/ledgers/pins/…, .venv-py312/bin/python). Checking
+  # them before cd lands in $HOME (ssh default) or a caller subdir and always
+  # 78s — only absolute /tmp pins worked. Pin against SUGAR_BX_REPO, not
+  # remote_cwd (may be a subdir when REL_CWD is set). measured_cmd still cds
+  # to the caller's cwd via prefix_cmd after the pin authenticates.
   wrapper="set -euo pipefail
 LOCK=$(sugar_bx_quote "$lock")
 WAIT=$(sugar_bx_quote "$wait_s")
@@ -288,8 +292,18 @@ HOST=$(sugar_bx_quote "$host_lit")
 SKIP_PIN=$(sugar_bx_quote "$pin_skip")
 PIN_PATH=$(sugar_bx_quote "$pin_path")
 PIN_PY=$(sugar_bx_quote "$pin_py")
-REPO_CWD=$(sugar_bx_quote "$remote_cwd")
-cd \"\$REPO_CWD\" || { printf 'sugarbin: crime=corpus-pin-cwd-missing path=%s\\n' \"\$REPO_CWD\" >&2; exit 78; }
+REPO_ROOT=$(sugar_bx_quote "$SUGAR_BX_REPO")
+cd \"\$REPO_ROOT\" || { printf 'sugarbin: crime=corpus-pin-cwd-missing path=%s replacement=synced checkout at SUGAR_BX_REPO must exist before pin check\\n' \"\$REPO_ROOT\" >&2; exit 78; }
+# Root relative pin/python against the synced checkout. Absolute paths (e.g.
+# /tmp/pin.json or a fleet venv) pass through unchanged.
+case \"\$PIN_PATH\" in
+  /*) ;;
+  *) PIN_PATH=\"\$REPO_ROOT/\$PIN_PATH\" ;;
+esac
+case \"\$PIN_PY\" in
+  /*) ;;
+  *) PIN_PY=\"\$REPO_ROOT/\$PIN_PY\" ;;
+esac
 touch \"\$LOCK\" || { printf 'sugarbin: crime=timing-lease-uncreatable path=%s\\n' \"\$LOCK\" >&2; exit 77; }
 exec 9>>\"\$LOCK\"
 if ! command -v flock >/dev/null 2>&1; then
@@ -324,15 +338,15 @@ fi
 if [[ \"\$SKIP_PIN\" != 1 && \"\$SKIP_PIN\" != true && \"\$SKIP_PIN\" != yes ]]; then
   export PYTHONPATH=implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-source-tree/src:\${PYTHONPATH:-}
   if [[ ! -x \"\$PIN_PY\" ]]; then
-    printf 'sugarbin: crime=corpus-pin-python-missing path=%s replacement=bin/brun -- bash scripts/bootstrap-venv-py312.sh (or reuse remote checkout sugar-bcargo-a978990da5ba which already has .venv-py312)\\n' \"\$PIN_PY\" >&2
+    printf 'sugarbin: crime=corpus-pin-python-missing path=%s cwd=%s replacement=bin/brun -- bash scripts/bootstrap-venv-py312.sh (or absolute SUGAR_BX_CORPUS_PYTHON to a fleet venv with 3.0.3/1421). Relative .venv-py312 is resolved under the synced repo root AFTER remote cd — not from \$HOME.\\n' \"\$PIN_PY\" \"\$REPO_ROOT\" >&2
     exit 78
   fi
   if [[ ! -f \"\$PIN_PATH\" ]]; then
-    printf 'sugarbin: crime=corpus-pin-file-missing path=%s replacement=docs/ledgers/pins/pandas-3.0.3.pin.json must be in the synced checkout\\n' \"\$PIN_PATH\" >&2
+    printf 'sugarbin: crime=corpus-pin-file-missing path=%s cwd=%s replacement=docs/ledgers/pins/pandas-3.0.3.pin.json must be in the synced checkout (sync_paths includes docs/ledgers). Relative pin paths are resolved under repo root AFTER remote cd — a check before that cd always 78s.\\n' \"\$PIN_PATH\" \"\$REPO_ROOT\" >&2
     exit 78
   fi
   set +e
-  \"\$PIN_PY\" tools/bx_corpus_pin_gate.py --expected-pin \"\$PIN_PATH\" --python \"\$PIN_PY\"
+  \"\$PIN_PY\" \"\$REPO_ROOT\"/tools/bx_corpus_pin_gate.py --expected-pin \"\$PIN_PATH\" --python \"\$PIN_PY\"
   pin_st=\$?
   set -e
   if [[ \"\$pin_st\" != 0 ]]; then
