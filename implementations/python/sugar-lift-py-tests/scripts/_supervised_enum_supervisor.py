@@ -291,14 +291,106 @@ class SupervisedEnumSupervisor:
         )
 
     def scan(self, paths: Sequence[tuple[Path, str]]) -> list[FileTerminal]:
-        """Lift every (path, rel); guarantee one terminal row per file."""
+        """Lift every (path, rel); guarantee one terminal row per file.
+
+        Content-addressed hits (tip × corpus × axis × file-content cid × …)
+        skip the worker lift. Misses are full honest measurement. Only
+        completed / typed-gap / bare-exception rows are banked.
+        """
+        from process_floor_measurement_cache import (
+            DEFAULT_AXIS,
+            MeasurementKey,
+            ProcessFloorTerminalCache,
+            CacheRefuse,
+            corpus_manifest_cid_for_paths,
+            demand_table_cid,
+            file_content_cid,
+            payload_to_file_terminal,
+            resolve_cache_root,
+            resolve_measurement_tip,
+            terminal_to_payload,
+        )
+
+        cache_root = resolve_cache_root()
+        cache = ProcessFloorTerminalCache(cache_root) if cache_root is not None else None
+        tip = resolve_measurement_tip()
+        demand_cid = demand_table_cid(self.demand_table_path)
+        timeout_ms = int(round(self.file_timeout * 1000))
+        path_list = [path for path, _rel in paths]
+        corpus_cid = corpus_manifest_cid_for_paths(self.corpus_root, path_list)
+
+        ordered: list[FileTerminal | None] = [None] * len(paths)
+        pending: list[tuple[int, Path, str, MeasurementKey]] = []
+        hits = 0
+        refuses = 0
+
+        if cache is not None:
+            for index, (path, rel) in enumerate(paths):
+                key = MeasurementKey(
+                    tip=tip,
+                    corpus_manifest_cid=corpus_cid,
+                    axis=DEFAULT_AXIS,
+                    file_content_cid=file_content_cid(path),
+                    demand_table_cid=demand_cid,
+                    file_timeout_ms=timeout_ms,
+                )
+                try:
+                    payload = cache.lookup(key)
+                except CacheRefuse:
+                    refuses += 1
+                    pending.append((index, path, rel, key))
+                    continue
+                if payload is None:
+                    pending.append((index, path, rel, key))
+                    continue
+                ordered[index] = payload_to_file_terminal(payload, worker_restarts=0)
+                hits += 1
+        else:
+            for index, (path, rel) in enumerate(paths):
+                key = MeasurementKey(
+                    tip=tip,
+                    corpus_manifest_cid=corpus_cid,
+                    axis=DEFAULT_AXIS,
+                    file_content_cid=file_content_cid(path),
+                    demand_table_cid=demand_cid,
+                    file_timeout_ms=timeout_ms,
+                )
+                pending.append((index, path, rel, key))
+
+        if pending:
+            try:
+                self.start()
+                for index, path, rel, key in pending:
+                    measured = self.lift_file(path, rel)
+                    ordered[index] = measured
+                    if cache is not None:
+                        payload = terminal_to_payload(
+                            file=measured.file,
+                            category=measured.category,
+                            returncode=measured.returncode,
+                            signal_name=measured.signal_name,
+                            stderr_tail=measured.stderr_tail,
+                            terminal=measured.terminal,
+                        )
+                        cache.store(key, payload)
+            finally:
+                self.stop()
+
+        if cache is not None:
+            print(
+                "PROCESS-FLOOR-CACHE: "
+                f"root={cache.root} tip={tip} "
+                f"hits={hits} misses={len(pending)} refuses={refuses} "
+                f"corpusManifestCid={corpus_cid[:48]}…"
+            )
+
         rows: list[FileTerminal] = []
-        try:
-            self.start()
-            for path, rel in paths:
-                rows.append(self.lift_file(path, rel))
-        finally:
-            self.stop()
+        for index, row in enumerate(ordered):
+            if row is None:
+                raise RuntimeError(
+                    f"process floor scan left file unmeasured at index {index}"
+                )
+            rows.append(row)
         return rows
 
 
