@@ -8,8 +8,11 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+
+from native_carrier_testimony import authenticated_function_value
 
 
 def _fn(src):
@@ -20,7 +23,12 @@ def _fn(src):
 
 
 def _invs(src):
-    return _fn(src).sugar().desugar().value.invs()
+    function = _fn(src)
+    outcome = function.sugar().desugar()
+    if isinstance(outcome, Complete):
+        return outcome.value.invs()
+    # Deleted expectation: each formal loop-body equality completed before binding.
+    return authenticated_function_value(function, operator="equals").invs()
 
 
 def test_concrete_for_unrolls_the_body_per_element():

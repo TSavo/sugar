@@ -301,29 +301,64 @@ def test_continuation_carrier_inherits_enclosing_reducer_pre_effect_state():
     assert halted.state is state
 
 
-def test_continuation_carrier_rejects_conflicting_pre_effect_state():
+def test_continuation_carrier_preserves_newer_reducer_pre_effect_state():
+    """A nested reducer carrier supersedes the enclosing carrier's older state.
+
+    The deleted expectation was that discharge panic on any differing nested
+    state.  That made the enclosing carrier falsely authoritative over state
+    reached later by the reducer continuation.
+    """
     first, left, right = _carrier(operator="less_than")
     outer_state = _ReducedBlock((TermValue(71),), True, ())
-    conflicting_state = _ReducedBlock((TermValue(72),), True, ())
-    second, _second_left, _second_right = _carrier(operator="less_than")
-    second = second.and_then(
+    newer_state = _ReducedBlock((TermValue(72),), True, ())
+    second_left = _coordinate("second_left", 2)
+    second_right = _coordinate("second_right", 3)
+    second = NativeOperationExitCarrierV1.mint(
+        site=_site(),
+        operator="less_than",
+        operands=(
+            SymbolicValue(make_var("second_left"), second_left),
+            SymbolicValue(make_var("second_right"), second_right),
+        ),
+        coordinates=(second_left, second_right),
+    ).and_then(
         lambda value: Complete(value),
-        pre_effect_state=ReducerPreEffectStateV1._from_reducer(conflicting_state),
+        pre_effect_state=ReducerPreEffectStateV1._from_reducer(newer_state),
     )
     chained = first.and_then(
         lambda _value: second,
         pre_effect_state=ReducerPreEffectStateV1._from_reducer(outer_state),
     )
 
+    exits = chained.discharge(
+        {
+            left.coordinate_cid: TermValue(1),
+            right.coordinate_cid: TermValue(2),
+            second_left.coordinate_cid: NoneValue(),
+            second_right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
+    assert halted.state is newer_state
+
+
+def test_direct_conflicting_pre_effect_state_reenrollment_stays_loud():
+    carrier, _left, _right = _carrier(operator="less_than")
+    first_state = _ReducedBlock((TermValue(71),), True, ())
+    conflicting_state = _ReducedBlock((TermValue(72),), True, ())
+    enrolled = carrier.and_then(
+        lambda value: Complete(value),
+        pre_effect_state=ReducerPreEffectStateV1._from_reducer(first_state),
+    )
+
     with pytest.raises(
         ConstructionPanic,
         match="a second conflicting reducer pre-effect state",
     ):
-        chained.discharge(
-            {
-                left.coordinate_cid: TermValue(1),
-                right.coordinate_cid: TermValue(2),
-            }
+        enrolled.and_then(
+            lambda value: Complete(value),
+            pre_effect_state=ReducerPreEffectStateV1._from_reducer(conflicting_state),
         )
 
 

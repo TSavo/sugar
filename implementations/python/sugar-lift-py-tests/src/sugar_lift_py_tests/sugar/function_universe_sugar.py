@@ -246,7 +246,12 @@ def reduce_block_to_exitset(
 
     for index, head in enumerate(statements):
 
-        def reduce_next(state: _ReducedBlock) -> ExitSet[_ReducedBlock]:
+        def reduce_next(
+            state: _ReducedBlock, *, statement=head
+        ) -> ExitSet[_ReducedBlock]:
+            # A native-operation carrier may retain this callback until after
+            # the outer reducer loop advances. Bind the current statement now;
+            # a late-bound ``head`` skips the deferred tail to the final node.
             if not state.can_fall_through:
                 # A terminal Completed face (return, including return from
                 # finally) owns the exit.  It is completed rather than halted,
@@ -282,7 +287,7 @@ def reduce_block_to_exitset(
                     statement_ctx = statement_ctx.with_observed_effect(
                         binding.slot_id, binding.effect
                     )
-            outcome = head.desugar(statement_ctx)
+            outcome = statement.desugar(statement_ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
             def project(value):

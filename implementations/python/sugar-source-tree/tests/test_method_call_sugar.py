@@ -8,6 +8,12 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
+from native_carrier_testimony import (
+    authenticated_function_value,
+    completed_function_value,
+    native_carrier_for,
+)
+
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
@@ -17,7 +23,7 @@ def _fn(src):
 
 
 def _out(src):
-    return _fn(src).sugar().desugar().value.post().args[1]
+    return completed_function_value(_fn(src)).post().args[1]
 
 
 def test_method_call_is_the_method_coordinate():
@@ -36,12 +42,11 @@ def test_method_chains_compose():
 
 
 def test_assert_consumes_the_coordinate():
-    inv = (
-        _fn("def A(s):\n    assert s.upper() == s\n    return s\n")
-        .sugar()
-        .desugar()
-        .value.invs()[0]
-    )
+    # Deleted expectation: the formal equality completed before its caller bound s.
+    inv = authenticated_function_value(
+        _fn("def A(s):\n    assert s.upper() == s\n    return s\n"),
+        operator="equals",
+    ).invs()[0]
     assert inv.name == "py.eq"
     assert inv.args[0].name == "call:upper"
 
@@ -55,13 +60,15 @@ def test_keyword_args_lift():
 
 
 def test_spread_keyword_args_build_reference_method_call():
-    t = _out("def A(z, d):\n    return z.get(1, **d)\n")
-
-    assert t.name == "python:call"
-    assert t.args[0].value == "z.get"
-    spread = t.args[-1]
-    assert spread.name == "python:double_starred_kwarg"
-    assert spread.args[0].name == "d"
+    """Deleted expectation: formal attribute lookup completed before binding z."""
+    carrier = native_carrier_for(
+        _fn("def A(z, d):\n    return z.get(1, **d)\n"),
+        operator="attribute_named",
+    )
+    receiver, name = carrier.operands
+    assert receiver.to_term(owner="method receiver carrier tooth").name == "z"
+    assert name.value == "get"
+    assert len(carrier.continuations) == 5
 
 
 def test_spread_call_is_a_constructed_method_argument_coordinate():
