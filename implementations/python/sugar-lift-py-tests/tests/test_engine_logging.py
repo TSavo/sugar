@@ -108,14 +108,30 @@ def test_heartbeat_only_live_log_omits_high_volume_debug_spans(
     previous = engine_log._LIVE_HANDLER
     engine_log._LIVE_HANDLER = None
     monkeypatch.setenv("SUGAR_ENGINE_TRACE_EVENTS", "0")
+    dumps_calls: list[object] = []
+    real_dumps = engine_log.json.dumps
+
+    def counting_dumps(*args, **kwargs):
+        dumps_calls.append(1)
+        return real_dumps(*args, **kwargs)
+
+    monkeypatch.setattr(engine_log.json, "dumps", counting_dumps)
     try:
         engine_log.configure_live_log(str(path))
+        # TRACE=0 must raise logger level so DEBUG enter/exit never reach
+        # json.dumps — handler-only filtering still pays serialisation.
+        assert engine_log.LOGGER.level == logging.WARNING
+        assert not engine_log.LOGGER.isEnabledFor(logging.DEBUG)
         with engine_log.reduction_span(sugar="NameSugar", role="term", site="t.py:1:0"):
+            # enter+exit are DEBUG: zero dumps on the hot path
+            assert dumps_calls == []
             engine_log._emit_heartbeats(
                 now=time.monotonic() + 1.0, minimum_seconds=0.01
             )
         payloads = [json.loads(line) for line in path.read_text().splitlines()]
         assert [payload["event"] for payload in payloads] == ["heartbeat"]
+        # Only the WARNING heartbeat paid serialisation.
+        assert len(dumps_calls) == 1
     finally:
         if engine_log._LIVE_HANDLER is not None:
             engine_log.LOGGER.removeHandler(engine_log._LIVE_HANDLER)

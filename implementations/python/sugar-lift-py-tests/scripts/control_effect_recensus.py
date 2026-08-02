@@ -65,10 +65,18 @@ No subprocess. No process pool. Construction context is required: bare
 defect). The real lift pipeline injects the same door via lift_rpc.
 
 I/O split (never mixed):
-  --engine-log   sugar engine JSONL (construction telemetry)
+  --engine-log   sugar engine JSONL (WARNING heartbeats by default)
+  --engine-trace opt-in full per-span DEBUG enter/exit flood
   --progress     tqdm bar only
   --json         final result summary
   --checkpoint-jsonl  per-file durable journal
+
+Engine log default is SUGAR_ENGINE_TRACE_EVENTS=0: WARNING heartbeats,
+cycle_suspected, and errors only — enough to name a stall. Per-span DEBUG
+enter/exit is write-only for this board (R comes from construction/desugar
+axes, not engine.jsonl) and costs json.dumps+FileHandler on every sugar
+enter/exit on the reduction hot path. Pass --engine-trace only when
+debugging a named stall needs the full stack flood.
 """
 
 from __future__ import annotations
@@ -227,11 +235,22 @@ class _EngineStdoutHeartbeat(logging.Handler):
             self.handleError(record)
 
 
-def _configure_engine_log(path: Path) -> None:
-    """Engine JSONL on disk + rate-limited stdout heartbeat for CI job logs."""
+def _configure_engine_log(path: Path, *, engine_trace: bool = False) -> None:
+    """Engine JSONL on disk + rate-limited stdout heartbeat for CI job logs.
+
+    Default is WARNING-only (``SUGAR_ENGINE_TRACE_EVENTS=0``): heartbeats,
+    cycle_suspected, and errors — enough to name a stall. Per-span DEBUG
+    enter/exit is opt-in via ``engine_trace=True`` / ``--engine-trace``; the
+    scoreboard path does not read those events for R, and they cost
+    ``json.dumps(sort_keys=...)`` plus a FileHandler write on every sugar
+    enter/exit on the reduction hot path (~1 MB/file, write-only).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     # Prefer the kit's own sink; also pin env so late imports see it.
     os.environ["SUGAR_ENGINE_LOG"] = str(path.resolve())
+    # Force the scoreboard default: do not inherit ambient TRACE=1 from a
+    # parent shell. Full span flood is explicit --engine-trace only.
+    os.environ["SUGAR_ENGINE_TRACE_EVENTS"] = "1" if engine_trace else "0"
     from sugar_lift_py_tests import engine_log
 
     # Drop any prior live handler (e.g. wrong path from env at import time).
@@ -241,9 +260,14 @@ def _configure_engine_log(path: Path) -> None:
     engine_log._LIVE_HANDLER = None  # type: ignore[attr-defined]
     engine_log.configure_live_log(str(path.resolve()))
     logger.propagate = False
-    logger.setLevel(logging.DEBUG)
+    # configure_live_log already set logger level from TRACE. Do not re-raise
+    # to DEBUG here — that re-enables hot-path json.dumps even when the file
+    # handler filters at WARNING.
+    logger.setLevel(logging.DEBUG if engine_trace else logging.WARNING)
     # SCOREBOARD_AUTHORITY: never leave engine heartbeats file-only in CI.
+    # WARNING floor: job log names stalls; never mirror per-span DEBUG flood.
     heartbeat = _EngineStdoutHeartbeat(min_interval_s=2.0)
+    heartbeat.setLevel(logging.WARNING)
     heartbeat.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(heartbeat)
 
@@ -749,6 +773,17 @@ def main() -> int:
         help="sugar engine JSONL only (default: <out-dir>/engine.jsonl)",
     )
     parser.add_argument(
+        "--engine-trace",
+        action="store_true",
+        default=False,
+        help=(
+            "opt-in full per-span DEBUG enter/exit JSONL (SUGAR_ENGINE_TRACE_EVENTS=1). "
+            "Default is WARNING-only heartbeats/cycles/errors for stall naming — "
+            "the board does not consume per-span events for R, and the flood is "
+            "serialisation on the reduction hot path."
+        ),
+    )
+    parser.add_argument(
         "--progress",
         type=Path,
         default=None,
@@ -854,7 +889,7 @@ def main() -> int:
     running_counts_path = out / "running-counts.jsonl"
 
     _silence_console_logging()
-    _configure_engine_log(engine_path)
+    _configure_engine_log(engine_path, engine_trace=bool(args.engine_trace))
     if args.write_corpus_pin is not None:
         write_pin(observed_pin, args.write_corpus_pin)
 
