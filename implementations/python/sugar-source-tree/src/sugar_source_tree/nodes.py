@@ -1049,39 +1049,17 @@ class SourceUnit:
             ):
                 return None
 
-            # Nested definitions are owned by the containing function, not by
-            # module_direct_bindings.  Resolve only an earlier same-name
-            # definition in this exact lexical body; foreign scopes and
-            # post-call definitions remain loud.
-            owner_span = owner.line_col_span()
-            nested = [
-                candidate
-                for candidate in self.function_nodes
-                if candidate.name == call.func.id
-                and (
-                    candidate.line_col_span().start_line,
-                    candidate.line_col_span().start_col,
-                )
-                >= (owner_span.start_line, owner_span.start_col)
-                and (
-                    candidate.line_col_span().end_line,
-                    candidate.line_col_span().end_col,
-                )
-                <= (owner_span.end_line, owner_span.end_col)
-                and (
-                    candidate.line_col_span().start_line,
-                    candidate.line_col_span().start_col,
-                )
-                < (span.start_line, span.start_col)
-            ]
-            if nested:
-                return max(
-                    nested,
-                    key=lambda item: (
-                        item.line_col_span().start_line,
-                        item.line_col_span().start_col,
-                    ),
-                )
+            # Do NOT resolve "nested" names from function_nodes here.
+            # function_nodes is FunctionDef/AsyncFunctionDef only — never ClassDef.
+            # Returning a FunctionDef as an allocation definition made
+            # source_class_has_authenticated_default_attribute_behavior call
+            # ClassDef._authenticated_new_constructor_shape on a FunctionDef
+            # (recursive Name-calls: def f: f(...) — the enclosing FunctionDef
+            # matched as a "prior nested" same-name definition). That AttributeError
+            # blinded recensus (instrument-defect) and factory_walk auditor-errors
+            # on real pandas (e.g. io/json/_normalize.py recursive normalize).
+            # Nested ClassDef allocation is not enrolled via function_nodes; module
+            # ClassDef bindings below remain the sole allocation door.
 
         bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
         if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
@@ -1186,6 +1164,10 @@ class SourceUnit:
         definition: "ClassDef",
     ) -> bool:
         """Whether ordinary attribute storage/lookup is source-constructed."""
+        # Defense in depth: allocation definition must be ClassDef. A FunctionDef
+        # here is not "no default attributes" — it is not an allocation at all.
+        if not isinstance(definition, ClassDef):
+            return False
         if definition._authenticated_new_constructor_shape() is not None:
             return True
         forbidden_methods = {
