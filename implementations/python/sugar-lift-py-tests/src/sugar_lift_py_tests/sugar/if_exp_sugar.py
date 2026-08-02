@@ -39,8 +39,9 @@ class IfExpSugar(ConstructedTermSugar):
 
     def __post_init__(self) -> None:
         # Defense in depth: construction door is IfExp._construct_sugar, which
-        # raises SugarNotWritten for non-term arms. If anything bypasses that
-        # door, refuse the same way — never TypeError.
+        # raises SugarNotWritten for non-term arms. SpreadCollectionSugar is
+        # ConstructedTermSugar (to_term admitted). If anything bypasses the
+        # door with a bare Sugar arm, refuse the same way — never TypeError.
         from sugar_source_tree.panic import SugarNotWritten
 
         for arm_name, arm in (

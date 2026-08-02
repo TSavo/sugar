@@ -4,15 +4,17 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.ellipsis_value import EllipsisValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class EllipsisLiteralSugar(Sugar):
+class EllipsisLiteralSugar(ConstructedTermSugar):
     """The `...` (Ellipsis) literal. A leaf: it stands as the EllipsisValue
     floor -- the Ellipsis-ness IS the type, there is no value to carry.
-    Mirrors NoneLiteralSugar's shape exactly."""
+    Mirrors NoneLiteralSugar's shape exactly, including ConstructedTermSugar
+    admission: ``x[..., :]`` is nested-construction testimony, not a slot lie.
+    """
 
     site: object = dataclass_field(compare=False, default=None)
 
@@ -31,3 +33,12 @@ class EllipsisLiteralSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
         return Complete(EllipsisValue())
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:ellipsis-literal-construction",
+            (self.occurrence_term(owner=owner), ctor("py.ellipsis", [])),
+            symbol_kind="coordinate",
+        )
