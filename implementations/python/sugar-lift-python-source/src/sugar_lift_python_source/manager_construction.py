@@ -65,6 +65,55 @@ class ImportValueUseSeatingGap(ValueError):
         super().__init__(f"{kind}: {detail}")
 
 
+def _bind_dependency_graphs(
+    session: SourceResolutionSession,
+    dependency_graphs: dict[str, DependencyArtifactGraph] | None,
+) -> dict[str, DependencyArtifactGraph]:
+    """Local graph map seeded from the session so auth tops are asked once.
+
+    Frame projection used to mint ``dependency_graphs={}`` per definition,
+    re-entering ``authenticate_dependency_top_level`` for the same warnings/re/
+    inspect tops (21× each on one test_pandas open). Session owns the map;
+    local overlays seed from it and write through on first auth. Walk-scoped
+    sessions (#7081) extend the once-ask across multi-file open/enumerate.
+    """
+    if dependency_graphs is None:
+        if session.enabled:
+            return session.dependency_graphs
+        return {}
+    if session.enabled:
+        for top, graph in session.dependency_graphs.items():
+            dependency_graphs.setdefault(top, graph)
+    return dependency_graphs
+
+
+def _dependency_graph_for_top(
+    top_level: str,
+    *,
+    session: SourceResolutionSession,
+    dependency_graphs: dict[str, DependencyArtifactGraph],
+    distribution_index=None,
+) -> DependencyArtifactGraph:
+    """Authenticate ``top_level`` once per session (and local map)."""
+    hit = dependency_graphs.get(top_level)
+    if hit is not None:
+        return hit
+    if session.enabled:
+        hit = session.dependency_graphs.get(top_level)
+        if hit is not None:
+            dependency_graphs[top_level] = hit
+            return hit
+    from .dependency_artifact import authenticate_dependency_top_level
+
+    graph = authenticate_dependency_top_level(
+        top_level, distribution_index=distribution_index
+    )
+    dependency_graphs[top_level] = graph
+    if session.enabled:
+        session.dependency_graphs[top_level] = graph
+    return graph
+
+
 def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
     """Select the sole authenticated returned class for module publication."""
     from sugar_lift_py_tests.floor.source_return_projection import (
@@ -770,12 +819,9 @@ def _enroll_imported_decorator_frames(
             continue
         receipt.revalidate()
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        graph = dependency_graphs.get(top_level)
-        if graph is None:
-            from .dependency_artifact import authenticate_dependency_top_level
-
-            graph = authenticate_dependency_top_level(top_level)
-            dependency_graphs[top_level] = graph
+        graph = _dependency_graph_for_top(
+            top_level, session=session, dependency_graphs=dependency_graphs
+        )
         resolved_decorator = resolve_import_binding(
             receipt, graph=graph, session=session
         )
@@ -897,9 +943,12 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
                 definition.fragment.seal().cid
             ] = tuple(bases)
 
-    dependency_graphs = {}
+    dependency_graphs = _bind_dependency_graphs(session, {})
     if graph is not None:
-        dependency_graphs[module.module_name.split(".", 1)[0]] = graph
+        top = module.module_name.split(".", 1)[0]
+        dependency_graphs[top] = graph
+        if session.enabled:
+            session.dependency_graphs[top] = graph
         for definition in prefix_classes:
             _seat_import_value_use_receipts(
                 source_file=source_file,
@@ -2123,8 +2172,13 @@ def _resolve_source_visible_frame_uncached(
     )
     from sugar_source_tree.reporter import NULL_REPORTER
 
-    dependency_graphs = dict(dependency_graphs or {})
-    dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
+    dependency_graphs = _bind_dependency_graphs(
+        session, dict(dependency_graphs or {})
+    )
+    top = resolved.module_name.split(".", 1)[0]
+    dependency_graphs[top] = graph
+    if session.enabled:
+        session.dependency_graphs[top] = graph
     module_key = _module_materialize_key(
         graph=graph, module=module, dependency_graphs=dependency_graphs
     )
@@ -2353,23 +2407,21 @@ def _resolve_source_visible_frame_uncached(
             )
 
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        dependency_graph = dependency_graphs.get(top_level)
-        if dependency_graph is None:
-            from .dependency_artifact import (
-                DependencyArtifactAuthenticationError,
-                authenticate_dependency_top_level,
+        try:
+            dependency_graph = _dependency_graph_for_top(
+                top_level, session=session, dependency_graphs=dependency_graphs
             )
+        except Exception as exc:
+            from .dependency_artifact import DependencyArtifactAuthenticationError
 
-            try:
-                dependency_graph = authenticate_dependency_top_level(top_level)
-            except DependencyArtifactAuthenticationError:
-                _install_opaque_call_obligation(
-                    context,
-                    call,
-                    obligation("call-target-source-absent"),
-                )
-                continue
-            dependency_graphs[top_level] = dependency_graph
+            if not isinstance(exc, DependencyArtifactAuthenticationError):
+                raise
+            _install_opaque_call_obligation(
+                context,
+                call,
+                obligation("call-target-source-absent"),
+            )
+            continue
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )

@@ -66,6 +66,9 @@ def populate_source_visible_call_frames(
     calls_by_span = {_span_key(node): node for node in calls}
     constructor_targets = {}
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
+    if session.enabled:
+        for top, graph in session.dependency_graphs.items():
+            graphs.setdefault(top, graph)
     for receipt in receipts:
         raw = receipt.use["useSite"]
         key = (raw["startLine"], raw["startCol"], raw["endLine"], raw["endCol"])
@@ -75,6 +78,10 @@ def populate_source_visible_call_frames(
         coordinate = _coordinate(call)
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         graph = graphs.get(top_level)
+        if graph is None and session.enabled:
+            graph = session.dependency_graphs.get(top_level)
+            if graph is not None:
+                graphs[top_level] = graph
         if graph is None:
             try:
                 from .dependency_artifact import authenticate_dependency_top_level
@@ -90,6 +97,8 @@ def populate_source_visible_call_frames(
                 )
                 continue
             graphs[top_level] = graph
+            if session.enabled:
+                session.dependency_graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if isinstance(resolved, PythonObjectResolutionGapV1):
             context.source_call_resolutions[coordinate] = (

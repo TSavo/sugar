@@ -268,6 +268,10 @@ def construct_provider_exception_attribute(
         return None
     top_level = module_name.split(".", 1)[0]
     graph = graph_cache.get(top_level)
+    if graph is None and session.enabled:
+        graph = session.dependency_graphs.get(top_level)
+        if graph is not None:
+            graph_cache[top_level] = graph
     if graph is None:
         from .dependency_artifact import authenticate_dependency_top_level
 
@@ -280,6 +284,8 @@ def construct_provider_exception_attribute(
                 f"provider artifact source absent: {module_name}"
             ) from exc
         graph_cache[top_level] = graph
+        if session.enabled:
+            session.dependency_graphs[top_level] = graph
     return AuthenticatedProviderExceptionTypeV1.construct(
         graph=graph,
         binding_cid=binding_cid,
@@ -391,11 +397,17 @@ def _reaching_provider_module(
         return None, None
     callee_top = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
     callee_graph = graph_cache.get(callee_top)
+    if callee_graph is None and session.enabled:
+        callee_graph = session.dependency_graphs.get(callee_top)
+        if callee_graph is not None:
+            graph_cache[callee_top] = callee_graph
     if callee_graph is None:
         callee_graph = authenticate_dependency_top_level(
             callee_top, distribution_index=distribution_index
         )
         graph_cache[callee_top] = callee_graph
+        if session.enabled:
+            session.dependency_graphs[callee_top] = callee_graph
     resolved = resolve_import_binding(receipt, graph=callee_graph, session=session)
     if not isinstance(resolved, ResolvedPythonObjectV1):
         return None, None
