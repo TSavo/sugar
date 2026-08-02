@@ -32,6 +32,13 @@ name: Control-effect recensus (authoritative scoreboard)
 # reports it missing if it did not speak for its window. workflow_dispatch is
 # provided so a tip board can be demanded on purpose, which is exactly what a
 # drain campaign needs before and after it lands.
+#
+# SILENCE CONCEALS (mr_pink shape)
+#
+# A single step that fuses population auth + multi-hour measurement + attendance
+# write makes the Actions UI show one long "in progress" with no phase name.
+# PYTHONUNBUFFERED=1 keeps brown's recensus narration line-buffered into the
+# job log; separate steps name which phase is live so a stall is visible.
 
 on:
   schedule:
@@ -51,16 +58,24 @@ jobs:
     name: control-effect recensus (R_construction_panics)
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 720
+    env:
+      # Always-on: recensus phase lines must hit the job log as they print.
+      # Buffered stdout/stderr is silence wearing a progress costume.
+      PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
 
-      - name: Recensus (production CLI path; no lease)
+      # Phase 1 — resolve the authenticated population (denominator door).
+      # Kept separate from measurement so auth hang is not billed as "recensus".
+      - name: "Phase: resolve authenticated pandas population"
+        id: population
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           PANDAS_CORPUS="$(
             python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
           )" || {
@@ -68,14 +83,35 @@ jobs:
             exit 1
           }
           echo "recensus population: authenticated pandas corpus at $PANDAS_CORPUS"
-          python implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
+          echo "root=$PANDAS_CORPUS" >> "$GITHUB_OUTPUT"
+
+      # Phase 2 — production CLI measurement only. Narration comes from the
+      # script (brown); this step only ensures unbuffered env + named UI phase.
+      - name: "Phase: recensus measure (production CLI; no lease)"
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
+          PANDAS_CORPUS: ${{ steps.population.outputs.root }}
+        run: |
+          set -euo pipefail
+          echo "recensus phase=measure status=start corpus_root=$PANDAS_CORPUS commit=$GITHUB_SHA"
+          # -u is belt-and-suspenders with job/step PYTHONUNBUFFERED=1
+          python -u implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
             "${{ github.event.inputs.corpus_subtree || '' }}$PANDAS_CORPUS" \
             --corpus-root "$PANDAS_CORPUS" \
             --repo "$GITHUB_WORKSPACE" \
             --commit "$GITHUB_SHA" \
             --out-dir "$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
-          # Identity-bound body for attendance
-          python3 -c "
+          echo "recensus phase=measure status=done"
+
+      # Phase 3 — attendance body only after a completed measure step.
+      - name: "Phase: write attendance measurement body"
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "recensus phase=attendance status=start"
+          python -u -c "
           import json, os
           from pathlib import Path
           body = {
@@ -87,7 +123,7 @@ jobs:
           Path('.sugar/pandas-control-effect/measurement.json').parent.mkdir(parents=True, exist_ok=True)
           Path('.sugar/pandas-control-effect/measurement.json').write_text(json.dumps(body, indent=2)+chr(10))
           "
-
+          echo "recensus phase=attendance status=done"
 
       - name: Upload the board
         if: always()
