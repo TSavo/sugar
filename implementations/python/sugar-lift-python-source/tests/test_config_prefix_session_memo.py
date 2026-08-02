@@ -1,19 +1,13 @@
-"""In-population prefix memo: one session → config SourceFile not ×N.
+"""In-population prefix memo + L0c seat materialize once.
 
-After membrane (#7057) killed stdlib rebuilds, residual open cost on
+After membrane killed stdlib rebuilds, residual open cost on
 ``pandas/io/json/_json.py`` was ``pandas/_config/config.py`` MaterializeModule
-dozens of times via ``prefix_has_completed_fallthrough`` →
-``_module_prefix_outcome`` (export fallthrough once per locus).
-
-Frame-door module memo is #7064. This tooth owns the **prefix door** on the
-same ``SourceResolutionSession`` (file-open already threads one session).
-
-Values stay session-owned (context-bound). No process-global projection memo.
+dozens of times. L0c: process_resident + session memos → ≤1 construction.
+Count constructions; do not time them.
 """
 
 from __future__ import annotations
 
-from collections import Counter
 from importlib import metadata
 from pathlib import Path
 
@@ -24,13 +18,16 @@ from sugar_source_tree.file_open_profile import (
     end_file_open_profile,
     summarize_module_materialize,
 )
-from sugar_source_tree.tree import SourceFile as RealSourceFile
+from sugar_source_tree.process_resident_file import (
+    clear_process_resident_files,
+    prepare_count_for,
+)
 
 
-def test_json_open_config_sourcefile_not_dozens(monkeypatch) -> None:
+def test_json_open_config_sourcefile_at_most_once() -> None:
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
     from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-    from sugar_source_tree import tree as tree_mod
+    from sugar_source_tree.process_resident_file import _RESIDENT  # type: ignore
 
     pandas_distribution = metadata.distribution("pandas")
     install_root = Path(pandas_distribution.locate_file("")).resolve()
@@ -38,16 +35,7 @@ def test_json_open_config_sourcefile_not_dozens(monkeypatch) -> None:
     if not path.is_file():
         pytest.skip(f"pandas _json.py not installed at {path}")
 
-    builds: Counter = Counter()
-    orig = tree_mod.SourceFile.__init__
-
-    def counting(self, identity, *args, **kwargs):
-        seat = identity[1] if isinstance(identity, tuple) else str(identity)
-        builds[Path(str(seat)).name] += 1
-        return orig(self, identity, *args, **kwargs)
-
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", counting)
-
+    clear_process_resident_files()
     bag = begin_file_open_profile()
     try:
         sf = open_source_file_for_construction(
@@ -59,23 +47,38 @@ def test_json_open_config_sourcefile_not_dozens(monkeypatch) -> None:
         fns = len(tuple(sf.functions()))
     finally:
         end_file_open_profile()
+
     summary = summarize_module_materialize(bag)
-    config_sf = builds.get("config.py", 0)
-    config_mat = sum(
-        int(row["count"])
-        for row in (summary.get("top") or [])
-        if str(row["module"]).endswith("config.py")
+    config_prepares = 0
+    enum_prepares = 0
+    for cid, ctx in list(_RESIDENT.items()):
+        name = Path(str(ctx.filename)).name
+        n = prepare_count_for(cid)
+        if name == "config.py":
+            config_prepares = max(config_prepares, n)
+        if name == "enum.py":
+            enum_prepares = max(enum_prepares, n)
+
+    mat_config = 0
+    mat_enum = 0
+    for row in summary.get("top") or []:
+        seats = [Path(str(s)).name for s in (row.get("seats") or [])]
+        count = int(row.get("count") or 0)
+        if "config.py" in seats or str(row.get("module", "")).endswith("config.py"):
+            mat_config += count
+        if "enum.py" in seats or str(row.get("module", "")).endswith("enum.py"):
+            mat_enum += count
+
+    assert config_prepares <= 1, (
+        f"config.py prepare_count={config_prepares} (want ≤1); top={summary.get('top')}"
     )
-    # Pre-fix residual: SourceFile config.py dozens (33 measured). After
-    # prefix door (#7066) + one shared lexical pass over the prefix SourceFile:
-    # prefix door 1 + frame door 1. Lexical use/value no longer re-Materialize.
-    assert config_sf <= 2, (
-        f"config.py SourceFile constructions={config_sf} (want ≤2); "
-        f"all={dict(builds)}; mat_top={summary.get('top')}"
+    assert enum_prepares <= 1, (
+        f"enum.py prepare_count={enum_prepares} (want ≤1); top={summary.get('top')}"
     )
-    assert config_mat <= 2, (
-        f"config.py MaterializeModule count={config_mat} (want ≤2); "
-        f"top={summary.get('top')}"
+    assert mat_config <= 1, (
+        f"config.py MaterializeModule count={mat_config} (want ≤1); top={summary.get('top')}"
     )
-    # False-zero floor: open must keep the real function roster.
+    assert mat_enum <= 1, (
+        f"enum.py MaterializeModule count={mat_enum} (want ≤1); top={summary.get('top')}"
+    )
     assert fns >= 40, f"_json open banked {fns} functions"

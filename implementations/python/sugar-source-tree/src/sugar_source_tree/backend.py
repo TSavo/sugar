@@ -670,15 +670,14 @@ class Backend:
         from .file_open_profile import _TimedModuleMaterialize, current_file_open_profile
 
         # Profile only when a file-open instrument is active (recensus etc.).
+        # L0c: key by content CID, not seat path — same module at two seats is
+        # one construction; seat-keyed profiles falsely counted N (enum ×35).
         profile = current_file_open_profile()
         if profile is not None:
-            # Prefer human path; fall back to content address.
-            module_key = str(
-                getattr(unit, "filename", None)
-                or getattr(unit, "path", None)
-                or getattr(unit, "source_cid", "unknown")
-            )
-            with _TimedModuleMaterialize(module_key):
+            source_cid = getattr(unit, "source_cid", None) or ""
+            filename = str(getattr(unit, "filename", None) or "")
+            module_key = str(source_cid) if source_cid else (filename or "unknown")
+            with _TimedModuleMaterialize(module_key, seat=filename):
                 return self._materialize_module_body(unit, reporter)
         return self._materialize_module_body(unit, reporter)
 

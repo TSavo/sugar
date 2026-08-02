@@ -3,6 +3,9 @@
 Enabled only while a recensus (or other instrument) holds the contextvar.
 Default is off — zero cost when unset. materialize_module records count+time
 per module identity so a slow open names which dependency rebuilds dominate.
+
+L0c: module keys are content CIDs (not seat paths). Construction count is the
+tooth; elapsed time is diagnostic only.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ _PROFILE: ContextVar[dict[str, Any] | None] = ContextVar(
 def begin_file_open_profile() -> dict[str, Any]:
     """Start a profile bag for one file open; return it for the caller to fill."""
     bag: dict[str, Any] = {
-        "module_materialize": {},  # module_key -> {count, s}
+        "module_materialize": {},  # module_key -> {count, s, seats}
     }
     _PROFILE.set(bag)
     return bag
@@ -37,18 +40,35 @@ def end_file_open_profile() -> dict[str, Any] | None:
     return bag
 
 
-def record_module_materialize(module_key: str, elapsed_s: float) -> None:
-    """Accumulate one materialize_module completion into the active profile."""
+def record_module_materialize(
+    module_key: str,
+    elapsed_s: float,
+    *,
+    seat: str | None = None,
+) -> None:
+    """Accumulate one materialize_module completion into the active profile.
+
+    ``module_key`` is the content address (L0c). Construction count is what
+    teeth read — elapsed time is diagnostic only.
+    """
     bag = _PROFILE.get()
     if bag is None:
         return
     table = bag.setdefault("module_materialize", {})
     row = table.get(module_key)
     if row is None:
-        table[module_key] = {"count": 1, "s": round(elapsed_s, 6)}
+        table[module_key] = {
+            "count": 1,
+            "s": round(elapsed_s, 6),
+            "seats": [seat] if seat else [],
+        }
     else:
         row["count"] = int(row["count"]) + 1
         row["s"] = round(float(row["s"]) + elapsed_s, 6)
+        if seat:
+            seats = row.setdefault("seats", [])
+            if seat not in seats:
+                seats.append(seat)
 
 
 def summarize_module_materialize(bag: dict[str, Any] | None) -> dict[str, Any]:
@@ -63,16 +83,18 @@ def summarize_module_materialize(bag: dict[str, Any] | None) -> dict[str, Any]:
     table = bag.get("module_materialize") or {}
     total_calls = 0
     total_s = 0.0
-    ranked: list[tuple[str, int, float]] = []
+    ranked: list[tuple[str, int, float, list]] = []
     for key, row in table.items():
         c = int(row.get("count") or 0)
         s = float(row.get("s") or 0.0)
+        seats = list(row.get("seats") or [])
         total_calls += c
         total_s += s
-        ranked.append((str(key), c, s))
+        ranked.append((str(key), c, s, seats))
     ranked.sort(key=lambda item: (-item[2], -item[1], item[0]))
     top = [
-        {"module": key, "count": c, "s": round(s, 4)} for key, c, s in ranked[:8]
+        {"module": key, "count": c, "s": round(s, 4), "seats": seats}
+        for key, c, s, seats in ranked[:8]
     ]
     return {
         "modulesDistinct": len(table),
@@ -85,8 +107,9 @@ def summarize_module_materialize(bag: dict[str, Any] | None) -> dict[str, Any]:
 class _TimedModuleMaterialize:
     """Context manager: time one materialize_module and record it."""
 
-    def __init__(self, module_key: str) -> None:
+    def __init__(self, module_key: str, *, seat: str | None = None) -> None:
         self.module_key = module_key
+        self.seat = seat
         self._t0 = 0.0
 
     def __enter__(self) -> "_TimedModuleMaterialize":
@@ -94,4 +117,8 @@ class _TimedModuleMaterialize:
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        record_module_materialize(self.module_key, time.perf_counter() - self._t0)
+        record_module_materialize(
+            self.module_key,
+            time.perf_counter() - self._t0,
+            seat=self.seat,
+        )
