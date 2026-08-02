@@ -43,6 +43,25 @@ jobs:
           name: python-test-wheelhouse
           path: ${{ steps.env.outputs.env-dir }}/wheelhouse/
           if-no-files-found: error
+      - name: Pull authenticated shared Python demand table
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools:${{ github.workspace }}/implementations/python/sugar-lift-py-tests/src:${{ github.workspace }}/implementations/python/sugar-lift-python-source/src:${{ github.workspace }}/implementations/python/sugar-source-tree/src
+          SUGAR_BINARY_ALLOW_BUILD: "0"
+          SUGAR_BINARY_PUBLISH: "0"
+        run: |
+          set -euo pipefail
+          demand_dir="${RUNNER_TEMP}/python-demand-table"
+          mkdir -p "$demand_dir"
+          python3 -c 'import sys; from pathlib import Path; from sugar_lift_py_tests.no_call_body_attribution import pull_shared_demand_table; pull_shared_demand_table(Path(sys.argv[1]), Path(sys.argv[2]))' \
+            "$GITHUB_WORKSPACE" "$demand_dir/python-demand-table.json"
+          test -s "$demand_dir/python-demand-table.json"
+      - name: Upload authenticated shared Python demand table
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-demand-table
+          path: ${{ runner.temp }}/python-demand-table/python-demand-table.json
+          if-no-files-found: error
 
   process-floor:
     name: process-floor ${{ matrix.axisSeat }}
@@ -255,6 +274,11 @@ jobs:
         with:
           name: python-test-wheelhouse
           path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Download authenticated shared Python demand table
+        uses: actions/download-artifact@v4
+        with:
+          name: python-demand-table
+          path: ${{ runner.temp }}/python-demand-table
       - name: Install from shared wheelhouse (no network resolve)
         uses: ./.github/actions/python-test-environment-from-wheelhouse
         with:
@@ -322,7 +346,7 @@ jobs:
           set -uo pipefail
           chmod +x tools/run_one_process_floor_axis.sh
           set +e
-          bash tools/run_one_process_floor_axis.sh "${{ matrix.axis }}" "${{ matrix.script }}" "${{ matrix.shard }}" "${{ matrix.shardCount }}"
+          bash tools/run_one_process_floor_axis.sh "${{ matrix.axis }}" "${{ matrix.script }}" "${{ matrix.shard }}" "${{ matrix.shardCount }}" "${RUNNER_TEMP}/python-demand-table/python-demand-table.json"
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"

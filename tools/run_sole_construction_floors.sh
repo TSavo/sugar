@@ -54,6 +54,12 @@ PANDAS_CORPUS="$(
   exit 1
 }
 echo "process-floor population: authenticated pandas corpus at $PANDAS_CORPUS"
+DEMAND_TABLE_PATH="${DEMAND_TABLE_PATH:-}"
+if [ -z "$DEMAND_TABLE_PATH" ] || [ ! -s "$DEMAND_TABLE_PATH" ]; then
+  echo "::error::authenticated python-demand-table required for process floors; set DEMAND_TABLE_PATH to the pulled table"
+  exit 2
+fi
+echo "process-floor demand table: $DEMAND_TABLE_PATH"
 # --repo-root is the population (relative loci). Scratch must NOT nest under it
 # (vendor site-packages is read-only; mutating the population is wrong even when
 # mkdir succeeds). Workspace/tmp only — same vocabulary as prepare_floor_io.
@@ -74,14 +80,17 @@ echo "process-floor cache: dir=${SUGAR_PROCESS_FLOOR_CACHE_DIR} tip=${SUGAR_MEAS
 # Axis names: R_axis only — never "R_axis = 0" (false banked zero on pre-measure crash).
 axis "R_native_crashes" \
   python "$SCRIPTS/native_crash_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --demand-table-path "$DEMAND_TABLE_PATH" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH/native-crash"
 axis "R_bare_exceptions" \
   python "$SCRIPTS/bare_exception_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --demand-table-path "$DEMAND_TABLE_PATH" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH/bare-exception"
 axis "R_timeouts" \
   python "$SCRIPTS/timeout_zero_tolerance.py" "$PANDAS_CORPUS" \
+  --demand-table-path "$DEMAND_TABLE_PATH" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH/timeout"
 # R_silent is Criterion 2's fourth simultaneous term — same population as the
