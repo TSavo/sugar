@@ -221,11 +221,15 @@ def main() -> int:
         progress_path=progress_path,
     )
     if args.json is not None:
-        from pandas_floor_summary import floor_summary, relative_files, write_json
+        from pandas_floor_summary import relative_files, write_floor_summary_or_residual
 
         files = relative_files(paths, args.repo_root)
-        payload = floor_summary(
+        residual_count = len(summary.offenders)
+        write_floor_summary_or_residual(
+            args.json,
             floor="native-crash",
+            residual_key="R_native_crashes",
+            residual_count=residual_count,
             files=files,
             rows=[
                 {
@@ -237,14 +241,13 @@ def main() -> int:
                 for row in summary.rows
             ],
             totals={
-                "R_native_crashes": len(summary.offenders),
+                "R_native_crashes": residual_count,
                 "completed": summary.completed,
                 "timeouts": summary.timeouts,
                 "nonNativeRed": summary.non_native_red,
             },
             measured=True,
         )
-        write_json(args.json, payload)
     print(
         "NATIVE-CRASH SURFACE: "
         f"discovered={summary.discovered} completed={summary.completed} "

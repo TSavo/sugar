@@ -449,11 +449,15 @@ def main() -> int:
         progress_stdout=args.progress_stdout,
     )
     if args.json is not None:
-        from pandas_floor_summary import floor_summary, relative_files, write_json
+        from pandas_floor_summary import relative_files, write_floor_summary_or_residual
 
         files = relative_files(paths, args.repo_root)
-        payload = floor_summary(
+        residual_count = r_silent(summary.offenders)
+        write_floor_summary_or_residual(
+            args.json,
             floor="silent",
+            residual_key="R_silent",
+            residual_count=residual_count,
             files=files,
             rows=[
                 {
@@ -465,7 +469,7 @@ def main() -> int:
                 for row in summary.rows
             ],
             totals={
-                "R_silent": r_silent(summary.offenders),
+                "R_silent": residual_count,
                 "completed": summary.completed,
                 "constructionPanics": summary.construction_panics,
                 "nativeCrashes": summary.native_crashes,
@@ -475,7 +479,6 @@ def main() -> int:
             measured=len(summary.rows) == len(files),
             unmeasurable_reasons=(),
         )
-        write_json(args.json, payload)
     print(
         "SILENT SURFACE: "
         f"files_discovered={summary.discovered} files_completed={summary.completed} "
