@@ -109,6 +109,14 @@ def is_corpus_py_path(path: Path, *, root: Path) -> bool:
     return True
 
 
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+    try:
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def discover_corpus_paths_structural(root: Path) -> tuple[Path, ...]:
     """Path selection identical to ``SourceTree.paths`` (structural only).
 
@@ -134,7 +142,12 @@ def discover_corpus_paths_structural(root: Path) -> tuple[Path, ...]:
 def denominator_paths(root: Path) -> tuple[Path, ...]:
     """Live denominator: same set as SourceTree.paths() under root."""
     root = root.resolve()
+    _log(f"corpus_enrollment phase=discover_structural status=start root={root}")
     structural = discover_corpus_paths_structural(root)
+    _log(
+        f"corpus_enrollment phase=discover_structural status=done "
+        f"paths={len(structural)}"
+    )
     bad = [p for p in structural if not is_corpus_py_path(p, root=root)]
     if bad:
         raise ValueError(
@@ -144,8 +157,17 @@ def denominator_paths(root: Path) -> tuple[Path, ...]:
     try:
         from sugar_source_tree.tree import SourceTree
 
+        _log("corpus_enrollment phase=sourcetree_crosscheck status=start")
         tree_paths = tuple(path.resolve() for path in SourceTree(root).paths())
+        _log(
+            f"corpus_enrollment phase=sourcetree_crosscheck status=done "
+            f"paths={len(tree_paths)}"
+        )
     except ImportError:
+        _log(
+            "corpus_enrollment phase=sourcetree_crosscheck status=skip "
+            "reason=ImportError"
+        )
         return structural
     if tree_paths != structural:
         raise ValueError(
@@ -205,10 +227,16 @@ def measure_enrollment(
     recensus_payload: dict | None,
 ) -> EnrollmentReport:
     """Compute denominator live; enrollment only from a terminal receipt."""
+    _log(f"corpus_enrollment phase=measure status=start corpus_root={corpus_root}")
     paths = denominator_paths(corpus_root)
     denom_ids = tuple(relative_file_identity(p, corpus_root=corpus_root) for p in paths)
     denom_n = len(denom_ids)
+    _log(f"corpus_enrollment phase=denominator status=done files={denom_n}")
     if recensus_payload is None:
+        _log(
+            "corpus_enrollment phase=terminals status=skip "
+            "reason=no_recensus enrollment=UNMEASURED"
+        )
         return EnrollmentReport(
             denominator_files=denom_n,
             enrolled_files=None,
@@ -220,12 +248,19 @@ def measure_enrollment(
                 "(no --from-recensus receipt). Do not invent enrolled=denominator."
             ),
         )
+    _log("corpus_enrollment phase=terminals status=start")
     terminal = terminal_file_identities_from_recensus(recensus_payload)
     denom_set = set(denom_ids)
     # Unenrolled relative to the live denominator, not a curated list
     unenrolled = sorted(denom_set - terminal)
     # Also surface terminals not in denominator (population drift)
     extra = sorted(terminal - denom_set)
+    enrolled_n = len(terminal & denom_set)
+    _log(
+        f"corpus_enrollment phase=terminals status=done "
+        f"terminals={len(terminal)} enrolled={enrolled_n} "
+        f"unenrolled={len(unenrolled)} drift_extra={len(extra)}"
+    )
     note = (
         f"live denominator={denom_n}; terminals={len(terminal)}; "
         f"unenrolled={len(unenrolled)}"
@@ -234,7 +269,7 @@ def measure_enrollment(
         note += f"; terminals_outside_denominator={len(extra)} (population drift)"
     return EnrollmentReport(
         denominator_files=denom_n,
-        enrolled_files=len(terminal & denom_set),
+        enrolled_files=enrolled_n,
         unenrolled_files=len(unenrolled),
         unenrolled_identities=tuple(unenrolled),
         measured_enrollment=True,
@@ -299,9 +334,14 @@ def format_report(report: EnrollmentReport) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-        except (AttributeError, ValueError):
-            pass
+            stream.reconfigure(
+                encoding="utf-8", errors="backslashreplace", line_buffering=True
+            )
+        except (AttributeError, ValueError, TypeError):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (AttributeError, ValueError):
+                pass
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--corpus-root",

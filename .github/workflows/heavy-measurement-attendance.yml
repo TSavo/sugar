@@ -53,10 +53,14 @@ jobs:
   roll-call:
     name: roll call (R_attendance = 0)
     runs-on: ubuntu-latest
+    env:
+      # Phase lines must hit the job log as they print (silence conceals hang).
+      PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Resolve the commit under roll call
+      - name: "Phase: resolve roll-call subject commit"
         id: subject
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,9 +69,9 @@ jobs:
           sha="${{ github.event.inputs.commit || github.event.workflow_run.head_sha }}"
           [ -n "$sha" ] || { echo "no commit to hold a roll call for"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "roll call subject: $sha"
+          echo "attendance phase=resolve_subject status=done sha=$sha"
 
-      - name: Collect lease receipts for the commit
+      - name: "Phase: collect measurement receipts (download artifacts)"
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.subject.outputs.sha }}
@@ -78,45 +82,66 @@ jobs:
           # under-reports: on 2026-08-01 it returned 6 non-completed runs where
           # the API returned 234, and a bankruptcy sweep was declared complete
           # on the strength of it.
+          echo "attendance phase=list_runs status=start sha=$SHA"
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" \
             --paginate --jq '.workflow_runs[]?|.id' > run-ids.txt || true
-          echo "runs for this commit: $(wc -l < run-ids.txt)"
+          total=$(wc -l < run-ids.txt | tr -d ' ')
+          echo "attendance phase=list_runs status=done runs=$total"
+          index=0
           while read -r id; do
             [ -z "$id" ] && continue
-            gh run download "$id" --dir "receipts/$id" 2>/dev/null || true
+            index=$((index + 1))
+            echo "attendance phase=download_run index=${index}/${total} run_id=$id status=start"
+            if gh run download "$id" --dir "receipts/$id" 2>/dev/null; then
+              echo "attendance phase=download_run index=${index}/${total} run_id=$id status=ok"
+            else
+              echo "attendance phase=download_run index=${index}/${total} run_id=$id status=no_artifacts"
+            fi
           done < run-ids.txt
-          echo "receipt files found: $(find receipts -name '*.json' | wc -l)"
+          json_n=$(find receipts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+          echo "attendance phase=collect_receipts status=done json_files=$json_n"
 
-      - name: Roll call + CommitMeasurement gate (fail closed)
-        id: measure
+      - name: "Phase: roll call (expected vs spoke)"
+        id: attendance
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.subject.outputs.sha }}
+          PYTHONUNBUFFERED: "1"
         run: |
           set -uo pipefail
           # PER-COMMIT cadence only. Nightlies are a different obligation.
-          #
-          # CRITICAL: attendance exit 1 must NOT skip compose/gate. A gate that
-          # only runs when attendance is already green is decorative. Capture
-          # attendance exit, ALWAYS compose, ALWAYS gate, then OR the reds.
+          # CRITICAL: attendance exit 1 must NOT skip compose/gate.
           set +e
-          python3 tools/heavy_measurement_attendance.py \
+          python3 -u tools/heavy_measurement_attendance.py \
             --commit "$SHA" \
             --cadence per-commit \
             --receipts-dir receipts \
             --repo "${GITHUB_REPOSITORY}" \
+            --partial-json receipts/attendance-partial.json \
             > attendance.md 2>&1
           att_exit=$?
           set -e
           cat attendance.md | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "attendance_exit=$att_exit"
+          echo "attendance_exit=$att_exit" | tee -a "$GITHUB_OUTPUT"
+          echo "attendance phase=roll_call status=done exit=$att_exit"
 
+      - name: "Phase: CommitMeasurement compose + gate"
+        id: measure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.subject.outputs.sha }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -uo pipefail
+          att_exit="${{ steps.attendance.outputs.attendance_exit }}"
           # Compose even when receipts/ are empty: that is PartialVector, not silence.
-          python3 - <<'PY'
+          echo "attendance phase=compose status=start"
+          python3 -u - <<'PY'
           from pathlib import Path
           import json
           import importlib.util
           import os
+          print("attendance phase=compose status=loading_commit_measurement", flush=True)
           spec = importlib.util.spec_from_file_location(
               "cm", Path("tools/commit_measurement.py")
           )
@@ -128,19 +153,22 @@ jobs:
               json.dumps(vector.to_json(), indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
-          print(json.dumps(vector.to_json(), indent=2, sort_keys=True))
+          print(json.dumps(vector.to_json(), indent=2, sort_keys=True), flush=True)
+          print("attendance phase=compose status=done", flush=True)
           PY
 
           set +e
-          python3 tools/commit_measurement_gate.py \
+          echo "attendance phase=gate status=start"
+          python3 -u tools/commit_measurement_gate.py \
             --composition commit-measurement.json \
             --require-complete \
             | tee -a "$GITHUB_STEP_SUMMARY"
           gate_exit=$?
           set -e
           echo "gate_exit=$gate_exit"
+          echo "attendance phase=gate status=done exit=$gate_exit"
           # Fail closed: either attendance minority OR incomplete composition.
-          if [ "$att_exit" -ne 0 ] || [ "$gate_exit" -ne 0 ]; then
+          if [ "$att_exit" != "0" ] || [ "$gate_exit" -ne 0 ]; then
             echo "RED: attendance_exit=$att_exit gate_exit=$gate_exit"
             exit 1
           fi
@@ -153,4 +181,5 @@ jobs:
           path: |
             attendance.md
             commit-measurement.json
+            receipts/attendance-partial.json
           if-no-files-found: warn

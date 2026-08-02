@@ -128,7 +128,7 @@ def main() -> int:
         paths = require_explicit_scan_roots(args.paths)
     except ValueError as error:
         print(f"TIMEOUT ZERO-TOLERANCE RED: {error}")
-        return 1
+        return 2
     print(
         "TIMEOUT POPULATION: "
         f"roots={[str(p) for p in args.paths]} files={len(paths)}"
@@ -144,7 +144,7 @@ def main() -> int:
         )
     except (OSError, ValueError) as error:
         print(format_unmeasured_axis("R_timeouts", reason=str(error)))
-        return 1
+        return 2
     summary = audit_paths(
         paths,
         root=args.repo_root,
