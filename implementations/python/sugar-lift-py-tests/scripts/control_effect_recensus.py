@@ -619,6 +619,108 @@ def _measure_file(
     )
 
 
+
+
+def _is_process_control(error: BaseException) -> bool:
+    """Never swallow process death as a per-file terminal."""
+    return isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit))
+
+
+def terminal_after_measure_escape(
+    *,
+    path: Path,
+    relative: str,
+    workspace_root: Path,
+    error: BaseException,
+    category: str = "backend-defect",
+) -> dict[str, Any]:
+    """Outer-shell law: never bank 0 when roster/AST mass is recoverable.
+
+    measure_file_via_enumerate must not raise after a roster bank — but when
+    anything escapes (new BaseException subclass, consumer refactor, outer
+    path), this shell must bank the recoverable population and name the
+    escape as residual. Banking functionsTotal=0 over known mass is the
+    #7073 mass-erase class with a timer on it.
+    """
+    try:
+        from recensus_enumerate_consumer import (
+            count_ast_function_defs,
+            demand_function_roster,
+            terminal_from_enumerate,
+        )
+    except ImportError:
+        # Consumer itself cannot load — true empty instrument path.
+        return {
+            "category": category,
+            "defect": {
+                "file": relative,
+                "type": type(error).__name__,
+                "message": str(error),
+                "phase": "outer-shell-escape",
+            },
+            "functionsTotal": 0,
+            "functionsEnumerated": 0,
+            "functionsClean": None,
+            "cleanRatioRefused": True,
+            "cleanRefuseReason": "consumer import failed; clean not measured",
+            "R_instrument_blind": 1,
+            "families": {f"outer-escape:{type(error).__name__}": 1},
+            "enumerateSource": True,
+        }
+
+    function_nodes: list[dict[str, Any]] = []
+    try:
+        function_nodes, _gaps = demand_function_roster(
+            workspace_root=workspace_root,
+            file_rel=relative,
+        )
+    except BaseException as roster_err:
+        if _is_process_control(roster_err):
+            raise
+        function_nodes = []
+
+    ast_fn = count_ast_function_defs(path)
+    if function_nodes:
+        # Recovered D2 roster — bank full mass, residual is the outer escape.
+        return terminal_from_enumerate(
+            file_rel=relative,
+            function_nodes=function_nodes,
+            function_gaps=[],
+            audit=None,
+            construction_gaps=[],
+            residual_phase_failed=True,
+            residual_error=error,
+            ast_fn=ast_fn,
+        )
+
+    # No D2 nodes — AST mass still forbids silent zero when the file has defs.
+    bank = int(ast_fn) if ast_fn is not None else 0
+    return {
+        "category": category,
+        "defect": {
+            "file": relative,
+            "type": type(error).__name__,
+            "message": str(error),
+            "phase": "outer-shell-escape",
+        },
+        "functionsTotal": bank,
+        "functionsEnumerated": 0,
+        "functionsNotEnumerated": bank,
+        "functionsEnumerationComplete": False,
+        "functionsClean": None if bank > 0 else 0,
+        "cleanRatioRefused": bank > 0,
+        "cleanRefuseReason": (
+            "outer shell escape; clean not measured" if bank > 0 else None
+        ),
+        "functionsAuthenticated": bank,
+        "astSites": {"site:function-def": bank} if bank else {},
+        "R_instrument_blind": 1,
+        "rosterPreservedAfterResidualFailure": bank > 0,
+        "families": {f"outer-escape:{type(error).__name__}": 1},
+        "enumerateSource": True,
+    }
+
+
 def main() -> int:
     # Line-buffer stdout even when not a TTY (CI pipes / artifact capture).
     try:
@@ -1362,15 +1464,20 @@ def main() -> int:
                     )
                 except (ImportError, AttributeError) as error:
                     # An arm that cannot resolve its dispatch target is UNWRITTEN,
-                    # wearing a working arm's clothes. It is not a panic, not a
-                    # typed refusal, and not in any family below -- so absorbing it
-                    # into `backend-defect` would leave the row short with nothing
-                    # saying so. Own category, named, loud, red (#6329).
-                    # measure_file_via_enumerate must not raise after roster bank;
-                    # these arms only fire when the consumer itself cannot load.
-                    row = {
-                        "category": "instrument-defect-unresolvable-dispatch",
-                        "defect": {
+                    # wearing a working arm's clothes. Own category, named, loud
+                    # (#6329). Still recover roster/AST mass when possible — never
+                    # bank silent 0 over a file that has functions.
+                    row = terminal_after_measure_escape(
+                        path=path,
+                        relative=relative,
+                        workspace_root=corpus_root,
+                        error=error,
+                        category="instrument-defect-unresolvable-dispatch",
+                    )
+                    # Preserve #6329 owner metadata on the defect object.
+                    defect = dict(row.get("defect") or {})
+                    defect.update(
+                        {
                             "file": relative,
                             "type": type(error).__name__,
                             "message": str(error),
@@ -1379,28 +1486,23 @@ def main() -> int:
                                 "the arm imports a name that does not exist; write "
                                 "the target or delete the arm"
                             ),
-                        },
-                        "functionsTotal": 0,
-                        "functionsClean": None,
-                        "cleanRatioRefused": True,
-                        "functionsEnumerated": 0,
-                        "R_instrument_blind": 1,
-                    }
-                except Exception as error:  # noqa: BLE001 -- per-file terminal
-                    # Consumer should bank mass itself; this is a last-resort shell.
-                    row = {
-                        "category": "backend-defect",
-                        "defect": {
-                            "file": relative,
-                            "type": type(error).__name__,
-                            "message": str(error),
-                        },
-                        "functionsTotal": 0,
-                        "functionsClean": None,
-                        "cleanRatioRefused": True,
-                        "functionsEnumerated": 0,
-                        "R_instrument_blind": 1,
-                    }
+                        }
+                    )
+                    row["defect"] = defect
+                    row["category"] = "instrument-defect-unresolvable-dispatch"
+                except BaseException as error:  # noqa: BLE001 -- per-file terminal
+                    # Last-resort shell. Must NOT bank functionsTotal=0 over known
+                    # mass: recover D2 roster (or AST) and name the escape residual.
+                    # ConstructionPanic is BaseException; other escapes will be too.
+                    if _is_process_control(error):
+                        raise
+                    row = terminal_after_measure_escape(
+                        path=path,
+                        relative=relative,
+                        workspace_root=corpus_root,
+                        error=error,
+                        category="backend-defect",
+                    )
                 file_s = time.perf_counter() - t_file
                 checkpoint.append(file, row)
                 measured_now.append((file, row))
