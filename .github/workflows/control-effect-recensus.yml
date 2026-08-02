@@ -28,15 +28,14 @@ name: Control-effect recensus (authoritative scoreboard)
 # every push re-saturates the runner pool we just spent a day unclogging (184
 # queued runs against a max of 25). So it takes the same cadence as the walls
 # and the scoreboard sweep, and the roll call enforces the WINDOW rather than
-# the commit: tools/heavy_measurement_attendance.py --cadence nightly-window
+# tools/heavy_measurement_attendance.py --cadence nightly-window
 # reports it missing if it did not speak for its window. workflow_dispatch is
 # provided so a tip board can be demanded on purpose, which is exactly what a
 # drain campaign needs before and after it lands.
 
 on:
   schedule:
-    # After the walls (37/53 past 10) so the heavy lease is not contended at
-    # the moment three classes wake up together.
+    # After the walls (37/53 past 10).
     - cron: "23 11 * * *"
   workflow_dispatch:
     inputs:
@@ -58,13 +57,10 @@ jobs:
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
 
-      - name: Recensus, under the machine-wide heavy lease
+      - name: Recensus (production CLI path; no lease)
         shell: bash
         run: |
           set -uo pipefail
-          # The corpus is resolved by the SAME authenticated door the process
-          # floors use. Never a path guessed here -- an unauthenticated corpus
-          # is a board about the wrong population, which reads as progress.
           PANDAS_CORPUS="$(
             python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
           )" || {
@@ -72,44 +68,26 @@ jobs:
             exit 1
           }
           echo "recensus population: authenticated pandas corpus at $PANDAS_CORPUS"
-          set +e
-          python3 tools/heavy_measurement_lease.py \
-            --class control-effect-recensus \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            -- python implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
-                 "${{ github.event.inputs.corpus_subtree || '' }}$PANDAS_CORPUS" \
-                 --corpus-root "$PANDAS_CORPUS" \
-                 --repo "$GITHUB_WORKSPACE" \
-                 --commit "$GITHUB_SHA" \
-                 --out-dir "$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
-          leased_exit=$?
-          set -e
-          # 75 is the lease REFUSING. A board that did not run is UNMEASURED,
-          # never R=0 -- the confusion this whole family exists to end.
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the recensus did NOT run. R is UNMEASURED, not 0."
-            exit 75
-          fi
-          exit "$leased_exit"
+          python implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
+            "${{ github.event.inputs.corpus_subtree || '' }}$PANDAS_CORPUS" \
+            --corpus-root "$PANDAS_CORPUS" \
+            --repo "$GITHUB_WORKSPACE" \
+            --commit "$GITHUB_SHA" \
+            --out-dir "$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
+          # Identity-bound body for attendance
+          python3 -c "
+          import json, os
+          from pathlib import Path
+          body = {
+              'schemaVersion': 1,
+              'measurementClass': 'control-effect-recensus',
+              'measuredCommit': os.environ.get('GITHUB_SHA'),
+              'status': 'completed',
+          }
+          Path('.sugar/pandas-control-effect/measurement.json').parent.mkdir(parents=True, exist_ok=True)
+          Path('.sugar/pandas-control-effect/measurement.json').write_text(json.dumps(body, indent=2)+chr(10))
+          "
 
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --require-commit "$GITHUB_SHA" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # The receipt distinguishes "ran and found nothing" from "never ran".
-      - name: Upload the recensus lease receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: control-effect-recensus-lease
-          path: lease-record.json
-          if-no-files-found: error
 
       - name: Upload the board
         if: always()

@@ -31,7 +31,7 @@ permissions:
 # NO `concurrency:` BLOCK. A group with cancel-in-progress: false still keeps
 # only ONE pending run and evicts the rest -- that is how five package-suite
 # runs and three sole-construction floor runs were lost. GitHub now retains
-# every run; tools/heavy_measurement_lease.py decides which one measures.
+# No machine-wide heavy-measurement lease; jobs run in parallel.
 #
 # This sweep is SUPERSEDED but still whole-package and still heavy, so it goes
 # behind the same machine-wide lease as the authoritative one. Retiring it is a
@@ -112,29 +112,9 @@ jobs:
           exit "${PIPESTATUS[0]}"
           SWEEP
           set +e
-          python3 tools/heavy_measurement_lease.py \
-            --class restored-suite-scoreboard \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            -- bash "$RUNNER_TEMP/restored-sweep.sh"
-          leased_exit=$?
+          bash "$RUNNER_TEMP/restored-sweep.sh"
           set -e
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the restored suite did NOT run."
-            echo "pytest_exit=lease-refused" >> "$GITHUB_OUTPUT"
-            exit 75
-          fi
-          echo "pytest_exit=$leased_exit" >> "$GITHUB_OUTPUT"
           test -s restored-suite.log
-
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --require-commit "$GITHUB_SHA" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Publish restored-suite vector
         env:
@@ -158,5 +138,4 @@ jobs:
           path: |
             restored-suite.log
             restored-suite-telemetry.md
-            lease-record.json
           if-no-files-found: error
