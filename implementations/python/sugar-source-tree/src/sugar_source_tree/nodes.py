@@ -2325,30 +2325,37 @@ class Node(Typed):
         return wrapped
 
     def _binding_site_and_path(self, name: str, ordinal: int):
-        candidates = []
+        """Locate a bound name's site and a **structural** local projection path.
+
+        Paths are derived from grammar structure (``targets/i/tuple/j``,
+        ``target/list/0``, …) — never from ``enumerate(walk())`` position.
+        Walk order is a traversal policy (and default ``walk`` is unique-by-id);
+        a coordinate must not depend on that policy. Orange audit of the
+        DAG seen-set: path-position indices would under-count if a target
+        DAG ever shared a Name across two edges.
+        """
+        candidates: list[tuple[object, tuple]] = []
+
+        def collect(node: Node, path: tuple) -> None:
+            if isinstance(node, Name):
+                if node.id == name:
+                    candidates.append((node.fragment, path))
+                return
+            if isinstance(node, Starred):
+                collect(node.value, (*path, "starred"))
+                return
+            if isinstance(node, (Tuple_, List)):
+                kind = "tuple" if isinstance(node, Tuple_) else "list"
+                for index, child in enumerate(node.elts):
+                    collect(child, (*path, kind, index))
+
         targets = getattr(self, "targets", None)
         if isinstance(targets, tuple):
             for target_index, target in enumerate(targets):
-                for projection_index, node in enumerate(target.walk()):
-                    if isinstance(node, Name) and node.id == name:
-                        candidates.append(
-                            (
-                                node.fragment,
-                                (
-                                    "targets",
-                                    target_index,
-                                    "projection",
-                                    projection_index,
-                                ),
-                            )
-                        )
+                collect(target, ("targets", target_index))
         target = getattr(self, "target", None)
         if isinstance(target, Node):
-            for projection_index, node in enumerate(target.walk()):
-                if isinstance(node, Name) and node.id == name:
-                    candidates.append(
-                        (node.fragment, ("target", "projection", projection_index))
-                    )
+            collect(target, ("target",))
         if ordinal < len(candidates):
             return candidates[ordinal]
         return self.fragment, ("constructed-projection", ordinal)
@@ -2683,6 +2690,11 @@ class Node(Typed):
         so walking it as a tree is exponential in sharing depth and is the
         setup_method/nanops combinatorial blowup. Callers that need one
         yield per *path* (rare) pass ``unique=False``.
+
+        Do **not** mint coordinates from ``enumerate(walk())`` — a walk index
+        is a traversal policy, not a structural locus. Binding projection
+        paths use grammar structure (``_binding_site_and_path``), which is
+        independent of whether ``walk`` is unique-by-id or path-complete.
         """
         stack: list[Node] = [self]
         seen: set[int] | None = set() if unique else None
