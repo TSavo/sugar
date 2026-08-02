@@ -204,9 +204,17 @@ sugar_bx_require_quiet() {
   # Default wait 2h (queue). Set SUGAR_BX_TIMING_LEASE_WAIT_S=0 to refuse
   # immediately with exit 77 when another measurement holds the lease.
   SUGAR_BX_TIMING_LEASE_WAIT="${SUGAR_BX_TIMING_LEASE_WAIT_S:-7200}"
-  printf 'sugarbin: bx-load-gate phase=arm host=%s max=%s lease=%s wait_s=%s\n' \
+  # Corpus pin (third gate). Quiet timing without a pin is a guess: battleaxe
+  # system python has been pandas 2.3.3/1415 while the authenticated pin is
+  # 3.0.3/1421. Default banked pin; SUGAR_BX_SKIP_CORPUS_PIN=1 only for
+  # non-corpus quiet probes (load/lease unit tests).
+  SUGAR_BX_CORPUS_PIN_PATH="${SUGAR_BX_REQUIRE_CORPUS_PIN:-docs/ledgers/pins/pandas-3.0.3.pin.json}"
+  SUGAR_BX_CORPUS_PYTHON="${SUGAR_BX_CORPUS_PYTHON:-.venv-py312/bin/python}"
+  SUGAR_BX_SKIP_CORPUS_PIN="${SUGAR_BX_SKIP_CORPUS_PIN:-0}"
+  printf 'sugarbin: bx-load-gate phase=arm host=%s max=%s lease=%s wait_s=%s corpus_pin=%s skip_pin=%s\n' \
     "$SUGAR_BX_HOST" "${SUGAR_BX_LOAD_MAX:-auto(nproc/4,floor=2)}" \
-    "$SUGAR_BX_TIMING_LEASE" "$SUGAR_BX_TIMING_LEASE_WAIT" >&2
+    "$SUGAR_BX_TIMING_LEASE" "$SUGAR_BX_TIMING_LEASE_WAIT" \
+    "$SUGAR_BX_CORPUS_PIN_PATH" "$SUGAR_BX_SKIP_CORPUS_PIN" >&2
   return 0
 }
 
@@ -251,20 +259,30 @@ sugar_bx_run_ambient() {
     return $?
   fi
 
-  # Quiet path: exclusive remote lease, then load sample under the lock, then
+  # Quiet path: exclusive remote lease → load under lock → corpus pin →
   # measure. Do not exec-replace the shell that holds the flock fd.
+  # Three gates, one law: quiet box, exclusive lease, correct corpus.
   local lock wait_s max_lit host_lit measured_cmd wrapper
+  local pin_path pin_py pin_skip
   lock="${SUGAR_BX_TIMING_LEASE:-/var/tmp/sugar-bx-timing-measurement.lease}"
   wait_s="${SUGAR_BX_TIMING_LEASE_WAIT:-7200}"
   max_lit="${SUGAR_BX_LOAD_MAX:-}"
   host_lit="$SUGAR_BX_HOST"
+  pin_path="${SUGAR_BX_CORPUS_PIN_PATH:-docs/ledgers/pins/pandas-3.0.3.pin.json}"
+  pin_py="${SUGAR_BX_CORPUS_PYTHON:-.venv-py312/bin/python}"
+  pin_skip="${SUGAR_BX_SKIP_CORPUS_PIN:-0}"
   # prefix_cmd already ends with spaces/env; run_cmd starts with a leading space.
   measured_cmd="${prefix_cmd}${run_cmd# }"
+  # Pin gate under lease after load. Identity mode (version+fileCount) default.
+  # All remote expansions use \$ so local $? does not fire while building wrapper.
   wrapper="set -euo pipefail
 LOCK=$(sugar_bx_quote "$lock")
 WAIT=$(sugar_bx_quote "$wait_s")
 MAX_LIT=$(sugar_bx_quote "$max_lit")
 HOST=$(sugar_bx_quote "$host_lit")
+SKIP_PIN=$(sugar_bx_quote "$pin_skip")
+PIN_PATH=$(sugar_bx_quote "$pin_path")
+PIN_PY=$(sugar_bx_quote "$pin_py")
 touch \"\$LOCK\" || { printf 'sugarbin: crime=timing-lease-uncreatable path=%s\\n' \"\$LOCK\" >&2; exit 77; }
 exec 9>>\"\$LOCK\"
 if ! command -v flock >/dev/null 2>&1; then
@@ -295,6 +313,27 @@ if awk -v l=\"\$l1\" -v m=\"\$max\" 'BEGIN{ exit !(l+0 > m+0) }'; then
   printf 'sugarbin: crime=host-not-quiet host=%s load1=%s nproc=%s max=%s lease=held replacement=wait for load1<=%s (or raise SUGAR_BX_MAX_LOADAVG with cause). A measurement that cannot testify to its own conditions is not a measurement.\\n' \\
     \"\$HOST\" \"\$l1\" \"\$n\" \"\$max\" \"\$max\" >&2
   exit 76
+fi
+if [[ \"\$SKIP_PIN\" != 1 && \"\$SKIP_PIN\" != true && \"\$SKIP_PIN\" != yes ]]; then
+  export PYTHONPATH=implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-source-tree/src:\${PYTHONPATH:-}
+  if [[ ! -x \"\$PIN_PY\" ]]; then
+    printf 'sugarbin: crime=corpus-pin-python-missing path=%s replacement=bin/brun -- bash scripts/bootstrap-venv-py312.sh (or reuse remote checkout sugar-bcargo-a978990da5ba which already has .venv-py312)\\n' \"\$PIN_PY\" >&2
+    exit 78
+  fi
+  if [[ ! -f \"\$PIN_PATH\" ]]; then
+    printf 'sugarbin: crime=corpus-pin-file-missing path=%s replacement=docs/ledgers/pins/pandas-3.0.3.pin.json must be in the synced checkout\\n' \"\$PIN_PATH\" >&2
+    exit 78
+  fi
+  set +e
+  \"\$PIN_PY\" tools/bx_corpus_pin_gate.py --expected-pin \"\$PIN_PATH\" --python \"\$PIN_PY\"
+  pin_st=\$?
+  set -e
+  if [[ \"\$pin_st\" != 0 ]]; then
+    printf 'sugarbin: crime=corpus-pin-mismatch exit=%s (78=wrong corpus; a number against the wrong pandas is not a measurement)\\n' \"\$pin_st\" >&2
+    exit 78
+  fi
+else
+  printf 'sugarbin: bx-corpus-pin phase=skipped reason=SUGAR_BX_SKIP_CORPUS_PIN\\n' >&2
 fi
 set +e
 ${measured_cmd}

@@ -824,11 +824,25 @@ def main() -> int:
         manifest_shape_cid = corpus_manifest_shape_cid(list(observed_pin.paths))
         _authenticate_declared_pandas_corpus(observed_pin, manifest_shape_cid)
     except CorpusPinDefect as defect:
+        # Exit 78: corpus pin gate — distinct from generic instrument failure (2).
+        # A number against the wrong pandas is not a measurement.
         print(str(defect), file=sys.stderr, flush=True)
-        return 2
+        print(
+            "control_effect_recensus: crime=corpus-pin-mismatch exit=78 "
+            "(use .venv-py312 pandas==3.0.3 fileCount=1421; never system 2.3.3/1415)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 78
     except ValueError as defect:
+        # Declared pandas 3.0.3 aggregate / shape CID refusal — same class as pin.
         print(str(defect), file=sys.stderr, flush=True)
-        return 2
+        print(
+            "control_effect_recensus: crime=corpus-pin-mismatch exit=78",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 78
     _phase_end("manifest_cid_and_pin", t_pin)
     _narrate(
         "RECENSUS PIN "

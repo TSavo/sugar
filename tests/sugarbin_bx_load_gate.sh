@@ -82,6 +82,7 @@ chmod +x "$fake_bin/ssh" "$fake_bin/rsync"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 run_bx() {
+  # Load/lease unit tests skip the corpus pin (no pandas on the fake remote).
   (cd "$repo_root" &&
     PATH="$fake_bin:$PATH" BCARGO_SSH="$fake_bin/ssh" BCARGO_RSYNC="$fake_bin/rsync" \
     BX_FAKE_SSH_LOG="$ssh_log" BX_FAKE_RSYNC_LOG="$rsync_log" \
@@ -92,6 +93,7 @@ run_bx() {
     BX_FAKE_REMOTE_STATUS="${BX_FAKE_REMOTE_STATUS-}" \
     BCARGO_REMOTE_ROOT="${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-load-gate-test}" \
     BCARGO_FORCE_REMOTE=1 \
+    SUGAR_BX_SKIP_CORPUS_PIN="${SUGAR_BX_SKIP_CORPUS_PIN:-1}" \
     "$repo_root/bin/sugarbin" run --host bx --env ambient "$@")
 }
 
@@ -158,11 +160,29 @@ SUGAR_BX_REQUIRE_QUIET=1 SUGAR_BX_TIMING_LEASE_WAIT_S=0 \
 grep -Fq 'crime=timing-lease-busy' "$tmp/stderr6" || fail "missing timing-lease-busy crime"
 export BX_FAKE_LEASE_BUSY=0
 
-# 7) brun adapter surfaces quiet + lease env.
+# 7) brun adapter surfaces quiet + lease + pin env.
 grep -Fq 'SUGAR_BX_REQUIRE_QUIET' "$repo_root/bin/brun" || fail "brun --help text missing quiet gate"
 grep -Fq 'sugar-bx-timing-measurement.lease' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing timing lease path"
 grep -Fq 'timing-lease-busy' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing lease-busy crime"
+grep -Fq 'bx_corpus_pin_gate' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing corpus pin gate"
+grep -Fq 'exit 78' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing pin exit 78"
 test -f "$repo_root/docs/contributing/battleaxe-timing.md" || fail "canonical timing doc missing"
 grep -Fq 'timing-measurement.lease' "$repo_root/docs/contributing/battleaxe-timing.md" || fail "doc missing exclusive lease"
+grep -Fq 'corpus-pin' "$repo_root/docs/contributing/battleaxe-timing.md" || fail "doc missing corpus pin gate"
+test -f "$repo_root/tools/bx_corpus_pin_gate.py" || fail "bx_corpus_pin_gate.py missing"
+
+# 8) Quiet path without SKIP must mention pin gate in remote wrapper.
+: >"$ssh_log"; : >"$rsync_log"; : >"$remote_exec_log"
+export BX_FAKE_LOAD="2.05 32"
+status=0
+SUGAR_BX_REQUIRE_QUIET=1 SUGAR_BX_SKIP_CORPUS_PIN=0 \
+  run_bx -- true >/dev/null 2>"$tmp/stderr8" || status=$?
+# Fake remote does not run real pin; wrapper must still carry pin gate text.
+grep -Fq 'bx_corpus_pin_gate' "$remote_exec_log" \
+  || grep -Fq 'bx_corpus_pin_gate' "$ssh_log" \
+  || fail "quiet+pin wrapper missing bx_corpus_pin_gate"
+grep -Fq 'PIN_PATH=' "$remote_exec_log" "$ssh_log" 2>/dev/null \
+  || grep -Fq 'pandas-3.0.3.pin.json' "$remote_exec_log" "$ssh_log" \
+  || fail "quiet+pin wrapper missing pin path"
 
 echo "PASS: sugarbin_bx_load_gate"

@@ -19,43 +19,53 @@ Wrappers live in the repo (they are **not** on PATH in a bare shell):
 repo-relative cwd, forwards env with `--env`, and can rsync results back with
 `--sync-back`. Do **not** invent a second remote runner.
 
-## Quiet gate + exclusive lease (mandatory for every timing number)
+## Three gates (mandatory for every timing number)
+
+**Rule:** a measurement that cannot testify to its own conditions is not a
+measurement. Three independent holes closed so far tonight:
+
+| Gate | Proves | Refuse |
+| --- | --- | --- |
+| **Load** | box was quiet under the lease | exit **76** |
+| **Lease** | no concurrent quiet measurement | exit **77** |
+| **Corpus pin** | measuring pandas **3.0.3 / 1421 files**, not system 2.3.3 / 1415 | exit **78** |
 
 ```bash
 export SUGAR_BX_REQUIRE_QUIET=1
-# optional explicit ceiling (also arms the gate alone):
-# export SUGAR_BX_MAX_LOADAVG=8
-# optional: refuse immediately instead of queueing behind another measurement
-# export SUGAR_BX_TIMING_LEASE_WAIT_S=0
+# optional: SUGAR_BX_MAX_LOADAVG=8
+# optional: SUGAR_BX_TIMING_LEASE_WAIT_S=0   # refuse if lease busy
+# pin defaults (override only with cause):
+#   SUGAR_BX_REQUIRE_CORPUS_PIN=docs/ledgers/pins/pandas-3.0.3.pin.json
+#   SUGAR_BX_CORPUS_PYTHON=.venv-py312/bin/python
+# never for fleet wall-clock: SUGAR_BX_SKIP_CORPUS_PIN=1
 ```
 
-**Rule:** a measurement that cannot testify to its own conditions is not a
-measurement. Load-at-start alone is not enough — six agents can all pass a free
-check then co-run and recreate contention on battleaxe.
+When `SUGAR_BX_REQUIRE_QUIET=1`, `bin/brun` / `bin/sugarbin run --host bx`:
 
-When armed, `bin/brun` / `bin/sugarbin run --host bx`:
-
-1. Takes an **exclusive remote flock** on
-   `/var/tmp/sugar-bx-timing-measurement.lease` (queue up to
-   `SUGAR_BX_TIMING_LEASE_WAIT_S`, default 7200s; `0` → exit **77** immediately
-   if another quiet-gated measurement holds it).
-2. Under that lock, samples **remote** 1-minute loadavg and `nproc`.
-3. **Refuses with exit 76** if `load1 > max` (default `max = max(2.0, nproc/4)`
-   → 8.0 on 32-core battleaxe).
-4. Runs the command while still holding the lease.
-5. Prints `bx-load-gate phase=before|after … lease=held` and
-   `bx-timing-lease phase=acquired|release` on stderr.
-
-Ordinary builds leave the gate **unset** (no lease, no load check). Timing
-runs always arm it. **Serialized measurement is enforced by the tool**, not by
-people agreeing not to overlap.
+1. Exclusive remote flock `/var/tmp/sugar-bx-timing-measurement.lease`
+2. Under lock: sample load1 → **76** if over ceiling
+3. Under lock: run `tools/bx_corpus_pin_gate.py` against
+   `.venv-py312` + banked pin → **78** if version/fileCount mismatch
+   (identity mode: version + file count; prints expected aggregate in the
+   receipt). `control_effect_recensus` also exits **78** on pin/aggregate refuse.
+4. Run the measurement while still holding the lease
+5. Print load before/after (`lease=held`) and pin `phase=ok` on stderr
 
 ## One-time remote env (pinned pandas corpus)
 
-From any checkout root (on the Mac; work runs on battleaxe):
+**Never use system python on battleaxe for measurement.** It has carried
+pandas **2.3.3 (1415 files)**. The authenticated pin is **3.0.3 (1421 files)**
+at `docs/ledgers/pins/pandas-3.0.3.pin.json`.
 
 ```bash
+# Preferred: bootstrap in *this* checkout's remote root
 bin/brun -- bash scripts/bootstrap-venv-py312.sh
+
+# Blonde is bootstrapping .venv-py312 with pandas==3.0.3 on the box.
+# Brown found an existing remote checkout that already has the right venv:
+#   sugar-bcargo-a978990da5ba  (tag a978990da5ba)
+# Reuse only if ` .venv-py312/bin/python -c 'import pandas; print(pandas.__version__)' `
+# prints 3.0.3 and the pin gate exits 0.
 ```
 
 That builds `.venv-py312` on the remote with **CPython 3.12.13 + pandas==3.0.3**
@@ -63,16 +73,14 @@ That builds `.venv-py312` on the remote with **CPython 3.12.13 + pandas==3.0.3**
 
 ## Canonical command shapes
 
-Always from the **repo root**. Always with `SUGAR_BX_REQUIRE_QUIET=1`.
-Always invoke `bin/brun` by path.
-
-Shared remote body (PYTHONPATH + corpus root from the pin):
+Always from the **repo root**. Always `SUGAR_BX_REQUIRE_QUIET=1`.
+Always invoke `bin/brun` by path. Always `.venv-py312` as `PY`.
+The quiet wrapper authenticates the pin before your command runs.
 
 ```bash
 export SUGAR_BX_REQUIRE_QUIET=1
-# Optional: pin an explicit SHA the remote checkout already has after sync.
-# The sync is the current tip of this worktree; commit id is recorded by the
-# recensus via --commit when you pass it.
+export SUGAR_BX_REQUIRE_CORPUS_PIN=docs/ledgers/pins/pandas-3.0.3.pin.json
+export SUGAR_BX_CORPUS_PYTHON=.venv-py312/bin/python
 
 REMOTE_JSON=/tmp/sugar-bx-measure.json   # path ON battleaxe
 LOCAL_JSON=/tmp/sugar-bx-measure.json    # path ON the Mac after sync-back
@@ -81,12 +89,15 @@ LOCAL_JSON=/tmp/sugar-bx-measure.json    # path ON the Mac after sync-back
 ### 1. Single file
 
 ```bash
-SUGAR_BX_REQUIRE_QUIET=1 bin/brun \
+SUGAR_BX_REQUIRE_QUIET=1 \
+SUGAR_BX_REQUIRE_CORPUS_PIN=docs/ledgers/pins/pandas-3.0.3.pin.json \
+SUGAR_BX_CORPUS_PYTHON=.venv-py312/bin/python \
+bin/brun \
   --sync-back "${REMOTE_JSON}:${LOCAL_JSON}" \
   -- bash -lc '
     set -euo pipefail
     PY=.venv-py312/bin/python
-    test -x "$PY" || { echo "missing .venv-py312; run: bin/brun -- bash scripts/bootstrap-venv-py312.sh" >&2; exit 2; }
+    test -x "$PY" || { echo "missing .venv-py312; bin/brun -- bash scripts/bootstrap-venv-py312.sh" >&2; exit 78; }
     CORPUS=$("$PY" -c "import pandas, pathlib; print(pathlib.Path(pandas.__file__).resolve().parent)")
     export PYTHONPATH=implementations/python/sugar-lift-py-tests/scripts:implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-python-source/src
     FILE_REL="${FILE_REL:-io/json/_json.py}"
@@ -95,9 +106,10 @@ SUGAR_BX_REQUIRE_QUIET=1 bin/brun \
       --corpus-root "$CORPUS" \
       --repo . \
       --commit "$(git rev-parse HEAD)" \
+      --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
       --json /tmp/sugar-bx-measure.json
   '
-# JSON at $LOCAL_JSON. Trust only if the command exited 0 (not 76).
+# Trust only exit 0. Cite stderr: lease=held, load1_before/after, bx-corpus-pin phase=ok.
 ```
 
 Override the file:
@@ -113,7 +125,10 @@ Pass a directory under the corpus root as the first positional (still with
 full run):
 
 ```bash
-SUGAR_BX_REQUIRE_QUIET=1 bin/brun \
+SUGAR_BX_REQUIRE_QUIET=1 \
+SUGAR_BX_REQUIRE_CORPUS_PIN=docs/ledgers/pins/pandas-3.0.3.pin.json \
+SUGAR_BX_CORPUS_PYTHON=.venv-py312/bin/python \
+bin/brun \
   --sync-back "${REMOTE_JSON}:${LOCAL_JSON}" \
   -- bash -lc '
     set -euo pipefail
@@ -126,6 +141,7 @@ SUGAR_BX_REQUIRE_QUIET=1 bin/brun \
       --corpus-root "$CORPUS" \
       --repo . \
       --commit "$(git rev-parse HEAD)" \
+      --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
       --json /tmp/sugar-bx-measure.json
   '
 ```
@@ -137,7 +153,10 @@ Plan is not a measurement. Measure a seat with the production worker shape:
 ```bash
 # After plan.json exists under .sugar/pandas-control-effect/ (from the CI plan
 # job or tools/plan_control_effect_recensus_shards.py on battleaxe):
-SUGAR_BX_REQUIRE_QUIET=1 bin/brun \
+SUGAR_BX_REQUIRE_QUIET=1 \
+SUGAR_BX_REQUIRE_CORPUS_PIN=docs/ledgers/pins/pandas-3.0.3.pin.json \
+SUGAR_BX_CORPUS_PYTHON=.venv-py312/bin/python \
+bin/brun \
   --sync-back "${REMOTE_JSON}:${LOCAL_JSON}" \
   -- bash -lc '
     set -euo pipefail
@@ -151,6 +170,7 @@ SUGAR_BX_REQUIRE_QUIET=1 bin/brun \
       --corpus-root "$CORPUS" \
       --repo . \
       --commit "$(git rev-parse HEAD)" \
+      --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
       --out-dir "$OUT" \
       --plan-json "$OUT/plan.json" \
       --shard-index "$SHARD" \
@@ -186,12 +206,13 @@ Do not each invent argv. Copy from this file. Cite stderr `load1_before` /
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Command finished; stderr has `bx-timing-lease phase=acquired`, `bx-load-gate phase=before|after … lease=held`. JSON at sync-back path. |
-| 76 | **Refused — host not quiet** (under lease). No number. Do not cite. Wait and retry. |
-| 77 | **Refused — another measurement holds the exclusive lease** (or wait timed out). No number. Queue or set wait; do not invent a second runner. |
+| 0 | Finished; stderr has lease acquired, load before/after `lease=held`, and `bx-corpus-pin phase=ok`. JSON at sync-back path. |
+| 76 | **Host not quiet** (under lease). No number. |
+| 77 | **Lease busy** (or wait timed out). No number. Queue — do not invent a second runner. |
+| 78 | **Wrong corpus pin** (e.g. system 2.3.3/1415 vs pin 3.0.3/1421). No number. Bootstrap `.venv-py312`. |
 | other | Remote command failure; also not a trusted number. |
 
-A JSON body without a 0 exit, or without the before load line with `lease=held`,
+A JSON body without exit 0, or without load `lease=held` **and** pin `phase=ok`,
 is not a timing receipt.
 
 ## Forbidden
