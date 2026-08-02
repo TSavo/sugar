@@ -427,13 +427,13 @@ def _with_census_partition(
     from sugar_source_tree.panic import WithConstructionGapKind
 
     vocabulary = tuple(member.value for member in WithConstructionGapKind)
-    # ENTER_MAY_HALT / EXIT_MAY_HALT are source-derived resource lifecycle
-    # gaps, added with the generator-backed resource contract. Keep the exact
-    # cardinality tooth current; do not replace it with an open-ended bucket.
-    if len(vocabulary) != 41:
+    # Closed cardinality tooth: every WithConstructionGapKind member is a
+    # partition key. Bump when a new kind is enrolled (OPAQUE_EXIT_TRUTHINESS
+    # made 42). Do not replace with an open-ended bucket.
+    if len(vocabulary) != 42:
         raise ValueError(
             "WithConstructionGapKind vocabulary changed: "
-            f"expected 41 members, found {len(vocabulary)}"
+            f"expected 42 members, found {len(vocabulary)}"
         )
     allowed = {"derived-contract", *(f"gap:{kind}" for kind in vocabulary)}
     unexpected = sorted(set(cm_resolutions) - allowed)
