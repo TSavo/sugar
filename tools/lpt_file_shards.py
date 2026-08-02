@@ -179,6 +179,94 @@ class ContentAddressedCostPrior:
         return costs, hits, misses
 
 
+def percentile(values: Sequence[float], p: float) -> float:
+    """Linear-interpolation-free nearest-rank percentile on a non-empty sequence."""
+    if not values:
+        raise ValueError("percentile on empty sequence")
+    if p <= 0:
+        return float(min(values))
+    if p >= 1:
+        return float(max(values))
+    ordered = sorted(float(v) for v in values)
+    # nearest-rank: index = ceil(p * n) - 1
+    idx = min(len(ordered) - 1, max(0, int(p * len(ordered) + 0.999999999) - 1))
+    return ordered[idx]
+
+
+def safe_unknown_cost_floor(known_costs: Sequence[float]) -> float:
+    """Conservative constant floor for files with no prior and no usable proxy.
+
+    Measured census-200 (open+populate): median 0.147s under-prices heavies by
+    ~12× (median heavy ≥1s) to 39× (worst). p75 (~0.54s) cuts under-half rate
+    from 36% to 14%. Never use the median of hit costs when tiny content-CID
+    collisions dominate the hit multiset (that produced the optimistic 0.039s).
+    """
+    if not known_costs:
+        return 1.0  # no evidence — one second, not zero
+    return max(percentile(known_costs, 0.75), 0.0)
+
+
+@dataclass(frozen=True)
+class SizeCostBin:
+    """One size band → measured median cost (calibrated from prior hits)."""
+
+    max_size: int  # inclusive upper bound (last bin uses a huge sentinel)
+    median_cost_s: float
+
+
+def calibrate_size_cost_bins(
+    size_cost_pairs: Sequence[tuple[int, float]],
+    *,
+    n_bins: int = 5,
+) -> tuple[SizeCostBin, ...]:
+    """Build size→cost bins from measured (size_bytes, cost_s) pairs.
+
+    Spearman size↔cost on census-200 was ~0.85 (rank); linear R² only ~0.18.
+    Quintile medians capture the monotone lift without pretending linearity.
+    """
+    if n_bins < 1:
+        raise ValueError("n_bins must be >= 1")
+    pairs = [(int(s), float(c)) for s, c in size_cost_pairs if s >= 0 and c >= 0]
+    if not pairs:
+        return (SizeCostBin(max_size=2**62, median_cost_s=1.0),)
+    pairs.sort(key=lambda t: (t[0], t[1]))
+    n = len(pairs)
+    bins: list[SizeCostBin] = []
+    for i in range(n_bins):
+        lo = (i * n) // n_bins
+        hi = ((i + 1) * n) // n_bins
+        chunk = pairs[lo:hi]
+        if not chunk:
+            continue
+        costs = sorted(c for _, c in chunk)
+        med = costs[len(costs) // 2]
+        max_size = chunk[-1][0] if i < n_bins - 1 else 2**62
+        bins.append(SizeCostBin(max_size=max_size, median_cost_s=med))
+    if not bins:
+        return (SizeCostBin(max_size=2**62, median_cost_s=1.0),)
+    # Ensure last bin is open-ended.
+    last = bins[-1]
+    bins[-1] = SizeCostBin(max_size=2**62, median_cost_s=last.median_cost_s)
+    return tuple(bins)
+
+
+def estimate_cost_from_size(
+    size_bytes: int,
+    bins: Sequence[SizeCostBin],
+    *,
+    floor_s: float,
+) -> float:
+    """Proxy cost for an unknown file: size-bin median, floored at p75 known."""
+    if size_bytes < 0:
+        size_bytes = 0
+    est = floor_s
+    for band in bins:
+        if size_bytes <= band.max_size:
+            est = band.median_cost_s
+            break
+    return max(float(floor_s), float(est))
+
+
 def equal_count_bins(files: Sequence[str], shard_count: int) -> list[list[str]]:
     """Path-index % k on the given order (caller should sort for stability)."""
     if shard_count < 1:
@@ -248,6 +336,16 @@ def assign_files(
 
     ``path_resolver`` maps roster key → filesystem path for content cid.
     When omitted, equal-count only (no path bytes to hash).
+
+    Unknown-file degrade (no prior entry) — safety law from census-200:
+      * Floor at **p75 of known costs**, never the median of the hit multiset
+        (tiny content-CID collisions made median ≈ 0.039s while heavies are 1–5s).
+      * When a filesystem path is available, score the unknown at
+        ``max(floor, size-bin median)`` calibrated from hit (size, cost) pairs
+        (Spearman size↔cost ≈ 0.85; size quintile medians rise 0.015→0.88s).
+      * LPT then packs known + estimated unknowns together — equal-cost unknowns
+        naturally fan across lightest bins (not one pile). No separate RR pass
+        required when estimates differ by size.
     """
     ordered = list(files)
     prior = prior if prior is not None else ContentAddressedCostPrior()
@@ -255,10 +353,10 @@ def assign_files(
     hits = 0
     misses = len(ordered)
     prior_disabled = not prior.enabled
+    path_map: dict[str, Path] = {}
     if path_resolver is not None and prior.enabled and ordered:
-        costs, hits, misses = prior.costs_for_paths(
-            {f: path_resolver[f] for f in ordered if f in path_resolver}
-        )
+        path_map = {f: path_resolver[f] for f in ordered if f in path_resolver}
+        costs, hits, misses = prior.costs_for_paths(path_map)
         # Files without a resolvable path count as misses.
         for f in ordered:
             if f not in path_resolver and f not in costs:
@@ -279,11 +377,42 @@ def assign_files(
         )
 
     known = list(costs.values())
-    missing_cost = sorted(known)[len(known) // 2]  # median of known
-    bins = lpt_bins(ordered, costs, shard_count, missing_cost=missing_cost)
-    loads = [
-        sum(costs.get(p, missing_cost) for p in b) for b in bins
-    ]
+    floor_s = safe_unknown_cost_floor(known)
+    # Calibrate size bins from hits that still have a resolvable path.
+    size_pairs: list[tuple[int, float]] = []
+    for key, cost in costs.items():
+        path = path_map.get(key)
+        if path is None:
+            continue
+        try:
+            size_pairs.append((path.stat().st_size, float(cost)))
+        except OSError:
+            continue
+    size_bins = calibrate_size_cost_bins(size_pairs)
+
+    # Fill per-file estimates for misses (do not leave them on a single constant
+    # that both under-prices heavies and clusters equal-weight unknowns).
+    estimated = dict(costs)
+    for f in ordered:
+        if f in estimated:
+            continue
+        path = path_map.get(f) if path_map else None
+        if path is not None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                estimated[f] = floor_s
+            else:
+                estimated[f] = estimate_cost_from_size(
+                    size, size_bins, floor_s=floor_s
+                )
+        else:
+            estimated[f] = floor_s
+
+    # missing_cost is only a residual fallback inside lpt_bins for keys absent
+    # from ``estimated`` (should be none); keep it at the safe floor.
+    bins = lpt_bins(ordered, estimated, shard_count, missing_cost=floor_s)
+    loads = [sum(float(estimated.get(p, floor_s)) for p in b) for b in bins]
     return ShardAssignment(
         bins=bins,
         mode="lpt",
