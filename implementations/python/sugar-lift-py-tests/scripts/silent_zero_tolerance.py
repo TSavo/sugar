@@ -297,18 +297,43 @@ def audit_paths(
                 f"# files={len(paths)} pending={len(pending)}\n"
             ),
         )
+    files_total = len(paths)
+    pending_total = len(pending)
+    already_done = files_total - pending_total
+    from job_log_heartbeat import JobLogHeartbeat
+
+    beat = JobLogHeartbeat("silent-audit", total=files_total)
+    beat.n = already_done
+    beat.watch()
+    beat.tick(
+        n=already_done,
+        force=True,
+        status="denominator",
+        pending=pending_total,
+        file_timeout_s=file_timeout,
+    )
     try:
         iterator: Any = pending
         if progress_stream is not None:
             iterator = iter_with_tqdm(
                 pending,
                 progress=progress_stream,
-                total=len(paths),
-                initial=len(paths) - len(pending),
+                total=files_total,
+                initial=already_done,
                 desc="silent",
-                progress_stdout=progress_stdout,
+                # Always mirror when requested — never isatty-gate job log.
+                progress_stdout=True if progress_stdout else False,
             )
-        for path in iterator:
+        for file_i, path in enumerate(pending, start=1):
+            rel = relative_to_root(path, root)
+            beat.tick(
+                n=already_done + file_i - 1,
+                force=True,
+                status="audit-file",
+                file=rel,
+                pending_index=file_i,
+                pending_total=pending_total,
+            )
             row = _run_one(path, root=root, file_timeout=file_timeout)
             if checkpoint is not None:
                 checkpoint.append(
@@ -321,7 +346,16 @@ def audit_paths(
                     },
                 )
             done_rows[row.file] = row
+            beat.tick(
+                n=already_done + file_i,
+                force=(file_i == pending_total or file_i % 10 == 0),
+                status="file-done",
+                file=row.file,
+                category=row.category,
+                silent_loci=r_silent(row.offenders),
+            )
     finally:
+        beat.stop(status="audit-complete")
         if progress_stream is not None:
             progress_stream.close()
 

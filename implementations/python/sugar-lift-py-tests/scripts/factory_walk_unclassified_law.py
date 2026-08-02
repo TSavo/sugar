@@ -29,7 +29,7 @@ from __future__ import annotations
 SCOREBOARD_AUTHORITY = False
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import subprocess
@@ -37,6 +37,11 @@ import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+# Repo tools/ for job-log heartbeats (≤30s doctrine — run 30731778056: 88s silence).
+_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
 
 from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (
     UNCLASSIFIED_STATUSES,
@@ -336,29 +341,87 @@ def measure_live_roots(
     file_timeout: int,
     workers: int,
 ) -> tuple[list[Any], dict[str, int]]:
+    """Live census with job-log heartbeats.
+
+    Run 30731778056: ~88s silence after group header — ``executor.map`` blocked
+    until the whole pool finished. Use ``as_completed`` + JobLogHeartbeat so
+    every finished file names phase/count on the Actions log within 30s.
+    """
+    from job_log_heartbeat import JobLogHeartbeat
+
     paths = _python_paths(roots)
     if not paths:
         raise ValueError(f"no Python source files found under {list(roots)}")
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        results = list(
-            executor.map(
-                lambda path: _measure_live_file(
-                    path, repo_root=repo_root, file_timeout=file_timeout
-                ),
-                paths,
-            )
+    total = len(paths)
+    beat = JobLogHeartbeat("factory-walk-live", total=total)
+    beat.watch()
+    beat.tick(
+        n=0,
+        force=True,
+        status="denominator",
+        files_discovered=total,
+        workers=workers,
+    )
+    results: list[Mapping[str, Any]] = []
+    done = 0
+    completed = timeouts = panics = crashes = errors = 0
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    _measure_live_file,
+                    path,
+                    repo_root=repo_root,
+                    file_timeout=file_timeout,
+                ): path
+                for path in paths
+            }
+            for fut in as_completed(futures):
+                path = futures[fut]
+                try:
+                    row = fut.result()
+                except Exception as exc:  # noqa: BLE001 — per-file containment
+                    rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+                    row = {
+                        "file": rel,
+                        "category": "auditor-error",
+                        "rows": [],
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                results.append(row)
+                done += 1
+                cat = str(row.get("category") or "")
+                if cat == "completed":
+                    completed += 1
+                elif cat == "timeout":
+                    timeouts += 1
+                elif cat == "factory-panic":
+                    panics += 1
+                elif cat == "native-crash":
+                    crashes += 1
+                elif cat == "auditor-error":
+                    errors += 1
+                beat.tick(
+                    n=done,
+                    force=True,
+                    file=row.get("file"),
+                    completed=completed,
+                    timeouts=timeouts,
+                    panics=panics,
+                    native_crashes=crashes,
+                    auditor_errors=errors,
+                )
+    finally:
+        beat.stop(
+            status="done",
         )
     counts = {
         "files_discovered": len(results),
-        "files_completed": sum(row.get("category") == "completed" for row in results),
-        "construction_panics": sum(
-            row.get("category") == "factory-panic" for row in results
-        ),
-        "timeouts": sum(row.get("category") == "timeout" for row in results),
-        "native_crashes": sum(row.get("category") == "native-crash" for row in results),
-        "auditor_errors": sum(
-            row.get("category") == "auditor-error" for row in results
-        ),
+        "files_completed": completed,
+        "construction_panics": panics,
+        "timeouts": timeouts,
+        "native_crashes": crashes,
+        "auditor_errors": errors,
     }
     rows = [
         walk_row
@@ -372,9 +435,16 @@ def measure_live_roots(
 def main(argv: Sequence[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-        except (AttributeError, ValueError):
-            pass
+            stream.reconfigure(
+                encoding="utf-8",
+                errors="backslashreplace",
+                line_buffering=True,
+            )
+        except (AttributeError, ValueError, TypeError):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (AttributeError, ValueError):
+                pass
     repo_root = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
