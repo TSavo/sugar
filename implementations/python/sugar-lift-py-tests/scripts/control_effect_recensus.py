@@ -1119,7 +1119,7 @@ def main() -> int:
     desugar_defects: list[dict[str, Any]] = []
     # A FOURTH, disjoint from all three and RED-NEUTRAL: a declared mechanism
     # refusing on purpose, as its correct answer, in something that is not a
-    # SugarNotWritten. See sugar_lift_py_tests.desugar_axis._designed_gap_types
+    # designed-gap taxonomy deleted — panics only
     # for why membership is a declared TYPE and never "a ValueError from this
     # call". Published with its MEMBERS, not a bare count: `factoringGaps = 13`
     # as a lone scalar sent an owner hunting for a whole session.
