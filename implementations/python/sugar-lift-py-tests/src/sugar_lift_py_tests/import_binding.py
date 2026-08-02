@@ -215,7 +215,17 @@ class AuthenticatedImportUseV1:
         Call-target and value-use demands revalidate against their own
         row/outcome surfaces so Call receipts stay unchanged and neither
         surface can authorize the other.
+
+        Ask once per content, not once per path: the same authenticated use
+        face (``use["cid"]``) is revalidated at every seating / resolve /
+        roster retain door.  Measured cold open of
+        ``pandas/tests/io/json/test_pandas.py``: 1011 revalidate calls over
+        only 75 unique use CIDs (max 67× one face).  The answer cannot change
+        for a given content address; memo success so later doors free.
         """
+        use_cid = self.use.get("cid")
+        if use_cid is not None and use_cid in _REVALIDATED_USE_CIDS:
+            return
         site = self.use["useSite"]
         key = (
             site["startLine"],
@@ -247,6 +257,8 @@ class AuthenticatedImportUseV1:
             raise ValueError(
                 "authenticated import use is not byte-identical to lexical revalidation"
             )
+        if use_cid is not None:
+            _REVALIDATED_USE_CIDS.add(use_cid)
 
 
 def _authenticated_binding_target_symbol(binding: ImportBindingV1) -> str:
@@ -1069,12 +1081,17 @@ _REVALIDATION_SNAPSHOTS: dict[
 _VALUE_REVALIDATION_SNAPSHOTS: dict[
     tuple[str, str, str, str], _LexicalRevalidationSnapshotV1
 ] = {}
+# Content-addressed "this use face already passed revalidate".  Process-global
+# is legitimate: the key is the use CID (complete preimage of the face), and
+# the value is pure success — never a live context.  Cleared with snapshots.
+_REVALIDATED_USE_CIDS: set[str] = set()
 
 
 def clear_lexical_revalidation_snapshots() -> None:
     """Drop amortized revalidation snapshots (tests / hermetic process reuse)."""
     _REVALIDATION_SNAPSHOTS.clear()
     _VALUE_REVALIDATION_SNAPSHOTS.clear()
+    _REVALIDATED_USE_CIDS.clear()
 
 
 def _revalidation_cache_key(
