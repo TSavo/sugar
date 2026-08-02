@@ -95,9 +95,29 @@ A family with **no lying twin** is a family we cannot prove we detect.
 | `GapKind.OPERATION` | `Operation` | yes | `…ons/python/sugar-lift-py-tests/tests/test_delete_formal_caller.py` | yes | `…ons/python/sugar-lift-py-tests/tests/test_delete_formal_caller.py` | both |
 | `GapKind.PROOFIR` | `ProofIR` | yes | `…ar-lift-py-tests/tests/test_semantic_family_twin_inventory_law.py` | yes | `…ar-lift-py-tests/tests/test_semantic_family_twin_inventory_law.py` | both |
 
-## Missing lying twin (action list)
+## Missing lying twin — ranked (seal / floor load-bearing)
 
-- `WithConstructionGapKind.UNRESOLVED_SYMBOL` (`unresolved-symbol`)
+A truthful twin proves recognition when the residual is present. A **lying** twin
+proves we would notice its **absence** (or refuse a misclassification). Rank is
+by whether tonight's seal / floors depend on that detector:
+
+| rank | family | why load-bearing | twin status after rank-1 land |
+| ---: | --- | --- | --- |
+| **1** | `call-target-off-population` | Population membrane; false green rebuilds off-pin | **lying twin written** (`test_c5_residual_lying_twins_rank1.py`) |
+| **2** | `exit-missing` | Closed CM protocol residual on seal vocabulary | **lying twin written** (discriminates vs enter-missing) |
+| **3** | `unresolved-symbol` | Default With loud residual without a contract ref | **lying twin written** (bare return is not unresolved-symbol) |
+| **4** | `ConstructedValueTestimonyNotWritten` / category gap | False-green construction class | **lying twin written** (tuple canonicalizes; list loud) |
+| 5 | `definition-missing` | Source-derived construction residual on seal | still missing |
+| 6 | `artifact-mismatch` | Authority mismatch residual | still missing |
+| 7 | `incomplete-call-actuals` | Populate residual | still missing |
+| 8 | `target-outside-binding` | Export residual (truthful only in census) | still missing |
+| 9–20 | other `WithConstructionGapKind` members below | On seal vocabulary tooth; lower live mass | still missing |
+| 21 | `instrument-defect-unresolvable-dispatch` | Board category, not a gap kind | still missing |
+| 22–24 | `ConstructedValueTestimonyNotWritten` class, `AsyncContextManagerUnsupported`, `SubstituteNotWritten` | Panic classes; secondary seal mass | class-level still listed; category twin covers #4 |
+| 25 | `GapKind.SUGAR_ORDERING` | Construction locus label — **not** CM residual | lowest for CM seal |
+
+### Still missing lying twin (after rank-1 four)
+
 - `WithConstructionGapKind.AMBIGUOUS_SYMBOL` (`ambiguous-symbol`)
 - `WithConstructionGapKind.WRONG_CONTRACT_KIND` (`wrong-contract-kind`)
 - `WithConstructionGapKind.SIGNATURE_MISMATCH` (`signature-mismatch`)
@@ -115,13 +135,12 @@ A family with **no lying twin** is a family we cannot prove we detect.
 - `WithConstructionGapKind.INCOMPLETE_CALL_ACTUALS` (`incomplete-call-actuals`)
 - `WithConstructionGapKind.ARTIFACT_MISMATCH` (`artifact-mismatch`)
 - `WithConstructionGapKind.DEFINITION_MISSING` (`definition-missing`)
-- `WithConstructionGapKind.CALL_TARGET_OFF_POPULATION` (`call-target-off-population`)
-- `WithConstructionGapKind.EXIT_MISSING` (`exit-missing`)
-- `panic.ConstructedValueTestimonyNotWritten` (`ConstructedValueTestimonyNotWritten`)
 - `panic.AsyncContextManagerUnsupported` (`AsyncContextManagerUnsupported`)
 - `panic.SubstituteNotWritten` (`SubstituteNotWritten`)
 - `recensus.category.instrument-defect-unresolvable-dispatch` (`instrument-defect-unresolvable-dispatch`)
 - `GapKind.SUGAR_ORDERING` (`Sugar ordering`)
+
+**Predicted R after rank-1 land:** missing lying ≈ **21** (was 25; four families now have explicit `*_lying_twin_*` tests). Re-scan inventory to confirm marker credit.
 
 ## Group inventory sources
 
