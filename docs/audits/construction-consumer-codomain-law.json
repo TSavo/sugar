@@ -2,14 +2,15 @@
   "gaps": [],
   "summary": {
     "R_construction_consumer_codomain_gap": 0,
+    "R_expression_construct_not_term": 0,
     "R_kind_dispatch_codomain_gap": 0,
     "R_total": 0,
-    "binding_state_types": 5,
-    "classes": 146,
-    "closed_doors": 3,
-    "construct_minted": 0,
-    "constructed_term_types": 56,
-    "kind_literals": 5,
-    "modules_indexed": 89
+    "binding_state_types": 10,
+    "classes": 270,
+    "closed_doors": 5,
+    "construct_minted": 92,
+    "constructed_term_types": 57,
+    "kind_literals": 51,
+    "modules_indexed": 90
   }
 }

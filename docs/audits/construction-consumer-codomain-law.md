@@ -19,9 +19,32 @@ them; this instrument finds them **forwards**, in seconds, with no corpus.
 
 ## Method (static AST)
 
-1. **Produced:** `ConstructedTermSugar` descendants + binding-state species  
+1. **Produced:** inheritance-proven `ConstructedTermSugar` descendants + binding-state species  
 2. **Closed doors:** `isinstance` / `require_constructed_term_sugar` arms that also raise `TypeError` or `SugarNotWritten`  
-3. **Gap:** produced sibling absent from a door that totalizes that family  
+3. **Gap (sibling):** produced sibling absent from a door that totalizes that family  
+4. **Gap (dynamic-discharge proxy):** `Expression` / `*StateV1` / `*Place*` `_construct_sugar` returns a `*Sugar` that is **not** a `ConstructedTermSugar` descendant → axis `R_expression_construct_not_term`
+
+### Axis 4 — why it exists (fifth lie, sealed board)
+
+Sealed board found:
+`AttributeSugar.receiver requires ConstructedTermSugar, got ConstructedObjectPlaceSugar`
+on `tests/frame/test_arithmetic.py`. Pure isinstance-sibling scan reported
+`R_total=0` because `require_constructed_term_sugar` accepts the **base**
+`ConstructedTermSugar` (all descendants covered) — it cannot see a mint that
+lives **outside** the term hierarchy entirely. That mint is dynamic discharge
+currency: `ObjectPlaceStateV1(Expression)._construct_sugar` → nested slot.
+
+Static proxy enrolled: scan Expression-ish `_construct_sugar` Call returns;
+flag Sugar-not-CTS. **Do not** union every `*Sugar` mint into the term set —
+that lie hid ObjectPlace pre-promote.
+
+### Reach honesty (what static still cannot follow)
+
+- `getattr` / variable factories / runtime type mutations
+- mints outside enrolled roots
+
+Those remain **runtime-only**: `require_constructed_term_sugar` TypeError at
+the slot + sealed-board / discharge twins. Do not force a static answer.
 
 ## Bankable zero language (load-bearing)
 
@@ -30,12 +53,14 @@ them; this instrument finds them **forwards**, in seconds, with no corpus.
 That sentence is the difference between a measured zero and silence-as-a-clean-floor.
 It is the distinction this campaign exists to defend.
 
-### Caveat (must stay prominent)
+### Caveat (must stay prominent — proven load-bearing by ObjectPlace)
 
-Zero is **under this instrument's reach**: static AST on enrolled doors and mint
-packages. **Do not read `R_total=0` as "the class is closed forever".** It means:
-at this tip, every produced sibling is accepted by every closed door we can see
-statically. Remaining gaps may be **dynamic-only**.
+Zero is **under this instrument's reach**: static AST on enrolled doors, mint
+packages, and Expression `_construct_sugar` mint→term proxy. **Do not read
+`R_total=0` as "the class is closed forever".** It means: at this tip, every
+produced sibling is accepted by every closed door we can see statically, and
+every Expression-ish construct mint we can name is a ConstructedTermSugar.
+Remaining gaps may still be dynamic-only (getattr factories, etc.).
 
 ## CI law (enrollment is existence)
 
@@ -58,13 +83,22 @@ python3 implementations/python/sugar-lift-py-tests/scripts/construction_consumer
 | R_total | 0 |
 | R_construction_consumer_codomain_gap | 0 |
 | R_kind_dispatch_codomain_gap | 0 |
+| R_expression_construct_not_term | 0 |
 
-Closed doors (typical tip surface):
+Closed doors / mints (typical tip surface):
 
 - `require_constructed_term_sugar` — base `ConstructedTermSugar`
 - `binding_state_read_node` — `Node | UnboundBinding | GuardedBinding | LoopProjectedBinding`
 - `_projection_term` — ConstructedTermSugar + projection faces
+- `ObjectPlaceStateV1._construct_sugar` → `ConstructedObjectPlaceSugar` (promoted to CTS)
 
-After #7099 / #7101 / #7103 hierarchy fixes, static closed doors accept every
-produced sibling this instrument can see. The four hierarchy lies **may** be the
-whole class at tip — proven zero is still bankable under the caveat above.
+After #7099 / #7101 / #7103 hierarchy fixes + ObjectPlace promote, static closed
+doors and Expression mint→term proxy accept every inhabitant this instrument
+can see. Proven zero remains bankable under the caveat above.
+
+## Fix judgment (ObjectPlace fifth lie)
+
+**Promote** `ConstructedObjectPlaceSugar` → `ConstructedTermSugar` + `to_term`.
+Do **not** widen `AttributeSugar.receiver`. An object place projects
+authenticated construction testimony of an object — same ontology as
+`ConstructedReceiverRefSugar`. The slot was truthful; the mint understated.
