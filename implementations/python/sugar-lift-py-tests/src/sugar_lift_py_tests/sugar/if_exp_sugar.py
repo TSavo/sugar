@@ -21,10 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import (
-    ConstructedTermSugar,
-    require_constructed_term_sugar,
-)
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
@@ -41,9 +38,31 @@ class IfExpSugar(ConstructedTermSugar):
     branch_slot: object = None
 
     def __post_init__(self) -> None:
-        require_constructed_term_sugar(self.test, owner="IfExpSugar.test")
-        require_constructed_term_sugar(self.body, owner="IfExpSugar.body")
-        require_constructed_term_sugar(self.orelse, owner="IfExpSugar.orelse")
+        # Defense in depth: construction door is IfExp._construct_sugar, which
+        # raises SugarNotWritten for non-term arms. If anything bypasses that
+        # door, refuse the same way — never TypeError.
+        from sugar_source_tree.panic import SugarNotWritten
+
+        for arm_name, arm in (
+            ("test", self.test),
+            ("body", self.body),
+            ("orelse", self.orelse),
+        ):
+            if isinstance(arm, ConstructedTermSugar):
+                continue
+            raise SugarNotWritten(
+                blame=self.site,
+                owner=f"IfExpSugar.{arm_name}",
+                observed=(
+                    f"IfExpSugar.{arm_name} is {type(arm).__name__}, not "
+                    "ConstructedTermSugar"
+                ),
+                requested="ConstructedTermSugar arms for to_term / distribute",
+                fix=(
+                    "construct only through IfExp._construct_sugar, which names "
+                    "the missing arm sugar; do not bypass with a raw type assert"
+                ),
+            )
 
     @classmethod
     def witnesses(cls):
