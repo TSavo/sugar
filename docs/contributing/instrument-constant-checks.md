@@ -63,9 +63,7 @@ Before trusting a residual bucket, a clean ratio, a ground, or a type-narrowing
 
 1. **Name the second answer.** What would red look like for this instrument on
    this case? If you cannot name it, you have a constant.
-2. **Plant the lying twin.** Force the bad world; require the instrument to
-   change. If it cannot change, delete or redesign (see residual C5 twin census).
-3. **Prefer unrepresentable over audited.** A type that cannot construct the
+2. **Prefer unrepresentable over audited.** A type that cannot construct the
    illegal shape beats a ratio that promises to stay honest. Climb the
    enforcement ladder; do not add a second constant to watch the first.
 
