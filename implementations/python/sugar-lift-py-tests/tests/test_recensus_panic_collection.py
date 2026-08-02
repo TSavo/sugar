@@ -42,7 +42,7 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_gap(
 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
     row = module._measure_file(path, relative="fixture.py", workspace_root=tmp_path)
-    assert row["category"] == "construction-panic"
+    assert row["category"] == "panic"
     assert row["panic"]["type"] == "ConstructionPanic"
     # File-level ConstructionPanic must be enrolled in families at measure time
     # so aggregation does not invent a family the walk never named.
@@ -100,7 +100,7 @@ def test_mid_file_construction_panic_does_not_shrink_function_denominator(
         contract_refs={},
     )
 
-    assert row["category"] == "construction-panic"
+    assert row["category"] == "panic"
     assert row["functionsTotal"] == 3
     assert row["functionsEnumerated"] == 2
     assert row["functionsNotEnumerated"] == 1
@@ -194,5 +194,4 @@ def test_backend_defect_keys_split_cm_and_call_demand() -> None:
     assert cm != call
     assert other.startswith("BackendDefect:")
     assert other not in {cm, call}
-
 

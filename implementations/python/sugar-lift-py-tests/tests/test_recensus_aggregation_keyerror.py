@@ -1,4 +1,4 @@
-"""Landmine two: aggregation must survive construction-panic rows.
+"""Landmine two: aggregation must survive canonical panic rows.
 
 The recensus walked 1421/1421 then died on:
   families['ConstructionPanic'] += 1 → KeyError
@@ -44,7 +44,7 @@ def _aggregate_rows(module, measured_rows: list[tuple[str, dict]]):
         row = dict(raw)
         category = str(row.get("category"))
         families.update(row.get("families") or {})
-        if category == "construction-panic":
+        if category == "panic":
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(panic)
@@ -78,7 +78,7 @@ def test_measure_enrolls_construction_panic_in_families(
 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
     row = module._measure_file(path, relative="fixture.py", workspace_root=tmp_path)
-    assert row["category"] == "construction-panic"
+    assert row["category"] == "panic"
     assert row["families"].get("ConstructionPanic", 0) >= 1
 
 
@@ -99,7 +99,7 @@ def test_aggregation_survives_legacy_panic_row_without_family_key() -> None:
         (
             "pkg/b.py",
             {
-                "category": "construction-panic",
+                "category": "panic",
                 "functionsTotal": 3,
                 "functionsClean": 1,
                 "families": {},  # legacy: panic not enrolled in families
