@@ -35,7 +35,16 @@ ATTEND = _load(
 )
 
 
-def _row(file: str, *, category: str = "completed", fn: int = 1, panic: bool = False):
+def _row(
+    file: str,
+    *,
+    category: str = "completed",
+    fn: int = 1,
+    auth: int | None = None,
+    panic: bool = False,
+):
+    """fn = enumerated; auth = authenticated AST population (defaults to fn)."""
+    authenticated = fn if auth is None else auth
     if panic:
         return (
             file,
@@ -43,6 +52,9 @@ def _row(file: str, *, category: str = "completed", fn: int = 1, panic: bool = F
                 "category": "construction-panic",
                 "functionsTotal": 0,
                 "functionsClean": 0,
+                "functionsEnumerated": 0,
+                "functionsAuthenticated": authenticated,
+                "astSites": {"site:function-def": authenticated},
                 "families": {"ConstructionPanic": 1},
                 "panic": {"file": file, "type": "ConstructionPanic", "message": "x"},
             },
@@ -51,9 +63,23 @@ def _row(file: str, *, category: str = "completed", fn: int = 1, panic: bool = F
         file,
         {
             "category": category,
-            "functionsTotal": fn,
+            "functionsTotal": fn if category == "completed" else 0,
             "functionsClean": fn if category == "completed" else 0,
+            "functionsEnumerated": fn if category == "completed" else 0,
+            "functionsAuthenticated": authenticated,
+            "astSites": {"site:function-def": authenticated},
             "families": {},
+            **(
+                {
+                    "defect": {
+                        "file": file,
+                        "type": "BackendDefect",
+                        "message": "instrument failed",
+                    }
+                }
+                if category == "backend-defect"
+                else {}
+            ),
         },
     )
 
@@ -87,7 +113,11 @@ def test_compose_scoreboard_authority_true_only_here() -> None:
 
 def test_k1_compose_seals_with_dual_denom_and_body_cid() -> None:
     files = ["pandas/a.py", "pandas/b.py"]
-    rows = [_row("pandas/a.py", fn=3), _row("pandas/b.py", fn=2, panic=True)]
+    # a: enumerated 3 of 3 authenticated; b: panic, auth 2 still in population.
+    rows = [
+        _row("pandas/a.py", fn=3, auth=3),
+        _row("pandas/b.py", fn=0, auth=2, panic=True),
+    ]
     status, body = COMPOSE.compose_k1_from_rows(
         rows,
         enrolled_files=files,
@@ -102,11 +132,51 @@ def test_k1_compose_seals_with_dual_denom_and_body_cid() -> None:
     assert body["bodyCid"]
     assert body["R_construction_panics"] == 1
     assert body["denominator"]["files"]["enrolled"] == 2
-    # Panic fixture rows declare functionsTotal=0; only a.py contributes 3.
-    assert body["denominator"]["functions"]["total"] == 3
-    assert body["denominator"]["functions"]["unit"] == "construction-function-locus"
+    # AUTHENTICATED population is the function denominator (AST), not enumerate-only.
+    assert body["denominator"]["functions"]["total"] == 5
+    assert body["denominator"]["functions"]["authenticated"] == 5
+    assert body["denominator"]["functions"]["enumerated"] == 3
+    assert body["denominator"]["functions"]["unaccounted"] == 2
+    assert body["denominator"]["functions"]["unit"] == "ast-function-def"
     # Dual units: file enrolled count is not the function total slot.
     assert "files" in body["denominator"] and "functions" in body["denominator"]
+    # cleanEnumerated is not a corpus cleanliness claim over authenticated total.
+    assert "clean" not in body["denominator"]["functions"]
+
+
+def test_board_refuses_enumerated_as_authenticated_population() -> None:
+    """C1 law: instrument-blind rows must not shrink the function denominator.
+
+    Advisor (freeze): instrument-defect rows contribute 0 to num AND denom so
+    clean% is structurally blind. Same shape one level up on the seal board:
+    18230 enumerated-only must never mint denominator.functions.total.
+    """
+    files = ["pandas/good.py", "pandas/blind.py"]
+    rows = [
+        _row("pandas/good.py", fn=2, auth=2),
+        _row("pandas/blind.py", category="backend-defect", fn=0, auth=10),
+    ]
+    status, body = COMPOSE.compose_k1_from_rows(
+        rows,
+        enrolled_files=files,
+        measured_commit="deadbeef",
+        aggregate_hash="agg",
+        manifest_shape_cid="cid",
+    )
+    assert status == "sealed"
+    # Population is authenticated AST sum (2+10), never enumerated-only (2).
+    assert body["denominator"]["functions"]["total"] == 12
+    assert body["functionsTotal"] == 12
+    assert body["functionsEnumerated"] == 2
+    assert body["functionsUnaccounted"] == 10
+    assert body["R_instrument_blind"] == 1
+    assert body["R_instrument_blind_functions"] == 10
+    # Must not present 2/2 clean as if the corpus were fully measured.
+    assert body["denominator"]["functions"]["enumerated"] == 2
+    assert body.get("functionsConstructClean") == 2
+    # No corpus clean% field that divides clean by incomplete total.
+    denom_fn = body["denominator"]["functions"]
+    assert denom_fn["total"] != denom_fn["enumerated"]
 
 
 def test_missing_shard_emits_unmeasured_without_class() -> None:
@@ -192,7 +262,10 @@ def test_two_partials_compose_stable_compose_cid() -> None:
     assert s1 == s2 == "sealed"
     assert b1["composeCid"] == b2["composeCid"]
     assert b1["R_construction_panics"] == 0
+    # auth defaults to fn in _row → 2+3
     assert b1["denominator"]["functions"]["total"] == 5
+    assert b1["denominator"]["functions"]["authenticated"] == 5
+    assert b1["functionsEnumerated"] == 5
     assert b1["perShardCids"]["s00"] == p0["partialCid"]
     assert b1["perShardCids"]["s01"] == p1["partialCid"]
 

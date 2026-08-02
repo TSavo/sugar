@@ -155,7 +155,25 @@ def mint_partial(
         and len(terminal_files) == len(assigned)
     )
     fn_total = sum(int((r or {}).get("functionsTotal") or 0) for _, r in terminals)
-    fn_clean = sum(int((r or {}).get("functionsClean") or 0) for _, r in terminals)
+    fn_enum = sum(
+        int(
+            (r or {}).get("functionsEnumerated")
+            if (r or {}).get("functionsEnumerated") is not None
+            else (r or {}).get("functionsTotal")
+            or 0
+        )
+        for _, r in terminals
+    )
+    clean_refused = any(
+        (r or {}).get("cleanRatioRefused") or (r or {}).get("functionsClean") is None
+        for _, r in terminals
+        if int((r or {}).get("functionsTotal") or 0) > 0
+    )
+    fn_clean: int | None
+    if clean_refused:
+        fn_clean = None
+    else:
+        fn_clean = sum(int((r or {}).get("functionsClean") or 0) for _, r in terminals)
 
     panics: list[dict[str, Any]] = []
     families: Counter[str] = Counter()
@@ -218,7 +236,9 @@ def mint_partial(
             },
             "functions": {
                 "total": fn_total,
+                "enumerated": fn_enum,
                 "clean": fn_clean,
+                "cleanRatioRefused": clean_refused,
                 "unit": "construction-function-locus",
             },
         },
@@ -280,13 +300,39 @@ def aggregate_terminal_rows(
     files_completed = 0
     functions_total = 0
     functions_clean = 0
+    functions_enumerated = 0
+    clean_ratio_refused = False
+    clean_refuse_reasons: list[str] = []
+    r_instrument_blind = 0
+    r_instrument_blind_functions = 0
 
     for file, raw in measured_rows:
         row = dict(raw)
         category = str(row.get("category"))
         floor_rows.append({"file": file, "category": category})
-        functions_total += int(row.get("functionsTotal") or 0)
-        functions_clean += int(row.get("functionsClean") or 0)
+        ft = int(row.get("functionsTotal") or 0)
+        functions_total += ft
+        functions_enumerated += int(
+            row.get("functionsEnumerated")
+            if row.get("functionsEnumerated") is not None
+            else (ft if category == "completed" else 0)
+        )
+        # Clean: never treat missing as 0-of-total tautology. Null → refuse ratio.
+        if row.get("cleanRatioRefused") or row.get("functionsClean") is None:
+            if ft > 0 or row.get("cleanRatioRefused"):
+                clean_ratio_refused = True
+                reason = row.get("cleanRefuseReason") or "functionsClean unmeasured"
+                clean_refuse_reasons.append(f"{file}:{reason}")
+        else:
+            functions_clean += int(row.get("functionsClean") or 0)
+        if int(row.get("R_instrument_blind") or 0) or category in {
+            "backend-defect",
+            "instrument-defect-unresolvable-dispatch",
+        }:
+            r_instrument_blind += 1
+            # Mass on instrument-blind rows is residual, not silent zero.
+            if category != "completed":
+                r_instrument_blind_functions += ft
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
         desugar_categories.update(row.get("desugarCategories") or {})
@@ -350,6 +396,11 @@ def aggregate_terminal_rows(
         "files_completed": files_completed,
         "functions_total": functions_total,
         "functions_clean": functions_clean,
+        "functions_enumerated": functions_enumerated,
+        "clean_ratio_refused": clean_ratio_refused,
+        "clean_refuse_reasons": clean_refuse_reasons[:50],
+        "r_instrument_blind": r_instrument_blind,
+        "r_instrument_blind_functions": r_instrument_blind_functions,
         "missing_files": missing_files,
         "duplicate_files": duplicate_files,
         "malformed_rows": malformed_rows,
@@ -433,8 +484,30 @@ def seal_board_from_aggregate(
                 "complete": bool(agg["files_complete"]),
             },
             "functions": {
+                # Population = sum of row functionsTotal (roster-preserved mass).
                 "total": int(agg["functions_total"]),
-                "clean": int(agg["functions_clean"]),
+                "enumerated": int(agg.get("functions_enumerated") or 0),
+                "unaccounted": max(
+                    0,
+                    int(agg["functions_total"])
+                    - int(agg.get("functions_enumerated") or 0),
+                ),
+                # clean only when every row could measure it; else refused.
+                **(
+                    {
+                        "clean": None,
+                        "cleanRatioRefused": True,
+                        "cleanRefuseReason": (
+                            "one or more files refused functionsClean "
+                            "(would be tautological clean%)"
+                        ),
+                    }
+                    if agg.get("clean_ratio_refused")
+                    else {
+                        "clean": int(agg["functions_clean"]),
+                        "cleanRatioRefused": False,
+                    }
+                ),
                 "unit": "construction-function-locus",
             },
             # Back-compat flat keys (file unit only) for older readers.
@@ -455,10 +528,26 @@ def seal_board_from_aggregate(
         "defects": defects,
         "instrumentDefects": list(defects),
         "R_instrument_defects": len(defects),
+        "R_instrument_blind": int(agg.get("r_instrument_blind") or 0),
+        "R_instrument_blind_functions": int(
+            agg.get("r_instrument_blind_functions") or 0
+        ),
         "constructionPanics": construction_panics,
         "R_construction_panics": len(construction_panics),
         "functionsTotal": int(agg["functions_total"]),
-        "functionsConstructClean": int(agg["functions_clean"]),
+        "functionsEnumerated": int(agg.get("functions_enumerated") or 0),
+        "functionsUnaccounted": max(
+            0,
+            int(agg["functions_total"]) - int(agg.get("functions_enumerated") or 0),
+        ),
+        # Never mint a tautological clean: null when any file refused clean.
+        "functionsConstructClean": (
+            None
+            if agg.get("clean_ratio_refused")
+            else int(agg["functions_clean"])
+        ),
+        "cleanRatioRefused": bool(agg.get("clean_ratio_refused")),
+        "cleanRefuseReasons": list(agg.get("clean_refuse_reasons") or []),
         "R": r_construction,
         "R_construction": r_construction,
         "families": dict(
