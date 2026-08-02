@@ -55,11 +55,43 @@ definition. The session is the boundary that makes that amortization safe.
 ``session_or_new(None)`` remains the honest single-shot leaf: slower, always
 correct, never process-global. It is not permission for a multi-resolve owner to
 drop the session.
+
+Walk-scoped multi-resolve owner (``walk_session_for``)
+------------------------------------------------------
+A census / package walk is ONE workspace root under ONE pin authority. Production
+doors that open many files under that root (``open_source_file_for_construction``,
+``sugar.enumerate`` functions/facts for a corpus) are multi-resolve owners in the
+sense of the decision of record above: they must thread ONE session so projection
+memos survive file-to-file and re-open of the same content.
+
+Legitimacy (why this is not process-global free-for-all):
+
+* Key is the resolved workspace root — the authority locus of the walk, not a
+  content CID. Different roots mint different sessions; one project cannot warm
+  another's answers.
+* Values remain session-bound live Nodes (frame / module materialize). They are
+  never parked under a process-global content map. §4 residency covers pure
+  content-derived prep (SourceFile body, lexical import pass); visible-frame
+  projection stays on the session object the walk owns.
+* Measured (orange, tip #7078): cross-file shared session is ~15% on a mixed
+  20-file lib sample (frame_results after 20 files ≈ 1 — almost no shared
+  definitions). Same-content re-open under the same walk session is the
+  amortization that is real (identical definition coordinates hit). Do not bet
+  a 6× census cut on walk session alone.
+
+``walk_session_for(root)`` is the small production default for multi-file doors.
+Callers that need isolation pass an explicit ``SourceResolutionSession()`` or
+``session_or_new(None)``.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+
+# Resolved workspace root path -> walk-owned session. Not content-keyed; not a
+# substitute for §4 residency. Cleared only by tests (clear_walk_sessions).
+_WALK_SESSIONS: dict[str, "SourceResolutionSession"] = {}
 
 
 class SourceResolutionSession:
@@ -217,8 +249,29 @@ def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionS
     (cycle detection and within-tree amortization stay real). The memo dies with
     the call tree -- slower across independent top-level calls, always correct.
 
-    Multi-resolve owners (populate, package enumeration, file-open) must pass an
-    explicit session so amortization reaches every receipt they own. Do not call
-    this at those doors and throw the result away between receipts.
+    Multi-resolve owners (populate, package enumeration, file-open, census walk)
+    must pass an explicit session — or use ``walk_session_for(workspace_root)``
+    — so amortization reaches every receipt they own. Do not call this at those
+    doors and throw the result away between receipts.
     """
     return SourceResolutionSession() if session is None else session
+
+
+def walk_session_for(workspace_root: Path | str) -> SourceResolutionSession:
+    """Return the multi-resolve session owned by one workspace walk.
+
+    One resolved root → one session for the life of the process (or until
+    ``clear_walk_sessions``). Legitimate because a corpus walk is one authority
+    locus; not process-global free-for-all (see module docstring).
+    """
+    key = str(Path(workspace_root).resolve())
+    session = _WALK_SESSIONS.get(key)
+    if session is None:
+        session = SourceResolutionSession()
+        _WALK_SESSIONS[key] = session
+    return session
+
+
+def clear_walk_sessions() -> None:
+    """Test door: drop walk-owned sessions so teeth start cold."""
+    _WALK_SESSIONS.clear()

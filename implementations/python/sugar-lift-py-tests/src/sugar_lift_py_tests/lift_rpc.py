@@ -212,9 +212,9 @@ def open_source_file_for_construction(
     hold a frozen context (shared demand table across a census) may pass it.
 
     ``resolution_session`` owns every source-resolution memo for this open. When
-    omitted, this door mints one session for the population so multi-receipt
-    amortization is real; multi-file owners should pass one shared session so
-    the same dependency definition is not re-projected per consumer file.
+    omitted, this door uses the walk-scoped session for ``root`` so multi-file
+    census / re-open of the same content amortize projection under one workspace
+    authority (see ``walk_session_for``). Pass an explicit session to isolate.
 
     Roster-floor law: after SourceFile construction succeeds, N =
     ``len(functions())`` is banked on the open as ``function_roster_floor``.
@@ -223,7 +223,7 @@ def open_source_file_for_construction(
     *before* SourceFile still raises (empty denominator). Process-control
     exceptions (``BaseException`` outside ``Exception``) still halt.
     """
-    from sugar_lift_python_source.resolution_session import session_or_new
+    from sugar_lift_python_source.resolution_session import walk_session_for
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
@@ -254,9 +254,13 @@ def open_source_file_for_construction(
             populate_source_derived_resource_refs,
         )
 
-        # File-open is a multi-resolve owner: one session for every receipt in
-        # this population. session_or_new keeps an explicit shared session.
-        session = session_or_new(resolution_session)
+        # Multi-resolve owner: walk-scoped session when none given so census
+        # and same-content re-open share projection memos under one root.
+        session = (
+            resolution_session
+            if resolution_session is not None
+            else walk_session_for(root)
+        )
         # Catch Exception, not BaseException: KeyboardInterrupt / SystemExit /
         # GeneratorExit still halt the process. Do not enumerate SNW/TypeError
         # here — that was the two-costume allowlist that left the class open.
@@ -1910,11 +1914,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             construction_context = TreeConstructionContextV1(_BOUND_CONTRACT_REFS)
             # One session for the whole package walk: the same dependency
             # definition projected for many consumer files amortizes once.
-            from sugar_lift_python_source.resolution_session import (
-                SourceResolutionSession,
-            )
+            from sugar_lift_python_source.resolution_session import walk_session_for
 
-            package_session = SourceResolutionSession()
+            package_session = walk_session_for(root)
             for source_path in sorted(root.rglob("*.py")):
                 identity = path_source(str(source_path))
                 source_file = _TreeSourceFile(
@@ -2160,16 +2162,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_python_source.manager_summary_derivation import (
                     populate_source_derived_resource_refs,
                 )
-                from sugar_lift_python_source.resolution_session import (
-                    SourceResolutionSession,
-                )
+                from sugar_lift_python_source.resolution_session import walk_session_for
 
-                # Single-file multi-resolve owner: one session for every receipt.
+                # Walk-scoped multi-resolve owner: same session as other opens
+                # under this workspace root (census / re-open amortization).
                 populate_source_derived_resource_refs(
                     tree_file,
                     root=root,
                     path=full_path,
-                    session=SourceResolutionSession(),
+                    session=walk_session_for(root),
                 )
                 nodes = []
                 for fn in tree_file.functions():
