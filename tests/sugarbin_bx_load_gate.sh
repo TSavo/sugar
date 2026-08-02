@@ -166,6 +166,23 @@ grep -Fq 'sugar-bx-timing-measurement.lease' "$repo_root/bin/lib/sugar-bx.sh" ||
 grep -Fq 'timing-lease-busy' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing lease-busy crime"
 grep -Fq 'bx_corpus_pin_gate' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing corpus pin gate"
 grep -Fq 'exit 78' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing pin exit 78"
+# Pin-before-cd always 78'd relative paths (only absolute /tmp worked). Tooth:
+# quiet wrapper must set REPO_ROOT and root relative PIN_PATH before pin-file check.
+# Match wrapper-local REPO_ROOT= (not SUGAR_BX_REPO_ROOT elsewhere in the file).
+bx_src="$repo_root/bin/lib/sugar-bx.sh"
+cd_repo_line=$(grep -n 'REPO_ROOT=\$(sugar_bx_quote' "$bx_src" | head -1 | cut -d: -f1)
+pin_rel_case=$(grep -n 'PIN_PATH=.*REPO_ROOT.*PIN_PATH' "$bx_src" | head -1 | cut -d: -f1)
+if [[ -z "$pin_rel_case" ]]; then
+  pin_rel_case=$(grep -n 'REPO_ROOT/\$PIN_PATH\|REPO_ROOT/\\$PIN_PATH' "$bx_src" | head -1 | cut -d: -f1)
+fi
+pin_file_line=$(grep -n 'corpus-pin-file-missing' "$bx_src" | head -1 | cut -d: -f1)
+[[ -n "$cd_repo_line" && -n "$pin_file_line" ]] \
+  || fail "sugar-bx missing REPO_ROOT= before pin-file check (relative pin always 78 without remote cd)"
+[[ "$cd_repo_line" -lt "$pin_file_line" ]] \
+  || fail "sugar-bx pin-file check (line $pin_file_line) must come AFTER REPO_ROOT= (line $cd_repo_line)"
+[[ -n "$pin_rel_case" && "$pin_rel_case" -lt "$pin_file_line" ]] \
+  || fail "sugar-bx must root relative PIN_PATH under REPO_ROOT before pin-file check"
+grep -Fq 'docs/ledgers' "$bx_src" || fail "sugar-bx sync_paths must include docs/ledgers (pin JSON)"
 test -f "$repo_root/docs/contributing/battleaxe-timing.md" || fail "canonical timing doc missing"
 grep -Fq 'timing-measurement.lease' "$repo_root/docs/contributing/battleaxe-timing.md" || fail "doc missing exclusive lease"
 grep -Fq 'corpus-pin' "$repo_root/docs/contributing/battleaxe-timing.md" || fail "doc missing corpus pin gate"
