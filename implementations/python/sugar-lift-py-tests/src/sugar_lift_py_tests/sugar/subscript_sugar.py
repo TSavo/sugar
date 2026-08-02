@@ -138,21 +138,38 @@ class SubscriptSugar(ConstructedTermSugar):
         )
 
     def _subscript(self, receiver, index, ctx):
-        from sugar_lift_py_tests.floor import ObjectValue
+        """One door: prefer ``subscript_with`` (operation) over legacy ``subscript``.
+
+        Several floors implement only ``subscript_with`` (DictLiteralValue,
+        ArrayLiteral, TupleLiteralValue, ObjectValue, StringValue, …). Routing
+        solely through ``subscript`` left those as owner=subscript construction
+        panics even though the operation edge was already written. Prefer the
+        operation edge when the receiver overrides it; otherwise fall back to
+        the legacy ``subscript`` / ``subscript_with_occurrence`` path so
+        floors that only implement ``subscript`` keep working.
+        """
+        from sugar_lift_py_tests.floor.floor_value import FloorValue
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            SubscriptOperation,
+        )
 
         receiver = receiver.project_operation_receiver(
             ctx, owner="SubscriptSugar receiver"
         )
         index = index.project_operation_receiver(ctx, owner="SubscriptSugar index")
 
-        if isinstance(receiver, ObjectValue):
-            return receiver.call_method_value(
-                "__getitem__",
-                (index,),
-                owner=type(self).__name__,
-                blame=self.site,
-                ctx=ctx,
-            )
+        operation = SubscriptOperation(
+            index=index,
+            owner=type(self).__name__,
+            blame=self.site,
+            use_occurrence=self.use_occurrence,
+        )
+        # Species that overrode subscript_with own the modern edge.
+        if (
+            isinstance(receiver, FloorValue)
+            and type(receiver).subscript_with is not FloorValue.subscript_with
+        ):
+            return receiver.subscript_with(operation, ctx)
         return receiver.subscript_with_occurrence(
             index, self.site, self.use_occurrence
         )
