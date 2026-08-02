@@ -33,7 +33,25 @@ class ReceiverStatePartitionValue(FloorValue):
                     payload = face.effect.to_term(owner=owner)
                 kind = "halted"
             else:  # pragma: no cover - ExitSet is closed over these two faces.
-                raise TypeError(type(face).__name__)
+                # Missing arm over ExitSet faces: name the species and the door.
+                from sugar_lift_py_tests.gap.info import GapKind
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="ReceiverStatePartitionValue.to_term",
+                    blame="receiver-state-partition",
+                    observed=(
+                        f"ExitSet face species {type(face).__name__} has no "
+                        f"to_term arm (only Completed and Halted are written)"
+                    ),
+                    requested="Completed | Halted face from ExitSet",
+                    fix=(
+                        f"write to_term arm for {type(face).__name__} or stop "
+                        f"emitting it into receiver-state partitions; do not "
+                        f"raise bare TypeError with only the type name"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                )
             faces.append(
                 ctor(
                     "python:receiver-state-face",
