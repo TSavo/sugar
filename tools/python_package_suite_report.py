@@ -35,6 +35,7 @@ import platform
 import random
 import sys
 import time
+from pathlib import Path
 
 # Phase of a report that failed decides failure-vs-error, the same split the
 # terminal summary shows: a call-phase failure is a FAILED test, a setup- or
@@ -310,7 +311,18 @@ class SuiteReporter:
             self._beat = None
         # Write content-addressed LPT prior so the NEXT run packs by measured
         # cost (cold equal-count seeds the shelf; second run is LPT).
-        self._write_lpt_prior()
+        # Never let prior write fail the suite report — missing import or shelf
+        # IO must not kill suite-report.json (freeze tip: NameError on Path).
+        try:
+            self._write_lpt_prior()
+        except Exception as error:  # noqa: BLE001 — report is load-bearing
+            try:
+                narrate(
+                    f"JOB_LOG phase=lpt-prior-write status=failed "
+                    f"error={type(error).__name__}:{error!s}"
+                )
+            except Exception:  # noqa: BLE001
+                pass
         path = self.config.getoption("--suite-report")
         if not path:
             return
