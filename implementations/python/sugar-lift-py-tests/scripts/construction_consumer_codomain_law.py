@@ -66,13 +66,17 @@ from typing import Iterator, NamedTuple, Sequence
 # Roots to scan (kit construction + consumers only)
 # ---------------------------------------------------------------------------
 
-# Focused roots: sugar mint package + binding-state / loop construction.
+# Focused roots: sugar mint package + binding-state / loop construction +
+# Expression-currency nodes (ObjectPlaceStateV1 lives in nodes.py; without it
+# the dynamic-discharge proxy cannot see Expression._construct_sugar mints).
 # (Full sugar-source-tree/src is huge; fifth-lie doors live in these surfaces.)
 _DEFAULT_PACKAGES = (
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
     "implementations/python/sugar-source-tree/src/sugar_source_tree/binding_state.py",
     "implementations/python/sugar-source-tree/src/sugar_source_tree/live_loop_construction.py",
     "implementations/python/sugar-source-tree/src/sugar_source_tree/loop_recurrence.py",
+    # Expression._construct_sugar discharge mints (ObjectPlaceStateV1, …)
+    "implementations/python/sugar-source-tree/src/sugar_source_tree/nodes.py",
 )
 
 # Families known to mint construction currency that doors must totalize over.
@@ -128,6 +132,8 @@ class ModuleIndex:
         "class_lines",
         "construct_returns",
         "kind_literals",
+        # (owner_class, returned_sugar_name, line) for Expression-ish _construct_sugar
+        "expression_construct_mints",
     )
 
     def __init__(self, path: Path, tree: ast.AST) -> None:
@@ -137,6 +143,7 @@ class ModuleIndex:
         self.class_lines: dict[str, int] = {}
         self.construct_returns: dict[str, set[str]] = defaultdict(set)
         self.kind_literals: set[str] = set()
+        self.expression_construct_mints: list[tuple[str, str, int]] = []
 
 
 def _iter_py_files(roots: Sequence[Path]) -> Iterator[Path]:
@@ -216,6 +223,11 @@ def index_module(path: Path) -> ModuleIndex | None:
                         n = _name_of(sub.value.func)
                         if n:
                             idx.construct_returns[node.name].add(n)
+                            # Record mint line for expression-currency scan later
+                            # once inheritance of owner is known (second pass).
+                            idx.expression_construct_mints.append(
+                                (node.name, n, item.lineno)
+                            )
         # kind="X" / kind='X' string literals on keyword or compare
         if isinstance(node, ast.keyword) and node.arg == "kind":
             if isinstance(node.value, ast.Constant) and isinstance(
@@ -357,8 +369,10 @@ def collect_closed_doors(
                 "project_loop_post_binding",
                 "unwrap_binding_state",
             }
-            _BINDING_MARKERS = {
-                "Node",
+            # Binding-state *currency* species — not bare Node (every walker
+            # accepts Node; _substitute_field is substitution plumbing, not a
+            # construction→consumer codomain door).
+            _BINDING_CURRENCY = {
                 "UnboundBinding",
                 "GuardedBinding",
                 "LoopProjectedBinding",
@@ -366,8 +380,8 @@ def collect_closed_doors(
             is_named = node.name in _FIFTH_LIE_DOORS or (
                 "binding_state_read" in node.name
             )
-            is_binding_currency_door = bool(accepted & _BINDING_MARKERS) and (
-                len(accepted) >= 2 or "TypeError" in raises or "SugarNotWritten" in raises
+            is_binding_currency_door = bool(accepted & _BINDING_CURRENCY) and (
+                "TypeError" in raises or "SugarNotWritten" in raises
             )
             is_require_term = (
                 "require_constructed_term" in node.name
@@ -406,16 +420,19 @@ def collect_produced(
     """Return (constructed_term_types, binding_state_types, construct_minted)."""
     cache: dict[str, set[str]] = {}
     constructed = all_descendants(classes, _CONSTRUCTED_TERM_ROOT)
-    # Also include classes that claim Sugar and are returned as construction
-    sugar_desc = all_descendants(classes, _SUGAR_ROOT)
 
     minted: set[str] = set()
     for idx in indexes:
         for owner, rets in idx.construct_returns.items():
             for r in rets:
                 minted.add(r)
-                if r in sugar_desc or r in constructed:
-                    constructed.add(r)
+                # Only inheritance-proven ConstructedTermSugar descendants count
+                # as term currency. Adding every Sugar mint here hid
+                # ConstructedObjectPlaceSugar (Sugar-not-term) from both axes.
+                if r not in constructed and r in classes:
+                    bases = transitive_bases(classes, r, cache=cache) | {r}
+                    if _CONSTRUCTED_TERM_ROOT in bases:
+                        constructed.add(r)
 
     binding: set[str] = set()
     for name in classes:
@@ -484,16 +501,136 @@ def sibling_gap(
     return True
 
 
+def find_expression_mint_not_term_gaps(
+    indexes: Sequence[ModuleIndex],
+    classes: dict[str, set[str]],
+    constructed_terms: set[str],
+    *,
+    repo: Path | None = None,
+) -> list[Gap]:
+    """Dynamic-path static proxy: Expression._construct_sugar mints non-term Sugar.
+
+    AttributeSugar.receiver and peer slots require ConstructedTermSugar at
+    discharge. If an Expression node mints a Sugar that is NOT a
+    ConstructedTermSugar descendant, the require door TypeErrors at runtime
+    while pure isinstance-sibling scans report R=0 (the mint is outside the
+    term hierarchy entirely). That is the ConstructedObjectPlaceSugar class —
+    sealed board fifth lie on tests/frame/test_arithmetic.py.
+
+    Reach: static AST of Expression-ish ``_construct_sugar`` return Call
+    targets. Does NOT follow dynamic getattr/factory variables — those remain
+    runtime-only (require_constructed_term_sugar TypeError + board discharge).
+    """
+    gaps: list[Gap] = []
+    cache: dict[str, set[str]] = {}
+    expression_roots = {"Expression", "expr"}  # Node expression currency
+    sugar_desc = all_descendants(classes, _SUGAR_ROOT)
+    # HONEST term set only: inheritance-proven ConstructedTermSugar descendants.
+    # Do NOT union with every *Sugar mint name — that hid ObjectPlace pre-promote.
+    term_desc = set(constructed_terms) | all_descendants(
+        classes, _CONSTRUCTED_TERM_ROOT
+    )
+    # Re-filter: only names whose bases include ConstructedTermSugar (or are it).
+    honest_terms: set[str] = set()
+    for name in term_desc:
+        bases = transitive_bases(classes, name, cache=cache) | {name}
+        if _CONSTRUCTED_TERM_ROOT in bases or name == _CONSTRUCTED_TERM_ROOT:
+            honest_terms.add(name)
+    term_desc = honest_terms
+
+    for idx in indexes:
+        if repo is not None and idx.path.is_relative_to(repo):
+            rel = str(idx.path.relative_to(repo))
+        else:
+            rel = str(idx.path)
+        for owner, minted, line in idx.expression_construct_mints:
+            owner_bases = transitive_bases(classes, owner, cache=cache) | {owner}
+            # Only Expression / expression-state construction currency.
+            # Statement sugars (FunctionDef, Assert, …) are not Attribute receivers.
+            if not (owner_bases & expression_roots) and "Expression" not in owner_bases:
+                if not (
+                    owner.endswith("StateV1")
+                    or owner.endswith("State")
+                    or "Place" in owner
+                    or "Expression" in owner
+                ):
+                    continue
+            if minted not in sugar_desc and not minted.endswith("Sugar"):
+                continue
+            if minted in term_desc or minted == _CONSTRUCTED_TERM_ROOT:
+                continue
+            # Minted sugar that is not ConstructedTermSugar
+            minted_bases = transitive_bases(classes, minted, cache=cache) | {minted}
+            if _CONSTRUCTED_TERM_ROOT in minted_bases:
+                continue
+            # Only construction-currency mints: names that claim nested term
+            # testimony (Constructed*, *Place*, *Receiver*). Effect/suspension
+            # sugars (YieldSuspensionSugar, YieldFromSugar, …) intentionally
+            # sit outside CTS — GeneratorConstructionV1 only. Flagging them as
+            # "promote" is a lie; they are refuse-named by design.
+            if not _claims_construction_currency(minted):
+                continue
+            gaps.append(
+                Gap(
+                    axis="R_expression_construct_not_term",
+                    door=f"{owner}._construct_sugar",
+                    door_path=rel,
+                    door_line=line,
+                    produced=minted,
+                    accepted=(_CONSTRUCTED_TERM_ROOT,),
+                    note=(
+                        f"{owner}._construct_sugar mints {minted}, which claims "
+                        f"construction currency (Constructed*/Place/Receiver) but "
+                        f"is not ConstructedTermSugar. Nested slots "
+                        f"(AttributeSugar.receiver, BinOpSugar, …) call "
+                        f"require_constructed_term_sugar and TypeError at discharge "
+                        f"— dynamic path invisible to pure sibling isinstance scans."
+                    ),
+                    fix=(
+                        f"promote {minted} to ConstructedTermSugar + to_term "
+                        f"(slots are truthful; mint missing the base — same as #7099) "
+                        f"OR rename/refuse if it is not nested-construction testimony"
+                    ),
+                )
+            )
+    return gaps
+
+
+def _claims_construction_currency(minted: str) -> bool:
+    """Heuristic: mint name asserts nested-construction / place / receiver currency.
+
+    ObjectPlace fifth lie: ConstructedObjectPlaceSugar. Peer: ConstructedReceiverRefSugar.
+    YieldSuspensionSugar does NOT claim this — suspension boundary only.
+    """
+    if minted.startswith("Constructed"):
+        return True
+    if "Place" in minted or "Receiver" in minted:
+        return True
+    if minted.endswith("PlaceSugar") or minted.endswith("ReceiverSugar"):
+        return True
+    return False
+
+
 def find_gaps(
     doors: Sequence[ClosedDoor],
     constructed: set[str],
     binding: set[str],
     classes: dict[str, set[str]],
     kind_literals: set[str],
+    indexes: Sequence[ModuleIndex] | None = None,
+    *,
+    repo: Path | None = None,
 ) -> list[Gap]:
     gaps: list[Gap] = []
     term_family = {_CONSTRUCTED_TERM_ROOT, _SUGAR_ROOT}
     binding_family = set(_BINDING_STATE_FAMILY)
+
+    if indexes is not None:
+        gaps.extend(
+            find_expression_mint_not_term_gaps(
+                indexes, classes, constructed, repo=repo
+            )
+        )
 
     # Core binding-state currency (what binding_state_read_node must totalize).
     binding_core = frozenset(
@@ -624,13 +761,24 @@ def run(roots: Sequence[Path], repo: Path) -> tuple[list[Gap], dict[str, object]
             indexes.append(idx)
     classes = merge_classes(indexes)
     constructed, binding, minted = collect_produced(indexes, classes)
-    # Minted ConstructedTerm names count as produced even if inheritance parse missed
-    constructed |= {m for m in minted if m.endswith("Sugar")}
+    # Do NOT union every *Sugar mint into constructed. That lie hid
+    # ConstructedObjectPlaceSugar (Sugar, not ConstructedTermSugar) from both
+    # sibling and expression-mint axes. Only inheritance-proven CTS counts.
+    # Unresolved imported bases: keep only names already in `constructed`
+    # via all_descendants (which requires a known base edge in this scan).
     doors = collect_closed_doors(indexes, repo)
     kind_literals: set[str] = set()
     for idx in indexes:
         kind_literals |= idx.kind_literals
-    gaps = find_gaps(doors, constructed, binding, classes, kind_literals)
+    gaps = find_gaps(
+        doors,
+        constructed,
+        binding,
+        classes,
+        kind_literals,
+        indexes=indexes,
+        repo=repo,
+    )
     # Dedup by (door, produced, axis)
     uniq: dict[tuple[str, str, str, int], Gap] = {}
     for g in gaps:
@@ -651,16 +799,21 @@ def run(roots: Sequence[Path], repo: Path) -> tuple[list[Gap], dict[str, object]
         "R_kind_dispatch_codomain_gap": sum(
             1 for g in ordered if g.axis == "R_kind_dispatch_codomain_gap"
         ),
+        "R_expression_construct_not_term": sum(
+            1 for g in ordered if g.axis == "R_expression_construct_not_term"
+        ),
         "R_total": len(ordered),
     }
     return ordered, summary
 
 
 def discrimination_self_test() -> bool:
-    """Plant a lagging door; prove the instrument goes red then clean.
+    """Plant lagging doors; prove the instrument goes red then clean.
 
-    Planted shape (tonight's fifth lie): construction produces LoopProjectedBinding
-    while binding_state_read_node only accepts GuardedBinding and TypeErrors.
+    Two planted shapes:
+    1. binding_state_read_node lagging LoopProjectedBinding (sibling isinstance).
+    2. Expression._construct_sugar minting Sugar-not-CTS (dynamic-discharge
+       proxy — sealed-board ObjectPlace fifth lie).
     """
     import tempfile
 
@@ -711,6 +864,43 @@ def binding_state_read_node(state):
         fix="write arm",
     )
 '''
+    # Dynamic-discharge proxy plant: Expression mints Sugar outside CTS.
+    planted_expr = '''
+class Sugar:
+    pass
+
+class ConstructedTermSugar(Sugar):
+    pass
+
+class Expression:
+    pass
+
+class ConstructedObjectPlaceSugar(Sugar):
+    """Object place claimed as construction currency but not a term."""
+    pass
+
+class ObjectPlaceStateV1(Expression):
+    def _construct_sugar(self):
+        return ConstructedObjectPlaceSugar()
+'''
+    clean_expr = '''
+class Sugar:
+    pass
+
+class ConstructedTermSugar(Sugar):
+    pass
+
+class Expression:
+    pass
+
+class ConstructedObjectPlaceSugar(ConstructedTermSugar):
+    """Promoted: object place IS nested-construction testimony."""
+    pass
+
+class ObjectPlaceStateV1(Expression):
+    def _construct_sugar(self):
+        return ConstructedObjectPlaceSugar()
+'''
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         fixture = root / "binding_state.py"
@@ -718,12 +908,30 @@ def binding_state_read_node(state):
         red_gaps, red_summary = run((root,), root)
         fixture.write_text(clean, encoding="utf-8")
         green_gaps, green_summary = run((root,), root)
+
+        expr_root = root / "expr_mint"
+        expr_root.mkdir()
+        expr_fixture = expr_root / "nodes.py"
+        expr_fixture.write_text(planted_expr, encoding="utf-8")
+        red_expr_gaps, red_expr_summary = run((expr_root,), root)
+        expr_fixture.write_text(clean_expr, encoding="utf-8")
+        green_expr_gaps, green_expr_summary = run((expr_root,), root)
+
     red_ok = (
         red_summary["R_total"] >= 1
         and any(g.produced == "LoopProjectedBinding" for g in red_gaps)
     )
     green_ok = green_summary["R_total"] == 0
-    return red_ok and green_ok
+    expr_red_ok = (
+        red_expr_summary.get("R_expression_construct_not_term", 0) >= 1
+        and any(
+            g.produced == "ConstructedObjectPlaceSugar"
+            and g.axis == "R_expression_construct_not_term"
+            for g in red_expr_gaps
+        )
+    )
+    expr_green_ok = green_expr_summary["R_total"] == 0
+    return red_ok and green_ok and expr_red_ok and expr_green_ok
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -797,6 +1005,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"  R_kind_dispatch_codomain_gap="
             f"{summary['R_kind_dispatch_codomain_gap']}"
         )
+        print(
+            f"  R_expression_construct_not_term="
+            f"{summary['R_expression_construct_not_term']}"
+        )
         print(f"  R_total={summary['R_total']}")
         if gaps:
             print()
@@ -817,9 +1029,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(
                 "  R_total=0 under THIS instrument reach (static AST on enrolled"
-                " doors). Not \"the class is closed forever\" — remaining gaps may"
-                " be dynamic-only. At this tip every produced sibling is accepted"
-                " by every closed door we can see statically."
+                " doors + Expression._construct_sugar mint→term proxy)."
+                " Not \"the class is closed forever\" — remaining gaps may still"
+                " be dynamic-only (getattr factories, runtime type mutations)."
+                " Those are caught by require_constructed_term_sugar TypeError"
+                " at discharge and sealed-board twins, not by this scan."
             )
 
     return 1 if gaps else 0
