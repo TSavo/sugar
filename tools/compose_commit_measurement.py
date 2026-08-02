@@ -86,12 +86,19 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "PartialVector (honest): unmeasuredAxes="
             f"{payload.get('unmeasuredAxes')!r} — no total; "
-            "S0.3 allows this (package suite may not have spoken)"
+            "criterion-2 Complete requires every enrolled axis including "
+            "R_construction_panics (control-effect recensus); four green "
+            "process floors alone are Partial"
         )
         # Exit 0: partial is success for this CLI. Use
         # commit_measurement_gate --require-complete only for tip-complete claims.
         return 0
-    print(f"CompleteVector total={payload.get('total')}")
+    # CompleteVector has no scalar total across mixed units (locus vs file vs
+    # construction-panic). valuesByUnit is a per-unit bag, not a residual sum.
+    print(
+        f"CompleteVector valuesByUnit={payload.get('valuesByUnit')!r} "
+        f"(total={payload.get('total')!r} — always null for multi-unit C2)"
+    )
     return 0
 
 
