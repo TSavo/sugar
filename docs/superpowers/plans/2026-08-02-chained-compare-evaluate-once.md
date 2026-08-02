@@ -128,7 +128,7 @@ return ChainedCompareSugar(values=pairs, site=self.fragment)
 
 - [ ] **Step 5: Run the new focused teeth and verify GREEN**
 
-Run the exact Task 1 pytest command. Expected: `2 passed`.
+Run the exact Task 1 pytest command. Expected: `5 passed`.
 
 - [ ] **Step 6: Run focused existing BoolOp/Compare floors**
 
@@ -139,6 +139,10 @@ PYTHONPATH=implementations/python/sugar-lift-py-tests/src:implementations/python
 ```
 
 Expected: all collected focused tests pass with no collection loss.
+
+If `test_bool_op_operand_sequence.py` refuses its legacy `_ProbeSugar` because
+it is not `ConstructedTermSugar`, report that separately as the announced
+current-main API drift; do not weaken the codomain or repair it in this lane.
 
 - [ ] **Step 7: Commit the implementation**
 

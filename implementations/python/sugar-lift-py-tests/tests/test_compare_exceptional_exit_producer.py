@@ -893,17 +893,16 @@ def test_identity_law_never_publishes_a_raise_partition(
 
 
 def test_chained_comparison_composes_pair_ordering_laws() -> None:
-    """Chaining law: ``a < b < c`` is And of pair ordering sugars.
+    """Chaining law: ``a < b < c`` carries one middle through pair owners.
 
-    Construction lives at ``Compare._construct_sugar`` (BoolOpSugar over
-    adjacent ComparisonOpSugar pairs). Undecided free names refuse named at
-    the first ordering floor — not a monomorphic chain panic and not a
+    Construction lives at ``Compare._construct_sugar`` (ChainedCompareSugar
+    over adjacent ComparisonOpSugar pairs). Undecided free names refuse named
+    at the first ordering floor — not a monomorphic chain panic and not a
     fabricated dual-edge completion.
     """
     node = _synthetic_compare("a < b < c")
     sugar = node.sugar()
-    assert type(sugar).__name__ == "BoolOpSugar"
-    assert sugar.op_kind == "And"
+    assert type(sugar).__name__ == "ChainedCompareSugar"
     assert len(sugar.values) == 2
     _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
 

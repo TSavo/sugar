@@ -10278,10 +10278,8 @@ class Compare(Expression):
         """A comparison constructs its operator's sugar, built WITH its
         children's sugar. `==` is EqualityOpSugar (it also refines); the ordering
         family and `!=` are ComparisonOpSugar. A CHAINED comparison `a < b < c`
-        is `(a < b) and (b < c)` -- each adjacent pair becomes its own comparison
-        sugar and they conjoin (b is the same reduced term in both, as Python
-        evaluates it once). Identity/membership operators (is/in/...) inherit the
-        loud throw until written.
+        constructs each adjacent pair under ChainedCompareSugar, which evaluates
+        `b` once and carries that reduced value from the first leg into the second.
         """
         from .operators import Eq
         from sugar_lift_py_tests.sugar.comparison_op_sugar import (
@@ -10326,9 +10324,11 @@ class Compare(Expression):
         pairs = tuple(pair(i) for i in range(len(self.ops)))
         if len(pairs) == 1:
             return pairs[0]
-        from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
+        from sugar_lift_py_tests.sugar.chained_compare_sugar import (
+            ChainedCompareSugar,
+        )
 
-        return BoolOpSugar(op_kind="And", values=pairs, site=self.fragment)
+        return ChainedCompareSugar(values=pairs, site=self.fragment)
 
 
 class Call(Expression):
