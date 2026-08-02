@@ -39,6 +39,8 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     # silent is the long pole (~11min today); others ~30s once cache warm.
     timeout-minutes: 360
+    env:
+      PYTHONUNBUFFERED: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -125,6 +127,8 @@ jobs:
     needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Download shared third-party wheelhouse
@@ -136,17 +140,21 @@ jobs:
         uses: ./.github/actions/python-test-environment-from-wheelhouse
         with:
           wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Static AST / discrimination floors (parallel to process matrix)
+      - name: "Phase: static AST / discrimination floors"
         id: static
         shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
         run: |
           set -uo pipefail
+          echo "static_floors phase=job status=start"
           chmod +x tools/run_static_sole_construction_floors.sh
           set +e
           bash tools/run_static_sole_construction_floors.sh
           code=$?
           set -e
-          python3 tools/sole_construction_floor_enrollment.py \
+          echo "static_floors phase=mint_report exit=$code"
+          python3 -u tools/sole_construction_floor_enrollment.py \
             --mint-report floor-axis-report.json \
             --axis-id static-laws \
             --display R_static_sole_construction \
@@ -168,43 +176,58 @@ jobs:
     if: always()
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: Download all axis reports
+      - name: "Phase: download axis reports"
         uses: actions/download-artifact@v4
         with:
           path: floor-axis-artifacts
           pattern: floor-axis-*
           merge-multiple: false
-      - name: Enrollment roll call (missing axis = UNMEASURED)
+      - name: "Phase: enrollment roll call (missing = UNMEASURED)"
         shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
-          python3 tools/sole_construction_floor_enrollment.py \
+          echo "floor_enrollment phase=job status=start commit=$GITHUB_SHA"
+          python3 -u tools/sole_construction_floor_enrollment.py \
             --check-attendance floor-axis-artifacts \
             --require-commit "${GITHUB_SHA}" \
             --write-campaign-body floor-measurement.json \
+            --partial-json floor-axis-artifacts/enrollment-partial.json \
             | tee -a "$GITHUB_STEP_SUMMARY"
           # Fail attendance if incomplete (tool exit already).
           # Also fail if any residual-red axis attended: residual red is campaign red.
-          python3 - <<'PY'
+          python3 -u - <<'PY'
           import json, sys
           from pathlib import Path
           body = json.loads(Path("floor-measurement.json").read_text())
           enr = body.get("enrollment") or {}
+          print(
+              f"floor_enrollment phase=campaign_gate "
+              f"status={enr.get('status')} attended={enr.get('attended')} "
+              f"missing={enr.get('missing')} residual={enr.get('residualRed')}",
+              flush=True,
+          )
           if enr.get("status") != "complete":
-              print("UNMEASURED: enrollment incomplete", enr, file=sys.stderr)
+              print("UNMEASURED: enrollment incomplete", enr, file=sys.stderr, flush=True)
               sys.exit(1)
           residual = enr.get("residualRed") or []
           if residual:
-              print(f"RESIDUAL RED axes: {residual}", file=sys.stderr)
+              print(f"RESIDUAL RED axes: {residual}", file=sys.stderr, flush=True)
               sys.exit(1)
-          print("enrollment complete; all axes residual-green")
+          print("enrollment complete; all axes residual-green", flush=True)
           PY
       - name: Upload campaign measurement body
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: python-sole-construction-floors-measurement
-          path: floor-measurement.json
+          path: |
+            floor-measurement.json
+            floor-axis-artifacts/enrollment-partial.json
+            floor-axis-artifacts/attendance-partial.json
           if-no-files-found: error

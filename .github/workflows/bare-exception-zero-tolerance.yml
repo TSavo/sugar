@@ -1,8 +1,9 @@
 name: Bare exception zero tolerance (discrimination)
 
-# Discrimination only. Full corpus R_bare_exceptions runs exclusively under
-# factory-zero-tolerance.yml so heavy floors share one pinned run and one
-# concurrency group (no multi-workflow pending-run cancellation).
+# Discrimination only. Full corpus R_bare_exceptions runs under
+# factory-zero-tolerance.yml process-floor matrix.
+#
+# SILENCE CONCEALS: named phases + PYTHONUNBUFFERED so stall vs work is visible.
 on:
   push:
     branches: [main]
@@ -15,22 +16,29 @@ jobs:
   bare-exception-discrimination:
     runs-on: [self-hosted, Linux, X64]
     env:
+      PYTHONUNBUFFERED: "1"
       PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-py-tests/src"
     steps:
-      - uses: actions/checkout@v4
-      # ONE environment definition, shared read-only with the authoritative
-      # suite. `sugar-lift-py-tests[test]` remains the sole dependency
-      # authority (#6275) — the action installs from that table and this floor
-      # hand-lists nothing. This floor stays a distinct instrument: one
-      # discrimination file, never a second whole-package sweep.
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
-      - name: R_bare_exceptions discrimination
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_bare_exception_zero_tolerance.py
-          -q
-      - name: Panic-catch self-check
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
+      - name: "Phase: R_bare_exceptions discrimination (pytest)"
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          echo "discrimination phase=bare_exception status=start"
+          python -u -m pytest --noconftest \
+            implementations/python/sugar-lift-py-tests/tests/test_bare_exception_zero_tolerance.py \
+            -v --tb=short
+          echo "discrimination phase=bare_exception status=done"
+      - name: "Phase: panic-catch self-check"
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          echo "discrimination phase=panic_catch status=start"
+          python -u \
+            implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
+          echo "discrimination phase=panic_catch status=done"

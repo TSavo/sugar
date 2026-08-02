@@ -1,7 +1,9 @@
 name: Python native-crash floor (discrimination)
 
-# Discrimination only. Full corpus R_native_crashes runs exclusively under
-# factory-zero-tolerance.yml (one heavy orchestrator).
+# Discrimination only. Full corpus R_native_crashes runs under
+# factory-zero-tolerance.yml process-floor matrix.
+#
+# SILENCE CONCEALS: named phases + PYTHONUNBUFFERED so stall vs work is visible.
 on:
   push:
     branches: [main]
@@ -14,17 +16,20 @@ jobs:
   native-crash-discrimination:
     name: native-crash-discrimination
     runs-on: [self-hosted, Linux, X64]
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
-      # ONE environment definition, shared read-only with the authoritative
-      # suite. `sugar-lift-py-tests[test]` remains the sole dependency
-      # authority (#6275) — the action installs from that table and this floor
-      # hand-lists nothing. This floor stays a distinct instrument: one
-      # discrimination file, never a second whole-package sweep.
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
-      - name: R_native_crashes discrimination
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_native_crash_zero_tolerance.py
-          -q
+      - name: "Phase: R_native_crashes discrimination (pytest)"
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          echo "discrimination phase=native_crash status=start"
+          python -u -m pytest --noconftest \
+            implementations/python/sugar-lift-py-tests/tests/test_native_crash_zero_tolerance.py \
+            -v --tb=short
+          echo "discrimination phase=native_crash status=done"
