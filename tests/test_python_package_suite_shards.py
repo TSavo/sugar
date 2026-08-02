@@ -39,16 +39,18 @@ def test_shard_assignment_is_deterministic_and_covers_every_file() -> None:
     assert count == 8, f"suite fan-out sized to 8 by measurement; got {count}"
     covered: list[str] = []
     for i in range(count):
-        covered.extend(mod.files_for_shard(files, i, count))
+        covered.extend(mod.files_for_shard(files, i, count, repo_root=ROOT))
 
     assert sorted(covered) == sorted(files)
-    # Same file always same shard across two pure calls.
-    assert mod.files_for_shard(files, 0, count) == mod.files_for_shard(
-        files, 0, count
+    # Same file always same shard across two pure calls (deterministic LPT/eq).
+    assert mod.files_for_shard(files, 0, count, repo_root=ROOT) == mod.files_for_shard(
+        files, 0, count, repo_root=ROOT
     )
-    # Spot-check: a middle file's seat is index % count.
+    # Spot-check: seat is stable for a middle file under the active assignment.
     mid = files[len(files) // 2]
-    assert mod.shard_index_for(mid, files, count) == files.index(mid) % count
+    seat = mod.shard_index_for(mid, files, count, repo_root=ROOT)
+    assert 0 <= seat < count
+    assert mid in mod.files_for_shard(files, seat, count, repo_root=ROOT)
 
 
 def test_missing_shard_makes_attendance_red_not_a_smaller_pass() -> None:

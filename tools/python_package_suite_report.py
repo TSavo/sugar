@@ -170,6 +170,8 @@ class SuiteReporter:
         self.shuffle_seed = None
         self._beat: object | None = None
         self._current_nodeid: str | None = None
+        # Per-test-file wall seconds (sum of call durations) → LPT prior.
+        self._file_duration_s: dict[str, float] = {}
         # Resolved NOW, so an unresolvable identity costs zero measurement.
         self.identity = self._identity()
         self.measured_commit = self._measured_commit()
@@ -208,6 +210,13 @@ class SuiteReporter:
 
     def pytest_runtest_logreport(self, report):
         nodeid = report.nodeid
+        # Accumulate call-phase duration per test file for LPT prior write-through.
+        if report.when == "call":
+            duration = float(getattr(report, "duration", 0.0) or 0.0)
+            file_key = nodeid.split("::", 1)[0]
+            self._file_duration_s[file_key] = (
+                self._file_duration_s.get(file_key, 0.0) + duration
+            )
         if report.failed:
             if report.when in _ERROR_PHASES:
                 self._record(self.errored, nodeid)
@@ -299,6 +308,9 @@ class SuiteReporter:
             except Exception:  # noqa: BLE001 — never fail report for narration
                 pass
             self._beat = None
+        # Write content-addressed LPT prior so the NEXT run packs by measured
+        # cost (cold equal-count seeds the shelf; second run is LPT).
+        self._write_lpt_prior()
         path = self.config.getoption("--suite-report")
         if not path:
             return
@@ -445,6 +457,45 @@ class SuiteReporter:
                 "which commit it measured"
             )
         return commit
+
+    def _write_lpt_prior(self) -> None:
+        """Persist per-file pytest call seconds into the CA LPT cost shelf."""
+        if not self._file_duration_s:
+            return
+        try:
+            from lpt_file_shards import ContentAddressedCostPrior
+        except ImportError:
+            return
+        prior = ContentAddressedCostPrior()
+        if not prior.enabled:
+            return
+        # nodeid file keys are usually relative to pytest rootdir (cwd).
+        root = Path(self.config.rootpath)
+        written = 0
+        for file_key, cost in self._file_duration_s.items():
+            candidates = [
+                root / file_key,
+                Path(file_key),
+            ]
+            # Workflow runs with working-directory implementations/python.
+            if not file_key.startswith("implementations/"):
+                candidates.append(
+                    root / "implementations" / "python" / file_key
+                )
+            path = next((p for p in candidates if p.is_file()), None)
+            if path is None:
+                continue
+            if prior.put_for_path(
+                path,
+                float(cost),
+                source="suite-pytest-call-duration",
+                path_hint=file_key,
+            ):
+                written += 1
+        narrate(
+            f"JOB_LOG phase=lpt-prior-write population=suite-pytest "
+            f"files_written={written} files_measured={len(self._file_duration_s)}"
+        )
 
 
 _START_UNIX = time.time()

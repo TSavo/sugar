@@ -607,13 +607,32 @@ class SupervisedEnumSupervisor:
                         status="lifting",
                         file=rel,
                     )
+                    t_file = time.perf_counter()
                     measured = self.lift_file(path, rel)
+                    file_s = time.perf_counter() - t_file
                     ordered[index] = measured
+                    # Content-addressed LPT prior write-through (next run packs
+                    # by measured cost; cold equal-count seeds the shelf).
+                    try:
+                        _tools = Path(__file__).resolve().parents[4] / "tools"
+                        if _tools.is_dir() and str(_tools) not in sys.path:
+                            sys.path.insert(0, str(_tools))
+                        from lpt_file_shards import ContentAddressedCostPrior
+
+                        ContentAddressedCostPrior().put_for_path(
+                            path,
+                            file_s,
+                            source="process-floor-lift",
+                            path_hint=rel,
+                        )
+                    except Exception:  # noqa: BLE001 — prior must not kill scan
+                        pass
                     lift_beat.tick(
                         n=done_i,
                         force=True,
                         status=measured.category,
                         file=rel,
+                        file_s=f"{file_s:.3f}",
                     )
                     if cache is not None:
                         payload = terminal_to_payload(

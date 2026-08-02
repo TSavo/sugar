@@ -104,30 +104,30 @@ def test_enrollment_missing_axis_is_unmeasured(tmp_path: Path) -> None:
     mod = _enroll_mod()
     # Only one of five enrolled axes present.
     report = mod.mint_axis_report(
-        axis_id="silent",
-        display="R_silent",
+        axis_id="silent-s00",
+        display="R_silent[s00]",
         commit_sha="deadbeef",
         exit_code=0,
         kind="process",
     )
-    path = tmp_path / "floor-axis-silent" / mod.REPORT_FILENAME
+    path = tmp_path / "floor-axis-silent-s00" / mod.REPORT_FILENAME
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(report), encoding="utf-8")
     code, summary = mod.check_attendance(tmp_path, require_commit="deadbeef")
     assert code == 1
     assert summary["status"] == "UNMEASURED"
-    assert "native-crash" in summary["missing"]
-    assert "silent" in summary["attended"]
+    assert "native-crash-s00" in summary["missing"]
+    assert "silent-s00" in summary["attended"]
 
 
 def test_enrollment_complete_with_all_axes(tmp_path: Path) -> None:
     mod = _enroll_mod()
-    for axis in mod.ENROLLED:
+    for axis in mod.ENROLLED:  # process LPT seats + static
         report = mod.mint_axis_report(
             axis_id=axis.axis_id,
             display=axis.display,
             commit_sha="abc123",
-            exit_code=0 if axis.axis_id != "timeout" else 1,
+            exit_code=0 if not axis.axis_id.startswith("timeout-") else 1,
             kind=axis.kind,
         )
         path = tmp_path / f"floor-axis-{axis.axis_id}" / mod.REPORT_FILENAME
@@ -136,7 +136,7 @@ def test_enrollment_complete_with_all_axes(tmp_path: Path) -> None:
     code, summary = mod.check_attendance(tmp_path, require_commit="abc123")
     assert code == 0
     assert summary["status"] == "complete"
-    assert summary["residualRed"] == ["timeout"]
+    assert summary["residualRed"] == [f"timeout-s{i:02d}" for i in range(8)]
 
 
 def test_local_monolith_still_lists_process_axes_for_workstation() -> None:

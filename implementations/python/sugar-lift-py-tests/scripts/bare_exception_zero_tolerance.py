@@ -28,6 +28,8 @@ from _enum_floor_runtime import (  # noqa: E402
     production_roots,
     require_explicit_scan_roots,
     require_python_paths,
+    add_lpt_shard_args,
+    apply_lpt_file_shard,
 )
 from _production_lift_child import (  # noqa: E402
     NON_FAILURE_OUTCOMES,
@@ -116,6 +118,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
+    add_lpt_shard_args(parser)
     args = parser.parse_args()
 
     boot_error = production_lift_bootstrap_error()
@@ -127,6 +130,13 @@ def main() -> int:
         return 2
     try:
         paths = require_explicit_scan_roots(args.paths)
+        paths = apply_lpt_file_shard(
+            paths,
+            root=args.repo_root,
+            shard_index=args.shard_index,
+            shard_count=args.shard_count,
+            population="process-floor-bare-exception",
+        )
     except ValueError as error:
         print(f"BARE-EXCEPTION ZERO-TOLERANCE RED: {error}")
         return 2

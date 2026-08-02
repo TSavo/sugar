@@ -18,6 +18,11 @@ permissions:
 #
 # JOB LOG DOCTRINE: long floors emit named phase/count to the job log ≤30s.
 # PYTHONUNBUFFERED so narration is not held in stdio buffers.
+#
+# LPT file shards (k=8): process axes × file-shard seats. Split key is
+# longest-processing-time packing on a content-addressed file cost prior;
+# equal-count only when no prior (JOB_LOG says so). Prior write-through
+# makes the second run fast. Do not raise k — env tax, max_file floor.
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -40,7 +45,7 @@ jobs:
           if-no-files-found: error
 
   process-floor:
-    name: process-floor ${{ matrix.axis }}
+    name: process-floor ${{ matrix.axisSeat }}
     needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     # silent is the long pole (~11min today); others ~30s once cache warm.
@@ -52,17 +57,197 @@ jobs:
       matrix:
         include:
           - axis: silent
+            axisSeat: silent-s00
             script: silent_zero_tolerance.py
-            display: R_silent
+            display: R_silent[s00]
+            shard: 0
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s01
+            script: silent_zero_tolerance.py
+            display: R_silent[s01]
+            shard: 1
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s02
+            script: silent_zero_tolerance.py
+            display: R_silent[s02]
+            shard: 2
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s03
+            script: silent_zero_tolerance.py
+            display: R_silent[s03]
+            shard: 3
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s04
+            script: silent_zero_tolerance.py
+            display: R_silent[s04]
+            shard: 4
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s05
+            script: silent_zero_tolerance.py
+            display: R_silent[s05]
+            shard: 5
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s06
+            script: silent_zero_tolerance.py
+            display: R_silent[s06]
+            shard: 6
+            shardCount: 8
+          - axis: silent
+            axisSeat: silent-s07
+            script: silent_zero_tolerance.py
+            display: R_silent[s07]
+            shard: 7
+            shardCount: 8
           - axis: native-crash
+            axisSeat: native-crash-s00
             script: native_crash_zero_tolerance.py
-            display: R_native_crashes
+            display: R_native_crashes[s00]
+            shard: 0
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s01
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s01]
+            shard: 1
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s02
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s02]
+            shard: 2
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s03
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s03]
+            shard: 3
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s04
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s04]
+            shard: 4
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s05
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s05]
+            shard: 5
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s06
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s06]
+            shard: 6
+            shardCount: 8
+          - axis: native-crash
+            axisSeat: native-crash-s07
+            script: native_crash_zero_tolerance.py
+            display: R_native_crashes[s07]
+            shard: 7
+            shardCount: 8
           - axis: bare-exception
+            axisSeat: bare-exception-s00
             script: bare_exception_zero_tolerance.py
-            display: R_bare_exceptions
+            display: R_bare_exceptions[s00]
+            shard: 0
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s01
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s01]
+            shard: 1
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s02
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s02]
+            shard: 2
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s03
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s03]
+            shard: 3
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s04
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s04]
+            shard: 4
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s05
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s05]
+            shard: 5
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s06
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s06]
+            shard: 6
+            shardCount: 8
+          - axis: bare-exception
+            axisSeat: bare-exception-s07
+            script: bare_exception_zero_tolerance.py
+            display: R_bare_exceptions[s07]
+            shard: 7
+            shardCount: 8
           - axis: timeout
+            axisSeat: timeout-s00
             script: timeout_zero_tolerance.py
-            display: R_timeouts
+            display: R_timeouts[s00]
+            shard: 0
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s01
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s01]
+            shard: 1
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s02
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s02]
+            shard: 2
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s03
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s03]
+            shard: 3
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s04
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s04]
+            shard: 4
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s05
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s05]
+            shard: 5
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s06
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s06]
+            shard: 6
+            shardCount: 8
+          - axis: timeout
+            axisSeat: timeout-s07
+            script: timeout_zero_tolerance.py
+            display: R_timeouts[s07]
+            shard: 7
+            shardCount: 8
     steps:
       - uses: actions/checkout@v4
       - name: Download shared third-party wheelhouse
@@ -83,6 +268,24 @@ jobs:
       # under /home/runner/.cache on self-hosted (HOME not a safe cache root).
       # Fleet share is actions/cache restore/save, not host HOME — so use the
       # job workspace (always writable) as the local mount point.
+
+      - name: Resolve LPT file-cost prior path
+        id: lpt
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${GITHUB_WORKSPACE}/.cache/sugar/lpt-file-costs"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_LPT_PRIOR_DIR=$dir" >> "$GITHUB_ENV"
+          echo "JOB_LOG phase=lpt-prior status=resolve dir=$dir"
+      - name: Restore LPT file-cost prior (content-addressed)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-file-costs-${{ github.sha }}
+          restore-keys: |
+            lpt-file-costs-
       - name: Resolve process-floor CA shelf path
         id: shelf
         shell: bash
@@ -119,7 +322,7 @@ jobs:
           set -uo pipefail
           chmod +x tools/run_one_process_floor_axis.sh
           set +e
-          bash tools/run_one_process_floor_axis.sh "${{ matrix.axis }}" "${{ matrix.script }}"
+          bash tools/run_one_process_floor_axis.sh "${{ matrix.axis }}" "${{ matrix.script }}" "${{ matrix.shard }}" "${{ matrix.shardCount }}"
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -128,6 +331,13 @@ jobs:
           exit "$code"
       # Save after every attempt so partial fills warm peers / next runs.
       # Concurrent saves of the same key: first wins; content is CA so safe.
+
+      - name: Save LPT file-cost prior (content-addressed)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-file-costs-${{ github.sha }}-${{ matrix.axisSeat }}
       - name: Save process-floor CA terminal shelf (fleet)
         if: always()
         uses: actions/cache/save@v4
@@ -138,7 +348,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: floor-axis-${{ matrix.axis }}
+          name: floor-axis-${{ matrix.axisSeat }}
           path: floor-axis-report.json
           if-no-files-found: error
 
