@@ -349,6 +349,7 @@ test-python-format:
 # numpy slice, requests recognition slice. Seconds, not wall-scale. Silent
 # must stay 0; lifted loci cannot disappear without a loud pin update.
 # Post-factory path: SourceFile + Assert.sugar() (sugar-source-tree required).
+# CLAIM_MASS_PIN=<name> runs one pin (CI matrix). Empty = all pins (local).
 .PHONY: test-claim-mass-tripwires
 test-claim-mass-tripwires:
 	$(PYTHON) -m venv $(PYTHON_KIT_VENV)
@@ -358,7 +359,8 @@ test-claim-mass-tripwires:
 		-e implementations/python/sugar-source-tree \
 		-e implementations/python/sugar-lift-py-tests[test]
 	cd implementations/python/sugar-lift-py-tests && \
-		$(abspath $(PYTHON_KIT)) -m pytest -q tests/test_claim_mass_tripwires.py
+		$(abspath $(PYTHON_KIT)) -m pytest -q tests/test_claim_mass_tripwires.py \
+		$(if $(CLAIM_MASS_PIN),-k $(CLAIM_MASS_PIN),)
 
 .PHONY: test-php
 test-php:

@@ -91,18 +91,7 @@ jobs:
             python: false
             z3: false
             b3sum: false
-          - name: Python format
-            target: test-python-format
-            python: true
-            z3: false
-            b3sum: false
-          # claim-mass tripwires is pytest over a small file set; b3sum was
-          # matrix baggage, not a sugarbin consumer (make target is pure Python).
-          - name: claim-mass tripwires
-            target: test-claim-mass-tripwires
-            python: true
-            z3: false
-            b3sum: false
+          # claim-mass + python-format: fan-out jobs below.
           # coretests-invariants and coretests-source-audit are Makefile targets
           # only (hand / future Rust work). Not on this per-commit matrix.
 
@@ -190,6 +179,197 @@ jobs:
 
   # Showcase shards warm their own bins inside `make test-showcases`.
   # Concurrent shards share the filesystem shelf; single-flight prevents stampede.
+  # ------------------------------------------------------------------
+  claim-mass-matrix:
+    name: emit claim-mass pin matrix
+    # no needs: prepare — pure Python (7019)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      count: ${{ steps.m.outputs.count }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Emit pin matrix from PINS (single source of truth)
+        id: m
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(python3 tools/claim_mass_tripwire_shards.py --emit-matrix-json)"
+          count="$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)["pin"]))' <<<"$matrix")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+  claim-mass-tripwires:
+    name: claim-mass (${{ matrix.pin }})
+    needs: [claim-mass-matrix]
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.claim-mass-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install tripwire deps
+        run: |
+          python -m pip install --quiet \
+            -e implementations/python/sugar-lift-python-source \
+            -e implementations/python/sugar-source-tree \
+            -e 'implementations/python/sugar-lift-py-tests[test]'
+      - name: Run pin ${{ matrix.pin }}
+        id: pin
+        shell: bash
+        working-directory: implementations/python/sugar-lift-py-tests
+        env:
+          PYTHONPATH: src:tests:${{ github.workspace }}/implementations/python/sugar-lift-python-source/src:${{ github.workspace }}/implementations/python/sugar-source-tree/src
+        run: |
+          set -uo pipefail
+          set +e
+          python -m pytest -q tests/test_claim_mass_tripwires.py -k '${{ matrix.pin }}'
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          python3 - <<PY
+          import json, os
+          from pathlib import Path
+          body = {
+              "schemaVersion": 1,
+              "measurementClass": "claim-mass-tripwires",
+              "pin": "${{ matrix.pin }}",
+              "measuredCommit": os.environ.get("GITHUB_SHA"),
+              "status": "completed",
+              "exitCode": $exit_code,
+          }
+          Path(os.environ["GITHUB_WORKSPACE"], "claim-mass-body.json").write_text(
+              json.dumps(body, indent=2) + "\n"
+          )
+          PY
+          exit "$exit_code"
+      - name: Upload pin measurement body
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claim-mass-${{ matrix.pin }}
+          path: claim-mass-body.json
+          if-no-files-found: error
+
+  claim-mass-attendance:
+    name: claim-mass enrollment (all pins)
+    if: always() && !cancelled()
+    needs: [claim-mass-matrix, claim-mass-tripwires]
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: claim-mass-*
+          path: runs
+      - name: Roll call — every pin attended
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/claim_mass_tripwire_attendance.py \
+            --reports-dir runs \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------
+  # python-format: N packages ⇒ N black jobs. Enrollment is existence.
+  # ------------------------------------------------------------------
+  python-format-matrix:
+    name: emit python-format package matrix
+    # no needs: prepare — pure Python (7019)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: m
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(python3 tools/python_format_shards.py --emit-matrix-json)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  python-format:
+    name: black (${{ matrix.package }})
+    needs: [python-format-matrix]
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.python-format-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install black (via sugar-lift-py-tests[test])
+        run: |
+          python -m pip install --quiet \
+            -e 'implementations/python/sugar-lift-py-tests[test]'
+      - name: Black check ${{ matrix.package }}
+        id: fmt
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          python -m black --check "implementations/python/${{ matrix.package }}"
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          python3 - <<PY
+          import json, os
+          from pathlib import Path
+          body = {
+              "schemaVersion": 1,
+              "measurementClass": "python-format",
+              "package": "${{ matrix.package }}",
+              "measuredCommit": os.environ.get("GITHUB_SHA"),
+              "status": "completed",
+              "exitCode": $exit_code,
+          }
+          Path("python-format-body.json").write_text(json.dumps(body, indent=2) + "\n")
+          PY
+          exit "$exit_code"
+      - name: Upload format measurement body
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-format-${{ matrix.package }}
+          path: python-format-body.json
+          if-no-files-found: error
+
+  python-format-attendance:
+    name: python-format enrollment (all packages)
+    if: always() && !cancelled()
+    needs: [python-format-matrix, python-format]
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-format-*
+          path: runs
+      - name: Roll call — every package attended
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/python_format_attendance.py \
+            --reports-dir runs \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
   showcases:
     name: showcases (${{ matrix.shard }}/4)
     runs-on: [self-hosted, Linux, X64]
@@ -249,7 +429,13 @@ jobs:
     # Aggregate genuine success/failure results, but do not manufacture a red
     # test result when concurrency intentionally supersedes the whole run.
     if: ${{ always() && !cancelled() }}
-    needs: [ci-apt-fast-path, core, core-shelf, showcases]
+    needs:
+      - ci-apt-fast-path
+      - core
+      - core-shelf
+      - claim-mass-attendance
+      - python-format-attendance
+      - showcases
     runs-on: ubuntu-latest
     steps:
       - name: Report the complete acid-test vector
@@ -257,10 +443,14 @@ jobs:
           APT_RESULT: ${{ needs.ci-apt-fast-path.result }}
           CORE_RESULT: ${{ needs.core.result }}
           CORE_SHELF_RESULT: ${{ needs.core-shelf.result }}
+          CLAIM_MASS_RESULT: ${{ needs.claim-mass-attendance.result }}
+          FORMAT_RESULT: ${{ needs.python-format-attendance.result }}
           SHOWCASE_RESULT: ${{ needs.showcases.result }}
         run: |
-          echo "apt=$APT_RESULT core=$CORE_RESULT core-shelf=$CORE_SHELF_RESULT showcases=$SHOWCASE_RESULT"
+          echo "apt=$APT_RESULT core=$CORE_RESULT core-shelf=$CORE_SHELF_RESULT claim-mass=$CLAIM_MASS_RESULT format=$FORMAT_RESULT showcases=$SHOWCASE_RESULT"
           test "$APT_RESULT" = success
           test "$CORE_RESULT" = success
           test "$CORE_SHELF_RESULT" = success
+          test "$CLAIM_MASS_RESULT" = success
+          test "$FORMAT_RESULT" = success
           test "$SHOWCASE_RESULT" = success
