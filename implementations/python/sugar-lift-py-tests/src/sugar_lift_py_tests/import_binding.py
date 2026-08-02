@@ -1319,15 +1319,34 @@ def authenticated_import_use_receipts(
     source: str,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
+    *,
+    module=None,
 ) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
-    """Return typed, final-checked Call-target receipts from the lexical pass."""
+    """Return typed, final-checked Call-target receipts from the lexical pass.
+
+    ``module`` — already-materialized Module root for this ``source_cid``. When
+    the caller just opened a SourceFile (populate after open), pass its root so
+    the pass does not re-Materialize the same body (measured: second full
+    ``_json.py`` SourceFile inside populate equaled ~0.25s of residual wall).
+    """
     # Refuse mismatched claims here (same boundary as AuthenticatedImportUseV1);
     # never rewrite source_cid after minting.
     if module_identities is None:
         module_identities = {}
-    rows, outcomes = authenticated_import_uses(
-        root, path, source, source_cid, module_identities=module_identities
-    )
+    if module is not None:
+        runner = _run_lexical_import_pass_on_module(
+            module,
+            root=root,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities=module_identities,
+        )
+        rows, outcomes = runner.rows, runner.outcomes
+    else:
+        rows, outcomes = authenticated_import_uses(
+            root, path, source, source_cid, module_identities=module_identities
+        )
     # Same pass fills revalidation snapshot so receipt.revalidate() does not
     # re-Materialize the module (mint+revalidate was a second SourceFile).
     cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)

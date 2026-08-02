@@ -952,18 +952,28 @@ def authenticate_dependency_top_level(
         cached = _TOP_LEVEL_GRAPH_CACHE.get(top_level)
         if cached is not None:
             return cached
-    packages = _packages_distributions()
-    distributions = tuple(packages.get(top_level, ()))
-    if len(distributions) == 1:
+    # Fast path: many top-levels share the distribution name (pandas, numpy, …).
+    # ``packages_distributions()`` walks every installed dist (~0.2s measured);
+    # try the direct door first and only pay the install-map walk on miss
+    # (e.g. dateutil → python-dateutil) or multi-owner conflict.
+    graph: DependencyArtifactGraph | None = None
+    try:
         graph = DependencyArtifactGraph.authenticate(
-            importlib.metadata.distribution(distributions[0])
+            importlib.metadata.distribution(top_level)
         )
-    elif distributions:
-        raise DependencyArtifactAuthenticationError(
-            "top-level module belongs to multiple installed distributions"
-        )
-    else:
-        graph = DependencyArtifactGraph.authenticate_stdlib_module(top_level)
+    except importlib.metadata.PackageNotFoundError:
+        packages = _packages_distributions()
+        distributions = tuple(packages.get(top_level, ()))
+        if len(distributions) == 1:
+            graph = DependencyArtifactGraph.authenticate(
+                importlib.metadata.distribution(distributions[0])
+            )
+        elif distributions:
+            raise DependencyArtifactAuthenticationError(
+                "top-level module belongs to multiple installed distributions"
+            )
+        else:
+            graph = DependencyArtifactGraph.authenticate_stdlib_module(top_level)
     if _AUTHENTICATE_CACHE_ENABLED:
         _TOP_LEVEL_GRAPH_CACHE[top_level] = graph
     return graph
