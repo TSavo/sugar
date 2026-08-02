@@ -7,16 +7,21 @@ an unenrolled module.
 The opaque/cite path already existed on FAILURE
 (``_install_opaque_call_obligation``).  SUCCESS against authenticated stdlib
 used to call ``resolve_source_visible_frame`` → full ``MaterializeModule`` of
-the dependency (``enum.py`` 35× on one open of ``pandas/io/json/_json.py``).
+the dependency (``enum.py`` 35×, ``re/*`` 71× on one open of
+``pandas/io/json/_json.py``).
 
-Red instrument (one assertion):
-  one open of pandas/io/json/_json.py → SourceFile constructions of enum.py == 0
+Red instruments:
+  one open of pandas/io/json/_json.py → SourceFile of enum.py == 0
+  one open of pandas/io/json/_json.py → SourceFile of ANY stdlib seat == 0
 
-Do not touch the dependency-seat memo — that is a separate campaign (white).
+In-population redundancy (e.g. pandas/_config/config.py ×18) is white's
+dependency-seat memo campaign — not this instrument.
 """
 
 from __future__ import annotations
 
+import sysconfig
+from collections import Counter
 from pathlib import Path
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
@@ -33,16 +38,52 @@ def _enum_seat(filename: str) -> bool:
     return seat.endswith("enum.py") or seat == "enum.py"
 
 
-def _count_enum_sourcefiles_during(open_fn) -> tuple[int, int, object]:
-    """Patch SourceFile.__init__ to count constructions, run open_fn, restore."""
-    counts = {"all": 0, "enum": 0}
+def _stdlib_seat(filename: str, *, stdlib_root: Path) -> bool:
+    """True when the SourceFile identity is an off-population stdlib seat."""
+    seat = str(filename).replace("\\", "/")
+    if seat.startswith("pandas/") or "/site-packages/pandas/" in seat:
+        return False
+    if seat.startswith("numpy/") or "/site-packages/numpy/" in seat:
+        return False
+    # Relative seats minted by authenticate_stdlib_path (enum.py, re/__init__.py, …)
+    candidate = (stdlib_root / seat).resolve()
+    try:
+        candidate.relative_to(stdlib_root)
+    except ValueError:
+        pass
+    else:
+        if candidate.is_file() or seat.endswith(".py") or "/" in seat:
+            # Prefer existence, but also match known relative seats even if
+            # this interpreter layout differs slightly from the seat spelling.
+            if candidate.is_file():
+                return True
+    # Absolute path inside stdlib root
+    try:
+        p = Path(seat).resolve()
+        p.relative_to(stdlib_root)
+        return True
+    except (ValueError, OSError):
+        pass
+    # Common relative stdlib spellings used as source_seat
+    if seat in {"enum.py", "re.py", "abc.py", "typing.py", "types.py"}:
+        return True
+    if seat.startswith("re/") or seat.startswith("collections/") or seat.startswith(
+        "importlib/"
+    ):
+        return True
+    if seat.endswith("/enum.py") or seat.endswith("/re.py"):
+        return True
+    return False
+
+
+def _count_sourcefiles_during(open_fn) -> tuple[Counter[str], object]:
+    """Patch SourceFile.__init__, run open_fn, restore. Returns seat counter."""
+    seats: Counter[str] = Counter()
     orig = SourceFile.__init__
 
     def counting_init(self, identity, *args, **kwargs):  # type: ignore[no-untyped-def]
         _source, filename, _cid = identity
-        counts["all"] += 1
-        if _enum_seat(filename):
-            counts["enum"] += 1
+        seats[str(filename).replace("\\", "/")] += 1
         return orig(self, identity, *args, **kwargs)
 
     SourceFile.__init__ = counting_init  # type: ignore[method-assign]
@@ -50,22 +91,21 @@ def _count_enum_sourcefiles_during(open_fn) -> tuple[int, int, object]:
         result = open_fn()
     finally:
         SourceFile.__init__ = orig  # type: ignore[method-assign]
-    return counts["enum"], counts["all"], result
+    return seats, result
 
 
 def _locus_root_for_corpus(corpus: Path) -> Path:
     """Install root that records seats as ``pandas/...`` (not package-relative)."""
     import importlib.util
 
-    # tests/ -> sugar-lift-python-source -> python/ -> sugar-lift-py-tests/scripts
+    # __file__ = .../sugar-lift-python-source/tests/test_....py
+    # parents[0]=tests, [1]=sugar-lift-python-source, [2]=python
     cer_path = (
         Path(__file__).resolve().parents[2]
         / "sugar-lift-py-tests"
         / "scripts"
         / "control_effect_recensus.py"
     )
-    # __file__ = .../sugar-lift-python-source/tests/test_....py
-    # parents[0]=tests, [1]=sugar-lift-python-source, [2]=python
     assert cer_path.is_file(), f"missing recensus script at {cer_path}"
     spec = importlib.util.spec_from_file_location("cer_membrane", cer_path)
     assert spec is not None and spec.loader is not None
@@ -74,41 +114,59 @@ def _locus_root_for_corpus(corpus: Path) -> Path:
     return cer.locus_root_for_corpus(corpus)
 
 
-def test_population_membrane_json_open_never_materializes_enum_py() -> None:
-    """One open of pandas io/json/_json.py must construct SourceFile(enum.py) zero times.
-
-    Pre-membrane this was 35.  Green is 0: success cites.
-    Open may still SNW for unrelated in-population reasons; the instrument
-    only measures off-population rebuild of enum.py.
-    """
+def _open_json_once():
     corpus = authenticated_pandas_corpus().root
     locus = _locus_root_for_corpus(corpus)
     target = corpus / "io" / "json" / "_json.py"
     assert target.is_file(), f"missing planted corpus file {target}"
-
     ctx = tree_construction_context_for_workspace(corpus, contract_refs={})
     reporter = CollectingReporter()
+    from sugar_source_tree.panic import SugarNotWritten
 
-    def open_once():
-        from sugar_source_tree.panic import SugarNotWritten
+    try:
+        return open_source_file_for_construction(
+            target,
+            root=locus,
+            reporter=reporter,
+            construction_context=ctx,
+            populate_derived=True,
+        )
+    except SugarNotWritten:
+        # In-population SNW is not this instrument; seat counts still measured.
+        return object()
 
-        try:
-            return open_source_file_for_construction(
-                target,
-                root=locus,
-                reporter=reporter,
-                construction_context=ctx,
-                populate_derived=True,
-            )
-        except SugarNotWritten:
-            # In-population SNW is not this instrument.  enum count still measured.
-            return object()
 
-    enum_n, total_n, _result = _count_enum_sourcefiles_during(open_once)
+def test_population_membrane_json_open_never_materializes_enum_py() -> None:
+    """One open of pandas io/json/_json.py must construct SourceFile(enum.py) zero times.
+
+    Pre-membrane this was 35.  Green is 0: success cites.
+    """
+    seats, _ = _count_sourcefiles_during(_open_json_once)
+    enum_n = sum(n for s, n in seats.items() if _enum_seat(s))
+    total_n = sum(seats.values())
     assert enum_n == 0, (
         f"POPULATION MEMBRANE RED: SourceFile constructions of enum.py = {enum_n} "
         f"(want 0). Success against authenticated stdlib must cite, never "
         f"MaterializeModule. total SourceFile constructions this open={total_n}."
+    )
+
+
+def test_population_membrane_json_open_never_materializes_any_stdlib() -> None:
+    """Off-population stdlib seats must be zero — not just enum.
+
+    Pre-membrane: re/* was 71 constructions (~6.4s).  Membrane must kill all
+    stdlib MaterializeModule, not only the enum tooth.
+    """
+    stdlib_root = Path(sysconfig.get_path("stdlib")).resolve()
+    seats, _ = _count_sourcefiles_during(_open_json_once)
+    stdlib_seats = {
+        s: n for s, n in seats.items() if _stdlib_seat(s, stdlib_root=stdlib_root)
+    }
+    stdlib_n = sum(stdlib_seats.values())
+    assert stdlib_n == 0, (
+        f"POPULATION MEMBRANE RED: stdlib SourceFile constructions = {stdlib_n} "
+        f"(want 0). Offenders: {dict(sorted(stdlib_seats.items(), key=lambda kv: -kv[1])[:20])}. "
+        f"In-population residual is white's memo; stdlib is the membrane."
     )
 
 
@@ -131,3 +189,11 @@ def test_off_population_gap_helper_names_stdlib() -> None:
     assert gap is not None
     assert gap.kind == "call-target-off-population"
     assert "enum" in gap.detail
+
+    re_graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    gap_re = _off_population_materialize_gap(
+        type("R", (), {"cid": "r", "module_name": "re"})(),
+        graph=re_graph,
+    )
+    assert gap_re is not None
+    assert gap_re.kind == "call-target-off-population"
