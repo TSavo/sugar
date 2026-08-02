@@ -52,6 +52,17 @@ def _recensus_body(panics: int = 0, files: int = 1415) -> dict:
     return {
         "schemaVersion": 1,
         "measurementClass": "control-effect-recensus",
+        "measurement": "measured",
+        "conservationWitness": {
+            "witnessSchema": "sugar.conservation-witness.v1",
+            "inputKeyManifestCid": "sha256:" + ("a" * 64),
+            "inputKeyCount": files,
+            "outputKeyManifestCid": "sha256:" + ("b" * 64),
+            "outputKeyCount": files,
+            "validatorStageId": "compose-terminal-aggregate-seal/v1",
+            "validatorSourceCid": "sha256:" + ("c" * 64),
+            "status": "passed",
+        },
         "measuredCommit": "deadbeef",
         "R_construction_panics": panics,
         "constructionPanics": [{"x": i} for i in range(panics)],
@@ -355,6 +366,22 @@ def test_enrolled_panics_axis_not_forbidden() -> None:
             {
                 "R_construction": CM.unmeasured("invented"),
             },
+        )
+
+
+def test_legacy_recensus_body_without_conservation_witness_is_refused() -> None:
+    body = _recensus_body(2)
+    body.pop("conservationWitness")
+    with pytest.raises(CM.CommitMeasurementError, match="conservationWitness"):
+        CM.measured(
+            2,
+            identity="R_construction_panics",
+            unit=CM.UNIT_CONSTRUCTION_PANIC,
+            population_id="board",
+            population_size=1415,
+            body=body,
+            value_field_path="R_construction_panics",
+            exit_code=1,
         )
 
 

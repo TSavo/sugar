@@ -44,9 +44,19 @@ SCOREBOARD_AUTHORITY = False
 
 import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence, Union
+
+_PACKAGE_SRC = (
+    Path(__file__).resolve().parents[1]
+    / "implementations/python/sugar-lift-py-tests/src"
+)
+if str(_PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_SRC))
+
+from sugar_lift_py_tests.conservation_mint import decode_conserved_body  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Units — incommensurable. Presenting two Measured.values without their units
@@ -237,6 +247,16 @@ def measured(
             f"Measured requires a parsed body mapping; got {type(body).__name__}. "
             "NoReport is Unmeasured."
         )
+    if (
+        identity == "R_construction_panics"
+        or body.get("measurementClass") == "control-effect-recensus"
+    ):
+        try:
+            decode_conserved_body(body)
+        except ValueError as error:
+            raise CommitMeasurementError(
+                f"Measured refuses unconserved recensus body: {error}"
+            ) from error
     path_s = _require_nonempty_str("value_field_path", value_field_path)
     unit_s = _require_unit(unit)
     try:
