@@ -1,9 +1,33 @@
 from __future__ import annotations
 
 import ast
-from typing import Any
+from typing import Any, NoReturn
 
 Json = dict[str, Any]
+
+
+def _could_not_build(
+    *,
+    owner: str,
+    observed: str,
+    requested: str,
+    fix: str,
+) -> NoReturn:
+    """Boundary refusal: name what the AST adapter could not construct.
+
+    A bare ValueError at this door says neither "malformed IR" nor "unwritten
+    arm." ConstructionPanic carries owner / observed / requested / fix so the
+    next agent knows which of those it is.
+    """
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner=owner,
+        blame="python_ast_adapter",
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )
 
 
 def compile_ir_document(ir: list[Json]) -> str:
@@ -95,7 +119,12 @@ def _arguments(contract: Json) -> ast.arguments:
 
     for raw_entry in shape:
         if not isinstance(raw_entry, dict):
-            raise ValueError(f"parameterShape entry is not an object: {raw_entry!r}")
+            _could_not_build(
+                owner="python_ast_adapter.parameterShape",
+                observed=f"parameterShape entry is not an object: {raw_entry!r}",
+                requested="parameterShape entry object with name and kind",
+                fix="fix the IR producer of parameterShape, or reject malformed shape before compile",
+            )
         name = str(raw_entry["name"])
         kind = str(raw_entry["kind"])
         arg = ast.arg(arg=name, annotation=None, type_comment=None)
@@ -114,7 +143,12 @@ def _arguments(contract: Json) -> ast.arguments:
         elif kind == "kwarg":
             kwarg = arg
         else:
-            raise ValueError(f"unsupported parameter kind: {kind}")
+            _could_not_build(
+                owner="python_ast_adapter.parameterShape",
+                observed=f"unsupported parameter kind: {kind}",
+                requested="positional-only | positional-or-keyword | vararg | keyword-only | kwarg",
+                fix=f"write parameterShape arm for kind {kind!r} or fix the producer spelling",
+            )
 
     defaults = _trailing_defaults(positional_defaults)
     return ast.arguments(
@@ -136,7 +170,12 @@ def _trailing_defaults(defaults: list[Json | None]) -> list[ast.expr]:
         return []
     trailing = defaults[first_default:]
     if any(value is None for value in trailing):
-        raise ValueError("positional parameter defaults must be trailing")
+        _could_not_build(
+            owner="python_ast_adapter.parameterShape",
+            observed="positional parameter defaults are not trailing",
+            requested="defaults only after the first defaulted positional",
+            fix="repair parameterShape defaults order at the IR producer",
+        )
     return [_expr(value) for value in trailing if value is not None]
 
 
@@ -199,7 +238,12 @@ def _stmt(term: Json) -> ast.stmt:
         )
     if name == "python:import":
         if not args:
-            raise ValueError("python:import needs at least one bound name")
+            _could_not_build(
+                owner="python_ast_adapter.import",
+                observed="python:import with zero bound names",
+                requested="at least one bound import name",
+                fix="emit bound names on python:import or drop the empty import",
+            )
         return ast.Import(
             names=[ast.alias(name=_const_string(arg), asname=None) for arg in args]
         )
@@ -263,12 +307,18 @@ def _stmt(term: Json) -> ast.stmt:
         return ast.Continue()
     if name == "python:raise":
         if len(args) != 2:
-            raise ValueError(
-                f"python:raise requires exactly exception and cause: {term!r}"
+            _could_not_build(
+                owner="python_ast_adapter.raise",
+                observed=f"python:raise arity is not exception+cause: {term!r}",
+                requested="python:raise(exception, cause)",
+                fix="emit both operands (use python:no_value for absent cause only)",
             )
         if _name(args[0]) == "python:no_value":
-            raise ValueError(
-                f"python:raise exception operand cannot be python:no_value: {term!r}"
+            _could_not_build(
+                owner="python_ast_adapter.raise",
+                observed=f"python:raise exception operand is python:no_value: {term!r}",
+                requested="a concrete exception expression as the first operand",
+                fix="emit the exception term; bare raise-from-handler is a different arm",
             )
         return ast.Raise(
             exc=_expr(args[0]),
@@ -291,7 +341,12 @@ def _expr(term: Json) -> ast.expr:
     if kind == "var":
         return ast.Name(id=str(term.get("name", "x")), ctx=ast.Load())
     if kind != "ctor":
-        raise ValueError(f"unsupported term kind: {kind}")
+        _could_not_build(
+            owner="python_ast_adapter.term",
+            observed=f"unsupported term kind: {kind!r}",
+            requested="const | var | ctor",
+            fix=f"write term compile arm for kind {kind!r} or fix the IR producer",
+        )
 
     name = _name(term)
     args = term.get("args", [])
@@ -391,14 +446,24 @@ def _expr(term: Json) -> ast.expr:
         )
     if name == "python:lambda":
         if not args:
-            raise ValueError("python:lambda needs a body")
+            _could_not_build(
+                owner="python_ast_adapter.lambda",
+                observed="python:lambda with no body args",
+                requested="python:lambda(...params, body)",
+                fix="emit the lambda body term",
+            )
         return ast.Lambda(args=_lambda_arguments(args[:-1]), body=_expr(args[-1]))
     if name == "python:dict":
         keys: list[ast.expr | None] = []
         values: list[ast.expr] = []
         for entry in args:
             if _name(entry) != "python:dict_entry":
-                raise ValueError(f"expected python:dict_entry: {entry!r}")
+                _could_not_build(
+                    owner="python_ast_adapter.dict",
+                    observed=f"dict entry is not python:dict_entry: {entry!r}",
+                    requested="python:dict_entry(key, value)",
+                    fix="emit dict entries as python:dict_entry ctors",
+                )
             entry_args = entry.get("args", [])
             key = entry_args[0]
             keys.append(None if _is_none_const(key) else _expr(key))
@@ -408,7 +473,12 @@ def _expr(term: Json) -> ast.expr:
         return ast.JoinedStr(values=[_fstring_part(part) for part in args])
     if name == "python:walrus":
         return ast.NamedExpr(target=_walrus_target(args[0]), value=_expr(args[1]))
-    raise ValueError(f"unsupported python operation in expression position: {name}")
+    _could_not_build(
+        owner="python_ast_adapter.expr",
+        observed=f"unsupported python operation in expression position: {name}",
+        requested="a written python: expr ctor arm",
+        fix=f"write expression compile arm for {name!r}",
+    )
 
 
 def _const_value(value: Any) -> object:
@@ -422,7 +492,12 @@ def _const_value(value: Any) -> object:
             return complex(float(str(value["re"])), float(str(value["im"])))
         if tag == "ellipsis":
             return Ellipsis
-        raise ValueError(f"unsupported tagged constant type: {tag}")
+        _could_not_build(
+            owner="python_ast_adapter.const",
+            observed=f"unsupported tagged constant type: {tag!r}",
+            requested="float | bytes | complex | ellipsis (tagged const)",
+            fix=f"write tagged const arm for type {tag!r}",
+        )
     return value
 
 
@@ -448,12 +523,22 @@ def _target(term: Json) -> ast.expr:
     if name == "python:tuple_target":
         targets = [_target(arg) for arg in args]
         if not targets:
-            raise ValueError("tuple target must contain at least one target")
+            _could_not_build(
+                owner="python_ast_adapter.target",
+                observed="empty python:tuple_target",
+                requested="at least one store target",
+                fix="emit one or more tuple targets",
+            )
         return ast.Tuple(elts=targets, ctx=ast.Store())
     if name == "python:list_target":
         targets = [_target(arg) for arg in args]
         if not targets:
-            raise ValueError("list target must contain at least one target")
+            _could_not_build(
+                owner="python_ast_adapter.target",
+                observed="empty python:list_target",
+                requested="at least one store target",
+                fix="emit one or more list targets",
+            )
         return ast.List(elts=targets, ctx=ast.Store())
     if name == "python:starred":
         return ast.Starred(value=_target(args[0]), ctx=ast.Store())
@@ -464,31 +549,61 @@ def _target(term: Json) -> ast.expr:
 def _unpack_target(kind_term: Json, targets_term: Json) -> ast.expr:
     kind = _const_string(kind_term)
     if _name(targets_term) != "python:unpack_targets":
-        raise ValueError(f"expected python:unpack_targets: {targets_term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.unpack",
+            observed=f"expected python:unpack_targets: {targets_term!r}",
+            requested="python:unpack_targets(...)",
+            fix="emit unpack targets under python:unpack_targets",
+        )
     targets = [_target(term) for term in targets_term.get("args", [])]
     if not targets:
-        raise ValueError("unpack target must contain at least one name")
+        _could_not_build(
+            owner="python_ast_adapter.unpack",
+            observed="empty unpack target list",
+            requested="at least one unpack target",
+            fix="emit one or more names in unpack targets",
+        )
     if kind == "tuple":
         return ast.Tuple(elts=targets, ctx=ast.Store())
     if kind == "list":
         return ast.List(elts=targets, ctx=ast.Store())
-    raise ValueError(f"unsupported unpack target kind: {kind}")
+    _could_not_build(
+        owner="python_ast_adapter.unpack",
+        observed=f"unsupported unpack target kind: {kind!r}",
+        requested="tuple | list",
+        fix=f"write unpack target arm for kind {kind!r}",
+    )
 
 
 def _unpack_name_target(term: Json) -> ast.Name:
     expr = _expr(term)
     if not isinstance(expr, ast.Name):
-        raise ValueError(f"unpack target is not a name: {ast.dump(expr)}")
+        _could_not_build(
+            owner="python_ast_adapter.unpack",
+            observed=f"unpack target is not a name: {ast.dump(expr)}",
+            requested="ast.Name store target",
+            fix="emit name-only unpack targets at this door",
+        )
     expr.ctx = ast.Store()
     return expr
 
 
 def _comprehension(term: Json) -> ast.comprehension:
     if _name(term) != "python:comprehension":
-        raise ValueError(f"expected python:comprehension: {term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.comprehension",
+            observed=f"expected python:comprehension: {term!r}",
+            requested="python:comprehension(target, iter, *ifs)",
+            fix="emit comprehension generators as python:comprehension",
+        )
     args = term.get("args", [])
     if len(args) < 2:
-        raise ValueError(f"python:comprehension needs target and iter: {term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.comprehension",
+            observed=f"python:comprehension missing target/iter: {term!r}",
+            requested="python:comprehension(target, iter, *ifs)",
+            fix="emit at least target and iter on the comprehension",
+        )
     return ast.comprehension(
         target=_comprehension_target(args[0]),
         iter=_expr(args[1]),
@@ -513,10 +628,20 @@ def _lambda_arguments(param_terms: list[Json]) -> ast.arguments:
             shape.append({"name": name, "kind": "positional-or-keyword"})
             continue
         if _name(term) != "python:lambda_param":
-            raise ValueError(f"expected lambda parameter term: {term!r}")
+            _could_not_build(
+                owner="python_ast_adapter.lambda",
+                observed=f"expected lambda parameter term: {term!r}",
+                requested="string const name or python:lambda_param",
+                fix="emit lambda params as names or python:lambda_param",
+            )
         args = term.get("args", [])
         if len(args) != 3:
-            raise ValueError(f"python:lambda_param needs name, kind, default: {term!r}")
+            _could_not_build(
+                owner="python_ast_adapter.lambda",
+                observed=f"python:lambda_param arity is not name,kind,default: {term!r}",
+                requested="python:lambda_param(name, kind, default)",
+                fix="emit three operands on python:lambda_param",
+            )
         name = _const_string(args[0])
         kind = _const_string(args[1])
         default = args[2]
@@ -544,18 +669,33 @@ def _with_comprehension_target_context(expr: ast.expr) -> ast.expr:
         expr.value = _with_comprehension_target_context(expr.value)
         expr.ctx = ast.Store()
         return expr
-    raise ValueError(f"comprehension target is not assignable: {ast.dump(expr)}")
+    _could_not_build(
+        owner="python_ast_adapter.comprehension",
+        observed=f"comprehension target is not assignable: {ast.dump(expr)}",
+        requested="Name | Tuple | List | Starred store shape",
+        fix="emit an assignable comprehension target",
+    )
 
 
 def _except_handlers(term: Json) -> list[ast.ExceptHandler]:
     if _name(term) != "python:except_handlers":
-        raise ValueError(f"expected python:except_handlers: {term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.except",
+            observed=f"expected python:except_handlers: {term!r}",
+            requested="python:except_handlers(...)",
+            fix="emit handlers under python:except_handlers",
+        )
     return [_except_handler(handler) for handler in term.get("args", [])]
 
 
 def _except_handler(term: Json) -> ast.ExceptHandler:
     if _name(term) != "python:except_handler":
-        raise ValueError(f"expected python:except_handler: {term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.except",
+            observed=f"expected python:except_handler: {term!r}",
+            requested="python:except_handler(type, name, body)",
+            fix="emit each handler as python:except_handler",
+        )
     args = term.get("args", [])
     return ast.ExceptHandler(
         type=None if _is_none_const(args[0]) else _expr(args[0]),
@@ -568,11 +708,19 @@ def _fstring_part(term: Json) -> ast.Constant | ast.FormattedValue:
     if _is_string_const(term):
         return ast.Constant(value=_const_string(term))
     if _name(term) != "python:fstring_value":
-        raise ValueError(f"expected f-string part: {term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.fstring",
+            observed=f"expected f-string part: {term!r}",
+            requested="string const or python:fstring_value",
+            fix="emit f-string parts as string const or python:fstring_value",
+        )
     args = term.get("args", [])
     if len(args) != 3:
-        raise ValueError(
-            f"expected python:fstring_value(value, conversion, format): {term!r}"
+        _could_not_build(
+            owner="python_ast_adapter.fstring",
+            observed=f"python:fstring_value arity is not value,conversion,format: {term!r}",
+            requested="python:fstring_value(value, conversion, format)",
+            fix="emit three operands on python:fstring_value",
         )
     return ast.FormattedValue(
         value=_expr(args[0]),
@@ -586,7 +734,12 @@ def _fstring_conversion(term: Json) -> int:
         return -1
     conversion = _const_string(term)
     if conversion not in {"a", "r", "s"}:
-        raise ValueError(f"unsupported f-string conversion: {conversion}")
+        _could_not_build(
+            owner="python_ast_adapter.fstring",
+            observed=f"unsupported f-string conversion: {conversion!r}",
+            requested="a | r | s | none",
+            fix=f"write conversion arm for {conversion!r} or fix the producer",
+        )
     return ord(conversion)
 
 
@@ -595,8 +748,11 @@ def _fstring_format_spec(term: Json) -> ast.JoinedStr | None:
         return None
     format_spec = _expr(term)
     if not isinstance(format_spec, ast.JoinedStr):
-        raise ValueError(
-            f"f-string format spec is not JoinedStr: {ast.dump(format_spec)}"
+        _could_not_build(
+            owner="python_ast_adapter.fstring",
+            observed=f"f-string format spec is not JoinedStr: {ast.dump(format_spec)}",
+            requested="JoinedStr format_spec",
+            fix="emit format_spec as a joined string expression",
         )
     return format_spec
 
@@ -604,7 +760,12 @@ def _fstring_format_spec(term: Json) -> ast.JoinedStr | None:
 def _walrus_target(term: Json) -> ast.Name:
     expr = _expr(term)
     if not isinstance(expr, ast.Name):
-        raise ValueError(f"walrus target is not a name: {ast.dump(expr)}")
+        _could_not_build(
+            owner="python_ast_adapter.walrus",
+            observed=f"walrus target is not a name: {ast.dump(expr)}",
+            requested="ast.Name store target",
+            fix="emit a name-only walrus target",
+        )
     expr.ctx = ast.Store()
     return expr
 
@@ -617,7 +778,12 @@ def _with_context(expr: ast.expr, ctx: ast.expr_context) -> ast.expr:
     elif isinstance(expr, ast.Subscript):
         expr.ctx = ctx
     else:
-        raise ValueError(f"term is not assignable: {ast.dump(expr)}")
+        _could_not_build(
+            owner="python_ast_adapter.target",
+            observed=f"term is not assignable: {ast.dump(expr)}",
+            requested="Name | Attribute | Subscript store shape",
+            fix="emit an assignable store target",
+        )
     return expr
 
 
@@ -643,14 +809,24 @@ def _cmpop(op: str) -> ast.cmpop:
         "not in": ast.NotIn,
     }
     if op not in mapping:
-        raise ValueError(f"unsupported comparison operator: {op}")
+        _could_not_build(
+            owner="python_ast_adapter.compare",
+            observed=f"unsupported comparison operator: {op!r}",
+            requested="== != < <= > >= is is not in not in",
+            fix=f"write comparison arm for operator {op!r}",
+        )
     return mapping[op]()
 
 
 def _augop(op: str) -> ast.operator:
     operator = _BINOPS.get(op)
     if operator is None:
-        raise ValueError(f"unsupported augmented assignment operator: {op}")
+        _could_not_build(
+            owner="python_ast_adapter.aug_assign",
+            observed=f"unsupported augmented assignment operator: {op!r}",
+            requested="a written python: binary op used as aug-assign",
+            fix=f"write aug-assign arm for operator {op!r}",
+        )
     return operator()
 
 
@@ -681,7 +857,12 @@ def _unguarded(term: Json) -> Json:
 
 def _const_string(term: Json) -> str:
     if term.get("kind") != "const" or not isinstance(term.get("value"), str):
-        raise ValueError(f"expected string const: {term!r}")
+        _could_not_build(
+            owner="python_ast_adapter.const",
+            observed=f"expected string const: {term!r}",
+            requested="const term with string value",
+            fix="emit a string const term",
+        )
     return term["value"]
 
 

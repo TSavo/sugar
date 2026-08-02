@@ -216,7 +216,15 @@ def envelope_body_to_value(env: ProofEnvelopeInput) -> Value:
 
 def _bytes_to_hex(b: bytes) -> str:
     if not isinstance(b, (bytes, bytearray)):
-        raise TypeError("members values must be bytes")
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="proof_envelope.members",
+            blame="proof_envelope",
+            observed=f"members value is {type(b).__name__}, not bytes",
+            requested="bytes | bytearray for each catalog member",
+            fix="store member payloads as bytes before encoding the proof envelope",
+        )
     return bytes(b).hex()
 
 
