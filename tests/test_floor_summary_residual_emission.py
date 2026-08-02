@@ -46,9 +46,11 @@ def test_conservation_failure_emits_unmeasured_without_residual_mass(
     assert body["residualKey"] == "R_native_crashes"
     assert body["residualCount"] is None
     assert "totals" not in body
-    assert body["unmeasurableReasons"] == [
-        "ValueError: floor rows must account for every corpus file exactly once"
-    ]
+    [reason] = body["unmeasurableReasons"]
+    assert "floor rows must account for every corpus file exactly once" in reason
+    assert "expectedRows=2 observedRows=1" in reason
+    assert "missing=1 extra=0 duplicateKeys=0" in reason
+    assert "missingSample=['b.py']" in reason
 
     enr = _load(
         "sole_construction_floor_enrollment",
@@ -58,10 +60,11 @@ def test_conservation_failure_emits_unmeasured_without_residual_mass(
         out, residual_key="R_native_crashes"
     )
     assert reading.residual_count is None
-    assert reading.unmeasured_reason == (
+    assert reading.unmeasured_reason.startswith(
         "floor summary conservation failed: ValueError: floor rows must account "
         "for every corpus file exactly once"
     )
+    assert "expectedRows=2 observedRows=1" in reading.unmeasured_reason
 
 
 def test_legacy_fallback_residual_is_rejected_not_resealed(tmp_path: Path) -> None:

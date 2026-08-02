@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -64,8 +65,23 @@ def _floor_summary_outcome(
             raise ValueError(reason)
         if not ordered_files:
             raise ValueError("a floor summary requires a non-empty measured corpus")
-        if [str(row["file"]) for row in ordered_rows] != ordered_files:
-            raise ValueError("floor rows must account for every corpus file exactly once")
+        row_files = [str(row["file"]) for row in ordered_rows]
+        if row_files != ordered_files:
+            expected = Counter(ordered_files)
+            observed = Counter(row_files)
+            missing = sorted((expected - observed).elements())
+            extra = sorted((observed - expected).elements())
+            duplicates = sorted(
+                file for file, count in observed.items() if count > 1
+            )
+            raise ValueError(
+                "floor rows must account for every corpus file exactly once: "
+                f"expectedRows={len(ordered_files)} observedRows={len(row_files)} "
+                f"missing={len(missing)} extra={len(extra)} "
+                f"duplicateKeys={len(duplicates)} "
+                f"missingSample={missing[:5]!r} extraSample={extra[:5]!r} "
+                f"duplicateSample={duplicates[:5]!r}"
+            )
         if reasons:
             raise ValueError("a measured floor cannot carry unmeasurable reasons")
 
