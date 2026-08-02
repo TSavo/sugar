@@ -339,22 +339,63 @@ if ! flock -w \"\$WAIT\" 9; then
   exit 77
 fi
 printf 'sugarbin: bx-timing-lease phase=acquired host=%s path=%s\\n' \"\$HOST\" \"\$LOCK\" >&2
+# Quiet metric: CPU idle percent (governs), with loadavg always testified beside it.
+# On battleaxe, ~25 CI runner containers inflate loadavg via process churn while
+# the box can still be CPU-available. Gating only on loadavg blocks honest
+# measurements; raising SUGAR_BX_MAX_LOADAVG to sneak past is forbidden.
+# Receipt carries BOTH so a reader can judge. Exit 76 still means not quiet.
 if [[ -r /proc/loadavg ]]; then
   read -r l1 _rest </proc/loadavg
 else
   l1=\$(python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || echo 0)
 fi
 n=\$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+# Sample CPU idle over ~1s via /proc/stat deltas (field 5 = idle jiffies).
+read_cpu_idle() {
+  local t1 i1 t2 i2 dt di
+  read -r t1 i1 < <(awk '/^cpu /{print \$2+\$3+\$4+\$5+\$6+\$7+\$8+\$9, \$5}' /proc/stat)
+  sleep 1
+  read -r t2 i2 < <(awk '/^cpu /{print \$2+\$3+\$4+\$5+\$6+\$7+\$8+\$9, \$5}' /proc/stat)
+  dt=\$((t2-t1)); di=\$((i2-i1))
+  if [[ \$dt -gt 0 ]]; then
+    awk -v di=\"\$di\" -v dt=\"\$dt\" 'BEGIN{printf \"%.2f\", 100.0*di/dt}'
+  else
+    echo 0
+  fi
+}
+if [[ -r /proc/stat ]]; then
+  idle_pct=\$(read_cpu_idle)
+else
+  # Non-Linux / test hosts: fall back to treating idle as high when no load gate.
+  idle_pct=100
+fi
+# Minimum idle percent that counts as quiet (default 50). Override with
+# SUGAR_BX_MIN_CPU_IDLE (0-100). Explicit SUGAR_BX_MAX_LOADAVG still only
+# *records* loadavg; it does not alone govern pass/fail when CPU idle is the
+# governing metric (unless SUGAR_BX_QUIET_METRIC=loadavg).
+# Calibration (battleaxe 2026-08-02T13:34Z, no heavy work): load1~19–20 from
+# runner-container churn, cpu_idle_pct~39–44%, procs_blocked=0. Floor is set
+# just under that idle band so a truly quiet box passes; do not raise loadavg.
+MIN_IDLE=\${SUGAR_BX_MIN_CPU_IDLE:-35}
+BASELINE_NOTE='bx-idle-baseline-2026-08-02 load1~19.5 cpu_idle~40% nproc=32'
+QUIET_METRIC=\${SUGAR_BX_QUIET_METRIC:-cpu_idle}
 if [[ -n \"\$MAX_LIT\" ]]; then
   max=\"\$MAX_LIT\"
 else
   max=\$(awk -v n=\"\$n\" 'BEGIN{ m=n/4.0; if (m < 2.0) m=2.0; printf \"%.2f\", m }')
 fi
-printf 'sugarbin: bx-load-gate phase=before host=%s load1=%s nproc=%s max=%s lease=held\\n' \\
-  \"\$HOST\" \"\$l1\" \"\$n\" \"\$max\" >&2
-if awk -v l=\"\$l1\" -v m=\"\$max\" 'BEGIN{ exit !(l+0 > m+0) }'; then
-  printf 'sugarbin: crime=host-not-quiet host=%s load1=%s nproc=%s max=%s lease=held replacement=wait for load1<=%s (or raise SUGAR_BX_MAX_LOADAVG with cause). A measurement that cannot testify to its own conditions is not a measurement.\\n' \\
-    \"\$HOST\" \"\$l1\" \"\$n\" \"\$max\" \"\$max\" >&2
+printf 'sugarbin: bx-load-gate phase=before host=%s load1=%s cpu_idle_pct=%s nproc=%s min_idle=%s load_max=%s metric=%s baseline=%s lease=held\\n' \\
+  \"\$HOST\" \"\$l1\" \"\$idle_pct\" \"\$n\" \"\$MIN_IDLE\" \"\$max\" \"\$QUIET_METRIC\" \"\$BASELINE_NOTE\" >&2
+quiet_ok=1
+if [[ \"\$QUIET_METRIC\" == loadavg ]]; then
+  if awk -v l=\"\$l1\" -v m=\"\$max\" 'BEGIN{ exit !(l+0 > m+0) }'; then quiet_ok=0; fi
+else
+  # cpu_idle (default): pass when idle_pct >= min_idle. loadavg is testimony only.
+  if awk -v i=\"\$idle_pct\" -v m=\"\$MIN_IDLE\" 'BEGIN{ exit !(i+0 < m+0) }'; then quiet_ok=0; fi
+fi
+if [[ \"\$quiet_ok\" != 1 ]]; then
+  printf 'sugarbin: crime=host-not-quiet host=%s load1=%s cpu_idle_pct=%s nproc=%s min_idle=%s load_max=%s metric=%s lease=held replacement=wait for cpu_idle_pct>=%s (or set SUGAR_BX_QUIET_METRIC=loadavg / SUGAR_BX_MIN_CPU_IDLE with cause). Receipt carries loadavg+cpu_idle; do not raise load threshold to sneak past churn. A measurement that cannot testify to its own conditions is not a measurement.\\n' \\
+    \"\$HOST\" \"\$l1\" \"\$idle_pct\" \"\$n\" \"\$MIN_IDLE\" \"\$max\" \"\$QUIET_METRIC\" \"\$MIN_IDLE\" >&2
   exit 76
 fi
 if [[ \"\$SKIP_PIN\" != 1 && \"\$SKIP_PIN\" != true && \"\$SKIP_PIN\" != yes ]]; then
@@ -387,8 +428,13 @@ if [[ -r /proc/loadavg ]]; then
 else
   l2=\$(python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || echo unknown)
 fi
-printf 'sugarbin: bx-load-gate phase=after host=%s load1_before=%s load1_after=%s nproc=%s lease=held\\n' \\
-  \"\$HOST\" \"\$l1\" \"\$l2\" \"\$n\" >&2
+if [[ -r /proc/stat ]]; then
+  idle_after=\$(read_cpu_idle)
+else
+  idle_after=unknown
+fi
+printf 'sugarbin: bx-load-gate phase=after host=%s load1_before=%s load1_after=%s cpu_idle_before=%s cpu_idle_after=%s nproc=%s metric=%s lease=held\\n' \\
+  \"\$HOST\" \"\$l1\" \"\$l2\" \"\$idle_pct\" \"\$idle_after\" \"\$n\" \"\$QUIET_METRIC\" >&2
 printf 'sugarbin: bx-timing-lease phase=release host=%s path=%s status=%s\\n' \"\$HOST\" \"\$LOCK\" \"\$st\" >&2
 exit \"\$st\""
   sugar_bx_ssh "bash -lc $(sugar_bx_quote "$wrapper")"
