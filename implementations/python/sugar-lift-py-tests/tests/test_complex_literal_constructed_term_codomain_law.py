@@ -53,6 +53,7 @@ _OWNERS = (
     "CallSiteSugar.keywords",
     "MethodCallSugar.args",
     "MethodCallSugar.keywords",
+    "MethodCallSugar.receiver",
     "IfExpSugar.body",
     "IfExpSugar.orelse",
 )
