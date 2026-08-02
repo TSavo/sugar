@@ -116,9 +116,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
-    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
-    del args.workers
 
     boot_error = production_lift_bootstrap_error()
     if boot_error is not None:
