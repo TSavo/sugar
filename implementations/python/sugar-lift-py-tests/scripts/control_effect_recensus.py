@@ -96,6 +96,31 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
+# CI-visible narration: default print buffering makes a live process look dead.
+# Every RECENSUS line uses flush=True; prefer PYTHONUNBUFFERED=1 in the workflow.
+_PROGRESS_EVERY_N = max(1, int(os.environ.get("RECENSUS_PROGRESS_EVERY_N", "1")))
+
+
+def _narrate(msg: str) -> None:
+    """Unbuffered stdout so CI / SSH can see the scoreboard is alive."""
+    print(msg, flush=True)
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001 — never fail the board for a flush
+        pass
+
+
+def _phase_begin(name: str) -> float:
+    _narrate(f"RECENSUS PHASE BEGIN: {name}")
+    return time.perf_counter()
+
+
+def _phase_end(name: str, t0: float) -> None:
+    _narrate(
+        f"RECENSUS PHASE END: {name} elapsed_s={time.perf_counter() - t0:.3f}"
+    )
+
 
 def _git_commit(root: Path) -> str:
     return subprocess.check_output(
@@ -145,8 +170,41 @@ def _silence_console_logging() -> None:
     logging.lastResort = None  # type: ignore[assignment]
 
 
+class _EngineStdoutHeartbeat(logging.Handler):
+    """Mirror engine log activity to the job log without TTY gating.
+
+    Full JSONL stays on disk (SUGAR_ENGINE_LOG). CI needs a live heartbeat so a
+    long lift is not a silent 95% CPU wedge. Rate-limited to avoid flooding.
+    """
+
+    def __init__(self, *, min_interval_s: float = 2.0) -> None:
+        super().__init__()
+        self._min_interval_s = min_interval_s
+        self._last_emit = 0.0
+        self._suppressed = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        now = time.monotonic()
+        if now - self._last_emit < self._min_interval_s:
+            self._suppressed += 1
+            return
+        self._last_emit = now
+        try:
+            msg = self.format(record)
+            extra = (
+                f" suppressed={self._suppressed}" if self._suppressed else ""
+            )
+            self._suppressed = 0
+            print(
+                f"RECENSUS ENGINE heartbeat{extra} {msg[:240]}",
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001
+            self.handleError(record)
+
+
 def _configure_engine_log(path: Path) -> None:
-    """Engine JSONL only — never stdout/stderr."""
+    """Engine JSONL on disk + rate-limited stdout heartbeat for CI job logs."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # Prefer the kit's own sink; also pin env so late imports see it.
     os.environ["SUGAR_ENGINE_LOG"] = str(path.resolve())
@@ -160,6 +218,10 @@ def _configure_engine_log(path: Path) -> None:
     engine_log.configure_live_log(str(path.resolve()))
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
+    # SCOREBOARD_AUTHORITY: never leave engine heartbeats file-only in CI.
+    heartbeat = _EngineStdoutHeartbeat(min_interval_s=2.0)
+    heartbeat.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(heartbeat)
 
 
 def _occurrence_key(
@@ -588,6 +650,15 @@ def _measure_file(
 
 
 def main() -> int:
+    # Line-buffer stdout even when not a TTY (CI pipes / artifact capture).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+    # Also force C-level unbuffering when the parent forgot PYTHONUNBUFFERED.
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "corpus",
@@ -661,8 +732,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--progress-stdout",
-        action="store_true",
-        help="also paint tqdm on this process's stderr (still write --progress)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "mirror progress heartbeats to stdout (default: ON). "
+            "SCOREBOARD_AUTHORITY never TTY-gates this — CI is not a TTY. "
+            "Use --no-progress-stdout only for interactive local quiet."
+        ),
     )
     args = parser.parse_args()
 
@@ -705,8 +781,17 @@ def main() -> int:
     from pandas_floor_summary import corpus_cid as corpus_manifest_shape_cid
     from sugar_source_tree.tree import SourceTree
 
+    tip = args.commit or _git_commit(args.repo.resolve()) or "unpinned"
+    _narrate(
+        "RECENSUS START "
+        f"corpus={corpus} corpus_root={corpus_root} tip={tip} "
+        f"out_dir={args.out_dir.resolve()} "
+        f"host={platform.node()} pid={os.getpid()}"
+    )
+
     # Pin FIRST. A run that cannot name its corpus has no denominator, and a
     # number without a denominator is not a scoreboard entry — it is a rumour.
+    t_pin = _phase_begin("manifest_cid_and_pin")
     try:
         observed_pin = pin_corpus(
             corpus_root,
@@ -725,6 +810,14 @@ def main() -> int:
     except ValueError as defect:
         print(str(defect), file=sys.stderr, flush=True)
         return 2
+    _phase_end("manifest_cid_and_pin", t_pin)
+    _narrate(
+        "RECENSUS PIN "
+        f"distribution={observed_pin.distribution} version={observed_pin.version} "
+        f"manifest_shape_cid={manifest_shape_cid} "
+        f"aggregate_hash={observed_pin.aggregate_hash} "
+        f"pin_file_count={len(observed_pin.paths)}"
+    )
 
     # Authentication precedes every output artifact and every source-selection
     # pass. A refused tree cannot leave a checkpoint that looks resumable.
@@ -734,16 +827,28 @@ def main() -> int:
     checkpoint_path = args.checkpoint_jsonl or (out / "checkpoint.jsonl")
     engine_path = args.engine_log or (out / "engine.jsonl")
     progress_path = args.progress or (out / "progress.log")
+    running_counts_path = out / "running-counts.jsonl"
 
     _silence_console_logging()
     _configure_engine_log(engine_path)
     if args.write_corpus_pin is not None:
         write_pin(observed_pin, args.write_corpus_pin)
 
+    t_src = _phase_begin("source_tree_path_selection")
     paths = list(SourceTree(corpus).paths())
+    _phase_end("source_tree_path_selection", t_src)
     if not paths:
         parser.error("corpus contains no Python files")
-
+    # DENOMINATOR before demand-table derivation and before any per-file lift.
+    _narrate(
+        "RECENSUS DENOMINATOR "
+        f"files_to_walk={len(paths)} "
+        f"manifest_shape_cid={manifest_shape_cid} "
+        f"tip={tip} "
+        f"out_dir={out.resolve()} "
+        f"checkpoint={checkpoint_path.resolve()} "
+        f"result={result_path.resolve()}"
+    )
     # File identity is ALWAYS relative to the corpus root — never to CORPUS.
     # That is what makes one file measured alone produce the same row identity
     # as that file inside the full run.
@@ -782,17 +887,32 @@ def main() -> int:
     # anything but the root is the corpus-context drift defect.
     from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
 
+    t_demand = _phase_begin("demand_table_derivation")
+    _narrate(
+        f"RECENSUS DEMAND_TABLE deriving provisional refs from workspace_root={workspace_root}"
+    )
     contract_refs = provisional_contract_refs_from_demands(workspace_root)
+    _phase_end("demand_table_derivation", t_demand)
+    _narrate(
+        "RECENSUS DEMAND_TABLE ready "
+        f"(type={type(contract_refs).__name__})"
+    )
 
     from pandas_census_checkpoint import Checkpoint
 
+    t_ckpt = _phase_begin("checkpoint_load")
     checkpoint = Checkpoint(
         floor="control-effect",
         files=tuple(file_names),
         path=checkpoint_path,
     )
     pending = list(checkpoint.pending_files())
-
+    _phase_end("checkpoint_load", t_ckpt)
+    _narrate(
+        "RECENSUS CHECKPOINT "
+        f"total={len(file_names)} already_done={len(file_names) - len(pending)} "
+        f"pending={len(pending)} path={checkpoint_path.resolve()}"
+    )
     defects: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
@@ -879,11 +999,28 @@ def main() -> int:
         "[{elapsed}<{remaining}, {rate_fmt}] {postfix}"
     )
 
+    _last_progress_stdout = 0.0
+
     def _set_bars(postfix: dict[str, object], *, refresh: bool = True) -> None:
+        nonlocal _last_progress_stdout
         bar.set_postfix(postfix, refresh=refresh)
         if live_bar is not None:
             live_bar.set_postfix(postfix, refresh=refresh)
         progress_stream.flush()
+        # File-side tqdm is invisible in CI. Mirror heartbeats to stdout without
+        # TTY gating — rate-limited so per-function postfix does not flood.
+        if not args.progress_stdout or not refresh:
+            return
+        now = time.monotonic()
+        status = str(postfix.get("status") or "")
+        force = status not in {"lifting…", "ok", "…"}
+        if not force and now - _last_progress_stdout < 2.0:
+            return
+        _last_progress_stdout = now
+        n = getattr(bar, "n", live_done)
+        total = getattr(bar, "total", len(file_names)) or len(file_names)
+        bits = " ".join(f"{k}={v}" for k, v in postfix.items())
+        _narrate(f"RECENSUS PROGRESS {n}/{total} {bits}")
 
     try:
         bar = tqdm(
@@ -899,7 +1036,8 @@ def main() -> int:
             smoothing=0.05,
             bar_format=bar_format,
         )
-        # Optional second bar on stderr for an interactive terminal.
+        # Interactive TTY only: second tqdm bar on stderr. Never gate *all*
+        # progress on isatty — CI is not a TTY and that was the silent wedge.
         live_bar = None
         if args.progress_stdout and sys.stderr.isatty():
             live_bar = tqdm(
@@ -913,12 +1051,28 @@ def main() -> int:
                 smoothing=0.05,
                 bar_format=bar_format,
             )
+        _narrate(
+            "RECENSUS PROGRESS_ROUTE "
+            f"file={progress_path.resolve()} "
+            f"stdout_mirror={args.progress_stdout} "
+            f"tty_stderr_bar={live_bar is not None} "
+            f"(SCOREBOARD never TTY-gates stdout heartbeats)"
+        )
 
+        t_lift = _phase_begin("per_file_lift")
+        _narrate(
+            "RECENSUS LIFT ENTER "
+            f"pending={len(pending)} total={len(file_names)} "
+            f"progress_every_n={_PROGRESS_EVERY_N}"
+        )
         for file in bar:
             path = by_file[file]
             # Same identity in a bounded run and in the full run: relative to
             # the corpus ROOT, never to whatever slice this invocation measured.
             relative = path.resolve().relative_to(corpus_root).as_posix()
+            # index is 1-based among pending within this invocation; live_done
+            # includes checkpoint resume so overall position is known.
+            file_index = live_done + 1
             # Show the file we are about to open — before the work starts.
             _set_bars(
                 {
@@ -932,8 +1086,21 @@ def main() -> int:
                 },
                 refresh=True,
             )
+            if (
+                file_index == 1
+                or file_index % _PROGRESS_EVERY_N == 0
+                or file_index == len(file_names)
+            ):
+                _narrate(
+                    "RECENSUS FILE BEGIN "
+                    f"{file_index}/{len(file_names)} file={relative} "
+                    f"elapsed_s={time.time() - started:.1f} "
+                    f"counts completed≈{live_done - live_panic - live_defect} "
+                    f"snw={live_snw} other_gaps={live_other_gaps} "
+                    f"cpanic={live_panic} defect={live_defect} "
+                    f"fn_clean/total={live_clean}/{live_fns}"
+                )
             t_file = time.perf_counter()
-
             fn_stat = {
                 "slow_s": 0.0,
                 "slow_name": "-",
@@ -1056,14 +1223,54 @@ def main() -> int:
             if live_bar is not None:
                 live_bar.update(1)
 
+            # Durable running counts — crash at file 900 still leaves 899 rows
+            # on checkpoint AND a jsonl tail of counts on stdout-equivalent disk.
+            running = {
+                "schema": "control-effect-recensus-running-v1",
+                "index": live_done,
+                "total": len(file_names),
+                "file": relative,
+                "category": cat,
+                "file_s": round(file_s, 4),
+                "elapsed_s": round(time.time() - started, 3),
+                "snw": live_snw,
+                "other_gaps": live_other_gaps,
+                "cpanic": live_panic,
+                "defect": live_defect,
+                "fn_clean": live_clean,
+                "fn_total": live_fns,
+                "phase": "per_file_lift",
+            }
+            with running_counts_path.open("a", encoding="utf-8") as rc_stream:
+                rc_stream.write(
+                    json.dumps(running, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                )
+                rc_stream.flush()
+            if (
+                live_done == 1
+                or live_done % _PROGRESS_EVERY_N == 0
+                or live_done == len(file_names)
+            ):
+                _narrate(
+                    "RECENSUS FILE END "
+                    f"{live_done}/{len(file_names)} file={relative} "
+                    f"category={cat} file_s={file_s:.3f} "
+                    f"elapsed_s={time.time() - started:.1f} "
+                    f"snw={live_snw} other_gaps={live_other_gaps} "
+                    f"cpanic={live_panic} defect={live_defect} "
+                    f"fn_clean/total={live_clean}/{live_fns}"
+                )
+
+        _phase_end("per_file_lift", t_lift)
         if live_bar is not None:
             live_bar.close()
         bar.close()
     finally:
         progress_stream.close()
 
+    t_agg = _phase_begin("aggregation")
     measured_rows = [(row["file"], row["result"]) for row in checkpoint.rows()]
-
     # The denominator, stated before any rate is quoted. Checkpoint already
     # refuses duplicate rows, unknown files, a foreign manifest CID and
     # malformed JSON at load; what it cannot say is which enrolled files never
@@ -1401,14 +1608,22 @@ def main() -> int:
         and stable_zero_terms["factoringGaps"] == 0
         and stable_zero_terms["unresolvableDispatchTargets"] == 0
     )
+    _phase_end("aggregation", t_agg)
+
+    t_board = _phase_begin("board_write")
     rendered = json.dumps(result, indent=2)
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(rendered + "\n")
-    # One quiet line on stdout — paths only, no engine dump.
-    print(
-        f"done files={files_completed}/{len(file_names)} "
-        f"result={result_path} progress={progress_path} engine={engine_path}",
-        flush=True,
+    _phase_end("board_write", t_board)
+    _narrate(
+        "RECENSUS DONE "
+        f"files={files_completed}/{len(file_names)} "
+        f"R_construction={result.get('R_construction')} "
+        f"R_desugar={result.get('R_desugar')} "
+        f"cpanic={len(construction_panics)} defect={len(defects)} "
+        f"elapsed_s={time.time() - started:.1f} "
+        f"result={result_path} progress={progress_path} engine={engine_path} "
+        f"running_counts={running_counts_path}"
     )
     # An incomplete or contaminated denominator is red on its own. Banking a
     # partial run as a board is the exact failure this repair exists to end.
