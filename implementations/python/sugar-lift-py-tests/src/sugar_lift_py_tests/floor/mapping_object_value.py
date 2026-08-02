@@ -196,12 +196,28 @@ class MappingObjectValue(ObjectValue):
             _closed_member_equal(key, candidate) for candidate, _ in self.entries
         )
         if any(decision is None for decision in decisions):
+            from sugar_lift_py_tests.sealed_ground import (
+                KeyEqualityUndecided,
+                MappingKeyEqualityArtifact,
+            )
+
             construction_panic_gap(
                 owner="MappingObjectValue.get",
                 blame=blame,
-                observed="undecidable mapping key equality",
+                observed=(
+                    "undecidable mapping key equality: "
+                    f"key={type(key).__name__} over {type(self).__name__}"
+                ),
                 requested="one source-decided finite mapping key",
                 fix="construct key equality or keep get typed loud",
+                decidability=KeyEqualityUndecided(
+                    artifact=MappingKeyEqualityArtifact(
+                        key_type_name=type(key).__name__,
+                        mapping_type_name=type(self).__name__,
+                        site=str(blame),
+                    )
+                ),
+                world={"key_equality_undecided": True},
             )
         matching = tuple(index for index, decision in enumerate(decisions) if decision)
         if len(matching) > 1:
