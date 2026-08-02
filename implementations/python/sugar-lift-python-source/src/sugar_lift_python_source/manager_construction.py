@@ -614,19 +614,26 @@ def _session_lexical_import_runner(session: SourceResolutionSession, module):
     """
     from pathlib import Path
 
-    from sugar_lift_py_tests.import_binding import (
-        _run_lexical_import_pass,
-        _run_lexical_import_pass_on_module,
-    )
-
     hit = session.lexical_pass_hit(module.source_cid)
     if hit is not None:
         return hit
     root = Path(".")
     path = Path(module.source_seat)
+    # §4 process residency: lexical pass is module preparation under content CID.
+    # Prefer typed module from prefix door / process-resident SourceFile.
+    from sugar_source_tree.process_resident_file import (
+        get_or_prepare_lexical_import_pass,
+        get_resident,
+    )
+    from sugar_source_tree.tree import SourceFile
+
     source_file = session.prefix_file_hit(module.source_cid)
+    if source_file is None:
+        resident = get_resident(module.source_cid)
+        if resident is not None:
+            source_file = resident.source_file
     if source_file is not None:
-        runner = _run_lexical_import_pass_on_module(
+        runner = get_or_prepare_lexical_import_pass(
             source_file.root,
             root=root,
             path=path,
@@ -635,11 +642,14 @@ def _session_lexical_import_runner(session: SourceResolutionSession, module):
             module_identities={},
         )
     else:
-        runner = _run_lexical_import_pass(
-            root,
-            path,
-            module.source,
-            module.source_cid,
+        # Opens SourceFile (process-resident MaterializeModule) then lexical once.
+        typed = SourceFile((module.source, str(path), module.source_cid)).root
+        runner = get_or_prepare_lexical_import_pass(
+            typed,
+            root=root,
+            path=path,
+            source=module.source,
+            source_cid=module.source_cid,
             module_identities={},
         )
     session.remember_lexical_pass(module.source_cid, runner)

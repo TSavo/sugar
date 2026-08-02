@@ -1172,6 +1172,9 @@ def _run_lexical_import_pass_on_module(
     Call rows, value rows, and name targets come from this single walk. Callers
     that already hold a SourceFile for ``source_cid`` (prefix door, frame door)
     MUST use this entry so the walk does not rebuild the typed tree.
+
+    Prefer ``get_or_prepare_lexical_import_pass`` (§4 process residency) at
+    public doors so the same content CID does not re-walk in one process.
     """
     _require_source_cid_matches_text(source, source_cid)
     module_name = module_name_for_path(root, path)
@@ -1203,12 +1206,17 @@ def _run_lexical_import_pass(
 ) -> _Pass:
     """One reaching-definition walk: call rows, value rows, and name targets.
 
-    Builds a SourceFile only when the caller has no typed module yet. Prefer
-    ``_run_lexical_import_pass_on_module`` when a session already owns the body.
+    Builds a SourceFile only when the caller has no typed module yet (and that
+    SourceFile is process-resident under content CID). Lexical product is also
+    §4-resident so a second open does not re-walk.
     """
+    from sugar_source_tree.process_resident_file import (
+        get_or_prepare_lexical_import_pass,
+    )
+
     _require_source_cid_matches_text(source, source_cid)
     module = SourceFile((source, str(path), source_cid)).root
-    return _run_lexical_import_pass_on_module(
+    return get_or_prepare_lexical_import_pass(
         module,
         root=root,
         path=path,
@@ -1328,13 +1336,21 @@ def authenticated_import_use_receipts(
     the caller just opened a SourceFile (populate after open), pass its root so
     the pass does not re-Materialize the same body (measured: second full
     ``_json.py`` SourceFile inside populate equaled ~0.25s of residual wall).
+
+    Enumeration protocol §4: the lexical pass is module temporal preparation for
+    this content CID — process-resident, once per CID (+ package role). Seat-bound
+    receipts are minted per call with the caller's root/path; the pass product is not.
     """
     # Refuse mismatched claims here (same boundary as AuthenticatedImportUseV1);
     # never rewrite source_cid after minting.
     if module_identities is None:
         module_identities = {}
     if module is not None:
-        runner = _run_lexical_import_pass_on_module(
+        from sugar_source_tree.process_resident_file import (
+            get_or_prepare_lexical_import_pass,
+        )
+
+        runner = get_or_prepare_lexical_import_pass(
             module,
             root=root,
             path=path,
@@ -1374,6 +1390,8 @@ def authenticated_import_value_use_receipts(
     source: str,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
+    *,
+    module=None,
 ) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
     """Final-checked receipts for imported Name and Attribute value occurrences.
 
@@ -1381,12 +1399,30 @@ def authenticated_import_value_use_receipts(
     helper identity operands to authenticated object CIDs without spelling
     authority.  Call-target receipts remain on
     ``authenticated_import_use_receipts`` unchanged.
+
+    When ``module`` is provided (or the body is process-resident under §4), the
+    lexical pass is reused with the call-target door — one walk fills both.
     """
     if module_identities is None:
         module_identities = {}
-    rows, outcomes = authenticated_import_value_uses(
-        root, path, source, source_cid, module_identities=module_identities
-    )
+    if module is not None:
+        from sugar_source_tree.process_resident_file import (
+            get_or_prepare_lexical_import_pass,
+        )
+
+        runner = get_or_prepare_lexical_import_pass(
+            module,
+            root=root,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities=module_identities,
+        )
+        rows, outcomes = runner.value_rows, runner.value_outcomes
+    else:
+        rows, outcomes = authenticated_import_value_uses(
+            root, path, source, source_cid, module_identities=module_identities
+        )
     cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
     if cache_key not in _VALUE_REVALIDATION_SNAPSHOTS:
         _VALUE_REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(

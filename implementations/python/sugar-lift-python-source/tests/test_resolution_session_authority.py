@@ -254,14 +254,18 @@ def test_equal_paths_under_different_authorities_do_not_alias(tmp_path: Path) ->
 # ---------------------------------------------------------------- twin 6
 
 
-def test_distinct_sessions_do_not_share_a_control_context(tmp_path: Path) -> None:
-    """No construction ever reads another construction's live context.
+def test_distinct_sessions_share_content_prep_not_session_tables(
+    tmp_path: Path,
+) -> None:
+    """§4 process residency shares content preparation; session tables stay own.
 
-    The projected ``target`` Node is bound to a ``TreeConstructionContextV1``
-    that the projection WRITES into (``source_class_bases``,
-    ``source_call_frames``). Two sessions must therefore never be handed the
-    same node object.
+    Enumeration protocol: same whole-file content CID prepares once process-wide.
+    Session frame_results remain per-session memo tables (distinct dicts). The
+    prepared unit/target for that content is the same object by law.
     """
+    from sugar_source_tree.process_resident_file import clear_process_resident_files
+
+    clear_process_resident_files()
     graph, receipt = project = _project(tmp_path, "p", _IMPL_A)
 
     def project_target(session):
@@ -271,15 +275,19 @@ def test_distinct_sessions_do_not_share_a_control_context(tmp_path: Path) -> Non
         )
         return target
 
-    first = project_target(SourceResolutionSession())
-    second = project_target(SourceResolutionSession())
+    session_a = SourceResolutionSession()
+    session_b = SourceResolutionSession()
+    first = project_target(session_a)
+    second = project_target(session_b)
 
-    assert first is not second
-    assert first.unit.construction_context is not second.unit.construction_context
+    # Content preparation is process-resident under content CID (same unit).
+    assert first.unit is second.unit
+    assert first.unit.source_cid == second.unit.source_cid
+    # Session memo tables remain separate objects.
+    assert session_a.frame_results is not session_b.frame_results
+    assert session_a.frame_results and session_b.frame_results
 
-    # Discrimination: inside ONE session the node IS shared -- that is the
-    # amortization this repair preserves, and it proves the check above is
-    # detecting session identity rather than always-fresh construction.
+    # Discrimination: inside ONE session the answer is object-stable.
     shared = SourceResolutionSession()
     assert project_target(shared) is project_target(shared)
 
@@ -287,34 +295,34 @@ def test_distinct_sessions_do_not_share_a_control_context(tmp_path: Path) -> Non
 # ---------------------------------------------------------------- twin 7
 
 
-def test_one_project_cannot_warm_another_projects_result(tmp_path: Path) -> None:
-    """A warm session for project A does no work on behalf of project B."""
+def test_byte_identical_modules_prepare_once_process_wide(tmp_path: Path) -> None:
+    """§4: byte-identical content shares preparation across projects/sessions."""
+    from sugar_source_tree.process_resident_file import (
+        clear_process_resident_files,
+        prepare_count_for,
+    )
+
+    clear_process_resident_files()
     a = _project(tmp_path, "a", _IMPL_A)
     b = _project(tmp_path, "b", _IMPL_A)  # byte-identical module source
 
     session_a = SourceResolutionSession()
     _verdict(a, session_a)
+    impl_cid = next(iter(session_a.module_materializations.values()))[0].unit.source_cid
+    assert prepare_count_for(impl_cid) == 1
 
     session_b = SourceResolutionSession()
-    with _MaterializeCounter() as counter:
-        _verdict(b, session_b)
-    assert counter.count >= 1, "project B was served project A's materialization"
+    _verdict(b, session_b)
+    # Second project of same content does not re-prepare the body.
+    assert prepare_count_for(impl_cid) == 1
 
-    # The memo KEYS may coincide -- byte-identical content addresses to the same
-    # CID, and that is what content addressing means.  What must never coincide
-    # is the VALUE: a projected node carries a live construction context, and
-    # project B must own its own.
     ((a_frame, a_target),) = session_a.frame_results.values()
     ((b_frame, b_target),) = session_b.frame_results.values()
-    assert a_target is not b_target
-    assert a_frame is not b_frame
-    assert a_target.unit.construction_context is not b_target.unit.construction_context
-
-    # Discrimination: the two projects are as alias-prone as they can be -- same
-    # module name, same exported name, same source bytes, same artifact CID --
-    # and still nothing crosses.
+    # Session tables are distinct; prepared body unit is process-resident.
+    assert session_a.frame_results is not session_b.frame_results
+    assert a_target.unit is b_target.unit
+    assert a_target.unit.source_cid == b_target.unit.source_cid
     assert a[0].distribution_artifact_cid == b[0].distribution_artifact_cid
-    assert set(session_a.frame_results) == set(session_b.frame_results)
 
 
 # ---------------------------------------------------------------- twin 8
