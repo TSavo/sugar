@@ -33,7 +33,8 @@ for lie in constructed_zero swallow_panic drop_opaque crash_mid; do
 done
 grep -Fq 'known_constructed' "$disc" || fail 'disc must expect known_constructed tooth'
 grep -Fq 'known_panic' "$disc" || fail 'disc must expect known_panic tooth'
-grep -Fq 'unconstructed_residual' "$disc" || fail 'disc must expect unconstructed_residual tooth'
+grep -Fq 'known_unconstructed' "$disc" || fail 'disc must expect known_unconstructed tooth'
+grep -Fq 'with_items_accounted' "$script" || fail 'smoke must prove exact with-item accounting'
 grep -Fq 'crash_not_green' "$disc" || fail 'disc must expect crash_not_green tooth'
 grep -Fq 'PATH_UNMEASURED' "$disc" || fail 'disc must expect PATH_UNMEASURED for crash_mid'
 

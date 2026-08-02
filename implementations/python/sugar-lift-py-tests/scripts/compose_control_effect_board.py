@@ -46,6 +46,7 @@ STAGE_ENUMERATE_FILE_TERMINAL = "recensus-enumerate-file-terminal/v1"
 STAGE_WITH_TALLY_PARTITION = "control-effect-with-tally-partition/v1"
 STAGE_TERMINAL_AGGREGATE_SEAL = "compose-terminal-aggregate-seal/v1"
 _CONSTRUCTION_PANIC_TYPE = "sugar_lift_py_tests.gap.panic.ConstructionPanic"
+_SOURCE_PANIC_PREFIX = "sugar_source_tree.panic."
 _TERMINAL_KINDS = frozenset({"constructed", "construction-panic"})
 _TERMINAL_CONVENTION = {
     "observed_chain_length": "number of observed terminals in order",
@@ -302,6 +303,30 @@ def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, 
     input_key = row.get("inputKey")
     if not isinstance(input_key, dict) or not isinstance(input_key.get("sourceCid"), str):
         failures.append({"file": file, "reason": "inputKey lacks sourceCid"})
+    elif "functionKeyManifest" in input_key:
+        function_keys = input_key.get("functionKeyManifest")
+        if not isinstance(function_keys, list):
+            failures.append({"file": file, "reason": "functionKeyManifest is not a list"})
+        else:
+            if len(function_keys) != int(row.get("functionsTotal") or 0):
+                failures.append(
+                    {
+                        "file": file,
+                        "reason": "function key attendance disagrees with functionsTotal",
+                        "functionKeyCount": len(function_keys),
+                        "functionsTotal": int(row.get("functionsTotal") or 0),
+                    }
+                )
+            observed_function_cid = key_manifest_cid(function_keys)
+            if input_key.get("functionKeyCid") != observed_function_cid:
+                failures.append(
+                    {
+                        "file": file,
+                        "reason": "functionKeyCid mismatch",
+                        "claimed": input_key.get("functionKeyCid"),
+                        "observed": observed_function_cid,
+                    }
+                )
     expected_row_id = (
         canonical_cid({"inputKey": input_key}) if isinstance(input_key, dict) else None
     )
@@ -347,7 +372,9 @@ def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, 
     if row.get("final_terminal") != terminal_kind:
         failures.append({"file": file, "reason": "final_terminal disagrees"})
     if terminal_kind == "construction-panic":
-        if observed_type != _CONSTRUCTION_PANIC_TYPE:
+        if observed_type != _CONSTRUCTION_PANIC_TYPE and not str(
+            observed_type
+        ).startswith(_SOURCE_PANIC_PREFIX):
             failures.append(
                 {
                     "file": file,
@@ -700,7 +727,8 @@ def mint_partial(
     malformed = [
         f
         for f, raw in terminals
-        if not isinstance(raw, dict) or not raw.get("category")
+        if not isinstance(raw, dict)
+        or (not raw.get("category") and not raw.get("instrumentFailure"))
     ]
     files_complete = (
         not missing
@@ -834,7 +862,8 @@ def aggregate_terminal_rows(
     malformed_rows = sorted(
         file
         for file, raw in measured_rows
-        if not isinstance(raw, dict) or not raw.get("category")
+        if not isinstance(raw, dict)
+        or (not raw.get("category") and not raw.get("instrumentFailure"))
     )
 
     families: Counter[str] = Counter()
@@ -843,6 +872,7 @@ def aggregate_terminal_rows(
     desugar_by_category_owner: Counter[str] = Counter()
     backend_defects: Counter[str] = Counter()
     cm_resolutions: Counter[str] = Counter()
+    with_resolution_rows: list[dict[str, Any]] = []
     unrecognized_cm_kinds: Counter[str] = Counter()
     ast_sites: Counter[str] = Counter()
     desugar_construction_panics: list[dict[str, Any]] = []
@@ -888,6 +918,7 @@ def aggregate_terminal_rows(
         desugar_by_category_owner.update(row.get("desugarByCategoryOwner") or {})
         backend_defects.update(row.get("backendDefects") or {})
         cm_resolutions.update(row.get("cmResolutions") or {})
+        with_resolution_rows.extend(row.get("withResolutionRows") or [])
         unrecognized_cm_kinds.update(row.get("unrecognizedCmResolutionKinds") or {})
         ast_sites.update(row.get("astSites") or {})
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
@@ -925,6 +956,7 @@ def aggregate_terminal_rows(
         "desugar_by_category_owner": desugar_by_category_owner,
         "backend_defects": backend_defects,
         "cm_resolutions": cm_resolutions,
+        "with_resolution_rows": with_resolution_rows,
         "unrecognized_cm_kinds": unrecognized_cm_kinds,
         "ast_sites": ast_sites,
         "desugar_construction_panics": desugar_construction_panics,
@@ -1345,7 +1377,7 @@ def compose_from_partials(
     with_census = None
     if with_census_fn is not None:
         with_census = with_census_fn(
-            Counter(agg["cm_resolutions"]),
+            list(agg["with_resolution_rows"]),
             Counter(agg["ast_sites"]),
             Counter(agg["unrecognized_cm_kinds"]),
         )

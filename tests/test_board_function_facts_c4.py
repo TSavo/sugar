@@ -231,6 +231,49 @@ def test_compose_seal_uses_three_sealed_meanings() -> None:
     def _row(file: str, *, fn: int = 1, auth: int | None = None, panic: bool = False):
         authenticated = fn if auth is None else auth
         enumerated = 0 if panic else fn
+        source_cid = "sha256:" + ("a" if file.endswith("a.py") else "b") * 64
+        function_keys = [
+            {
+                "sourceCid": source_cid,
+                "file": file,
+                "functionSourceCid": source_cid,
+                "functionName": f"f{index}",
+                "span": {
+                    "startLine": index + 1,
+                    "startCol": 0,
+                    "endLine": index + 1,
+                    "endCol": 1,
+                },
+            }
+            for index in range(authenticated)
+        ]
+        input_key = {
+            "sourceCid": source_cid,
+            "file": file,
+            "functionKeyManifest": function_keys,
+            "functionKeyCid": compose.key_manifest_cid(function_keys),
+        }
+        terminal_kind = "construction-panic" if panic else "constructed"
+        panic_payload = {
+            "file": file,
+            "owner": "FunctionSugar",
+            "coordinate": f"{file}:1:0",
+            "observed": "UnconstructedFunction",
+            "requested": "constructed function",
+            "fix": "write the missing function sugar",
+            "entrance": "sugar.enumerate:facts",
+            "observedEventType": (
+                "sugar_lift_py_tests.gap.panic.ConstructionPanic"
+            ),
+            "construction_trace": [
+                {
+                    "kind": "source-construct",
+                    "constructOwner": "FunctionSugar",
+                    "coordinate": f"{file}:1:0",
+                }
+            ],
+            "message": "x",
+        }
         return (
             file,
             {
@@ -242,17 +285,29 @@ def test_compose_seal_uses_three_sealed_meanings() -> None:
                 "functionsAuthenticated": authenticated,
                 "astSites": {"site:function-def": authenticated},
                 "families": {"ConstructionPanic": 1} if panic else {},
-                **(
-                    {
-                        "panic": {
-                            "file": file,
-                            "type": "ConstructionPanic",
-                            "message": "x",
-                        }
-                    }
-                    if panic
-                    else {}
+                "inputKey": input_key,
+                "rowId": compose.canonical_cid({"inputKey": input_key}),
+                "stageId": compose.STAGE_ENUMERATE_FILE_TERMINAL,
+                "observedEventType": (
+                    panic_payload["observedEventType"] if panic else "builtins.dict"
                 ),
+                "terminalKind": terminal_kind,
+                "observed_chain_length": 1,
+                "blocking_terminal_count": 1 if panic else 0,
+                "final_terminal": terminal_kind,
+                "edgeWitnesses": {
+                    compose.EDGE_ENUMERATE_FILE: compose.key_edge_witness(
+                        stage_id=compose.STAGE_ENUMERATE_FILE_TERMINAL,
+                        input_keys=function_keys,
+                        output_keys=function_keys,
+                    ),
+                    compose.EDGE_WITH_PARTITION: compose.key_edge_witness(
+                        stage_id=compose.STAGE_WITH_TALLY_PARTITION,
+                        input_keys=[],
+                        output_keys=[],
+                    ),
+                },
+                **({"panic": panic_payload} if panic else {}),
                 "R_instrument_blind": 0,
             },
         )

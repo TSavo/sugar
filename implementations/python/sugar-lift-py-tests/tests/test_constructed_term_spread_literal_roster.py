@@ -30,7 +30,7 @@ from sugar_lift_py_tests.sugar.spread_sugar import (
     SpreadDictSugar,
 )
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_source_tree.nodes import BinOp, Call, List, Subscript
+from sugar_source_tree.nodes import BinOp, Call, Constant, List, Subscript
 from sugar_source_tree.tree import SourceFile
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"

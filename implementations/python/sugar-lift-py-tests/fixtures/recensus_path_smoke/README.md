@@ -9,7 +9,7 @@ Planted teeth (mr_blue conservation fixtures + panic):
 | File | Known answer |
 | --- | --- |
 | `planted_constructed_with.py` | one with-item; inject SourceDerived → constructed≥1 |
-| `planted_opaque_with.py` | one with-item; typed gap residual, not silent drop |
+| `planted_opaque_with.py` | one with-item; unconstructed and accounted, not silently dropped |
 | `planted_clean.py` | no with; completed row |
 | panic plant | ConstructionPanic enrolled as cpanic=1 (harness inject) |
 

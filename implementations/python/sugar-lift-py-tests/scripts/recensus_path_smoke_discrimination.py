@@ -8,7 +8,7 @@ path verdict — not reasoned, not asserted from positive-arm silence.
 Arms (binding):
   1. constructed_zero -> PATH_RED, failedTooth=known_constructed
   2. swallow_panic    -> PATH_RED, failedTooth=known_panic
-  3. drop_opaque      -> PATH_RED, failedTooth=unconstructed_residual
+  3. drop_opaque      -> PATH_RED, failedTooth=known_unconstructed
   4. crash_mid        -> PATH_UNMEASURED, failedTooth=crash_not_green
      (NOT green, NOT PATH_RED — crash-banks-measured / crash-prints-zero class)
 
@@ -34,7 +34,7 @@ _SMOKE = _SCRIPTS / "recensus_path_smoke.py"
 ARMS: list[tuple[str, str, str, int]] = [
     ("constructed_zero", "PATH_RED", "known_constructed", 1),
     ("swallow_panic", "PATH_RED", "known_panic", 1),
-    ("drop_opaque", "PATH_RED", "unconstructed_residual", 1),
+    ("drop_opaque", "PATH_RED", "known_unconstructed", 1),
     ("crash_mid", "PATH_UNMEASURED", "crash_not_green", 2),
 ]
 

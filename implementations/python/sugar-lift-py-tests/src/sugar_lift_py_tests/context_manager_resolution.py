@@ -406,6 +406,43 @@ class SourceDerivedGeneratorResourceRefV1:
         return self.protocol.protocol_construction_cid
 
 
+def effective_context_manager_resolutions_for_source(
+    context: object, *, source_cid: str
+) -> dict[SourceFragmentCoordinateV1, object]:
+    """Project the exact resolution table consumed by With for one source."""
+    effective: dict[SourceFragmentCoordinateV1, object] = {}
+    refs = getattr(context, "contract_refs", None)
+    for coordinate, resolution in (getattr(refs, "by_use_site", None) or {}).items():
+        if getattr(coordinate, "source_cid", None) == source_cid:
+            effective[coordinate] = resolution
+    for coordinate, resolution in (
+        getattr(context, "source_derived_contract_refs", None) or {}
+    ).items():
+        if getattr(coordinate, "source_cid", None) == source_cid:
+            # Same precedence as With._prebound_manager_resolution.
+            effective[coordinate] = resolution
+    return effective
+
+
+def context_manager_resolution_outcome(resolution: object) -> str:
+    """Closed census projection: exactly constructed or unconstructed."""
+    if isinstance(
+        resolution,
+        (
+            SourceDerivedContextManagerRefV1,
+            SourceDerivedGeneratorResourceRefV1,
+            ContextManagerContractRefV1,
+        ),
+    ):
+        return "constructed"
+    if isinstance(resolution, ContextManagerResolutionGapV1):
+        return "unconstructed"
+    raise TypeError(
+        "With resolution table value is neither constructed ref nor gap: "
+        f"{type(resolution).__module__}.{type(resolution).__qualname__}"
+    )
+
+
 @dataclass(frozen=True)
 class FactoredSourceDerivedContextManagerRefV1:
     """Source-derived EffectBoundary with factored message-pattern faces.

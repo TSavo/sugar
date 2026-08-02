@@ -1,7 +1,7 @@
 # Recensus PATH smoke — production-path integrity over a planted micro-population.
 #
 # COVERAGE HONESTY (binding):
-#   This job measures the RECENSUS PRODUCTION PATH (per_file_lift → aggregation
+#   This job measures the RECENSUS PRODUCTION PATH (sugar.enumerate → aggregation
 #   → with-census conservation → sealed path body) over ~4 planted files in
 #   under 60s. It retires the SERIAL ROT TAX that made path defects cost one
 #   full 73-minute corpus walk each.
@@ -38,6 +38,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       RECENSUS_PATH_SMOKE_OUT: ${{ github.workspace }}/.sugar/recensus-path-smoke
+      WITH_WIRE_WORKTREE_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

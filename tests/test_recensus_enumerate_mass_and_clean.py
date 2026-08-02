@@ -10,6 +10,7 @@ can only report 1.0 is refused, not banked as perfection.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -41,8 +42,13 @@ COMPOSE = _load(
 )
 
 
-def test_residual_failure_preserves_roster_functions_total(monkeypatch) -> None:
-    """D2 banks 3 functions; D3 raises; row still has functionsTotal=3."""
+def test_residual_failure_preserves_roster_functions_total(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D2 banks 3 functions; an ordinary D3 failure is unmeasured at mass 3."""
+    src = tmp_path / "pkg/mod.py"
+    src.parent.mkdir()
+    src.write_text("def a(): pass\ndef b(): pass\ndef c(): pass\n", encoding="utf-8")
     nodes = [
         {"memento": {"function_name": "a"}},
         {"memento": {"function_name": "b"}},
@@ -56,51 +62,64 @@ def test_residual_failure_preserves_roster_functions_total(monkeypatch) -> None:
         raise RuntimeError("sugar.enumerate error: residual phase crashed")
 
     monkeypatch.setattr(CONSUMER, "demand_function_roster", fake_roster)
+    monkeypatch.setattr(
+        CONSUMER, "demand_context_manager_resolution_events", lambda **_k: ([], [])
+    )
     monkeypatch.setattr(CONSUMER, "demand_construction_residual", boom_residual)
     monkeypatch.setattr(CONSUMER, "count_ast_function_defs", lambda _p: 3)
 
     row = CONSUMER.measure_file_via_enumerate(
-        workspace_root=Path("/tmp"),
+        workspace_root=tmp_path,
         file_rel="pkg/mod.py",
     )
     assert row["functionsTotal"] == 3
     assert row["functionsEnumerated"] == 3
     assert row["rosterPreservedAfterResidualFailure"] is True
-    assert row["category"] == "panic"
+    assert "category" not in row
+    assert row["instrumentFailure"]["phase"] == "residual"
     # Clean must not claim 3/3 perfection after residual failure.
     assert row["functionsClean"] is None
     assert row["cleanRatioRefused"] is True
 
 
-def test_open_roster_failure_still_zero_when_no_ast(monkeypatch) -> None:
+def test_open_roster_failure_still_zero_when_no_ast(
+    tmp_path: Path, monkeypatch
+) -> None:
     """True open failure (no roster, no AST) keeps empty denominator."""
 
     def boom_roster(**_k):
         raise RuntimeError("no such file")
 
+    (tmp_path / "missing.py").write_text("", encoding="utf-8")
     monkeypatch.setattr(CONSUMER, "demand_function_roster", boom_roster)
     monkeypatch.setattr(CONSUMER, "count_ast_function_defs", lambda _p: None)
 
     row = CONSUMER.measure_file_via_enumerate(
-        workspace_root=Path("/tmp"),
+        workspace_root=tmp_path,
         file_rel="missing.py",
     )
     assert row["functionsTotal"] == 0
     assert row["functionsEnumerated"] == 0
-    assert row["category"] == "panic"
+    assert "category" not in row
+    assert row["instrumentFailure"]["phase"] == "roster"
 
 
-def test_roster_failure_banks_ast_population_not_silent_zero(monkeypatch) -> None:
+def test_roster_failure_banks_ast_population_not_silent_zero(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Instrument crash before roster still names AST mass (instrument-blind)."""
 
     def boom_roster(**_k):
         raise RuntimeError("sugar.enumerate error: mid-roster crash")
 
+    src = tmp_path / "pkg/heavy.py"
+    src.parent.mkdir()
+    src.write_text("def one(): pass\n", encoding="utf-8")
     monkeypatch.setattr(CONSUMER, "demand_function_roster", boom_roster)
     monkeypatch.setattr(CONSUMER, "count_ast_function_defs", lambda _p: 12)
 
     row = CONSUMER.measure_file_via_enumerate(
-        workspace_root=Path("/tmp"),
+        workspace_root=tmp_path,
         file_rel="pkg/heavy.py",
     )
     assert row["functionsTotal"] == 12
@@ -162,8 +181,67 @@ def test_honest_source_audit_clean_is_used() -> None:
     assert row["cleanRatioRefused"] is False
 
 
-def test_compose_refuses_tautological_clean_on_board() -> None:
-    """Board must not mint functionsConstructClean when any file refused clean."""
+def test_audit_panic_is_not_mislabeled_as_residual_phase_failure() -> None:
+    """A returned D3 panic is not an escaped D3 call."""
+    nodes = [{"memento": {"function_name": "a"}}]
+    row = CONSUMER.terminal_from_enumerate(
+        file_rel="x.py",
+        function_nodes=nodes,
+        function_gaps=[],
+        audit={
+            "semanticCore": {
+                "status": "failed",
+                "panics": [
+                    {
+                        "reason": "unconstructed child",
+                        "gap": {
+                            "owner": "WithSugar",
+                            "coordinate": "x.py:1:0",
+                            "observed": "OpaqueValue",
+                            "requested": "ContextManagerResolution",
+                            "fix": "construct the manager resolution",
+                            "entrance": "sugar.enumerate:facts",
+                            "observedEventType": "sugar_source_tree.panic.SugarNotWritten",
+                            "construction_trace": [
+                                {
+                                    "kind": "source-construct",
+                                    "constructOwner": "WithSugar",
+                                    "coordinate": "x.py:1:0",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        },
+        construction_gaps=[],
+        residual_phase_failed=False,
+        ast_fn=1,
+    )
+    assert row["category"] == "panic"
+    assert row["rosterPreservedAfterResidualFailure"] is False
+
+
+def test_reasonless_unauthenticated_audit_panic_is_instrument_failure() -> None:
+    """A raw row without construction testimony cannot enter frontier width."""
+    nodes = [{"memento": {"function_name": "a"}}]
+    raw_panic = {"gap": {"observed": "OpaqueValue"}, "locus": "x.py:1:0"}
+    row = CONSUMER.terminal_from_enumerate(
+        file_rel="x.py",
+        function_nodes=nodes,
+        function_gaps=[],
+        audit={"semanticCore": {"status": "failed", "panics": [raw_panic]}},
+        construction_gaps=[],
+        residual_phase_failed=False,
+        ast_fn=1,
+    )
+    assert "category" not in row
+    assert row["instrumentFailure"]["phase"] == "audit-panic-decode"
+    assert str(raw_panic) in row["instrumentFailure"]["message"]
+
+
+def test_compose_refuses_unattested_clean_board() -> None:
+    """Legacy rows cannot mint a clean ratio or authenticated frontier width."""
     rows = [
         (
             "good.py",
@@ -197,14 +275,11 @@ def test_compose_refuses_tautological_clean_on_board() -> None:
         aggregate_hash="agg",
         manifest_shape_cid="cid",
     )
-    assert status == "sealed"
-    # Population includes instrument-blind mass (10), not dropped to 2.
-    assert body["functionsTotal"] == 12
-    # Clean ratio refused — not 2/2 perfection.
-    assert body["cleanRatioRefused"] is True
-    assert body["functionsConstructClean"] is None
-    assert body["denominator"]["functions"].get("cleanRatioRefused") is True
-    assert body["denominator"]["functions"].get("clean") is None
+    assert status == "unmeasured"
+    assert body["status"] == "unmeasured"
+    assert "frontierWidth" not in body
+    assert "productPanicCount" not in body
+    assert body["instrumentFailures"]
 
 
 
@@ -237,6 +312,48 @@ def test_consumer_source_forbids_clean_equal_total_assignment() -> None:
     assert not crimes, (
         "ANY RATIO WHOSE NUMERATOR DEFAULTS TO ITS DENOMINATOR IS NOT A "
         "MEASUREMENT.\n" + "\n".join(crimes)
+    )
+
+
+def test_main_has_one_reachable_panic_enrollment_arm() -> None:
+    """Taxonomy deletion must not create duplicate, unreachable elif arms."""
+    recensus_path = SCRIPTS / "control_effect_recensus.py"
+    tree = ast.parse(recensus_path.read_text(encoding="utf-8"))
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+
+    def is_panic_test(node) -> bool:
+        return (
+            isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name)
+            and node.left.id == "category"
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.Eq)
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Constant)
+            and node.comparators[0].value == "panic"
+        )
+
+    duplicate_chains: list[list[int]] = []
+    for node in ast.walk(main):
+        if not isinstance(node, ast.If):
+            continue
+        lines: list[int] = []
+        cursor = node
+        while True:
+            if is_panic_test(cursor.test):
+                lines.append(cursor.lineno)
+            if len(cursor.orelse) != 1 or not isinstance(cursor.orelse[0], ast.If):
+                break
+            cursor = cursor.orelse[0]
+        if len(lines) > 1:
+            duplicate_chains.append(lines)
+    assert duplicate_chains == [], (
+        "duplicate category == 'panic' elif arms make later enrollment "
+        f"unreachable: {duplicate_chains}"
     )
 
 
@@ -290,9 +407,9 @@ def test_outer_shell_escape_banks_recovered_roster_not_zero(
     assert row.get("rosterPreservedAfterResidualFailure") is True
     assert row.get("cleanRatioRefused") is True
     assert row.get("functionsClean") is None
-    defect = row.get("defect") or {}
-    assert defect.get("type") == "NewBaseExceptionGap" or "NewBaseExceptionGap" in str(
-        row.get("families") or {}
+    assert "category" not in row
+    assert row["instrumentFailure"]["observedEventType"].endswith(
+        ".NewBaseExceptionGap"
     )
 
 

@@ -1831,6 +1831,34 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     ]
     absent_seen = set(absent_keys)
     absent_keys.extend(key for key in gaps_by_key if key not in absent_seen)
+
+    def _construction_trace(panic, *, owner: str, coordinate: str) -> list[dict]:
+        trace = [
+            {
+                "kind": "source-construct",
+                "constructOwner": owner,
+                "coordinate": coordinate,
+            }
+        ]
+        tb = getattr(panic, "__traceback__", None)
+        while tb is not None:
+            frame = tb.tb_frame
+            trace.append(
+                {
+                    "kind": "dispatch-frame",
+                    "module": str(frame.f_globals.get("__name__") or ""),
+                    "qualname": frame.f_code.co_qualname,
+                    "file": frame.f_code.co_filename,
+                    "line": tb.tb_lineno,
+                }
+            )
+            tb = tb.tb_next
+        if len(trace) > 1:
+            final = dict(trace[-1])
+            final["kind"] = "panic-site"
+            trace.append(final)
+        return trace
+
     for key in absent_keys:
         node = nodes_by_key[key]
         panic = gaps_by_key.get(key)
@@ -1848,6 +1876,35 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
             if panic is not None
             else f"{node.kind} registered but never answered the roll call"
         )
+        authenticated_gap = {
+            "blame": terminal,
+            "kind": panic_kind,
+            "nodeKind": node.kind,
+            "reason": reason,
+        }
+        if panic is not None:
+            owner = str(getattr(panic, "owner", node.kind))
+            coordinate = terminal
+            authenticated_gap.update(
+                {
+                    "owner": owner,
+                    "coordinate": coordinate,
+                    "observed": str(getattr(panic, "observed", reason)),
+                    "requested": str(
+                        getattr(panic, "requested", f"constructed {node.kind}")
+                    ),
+                    "fix": str(
+                        getattr(panic, "fix", f"write {node.kind}.sugar")
+                    ),
+                    "entrance": "sugar.enumerate:facts:auditFrontier",
+                    "observedEventType": (
+                        f"{type(panic).__module__}.{type(panic).__qualname__}"
+                    ),
+                    "construction_trace": _construction_trace(
+                        panic, owner=owner, coordinate=coordinate
+                    ),
+                }
+            )
         panics.append(
             {
                 # Closed-envelope discriminators required by the current Rust
@@ -1859,12 +1916,7 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
                 "locus": locus,
                 "demandedSource": demanded_source,
                 "terminalGapLocus": terminal,
-                "gap": {
-                    "blame": terminal,
-                    "kind": panic_kind,
-                    "nodeKind": node.kind,
-                    "reason": reason,
-                },
+                "gap": authenticated_gap,
             }
         )
 
@@ -2059,6 +2111,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
         if level in (
             "functions",
+            "context-manager-resolutions",
             "call_sites",
             "assertions",
             "facts",
@@ -2165,7 +2218,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
 
-            if level == "functions":
+            if level in {"functions", "context-manager-resolutions"}:
                 # The functions level IS SourceFile.functions(): every function
                 # definition in the file, enumerated from the typed tree over
                 # oracle-pinned text. No lift runs, no IR rows are consulted,
@@ -2246,6 +2299,43 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     path=full_path,
                     session=walk_session_for(root),
                 )
+                if level == "context-manager-resolutions":
+                    from sugar_lift_py_tests.context_manager_resolution import (
+                        context_manager_resolution_outcome,
+                        effective_context_manager_resolutions_for_source,
+                    )
+
+                    resolution_nodes = []
+                    for coordinate, resolution in sorted(
+                        effective_context_manager_resolutions_for_source(
+                            construction_context, source_cid=file_cid
+                        ).items()
+                    ):
+                        resolution_nodes.append(
+                            {
+                                "memento": {
+                                    "kind": "context-manager-resolution",
+                                    "file": file_rel,
+                                    "source_cid": file_cid,
+                                    "coordinate": coordinate.wire(),
+                                },
+                                "audit": {
+                                    "observedEventType": (
+                                        f"{type(resolution).__module__}."
+                                        f"{type(resolution).__qualname__}"
+                                    ),
+                                    "outcome": context_manager_resolution_outcome(
+                                        resolution
+                                    ),
+                                },
+                                "payload": None,
+                            }
+                        )
+                    _send_enumerate_result(msg_id, resolution_nodes, [])
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
                 nodes = []
                 for fn in tree_file.functions():
                     lc = fn.line_col_span()
