@@ -66,6 +66,7 @@ SCOREBOARD_AUTHORITY = False
 import argparse
 import ast
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -384,24 +385,66 @@ def _source_files(roots: Iterable[Path]) -> list[Path]:
     return sorted(files)
 
 
+def _load_scan_scope():
+    try:
+        from sugar_lift_py_tests.idd.instrument_scan_scope import (
+            instrument_scan_scope,
+        )
+    except ImportError:
+        import importlib.util
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "sugar_lift_py_tests"
+            / "idd"
+            / "instrument_scan_scope.py"
+        )
+        spec = importlib.util.spec_from_file_location("instrument_scan_scope", path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        instrument_scan_scope = mod.instrument_scan_scope
+    return instrument_scan_scope
+
+
+def default_self_sealing_scope(repo: Path):
+    """Named population door (tests + idd). Not a silent empty-arg expand."""
+    instrument_scan_scope = _load_scan_scope()
+    return instrument_scan_scope(
+        declared_roots=_default_roots(repo.resolve()),
+        instrument_self=Path(__file__).resolve(),
+    )
+
+
 def scan_roots(
     roots: Iterable[Path] | None = None, *, repo: Path | None = None
 ) -> tuple[list[Finding], list[str]]:
-    """Scan instrument roots. ``roots`` defaults to ``_default_roots(repo)``.
+    """Scan via InstrumentScanScope. Empty undeclared roots refuse.
 
-    Parent vector citations call ``scan_roots(repo=repo)`` — roots must be
-    optional so a missing-arg TypeError cannot silently zero the axis.
+    Parent vector citations may call ``scan_roots(repo=repo)`` which uses the
+    named :func:`default_self_sealing_scope` population — never an accidental
+    whole-repo expand without provenance.
     """
     base = (repo or Path.cwd()).resolve()
-    scan_paths = tuple(roots) if roots is not None else _default_roots(base)
+    instrument_scan_scope = _load_scan_scope()
+    if roots is None:
+        scope = default_self_sealing_scope(base)
+    else:
+        declared = tuple(Path(p).resolve() for p in roots)
+        if not declared:
+            raise ValueError(
+                "scan roots must be explicit and non-empty; refusing undeclared "
+                "population. Pass roots or use default_self_sealing_scope(repo)."
+            )
+        scope = instrument_scan_scope(
+            declared_roots=declared,
+            instrument_self=Path(__file__).resolve(),
+        )
     findings: list[Finding] = []
     errors: list[str] = []
-    # Never audit this script as an offender source of examples in docstrings
-    # with executable code — docstrings are not AST statements. Fine.
-    self_path = Path(__file__).resolve()
-    for path in _source_files(scan_paths):
-        if path.resolve() == self_path:
-            continue
+    for path in scope.iter_python_files():
         label = (
             str(path.resolve().relative_to(base))
             if path.resolve().is_relative_to(base)
@@ -450,8 +493,17 @@ def main() -> int:
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     repo = args.repo.resolve()
-    roots = tuple(path.resolve() for path in args.roots) or _default_roots(repo)
-    findings, errors = scan_roots(roots, repo=repo)
+    instrument_scan_scope = _load_scan_scope()
+    if args.roots:
+        declared = tuple(path.resolve() for path in args.roots)
+        scope = instrument_scan_scope(
+            declared_roots=declared,
+            instrument_self=Path(__file__).resolve(),
+        )
+        findings, errors = scan_roots(declared, repo=repo)
+    else:
+        scope = default_self_sealing_scope(repo)
+        findings, errors = scan_roots(None, repo=repo)
     print(format_report(findings, errors))
     if args.json is not None:
         args.json.write_text(
@@ -462,6 +514,7 @@ def main() -> int:
                     "rung": "auditor",
                     "R": len(findings),
                     "auditorErrors": errors,
+                    "scanScope": scope.to_provenance(),
                     "byClass": {
                         kind: sum(f.violation_class == kind for f in findings)
                         for kind in REQUIRED_FIX

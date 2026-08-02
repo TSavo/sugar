@@ -201,13 +201,30 @@ def production_python_scan_roots(repo: Path) -> list[Path]:
 def collect_builtin_closed_operation_report(
     root: Path | list[Path] | tuple[Path, ...],
 ) -> BuiltinClosedOperationReport:
-    """Scan one root or several. Prefer ``production_python_scan_roots(repo)``."""
+    """Scan one root or several. Prefer ``production_python_scan_roots(repo)``.
+
+    Population is an :class:`InstrumentScanScope`: empty roots refuse;
+    instrument-self and auth-pin inventory never enter the offender set.
+    """
+    from sugar_lift_py_tests.idd.instrument_scan_scope import instrument_scan_scope
+
     roots = [root] if isinstance(root, Path) else list(root)
+    if not roots:
+        raise ValueError(
+            "builtin_closed scan roots must be non-empty; refusing undeclared "
+            "population (wrong-population false green)"
+        )
+    scope = instrument_scan_scope(
+        declared_roots=roots,
+        instrument_self=Path(__file__).resolve(),
+    )
     offenders: list[BuiltinClosedOperationOffender] = []
     for one in roots:
         if not one.is_dir():
             continue
         for path in sorted(one.rglob("*.py")):
+            if not scope.admits(path):
+                continue
             relative_path = path.relative_to(one)
             parts = relative_path.parts
             if "sugar_lift_py_tests" in parts:

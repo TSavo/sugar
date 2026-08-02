@@ -38,6 +38,61 @@ import traceback
 from pathlib import Path
 from typing import NamedTuple, Sequence
 
+# Population law (vendor 23→~0): every scan takes a declared InstrumentScanScope.
+# Instrument-self and auth-pin inventory are excluded by construction.
+try:
+    from sugar_lift_py_tests.idd.instrument_scan_scope import (
+        InstrumentScanScope,
+        InstrumentScanScopeError,
+        instrument_scan_scope,
+    )
+except ImportError:  # script-path invocation without package on PYTHONPATH
+    _IDD = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "sugar_lift_py_tests"
+        / "idd"
+        / "instrument_scan_scope.py"
+    )
+    import importlib.util
+
+    _spec = importlib.util.spec_from_file_location("instrument_scan_scope", _IDD)
+    assert _spec is not None and _spec.loader is not None
+    _scope_mod = importlib.util.module_from_spec(_spec)
+    sys.modules[_spec.name] = _scope_mod
+    _spec.loader.exec_module(_scope_mod)
+    InstrumentScanScope = _scope_mod.InstrumentScanScope  # type: ignore[misc]
+    InstrumentScanScopeError = _scope_mod.InstrumentScanScopeError  # type: ignore[misc]
+    instrument_scan_scope = _scope_mod.instrument_scan_scope  # type: ignore[misc]
+
+_INSTRUMENT_SELF = Path(__file__).resolve()
+
+# Named construction/recognition population (CI door). Not a silent multi-root
+# expand of the whole package — idd / auth-pin / SST are never implied.
+_CONSTRUCTION_LANES = (
+    "claim",
+    "context",
+    "effect",
+    "floor",
+    "gap",
+    "kit_rpc",
+    "lift",
+    "outcome",
+    "proofir",
+    "sugar",
+    "sugar_body",
+    "temporal",
+)
+
+
+def construction_recognition_scope(package: Path) -> InstrumentScanScope:
+    """Declared CI population for product logo-dispatch (not whole kit)."""
+    roots = tuple(package / name for name in _CONSTRUCTION_LANES)
+    return instrument_scan_scope(
+        declared_roots=roots,
+        instrument_self=_INSTRUMENT_SELF,
+    )
+
 VENDORS = frozenset(
     {
         "numpy",
@@ -398,9 +453,10 @@ def scan_file(path: Path, *, rel: str) -> list[VendorSpecialCase]:
     return deduped
 
 
-def scan_roots(roots: Sequence[Path]) -> list[VendorSpecialCase]:
+def scan_with_scope(scope: InstrumentScanScope) -> list[VendorSpecialCase]:
+    """Scan only paths the scope admits. Scope is required provenance."""
     offenders: list[VendorSpecialCase] = []
-    for root in roots:
+    for root in scope.declared_roots:
         try:
             root_resolved = root.resolve()
         except OSError as exc:
@@ -412,6 +468,18 @@ def scan_roots(roots: Sequence[Path]) -> list[VendorSpecialCase]:
                     vendor="-",
                     expression=type(exc).__name__,
                     note=f"could not resolve scan root: {exc}",
+                )
+            )
+            continue
+        if not root_resolved.exists():
+            offenders.append(
+                VendorSpecialCase(
+                    path=str(root),
+                    line=0,
+                    kind="auditor-root-error",
+                    vendor="-",
+                    expression="NotADirectory",
+                    note=f"scan root is not a directory: {root_resolved}",
                 )
             )
             continue
@@ -444,9 +512,25 @@ def scan_roots(roots: Sequence[Path]) -> list[VendorSpecialCase]:
         for path in paths:
             if not path.is_file():
                 continue
+            if not scope.admits(path):
+                continue
             rel = _rel_path(root_resolved, path)
             offenders.extend(scan_file(path, rel=rel))
     return sorted(offenders)
+
+
+def scan_roots(roots: Sequence[Path]) -> list[VendorSpecialCase]:
+    """Build a declared scope from *roots* and scan. Empty roots refuse."""
+    if not roots:
+        raise InstrumentScanScopeError(
+            "scan roots must be explicit and non-empty; refusing undeclared "
+            "population. Pass roots or use construction_recognition_scope()."
+        )
+    scope = instrument_scan_scope(
+        declared_roots=roots,
+        instrument_self=_INSTRUMENT_SELF,
+    )
+    return scan_with_scope(scope)
 
 
 def r_vendor_special_case(offenders: Sequence[VendorSpecialCase]) -> int:
@@ -492,30 +576,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "roots",
         nargs="*",
         type=Path,
-        # Construction/recognition surface (post-factory architecture).
-        # factory/ and recognition/ were folded across these dirs: construction
-        # decisions now flow through floor values, effects, outcomes, claims,
-        # ProofIR, temporal/context machinery, and lift/RPC orchestration.
-        # Excluded on purpose: audit_only + idd (measurement/reporting),
-        # manifests (declared contract data).
-        default=[
-            package / "claim",
-            package / "context",
-            package / "effect",
-            package / "floor",
-            package / "gap",
-            package / "kit_rpc",
-            package / "lift",
-            package / "outcome",
-            package / "proofir",
-            package / "sugar",
-            package / "sugar_body",
-            package / "temporal",
-        ],
+        default=[],
+        help=(
+            "Declared scan roots. Empty invokes construction_recognition_scope "
+            "(named product lanes only). Expanded multi-root must be explicit; "
+            "instrument-self and auth-pin inventory never score as product R."
+        ),
     )
     try:
         args = parser.parse_args(argv)
-        offenders = scan_roots(args.roots)
+        if args.roots:
+            scope = instrument_scan_scope(
+                declared_roots=args.roots,
+                instrument_self=_INSTRUMENT_SELF,
+            )
+        else:
+            # Named population door — not silent whole-package expand (#7001 class).
+            scope = construction_recognition_scope(package)
+        offenders = scan_with_scope(scope)
     except Exception as exc:  # noqa: BLE001 — process-level containment
         print(
             "VENDOR-SPECIAL-CASE LAW ERROR: unhandled auditor failure "
@@ -544,6 +622,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ok": r == 0 and err == 0,
         "R_vendor_special_case": r,
         "auditor_errors": err,
+        "scanScope": scope.to_provenance(),
     }
     if r > 0 or err > 0:
         print(
