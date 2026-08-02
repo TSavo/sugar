@@ -264,6 +264,9 @@ dispatch_execution_subcommand() {
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
   [[ "$route_env" != docker ]] || sugar_bx_require_docker_ready || return $?
   sugar_bx_sync_workspace || return $?
+  # Quiet gate is opt-in (SUGAR_BX_REQUIRE_QUIET / SUGAR_BX_MAX_LOADAVG).
+  # Armed for wall-clock timing only; ordinary builds leave it unset.
+  sugar_bx_require_quiet || return $?
   if [[ "$route_env" == docker ]]; then
     sugar_bx_write_mount_proof || return $?
     local remote_needs="$needs" has_artifacts=0
@@ -274,6 +277,7 @@ dispatch_execution_subcommand() {
       has_artifacts=1
     fi
     if [[ "$subcommand" == build ]]; then
+      sugar_bx_report_load_after
       sugar_bx_finish 0
       return $?
     fi
@@ -281,6 +285,7 @@ dispatch_execution_subcommand() {
     sugar_bx_run_docker "$docker_image" "$task_network" "$has_artifacts" "${command[@]}"
     status=$?
     set -e
+    sugar_bx_report_load_after
     sugar_bx_finish "$status"
     return $?
   fi
@@ -291,6 +296,7 @@ dispatch_execution_subcommand() {
       sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && bin/sugarbin build --profile $(sugar_bx_quote "$profile") --platform $(sugar_bx_quote "$remote_platform") --needs $(sugar_bx_quote "$remote_needs")"
       status=$?
       set -e
+      sugar_bx_report_load_after
       sugar_bx_finish "$status"
       return $?
     fi
@@ -298,13 +304,20 @@ dispatch_execution_subcommand() {
     command=(bash -lc "$remote_setup \"\$@\"; status=\$?; rm -rf \"\$dir\"; exit \$status" bash "${command[@]}")
   fi
   if [[ "$subcommand" == cargo ]]; then
+    # Quiet gate already armed above; cargo path reports after inside finish sites.
+    local cargo_status=0
+    set +e
     sugarbin_bx_cargo "$repo_root"
-    return $?
+    cargo_status=$?
+    set -e
+    sugar_bx_report_load_after
+    return "$cargo_status"
   fi
   set +e
   sugar_bx_run_ambient "${command[@]}"
   status=$?
   set -e
+  sugar_bx_report_load_after
   if [[ "$status" == 0 ]]; then
     if ((${#SUGAR_BX_SYNC_BACKS[@]} != 0)); then
       for pair in "${SUGAR_BX_SYNC_BACKS[@]}"; do

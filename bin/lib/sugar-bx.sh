@@ -156,6 +156,86 @@ sugar_bx_require_docker_ready() {
   fi
 }
 
+# Exit 76: host not quiet enough for a trusted wall-clock measurement.
+# A number taken under contention is not a slow measurement — it is not a
+# measurement. Timing runs must set SUGAR_BX_REQUIRE_QUIET=1 (or an explicit
+# SUGAR_BX_MAX_LOADAVG). Ordinary builds leave both unset and are not gated.
+# Sample is always the *remote* box load (via sugar_bx_ssh), never the laptop.
+sugar_bx_sample_load() {
+  # Prints: load1 nproc  (one line). Uses /proc/loadavg on Linux; falls back
+  # to python getloadavg on platforms without it (local-mode macOS tests).
+  sugar_bx_ssh 'bash -lc "
+    set -e
+    if [[ -r /proc/loadavg ]]; then
+      read -r l1 _rest </proc/loadavg
+    else
+      l1=\$(python3 -c \"import os; print(os.getloadavg()[0])\" 2>/dev/null || echo 0)
+    fi
+    n=\$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+    printf \"%s %s\\n\" \"\$l1\" \"\$n\"
+  "'
+}
+
+sugar_bx_require_quiet() {
+  local require="${SUGAR_BX_REQUIRE_QUIET:-0}"
+  local max_env="${SUGAR_BX_MAX_LOADAVG:-}"
+  # No gate unless the caller asked for a quiet measurement.
+  if [[ -z "$max_env" && "$require" != 1 && "$require" != true && "$require" != yes ]]; then
+    SUGAR_BX_LOAD_BEFORE=""
+    return 0
+  fi
+  local sample load1 nproc max
+  set +e
+  sample="$(sugar_bx_sample_load 2>&1)"
+  local sample_status=$?
+  set -e
+  if [[ "$sample_status" != 0 ]]; then
+    printf 'sugarbin: crime=load-sample-failed host=%s status=%s detail=%s replacement=fix ssh to %s; cannot certify a quiet box without a load reading\n' \
+      "$SUGAR_BX_HOST" "$sample_status" "${sample:-<no output>}" "$SUGAR_BX_HOST" >&2
+    return 76
+  fi
+  sample="$(printf '%s' "$sample" | tr -d '\r' | tail -n 1)"
+  load1="${sample%% *}"
+  nproc="${sample##* }"
+  if [[ -z "$load1" || -z "$nproc" || "$load1" == "$sample" ]]; then
+    printf 'sugarbin: crime=load-sample-unparseable host=%s sample=%s replacement=expect \"load1 nproc\" from remote sample\n' \
+      "$SUGAR_BX_HOST" "${sample:-<empty>}" >&2
+    return 76
+  fi
+  SUGAR_BX_LOAD_BEFORE="$load1"
+  SUGAR_BX_NPROC="$nproc"
+  if [[ -n "$max_env" ]]; then
+    max="$max_env"
+  else
+    # Default: 25% of cores, floor 2.0 — battleaxe 32c → 8.0. Contended Mac
+    # (load 13 on 8 cores) is always over; quiet bx (load ~2 on 32) always under.
+    max="$(awk -v n="$nproc" 'BEGIN{ m=n/4.0; if (m < 2.0) m=2.0; printf "%.2f", m }')"
+  fi
+  printf 'sugarbin: bx-load-gate phase=before host=%s load1=%s nproc=%s max=%s\n' \
+    "$SUGAR_BX_HOST" "$load1" "$nproc" "$max" >&2
+  # Refuse when load1 > max (strict). Equality is allowed.
+  if awk -v l="$load1" -v m="$max" 'BEGIN{ exit !(l+0 > m+0) }'; then
+    printf 'sugarbin: crime=host-not-quiet host=%s load1=%s nproc=%s max=%s replacement=wait for load1<=%s on %s (or raise SUGAR_BX_MAX_LOADAVG with cause). A wall-clock number taken under contention manufactured tonight'\''s fake 87%% regression — refuse rather than report.\n' \
+      "$SUGAR_BX_HOST" "$load1" "$nproc" "$max" "$max" "$SUGAR_BX_HOST" >&2
+    return 76
+  fi
+  return 0
+}
+
+sugar_bx_report_load_after() {
+  # Best-effort after sample when a quiet gate was armed. Never fails the run:
+  # the before-gate already certified start conditions; after is telemetry.
+  [[ -n "${SUGAR_BX_LOAD_BEFORE:-}" ]] || return 0
+  local sample load1
+  set +e
+  sample="$(sugar_bx_sample_load 2>/dev/null)"
+  set -e
+  sample="$(printf '%s' "$sample" | tr -d '\r' | tail -n 1)"
+  load1="${sample%% *}"
+  printf 'sugarbin: bx-load-gate phase=after host=%s load1_before=%s load1_after=%s nproc=%s\n' \
+    "$SUGAR_BX_HOST" "$SUGAR_BX_LOAD_BEFORE" "${load1:-unknown}" "${SUGAR_BX_NPROC:-unknown}" >&2
+}
+
 sugar_bx_run_ambient() {
   local remote_cwd="$SUGAR_BX_REPO" arg inner="" prefix="" name
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$SUGAR_BX_REPO/$SUGAR_BX_REL_CWD"
