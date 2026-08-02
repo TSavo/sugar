@@ -173,10 +173,24 @@ def test_exit_missing_lying_twin_enter_missing_is_not_exit_missing() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unresolved_symbol_truthful_twin_unauthenticated_with_is_loud() -> None:
-    """Detector fires a typed CM residual without an authenticated contract ref."""
+def _source_file_with_preconstruction(path: Path):
+    """Import fixture from sugar-source-tree tests (not on default package path)."""
+    import sys
+
+    fixture_dir = (
+        Path(__file__).resolve().parents[2]
+        / "sugar-source-tree"
+        / "tests"
+    )
+    if str(fixture_dir) not in sys.path:
+        sys.path.insert(0, str(fixture_dir))
     from with_resolution_fixture import source_file_with_preconstruction
 
+    return source_file_with_preconstruction(path)
+
+
+def test_unresolved_symbol_truthful_twin_unauthenticated_with_is_loud() -> None:
+    """Detector fires a typed CM residual without an authenticated contract ref."""
     src = (
         "import contextlib\n"
         "def A(z):\n"
@@ -187,7 +201,7 @@ def test_unresolved_symbol_truthful_twin_unauthenticated_with_is_loud() -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write(src)
         path = Path(handle.name)
-    fn = next(source_file_with_preconstruction(path).functions())
+    fn = next(_source_file_with_preconstruction(path).functions())
     with pytest.raises(SugarNotWritten) as caught:
         fn.sugar()
     name = type(caught.value).__name__
@@ -213,13 +227,11 @@ def test_unresolved_symbol_lying_twin_bare_return_is_not_unresolved_symbol() -> 
     Plants absence of the residual site. If a detector sprayed
     unresolved-symbol onto every function, this would red.
     """
-    from with_resolution_fixture import source_file_with_preconstruction
-
     src = "def A(z):\n    return z\n"
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write(src)
         path = Path(handle.name)
-    fn = next(source_file_with_preconstruction(path).functions())
+    fn = next(_source_file_with_preconstruction(path).functions())
     try:
         fn.sugar()
     except SugarNotWritten as exc:

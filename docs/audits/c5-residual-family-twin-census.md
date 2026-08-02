@@ -1,29 +1,44 @@
 # C5 residual-family twin census (code inventory)
 
 **Criterion 5:** every residual family must be proven by BOTH a truthful twin and a lying twin.
-**Method:** closed production vocabularies (`WithConstructionGapKind` 42 members, `SugarNotWritten` hierarchy, `GapKind`, `ConstructionPanic`, recensus board categories) + static `rg` of `implementations/python/**/tests/**` for wire/class tokens and truthful/lying markers.
+**Method:** closed production vocabularies (`WithConstructionGapKind` 42 members, `SugarNotWritten` hierarchy, `GapKind`, `ConstructionPanic`, recensus board categories) + static scan of focused test trees for family wire/class tokens and truthful/lying **markers**.
 **Not a recensus measure.** No battleaxe. Black seal untouched.
 
-## Summary
+## Why C5 exists (the membrane example)
 
-| metric | count |
-| --- | ---: |
-| residual families inventoried | 65 |
-| both twins (heuristic) | 37 |
-| truthful only | 2 |
-| lying only | 3 |
-| mentioned without twin markers | 8 |
-| neither (no test hit) | 15 |
-| **missing lying twin** | **25** |
-| missing truthful twin | 26 |
+`call-target-off-population` is the population membrane — the residual that stops rebuild of CPython off-pin. A **truthful** twin only proves we recognise the residual when present. Without a **lying** twin we cannot prove we would notice its **absence**. If the membrane silently stopped citing and went back to rebuilding, nothing would catch it: the walk would only get slower, and we would hunt for a cause — exactly the failure mode of tonight's hours of contention hunting. That is the whole C5 criterion in one family: a detector nobody has fooled is a detector nobody has tested.
 
-A family with **no lying twin** is a family we cannot prove we detect.
+## Summary (verified re-scan after rank-1)
 
-### Caveats
+| metric | pre-rank1 | **verified post-rank1** |
+| --- | ---: | ---: |
+| residual families inventoried | 65 | **66** |
+| both twins (heuristic marker) | 37 | **43** |
+| **missing lying twin** | **25** | **20** |
+| missing truthful twin | 26 | 22 |
 
-- Heuristic over-credit: a multi-kind test file with twin markers can mark several kinds `both` when only one kind is twinned in that file.
-- Under-credit: twins that never spell the wire string (type-only assert) can show as `neither`.
-- Separate domain: Sugar/ProofIR family C5 lives in `scripts/semantic_family_twin_inventory_law.py` (factory `witnesses()` / NotVerdictBearing opt-outs). That is not this residual table.
+**Predict-then-verify:** rank-1 predicted 25 → ~21. Re-scan on tip with `test_c5_residual_lying_twins_rank1.py` present reports **missing_lying=20**. All four rank-1 wires credit as `both` against that file:
+
+| family | census credit path |
+| --- | --- |
+| `call-target-off-population` | both ← rank-1 file |
+| `exit-missing` | both ← rank-1 file |
+| `unresolved-symbol` | both ← rank-1 file |
+| `ConstructedValueTestimonyNotWritten` | both ← rank-1 file |
+
+Delta is not exactly −4: inventory cardinality moved 65→66 (`UNRECOGNIZED_RESOLUTION_KIND` enrolled), and heuristic co-credit on other files moved a few rows. The four planted twins **are** visible to the census — the number 25 was not a blind orientation figure; the re-scan can see the new markers.
+
+A family with **no lying twin marker** is a family we cannot even *claim* to detect under this inventory.
+
+### Caveats — read before treating R as proof
+
+**`R_missing_lying_twin=20` is not “46 families proven.”** It is “20 families still lack a lying **marker** under a static inventory.” The dual:
+
+1. **Marker ≠ proof the detector fires.** The census looks for wire/class tokens co-located with `truthful` / `lying` / `*_twin_*` spelling. It does **not** execute the twin, does **not** assert the detector product, and does **not** prove the lying face exercises the real residual path. A family can score `both` by marker and still be unproven if the lying twin never makes the detector fire (or only renames a sibling kind). Treat `both` as *candidate enrollment*, not as C5 discharge.
+2. **Heuristic over-credit:** a multi-kind test file with twin markers can mark several kinds `both` when only one kind is twinned in that file.
+3. **Heuristic under-credit:** twins that never spell the wire string (type-only assert) can show as `neither`.
+4. **Separate domain:** Sugar/ProofIR family C5 lives in `scripts/semantic_family_twin_inventory_law.py` (factory `witnesses()` / NotVerdictBearing opt-outs). That is not this residual table. Do not read 66 residual families as the full semantic family set.
+5. **Static only:** no corpus, no seal remeasure, no battleaxe. Residual gap products, not sugar-catalog C5.
 
 ## Table
 
@@ -101,46 +116,38 @@ A truthful twin proves recognition when the residual is present. A **lying** twi
 proves we would notice its **absence** (or refuse a misclassification). Rank is
 by whether tonight's seal / floors depend on that detector:
 
-| rank | family | why load-bearing | twin status after rank-1 land |
+| rank | family | why load-bearing | verified status |
 | ---: | --- | --- | --- |
-| **1** | `call-target-off-population` | Population membrane; false green rebuilds off-pin | **lying twin written** (`test_c5_residual_lying_twins_rank1.py`) |
-| **2** | `exit-missing` | Closed CM protocol residual on seal vocabulary | **lying twin written** (discriminates vs enter-missing) |
-| **3** | `unresolved-symbol` | Default With loud residual without a contract ref | **lying twin written** (bare return is not unresolved-symbol) |
-| **4** | `ConstructedValueTestimonyNotWritten` / category gap | False-green construction class | **lying twin written** (tuple canonicalizes; list loud) |
-| 5 | `definition-missing` | Source-derived construction residual on seal | still missing |
-| 6 | `artifact-mismatch` | Authority mismatch residual | still missing |
-| 7 | `incomplete-call-actuals` | Populate residual | still missing |
-| 8 | `target-outside-binding` | Export residual (truthful only in census) | still missing |
-| 9–20 | other `WithConstructionGapKind` members below | On seal vocabulary tooth; lower live mass | still missing |
-| 21 | `instrument-defect-unresolvable-dispatch` | Board category, not a gap kind | still missing |
-| 22–24 | `ConstructedValueTestimonyNotWritten` class, `AsyncContextManagerUnsupported`, `SubstituteNotWritten` | Panic classes; secondary seal mass | class-level still listed; category twin covers #4 |
-| 25 | `GapKind.SUGAR_ORDERING` | Construction locus label — **not** CM residual | lowest for CM seal |
+| **1** | `call-target-off-population` | Population membrane; silent stop → rebuild CPython / slower walk with no alarm | **both** (rank-1 file; marker credit verified) |
+| **2** | `exit-missing` | Closed CM protocol residual on seal vocabulary | **both** (rank-1; discriminates vs enter-missing) |
+| **3** | `unresolved-symbol` | Default With loud residual without a contract ref | **both** (rank-1; bare return is not unresolved-symbol) |
+| **4** | `ConstructedValueTestimonyNotWritten` / category gap | False-green construction class | **both** (rank-1; tuple ok / list loud) |
+| … | remaining vocabulary / panic / board rows | see still-missing list | **missing lying marker** |
 
-### Still missing lying twin (after rank-1 four)
+### Still missing lying twin marker (verified R=20)
 
 - `WithConstructionGapKind.AMBIGUOUS_SYMBOL` (`ambiguous-symbol`)
 - `WithConstructionGapKind.WRONG_CONTRACT_KIND` (`wrong-contract-kind`)
 - `WithConstructionGapKind.SIGNATURE_MISMATCH` (`signature-mismatch`)
 - `WithConstructionGapKind.UNAUTHENTICATED_MEMBER` (`unauthenticated-member`)
 - `WithConstructionGapKind.PAYLOAD_CID_MISMATCH` (`payload-cid-mismatch`)
-- `WithConstructionGapKind.UNSUPPORTED_CM_SCHEMA` (`unsupported-cm-schema`)
 - `WithConstructionGapKind.STALE_DERIVED_CONTRACT` (`stale-derived-contract`)
 - `WithConstructionGapKind.UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS` (`unsupported-context-manager-semantics`)
 - `WithConstructionGapKind.UNSUPPORTED_WITH_BINDING_TARGET` (`unsupported-with-binding-target`)
 - `WithConstructionGapKind.ASYNC_CONTEXT_MANAGER_UNSUPPORTED` (`async-context-manager-unsupported`)
 - `WithConstructionGapKind.UNSUPPORTED_STATEMENT` (`unsupported-statement`)
 - `WithConstructionGapKind.MALFORMED_IMPORT_BINDING` (`malformed-import-binding`)
+- `WithConstructionGapKind.ARTIFACT_MODULE_ABSENT` (`artifact-module-absent`)
 - `WithConstructionGapKind.TARGET_OUTSIDE_BINDING` (`target-outside-binding`)
 - `WithConstructionGapKind.OPAQUE_SOURCE` (`opaque-source`)
 - `WithConstructionGapKind.INCOMPLETE_CALL_ACTUALS` (`incomplete-call-actuals`)
 - `WithConstructionGapKind.ARTIFACT_MISMATCH` (`artifact-mismatch`)
-- `WithConstructionGapKind.DEFINITION_MISSING` (`definition-missing`)
+- `WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND` (`unrecognized-resolution-kind`) — new vs pre-rank1 n=65
 - `panic.AsyncContextManagerUnsupported` (`AsyncContextManagerUnsupported`)
 - `panic.SubstituteNotWritten` (`SubstituteNotWritten`)
 - `recensus.category.instrument-defect-unresolvable-dispatch` (`instrument-defect-unresolvable-dispatch`)
-- `GapKind.SUGAR_ORDERING` (`Sugar ordering`)
 
-**Predicted R after rank-1 land:** missing lying ≈ **21** (was 25; four families now have explicit `*_lying_twin_*` tests). Re-scan inventory to confirm marker credit.
+**Verified R:** missing lying = **20** (was 25 pre-rank1; predicted ~21; actual 20). Marker credit only — see caveats.
 
 ## Group inventory sources
 
@@ -150,4 +157,4 @@ by whether tonight's seal / floors depend on that detector:
 - **GapKind** (6): `sugar_lift_py_tests/gap/info.py` — construction-gap locus labels, not CM residual kinds
 - **recensus categories** (4): `recensus_enumerate_consumer.py` board categories
 
-*Generated by static inventory (`/tmp/c5_rows.txt` via tools/c5_residual_family_twin_census approach). No measurement.*
+*Static inventory only (`tools/c5_residual_family_twin_census.py` approach). Summary metrics and still-missing list re-verified post-rank1; the large status table above is the pre-rank1 snapshot and is superseded by the verified summary for R. Marker credit is not detector proof — see caveats. No corpus measurement.*
