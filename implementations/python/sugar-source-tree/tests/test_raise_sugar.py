@@ -103,6 +103,58 @@ def test_raise_call_form_carries_exception_type_coordinate():
     assert effect.exception_type_coordinate is not None
 
 
+def test_local_exception_class_constructs_authenticated_raise_effect():
+    """Source ClassDef exception types construct through the Raise door."""
+    effect = _effect(
+        "class E(Exception):\n    pass\n\ndef A():\n    raise E\n"
+    )
+    assert effect.exception_name == "E"
+    assert effect.exception_type_coordinate is not None
+
+
+def test_handler_reraise_resolves_in_flight_effect_not_isolated_desugar():
+    """Bare re-raise is loud alone; through TrySugar the in-flight slot binds.
+
+    Wrong entrance would desugar the bare Raise in isolation (no effect testimony).
+    The real door is function/Try reduction, which bind_in_flight_effect owns.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(
+            "def A():\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except ValueError:\n"
+            "        raise\n"
+        )
+        path = f.name
+    fn = next(SourceFile(path_source(path)).functions())
+    # Full body door — not an isolated Raise.desugar without handler context.
+    outcome = fn.sugar().desugar()
+    # Universe/block may collapse to ExitSet or Incomplete; extract raise effects.
+    effects = []
+    if isinstance(outcome, Incomplete):
+        effects.append(outcome.effect)
+    else:
+        exits = getattr(outcome, "exits", None) or getattr(
+            getattr(outcome, "value", None), "exits", ()
+        )
+        if exits is None:
+            exits = ()
+        for exit_ in exits:
+            eff = getattr(exit_, "effect", None)
+            if eff is not None:
+                effects.append(eff)
+    assert effects, f"expected a raise effect from handler re-raise, got {outcome!r}"
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    assert any(isinstance(e, RaiseEffect) for e in effects)
+    named = next(e for e in effects if isinstance(e, RaiseEffect))
+    assert named.exception_name == "ValueError"
+    assert named.exception_type_coordinate is not None
+
+
 if __name__ == "__main__":
     test_raise_is_the_halt_arm_not_a_value()
     test_exception_name_is_read_structurally()
@@ -111,4 +163,6 @@ if __name__ == "__main__":
     test_raise_from_carries_both_constructed_values()
     test_authenticated_raise_constructs_raise_effect_not_nameerror()
     test_raise_call_form_carries_exception_type_coordinate()
+    test_local_exception_class_constructs_authenticated_raise_effect()
+    test_handler_reraise_resolves_in_flight_effect_not_isolated_desugar()
     print("ok: raise -> Incomplete(RaiseEffect); explicit cause carried")
