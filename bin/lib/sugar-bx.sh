@@ -167,9 +167,11 @@ sugar_bx_require_docker_ready() {
 #
 # Concurrency: load-at-start alone is not enough — six agents can all pass a
 # quiet check then co-run and recreate contention on battleaxe. Quiet-gated
-# ambient runs take an exclusive remote flock
-# (/var/tmp/sugar-bx-timing-measurement.lease by default), re-sample load
-# under that lock, then run. Serialize, do not rely on people.
+# ambient runs take an exclusive remote flock on the host bind-mount lease
+# (/home/runner|tsavo/.cache/sugar/binaries/.sugar-heavy-measurement.lease;
+# never /var/tmp on containers — lock theatre), re-sample load under that
+# lock, then run. CI seats use shared flock on the same path
+# (tools/bx_host_measure_gates.sh --shared). Serialize, do not rely on people.
 sugar_bx_quiet_armed() {
   local require="${SUGAR_BX_REQUIRE_QUIET:-0}"
   local max_env="${SUGAR_BX_MAX_LOADAVG:-}"
@@ -202,7 +204,18 @@ sugar_bx_require_quiet() {
   fi
   SUGAR_BX_QUIET_ARMED=1
   SUGAR_BX_LOAD_MAX="${SUGAR_BX_MAX_LOADAVG:-}"
-  SUGAR_BX_TIMING_LEASE="${SUGAR_BX_TIMING_LEASE_PATH:-/var/tmp/sugar-bx-timing-measurement.lease}"
+  # Prefer host bind-mount lease (serializes CI containers + host brun).
+  # /var/tmp is per-container lock theatre on battleaxe (same bootId, different
+  # inode). See docs/contributing/heavy-measurement-lease.md.
+  if [[ -n "${SUGAR_BX_TIMING_LEASE_PATH:-}" ]]; then
+    SUGAR_BX_TIMING_LEASE="$SUGAR_BX_TIMING_LEASE_PATH"
+  elif [[ -d /home/runner/.cache/sugar/binaries ]]; then
+    SUGAR_BX_TIMING_LEASE=/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease
+  elif [[ -d /home/tsavo/.cache/sugar/binaries ]]; then
+    SUGAR_BX_TIMING_LEASE=/home/tsavo/.cache/sugar/binaries/.sugar-heavy-measurement.lease
+  else
+    SUGAR_BX_TIMING_LEASE=/var/tmp/sugar-bx-timing-measurement.lease
+  fi
   # Default wait 2h (queue). Set SUGAR_BX_TIMING_LEASE_WAIT_S=0 to refuse
   # immediately with exit 77 when another measurement holds the lease.
   SUGAR_BX_TIMING_LEASE_WAIT="${SUGAR_BX_TIMING_LEASE_WAIT_S:-7200}"
@@ -266,7 +279,16 @@ sugar_bx_run_ambient() {
   # Three gates, one law: quiet box, exclusive lease, correct corpus.
   local lock wait_s max_lit host_lit measured_cmd wrapper
   local pin_path pin_py pin_skip
-  lock="${SUGAR_BX_TIMING_LEASE:-/var/tmp/sugar-bx-timing-measurement.lease}"
+  lock="${SUGAR_BX_TIMING_LEASE:-}"
+  if [[ -z "$lock" ]]; then
+    if [[ -d /home/runner/.cache/sugar/binaries ]]; then
+      lock=/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease
+    elif [[ -d /home/tsavo/.cache/sugar/binaries ]]; then
+      lock=/home/tsavo/.cache/sugar/binaries/.sugar-heavy-measurement.lease
+    else
+      lock=/var/tmp/sugar-bx-timing-measurement.lease
+    fi
+  fi
   wait_s="${SUGAR_BX_TIMING_LEASE_WAIT:-7200}"
   max_lit="${SUGAR_BX_LOAD_MAX:-}"
   host_lit="$SUGAR_BX_HOST"
