@@ -524,7 +524,15 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
                 )
             )
             continue
-        raise TypeError(f"unknown warning message verdict {type(verdict).__name__}")
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="WithEffectBoundarySugar.warning_message",
+            blame=getattr(self, "site", "with-effect-boundary"),
+            observed=f"warning message verdict species {type(verdict).__name__} has no arm",
+            requested="a written warning-message verdict class",
+            fix=f"write warning-message arm for {type(verdict).__name__}",
+        )
     return ExitSet(tuple(exits)).normalize()
 
 

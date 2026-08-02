@@ -107,7 +107,15 @@ class UnaryOpSugar(ConstructedTermSugar):
 
     def __post_init__(self) -> None:
         if self.op_kind not in {*UNARYOP_METHODS, "Not"}:
-            raise ValueError(f"unknown unary operator {self.op_kind!r}")
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="UnaryOpSugar",
+                blame=self.site,
+                observed=f"unary operator {self.op_kind!r} has no UnaryOpSugar arm",
+                requested="a written unary op kind (Not or UNARYOP_METHODS entry)",
+                fix=f"enroll {self.op_kind!r} in UnaryOpSugar or refuse earlier",
+            )
         require_constructed_term_sugar(self.operand, owner="UnaryOpSugar.operand")
 
     @classmethod

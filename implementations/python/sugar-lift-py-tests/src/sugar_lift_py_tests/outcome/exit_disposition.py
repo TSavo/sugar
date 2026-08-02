@@ -135,9 +135,14 @@ def _boundary_halted_edge(disposition, incoming):
             held=_consumed(disposition, incoming),
             failed=incoming.effect,
         )
-    raise TypeError(
-        "message verdict must be MatchDecided or MatchRetained; "
-        f"got {type(verdict).__name__}"
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="exit_disposition.message_verdict",
+        blame="exit_disposition",
+        observed=f"message verdict species {type(verdict).__name__} has no arm",
+        requested="MatchDecided | MatchRetained",
+        fix=f"write message-verdict arm for {type(verdict).__name__}",
     )
 
 
@@ -188,10 +193,17 @@ def _resource_verdict(disposition: object, effect: object) -> str:
     if isinstance(disposition, Suppresses):
         return _suppresses_verdict(disposition, effect)
 
-    raise TypeError(
-        "exit disposition must be NeverSuppresses, ExitSuppressionContract, "
-        "RuntimeSelected, Suppresses, or EffectBoundaryDisposition; "
-        f"got {type(disposition).__name__}"
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="exit_disposition._resource_verdict",
+        blame="exit_disposition",
+        observed=f"exit disposition species {type(disposition).__name__} has no verdict arm",
+        requested=(
+            "NeverSuppresses | ExitSuppressionContract | RuntimeSelected | "
+            "Suppresses | EffectBoundaryDisposition"
+        ),
+        fix=f"write _resource_verdict arm for {type(disposition).__name__}",
     )
 
 
