@@ -76,6 +76,7 @@ class SourceResolutionSession:
         "prefix_fallthrough",
         "import_use_rosters",
         "import_value_rosters",
+        "lexical_passes",
     )
 
     def __init__(self, *, enabled: bool = True) -> None:
@@ -107,6 +108,9 @@ class SourceResolutionSession:
         # source_cid -> import-use / value-use receipt tuples (lexical pass once)
         self.import_use_rosters: dict[str, Any] = {}
         self.import_value_rosters: dict[str, Any] = {}
+        # source_cid -> full lexical _Pass product (rows + value_rows). One walk
+        # fills both roster doors; avoids a second SourceFile for the same body.
+        self.lexical_passes: dict[str, Any] = {}
 
     # -- export resolution memo ------------------------------------------
 
@@ -171,6 +175,13 @@ class SourceResolutionSession:
     def remember_import_value(self, source_cid: str, receipts: Any) -> None:
         if self.enabled:
             self.import_value_rosters[source_cid] = receipts
+
+    def lexical_pass_hit(self, source_cid: str) -> Any | None:
+        return self.lexical_passes.get(source_cid) if self.enabled else None
+
+    def remember_lexical_pass(self, source_cid: str, runner: Any) -> None:
+        if self.enabled:
+            self.lexical_passes[source_cid] = runner
 
 
 def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionSession:

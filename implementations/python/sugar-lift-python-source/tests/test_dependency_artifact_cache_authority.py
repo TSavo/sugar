@@ -152,6 +152,9 @@ def _isolated_memos(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(da, "_AUTHENTICATE_GRAPH_CACHE", {})
     monkeypatch.setattr(da, "_AUTHENTICATE_CACHE_ENABLED", True)
+    monkeypatch.setattr(da, "_AUTHENTICATE_BY_INSTALLATION_FINGERPRINT", {})
+    monkeypatch.setattr(da, "_PACKAGES_DISTRIBUTIONS_CACHE", None)
+    monkeypatch.setattr(da, "_TOP_LEVEL_GRAPH_CACHE", {})
     yield
 
 
@@ -407,7 +410,11 @@ def test_disk_memo_survives_a_cold_process_table(tmp_path):
     distribution = _install(root, implementation_source=_IMPL_A)
     warm = DependencyArtifactGraph.authenticate(distribution)
 
+    # Simulate a new process: every process-local table is empty; only the
+    # content-addressed (and fingerprint→CID) disk seats remain.
     da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
     from_disk = DependencyArtifactGraph.authenticate(
         importlib.metadata.Distribution.at(distribution._path)
     )

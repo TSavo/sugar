@@ -66,14 +66,15 @@ def test_json_open_config_sourcefile_not_dozens(monkeypatch) -> None:
         for row in (summary.get("top") or [])
         if str(row["module"]).endswith("config.py")
     )
-    # Pre-fix residual: SourceFile config.py dozens (33 measured). After:
-    # prefix door 1 + frame door 1 + lexical use/value mints ≤2.
-    assert config_sf <= 4, (
-        f"config.py SourceFile constructions={config_sf} (want ≤4); "
+    # Pre-fix residual: SourceFile config.py dozens (33 measured). After
+    # prefix door (#7066) + one shared lexical pass over the prefix SourceFile:
+    # prefix door 1 + frame door 1. Lexical use/value no longer re-Materialize.
+    assert config_sf <= 2, (
+        f"config.py SourceFile constructions={config_sf} (want ≤2); "
         f"all={dict(builds)}; mat_top={summary.get('top')}"
     )
-    assert config_mat <= 4, (
-        f"config.py MaterializeModule count={config_mat} (want ≤4); "
+    assert config_mat <= 2, (
+        f"config.py MaterializeModule count={config_mat} (want ≤2); "
         f"top={summary.get('top')}"
     )
     # False-zero floor: open must keep the real function roster.

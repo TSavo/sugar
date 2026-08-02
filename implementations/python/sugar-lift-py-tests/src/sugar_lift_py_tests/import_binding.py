@@ -1158,16 +1158,22 @@ def _require_source_cid_matches_text(source: str, source_cid: str) -> None:
         raise ValueError("authenticated import-use source CID is stale")
 
 
-def _run_lexical_import_pass(
+def _run_lexical_import_pass_on_module(
+    module,
+    *,
     root: Path,
     path: Path,
     source: str,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
 ) -> _Pass:
-    """One reaching-definition walk: call rows, value rows, and name targets."""
+    """One reaching-definition walk over an already-materialized Module root.
+
+    Call rows, value rows, and name targets come from this single walk. Callers
+    that already hold a SourceFile for ``source_cid`` (prefix door, frame door)
+    MUST use this entry so the walk does not rebuild the typed tree.
+    """
     _require_source_cid_matches_text(source, source_cid)
-    module = SourceFile((source, str(path), source_cid)).root
     module_name = module_name_for_path(root, path)
     identities = module_identities or {}
     module_state = _final_module_state(
@@ -1186,6 +1192,30 @@ def _run_lexical_import_pass(
     )
     runner.statements(module.body, {}, module)
     return runner
+
+
+def _run_lexical_import_pass(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> _Pass:
+    """One reaching-definition walk: call rows, value rows, and name targets.
+
+    Builds a SourceFile only when the caller has no typed module yet. Prefer
+    ``_run_lexical_import_pass_on_module`` when a session already owns the body.
+    """
+    _require_source_cid_matches_text(source, source_cid)
+    module = SourceFile((source, str(path), source_cid)).root
+    return _run_lexical_import_pass_on_module(
+        module,
+        root=root,
+        path=path,
+        source=source,
+        source_cid=source_cid,
+        module_identities=module_identities,
+    )
 
 
 def authenticated_import_uses(
