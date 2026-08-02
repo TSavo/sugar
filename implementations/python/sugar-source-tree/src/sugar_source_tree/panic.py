@@ -172,6 +172,39 @@ class ConstructedValueTestimonyNotWritten(SugarNotWritten):
 # Taxonomy deleted. Construct or panic.
 
 
+class ContextManagerResolutionConstructionGap(SugarNotWritten):
+    """With cannot construct: no authenticated CM contract for this use-site.
+
+    One named door for the require path — not a residual-kind vocabulary.
+    When the preconstruction table carries a gap row, ``kind`` / ``target_symbol``
+    are the row's detail strings (opaque evidence), never a closed enum the
+    board invents kinds from. When the table has no row, those fields are None
+    and ``observed`` names the missing coordinate.
+
+    Construct when a ``ContextManagerContractRefV1`` (or source-derived peer)
+    is present; otherwise this panic — never SoftUnresolvedWithSugar.
+    """
+
+    _LABEL = "CONTEXT MANAGER RESOLUTION GAP"
+
+    def __init__(
+        self,
+        *,
+        use_site: object | None = None,
+        target_symbol: str | None = None,
+        resolution_kind: str | None = None,
+        demand_cid: str | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.use_site = use_site
+        self.target_symbol = target_symbol
+        self.demand_cid = demand_cid
+        # Optional detail from the resolution row (e.g. "runtime-selected").
+        # Not a closed WithConstructionGapKind vocabulary — deleted.
+        self.kind = resolution_kind
+
+
 class UnsupportedContextManagerSemantics(SugarNotWritten):
     """Manager semantics not constructible — write the arm or stay loud."""
 
