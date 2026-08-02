@@ -44,6 +44,16 @@ class MutableGlobalValue(FloorValue):
     def denotes_value(self) -> bool:
         return True
 
+    def runtime_type_is_decided(self) -> bool:
+        """Only dict pins decide membership/lookup structure; other kinds stay undecided."""
+        return self.kind == "dict"
+
+    def attribute(self, name, site):
+        """Mutable pin has no field layout at lift — undecided, not missing Floor.attribute."""
+        return self.undecided_attribute(
+            name, site, owner="MutableGlobalValue.attribute"
+        )
+
     def subscript(self, index, site):
         if self.kind != "dict":
             return self.undecided_subscript(
@@ -96,7 +106,9 @@ class MutableGlobalValue(FloorValue):
 
     def contains(self, item, site):
         if self.kind != "dict":
-            return super().contains(item, site)
+            return self.undecided_contains(
+                item, site, owner="MutableGlobalValue.contains"
+            )
         if getattr(site, "source_cid", None) != self.pin_source_cid:
             from sugar_source_tree.panic import SugarNotWritten
 
