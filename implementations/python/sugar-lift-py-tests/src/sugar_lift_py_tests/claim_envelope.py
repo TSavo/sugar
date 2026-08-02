@@ -154,7 +154,14 @@ def _authoring_to_value(a: Authoring) -> Value:
         if a.rationale is not None and a.rationale != "":
             pairs.append(("rationale", vstr(a.rationale)))
         return vobj(pairs)
-    raise TypeError(f"unknown Authoring variant: {type(a)!r}")
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    construction_panic_gap(
+        owner="claim_envelope.authoring",
+        blame="claim_envelope",
+        observed=f"Authoring species {type(a).__name__} has no arm",
+        requested="a written Authoring variant",
+        fix=f"write Authoring arm for {type(a).__name__}",
+    )
 
 
 # ---------------------------------------------------------------------------

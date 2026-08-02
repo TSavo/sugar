@@ -967,7 +967,15 @@ def formula_term(formula: Formula) -> Term:
             [str_const(formula.name), str_const(sort_name), formula_term(formula.body)],
             symbol_kind="coordinate",
         )
-    raise TypeError(f"unknown Formula construction: {type(formula).__name__}")
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="ir.formula_term",
+        blame="ir.formula_term",
+        observed=f"Formula species {type(formula).__name__} has no formula_term arm",
+        requested="Atomic | Connective | Quantifier (written Formula constructors)",
+        fix=f"write formula_term arm for {type(formula).__name__}",
+    )
 
 
 # EvidenceTerm --------------------------------------------------------------

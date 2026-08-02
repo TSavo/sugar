@@ -16,8 +16,14 @@ def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
     gap so kit-domain multi-arm outcomes stay on the typed-gap axis, never bare.
     """
     if isinstance(outcome, Incomplete):
-        raise RuntimeError(
-            f"{owner} cannot read completed value from incomplete effect: {outcome.reason}"
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner=owner,
+            blame=owner,
+            observed=f"Incomplete effect (reason={outcome.reason!r}); no completed floor value",
+            requested="Complete floor value",
+            fix="do not project complete_value from Incomplete; reduce or leave the gap loud",
         )
     if isinstance(outcome, Complete):
         return outcome.value
@@ -41,6 +47,12 @@ def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
                 gap_locus=GapLocus.PROJECTION,
             )
         )
-    raise RuntimeError(
-        f"{owner} cannot read completed value from {type(outcome).__name__}"
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner=owner,
+        blame=owner,
+        observed=f"outcome species {type(outcome).__name__} has no complete_value arm",
+        requested="Complete | ExitSet (ExitSet already handled) | Incomplete (refused)",
+        fix=f"write complete_value arm for {type(outcome).__name__} or refuse earlier",
     )

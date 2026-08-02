@@ -44,9 +44,17 @@ class ConstructedObjectPlaceSugar(ConstructedTermSugar):
         value_term = self.value.to_term(owner=owner)
         testimony_cid = getattr(self.testimony, "semantic_value_cid", None)
         if not isinstance(testimony_cid, str):
-            raise TypeError(
-                f"{owner}: ConstructedObjectPlaceSugar.testimony requires "
-                f"semantic_value_cid str, got {type(self.testimony).__name__}"
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner=owner,
+                blame=getattr(self, "site", owner),
+                observed=(
+                    "ConstructedObjectPlaceSugar.testimony has no semantic_value_cid str; "
+                    f"got {type(self.testimony).__name__}"
+                ),
+                requested="testimony with semantic_value_cid: str",
+                fix="mint constructed-value testimony before ConstructedObjectPlaceSugar.to_term",
             )
         return ctor(
             "python:constructed-object-place",

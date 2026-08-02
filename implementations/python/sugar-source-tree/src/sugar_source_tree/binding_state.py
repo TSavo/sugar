@@ -949,7 +949,15 @@ def _node_shape_v2_preimage(ref: object, child_cid: "dict[int, str]") -> dict[st
         else:
             # NEVER a fallback to subtree embedding: an unknown slot kind is a
             # gap in the schema, reported loudly, not inlined behind our backs.
-            raise TypeError(f"unknown backend slot {type(slot).__name__}")
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=desc.kind if hasattr(desc, "kind") else "node-shape-v2",
+                owner="backend_node_shape_v2",
+                observed=f"backend slot species {type(slot).__name__} has no NodeShapeV2 arm",
+                requested="Child | MaybeChild | Children | Leaf | OpLeaf | OpsLeaf",
+                fix=f"write NodeShapeV2 arm for {type(slot).__name__}; never inline a fallback",
+            )
         slots.append({"name": name, "value": value})
     return {
         "domain": NODE_SHAPE_V2_DOMAIN,

@@ -311,6 +311,7 @@ def aggregate_terminal_rows(
     defects: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
     files_completed = 0
+    files_panicked = 0
     functions_total = 0
     functions_clean = 0
     functions_enumerated = 0
@@ -321,14 +322,21 @@ def aggregate_terminal_rows(
 
     for file, raw in measured_rows:
         row = dict(raw)
-        category = str(row.get("category"))
-        floor_rows.append({"file": file, "category": category})
+        # construct-or-panic: completed means constructed; anything else panicked.
+        # (Legacy "category" string is not a residual taxonomy — only a completion bit.)
+        category = str(row.get("category") or "")
+        constructed = category == "completed" or (
+            not category and not row.get("panic") and not row.get("defect")
+        )
+        floor_rows.append(
+            {"file": file, "constructed": constructed}
+        )
         ft = int(row.get("functionsTotal") or 0)
         functions_total += ft
         functions_enumerated += int(
             row.get("functionsEnumerated")
             if row.get("functionsEnumerated") is not None
-            else (ft if category == "completed" else 0)
+            else (ft if constructed else 0)
         )
         # Clean: never treat missing as 0-of-total tautology. Null → refuse ratio.
         if row.get("cleanRatioRefused") or row.get("functionsClean") is None:
@@ -338,7 +346,6 @@ def aggregate_terminal_rows(
                 clean_refuse_reasons.append(f"{file}:{reason}")
         else:
             functions_clean += int(row.get("functionsClean") or 0)
-        # R_instrument_blind taxonomy deleted — panic is panic.
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
         desugar_categories.update(row.get("desugarCategories") or {})
@@ -351,10 +358,10 @@ def aggregate_terminal_rows(
         desugar_defects.extend(row.get("desugarDefects") or [])
         desugar_designed_gaps.extend(row.get("desugarDesignedGaps") or [])
 
-        if category == "completed":
+        if constructed:
             files_completed += 1
         else:
-            # construct-or-panic: anything not completed is a panic (no kind labels)
+            files_panicked += 1
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(dict(panic))
@@ -365,7 +372,11 @@ def aggregate_terminal_rows(
                 defects.append({"file": file, "type": "panic", "message": str(panic)})
             else:
                 defects.append(
-                    {"file": file, "type": str(category), "message": str(category)}
+                    {
+                        "file": file,
+                        "type": "panic",
+                        "message": str(category or "unconstructed"),
+                    }
                 )
 
     files_complete = (
@@ -391,6 +402,7 @@ def aggregate_terminal_rows(
         "defects": defects,
         "floor_rows": floor_rows,
         "files_completed": files_completed,
+        "files_panicked": files_panicked,
         "functions_total": functions_total,
         "functions_clean": functions_clean,
         "functions_enumerated": functions_enumerated,
@@ -433,20 +445,39 @@ def seal_board_from_aggregate(
     backend_defects = Counter(agg["backend_defects"])
     construction_panics = list(agg["construction_panics"])
     defects = list(agg["defects"])
-    r_construction = sum(families.values())
-    r_desugar = sum(desugar_families.values())
+    # One meaning each — never bag-sum-as-the-residual.
+    r_construction_panics = len(construction_panics)
+    r_desugar_panics = len(agg["desugar_construction_panics"])
+    r_desugar_defects = len(agg["desugar_defects"])
+    r_desugar_owed = int(desugar_categories.get("typed-refusal", 0))
+    r_desugar_accounted = int(desugar_categories.get("constructed-effect", 0))
     r_backend = sum(backend_defects.values())
+    cm = Counter(agg["cm_resolutions"])
+    r_cm_constructed = int(
+        cm.get("constructed", 0) + cm.get("derived-contract", 0)
+    )
+    r_cm_unconstructed = int(cm.get("unconstructed", 0)) + sum(
+        int(v) for k, v in cm.items() if str(k).startswith("gap:")
+    )
 
-    # C4 Step 1: three sealed meanings, not one overloaded int.
-    # LocalReadings are free; only the seal doors + board_fields_from_sealed_facts
-    # may mint board function fields. Bare ints cannot pass the consumer.
+    # Files unit — THREE meanings under what used to look like one "files" count:
+    #   enrolled  = pin population (how many exist on the pin)
+    #   terminal  = how many we processed (got a row)
+    #   completed = how many constructed (not panicked)
+    files_enrolled = len(file_names)
+    files_terminal = int(agg["terminal_count"])
+    files_completed = int(agg["files_completed"])
+    files_panicked = int(agg.get("files_panicked") or max(0, files_terminal - files_completed))
+    files_missing = len(agg["missing_files"])
+
+    # Functions unit — THREE sealed meanings (already split; not one figure).
     pin_id = (
         aggregate_hash
         or (plan or {}).get("aggregateHash")
         or _PANDAS_3_0_3_AGGREGATE_HASH
     )
     pop_fact = seal_functions_population_v1(
-        LocalReading(int(agg["functions_total"]), "functions_total"),
+        LocalReading(int(agg["functions_total"]), "functions_population"),
         tip=measured_commit,
         pin=str(pin_id),
     )
@@ -473,7 +504,6 @@ def seal_board_from_aggregate(
             pin=str(pin_id),
             refused=False,
         )
-    # Consumer close: bare int cannot become a board field.
     fn_fields = board_fields_from_sealed_facts(pop_fact, enum_fact, clean_fact)
 
     body: dict[str, Any] = {
@@ -507,12 +537,15 @@ def seal_board_from_aggregate(
         "isolation": "in-process",
         "paths": dict(paths or {}),
         # Dual unit denominator — files and functions NEVER share a slot.
-        # functions.* comes only from sealed meaning types (C4 consumer close).
+        # Each count is ONE meaning; see docs/audits/board-number-meanings.md.
         "denominator": {
             "files": {
-                "enrolled": len(file_names),
-                "terminalRows": int(agg["terminal_count"]),
-                "completed": int(agg["files_completed"]),
+                "enrolled": files_enrolled,
+                "terminal": files_terminal,
+                "completed": files_completed,
+                "panicked": files_panicked,
+                "missing": files_missing,
+                "terminalRows": files_terminal,
                 "corpusManifestCid": agg.get("manifest_cid"),
                 "enrolledFiles": list(file_names),
                 "missingFiles": list(agg["missing_files"]),
@@ -521,46 +554,41 @@ def seal_board_from_aggregate(
                 "complete": bool(agg["files_complete"]),
             },
             "functions": dict(fn_fields["denominator_functions"]),
-            # Back-compat flat keys (file unit only) for older readers.
-            "enrolled": len(file_names),
-            "terminalRows": int(agg["terminal_count"]),
-            "completed": int(agg["files_completed"]),
-            "corpusManifestCid": agg.get("manifest_cid"),
-            "enrolledFiles": list(file_names),
-            "missingFiles": list(agg["missing_files"]),
-            "duplicateFiles": list(agg["duplicate_files"]),
-            "malformedRows": list(agg["malformed_rows"]),
-            "complete": bool(agg["files_complete"]),
         },
-        "filesTotal": len(file_names),
-        "filesCompleted": int(agg["files_completed"]),
-        "enrolledFiles": len(file_names),
-        "populationSize": len(file_names),
-        "defects": defects,
-        "instrumentDefects": list(defects),
-        "R_instrument_defects": len(defects),
-        "constructionPanics": construction_panics,
-        "R_construction_panics": len(construction_panics),
-        # Function fields only via sealed types — bare ints cannot land here.
-        "functionsTotal": fn_fields["functionsTotal"],
+        # --- Files unit (one name per meaning) ---
+        "filesEnrolled": files_enrolled,
+        "filesTerminal": files_terminal,
+        "filesCompleted": files_completed,
+        "filesPanicked": files_panicked,
+        "filesMissing": files_missing,
+        # Back-compat aliases (same meaning as filesEnrolled — do not invent a fourth).
+        "filesTotal": files_enrolled,
+        "enrolledFiles": files_enrolled,
+        "populationSize": files_enrolled,
+        # --- Functions unit (one name per meaning; sealed types own the mint) ---
+        "functionsPopulation": fn_fields["functionsTotal"],
         "functionsEnumerated": fn_fields["functionsEnumerated"],
         "functionsUnaccounted": fn_fields["functionsUnaccounted"],
         "functionsConstructClean": fn_fields["functionsConstructClean"],
         "cleanRatioRefused": fn_fields["cleanRatioRefused"],
         "sealedFunctionFactCids": dict(fn_fields["sealedFactCids"]),
         "cleanRefuseReasons": list(agg.get("clean_refuse_reasons") or []),
-        "R": r_construction,
-        "R_construction": r_construction,
-        "families": dict(
-            sorted(families.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "R_desugar": r_desugar,
+        # Back-compat: functionsTotal means population (not enumerated, not clean).
+        "functionsTotal": fn_fields["functionsTotal"],
+        # --- Construct or panic (counts of panics, not kind bags) ---
+        "constructionPanics": construction_panics,
+        "R_construction_panics": r_construction_panics,
+        "defects": defects,
+        "R_defects": len(defects),
+        # --- Desugar: never one bag number as the residual ---
+        "desugarConstructionPanics": list(agg["desugar_construction_panics"]),
+        "R_desugar_construction_panics": r_desugar_panics,
+        "desugarDefects": list(agg["desugar_defects"]),
+        "R_desugar_defects": r_desugar_defects,
+        "R_desugar_owed_work": r_desugar_owed,
+        "R_desugar_accounted_semantics": r_desugar_accounted,
         "desugarCategories": dict(
             sorted(desugar_categories.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "R_desugar_owed_work": int(desugar_categories.get("typed-refusal", 0)),
-        "R_desugar_accounted_semantics": int(
-            desugar_categories.get("constructed-effect", 0)
         ),
         "desugarByCategoryOwner": dict(
             sorted(
@@ -571,19 +599,12 @@ def seal_board_from_aggregate(
         "desugarFamilies": dict(
             sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
         ),
-        "R_backend_defects": r_backend,
-        "backendDefects": dict(
-            sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "cmResolutions": dict(
-            sorted(
-                Counter(agg["cm_resolutions"]).items(),
-                key=lambda item: (-item[1], item[0]),
-            )
-        ),
-        "R_cm_derived_contract": int(
-            Counter(agg["cm_resolutions"]).get("derived-contract", 0)
-        ),
+        # --- CM with-items: constructed vs not (no kind partition) ---
+        "cmResolutions": dict(sorted(cm.items(), key=lambda item: (-item[1], item[0]))),
+        "R_cm_constructed": r_cm_constructed,
+        "R_cm_unconstructed": r_cm_unconstructed,
+        # Back-compat name for constructed count.
+        "R_cm_derived_contract": r_cm_constructed,
         "withCensus": with_census,
         "astSitePrevalence": dict(
             sorted(
@@ -591,16 +612,31 @@ def seal_board_from_aggregate(
                 key=lambda item: (-item[1], item[0]),
             )
         ),
-        "desugarConstructionPanics": list(agg["desugar_construction_panics"]),
-        "R_desugar_construction_panics": len(agg["desugar_construction_panics"]),
-        "desugarDefects": list(agg["desugar_defects"]),
-        "R_desugar_defects": len(agg["desugar_defects"]),
         "unresolvableDispatchTargets": list(agg["unresolvable_dispatch"]),
         "R_unresolvable_dispatch_targets": len(agg["unresolvable_dispatch"]),
+        "R_backend_defects": r_backend,
+        "backendDefects": dict(
+            sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
+        ),
+        # Owner detail tables (not residual kind taxonomies).
+        "families": dict(
+            sorted(families.items(), key=lambda item: (-item[1], item[0]))
+        ),
         "elapsedSeconds": elapsed_seconds,
         "planCid": (plan or {}).get("planCid"),
         "perShardCids": dict(sorted((per_shard_cids or {}).items())),
         "composeSchema": COMPOSE_SCHEMA,
+        # Explicit: board residual for construction is panic count, not family bag.
+        "boardNumberMeanings": {
+            "files": "enrolled | terminal | completed | panicked | missing",
+            "functions": "population | enumerated | clean (or clean refused)",
+            "construction": "R_construction_panics = len(constructionPanics)",
+            "desugar": (
+                "R_desugar_construction_panics | R_desugar_defects | "
+                "R_desugar_owed_work | R_desugar_accounted_semantics — never one bag"
+            ),
+            "cm": "R_cm_constructed | R_cm_unconstructed",
+        },
     }
     if source_stamp is not None:
         body["sourceStamp"] = dict(source_stamp)
