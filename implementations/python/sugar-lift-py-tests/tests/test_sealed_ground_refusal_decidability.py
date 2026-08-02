@@ -144,3 +144,16 @@ def test_kit_incomplete_is_not_c3_finality_door() -> None:
     require_refusal_ground_holds(ground)
     # Distinct type from EnrolledDemandUnresolved so residual class can split R
     assert not isinstance(ground, EnrolledDemandUnresolved)
+
+
+def test_enrolled_demand_mint_refused_when_table_has_ref() -> None:
+    """C3 tooth: holds can be FALSE — refusing over a resolved demand is illegal."""
+    ground = enrolled_demand_unresolved(
+        demand_family="context-manager",
+        demand_cid="demand:blake3-512:resolved",
+        use_site="x.py:1:0",
+        gap_kind="no-derived-contract",
+        expected_ref_type="ContextManagerContractRefV1",
+    )
+    with pytest.raises(TypeError, match="does not hold"):
+        require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": False})
