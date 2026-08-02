@@ -19,6 +19,13 @@ name: Control-effect recensus (authoritative scoreboard)
 # - Missing or failed seat → UNMEASURED envelope naming the missing shards;
 #   NEVER seal over the shards that finished.
 # - fail-fast: false so compose always sees the receipt set.
+# - CORPUS PIN GATE (exit 78): every plan and every shard job refuses unless the
+#   runner's pandas matches docs/ledgers/pins/pandas-3.0.3.pin.json
+#   (3.0.3 / 1421 files). A sealed board against the wrong pin is worse than
+#   no board — it carries a receipt. tools/bx_corpus_pin_gate.py.
+#   Load (76) / lease (77) apply to human brun timing; CI pin is mandatory.
+#   Lease is not wired here until runner topology is proven shared-vs-private
+#   (matrix may be multi-box).
 #
 # WHY NIGHTLY AND NOT push:[main]
 #
@@ -78,6 +85,23 @@ jobs:
           }
           echo "recensus population: authenticated pandas corpus at $PANDAS_CORPUS"
           echo "root=$PANDAS_CORPUS" >> "$GITHUB_OUTPUT"
+
+      # Gate before any plan artifact: wrong pandas (e.g. system 2.3.3/1415)
+      # must not produce planCid / LPT keys / sealed boards. Exit 78.
+      - name: "Phase: corpus pin gate (3.0.3 / 1421; exit 78 if wrong)"
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ steps.population.outputs.root }}
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-source-tree/src${PYTHONPATH:+:$PYTHONPATH}"
+          PIN="docs/ledgers/pins/pandas-3.0.3.pin.json"
+          test -f "$PIN" || { echo "::error::banked corpus pin missing at $PIN"; exit 78; }
+          test -d "$PANDAS_CORPUS" || { echo "::error::corpus root missing: $PANDAS_CORPUS"; exit 78; }
+          python tools/bx_corpus_pin_gate.py \
+            --expected-pin "$PIN" \
+            --corpus-root "$PANDAS_CORPUS"
+          echo "JOB_LOG phase=corpus-pin-gate status=ok job=plan root=$PANDAS_CORPUS"
 
       # Pin first so the LPT cache key includes aggregateHash — empty CI runners
       # otherwise plan with an empty shelf and degrade to equal-count (1.87× pole).
@@ -261,6 +285,23 @@ jobs:
             lpt-recensus-file-costs-${{ needs.plan.outputs.aggregate_hash }}-
             lpt-recensus-file-costs-
 
+      # Each seat re-gates: matrix runners may not share the plan job's env.
+      # Wrong pin on one seat would mint a partial that looks like product signal.
+      - name: "Phase: corpus pin gate (3.0.3 / 1421; exit 78 if wrong)"
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ needs.plan.outputs.root }}
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-source-tree/src${PYTHONPATH:+:$PYTHONPATH}"
+          PIN="docs/ledgers/pins/pandas-3.0.3.pin.json"
+          test -f "$PIN" || { echo "::error::banked corpus pin missing at $PIN"; exit 78; }
+          test -d "$PANDAS_CORPUS" || { echo "::error::corpus root missing: $PANDAS_CORPUS"; exit 78; }
+          python tools/bx_corpus_pin_gate.py \
+            --expected-pin "$PIN" \
+            --corpus-root "$PANDAS_CORPUS"
+          echo "JOB_LOG phase=corpus-pin-gate status=ok job=shard seat=s$(printf '%02d' '${{ matrix.shard }}') root=$PANDAS_CORPUS"
+
       - name: "Phase: measure shard partial only"
         shell: bash
         env:
@@ -279,11 +320,13 @@ jobs:
           echo "recensus phase=measure-shard status=start shard=$SHARD/$K corpus_root=$PANDAS_CORPUS commit=$GITHUB_SHA"
           # Worker: --plan-json + --shard-index → PARTIAL only (never seals).
           # control_effect_recensus write-throughs each file_s → LPT shelf.
+          # --require-corpus-pin: second belt (exit 78) if pin drifts mid-run.
           python -u implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
             "$PANDAS_CORPUS" \
             --corpus-root "$PANDAS_CORPUS" \
             --repo "$GITHUB_WORKSPACE" \
             --commit "$GITHUB_SHA" \
+            --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
             --out-dir "$OUT" \
             --plan-json "$PLAN" \
             --shard-index "$SHARD" \

@@ -220,6 +220,19 @@ Do not each invent argv. Copy from this file. Cite stderr `load1_before` /
 A JSON body without exit 0, or without load `lease=held` **and** pin `phase=ok`,
 is not a timing receipt.
 
+## CI recensus (control-effect k=8)
+
+Human brun timing uses all three gates (76/77/78). The GitHub
+`control-effect-recensus` workflow (LPT k=8 + compose seal) **must** run the
+**corpus pin gate** on every plan and every shard job before it mints plan or
+partial artifacts — **exit 78** if the runner is not pandas **3.0.3 / 1421**
+(`docs/ledgers/pins/pandas-3.0.3.pin.json` via `tools/bx_corpus_pin_gate.py`).
+A sealed board against the wrong pin is worse than no board.
+
+Load (76) and lease (77) stay brun-path defaults until CI runner topology is
+proven shared-vs-private (matrix may already be multi-box). Pin is mandatory
+either way.
+
 ## Forbidden
 
 - Any pandas open / walk / census / profile / cProfile / k=8 / demand-table
@@ -227,9 +240,12 @@ is not a timing receipt.
 - Broad local pytest.
 - Reporting a wall-clock taken while `bx-load-gate` was not armed or exited 76.
 - Inventing a parallel harness next to `bin/brun`.
+- CI plan/shard without the corpus pin gate (exit 78).
 
 ## Related
 
 - `docs/build-execution.md` — sugarbin / brun / bpytest routes
+- `docs/contributing/measurement-conditions.md` — law + incidents (when present on tip)
 - `docs/contributing/heavy-measurement-lease.md` — exclusive heavy jobs on the box
 - `bin/brun --help` — options and quiet-gate env vars
+- `.github/workflows/control-effect-recensus.yml` — pin gate on plan + each seat

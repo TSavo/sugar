@@ -89,25 +89,40 @@ Optional but preferred: expected **aggregate hash** from the banked pin (printed
 on pin-ok), host name, and `nproc`. JSON result bodies should not be cited
 without the matching stderr gate lines from the same run.
 
-## How to obey
+## CI recensus
 
-- Invoke **`bin/brun` by path** from the repo root (not on PATH in a bare shell).
+Human `bin/brun` timing uses all three gates. The control-effect recensus
+workflow (`.github/workflows/control-effect-recensus.yml`, LPT k=8 + compose)
+**must** run the **corpus pin gate** on **plan and every shard job** before
+minting plan or partial bodies — **exit 78** if the runner is not pandas
+**3.0.3 / 1421** (`tools/bx_corpus_pin_gate.py` + banked pin). Shard measure
+also passes `--require-corpus-pin` into `control_effect_recensus` (second belt).
+
+A sealed board against the wrong pin is worse than no board — it carries a
+receipt.
+
+**Load (76) and lease (77) are not wired in CI** until runner topology is
+proven: the matrix may already be multi-box (lease would only serialize
+same-host seats). Pin is mandatory either way. If topology later proves a
+shared box, add lease under the same quiet discipline as brun.
+
+## How to obey (human timing)
+
+- Invoke **`bin/brun` by path** from the repo root.
 - Always arm quiet: `SUGAR_BX_REQUIRE_QUIET=1`.
-- Always measure with **`.venv-py312/bin/python`** after
-  `bin/brun -- bash scripts/bootstrap-venv-py312.sh` (or a remote checkout
-  already proven by exit-0 pin gate).
-- Canonical shapes (single file, N-walk, k=8): **`docs/contributing/battleaxe-timing.md`**.
-- Implementation: load + lease in `bin/lib/sugar-bx.sh`; pin in
-  `tools/bx_corpus_pin_gate.py`; recensus pin refuse exit 78 in
-  `control_effect_recensus.py`.
+- Always measure with **`.venv-py312/bin/python`** after bootstrap (or a remote
+  checkout already proven by exit-0 pin gate).
+- Canonical shapes: **`docs/contributing/battleaxe-timing.md`**.
 
 ## Forbidden
 
 - Wall-clock or residual numbers from the Mac under agent load.
 - Concurrent quiet-gated runs that skip the lease.
 - System python / unpinned site-packages as the corpus.
-- Citing a JSON artifact without load, lease, pin, file count, and tip SHA.
+- Citing a JSON artifact without load, lease, pin, file count, and tip SHA
+  (for brun timing); citing a CI board without pin gate green.
 - Inventing a second remote harness next to `bin/brun`.
+- CI plan/shard that mints artifacts before the corpus pin gate.
 
 ---
 
