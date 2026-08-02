@@ -1,12 +1,13 @@
-"""With census conservation: Class B refusal + measurement partition teeth.
+"""With census conservation: construct-or-panic partition teeth.
 
 Conservation identity (binding):
-  site:with-item == constructed + typed_gaps
+  site:with-item == constructed + unconstructed
   over the effective use-site set With construction sees.
 
-Landmine class A (fixed elsewhere): families rebind.
-This module: Class B honest refusal when the identity fails, and teeth that
-discriminate measurement defect (wrong table) from product residual.
+The tally owns canonical coordinate-keyed rows. The partition consumes those
+same keys exactly once while splitting the closed constructed/unconstructed
+outcomes; deleted resolution kinds and gap buckets never re-enter through a
+compatibility decoder.
 """
 
 from __future__ import annotations
@@ -32,34 +33,106 @@ def _load():
     return module
 
 
+def _resolution_row(index: int, outcome: str) -> dict[str, object]:
+    return {
+        "inputKey": {
+            "sourceCid": "sha256:" + ("a" * 64),
+            "startLine": index,
+            "startCol": 4,
+            "endLine": index,
+            "endCol": 8,
+        },
+        "observedEventType": "tests.PlantedResolution",
+        "outcome": outcome,
+    }
+
+
 def test_conservation_identity_is_stated_on_partition_and_refusal():
     module = _load()
     law = module.WITH_CENSUS_CONSERVATION_IDENTITY
     assert "site:with-item" in law
     assert "constructed" in law
-    assert "typed_gaps" in law
+    assert "unconstructed" in law
 
     # Conserving case embeds the law.
+    rows = [
+        *[_resolution_row(index, "constructed") for index in range(1, 3)],
+        *[_resolution_row(index, "unconstructed") for index in range(3, 6)],
+    ]
     ok = module._with_census_partition(
-        Counter({"derived-contract": 2, "gap:runtime-selected": 3}),
+        rows,
         Counter({"site:with-item": 5}),
     )
     assert ok["conserves"] is True
     assert ok["conservationIdentity"] == law
     assert ok["unaccounted"] == 0
+    assert ok["accounted"] == 5
+    assert ok["unconstructed"] == 3
+    assert ok["edgeWitness"]["inputKeyManifest"] == ok["edgeWitness"][
+        "outputKeyManifest"
+    ]
+    assert ok["edgeWitness"]["missingKeys"] == []
+    assert ok["edgeWitness"]["extraKeys"] == []
+    assert "typed_gaps" not in ok
+    assert "typed_gap_kinds_total" not in ok
+    assert "unrecognized_resolution_kinds" not in ok
 
     # Refusal names the law and which side is short.
     with pytest.raises(ValueError, match="LAW:") as caught:
         module._with_census_partition(
-            Counter({"gap:runtime-selected": 12}),
+            [_resolution_row(index, "unconstructed") for index in range(12)],
             Counter({"site:with-item": 7915}),
         )
     msg = str(caught.value)
     assert "with_items_total=7915" in msg
     assert "constructed=0" in msg
-    assert "typed_gaps=12" in msg
+    assert "unconstructed=12" in msg
     assert "unaccounted=7903" in msg
-    assert "Do not suppress" in msg
+    assert "Construct or panic" in msg
+
+
+def test_partition_rejects_deleted_resolution_vocabulary() -> None:
+    module = _load()
+    with pytest.raises(TypeError, match="closed outcomes"):
+        module._with_census_partition(
+            [_resolution_row(1, "derived-contract")],
+            Counter({"site:with-item": 1}),
+        )
+
+
+def test_partition_rejects_duplicate_coordinate_rows() -> None:
+    module = _load()
+    row = _resolution_row(1, "constructed")
+    with pytest.raises(TypeError, match="duplicate"):
+        module._with_census_partition(
+            [row, row],
+            Counter({"site:with-item": 2}),
+        )
+
+
+def test_cm_zero_requires_separate_key_attestation() -> None:
+    module = _load()
+    with pytest.raises(ValueError, match="key attestation"):
+        module._attested_cm_counts({"cmResolutions": {}})
+
+    measured_zero = module._with_census_partition(
+        [],
+        Counter({"site:with-item": 0}),
+    )
+    assert module._attested_cm_counts(
+        {
+            "cmResolutions": {"constructed": 0, "unconstructed": 0},
+            "withCensus": measured_zero,
+        }
+    ) == (0, 0)
+
+
+def test_seal_board_additive_legacy_reads_remain_reconciled() -> None:
+    compose_path = _SCRIPTS / "compose_control_effect_board.py"
+    source = compose_path.read_text(encoding="utf-8")
+    assert 'cm.get("constructed", 0) + cm.get("derived-contract", 0)' in source
+    assert 'cm.get("unconstructed", 0)' in source
+    assert 'str(k).startswith("gap:")' in source
 
 
 def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
@@ -125,21 +198,19 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
         import_signature=ImportSignatureV2(()),
         protocol=_Protocol(),
     )
-    buckets, _ = module._tally_cm_resolutions(
+    rows = module._tally_cm_resolutions(
         ctx, source_cid=source_file.unit.source_cid
     )
     sites = module._ast_site_prevalence(path)
     assert sites.get("site:with-item", 0) == 1
-    assert buckets.get("derived-contract", 0) >= 1, (
-        f"known-constructed with must show constructed>0; got {dict(buckets)}"
-    )
-    partition = module._with_census_partition(buckets, sites)
+    assert sum(row["outcome"] == "constructed" for row in rows) >= 1, rows
+    partition = module._with_census_partition(rows, sites)
     assert partition["constructed"] >= 1
     assert partition["conserves"] is True
 
 
-def test_unconstructed_with_item_appears_in_typed_gap_not_silent_drop(tmp_path: Path):
-    """Planted opaque with must land in residual (typed gap), never vanish."""
+def test_unconstructed_with_item_is_counted_not_silently_dropped(tmp_path: Path):
+    """Planted opaque With must remain present as unconstructed, never vanish."""
     module = _load()
     from sugar_lift_py_tests.lift_rpc import (
         open_source_file_for_construction,
@@ -159,17 +230,16 @@ def test_unconstructed_with_item_appears_in_typed_gap_not_silent_drop(tmp_path: 
     source_file = open_source_file_for_construction(
         path, root=tmp_path, construction_context=ctx, populate_derived=True
     )
-    buckets, _ = module._tally_cm_resolutions(
+    rows = module._tally_cm_resolutions(
         ctx, source_cid=source_file.unit.source_cid
     )
     sites = module._ast_site_prevalence(path)
     assert sites.get("site:with-item", 0) == 1
-    typed = sum(v for k, v in buckets.items() if k.startswith("gap:"))
-    assert typed >= 1, f"unconstructed with must residual; got {dict(buckets)}"
-    assert buckets.get("derived-contract", 0) == 0
-    partition = module._with_census_partition(buckets, sites)
+    assert sum(row["outcome"] == "unconstructed" for row in rows) == 1, rows
+    assert sum(row["outcome"] == "constructed" for row in rows) == 0
+    partition = module._with_census_partition(rows, sites)
     assert partition["constructed"] == 0
-    assert sum(partition["typed_gaps"].values()) == 1
+    assert partition["unconstructed"] == 1
     assert partition["conserves"] is True
 
 
@@ -199,7 +269,59 @@ def test_effective_tally_includes_contract_refs_not_only_source_derived(
     # Old defect shape: derived empty, provisional has the gap.
     assert len(ctx.source_derived_contract_refs) == 0
     assert len(refs.by_use_site) == 1
-    buckets, _ = module._tally_cm_resolutions(
+    rows = module._tally_cm_resolutions(
         ctx, source_cid=source_file.unit.source_cid
     )
-    assert sum(buckets.values()) == 1, dict(buckets)
+    assert len(rows) == 1, rows
+
+
+def test_enumerate_with_rows_reach_partition_with_identical_keys(
+    tmp_path: Path,
+) -> None:
+    """The production enumerate door and partition conserve the same members."""
+    module = _load()
+    from recensus_enumerate_consumer import demand_context_manager_resolution_events
+    from sugar_lift_py_tests.lift_rpc import (
+        install_provisional_contract_refs,
+        provisional_contract_refs_from_demands,
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+
+    path = tmp_path / "opaque.py"
+    path.write_text(
+        "def run():\n"
+        "    with mystery():\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    refs = provisional_contract_refs_from_demands(tmp_path)
+    install_provisional_contract_refs(tmp_path, refs)
+    source_cid = path_source(str(path))[2]
+
+    events, gaps = demand_context_manager_resolution_events(
+        workspace_root=tmp_path,
+        file_rel="opaque.py",
+        source_cid=source_cid,
+    )
+    assert gaps == []
+    assert len(events) == 1
+    assert events[0]["outcome"] == "unconstructed"
+    assert "." in str(events[0]["observedEventType"])
+
+    rows = module._tally_cm_resolutions(
+        source_cid=source_cid,
+        resolution_events=events,
+    )
+    partition = module._with_census_partition(
+        rows,
+        module._ast_site_prevalence(path),
+    )
+    event_keys = [event["inputKey"] for event in events]
+    row_keys = [row["inputKey"] for row in rows]
+    edge = partition["edgeWitness"]
+    assert event_keys == row_keys
+    assert edge["inputKeyManifest"] == row_keys
+    assert edge["outputKeyManifest"] == row_keys
+    assert edge["missingKeys"] == []
+    assert edge["extraKeys"] == []
+    assert edge["duplicateKeys"] == []

@@ -8,9 +8,10 @@ WALLS (advisor, binding):
      and refuse CommitMeasurement panics ingestion by construction.
   2. SCOREBOARD_AUTHORITY stays False here. Sole bankable panics producer is
      control_effect_recensus on the authenticated pandas corpus.
-  3. Teeth are the instrument: constructed>0, cpanic=1, residual not vanish,
-     conservation closes, sealed body on PATH_OK. Crash → PATH_UNMEASURED.
-  4. Coverage honesty: five planted files retire serial path-rot discovery,
+  3. Teeth are the instrument: constructed>0, cpanic=1, unconstructed not
+     vanish, exact two-item accounting closes, sealed body on PATH_OK.
+     Crash → PATH_UNMEASURED.
+  4. Coverage honesty: four planted files retire serial path-rot discovery,
      not Class B corpus scale (thousands of with-items) or the full walk.
   5. measurementClass = recensus-path-smoke — never control-effect-recensus.
 
@@ -26,6 +27,7 @@ SCOREBOARD_AUTHORITY = False
 import importlib.util
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -60,6 +62,15 @@ def _narrate(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _worktree_sha() -> str:
+    value = os.environ.get("WITH_WIRE_WORKTREE_SHA", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise RuntimeError(
+            "WITH_WIRE_WORKTREE_SHA must carry the exact committed reproducer SHA"
+        )
+    return value
+
+
 def _load_recensus():
     path = _SCRIPTS / "control_effect_recensus.py"
     if str(_SCRIPTS) not in sys.path:
@@ -68,10 +79,16 @@ def _load_recensus():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    # Path smoke must never promote the recensus module's authority flag.
-    assert getattr(module, "SCOREBOARD_AUTHORITY", None) is True, (
-        "control_effect_recensus must remain SCOREBOARD_AUTHORITY=True; "
-        "this smoke module is False and separate"
+    # Workers stay non-authoritative. The separate compose door owns the seal.
+    assert getattr(module, "SCOREBOARD_AUTHORITY", None) is False, (
+        "control_effect_recensus must remain SCOREBOARD_AUTHORITY=False"
+    )
+    from compose_control_effect_board import (
+        SCOREBOARD_AUTHORITY as compose_authority,
+    )
+
+    assert compose_authority is True, (
+        "compose_control_effect_board must remain the sole scoreboard authority"
     )
     return module
 
@@ -123,7 +140,7 @@ def _seal_path(
 
 
 def _measure_constructed(module, path: Path, workspace: Path) -> dict[str, Any]:
-    """mr_blue plant: SourceDerived at live use-site → derived-contract tally.
+    """mr_blue plant: SourceDerived at live use-site → constructed tally.
 
     Isolate the plant in a single-file workspace so provisional demands see
     exactly one use-site (same isolation as test_with_census_conservation).
@@ -182,14 +199,18 @@ def _measure_constructed(module, path: Path, workspace: Path) -> dict[str, Any]:
             import_signature=ImportSignatureV2(()),
             protocol=_Protocol(),
         )
-        buckets, unrecognized = module._tally_cm_resolutions(
+        resolution_rows = module._tally_cm_resolutions(
             ctx, source_cid=source_file.unit.source_cid
         )
         sites = module._ast_site_prevalence(plant)
+        partition = module._with_census_partition(resolution_rows, sites)
         return {
             "category": "completed",
-            "cmResolutions": dict(buckets),
-            "unrecognizedCmResolutionKinds": dict(unrecognized),
+            "cmResolutions": {
+                "constructed": partition["constructed"],
+                "unconstructed": partition["unconstructed"],
+            },
+            "withResolutionRows": resolution_rows,
             "families": {},
             "sites": dict(sites),
             "relative": f"recensus_path_smoke/{path.name}",
@@ -199,7 +220,7 @@ def _measure_constructed(module, path: Path, workspace: Path) -> dict[str, Any]:
 
 
 def _measure_opaque(module, path: Path, workspace: Path) -> dict[str, Any]:
-    """mr_blue plant: opaque with → typed gap residual (isolated workspace)."""
+    """mr_blue plant: opaque With stays present as unconstructed."""
     import shutil
     import tempfile
 
@@ -218,14 +239,18 @@ def _measure_opaque(module, path: Path, workspace: Path) -> dict[str, Any]:
         source_file = open_source_file_for_construction(
             plant, root=iso, construction_context=ctx, populate_derived=True
         )
-        buckets, unrecognized = module._tally_cm_resolutions(
+        resolution_rows = module._tally_cm_resolutions(
             ctx, source_cid=source_file.unit.source_cid
         )
         sites = module._ast_site_prevalence(plant)
+        partition = module._with_census_partition(resolution_rows, sites)
         return {
             "category": "completed",
-            "cmResolutions": dict(buckets),
-            "unrecognizedCmResolutionKinds": dict(unrecognized),
+            "cmResolutions": {
+                "constructed": partition["constructed"],
+                "unconstructed": partition["unconstructed"],
+            },
+            "withResolutionRows": resolution_rows,
             "families": {},
             "sites": dict(sites),
             "relative": f"recensus_path_smoke/{path.name}",
@@ -235,20 +260,20 @@ def _measure_opaque(module, path: Path, workspace: Path) -> dict[str, Any]:
 
 
 def _measure_clean(module, path: Path, workspace: Path) -> dict[str, Any]:
-    """Production per-file lift door for a clean function (isolated workspace)."""
+    """Production enumerate consumer for a clean function."""
     import shutil
     import tempfile
 
     from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
+    from recensus_enumerate_consumer import measure_file_via_enumerate
 
     iso = Path(tempfile.mkdtemp(prefix="recensus-path-smoke-clean-"))
     try:
         plant = iso / path.name
         shutil.copy2(path, plant)
         refs = provisional_contract_refs_from_demands(iso)
-        row = module._measure_file(
-            plant,
-            relative=f"recensus_path_smoke/{path.name}",
+        row = measure_file_via_enumerate(
+            file_rel=path.name,
             workspace_root=iso,
             contract_refs=refs,
         )
@@ -261,12 +286,13 @@ def _measure_clean(module, path: Path, workspace: Path) -> dict[str, Any]:
 
 
 def _measure_panic(module, path: Path, workspace: Path) -> dict[str, Any]:
-    """Known panic through production _measure_file + ConstructionPanic inject."""
+    """Known panic through the production enumerate consumer."""
     import shutil
     import tempfile
 
     from sugar_lift_py_tests.gap.info import ConstructionGap
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from recensus_enumerate_consumer import measure_file_via_enumerate
     import sugar_source_tree.tree as tree_mod
 
     iso = Path(tempfile.mkdtemp(prefix="recensus-path-smoke-panic-"))
@@ -287,9 +313,8 @@ def _measure_panic(module, path: Path, workspace: Path) -> dict[str, Any]:
         plant = iso / path.name
         shutil.copy2(path, plant)
         tree_mod.SourceFile.__init__ = boom  # type: ignore[method-assign]
-        row = module._measure_file(
-            plant,
-            relative=f"recensus_path_smoke/{path.name}",
+        row = measure_file_via_enumerate(
+            file_rel=path.name,
             workspace_root=iso,
         )
     finally:
@@ -304,7 +329,9 @@ def _measure_panic(module, path: Path, workspace: Path) -> dict[str, Any]:
 def _run_teeth(
     *,
     constructed: int,
-    typed_gaps: int,
+    unconstructed: int,
+    with_items_total: int,
+    accounted: int,
     cpanic: int,
     conserves: bool,
     sealed_path: Path | None,
@@ -333,10 +360,25 @@ def _run_teeth(
     else:
         fail("known_panic", f"cpanic={cpanic} expected 1")
 
-    if typed_gaps >= 1:
-        ok("unconstructed_residual", f"typed_gaps={typed_gaps}")
+    if unconstructed >= 1:
+        ok("known_unconstructed", f"unconstructed={unconstructed}")
     else:
-        fail("unconstructed_residual", f"typed_gaps={typed_gaps} expected >=1")
+        fail(
+            "known_unconstructed",
+            f"unconstructed={unconstructed} expected >=1",
+        )
+
+    if with_items_total == 2 and accounted == with_items_total:
+        ok(
+            "with_items_accounted",
+            f"accounted={accounted} with_items_total={with_items_total}",
+        )
+    else:
+        fail(
+            "with_items_accounted",
+            f"accounted={accounted} with_items_total={with_items_total}; "
+            "expected planted population 2/2",
+        )
 
     if conserves:
         ok("conservation", "with census conserves")
@@ -397,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         phases.append("load_recensus_module")
         _narrate("PATH_SMOKE phase=load_recensus_module")
         module = _load_recensus()
+        worktree_sha = _worktree_sha()
 
         phases.append("enroll_micro_population")
         _narrate("PATH_SMOKE phase=enroll_micro_population")
@@ -448,12 +491,13 @@ def main(argv: list[str] | None = None) -> int:
         phases.append("aggregation")
         _narrate("PATH_SMOKE phase=aggregation")
         cm: Counter[str] = Counter()
+        with_resolution_rows: list[dict[str, Any]] = []
         sites: Counter[str] = Counter()
         families: Counter[str] = Counter()
         construction_panics: list[dict[str, Any]] = []
-        unrecognized: Counter[str] = Counter()
         for row in rows:
             cm.update({k: int(v) for k, v in (row.get("cmResolutions") or {}).items()})
+            with_resolution_rows.extend(row.get("withResolutionRows") or [])
             sites.update({k: int(v) for k, v in (row.get("sites") or {}).items()})
             families.update({k: int(v) for k, v in (row.get("families") or {}).items()})
             if row.get("category") == "panic":
@@ -464,8 +508,6 @@ def main(argv: list[str] | None = None) -> int:
                     families["ConstructionPanic"] = (
                         int(families.get("ConstructionPanic") or 0) + 1
                     )
-            for k, v in (row.get("unrecognizedCmResolutionKinds") or {}).items():
-                unrecognized[k] += int(v)
 
         cpanic = len(construction_panics)
         if cpanic == 0 and families.get("ConstructionPanic", 0) > 0:
@@ -474,10 +516,46 @@ def main(argv: list[str] | None = None) -> int:
         # With-census conservation identity (the Class B door).
         phases.append("conservation")
         _narrate("PATH_SMOKE phase=conservation")
-        partition = module._with_census_partition(cm, sites, unrecognized)
+        partition = module._with_census_partition(with_resolution_rows, sites)
         constructed = int(partition.get("constructed") or 0)
-        typed_gaps = int(sum(partition.get("typed_gaps", {}).values()))
+        unconstructed = int(partition.get("unconstructed") or 0)
+        with_items_total = int(partition.get("with_items_total") or 0)
+        accounted = int(partition.get("accounted") or 0)
         conserves = bool(partition.get("conserves"))
+        key_conservation = dict(partition.get("edgeWitness") or {})
+        first_terminal_chain = {
+            "worktreeSha": worktree_sha,
+            "input": {
+                "cmResolutions": dict(sorted(cm.items())),
+                "site:with-item": with_items_total,
+            },
+            "coordinate": [
+                "planted_constructed_with.py:10:4",
+                "planted_opaque_with.py:5:4",
+            ],
+            "firstObservedTerminal": (
+                "ValueError: with_items_total=2 constructed=0 gaps=0 "
+                "accounted=0 unaccounted=2"
+            ),
+            "entrance": (
+                "control_effect_recensus._with_census_partition "
+                "(scripts/control_effect_recensus.py)"
+            ),
+            "afterFix": {
+                "terminal": "constructed-result",
+                "constructed": constructed,
+                "unconstructed": unconstructed,
+                "accounted": accounted,
+                "with_items_total": with_items_total,
+                "keyMissing": key_conservation.get("missingKeys"),
+                "keyExtra": key_conservation.get("extraKeys"),
+                "keyDuplicates": key_conservation.get("duplicateKeys"),
+            },
+        }
+        _narrate(
+            "PATH_SMOKE FIRST_TERMINAL_CHAIN "
+            + json.dumps(first_terminal_chain, sort_keys=True)
+        )
 
         # Discrimination lies (optional): one fault at a time so negative arms
         # are OBSERVED, not reasoned. Env RECENSUS_PATH_SMOKE_LIE=
@@ -487,6 +565,13 @@ def main(argv: list[str] | None = None) -> int:
         if lie == "constructed_zero":
             _narrate("PATH_SMOKE LIE planted=constructed_zero")
             constructed = 0
+            accounted = unconstructed
+            conserves = accounted == with_items_total
+            partition = dict(partition)
+            partition["constructed"] = constructed
+            partition["accounted"] = accounted
+            partition["unaccounted"] = with_items_total - accounted
+            partition["conserves"] = conserves
         elif lie == "swallow_panic":
             _narrate("PATH_SMOKE LIE planted=swallow_panic")
             cpanic = 0
@@ -494,13 +579,16 @@ def main(argv: list[str] | None = None) -> int:
             families.pop("ConstructionPanic", None)
         elif lie == "drop_opaque":
             _narrate("PATH_SMOKE LIE planted=drop_opaque")
-            # Vanish typed-gap residual; residual tooth must PATH_RED.
-            typed_gaps = 0
+            # Vanish the unconstructed item; accounting teeth must PATH_RED.
+            unconstructed = 0
+            accounted = constructed
+            conserves = accounted == with_items_total
             partition = dict(partition)
-            partition["typed_gaps"] = {
-                k: 0 for k in (partition.get("typed_gaps") or {})
-            }
+            partition["unconstructed"] = unconstructed
             partition["constructed"] = constructed
+            partition["accounted"] = accounted
+            partition["unaccounted"] = with_items_total - accounted
+            partition["conserves"] = conserves
         elif lie == "crash_mid":
             _narrate("PATH_SMOKE LIE planted=crash_mid phase=after-conservation")
             raise RuntimeError(
@@ -516,14 +604,17 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "filesMeasured": len(rows),
             "constructed": constructed,
-            "typedGaps": typed_gaps,
+            "unconstructed": unconstructed,
             "cpanic": cpanic,
             "families": dict(sorted(families.items())),
             "cmResolutions": dict(sorted(cm.items())),
+            "firstTerminalChain": first_terminal_chain,
             "withCensus": {
                 "with_items_total": partition.get("with_items_total"),
                 "constructed": constructed,
-                "typed_gaps_sum": typed_gaps,
+                "unconstructed": unconstructed,
+                "accounted": accounted,
+                "keyMultisetConservation": key_conservation,
                 "conserves": conserves,
                 "conservationIdentity": partition.get("conservationIdentity"),
             },
@@ -553,7 +644,9 @@ def main(argv: list[str] | None = None) -> int:
         _narrate("PATH_SMOKE phase=teeth")
         teeth, failed = _run_teeth(
             constructed=constructed,
-            typed_gaps=typed_gaps,
+            unconstructed=unconstructed,
+            with_items_total=with_items_total,
+            accounted=accounted,
             cpanic=cpanic,
             conserves=conserves,
             sealed_path=sealed,
@@ -584,7 +677,8 @@ def main(argv: list[str] | None = None) -> int:
         elapsed = time.time() - started
         _narrate(
             f"PATH_SMOKE DONE pathVerdict={path_verdict} failedTooth={failed} "
-            f"constructed={constructed} typed_gaps={typed_gaps} cpanic={cpanic} "
+            f"constructed={constructed} unconstructed={unconstructed} "
+            f"accounted={accounted}/{with_items_total} cpanic={cpanic} "
             f"elapsed_s={elapsed:.1f} sealed={sealed}"
         )
         if elapsed > 60:

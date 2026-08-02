@@ -297,42 +297,16 @@ WITH_CENSUS_CONSERVATION_IDENTITY = (
     "site:with-item == constructed + unconstructed "
     "(no residual kind taxonomy)"
 )
-
-
-def _effective_cm_resolutions_for_source(context, *, source_cid: str) -> dict:
-    """Resolutions With construction will see for one source unit.
-
-    Same precedence as ``With._prebound_manager_resolution``: source-derived
-    overwrites ``contract_refs``. Filter by ``source_cid`` so a shared corpus
-    provisional table is counted once per site, not once per file walk.
-    """
-    effective: dict = {}
-    refs = getattr(context, "contract_refs", None)
-    by_use = getattr(refs, "by_use_site", None) or {}
-    for coordinate, resolution in by_use.items():
-        if getattr(coordinate, "source_cid", None) != source_cid:
-            continue
-        effective[coordinate] = resolution
-    derived = getattr(context, "source_derived_contract_refs", None) or {}
-    for coordinate, resolution in derived.items():
-        if getattr(coordinate, "source_cid", None) != source_cid:
-            continue
-        # Derived wins — identical to With construction.
-        effective[coordinate] = resolution
-    return effective
-
-
 def _tally_cm_resolutions(
-    context,
+    context=None,
     *,
     source_cid: str,
-) -> tuple[Counter[str], Counter[str]]:
-    """Count constructed vs unconstructed CM prebinds. No kind buckets."""
+    resolution_events: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Emit one canonical coordinate row per With resolution, no name buckets."""
     from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerContractRefV1,
-        ContextManagerResolutionGapV1,
-        SourceDerivedContextManagerRefV1,
-        SourceDerivedGeneratorResourceRefV1,
+        context_manager_resolution_outcome,
+        effective_context_manager_resolutions_for_source,
     )
 
     if not source_cid:
@@ -341,65 +315,127 @@ def _tally_cm_resolutions(
             "are not multiplied across every file in the census"
         )
 
-    buckets: Counter[str] = Counter()
-    empty: Counter[str] = Counter()
-    for resolution in _effective_cm_resolutions_for_source(
-        context, source_cid=source_cid
-    ).values():
-        if isinstance(
-            resolution,
-            (
-                SourceDerivedContextManagerRefV1,
-                SourceDerivedGeneratorResourceRefV1,
-                ContextManagerContractRefV1,
-            ),
-        ):
-            buckets["constructed"] += 1
-            continue
-        if isinstance(resolution, ContextManagerResolutionGapV1):
-            buckets["unconstructed"] += 1
-            continue
-        raise TypeError(
-            "With resolution table value is neither constructed ref nor gap: "
-            f"{type(resolution).__name__}"
-        )
-    return buckets, empty
+    rows: list[dict[str, Any]] = []
+    if resolution_events is not None:
+        for event in resolution_events:
+            if not isinstance(event, dict):
+                raise TypeError("With resolution event must be an object")
+            key = event.get("inputKey")
+            outcome = event.get("outcome")
+            observed_type = event.get("observedEventType")
+            if (
+                not isinstance(key, dict)
+                or key.get("sourceCid") != source_cid
+                or outcome not in {"constructed", "unconstructed"}
+                or not isinstance(observed_type, str)
+                or "." not in observed_type
+            ):
+                raise TypeError(f"malformed With resolution event: {event}")
+            rows.append(
+                {
+                    "inputKey": dict(key),
+                    "observedEventType": observed_type,
+                    "outcome": outcome,
+                }
+            )
+    else:
+        if context is None:
+            raise TypeError("With resolution tally requires context or raw events")
+        for coordinate, resolution in effective_context_manager_resolutions_for_source(
+            context, source_cid=source_cid
+        ).items():
+            rows.append(
+                {
+                    "inputKey": coordinate.wire(),
+                    "observedEventType": (
+                        f"{type(resolution).__module__}.{type(resolution).__qualname__}"
+                    ),
+                    "outcome": context_manager_resolution_outcome(resolution),
+                }
+            )
+    return sorted(rows, key=lambda row: json.dumps(row["inputKey"], sort_keys=True))
 
 
 def _with_census_partition(
-    cm_resolutions: Counter[str],
+    cm_resolution_rows: list[dict[str, Any]],
     ast_sites: Counter[str],
     unrecognized_kinds: Counter[str] | None = None,
 ) -> dict[str, Any]:
-    """Count constructed vs gap rows. No kind taxonomy, no 42-member vocabulary."""
-    del unrecognized_kinds  # taxonomy deleted
+    """Preserve coordinate keys while splitting constructed/unconstructed."""
+    del unrecognized_kinds
+    from compose_control_effect_board import (
+        STAGE_WITH_TALLY_PARTITION,
+        key_edge_witness,
+    )
+
+    constructed_rows = [
+        dict(row) for row in cm_resolution_rows if row.get("outcome") == "constructed"
+    ]
+    unconstructed_rows = [
+        dict(row) for row in cm_resolution_rows if row.get("outcome") == "unconstructed"
+    ]
+    if len(constructed_rows) + len(unconstructed_rows) != len(cm_resolution_rows):
+        raise TypeError("With partition received a row outside its closed outcomes")
+    input_keys = [dict(row["inputKey"]) for row in cm_resolution_rows]
+    output_rows = [*constructed_rows, *unconstructed_rows]
+    output_keys = [dict(row["inputKey"]) for row in output_rows]
+    edge_witness = key_edge_witness(
+        stage_id=STAGE_WITH_TALLY_PARTITION,
+        input_keys=input_keys,
+        output_keys=output_keys,
+    )
+    if (
+        edge_witness["missingKeys"]
+        or edge_witness["extraKeys"]
+        or edge_witness["duplicateKeys"]
+    ):
+        raise TypeError(
+            "With coordinate-key partition does not conserve: "
+            f"missing={edge_witness['missingKeys']} "
+            f"extra={edge_witness['extraKeys']} "
+            f"duplicate={edge_witness['duplicateKeys']}"
+        )
     total = int(ast_sites.get("site:with-item", 0))
-    constructed = int(cm_resolutions.get("derived-contract", 0))
-    gap_total = sum(v for k, v in cm_resolutions.items() if k.startswith("gap:"))
-    accounted = constructed + gap_total
+    constructed = len(constructed_rows)
+    unconstructed = len(unconstructed_rows)
+    accounted = constructed + unconstructed
     if accounted != total:
         unaccounted = total - accounted
         raise ValueError(
             "With census does not conserve. "
             f"LAW: {WITH_CENSUS_CONSERVATION_IDENTITY}. "
             f"REFUSED: with_items_total={total} constructed={constructed} "
-            f"gaps={gap_total} accounted={accounted} unaccounted={unaccounted}. "
+            f"unconstructed={unconstructed} accounted={accounted} "
+            f"unaccounted={unaccounted}. "
             "Construct or panic — fix the partition or write the missing construction."
         )
     return {
         "conservationIdentity": WITH_CENSUS_CONSERVATION_IDENTITY,
+        "edgeWitness": edge_witness,
+        "constructedRows": constructed_rows,
+        "unconstructedRows": unconstructed_rows,
         "with_items_total": total,
         "constructed": constructed,
-        "typed_gap_kinds_total": 0,
-        "typed_gaps": {},
-        "unrecognized_resolution_kinds": {},
+        "unconstructed": unconstructed,
         "accounted": accounted,
         "unaccounted": 0,
         "reconciliation": (
-            f"{total} = {constructed} constructed + {gap_total} gaps"
+            f"{total} = {constructed} constructed + {unconstructed} unconstructed"
         ),
         "conserves": True,
     }
+
+
+def _attested_cm_counts(result: dict[str, Any]) -> tuple[int, int]:
+    with_census = result.get("withCensus")
+    if not isinstance(with_census, dict):
+        raise ValueError("CM zero lacks key attestation")
+    edge = with_census.get("edgeWitness")
+    if not isinstance(edge, dict) or edge.get("missingKeys") or edge.get("extraKeys"):
+        raise ValueError("CM zero lacks conserving key attestation")
+    return int(with_census.get("constructed", 0)), int(
+        with_census.get("unconstructed", 0)
+    )
 
 
 
@@ -1367,6 +1403,7 @@ def main() -> int:
                     # workspace_root for enumerate is the corpus root; at.file is
                     # the path relative to that root (not the pin-prefixed key).
                     from recensus_enumerate_consumer import (
+                        _instrument_failure_row,
                         measure_file_via_enumerate,
                     )
 
@@ -1375,46 +1412,45 @@ def main() -> int:
                         file_rel=relative,
                         contract_refs=contract_refs,
                     )
-                except (ImportError, AttributeError) as error:
-                    # An arm that cannot resolve its dispatch target is UNWRITTEN,
-                    # wearing a working arm's clothes. Own category, named, loud
-                    # (#6329). Still recover roster/AST mass when possible — never
-                    # bank silent 0 over a file that has functions.
-                    row = terminal_after_measure_escape(
-                        path=path,
-                        relative=relative,
-                        workspace_root=corpus_root,
-                        error=error,
-                        category="panic",
-                    )
-                    # Preserve #6329 owner metadata on the defect object.
-                    defect = dict(row.get("defect") or {})
-                    defect.update(
-                        {
-                            "file": relative,
-                            "type": type(error).__name__,
-                            "message": str(error),
-                            "owner": "kit dispatch target",
-                            "fix": (
-                                "the arm imports a name that does not exist; write "
-                                "the target or delete the arm"
+                    if row.get("terminalKind") in {
+                        "constructed",
+                        "construction-panic",
+                    }:
+                        source_cid = str((row.get("inputKey") or {}).get("sourceCid"))
+                        resolution_rows = _tally_cm_resolutions(
+                            source_cid=source_cid,
+                            resolution_events=list(
+                                row.pop("contextManagerResolutionEvents", [])
                             ),
+                        )
+                        sites = _ast_site_prevalence(path)
+                        with_partition = _with_census_partition(
+                            resolution_rows, sites
+                        )
+                        row["withResolutionRows"] = resolution_rows
+                        row["cmResolutions"] = {
+                            "constructed": with_partition["constructed"],
+                            "unconstructed": with_partition["unconstructed"],
                         }
-                    )
-                    row["defect"] = defect
-                    row["category"] = "panic"
+                        row["astSites"] = dict(sites)
+                        from compose_control_effect_board import EDGE_WITH_PARTITION
+
+                        row.setdefault("edgeWitnesses", {})[
+                            EDGE_WITH_PARTITION
+                        ] = with_partition["edgeWitness"]
                 except BaseException as error:  # noqa: BLE001 -- per-file terminal
-                    # Last-resort shell. Must NOT bank functionsTotal=0 over known
-                    # mass: recover D2 roster (or AST) and name the escape residual.
-                    # ConstructionPanic is BaseException; other escapes will be too.
                     if _is_process_control(error):
                         raise
-                    row = terminal_after_measure_escape(
-                        path=path,
-                        relative=relative,
-                        workspace_root=corpus_root,
-                        error=error,
-                        category="panic",
+                    row = _instrument_failure_row(
+                        error,
+                        file_rel=relative,
+                        phase="main-file-producer",
+                        source_cid=None,
+                        function_nodes=[],
+                        functions_total=int(
+                            _ast_site_prevalence(path).get("site:function-def", 0)
+                        ),
+                        functions_enumerated=0,
                     )
                 file_s = time.perf_counter() - t_file
                 checkpoint.append(file, row)
@@ -1629,7 +1665,8 @@ def main() -> int:
     malformed_rows = sorted(
         file
         for file, raw in measured_rows
-        if not isinstance(raw, dict) or not raw.get("category")
+        if not isinstance(raw, dict)
+        or (not raw.get("category") and not raw.get("instrumentFailure"))
     )
 
     for file, raw in measured_rows:
@@ -1652,12 +1689,19 @@ def main() -> int:
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
         desugar_defects.extend(row.get("desugarDefects") or [])
         desugar_designed_gaps.extend(row.get("desugarDesignedGaps") or [])
+        if row.get("instrumentFailure"):
+            continue
         if category == "completed":
             files_completed += 1
         elif category == "panic":
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(panic)
+            defect = row.get("defect") or panic
+            if isinstance(defect, dict):
+                defects.append(dict(defect))
+                if defect.get("owner") == "kit dispatch target":
+                    unresolvable_dispatch.append(dict(defect))
             # Measure now enrolls ConstructionPanic into the row's families
             # (file-level BaseException path). Prefer that; only fill if a
             # legacy checkpoint row still omits it. Use get+assign so a plain
@@ -1666,39 +1710,11 @@ def main() -> int:
                 families["ConstructionPanic"] = (
                     int(families.get("ConstructionPanic") or 0) + 1
                 )
-        elif category == "panic":
-            defect = row.get("defect")
-            if isinstance(defect, dict):
-                unresolvable_dispatch.append(dict(defect))
-            defects.append(
-                dict(defect)
-                if isinstance(defect, dict)
-                else {"file": file, "type": category, "message": category}
-            )
         else:
-            defect = row.get("defect")
-            defects.append(
-                dict(defect)
-                if isinstance(defect, dict)
-                else {"file": file, "type": category, "message": category}
+            raise TypeError(
+                "control-effect recensus terminal category must be completed or "
+                f"panic; got {category!r} for {file}"
             )
-            # Demand/resolution table hygiene — own counter, not mass residual.
-            # Keep CM-demand vs call-demand bijection failures separate.
-            if isinstance(defect, dict):
-                msg = f"{defect.get('type', '')}: {defect.get('message', '')}"
-            else:
-                msg = str(category)
-            if (
-                "BackendDefect" in msg
-                or "backend defect" in msg.lower()
-                or (
-                    isinstance(defect, dict)
-                    and "BackendDefect" in str(defect.get("type", ""))
-                )
-            ):
-                backend_defects[_backend_defect_key(msg)] += 1
-            elif category == "panic":
-                backend_defects[_backend_defect_key(msg)] += 1
 
     from pandas_floor_summary import floor_summary
 
@@ -1793,9 +1809,7 @@ def main() -> int:
             "R_control_effect": r_construction + len(defects),
             "R_desugar": r_desugar,
             "R_backend_defects": r_backend,
-            "R_cm_derived_contract": int(
-                (result.get("cmResolutions") or {}).get("derived-contract", 0)
-            ),
+            "R_cm_derived_contract": _attested_cm_counts(result)[0],
             "desugarConstructionPanics": len(desugar_construction_panics),
             "desugarDefects": len(desugar_defects),
             "constructionPanics": len(construction_panics),
