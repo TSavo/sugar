@@ -15,6 +15,12 @@ permissions:
 # SHARED ENV: each of 5 jobs was paying 91–163s env prep for 116–184s total
 # job time — same identical wheelhouse N times. Prepare once; axes install
 # --no-index from the artifact (same law as suite + showcase #7020).
+#
+# JOB LOG DOCTRINE: long floors emit named phase/count to the job log ≤30s.
+# PYTHONUNBUFFERED so narration is not held in stdio buffers.
+
+env:
+  PYTHONUNBUFFERED: "1"
 
 jobs:
   python-test-env-prepare:

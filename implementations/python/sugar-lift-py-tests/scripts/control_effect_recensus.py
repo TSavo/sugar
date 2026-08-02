@@ -99,6 +99,12 @@ from typing import Any, Callable, TextIO
 # CI-visible narration: default print buffering makes a live process look dead.
 # Every RECENSUS line uses flush=True; prefer PYTHONUNBUFFERED=1 in the workflow.
 _PROGRESS_EVERY_N = max(1, int(os.environ.get("RECENSUS_PROGRESS_EVERY_N", "1")))
+# Doctrine: never more than 30s of job-log silence on a long path.
+_JOB_LOG_MAX_SILENCE_S = float(os.environ.get("JOB_LOG_MAX_SILENCE_S", "30"))
+
+_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
 
 
 def _narrate(msg: str) -> None:
@@ -120,6 +126,24 @@ def _phase_end(name: str, t0: float) -> None:
     _narrate(
         f"RECENSUS PHASE END: {name} elapsed_s={time.perf_counter() - t0:.3f}"
     )
+
+
+def _phase_call(name: str, fn):
+    """Run a long sub-phase with ≤30s job-log silence (alive lines if blocked)."""
+    from job_log_heartbeat import JobLogHeartbeat
+
+    t0 = _phase_begin(name)
+    beat = JobLogHeartbeat(f"recensus-{name}", max_silence_s=_JOB_LOG_MAX_SILENCE_S)
+    beat.watch()
+    try:
+        result = fn()
+        beat.stop(status="ok")
+        _phase_end(name, t0)
+        return result
+    except BaseException:
+        beat.stop(status="failed")
+        _phase_end(name, t0)
+        raise
 
 
 def _git_commit(root: Path) -> str:
@@ -887,12 +911,15 @@ def main() -> int:
     # anything but the root is the corpus-context drift defect.
     from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
 
-    t_demand = _phase_begin("demand_table_derivation")
+    # Demand-table walk can take minutes with only a BEGIN/END pair — that is
+    # blind by construction. Alive heartbeats every ≤30s hit the job log.
     _narrate(
         f"RECENSUS DEMAND_TABLE deriving provisional refs from workspace_root={workspace_root}"
     )
-    contract_refs = provisional_contract_refs_from_demands(workspace_root)
-    _phase_end("demand_table_derivation", t_demand)
+    contract_refs = _phase_call(
+        "demand_table_derivation",
+        lambda: provisional_contract_refs_from_demands(workspace_root),
+    )
     _narrate(
         "RECENSUS DEMAND_TABLE ready "
         f"(type={type(contract_refs).__name__})"
@@ -1007,15 +1034,22 @@ def main() -> int:
         if live_bar is not None:
             live_bar.set_postfix(postfix, refresh=refresh)
         progress_stream.flush()
-        # File-side tqdm is invisible in CI. Mirror heartbeats to stdout without
-        # TTY gating — rate-limited so per-function postfix does not flood.
-        if not args.progress_stdout or not refresh:
+        # File-side tqdm is invisible in CI. ALWAYS mirror to the job log —
+        # never TTY-gate, never hide behind --progress-stdout (that flag only
+        # controls the optional interactive stderr bar). Cap silence at 30s.
+        if not refresh:
             return
         now = time.monotonic()
         status = str(postfix.get("status") or "")
         force = status not in {"lifting…", "ok", "…"}
-        if not force and now - _last_progress_stdout < 2.0:
+        if not force and now - _last_progress_stdout < _JOB_LOG_MAX_SILENCE_S:
             return
+        if force and now - _last_progress_stdout < 2.0 and status in {
+            "done",
+            "cpanic",
+        }:
+            # Allow dense end-of-file lines without flooding.
+            pass
         _last_progress_stdout = now
         n = getattr(bar, "n", live_done)
         total = getattr(bar, "total", len(file_names)) or len(file_names)

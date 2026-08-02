@@ -6,8 +6,13 @@ One process. One door:
 
 I/O never mixed:
   engine log  → JSONL file (sugar construction telemetry)
-  progress    → tqdm only
+  progress    → optional tqdm file (local tail)
+  job log     → ALWAYS: named phase + running counts (≤30s silence)
   result/print → floor summary lines only
+
+DOCTRINE: if it can run >30s, emit a named phase or count to the JOB LOG
+within 30s and every 30s after. TTY-gated tqdm and file-only progress are
+identical to none in Actions.
 """
 
 from __future__ import annotations
@@ -22,6 +27,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence, TextIO, TypeVar
 
 T = TypeVar("T")
+
+# Repo tools/ is not always on path when floors run as scripts/.
+_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
 
 
 def silence_console_logging() -> None:
@@ -143,45 +153,44 @@ def open_progress(path: Path, *, header: str) -> TextIO:
 def iter_with_tqdm(
     items: Sequence[T],
     *,
-    progress: TextIO,
+    progress: TextIO | None = None,
     total: int | None = None,
     initial: int = 0,
     desc: str = "enum",
     progress_stdout: bool = False,
 ) -> Iterator[T]:
-    try:
-        from tqdm import tqdm
-    except ImportError as error:  # pragma: no cover
-        raise SystemExit(
-            "tqdm is required: python3 -m pip install 'tqdm>=4.66'"
-        ) from error
+    """Yield items with optional file tqdm AND always-on job-log heartbeats.
+
+    ``progress_stdout`` only controls an *extra* interactive tqdm on stderr when
+    a TTY is present. Job-log lines are never TTY-gated and never optional —
+    CI is not a TTY and file-only tqdm was the silent wedge.
+    """
+    from job_log_heartbeat import JobLogHeartbeat  # noqa: WPS433 — scripts path
 
     n_total = total if total is not None else len(items)
-    bar = tqdm(
-        items,
-        total=n_total,
-        initial=initial,
-        unit="file",
-        desc=desc,
-        file=progress,
-        dynamic_ncols=False,
-        ncols=120,
-        mininterval=0.2,
-        smoothing=0.05,
-        bar_format=(
-            "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, "
-            "{rate_fmt}] {postfix}"
-        ),
-    )
+    beat = JobLogHeartbeat(desc, total=n_total)
+    beat.n = initial
+    beat.watch()
+
+    bar = None
     live = None
-    if progress_stdout and sys.stderr.isatty():
-        live = tqdm(
+    if progress is not None:
+        try:
+            from tqdm import tqdm
+        except ImportError as error:  # pragma: no cover
+            raise SystemExit(
+                "tqdm is required: python3 -m pip install 'tqdm>=4.66'"
+            ) from error
+
+        bar = tqdm(
+            items,
             total=n_total,
             initial=initial,
             unit="file",
             desc=desc,
-            file=sys.stderr,
-            dynamic_ncols=True,
+            file=progress,
+            dynamic_ncols=False,
+            ncols=120,
             mininterval=0.2,
             smoothing=0.05,
             bar_format=(
@@ -189,19 +198,45 @@ def iter_with_tqdm(
                 "{rate_fmt}] {postfix}"
             ),
         )
+        # Interactive TTY only — never the sole progress channel.
+        if progress_stdout and sys.stderr.isatty():
+            live = tqdm(
+                total=n_total,
+                initial=initial,
+                unit="file",
+                desc=desc,
+                file=sys.stderr,
+                dynamic_ncols=True,
+                mininterval=0.2,
+                smoothing=0.05,
+                bar_format=(
+                    "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, "
+                    "{rate_fmt}] {postfix}"
+                ),
+            )
+        iterator: Any = bar
+    else:
+        iterator = items
+
+    done = initial
     try:
-        for item in bar:
+        for item in iterator:
             yield item
+            done += 1
+            # Running counts as they accumulate (not only at the end).
+            beat.tick(n=done, force=(done == n_total or done == initial + 1))
             if live is not None:
                 live.update(1)
-                # Keep live postfix in sync when caller sets on bar.
-                if getattr(bar, "postfix", None):
+                if bar is not None and getattr(bar, "postfix", None):
                     live.set_postfix_str(str(bar.postfix), refresh=False)
     finally:
-        bar.close()
+        beat.stop(status="end")
+        if bar is not None:
+            bar.close()
         if live is not None:
             live.close()
-        progress.flush()
+        if progress is not None:
+            progress.flush()
 
 
 def floor_workspace_root() -> Path:
