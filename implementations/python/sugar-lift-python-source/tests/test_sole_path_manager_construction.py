@@ -2474,9 +2474,7 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
 def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     tmp_path,
 ):
-    from sugar_source_tree.panic import (
-        WithConstructionGap,
-            )
+    from sugar_source_tree.panic import WithConstructionGap
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2508,9 +2506,7 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     tmp_path,
 ):
-    from sugar_source_tree.panic import (
-        WithConstructionGap,
-            )
+    from sugar_source_tree.panic import WithConstructionGap
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2525,8 +2521,6 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
 
     # Legacy multi-actual form still refuses; residual names the same exit-face
     # unary floor rather than inventing EffectBoundary by spelling.
-        "force-floor", "exit-may-halt",
-    }
     assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
     assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
         caught.value.observed
