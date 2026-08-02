@@ -421,12 +421,25 @@ class ConstructionTestimonyReporterV1:
     def retain_registered_node_from(
         self, node: Node, producer: "ConstructionTestimonyReporterV1"
     ) -> Node:
-        """Retain one exact producer-roll registration in this consumer roll."""
-        registered = (
-            None
-            if type(producer) is not ConstructionTestimonyReporterV1
-            else producer._materialized_by_ref.get(node.ref)
-        )
+        """Retain one exact producer-roll registration in this consumer roll.
+
+        When the producer is itself a ``ConstructionTestimonyReporterV1``, the
+        registration must already live on that producer's materialize table.
+        When the producer is the ordinary file-open ``CollectingReporter``, the
+        node *is* the roster occurrence (no separate materialize table) — enroll
+        it into this consumer roll once. Other producers (NullReporter, foreign
+        remints) stay loud BackendDefect: they never owned the registration.
+        """
+        from sugar_source_tree.reporter import CollectingReporter
+
+        if type(producer) is ConstructionTestimonyReporterV1:
+            registered = producer._materialized_by_ref.get(node.ref)
+        elif type(producer) is CollectingReporter and getattr(node, "reporter", None) is producer:
+            # File-open door: CollectingReporter witnessed construction; the
+            # node itself is the authenticated occurrence for this ref.
+            registered = node
+        else:
+            registered = None
         if (
             registered is not node
             or not isinstance(registered, type(node))
@@ -438,9 +451,22 @@ class ConstructionTestimonyReporterV1:
             backend_defect(
                 blame=node.fragment,
                 owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
-                observed="foreign or absent producer node registration",
-                requested="the producer reporter's exact typed Node/ref registration",
-                fix="retain the producer registration; never remint or search by name/span",
+                observed=(
+                    f"foreign or absent producer node registration "
+                    f"(producer={type(producer).__name__}, "
+                    f"node_reporter={type(getattr(node, 'reporter', None)).__name__})"
+                ),
+                requested=(
+                    "the producer reporter's exact typed Node/ref registration "
+                    "(ConstructionTestimonyReporterV1 materialize table, or "
+                    "CollectingReporter file-open occurrence whose .reporter is "
+                    "that CollectingReporter)"
+                ),
+                fix=(
+                    "retain the producer registration; never remint or search by "
+                    "name/span. If the producer was CollectingReporter, pass the "
+                    "same reporter the node was opened with."
+                ),
             )
         existing = self._materialized_by_ref.get(node.ref)
         if existing is not None and (
