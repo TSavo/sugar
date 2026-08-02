@@ -5194,6 +5194,41 @@ class Assign(Statement):
                 suffix.append(element.id)
         return (tuple(prefix), star.value.id, tuple(suffix))
 
+    def _name_only_nested_unpack_pattern(self, target):
+        """Name-only nested Tuple/List tree for non-display dynamic unpack.
+
+        Flat all-Name targets stay with ``DynamicUnpackAssignSugar``. This
+        admits only trees that nest at least one Tuple/List of Names (no
+        Attribute/Subscript/Starred). Returns a pattern tuple for
+        ``NestedDynamicUnpackAssignSugar``, or ``None``.
+        """
+        if not isinstance(target, (Tuple_, List)):
+            return None
+
+        def build(node):
+            if isinstance(node, Name):
+                return node.id
+            if isinstance(node, (Tuple_, List)):
+                if not node.elts:
+                    return None
+                parts = []
+                for element in node.elts:
+                    part = build(element)
+                    if part is None:
+                        return None
+                    parts.append(part)
+                return tuple(parts)
+            return None
+
+        pattern = build(target)
+        if not isinstance(pattern, tuple):
+            return None
+        # Flat all-str is owned by DynamicUnpackAssignSugar — not nested.
+        if all(isinstance(part, str) for part in pattern):
+            return None
+        # Every leaf must be a name (build already refused other shapes).
+        return pattern
+
     def _flat_mixed_unpack_targets(self, target):
         """Parse flat Name|Attribute|Subscript|*Name into typed unpack targets.
 
@@ -5676,12 +5711,27 @@ class Assign(Statement):
                     DynamicUnpackAssignSugar,
                 )
 
-                # Exact-arity: every leaf is a plain Name.
+                # Exact-arity: every leaf is a plain Name (flat).
                 if all(isinstance(item, Name) for item in target.elts):
                     return DynamicUnpackAssignSugar(
                         tuple(item.id for item in target.elts),
                         self.value.sugar(),
                         self.fragment,
+                    )
+                # Nested Name-only tree: ``(a, b), (c, d) = formal``.
+                # Construction already exists for flat dynamic unpack; this
+                # only admits the nested case that used to fall through to
+                # Assign.sugar SNW (not a missing call — missing arm).
+                nested = self._name_only_nested_unpack_pattern(target)
+                if nested is not None:
+                    from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
+                        NestedDynamicUnpackAssignSugar,
+                    )
+
+                    return NestedDynamicUnpackAssignSugar(
+                        pattern=nested,
+                        value=self.value.sugar(),
+                        site=self.fragment,
                     )
                 # Starred: at most one *Name among flat Name leaves. Opaque /
                 # runtime-selected RHS keeps the typed unpack obligation via
