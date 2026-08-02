@@ -493,3 +493,111 @@ def test_authority_blind_key_aliases_two_distributions(
     )
     assert isinstance(projected, mc.ManagerConstructionGapV1)
     assert projected.kind == "artifact-mismatch"
+
+
+# -------------------------------- multi-resolve owner must thread session
+
+
+def test_shared_session_amortizes_across_two_consumer_files(tmp_path: Path) -> None:
+    """Multi-resolve owners must pass one session — memos are not decorative.
+
+    Decision of record: keep the session memos; make sessions reach every
+    multi-resolve owner. Two consumer files that project the same authenticated
+    definition under ONE package session must rematerialize once, not twice.
+    Two isolated session_or_new(None) trees rematerialize twice — isolation is
+    correct for leaves, wrong for package enumeration.
+    """
+    from sugar_lift_python_source.resolution_session import session_or_new
+
+    dist_root = tmp_path / "dist"
+    distribution = _install(dist_root, implementation_source=_IMPL_A)
+    graph = DependencyArtifactGraph.authenticate(distribution)
+
+    consumers = tmp_path / "consumers"
+    consumers.mkdir()
+    paths = []
+    for name in ("a.py", "b.py"):
+        path = consumers / name
+        path.write_text("import example_pkg\nexample_pkg.build(1)\n", encoding="utf-8")
+        paths.append(path)
+
+    def project_once(session):
+        for path in paths:
+            from sugar_lift_py_tests.import_binding import (
+                authenticated_import_use_receipts,
+            )
+
+            source = path.read_text(encoding="utf-8")
+            receipts, _ = authenticated_import_use_receipts(
+                consumers,
+                path,
+                source,
+                blake3_512_of(source.encode("utf-8")),
+                module_identities={},
+            )
+            assert len(receipts) == 1
+            resolved = resolve_import_binding(
+                receipts[0], graph=graph, session=session
+            )
+            assert isinstance(resolved, ResolvedPythonObjectV1)
+            projected = resolve_source_visible_frame(
+                resolved, graph=graph, session=session
+            )
+            assert isinstance(projected, tuple), projected
+
+    shared = SourceResolutionSession()
+    with _MaterializeCounter() as cold_counter:
+        project_once(shared)  # two consumers, one session
+    cold = cold_counter.count
+    assert cold >= 1, "shared session did no projection work"
+    assert len(shared.frame_results) == 1, shared.frame_results
+    # Second pass over the same two consumers must be free under the shared session.
+    with _MaterializeCounter() as warm_counter:
+        project_once(shared)
+    assert warm_counter.count == 0, (
+        f"shared multi-resolve session still rematerialized {warm_counter.count} "
+        f"times on the second pass; session memos are dead across consumers"
+    )
+
+    # Discrimination: isolated leaves (session_or_new(None) per project_once)
+    # do not share memos — correct isolation, and proves the warm zero is real.
+    with _MaterializeCounter() as isolated_counter:
+        project_once(session_or_new(None))
+        project_once(session_or_new(None))
+    assert isolated_counter.count >= cold * 2, (
+        f"isolated sessions only materialized {isolated_counter.count} times "
+        f"(cold shared was {cold}); the shared-session twin cannot bite"
+    )
+
+
+def test_file_open_door_threads_resolution_session(tmp_path: Path, monkeypatch) -> None:
+    """Production file-open is a multi-resolve owner and must pass a session."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_lift_python_source import manager_summary_derivation as msd
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    path = root / "consumer.py"
+    path.write_text("x = 1\n", encoding="utf-8")
+
+    seen: list[object] = []
+    original = msd.populate_source_derived_resource_refs
+
+    def capture(source_file, *, root, path, session=None, **kwargs):
+        seen.append(session)
+        return original(source_file, root=root, path=path, session=session, **kwargs)
+
+    monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
+
+    open_source_file_for_construction(path, root=root)
+    assert len(seen) == 1
+    assert isinstance(seen[0], SourceResolutionSession), (
+        "file-open dropped the session; populate fell back to session_or_new and "
+        "the multi-resolve owner no longer owns amortization"
+    )
+
+    shared = SourceResolutionSession()
+    seen.clear()
+    open_source_file_for_construction(path, root=root, resolution_session=shared)
+    assert seen == [shared], "explicit package session must reach populate unchanged"

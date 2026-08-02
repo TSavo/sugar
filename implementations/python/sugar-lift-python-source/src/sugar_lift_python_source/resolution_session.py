@@ -32,6 +32,29 @@ this construction or the memo does not answer.
 
 ``enabled=False`` disables memoization entirely. That switch must change
 performance ONLY: never a formula, never a gap, never a verdict.
+
+Decision of record (session-memo liveness)
+------------------------------------------
+The memos on this class are real amortization, not decorative. They fire in two
+places:
+
+1. **Inside one call tree** -- even a single-shot ``session_or_new(None)`` entry
+   still needs ``frame_active`` (cycle detection) and nested export/frame hits
+   while that one top-level resolve walks reexports and nested callees.
+2. **Across top-level resolves** -- only when the *same* session object is
+   threaded. Multi-resolve owners (file-open population, package-level
+   enumeration that projects the same dependency definitions for many consumer
+   files) MUST mint one session and pass it through every resolve. Leaving
+   ``session=None`` at those doors re-opens a session per call and the across-
+   call amortization is gone -- correct isolation, wrong owner.
+
+Deletion of these memos is refused: the pandas megamodule wall was re-materializing
+SourceFile + class-base sugar once per call-site receipt of the same authenticated
+definition. The session is the boundary that makes that amortization safe.
+
+``session_or_new(None)`` remains the honest single-shot leaf: slower, always
+correct, never process-global. It is not permission for a multi-resolve owner to
+drop the session.
 """
 
 from __future__ import annotations
@@ -88,10 +111,15 @@ class SourceResolutionSession:
 
 
 def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionSession:
-    """Resolve the caller's session, or open one bounded to this single call.
+    """Resolve the caller's session, or open one bounded to this single call tree.
 
     ``None`` never means "share the process": it means "this call is its own
-    session". The memo then dies with the call, which is slower and always
-    correct.
+    session". Nested resolves inside that call still share the returned object
+    (cycle detection and within-tree amortization stay real). The memo dies with
+    the call tree -- slower across independent top-level calls, always correct.
+
+    Multi-resolve owners (populate, package enumeration, file-open) must pass an
+    explicit session so amortization reaches every receipt they own. Do not call
+    this at those doors and throw the result away between receipts.
     """
     return SourceResolutionSession() if session is None else session
