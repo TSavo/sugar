@@ -242,6 +242,14 @@ def test_bound_augassign_control_remains_completed_value() -> None:
 
 
 def test_binding_state_is_never_an_ast_child_or_node_protocol_value() -> None:
+    """Binding states are not Nodes — but L3c put .sugar() on the type door.
+
+    Pre-L3c this tooth asserted ``not hasattr(state, "sugar")`` as proof they
+    are not Node protocol values. That constant inverted when projection
+    became the type door (``test_guarded_binding_not_sugar_method``). Keep the
+    real hierarchy pins: not a Node, no AST child ``ref``, and Child enrollment
+    still refuses them as binop operands.
+    """
     unbound = UnboundBinding(name="x", cause=_substituted("def f():\n pass\n").fragment)
     guarded = GuardedBinding(
         slot=BranchResultSlot("test-slot"),
@@ -251,7 +259,13 @@ def test_binding_state_is_never_an_ast_child_or_node_protocol_value() -> None:
     for state in (unbound, guarded):
         assert not isinstance(state, Node)
         assert not hasattr(state, "ref")
-        assert not hasattr(state, "sugar")
+        # L3c: projection door lives on the type; absence of sugar is no longer
+        # the non-Node pin.
+        assert hasattr(state, "sugar")
+        assert type(state.sugar()).__name__ in (
+            "UnboundProjection",
+            "GuardedProjection",
+        )
 
     target = _substituted("def f(x):\n x += 1\n").body[0].target
     with pytest.raises(BackendDefect, match="non-Node operands"):
