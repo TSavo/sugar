@@ -3237,6 +3237,14 @@ def _seat_import_value_use_receipts(
             site["endLine"],
             site["endCol"],
         )
+        # Session-memoized module SourceFile is shared across definitions
+        # (#7064). The first definition that owns a use seats it; later
+        # definitions re-enter seating for the same unit. Re-seating a second
+        # mint of the same span raises BackendDefect and aborts the whole
+        # open — which discarded _json.py's 49-function roster (false zero).
+        # Already-seated spans are closed; leave them alone.
+        if unit.import_value_use_resolution(span_key) is not None:
+            continue
         use_start = (site["startLine"], site["startCol"])
         use_end = (site["endLine"], site["endCol"])
         if not any(
@@ -3334,6 +3342,9 @@ def _seat_import_value_use_receipts(
             return False
 
         def seat_receipt() -> None:
+            # Already seated on this unit (shared session module product): done.
+            if unit.import_value_use_resolution(span_key) is not None:
+                return
             transport_key = (
                 unit.filename,
                 module.source_cid,
