@@ -23,10 +23,12 @@ So the two jobs are split, and this program is half two::
     GitHub queue: preserve every requested measurement   (no concurrency group)
     BX lease:     ensure only one heavy measurement runs (this program)
 
-Every heavy class -- the authoritative package suite, the sole-construction
-corpus floors, the pandas/NumPy censuses, the restored-suite sweep -- wraps its
-measured command here. Overlapping GitHub runs all START and all survive; only
-one is ever inside the measured section.
+Every exclusive MEASUREMENT class -- sole-construction corpus floors, the
+pandas/NumPy censuses, the restored-suite sweep, the recensus -- wraps its
+measured command here. The package suite is CI confidence telemetry (per-shard
+identity-bound reports, no shared aggregate) and deliberately does NOT take
+this lease. Overlapping GitHub runs all START and all survive; only one
+corpus measurement is ever inside the measured section.
 
 WHY A FILE LOCK, AND WHY NOT ``flock(1)``
 =========================================
@@ -59,9 +61,9 @@ measurement. Refusing is the honest outcome, and the receipt says so in a field
 Usage::
 
     python3 tools/heavy_measurement_lease.py \\
-        --class python-package-suite \\
+        --class python-sole-construction-floors \\
         --record "$GITHUB_WORKSPACE/lease-record.json" \\
-        [--embed-into suite-report.json] [--timeout 14400] \\
+        [--embed-into report.json] [--timeout 14400] \\
         [--lease ~/.cache/sugar/binaries/.sugar-heavy-measurement.lease] \\
         -- <command> [args...]
 

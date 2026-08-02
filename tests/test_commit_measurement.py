@@ -39,7 +39,7 @@ def test_measured_requires_lease_and_body_cids() -> None:
 def test_measured_from_sealed_pair_unmeasured_without_body_field() -> None:
     reading = CM.measured_from_sealed_pair(
         commit_sha="abc",
-        lease_record={"acquired": True, "leaseClass": "python-package-suite"},
+        lease_record={"acquired": True, "leaseClass": "python-sole-construction-floors"},
         lease_receipt_cid="lease:1",
         body={"totals": {}},
         body_artifact_cid="body:1",
@@ -51,7 +51,7 @@ def test_measured_from_sealed_pair_unmeasured_without_body_field() -> None:
 def test_measured_from_sealed_pair_unmeasured_when_lease_not_acquired() -> None:
     reading = CM.measured_from_sealed_pair(
         commit_sha="abc",
-        lease_record={"acquired": False, "leaseClass": "python-package-suite"},
+        lease_record={"acquired": False, "leaseClass": "python-sole-construction-floors"},
         lease_receipt_cid="lease:1",
         body={"totals": {"failed": 0, "collected": 3}},
         body_artifact_cid="body:1",
@@ -67,7 +67,7 @@ def test_measured_from_sealed_pair_cites_body_value() -> None:
         commit_sha="abc",
         lease_record={
             "acquired": True,
-            "leaseClass": "python-package-suite",
+            "leaseClass": "python-sole-construction-floors",
             "measurementStatus": "completed/findings",
         },
         lease_receipt_cid="lease:1",
@@ -158,7 +158,7 @@ def test_forbidden_board_axis_names() -> None:
 def test_compose_tip_lease_without_body_is_unmeasured(tmp_path: Path) -> None:
     lease = {
         "schemaVersion": 1,
-        "leaseClass": "python-package-suite",
+        "leaseClass": "python-sole-construction-floors",
         "acquired": True,
         "measurementStatus": "completed/findings",
         "commit": "deadbeef",
@@ -166,8 +166,8 @@ def test_compose_tip_lease_without_body_is_unmeasured(tmp_path: Path) -> None:
     (tmp_path / "lease.json").write_text(json.dumps(lease), encoding="utf-8")
     v = CM.compose_tip_from_receipts_dir("deadbeef", tmp_path)
     assert isinstance(v, CM.PartialVector)
-    assert "python-package-suite" in v.unmeasured_axes()
-    assert "body artifact" in v.axes["python-package-suite"].reason
+    assert "python-sole-construction-floors" in v.unmeasured_axes()
+    assert "body artifact" in v.axes["python-sole-construction-floors"].reason
 
 
 def test_compose_tip_lease_plus_body_is_measured(tmp_path: Path) -> None:
@@ -178,21 +178,19 @@ def test_compose_tip_lease_plus_body_is_measured(tmp_path: Path) -> None:
     }
     lease = {
         "schemaVersion": 1,
-        "leaseClass": "python-package-suite",
+        "leaseClass": "python-sole-construction-floors",
         "acquired": True,
         "measurementStatus": "completed/findings",
         "commit": "deadbeef",
         "leaseRecord": None,
     }
-    # embed lease + body in one suite-report style object
+    # embed lease + body in one report style object
     suite = {**body, "leaseRecord": lease}
-    (tmp_path / "suite-report.json").write_text(json.dumps(suite), encoding="utf-8")
-    # floors absent → partial overall, but package suite measured
+    (tmp_path / "floor-report.json").write_text(json.dumps(suite), encoding="utf-8")
     v = CM.compose_tip_from_receipts_dir("deadbeef", tmp_path)
-    assert isinstance(v, CM.PartialVector)
-    assert isinstance(v.axes["python-package-suite"], CM.Measured)
-    assert v.axes["python-package-suite"].value == 4
-    assert isinstance(v.axes["python-sole-construction-floors"], CM.Unmeasured)
+    assert isinstance(v, CM.CompleteVector) or isinstance(v, CM.PartialVector)
+    assert isinstance(v.axes["python-sole-construction-floors"], CM.Measured)
+    assert v.axes["python-sole-construction-floors"].value == 4
 
 
 def test_gate_missing_composition_is_red(tmp_path: Path) -> None:

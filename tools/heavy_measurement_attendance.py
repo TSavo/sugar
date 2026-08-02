@@ -64,8 +64,11 @@ from pathlib import Path
 PER_COMMIT = "per-commit"
 NIGHTLY_WINDOW = "nightly-window"
 
+# Corpus / exclusive-measurement classes only. The package suite is CI
+# confidence telemetry (per-shard identity-bound reports, no shared hub) and
+# does not take the machine-wide lease — so it is not on this lease roster.
+# Suite completeness is tools/python_package_suite_shard_attendance.py.
 HEAVY_ROSTER = {
-    "python-package-suite": "Python package suite (authoritative)",
     "python-sole-construction-floors": "Python sole-construction floors (R>0 red)",
     "numpy-wall": "NumPy Wall Ratchet",
     "pandas-wall": "Pandas Wall Ratchet",
@@ -78,7 +81,6 @@ HEAVY_ROSTER = {
 # PER_COMMIT whose workflow has no `push: branches: [main]` is a contradiction
 # the roll call cannot detect at runtime, so the test makes it uncompilable.
 HEAVY_CADENCE = {
-    "python-package-suite": PER_COMMIT,
     "python-sole-construction-floors": PER_COMMIT,
     "numpy-wall": NIGHTLY_WINDOW,
     "pandas-wall": NIGHTLY_WINDOW,

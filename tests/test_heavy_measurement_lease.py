@@ -478,17 +478,18 @@ def test_status_file_tracks_the_live_phase(lease, record, tmp_path):
 def test_attendance_counts_a_missing_receipt_as_unmeasured(lease, record, tmp_path):
     receipts = tmp_path / "receipts"
     receipts.mkdir()
-    run_wrapper(lease, receipts / "python-package-suite.json", [sys.executable, "-c", "pass"])
+    # Receipt for a class no longer on the lease roster (package suite is
+    # confidence telemetry). Per-commit roll call still misses the floors.
+    run_wrapper(lease, receipts / "not-a-roster-class.json", [sys.executable, "-c", "pass"])
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "heavy_measurement_attendance.py"),
          "--commit", "421ef4157", "--receipts-dir", str(receipts)],
         capture_output=True, text=True, timeout=60,
     )
-    # A real receipt is present, but it belongs to no roster class -- so NOT
-    # ONE roster instrument spoke, and the roll call must say five, not zero.
-    # An artifact directory that merely contains files is not attendance.
+    # A real receipt is present, but it belongs to no roster class -- so the
+    # per-commit instrument (floors) did not speak.
     assert result.returncode == 1
-    assert "R_attendance = 5" in result.stdout
+    assert "R_attendance_commit = 1" in result.stdout
     assert "NOT a clean floor" in result.stdout
     assert "python-sole-construction-floors" in result.stdout
 
@@ -515,7 +516,7 @@ def test_attendance_is_green_when_every_instrument_reported(lease, record, tmp_p
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout
-    assert "R_attendance = 0" in result.stdout
+    assert "R_attendance_commit = 0" in result.stdout
 
 
 # -- the gate: no timing claim without an acquired lease --------------------

@@ -410,9 +410,11 @@ def _lease_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
 
 
 # Per-commit tip axes only (nightlies are a different obligation).
+# Package suite is confidence telemetry (per-shard reports, no lease) and is
+# not composed from lease receipts here — suite enrollment is
+# tools/python_package_suite_shard_attendance.py.
 TIP_AXIS_SPECS: tuple[tuple[str, str, str], ...] = (
     # axis_name, leaseClass, value_field_path on body
-    ("python-package-suite", "python-package-suite", "totals.failed"),
     (
         "python-sole-construction-floors",
         "python-sole-construction-floors",

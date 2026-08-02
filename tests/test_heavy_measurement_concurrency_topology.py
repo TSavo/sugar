@@ -22,11 +22,16 @@ merge rate was killing our heaviest instruments.
 So the two responsibilities are split, and this file pins the split:
 
     GitHub queue: preserve every requested measurement  → NO concurrency group
-    BX lease:     only one heavy measurement executes   → the flock wrapper
+    BX lease:     only one heavy *corpus* measurement     → the flock wrapper
 
-A heavy workflow that declares a concurrency group is back in the eviction
-path. A heavy workflow that runs its measurement outside the lease is back to
-two censuses fighting over one box. Both are red here.
+CLASS SPLIT (load-bearing): the machine-wide lease is for exclusive
+MEASUREMENT INTEGRITY — sole-construction floors, recensus, walls — work that
+cannot interleave two corpus populations without lying about R.
+
+The package suite is CI CONFIDENCE TELEMETRY. It writes per-shard
+identity-bound reports with no shared aggregate, so it has no shared resource
+to protect and must NOT take the lease. A future edit that re-adds the suite
+to the claimant set is red here.
 """
 
 from __future__ import annotations
@@ -41,17 +46,19 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 LEASE_WRAPPER = "tools/heavy_measurement_lease.py"
 GATE = "tools/heavy_measurement_lease_gate.py"
 
-# Every heavy measurement class: workflow file -> the --class name it leases
-# under. This is the same roster tools/heavy_measurement_attendance.py calls
-# the roll from, and the two are checked against each other below.
+# Corpus / heavy measurement classes: workflow file -> the --class name it
+# leases under. Package suite is deliberately ABSENT — confidence telemetry.
+# This roster matches tools/heavy_measurement_attendance.py.
 HEAVY_WORKFLOWS = {
-    "python-package-suite.yml": "python-package-suite",
     "factory-zero-tolerance.yml": "python-sole-construction-floors",
     "numpy-wall.yml": "numpy-wall",
     "pandas-wall.yml": "pandas-wall",
     "restored-suite-scoreboard.yml": "restored-suite-scoreboard",
     "control-effect-recensus.yml": "control-effect-recensus",
 }
+
+# Confidence telemetry: must not hold the measurement mutex.
+CONFIDENCE_TELEMETRY_WORKFLOWS = ("python-package-suite.yml",)
 
 # The dead group. Nothing may claim it again.
 RETIRED_GROUPS = ("sugar-python-heavy-measurement", "sugar-python-package-suite")
@@ -109,6 +116,23 @@ def test_heavy_workflows_measure_under_the_lease(workflow, lease_class):
         f"{workflow} must run {GATE}: a timing claim from a run that never "
         f"acquired the lease is not a measurement, and that has to be checked"
     )
+
+
+@pytest.mark.parametrize("workflow", CONFIDENCE_TELEMETRY_WORKFLOWS)
+def test_confidence_telemetry_takes_no_machine_wide_lease(workflow):
+    """The suite is not a corpus census. Lease re-introduction is the starvation class."""
+    text = _text(workflow)
+    assert LEASE_WRAPPER not in text, (
+        f"{workflow} must not call {LEASE_WRAPPER}: the package suite is CI "
+        f"confidence telemetry with per-shard identity-bound reports and no "
+        f"shared aggregate. Holding the machine-wide measurement mutex for it "
+        f"is the class that starved floors for hours. Keep the lease on corpus "
+        f"censuses only."
+    )
+    assert "--class python-package-suite" not in text
+    assert GATE not in text or "python_suite_identity_gate" in text
+    # Enrollment completeness, not a merged singleton.
+    assert "python_package_suite_shard_attendance" in text
 
 
 def test_no_heavy_workflow_cancels_a_superseded_run():
