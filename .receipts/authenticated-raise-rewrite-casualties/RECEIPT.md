@@ -7,10 +7,10 @@
 - Introducer population: 115 changed Python files.
 - Introduced unbound loads: 187 `AuthenticatedRaiseLocus` loads in 71 offender
   files within that 115-file population.
-- Current survivor snapshot after production PR #7147: `3cdc88c01`.
+- Current survivor snapshot after production PR #7147: `3cdc88c01269140c8b88d45b47d5ee38ec272163`.
 - Current survivor population: 20 unbound loads in 14 test files.
 - Exact current line ancestry: 1 load from `bf847eb93`, 18 loads from `8a3ceb2c0`, and 1 load from `1eeb80bb3`.
-- Exact local test-repair worktree snapshot excluding this receipt: `abf5a9f78735ed1ca21562a6d0aec8e477943d38`.
+- Exact test-repair snapshot: `0ef212b9a8d4e59da9d754483ff6f04be8a6c4e7`.
 - Local binding instruments on that snapshot: 0 files with an unbound `AuthenticatedRaiseLocus`; 0 of the five bounded `_identity` files remain unbound.
 
 These are file/load measurements. They are not suite-failure counts.
@@ -19,50 +19,50 @@ These are file/load measurements. They are not suite-failure counts.
 
 ### BoolOp legacy probe
 
-- Exact baseline SHA: `b02b333d8`.
+- Exact baseline SHA: `b02b333d871c97df33821c9d3918ddadccbed971`.
 - Input and coordinate: `test_bool_op_operand_sequence.py::test_left_operand_is_evaluated_and_truth_tested_exactly_once`, BoolOp construction at baseline line 164.
 - First observed terminal: `TypeError: BoolOpSugar.values requires ConstructedTermSugar, got _ProbeSugar`.
 - Entrance: `BoolOpSugar.__post_init__`.
-- After repair snapshot `abf5a9f78735ed1ca21562a6d0aec8e477943d38`: the probe is a genuine `ConstructedTermSugar`; the exact file constructs through all 12 tests, `12 passed`.
+- After repair snapshot `0ef212b9a8d4e59da9d754483ff6f04be8a6c4e7`: the probe is a genuine `ConstructedTermSugar`; the exact file constructs through all 12 tests, `12 passed`.
 
 ### BoolOp synthetic halted operand
 
-- Exact baseline SHA: `b02b333d8`.
+- Exact baseline SHA: `b02b333d871c97df33821c9d3918ddadccbed971`.
 - Input and coordinate: `test_bool_op_operand_sequence.py:225`, synthetic `LeftTruthError`.
 - First observed terminal: unbound `AuthenticatedRaiseLocus` at the test construction entrance.
 - Entrance: direct test `RaiseEffect` construction.
 - After binding the name: the next terminal was `TypeError` because the narrowed constructor required `exception_type_coordinate`.
-- After repair snapshot `abf5a9f78735ed1ca21562a6d0aec8e477943d38`: the synthetic non-builtin carries an explicit test coordinate and the halt constructs.
+- After repair snapshot `0ef212b9a8d4e59da9d754483ff6f04be8a6c4e7`: the synthetic non-builtin carries an explicit test coordinate and the halt constructs.
 
 ### Native exceptional projection
 
-- Exact baseline SHA: `b02b333d8`.
+- Exact baseline SHA: `b02b333d871c97df33821c9d3918ddadccbed971`.
 - Input and coordinate: BoolOp formal-truth discharge with `_ExceptionalTruth()`; source coordinate `boolop_caller.py:2:11-2:25`.
 - First observed terminal: `NameError: AuthenticatedRaiseLocus is not defined`.
 - Entrance: `NativeOperationResolutionV1.project` at `caller_parameter_contract.py:153`.
-- After production SHA `3cdc88c01`: projection constructs one `Halted` face with the requested type coordinate and authenticated operation occurrence.
-- Next test terminal: unbound `_identity` in the assertion; after repair snapshot `abf5a9f78735ed1ca21562a6d0aec8e477943d38`, the complete BoolOp file is `12 passed`.
+- After production SHA `3cdc88c01269140c8b88d45b47d5ee38ec272163`: projection constructs one `Halted` face with the requested type coordinate and authenticated operation occurrence.
+- Next test terminal: unbound `_identity` in the assertion; after repair snapshot `0ef212b9a8d4e59da9d754483ff6f04be8a6c4e7`, the complete BoolOp file is `12 passed`.
 
 ### Generator manager first-resume refusal
 
-- Exact baseline SHA: `b02b333d8`.
+- Exact baseline SHA: `b02b333d871c97df33821c9d3918ddadccbed971`.
 - Inputs and coordinates: premature return at `test_generator_context_manager_construction.py:76`; never-yield at line 102.
 - First terminal at the production entrance: the unbound `AuthenticatedRaiseLocus` in `GeneratorWithSugar._entry_refusal_exit`.
 - Entrance: `generator_with_sugar.py:128`.
 - After binding the name: the next observed terminal was `TypeError: RaiseEffect.__init__() missing exception_type_coordinate`.
-- After production SHA `3cdc88c01`: the observed builtin refusal routes through `RaiseEffect.for_builtin`; both focused twins pass, `2 passed`.
+- After production SHA `3cdc88c01269140c8b88d45b47d5ee38ec272163`: the observed builtin refusal routes through `RaiseEffect.for_builtin`; both focused twins pass, `2 passed`.
 
 ### Function-formal identity assertion
 
-- Exact current-main SHA: `3cdc88c01`.
+- Exact current-main SHA: `3cdc88c01269140c8b88d45b47d5ee38ec272163`.
 - Input and coordinate: `test_function_formal_native_operation_binding.py::test_positional_actuals_discharge_through_python_binder`, `helper(None, 2)`.
 - First terminal before the test repair: unbound `_identity` at line 60.
 - Entrance: `_assert_named_halt`.
-- After repair snapshot `abf5a9f78735ed1ca21562a6d0aec8e477943d38`: the identity assertion passes; the next terminal is the separate occurrence-shape assertion at line 61. This receipt does not claim that later drift is fixed.
+- After repair snapshot `0ef212b9a8d4e59da9d754483ff6f04be8a6c4e7`: the identity assertion passes; the next terminal is the separate occurrence-shape assertion at line 61. This receipt does not claim that later drift is fixed.
 
 ### Unary identity assertion
 
-- Exact current-main SHA: `3cdc88c01`.
+- Exact current-main SHA: `3cdc88c01269140c8b88d45b47d5ee38ec272163`.
 - Input and coordinate: `test_unary_not_bool_law.py::test_halted_truth_is_not_negated`.
 - First observed terminal: `TypeError: UnaryOpSugar.operand requires ConstructedTermSugar, got _ValueSugar`.
 - Entrance: `UnaryOpSugar.__post_init__`.
@@ -70,7 +70,7 @@ These are file/load measurements. They are not suite-failure counts.
 
 ### Try identity assertions
 
-- Exact current-main SHA: `3cdc88c01`.
+- Exact current-main SHA: `3cdc88c01269140c8b88d45b47d5ee38ec272163`.
 - Inputs and coordinates: `test_bare_reraise_reemits_the_exact_inflight_raise` and `test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit`.
 - First observed terminal: the tests receive `ExitSet` where their older assertions require `Incomplete`.
 - Entrance: the assertion immediately after `function.sugar().desugar()`.
@@ -78,7 +78,7 @@ These are file/load measurements. They are not suite-failure counts.
 
 ### Local processes without a terminal receipt
 
-- Exact repair snapshot: `abf5a9f78735ed1ca21562a6d0aec8e477943d38`.
+- Exact repair snapshot: `0ef212b9a8d4e59da9d754483ff6f04be8a6c4e7`.
 - Inputs: the focused pandas-subscript and source-setattr identity tests.
 - Observation: the local pytest processes exited 143 with no pytest terminal output.
 - Claim boundary: exit 143 is not counted as a product terminal, pass, failure, or timeout.
