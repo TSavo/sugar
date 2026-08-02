@@ -229,16 +229,17 @@ is not a timing receipt.
 
 ## CI recensus (control-effect k=8)
 
-Human brun timing uses all three gates (76/77/78). The GitHub
-`control-effect-recensus` workflow (LPT k=8 + compose seal) **must** run the
-**corpus pin gate** on every plan and every shard job before it mints plan or
-partial artifacts — **exit 78** if the runner is not pandas **3.0.3 / 1421**
-(`docs/ledgers/pins/pandas-3.0.3.pin.json` via `tools/bx_corpus_pin_gate.py`).
-A sealed board against the wrong pin is worse than no board.
+Topology: runners are **containers on battleaxe** (shared host). All three
+gates apply.
 
-Load (76) and lease (77) stay brun-path defaults until CI runner topology is
-proven shared-vs-private (matrix may already be multi-box). Pin is mandatory
-either way.
+| Gate | CI |
+| --- | --- |
+| Pin 78 | plan + each shard; `--require-corpus-pin` on measure |
+| Load 76 | under lease on measure (`tools/bx_host_measure_gates.sh`) |
+| Lease 77 | **shared** flock on measure so k=8 co-runs; brun quiet is **exclusive** on the same host path |
+
+Lease path: `/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease`  
+(not `/var/tmp` — per-container lock theatre).
 
 ## Forbidden
 

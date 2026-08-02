@@ -23,9 +23,14 @@ name: Control-effect recensus (authoritative scoreboard)
 #   runner's pandas matches docs/ledgers/pins/pandas-3.0.3.pin.json
 #   (3.0.3 / 1421 files). A sealed board against the wrong pin is worse than
 #   no board — it carries a receipt. tools/bx_corpus_pin_gate.py.
-#   Load (76) / lease (77) apply to human brun timing; CI pin is mandatory.
-#   Lease is not wired here until runner topology is proven shared-vs-private
-#   (matrix may be multi-box).
+# - LOAD (76) + HOST LEASE (77): topology proven SHARED — ~25 runners are
+#   containers on one box (battleaxe), same bootId. Measure steps wrap with
+#   tools/bx_host_measure_gates.sh --shared (shared flock so k=8 seats may
+#   co-run; exclusive brun quiet waits). Lease path MUST be the host
+#   bind-mount /home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease
+#   — NOT /var/tmp (per-container lock theatre). Load sample under the lease.
+#   Without this, CI seats fight human brun on the same kernel and seal a
+#   contaminated board with a receipt.
 #
 # WHY NIGHTLY AND NOT push:[main]
 #
@@ -49,6 +54,11 @@ env:
   PYTHONUNBUFFERED: "1"
   # Banked LPT k — keep fixed; change the split KEY (prior), not k (#7055).
   RECENSUS_SHARD_COUNT: "8"
+  # Host bind-mount lease (serializes with human brun exclusive quiet gate).
+  # Never /var/tmp — per-container on battleaxe runners.
+  SUGAR_BX_TIMING_LEASE_PATH: /home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease
+  # Queue for exclusive brun / peer shared holders (2h).
+  SUGAR_BX_TIMING_LEASE_WAIT_S: "7200"
 
 jobs:
   # ------------------------------------------------------------------ plan
@@ -302,7 +312,7 @@ jobs:
             --corpus-root "$PANDAS_CORPUS"
           echo "JOB_LOG phase=corpus-pin-gate status=ok job=shard seat=s$(printf '%02d' '${{ matrix.shard }}') root=$PANDAS_CORPUS"
 
-      - name: "Phase: measure shard partial only"
+      - name: "Phase: measure shard partial only (shared host lease + load)"
         shell: bash
         env:
           PANDAS_CORPUS: ${{ needs.plan.outputs.root }}
@@ -318,19 +328,21 @@ jobs:
             exit 1
           fi
           echo "recensus phase=measure-shard status=start shard=$SHARD/$K corpus_root=$PANDAS_CORPUS commit=$GITHUB_SHA"
+          # Shared host lease: k=8 seats may co-run; exclusive brun quiet waits.
+          # Load under lease (exit 76). Wrong path /var/tmp → lock theatre (77).
           # Worker: --plan-json + --shard-index → PARTIAL only (never seals).
-          # control_effect_recensus write-throughs each file_s → LPT shelf.
-          # --require-corpus-pin: second belt (exit 78) if pin drifts mid-run.
-          python -u implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
-            "$PANDAS_CORPUS" \
-            --corpus-root "$PANDAS_CORPUS" \
-            --repo "$GITHUB_WORKSPACE" \
-            --commit "$GITHUB_SHA" \
-            --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
-            --out-dir "$OUT" \
-            --plan-json "$PLAN" \
-            --shard-index "$SHARD" \
-            --partial-out "$OUT/partial-s$(printf '%02d' "$SHARD").json"
+          chmod +x tools/bx_host_measure_gates.sh
+          tools/bx_host_measure_gates.sh --shared -- \
+            python -u implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
+              "$PANDAS_CORPUS" \
+              --corpus-root "$PANDAS_CORPUS" \
+              --repo "$GITHUB_WORKSPACE" \
+              --commit "$GITHUB_SHA" \
+              --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
+              --out-dir "$OUT" \
+              --plan-json "$PLAN" \
+              --shard-index "$SHARD" \
+              --partial-out "$OUT/partial-s$(printf '%02d' "$SHARD").json"
           echo "recensus phase=measure-shard status=done shard=$SHARD"
           ls -la "$OUT"/partial-s*.json || true
           PRIOR_N="$(find "${SUGAR_LPT_PRIOR_DIR}" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"

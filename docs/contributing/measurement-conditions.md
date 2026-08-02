@@ -91,20 +91,31 @@ without the matching stderr gate lines from the same run.
 
 ## CI recensus
 
-Human `bin/brun` timing uses all three gates. The control-effect recensus
-workflow (`.github/workflows/control-effect-recensus.yml`, LPT k=8 + compose)
-**must** run the **corpus pin gate** on **plan and every shard job** before
-minting plan or partial bodies — **exit 78** if the runner is not pandas
-**3.0.3 / 1421** (`tools/bx_corpus_pin_gate.py` + banked pin). Shard measure
-also passes `--require-corpus-pin` into `control_effect_recensus` (second belt).
+Topology is **proven shared** (2026-08-02, white): ~25 GitHub runners are
+**containers on one box** (battleaxe) — same `bootId`, different container
+hostnames. So all three gates apply in CI, not only pin.
 
-A sealed board against the wrong pin is worse than no board — it carries a
-receipt.
+The control-effect recensus workflow
+(`.github/workflows/control-effect-recensus.yml`, LPT k=8 + compose):
 
-**Load (76) and lease (77) are not wired in CI** until runner topology is
-proven: the matrix may already be multi-box (lease would only serialize
-same-host seats). Pin is mandatory either way. If topology later proves a
-shared box, add lease under the same quiet discipline as brun.
+| Gate | CI wiring |
+| --- | --- |
+| **Pin (78)** | Plan + every shard before mint; measure `--require-corpus-pin` |
+| **Load (76)** | Under host lease on each **measure** step |
+| **Lease (77)** | `tools/bx_host_measure_gates.sh --shared` on measure |
+
+**Lease path (mandatory):**  
+`/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease`  
+— host bind-mount, verified across live containers. **Never `/var/tmp`**:
+per-container rootfs, same bootId, different inode → lock theatre (suite and
+floors once waited 0.0007s each and still overlapped).
+
+**Shared vs exclusive:** CI seats take a **shared** flock so k=8 may co-run.
+Human brun quiet takes **exclusive** on the same path and waits for shared
+holders (and blocks new shared while measuring). Without that, a sealed CI
+board and a human timing number can contaminate each other on one kernel.
+
+A sealed board without pin / load / lease testimony is worse than no board.
 
 ## How to obey (human timing)
 
