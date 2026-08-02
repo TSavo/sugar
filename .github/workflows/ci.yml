@@ -6,8 +6,9 @@
 # It runs `make ${{ matrix.target }}` over the `core` matrix plus sharded
 # `make test-showcases`. That is `make ci` decomposed for parallelism:
 # check-lift-refusal-vocabulary, check-fleet-claim-contract,
-# test-python-format, test-claim-mass-tripwires, test-showcases, self-attest,
-# coretests-invariants.
+# test-python-format, test-claim-mass-tripwires, test-showcases, self-attest.
+# coretests-invariants is NOT on the per-commit path (Rust client not ready;
+# do not gate Python commits on a 10+ minute Rust corpus job).
 #
 # IT DOES NOT RUN `test-rust` OR `test-python`, AND `make ci` DOES NOT EITHER.
 # This comment used to claim it did. It was false for both halves, and the
@@ -115,14 +116,8 @@ jobs:
             python: false
             z3: false
             b3sum: true
-          # coretests-source-audit stays `make coretests-source-audit` (instrument /
-          # R-measuring stick). Default CI excludes it while unresolved R remains
-          # nonzero by construction; do not re-gate until R is driven to 0.
-          - name: coretests invariants
-            target: coretests-invariants
-            python: false
-            z3: false
-            b3sum: true
+          # coretests-invariants and coretests-source-audit are Makefile targets
+          # only (hand / future Rust work). Not on this per-commit matrix.
 
     steps:
       - name: Checkout
