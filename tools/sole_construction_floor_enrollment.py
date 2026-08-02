@@ -113,7 +113,90 @@ def emit_process_matrix_json(
 #   0 — scan completed; residual green (R=0)
 #   1 — scan completed; residual red (R>0)
 #   2+ — scan did NOT complete (auth/init/crash/IO); UNMEASURED, not residual
+#
+# Residual *magnitude* is never invented from exit code. Measured mints require
+# residual_count cited from the floor's own summary under residual_key identity.
 SCAN_COMPLETED_EXITS = frozenset({0, 1})
+
+# Floor summary totals keys (pandas-floor-summary-v1) keyed by base axis id.
+RESIDUAL_KEY_BY_BASE: dict[str, str] = {
+    "silent": "R_silent",
+    "native-crash": "R_native_crashes",
+    "bare-exception": "R_bare_exceptions",
+    "timeout": "R_timeouts",
+    "static-laws": "R_static_sole_construction",
+}
+
+
+def base_axis_id(axis_id: str) -> str:
+    """Map seat id (silent-s03) to base axis (silent)."""
+    if axis_id == "static-laws":
+        return axis_id
+    # Seats: {base}-sNN
+    if "-s" in axis_id:
+        head, _, tail = axis_id.rpartition("-s")
+        if len(tail) == 2 and tail.isdigit():
+            return head
+    return axis_id
+
+
+def residual_key_for_axis(axis_id: str) -> str:
+    base = base_axis_id(axis_id)
+    key = RESIDUAL_KEY_BY_BASE.get(base)
+    if key is None:
+        raise ValueError(f"no residual key for axis_id {axis_id!r} (base={base!r})")
+    return key
+
+
+def load_residual_count_from_floor_summary(
+    summary_path: Path, *, residual_key: str
+) -> int:
+    """Cite residual magnitude from a floor summary body — never invent.
+
+    Accepts:
+      - pandas-floor-summary-v1 with totals[residual_key]
+      - floor-residual-v1 with residualKey + residualCount
+    """
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            f"cannot read floor summary {summary_path}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"floor summary {summary_path} is not a JSON object")
+    kind = payload.get("kind")
+    if kind == "floor-residual-v1":
+        if payload.get("residualKey") != residual_key:
+            raise ValueError(
+                f"floor-residual-v1 residualKey={payload.get('residualKey')!r} "
+                f"!= expected {residual_key!r}"
+            )
+        raw = payload.get("residualCount")
+        if type(raw) is not int or raw < 0:
+            raise ValueError(
+                f"floor-residual-v1 residualCount must be non-negative int; "
+                f"got {type(raw).__name__}={raw!r}"
+            )
+        return raw
+    totals = payload.get("totals")
+    if not isinstance(totals, dict):
+        raise ValueError(
+            f"floor summary {summary_path} missing totals object "
+            f"(need residual key {residual_key!r} under identity)"
+        )
+    if residual_key not in totals:
+        raise ValueError(
+            f"floor summary {summary_path} totals missing residual key "
+            f"{residual_key!r}; present={sorted(totals)!r}"
+        )
+    raw = totals[residual_key]
+    if type(raw) is not int or raw < 0:
+        raise ValueError(
+            f"floor summary residual {residual_key!r} must be a non-negative "
+            f"int; got {type(raw).__name__}={raw!r}"
+        )
+    return raw
 
 
 def mint_axis_report(
@@ -125,12 +208,18 @@ def mint_axis_report(
     kind: str,
     scan_completed: bool | None = None,
     unmeasured_reason: str | None = None,
+    residual_count: int | None = None,
+    residual_source: str | None = None,
+    residual_key: str | None = None,
 ) -> dict:
     """Mint an identity-bound axis body.
 
-    ``measured=True`` only when the scan completed with a body (exit 0 or 1 by
-    default). Auth/init/crash (exit >= 2, or scan_completed=False) mints
-    UNMEASURED with a named reason — never banked as attended residual green.
+    ``measured=True`` only when the scan completed (exit 0 or 1 by default)
+    **and** residual_count is cited from the floor summary. Auth/init/crash
+    (exit >= 2, or scan_completed=False) mints UNMEASURED with a named reason.
+
+    Do **not** invent residual magnitude from exit code: exit 1 only says
+    R>0; the count lives in the floor's own summary under residual_key.
     """
     if axis_id not in enrolled_ids():
         raise ValueError(f"axis_id {axis_id!r} is not enrolled")
@@ -138,6 +227,17 @@ def mint_axis_report(
     if scan_completed is None:
         scan_completed = code in SCAN_COMPLETED_EXITS
     if scan_completed:
+        if residual_count is None:
+            raise ValueError(
+                f"measured mint for {axis_id!r} requires residual_count from "
+                f"the floor summary (do not invent R from exit code={code})"
+            )
+        if type(residual_count) is not int or residual_count < 0:
+            raise ValueError(
+                f"residual_count must be a non-negative int; got "
+                f"{type(residual_count).__name__}={residual_count!r}"
+            )
+        rkey = residual_key or residual_key_for_axis(axis_id)
         return {
             "schemaVersion": 1,
             "kind": REPORT_KIND,
@@ -150,9 +250,17 @@ def mint_axis_report(
             "exitCode": code,
             "identityResolved": True,
             "measured": True,
-            "floorExitGreen": code == 0,
+            # Green iff residual count is zero — count is authoritative, not exit.
+            "floorExitGreen": residual_count == 0,
             "unmeasuredReason": None,
-            "totals": {"failed": 0 if code == 0 else 1},
+            "residualCount": residual_count,
+            "residualKey": rkey,
+            "residualSource": residual_source or "floor-summary",
+            # totals.failed carries magnitude for CommitMeasurement cite path.
+            "totals": {
+                "failed": residual_count,
+                "residual": residual_count,
+            },
         }
     reason = unmeasured_reason or (
         f"scan did not complete (exit={code}); infrastructure/auth/init/crash "
@@ -172,6 +280,7 @@ def mint_axis_report(
         "measured": False,
         "floorExitGreen": False,
         "unmeasuredReason": reason,
+        "residualCount": None,
         "totals": {"failed": 1, "unmeasured": 1},
     }
 
@@ -314,16 +423,25 @@ def check_attendance(
             continue
         attended.append(axis.axis_id)
         exit_code = int(row.get("exitCode", 1))
-        if exit_code != 0:
+        # Prefer residualCount magnitude when present (S1.1 mass ranking).
+        residual_count = row.get("residualCount")
+        if type(residual_count) is int:
+            residual_n = residual_count
+        else:
+            # Legacy bodies without magnitude: exit only proves red/green, not R.
+            residual_n = 1 if exit_code != 0 else 0
+        if residual_n > 0:
             residual_red.append(axis.axis_id)
             _log(
                 f"floor_enrollment result index={index}/{len(ENROLLED)} "
-                f"axis={axis.axis_id} spoke=yes residual=RED exit={exit_code}"
+                f"axis={axis.axis_id} spoke=yes residual=RED "
+                f"residualCount={residual_n} exit={exit_code}"
             )
         else:
             _log(
                 f"floor_enrollment result index={index}/{len(ENROLLED)} "
-                f"axis={axis.axis_id} spoke=yes residual=green exit=0"
+                f"axis={axis.axis_id} spoke=yes residual=green "
+                f"residualCount={residual_n} exit={exit_code}"
             )
 
     complete = not missing and not unresolved and not wrong_commit
@@ -395,6 +513,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Named reason when minting UNMEASURED (auth/init/crash).",
     )
+    parser.add_argument(
+        "--residual-count",
+        type=int,
+        default=None,
+        help=(
+            "Residual magnitude from the floor summary (required for measured "
+            "mints). Do not invent from exit code."
+        ),
+    )
+    parser.add_argument(
+        "--residual-from-summary",
+        type=Path,
+        default=None,
+        help=(
+            "pandas-floor-summary-v1 JSON; residual_count is read from "
+            "totals[residual_key] under identity (preferred over --residual-count)."
+        ),
+    )
+    parser.add_argument(
+        "--residual-key",
+        default=None,
+        help="totals key in floor summary (default: residual_key_for_axis(axis-id)).",
+    )
     parser.add_argument("--check-attendance", type=Path)
     parser.add_argument("--require-commit", default="")
     parser.add_argument("--write-campaign-body", type=Path)
@@ -427,9 +568,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     if args.mint_report is not None:
+        residual_count = args.residual_count
+        residual_source = None
+        residual_key = args.residual_key
+        if args.residual_from_summary is not None:
+            rkey = residual_key or residual_key_for_axis(args.axis_id)
+            residual_count = load_residual_count_from_floor_summary(
+                args.residual_from_summary, residual_key=rkey
+            )
+            residual_source = str(args.residual_from_summary.resolve())
+            residual_key = rkey
         _log(
             f"floor_enrollment phase=mint_report axis={args.axis_id} "
-            f"exit={args.exit_code} commit={args.commit_sha}"
+            f"exit={args.exit_code} residual_count={residual_count!r} "
+            f"commit={args.commit_sha}"
         )
         report = mint_axis_report(
             axis_id=args.axis_id,
@@ -439,6 +591,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             kind=args.kind,
             scan_completed=args.scan_completed,
             unmeasured_reason=args.unmeasured_reason,
+            residual_count=residual_count,
+            residual_source=residual_source,
+            residual_key=residual_key,
         )
         args.mint_report.parent.mkdir(parents=True, exist_ok=True)
         args.mint_report.write_text(
