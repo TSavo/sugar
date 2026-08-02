@@ -1611,15 +1611,39 @@ evict_shelf_cell() {
 # Concurrent matrix jobs that all miss the same cell must wait here so only
 # one cargo runs; waiters re-pull after the winner publishes.
 #
-# Mechanism: atomic mkdir (portable; no flock(1) dependency). Holder writes
-# pid; waiters reclaim if the holder pid is gone (cancelled job). A subprocess
-# flock would release when the child exits and would NOT protect the parent
-# rebuild — so we never flock in a short-lived child.
+# Mechanism: atomic mkdir (portable). Holder keeps a heartbeat file fresh.
+# Waiters reclaim when heartbeat is stale (dead/cancelled winner) — NOT via
+# kill -0 alone, which lies across container PID namespaces and was the
+# wedge-shaped cousin of the root-owned cell: a lock nobody can reclaim.
+# Subprocess flock would release when the child exits and would NOT protect
+# the parent rebuild — so we never flock in a short-lived child.
+#
+# Stale age (seconds). Cargo sugar rebuilds are minutes; 120s without a
+# heartbeat means the holder is gone. Override with SUGAR_BINARY_REBUILD_LOCK_STALE_S.
 _rebuild_lock_dir=""
+_rebuild_heartbeat_pid=""
+
+_rebuild_lock_stale_seconds() {
+  printf '%s\n' "${SUGAR_BINARY_REBUILD_LOCK_STALE_S:-120}"
+}
+
+_rebuild_heartbeat_age_seconds() {
+  local lockdir="$1" hb now age
+  hb="$lockdir/heartbeat"
+  [[ -f "$hb" ]] || { printf '%s\n' "999999"; return 0; }
+  now="$(date +%s)"
+  # portable mtime: GNU stat first, BSD second
+  local mtime
+  mtime="$(stat -c %Y "$hb" 2>/dev/null || stat -f %m "$hb" 2>/dev/null || echo 0)"
+  age=$((now - mtime))
+  [[ "$age" -ge 0 ]] || age=999999
+  printf '%s\n' "$age"
+}
 
 acquire_rebuild_single_flight() {
-  local stamp="$1" name="$2" lock_parent lockdir waited=0
+  local stamp="$1" name="$2" lock_parent lockdir waited=0 stale_s age
   _rebuild_lock_dir=""
+  _rebuild_heartbeat_pid=""
   lock_parent="$(cache_dir)/.rebuild-locks"
   if ! mkdir -p "$lock_parent" 2>/dev/null; then
     log "rebuild single-flight: cannot create $lock_parent; degraded (no lock)"
@@ -1627,20 +1651,41 @@ acquire_rebuild_single_flight() {
   fi
   # Directory name IS the lock: mkdir succeeds for exactly one contender.
   lockdir="$lock_parent/$(platform_key)-${profile}-$(stamp_for_filename "$stamp")-${bin_name}.lock"
+  stale_s="$(_rebuild_lock_stale_seconds)"
   log "rebuild single-flight: waiting for $bin_name stamp lock"
   while true; do
     if mkdir "$lockdir" 2>/dev/null; then
       printf '%s\n' "$$" >"$lockdir/pid"
+      : >"$lockdir/heartbeat"
       _rebuild_lock_dir="$lockdir"
+      # Heartbeat while we hold: keeps waiters from reclaiming a live cargo.
+      (
+        # shellcheck disable=SC2030
+        while [[ -d "$lockdir" ]]; do
+          : >"$lockdir/heartbeat" 2>/dev/null || exit 0
+          sleep 5
+        done
+      ) &
+      _rebuild_heartbeat_pid=$!
+      # Best-effort release on cancel so the estate is not wedged.
+      trap 'release_rebuild_single_flight' EXIT
       log "rebuild single-flight: acquired $bin_name stamp lock"
       return 0
     fi
-    # Stale reclaim: holder pid gone (SIGKILL / cancelled runner job).
-    if [[ -f "$lockdir/pid" ]]; then
-      local holder
-      holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
-      if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
-        log "rebuild single-flight: reclaiming stale lock from dead pid $holder"
+    # Stale reclaim: heartbeat not refreshed → holder dead/cancelled/wedged.
+    # Do NOT rely on kill -0: peer containers share the lock dir but not PIDs.
+    age="$(_rebuild_heartbeat_age_seconds "$lockdir")"
+    if [[ "$age" -ge "$stale_s" ]]; then
+      log "rebuild single-flight: reclaiming stale lock (heartbeat age ${age}s >= ${stale_s}s)"
+      rm -rf "$lockdir" 2>/dev/null || true
+      continue
+    fi
+    # Also reclaim empty/new locks that never wrote a heartbeat (crashed mid-mkdir).
+    if [[ ! -f "$lockdir/heartbeat" ]]; then
+      # brief grace so a peer finishing mkdir can write heartbeat
+      sleep 0.5
+      if [[ ! -f "$lockdir/heartbeat" ]]; then
+        log "rebuild single-flight: reclaiming lock with no heartbeat"
         rm -rf "$lockdir" 2>/dev/null || true
         continue
       fi
@@ -1649,12 +1694,19 @@ acquire_rebuild_single_flight() {
     waited=$((waited + 1))
     # Loud breadcrumb every ~30s so a wedged lock is not silent.
     if (( waited % 120 == 0 )); then
-      log "rebuild single-flight: still waiting for $bin_name stamp lock (${waited} ticks)"
+      log "rebuild single-flight: still waiting for $bin_name stamp lock (heartbeat age ${age}s, ${waited} ticks)"
     fi
   done
 }
 
 release_rebuild_single_flight() {
+  # Clear EXIT trap first so nested release from trap does not loop.
+  trap - EXIT 2>/dev/null || true
+  if [[ -n "${_rebuild_heartbeat_pid:-}" ]]; then
+    kill "$_rebuild_heartbeat_pid" 2>/dev/null || true
+    wait "$_rebuild_heartbeat_pid" 2>/dev/null || true
+    _rebuild_heartbeat_pid=""
+  fi
   [[ -n "${_rebuild_lock_dir:-}" ]] || return 0
   rm -rf "$_rebuild_lock_dir" 2>/dev/null || true
   _rebuild_lock_dir=""
