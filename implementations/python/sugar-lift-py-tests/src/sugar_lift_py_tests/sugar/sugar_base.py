@@ -89,10 +89,16 @@ def require_constructed_term_sugar(
     """Close a nested construction payload before canonical projection.
 
     ONE codomain law for every nested term slot (CallSiteSugar.args /
-    keywords, MethodCallSugar.args / keywords, IfExp arms, …). Admission is
-    hierarchy: ConstructedTermSugar + to_term — including SpreadCollectionSugar,
-    SpreadDictSugar, SpreadCallSugar, StarredSugar (L2a). Do not special-case
-    spread at individual call sites; promote the mint, keep this door.
+    keywords, MethodCallSugar.args / keywords, IfExp arms, BinOpSugar
+    left/right, UnaryOpSugar.operand, EqualityOpSugar, Subscript index, …).
+    Admission is hierarchy: ConstructedTermSugar + to_term — including:
+
+    - L2a: SpreadCollectionSugar, SpreadDictSugar, SpreadCallSugar, StarredSugar
+    - L2b: ComplexLiteralSugar, EllipsisLiteralSugar, and sibling leaves
+      (Int/Real/String/Bytes/None/True/False)
+
+    Do not special-case species at individual call sites; promote the mint,
+    keep this door.
     """
     if not isinstance(value, ConstructedTermSugar):
         raise TypeError(
