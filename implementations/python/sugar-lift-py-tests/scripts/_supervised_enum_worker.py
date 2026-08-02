@@ -53,7 +53,7 @@ def _lift(path: str, rel: str) -> dict:
     if plant_timeout and plant_timeout == rel:
         import time
 
-        time.sleep(3600)
+        time.sleep(30)
 
     from _production_lift_child import production_lift_testimony
 
@@ -73,6 +73,17 @@ def _lift(path: str, rel: str) -> dict:
     return {"kind": "lift-result", "file": rel, "terminal": terminal}
 
 
+def _progress(phase: str, **fields: object) -> None:
+    """Heartbeat so the supervisor can name a hung initialize phase."""
+    payload: dict[str, object] = {
+        "kind": "initialize-progress",
+        "phase": phase,
+        "coordinate": "supervised-enum-worker.construction-context",
+    }
+    payload.update(fields)
+    print(json.dumps(payload), flush=True)
+
+
 def _initialize(
     corpus_root: str,
     demand_table_path: str | None,
@@ -80,18 +91,68 @@ def _initialize(
     allow_local_demand_derivation: bool,
 ) -> dict:
     global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT
+    import os
+
+    # Test-only plant: hang after first progress so supervisor timeout names phase.
+    if os.environ.get("SUGAR_SUPERVISOR_PLANT_INIT_HANG") == "1":
+        _progress(
+            "planted-init-hang",
+            corpus_root=corpus_root or None,
+            note="SUGAR_SUPERVISOR_PLANT_INIT_HANG",
+        )
+        import time
+
+        time.sleep(30)
     if _CONSTRUCTION_CONTEXT is not None:
         return {
             "kind": "initialize-refusal",
             "coordinate": "supervised-enum-worker.construction-context",
             "reason": "frozen construction context was already initialized",
+            "corpus_root": corpus_root or None,
+            "demand_table_path": demand_table_path,
+            "phase": "already-initialized",
         }
     from sugar_lift_py_tests.lift_rpc import (
         provisional_contract_refs_from_demand_rows,
+        provisional_contract_refs_from_demands,
         tree_construction_context_for_workspace,
     )
 
+    if not corpus_root:
+        return {
+            "kind": "initialize-refusal",
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": (
+                "corpus_root is empty; cannot build TreeConstructionContext "
+                "without a named population root"
+            ),
+            "corpus_root": None,
+            "demand_table_path": demand_table_path,
+            "phase": "resolve-corpus-root",
+        }
+
     root = Path(corpus_root).resolve()
+    _progress(
+        "resolve-corpus-root",
+        corpus_root=str(root),
+        demand_table_path=demand_table_path,
+        allow_local_demand_derivation=allow_local_demand_derivation,
+        root_exists=root.exists(),
+        root_is_dir=root.is_dir(),
+    )
+    if not root.exists():
+        return {
+            "kind": "initialize-refusal",
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": (
+                f"corpus_root does not exist: {root} "
+                "(nothing to derive demands or freeze construction context against)"
+            ),
+            "corpus_root": str(root),
+            "demand_table_path": demand_table_path,
+            "phase": "resolve-corpus-root",
+        }
+
     contract_refs = None
     demand_table_identity = None
     if demand_table_path:
@@ -100,17 +161,64 @@ def _initialize(
             validate_shared_demand_table,
         )
 
+        table_path = Path(demand_table_path)
+        _progress(
+            "load-shared-demand-table",
+            corpus_root=str(root),
+            demand_table_path=str(table_path),
+            table_exists=table_path.is_file(),
+        )
+        if not table_path.is_file():
+            return {
+                "kind": "initialize-refusal",
+                "coordinate": "supervised-enum-worker.construction-context",
+                "reason": (
+                    f"demand_table_path is not a file: {table_path} "
+                    "(shared python-demand-table testimony missing on disk)"
+                ),
+                "corpus_root": str(root),
+                "demand_table_path": str(table_path),
+                "phase": "load-shared-demand-table",
+            }
         payload = validate_shared_demand_table(
-            json.loads(Path(demand_table_path).read_text(encoding="utf-8")),
+            json.loads(table_path.read_text(encoding="utf-8")),
             expected_content_key=SHARED_DEMAND_TABLE_CONTENT_KEY,
         )
         contract_refs = provisional_contract_refs_from_demand_rows(payload["rows"])
         demand_table_identity = SHARED_DEMAND_TABLE_CONTENT_KEY
     elif not allow_local_demand_derivation:
-        raise RuntimeError(
-            "supervised-enum-worker.shared-demand-table: authenticated demand "
-            "table testimony is absent"
+        return {
+            "kind": "initialize-refusal",
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": (
+                "authenticated demand table testimony is absent and "
+                "allow_local_demand_derivation is false; pass demand_table_path "
+                "or allow local derivation"
+            ),
+            "corpus_root": str(root),
+            "demand_table_path": None,
+            "phase": "demand-table-required",
+        }
+    else:
+        # Local derivation walks every *.py under corpus_root — authenticated
+        # pandas (~1421 files) is multi-minute. Progress lands before the walk
+        # so a supervisor timeout names this phase instead of refused: None.
+        _progress(
+            "derive-provisional-demands",
+            corpus_root=str(root),
+            demand_table_path=None,
+            note=(
+                "walking corpus_root for With/call demands; "
+                "authenticated pandas is expected to take minutes"
+            ),
         )
+        contract_refs = provisional_contract_refs_from_demands(root)
+    _progress(
+        "freeze-construction-context",
+        corpus_root=str(root),
+        demand_table_identity=demand_table_identity,
+        using_provisional_demands=demand_table_path is None,
+    )
     _CORPUS_ROOT = root
     _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(
         root, contract_refs=contract_refs
@@ -160,23 +268,26 @@ def main() -> int:
             print(json.dumps({"kind": "pong"}), flush=True)
             continue
         if kind == "initialize":
+            corpus_root = str(msg.get("corpus_root") or "")
+            demand_table_path = (
+                str(msg["demand_table_path"]) if msg.get("demand_table_path") else None
+            )
             try:
                 response = _initialize(
-                    str(msg.get("corpus_root") or ""),
-                    (
-                        str(msg["demand_table_path"])
-                        if msg.get("demand_table_path")
-                        else None
-                    ),
+                    corpus_root,
+                    demand_table_path,
                     allow_local_demand_derivation=bool(
                         msg.get("allow_local_demand_derivation", False)
                     ),
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 — named refusal to parent
                 response = {
                     "kind": "initialize-refusal",
                     "coordinate": "supervised-enum-worker.construction-context",
                     "reason": f"{type(error).__name__}: {error}",
+                    "corpus_root": corpus_root or None,
+                    "demand_table_path": demand_table_path,
+                    "phase": "initialize-exception",
                 }
             print(json.dumps(response), flush=True)
             continue
@@ -189,13 +300,18 @@ def main() -> int:
                 # Bare Python failures only. ConstructionPanic is BaseException:
                 # it is not caught here — the worker dies; the supervisor records
                 # the active file and restarts a fresh worker.
+                # Always emit non-empty error_type and message — never None:None.
+                err_type = type(error).__name__ or "Exception"
+                err_msg = str(error)
+                if not err_msg:
+                    err_msg = f"(empty str({err_type})); coordinate=lift-error"
                 print(
                     json.dumps(
                         {
                             "kind": "lift-error",
                             "file": rel,
-                            "error_type": type(error).__name__,
-                            "message": str(error)[-4000:],
+                            "error_type": err_type,
+                            "message": err_msg[-4000:],
                         }
                     ),
                     flush=True,

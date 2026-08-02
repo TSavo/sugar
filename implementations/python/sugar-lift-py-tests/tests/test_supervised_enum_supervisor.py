@@ -10,9 +10,16 @@ import pytest
 
 import sys
 import json
+import os
 import subprocess
 
+os.environ.setdefault("SUGAR_PROCESS_FLOOR_CACHE_DIR", "off")
+
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+# scan() imports process_floor_measurement_cache as a scripts sibling — same
+# door floors open when invoked as scripts/*.py (sys.path has scripts/).
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
 _SPEC = importlib.util.spec_from_file_location(
     "_supervised_enum_supervisor",
     _SCRIPTS / "_supervised_enum_supervisor.py",
@@ -109,3 +116,130 @@ def test_worker_refuses_file_before_frozen_context_initialization(
         worker.stdin.write(json.dumps({"kind": "shutdown"}) + "\n")
         worker.stdin.flush()
         worker.wait(timeout=5)
+
+
+def test_context_init_timeout_names_phase_not_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Init timeout must name phase + corpus_root — never 'refused: None'.
+
+    Floors 30728650857 banked refused: None because the 30s per-file budget
+    gated multi-minute provisional demand derivation over authenticated pandas.
+    """
+    _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
+    monkeypatch.setenv("SUGAR_SUPERVISOR_PLANT_INIT_HANG", "1")
+    supervisor = _SUP.SupervisedEnumSupervisor(
+        corpus_root=tmp_path,
+        file_timeout=30.0,
+        context_init_timeout=1.0,
+        allow_local_demand_derivation=True,
+    )
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            supervisor.start()
+        message = str(raised.value)
+        assert "refused: None" not in message
+        assert "mode=timeout" in message
+        assert "last_phase='planted-init-hang'" in message
+        assert f"corpus_root={tmp_path.resolve()}" in message
+        assert "coordinate=supervised-enum-worker.construction-context" in message
+        assert "context_init_timeout_s=1.0" in message
+    finally:
+        supervisor.stop()
+
+
+def test_context_init_missing_corpus_root_names_artifact(tmp_path: Path) -> None:
+    worker = subprocess.Popen(
+        [sys.executable, str(_SCRIPTS / "_supervised_enum_worker.py")],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert worker.stdin is not None and worker.stdout is not None
+    try:
+        assert json.loads(worker.stdout.readline())["kind"] == "ready"
+        worker.stdin.write(
+            json.dumps(
+                {
+                    "kind": "initialize",
+                    "corpus_root": "",
+                    "allow_local_demand_derivation": True,
+                }
+            )
+            + "\n"
+        )
+        worker.stdin.flush()
+        response = None
+        for _ in range(10):
+            line = worker.stdout.readline()
+            assert line, "worker exited without initialize-refusal"
+            response = json.loads(line)
+            if response.get("kind") != "initialize-progress":
+                break
+        assert response is not None
+        assert response["kind"] == "initialize-refusal"
+        assert response["phase"] == "resolve-corpus-root"
+        assert "corpus_root is empty" in response["reason"]
+    finally:
+        worker.stdin.write(json.dumps({"kind": "shutdown"}) + "\n")
+        worker.stdin.flush()
+        worker.wait(timeout=5)
+
+
+def test_context_init_nonexistent_root_names_path(tmp_path: Path) -> None:
+    missing = tmp_path / "no-such-corpus"
+    supervisor = _SUP.SupervisedEnumSupervisor(
+        corpus_root=missing,
+        file_timeout=30.0,
+        context_init_timeout=30.0,
+        allow_local_demand_derivation=True,
+    )
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            supervisor.start()
+        message = str(raised.value)
+        assert "refused: None" not in message
+        assert "does not exist" in message or "resolve-corpus-root" in message
+        assert str(missing.resolve()) in message
+    finally:
+        supervisor.stop()
+
+
+def test_named_lift_error_tail_never_none_none() -> None:
+    """Sibling: incomplete lift-error must not serialize as 'None: None'."""
+    assert "None: None" not in _SUP._named_lift_error_tail({})
+    assert "no error_type" in _SUP._named_lift_error_tail({})
+    assert "missing error_type" in _SUP._named_lift_error_tail({"message": "x"})
+    assert "(message field absent)" in _SUP._named_lift_error_tail(
+        {"error_type": "RuntimeError"}
+    )
+    assert _SUP._named_lift_error_tail(
+        {"error_type": "RuntimeError", "message": "boom"}
+    ) == "RuntimeError: boom"
+
+
+def test_lift_error_incomplete_payload_names_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling: incomplete lift-error body reaches FileTerminal named."""
+    source = _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
+    supervisor = _SUP.SupervisedEnumSupervisor(
+        corpus_root=tmp_path,
+        allow_local_demand_derivation=True,
+    )
+    try:
+        supervisor.start()
+        # Inject incomplete lift-error as if worker returned it.
+        original = supervisor._readline
+
+        def fake_readline(*, timeout: float):
+            return {"kind": "lift-error"}  # no error_type, no message
+
+        supervisor._readline = fake_readline  # type: ignore[method-assign]
+        row = supervisor.lift_file(source, "clean.py")
+        supervisor._readline = original  # type: ignore[method-assign]
+        assert row.category == "bare-exception"
+        assert "None: None" not in row.stderr_tail
+        assert "no error_type" in row.stderr_tail or "lift-error" in row.stderr_tail
+    finally:
+        supervisor.stop()
