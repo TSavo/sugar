@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run exactly one Criterion-2 process floor axis file-shard; emit identity-bound report.
 #
-# Usage: tools/run_one_process_floor_axis.sh <axis_base> <script_name> <shard_index> <shard_count>
+# Usage: tools/run_one_process_floor_axis.sh <axis_base> <script_name> <shard_index> <shard_count> <demand_table_path>
 #   axis_base: silent | native-crash | bare-exception | timeout
 #   seat id minted as ${axis_base}-s${shard_index:02d}
 #
@@ -19,6 +19,7 @@ axis_base="${1:?axis_base}"
 script_name="${2:?script}"
 shard_index="${3:?shard_index}"
 shard_count="${4:?shard_count}"
+demand_table_path="${5:?authenticated demand table path}"
 
 axis_seat="$(printf '%s-s%02d' "$axis_base" "$shard_index")"
 
@@ -28,6 +29,10 @@ SCRIPT="$SCRIPTS/$script_name"
 
 if [ ! -f "$SCRIPT" ]; then
   echo "::error::process floor script missing: $SCRIPT"
+  exit 2
+fi
+if [ ! -s "$demand_table_path" ]; then
+  echo "::error::authenticated python-demand-table missing or empty: $demand_table_path"
   exit 2
 fi
 
@@ -90,6 +95,7 @@ mkdir -p "$FLOOR_SCRATCH"
 
 set +e
 python -u "$SCRIPT" "$PANDAS_CORPUS" \
+  --demand-table-path "$demand_table_path" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH" \
   --json "$FLOOR_SUMMARY" \

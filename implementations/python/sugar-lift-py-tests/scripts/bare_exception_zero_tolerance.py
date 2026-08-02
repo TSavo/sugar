@@ -29,7 +29,9 @@ from _enum_floor_runtime import (  # noqa: E402
     require_explicit_scan_roots,
     require_python_paths,
     add_lpt_shard_args,
+    add_demand_table_arg,
     apply_lpt_file_shard,
+    require_demand_table,
 )
 from _production_lift_child import (  # noqa: E402
     NON_FAILURE_OUTCOMES,
@@ -125,7 +127,14 @@ def main() -> int:
         help="Write pandas-floor-summary-v1 with R_bare_exceptions magnitude.",
     )
     add_lpt_shard_args(parser)
+    add_demand_table_arg(parser)
     args = parser.parse_args()
+
+    try:
+        demand_table_path = require_demand_table(args.demand_table_path)
+    except ValueError as error:
+        print(f"BARE-EXCEPTION ZERO-TOLERANCE UNMEASURED: {error}")
+        return 2
 
     boot_error = production_lift_bootstrap_error()
     if boot_error is not None:
@@ -169,7 +178,10 @@ def main() -> int:
         encoding="utf-8",
     )
     terminals = scan_paths(
-        paths, root=args.repo_root, file_timeout=float(args.file_timeout)
+        paths,
+        root=args.repo_root,
+        file_timeout=float(args.file_timeout),
+        demand_table_path=demand_table_path,
     )
     rows = tuple(_from_terminal(t) for t in terminals)
     with progress_path.open("a", encoding="utf-8") as progress:
