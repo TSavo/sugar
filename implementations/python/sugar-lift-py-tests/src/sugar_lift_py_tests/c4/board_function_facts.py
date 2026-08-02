@@ -535,3 +535,62 @@ def board_fields_from_sealed_facts(
             "FunctionsCleanV1": clean.fact_cid,
         },
     }
+
+
+def require_sealed_board_function_fields(body: Mapping[str, Any]) -> None:
+    """Panic if an authoritative board carries function counts without the one door.
+
+    SCOREBOARD_AUTHORITY boards must land function totals only via
+    ``board_fields_from_sealed_facts``. A body with bare ``functionsTotal`` and
+    no three sealed fact CIDs is the 18230-vs-27954 hole: two sites computed
+    "how many functions" as ints and the board picked one. Construct the sealed
+    facts, or panic — never a second informal total.
+    """
+    if not body.get("SCOREBOARD_AUTHORITY"):
+        return
+    cids = body.get("sealedFunctionFactCids")
+    required = {
+        AXIS_POPULATION,
+        AXIS_ENUMERATED,
+        AXIS_CLEAN,
+    }
+    if not isinstance(cids, dict) or set(cids.keys()) != required:
+        raise BoardFunctionFactError(
+            "authoritative board missing sealedFunctionFactCids for the three "
+            f"function meanings (need {sorted(required)}, got {cids!r}); "
+            "function counts reach the board only through "
+            "board_fields_from_sealed_facts — a bare int is not a seal"
+        )
+    for axis, cid in cids.items():
+        if not isinstance(cid, str) or not cid.strip():
+            raise BoardFunctionFactError(
+                f"sealedFunctionFactCids[{axis!r}] must be a non-empty content "
+                f"address (got {cid!r})"
+            )
+    denom = (body.get("denominator") or {}).get("functions") or {}
+    if not isinstance(denom, dict):
+        raise BoardFunctionFactError(
+            "authoritative board denominator.functions must come from the sealed "
+            "door (missing or wrong type)"
+        )
+    if body.get("functionsTotal") != denom.get("total"):
+        raise BoardFunctionFactError(
+            "authoritative board functionsTotal disagrees with "
+            f"denominator.functions.total "
+            f"({body.get('functionsTotal')!r} vs {denom.get('total')!r}); "
+            "two producers of the same count cannot both land — one door only"
+        )
+    if body.get("functionsEnumerated") != denom.get("enumerated"):
+        raise BoardFunctionFactError(
+            "authoritative board functionsEnumerated disagrees with "
+            f"denominator.functions.enumerated "
+            f"({body.get('functionsEnumerated')!r} vs {denom.get('enumerated')!r}); "
+            "one door only"
+        )
+    if body.get("functionsUnaccounted") != denom.get("unaccounted"):
+        raise BoardFunctionFactError(
+            "authoritative board functionsUnaccounted disagrees with "
+            f"denominator.functions.unaccounted "
+            f"({body.get('functionsUnaccounted')!r} vs {denom.get('unaccounted')!r}); "
+            "unaccounted is derived at the seal door, not a third informal int"
+        )

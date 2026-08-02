@@ -56,6 +56,7 @@ if _PKG_SRC.is_dir() and str(_PKG_SRC) not in sys.path:
 from sugar_lift_py_tests.c4.board_function_facts import (  # noqa: E402
     LocalReading,
     board_fields_from_sealed_facts,
+    require_sealed_board_function_fields,
     seal_functions_clean_v1,
     seal_functions_enumerated_v1,
     seal_functions_population_v1,
@@ -607,6 +608,9 @@ def seal_board_from_aggregate(
         # Host/load noise stays in sourceStamp; bodyCid excludes it.
     if compose_cid is not None:
         body["composeCid"] = compose_cid
+    # One door only: function counts on an authoritative board must carry the
+    # three sealed fact CIDs. A bare functionsTotal without them panics.
+    require_sealed_board_function_fields(body)
     # bodyCid over seal-domain fields (exclude host-volatile sourceStamp).
     seal_domain = {
         k: v
