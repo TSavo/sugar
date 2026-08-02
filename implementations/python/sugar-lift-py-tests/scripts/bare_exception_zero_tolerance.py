@@ -22,6 +22,8 @@ from typing import Any, Mapping, NamedTuple, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _enum_floor_runtime import (  # noqa: E402
+    format_completed_axis_report,
+    format_unmeasured_axis,
     prepare_floor_io,
     production_roots,
     require_explicit_scan_roots,
@@ -135,13 +137,17 @@ def main() -> int:
         f"roots={[str(p) for p in args.paths]} files={len(paths)}"
     )
 
-    _base, engine_path, progress_path = prepare_floor_io(
-        repo_root=args.repo_root,
-        floor="bare-exception",
-        out_dir=args.out_dir,
-        engine_log=args.engine_log,
-        progress=args.progress,
-    )
+    try:
+        _base, engine_path, progress_path = prepare_floor_io(
+            repo_root=args.repo_root,
+            floor="bare-exception",
+            out_dir=args.out_dir,
+            engine_log=args.engine_log,
+            progress=args.progress,
+        )
+    except (OSError, ValueError) as error:
+        print(format_unmeasured_axis("R_bare_exceptions", reason=str(error)))
+        return 1
     progress_path.write_text(
         f"# bare-exception supervised enum scan\n"
         f"# engine={engine_path}\n"
@@ -167,7 +173,7 @@ def main() -> int:
         f"bare={len(offenders)} "
         f"progress={progress_path} engine={engine_path}"
     )
-    print(f"R_bare_exceptions = {len(offenders)}")
+    print(format_completed_axis_report("R_bare_exceptions", len(offenders)))
     for row in offenders:
         tail = (row.stderr_tail.splitlines() or ["no detail"])[-1]
         print(f"{row.file}:returncode={row.returncode}:bare-exception — {tail}")

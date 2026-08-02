@@ -27,10 +27,12 @@ AXIS_COMMANDS = {
     "R_construction_panic_catches_outside_membrane = 0": (
         "construction_panic_catch_law.py"
     ),
-    "R_silent = 0": "silent_zero_tolerance.py",
-    "R_native_crashes = 0": "native_crash_zero_tolerance.py",
-    "R_bare_exceptions = 0": "bare_exception_zero_tolerance.py",
-    "R_timeouts = 0": "timeout_zero_tolerance.py",
+    # Criterion-2 process floors: axis names carry no "= 0" (pre-measure crash
+    # must not paint a bankable zero in the group header).
+    "R_silent": "silent_zero_tolerance.py",
+    "R_native_crashes": "native_crash_zero_tolerance.py",
+    "R_bare_exceptions": "bare_exception_zero_tolerance.py",
+    "R_timeouts": "timeout_zero_tolerance.py",
     "R_vendor_special_case = 0": "vendor_special_case_law.py",
     "R_factory_walk_unclassified = 0": "factory_walk_unclassified_law.py",
     "R_finite_cap_opaque_completions = 0": ("finite_cap_opaque_completion_law.py"),
@@ -69,10 +71,10 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
                 "binding CI must census the checked-in production surface"
             )
         if axis in {
-            "R_native_crashes = 0",
-            "R_bare_exceptions = 0",
-            "R_timeouts = 0",
-            "R_silent = 0",
+            "R_native_crashes",
+            "R_bare_exceptions",
+            "R_timeouts",
+            "R_silent",
         }:
             # Process floors + Criterion-2 silent must name a population.
             # Bare silent_zero_tolerance used to default to kit production_roots
@@ -85,6 +87,15 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
             assert '"$PANDAS_CORPUS"' in step or "'$PANDAS_CORPUS'" in step, (
                 f"{axis} must pass \"$PANDAS_CORPUS\" as the scan root"
             )
+            # Scratch must not default under the population root.
+            assert "--out-dir" in step or "FLOOR_SCRATCH" in step, (
+                f"{axis} must direct floor scratch outside the population "
+                "(S0.2: mkdir under site-packages/pandas is measurement crime)"
+            )
+            # Group header must not embed a bankable zero.
+            assert " = 0" not in step.split("\n", 1)[0], (
+                f"{axis} group name must not embed '= 0' (pre-measure crash bank)"
+            )
 
 
 def test_process_floors_resolve_authenticated_pandas_population() -> None:
@@ -96,10 +107,10 @@ def test_process_floors_resolve_authenticated_pandas_population() -> None:
     assert "PANDAS_CORPUS=" in floors
     # Order: corpus resolved once, then all four Criterion-2 population axes use it.
     corpus_at = floors.find("PANDAS_CORPUS=")
-    native_at = floors.find('axis "R_native_crashes = 0"')
-    bare_at = floors.find('axis "R_bare_exceptions = 0"')
-    timeout_at = floors.find('axis "R_timeouts = 0"')
-    silent_at = floors.find('axis "R_silent = 0"')
+    native_at = floors.find('axis "R_native_crashes"')
+    bare_at = floors.find('axis "R_bare_exceptions"')
+    timeout_at = floors.find('axis "R_timeouts"')
+    silent_at = floors.find('axis "R_silent"')
     assert 0 <= corpus_at < native_at < bare_at < timeout_at < silent_at, (
         "PANDAS_CORPUS must be bound before native/bare/timeout/silent axes"
     )

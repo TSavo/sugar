@@ -64,6 +64,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sugar_lift_py_tests.idd.lift_coverage_census import DiskCensus  # noqa: E402
 
 from _enum_floor_runtime import (  # noqa: E402
+    format_completed_axis_report,
+    format_unmeasured_axis,
     iter_with_tqdm,
     open_progress,
     prepare_floor_io,
@@ -150,7 +152,7 @@ def r_silent(offenders: Sequence[SilentOffender]) -> int:
 
 def format_report(offenders: Sequence[SilentOffender]) -> str:
     lines = [
-        f"R_silent = {r_silent(offenders)}",
+        format_completed_axis_report("R_silent", r_silent(offenders)),
         (
             "Replacement: every source locus speaks as warranted, support, "
             "inactive, typed effect, or loud ConstructionPanic."
@@ -338,13 +340,17 @@ def main() -> int:
         print(f"SILENT ZERO-TOLERANCE RED: {error}")
         return 1
 
-    _base, engine_path, progress_path = prepare_floor_io(
-        repo_root=args.repo_root,
-        floor="silent",
-        out_dir=args.out_dir,
-        engine_log=args.engine_log,
-        progress=args.progress,
-    )
+    try:
+        _base, engine_path, progress_path = prepare_floor_io(
+            repo_root=args.repo_root,
+            floor="silent",
+            out_dir=args.out_dir,
+            engine_log=args.engine_log,
+            progress=args.progress,
+        )
+    except (OSError, ValueError) as error:
+        print(format_unmeasured_axis("R_silent", reason=str(error)))
+        return 1
     summary = audit_paths(
         paths,
         root=args.repo_root,

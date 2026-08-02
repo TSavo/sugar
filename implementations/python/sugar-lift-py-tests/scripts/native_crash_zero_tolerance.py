@@ -23,6 +23,8 @@ from typing import NamedTuple, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _enum_floor_runtime import (  # noqa: E402
+    format_completed_axis_report,
+    format_unmeasured_axis,
     prepare_floor_io,
     production_roots,
     require_explicit_scan_roots,
@@ -80,7 +82,9 @@ def r_native_crashes(offenders: Sequence[NativeCrashOffender]) -> int:
 
 def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
     lines = [
-        f"R_native_crashes = {r_native_crashes(offenders)}",
+        format_completed_axis_report(
+            "R_native_crashes", r_native_crashes(offenders)
+        ),
         (
             "Replacement: corpus children terminate with completed testimony, "
             "typed gap, bare-exception row, or loud timeout; never signal."
@@ -192,13 +196,17 @@ def main() -> int:
         f"roots={[str(p) for p in args.paths]} files={len(paths)}"
     )
 
-    _base, engine_path, progress_path = prepare_floor_io(
-        repo_root=args.repo_root,
-        floor="native-crash",
-        out_dir=args.out_dir,
-        engine_log=args.engine_log,
-        progress=args.progress,
-    )
+    try:
+        _base, engine_path, progress_path = prepare_floor_io(
+            repo_root=args.repo_root,
+            floor="native-crash",
+            out_dir=args.out_dir,
+            engine_log=args.engine_log,
+            progress=args.progress,
+        )
+    except (OSError, ValueError) as error:
+        print(format_unmeasured_axis("R_native_crashes", reason=str(error)))
+        return 1
     summary = audit_paths(
         paths,
         root=args.repo_root,
