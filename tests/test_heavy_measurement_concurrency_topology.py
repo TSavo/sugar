@@ -189,3 +189,18 @@ def test_floor_workflow_is_parallel_matrix_with_enrollment():
     assert "run_static_sole_construction_floors.sh" in text
     assert "run_sole_construction_floors.sh" not in text
     assert LEASE_WRAPPER not in text
+
+
+def test_process_floor_matrix_restores_and_saves_ca_terminal_shelf():
+    """Parallel jobs must not each cold-lift: fleet-wide actions/cache over the CA shelf.
+
+    HOME alone only shares same-host matrix landings. restore/save keyed by tip
+    makes the shelf available across runners; MeasurementKey still binds corpus
+    and file content so wrong population cannot hit.
+    """
+    text = _text("factory-zero-tolerance.yml")
+    assert "actions/cache/restore@v4" in text
+    assert "actions/cache/save@v4" in text
+    assert "process-floor-term-${{ github.sha }}" in text
+    assert "process-floor-terminals" in text
+    assert "SUGAR_PROCESS_FLOOR_CACHE_DIR" in text
