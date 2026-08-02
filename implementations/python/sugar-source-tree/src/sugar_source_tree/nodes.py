@@ -1861,8 +1861,10 @@ class Node(Typed):
     """Abstract base of every node. The hierarchy is the grammar.
 
     Shell over memoized field *data* on the unit ConstructionCache. Accessors
-    resolve each backend slot at most once per (ref, reporter, control_context)
-    into that shared row; re-reads hit the row. Shells are free to construct.
+    resolve each backend slot at most once per construction coordinate into
+    that shared row; re-reads hit the row. Control stacks enter the coordinate
+    only for Break/Continue/Raise (nearest binding); other kinds share one row
+    across every enclosing loop/handler. Shells are free to construct.
     Shadow rewrite uses the same door with a shadow backend ref.
     """
 
@@ -1949,6 +1951,7 @@ class Node(Typed):
             self.reporter,
             self.control_context,
             self.unit.construction_context,
+            kind=type(self).__name__,
         )
         row = cache.fields.setdefault(key, {})
         if name in row:
@@ -2518,6 +2521,7 @@ class Node(Typed):
             self.reporter,
             self.control_context,
             self.unit.construction_context,
+            kind=type(self).__name__,
         )
         remembered_panic = cache.sugar_panics.get(key)
         if remembered_panic is not None:
@@ -2642,6 +2646,7 @@ class Node(Typed):
             self.reporter,
             self.control_context,
             self.unit.construction_context,
+            kind=type(self).__name__,
         )
         row = cache.fields.setdefault(key, {})
         cached = row.get("__child_edges__")

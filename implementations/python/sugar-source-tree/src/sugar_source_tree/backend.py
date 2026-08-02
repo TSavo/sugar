@@ -66,8 +66,9 @@ def materialize(
 
     Constructs a Node shell for this backend ref (source or shadow). Field
     *data* is memoized on the unit's ConstructionCache — slots resolve once
-    per (ref, reporter, control_context) into a shared row; shells may be
-    built freely over that row. Registration runs in the constructor.
+    per construction coordinate into a shared row; shells may be built freely
+    over that row. Control stacks enter the coordinate only for
+    Break/Continue/Raise. Registration runs in the constructor.
 
     ``unit`` is the unit to construct UNDER, which is the parent's for a child
     slot. A ref that was parsed out of a specific source overrides it with that
@@ -85,11 +86,14 @@ def materialize(
     if cache is None:
         cache = ConstructionCache()
         object.__setattr__(unit, "construction_cache", cache)
-    # Ensure the field row exists (filled lazily on first accessor).
-    key = cache.key(ref, reporter, ctx, unit.construction_context)
+    cls = ref.resolve_type()
+    # Ensure the field row exists (filled lazily on first accessor). Kind
+    # selects whether the control stack is part of the coordinate.
+    key = cache.key(
+        ref, reporter, ctx, unit.construction_context, kind=cls.__name__
+    )
     cache.fields.setdefault(key, {})
 
-    cls = ref.resolve_type()
     return cls(
         unit=unit,
         ref=ref,
@@ -865,6 +869,7 @@ class Backend:
                 node.value.reporter,
                 node.value.control_context,
                 node.value.unit.construction_context,
+                kind=type(node.value).__name__,
             )
             value_cache.sugar_results[value_key] = value_sugar
             node.value.reporter.present_fact(node.value)

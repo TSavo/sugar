@@ -1,15 +1,49 @@
 """Work memoization for typed construction — field *data*, not Node shells.
 
-Each ``(ref, reporter, control_context)`` site owns a field row. Slots resolve
-at most once into that row on first need. ``materialize`` may construct Node
-shells freely; each shell reads the shared row. Source and shadow backends use
-the same map (different ``ref``).
+Each construction coordinate owns a field row. Slots resolve at most once into
+that row on first need. ``materialize`` may construct Node shells freely; each
+shell reads the shared row. Source and shadow backends use the same map
+(different ``ref``).
+
+Control context (enclosing loop / except stacks) is NOT part of every key.
+Only node kinds whose *resolved value* depends on that stack — Break,
+Continue, Raise — contribute a control fragment, and only the nearest binding
+they actually read. Name, Constant, Attribute, and the rest of the tree share
+one row per (ref, reporter, construction_context) regardless of nesting depth,
+so the key set converges with the ref set instead of growing with every loop.
 """
 
 from __future__ import annotations
 
 import weakref
 from typing import Any
+
+# Kinds whose constructed answer reads ControlConstructionContextV1.
+# Everyone else resolves identically inside or outside a loop/handler.
+CONTROL_SENSITIVE_KINDS: frozenset[str] = frozenset(
+    ("Break", "Continue", "Raise")
+)
+
+
+def control_key_fragment(
+    control_context: object,
+    kind: str | None,
+) -> tuple:
+    """The part of control context that belongs in a construction key.
+
+    Break/Continue need the nearest loop target only — not the full stack.
+    Raise needs the nearest exception slot only (bare raise; others tolerate
+    None). All other kinds contribute nothing: their field and sugar answers
+    do not depend on which loop encloses them.
+    """
+    if kind not in CONTROL_SENSITIVE_KINDS:
+        return ()
+    if kind in ("Break", "Continue"):
+        loops = getattr(control_context, "loop_targets", ()) or ()
+        return ("loop", loops[-1] if loops else None)
+    # Raise
+    slots = getattr(control_context, "exception_slots", ()) or ()
+    return ("exc", slots[-1] if slots else None)
 
 # The construction-shape CID is a CATEGORY of content-addressed work: a pure
 # function of a backend ref (fragment + subtree preimage). It is NOT unit-scoped
@@ -150,7 +184,12 @@ def remember_constructed_value_cid_v2(value: object, cid: str) -> None:
 
 
 class ConstructionCache:
-    """Shared field rows keyed by backend site + reporter + control context."""
+    """Shared field rows keyed by construction coordinate.
+
+    Control stacks enter the key only for control-sensitive kinds (see
+    ``control_key_fragment``). Non-sensitive kinds share one row across every
+    enclosing loop/handler so the key population converges with the ref set.
+    """
 
     __slots__ = ("fields", "sugar_results", "sugar_panics", "_pinned")
 
@@ -178,9 +217,10 @@ class ConstructionCache:
         # the coordinate rule -- the reporter testifies each coordinate once,
         # whether it answers present or absent.
         self.sugar_panics: dict[tuple, BaseException] = {}
-        # key -> ref, or (ref, construction_context). The cache key embeds
-        # both live identities; pin every non-None participant so neither ID
-        # can be recycled underneath a retained row.
+        # key -> pin bag. The cache key embeds live identities (ref,
+        # construction_context, and for control-sensitive kinds the nearest
+        # loop/exception binding); pin every participant so IDs cannot be
+        # recycled underneath a retained row.
         # Shadow refs minted
         # during substitution are transient: once a rewritten shadow is GC'd its
         # address is reused by the NEXT shadow (e.g. one loop-unroll iteration's
@@ -196,17 +236,29 @@ class ConstructionCache:
         reporter: object,
         control_context: object,
         construction_context: object = None,
+        *,
+        kind: str | None = None,
     ) -> tuple:
-        loop_targets = getattr(control_context, "loop_targets", ())
-        exception_slots = getattr(control_context, "exception_slots", ())
+        """Construction coordinate for field rows and sugar memoization.
+
+        ``kind`` selects whether control context contributes. Pass the node
+        class name (``Break``, ``Name``, …). Omitting ``kind`` is treated as
+        non-sensitive — no control fragment — which is correct for pin tests
+        and any caller that is not a control-sensitive node.
+        """
+        control = control_key_fragment(control_context, kind)
         computed = (
             id(ref),
             id(reporter),
             id(construction_context),
-            loop_targets,
-            exception_slots,
+            control,
         )
-        self._pinned[computed] = (
-            ref if construction_context is None else (ref, construction_context)
-        )
+        # Pin every identity-bearing participant so a GC'd address cannot be
+        # recycled into a live key. Control fragment is pinned when present so
+        # a nearest-loop target object stays unique for the row's lifetime.
+        if construction_context is None and not control:
+            pin: object = ref
+        else:
+            pin = (ref, construction_context, control)
+        self._pinned[computed] = pin
         return computed
