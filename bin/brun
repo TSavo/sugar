@@ -27,16 +27,21 @@ Environment (shared with bcargo so roots, caps and test harnesses apply):
   BCARGO_SSH, BCARGO_RSYNC        Override the ssh/rsync binaries (test harness)
 
 Quiet gate (wall-clock timing only — opt-in; ordinary builds leave unset):
-  SUGAR_BX_REQUIRE_QUIET=1   Exclusive remote timing lease + load sample under
-                             the lock. Refuse exit 76 if load1 > max(2, nproc/4).
-                             Print load BEFORE and AFTER on stderr (lease=held).
-  SUGAR_BX_MAX_LOADAVG=N     Explicit ceiling (also arms the gate alone).
+  SUGAR_BX_REQUIRE_QUIET=1   Arms all three gates: exclusive lease + load under
+                             lock + corpus pin (unless SKIP). 
+  SUGAR_BX_MAX_LOADAVG=N     Explicit load ceiling (also arms the gate alone).
   SUGAR_BX_TIMING_LEASE_PATH Remote flock path
                              (default /var/tmp/sugar-bx-timing-measurement.lease)
   SUGAR_BX_TIMING_LEASE_WAIT_S  Seconds to wait for the lease (default 7200).
                              0 = refuse immediately with exit 77 if busy.
-  Exit 76 = host not quiet. Exit 77 = another measurement holds the lease.
-  A measurement that cannot testify to its own conditions is not a measurement.
+  SUGAR_BX_REQUIRE_CORPUS_PIN  Pin JSON path (default
+                             docs/ledgers/pins/pandas-3.0.3.pin.json)
+  SUGAR_BX_CORPUS_PYTHON     Interpreter that must see the pin
+                             (default .venv-py312/bin/python)
+  SUGAR_BX_SKIP_CORPUS_PIN=1 Skip pin (load/lease unit tests only — never for
+                             pandas wall-clock)
+  Exit 76 = host not quiet. Exit 77 = lease busy. Exit 78 = wrong corpus pin.
+  Three gates, one law: quiet box, exclusive lease, correct corpus.
   See docs/contributing/battleaxe-timing.md.
 EOF
 }
