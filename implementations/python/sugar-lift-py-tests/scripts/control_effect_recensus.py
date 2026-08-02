@@ -321,21 +321,79 @@ def _cm_resolution_bucket(resolution) -> str:
     return f"gap:{parsed.value}"
 
 
+# Conservation identity (Class B refusal law — do not paper this raise):
+# every synchronous AST with-item is either constructed or one typed gap.
+WITH_CENSUS_CONSERVATION_IDENTITY = (
+    "site:with-item (AST sync With items) "
+    "== constructed (derived-contract / authenticated CM refs) "
+    "+ typed_gaps (gap:* kinds on the same use-sites); "
+    "every sync with-item appears exactly once as constructed or a typed gap"
+)
+
+
+def _effective_cm_resolutions_for_source(context, *, source_cid: str) -> dict:
+    """Resolutions With construction will see for one source unit.
+
+    Same precedence as ``With._prebound_manager_resolution``: source-derived
+    overwrites ``contract_refs``. Filter by ``source_cid`` so a shared corpus
+    provisional table is counted once per site, not once per file walk.
+    """
+    effective: dict = {}
+    refs = getattr(context, "contract_refs", None)
+    by_use = getattr(refs, "by_use_site", None) or {}
+    for coordinate, resolution in by_use.items():
+        if getattr(coordinate, "source_cid", None) != source_cid:
+            continue
+        effective[coordinate] = resolution
+    derived = getattr(context, "source_derived_contract_refs", None) or {}
+    for coordinate, resolution in derived.items():
+        if getattr(coordinate, "source_cid", None) != source_cid:
+            continue
+        # Derived wins — identical to With construction.
+        effective[coordinate] = resolution
+    return effective
+
+
 def _tally_cm_resolutions(
     context,
+    *,
+    source_cid: str,
 ) -> tuple[Counter[str], Counter[str]]:
-    """Count derived-table rows by structural resolution kind."""
+    """Count effective prebound resolutions for one source unit by kind.
+
+    Measurement defect class (Class A if ignored): tallying only
+    ``source_derived_contract_refs`` under-counts the provisional / authenticated
+    ``contract_refs`` table that With falls back to — producing
+    constructed=0, typed_gaps≪with_items, and an honest conservation refusal.
+    """
     from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerContractRefV1,
         ContextManagerResolutionGapV1,
         SourceDerivedContextManagerRefV1,
+        SourceDerivedGeneratorResourceRefV1,
     )
     from sugar_source_tree.panic import WithConstructionGapKind
 
+    if not source_cid:
+        raise ValueError(
+            "cm resolution tally requires source_cid so shared contract_refs "
+            "are not multiplied across every file in the census"
+        )
+
     buckets: Counter[str] = Counter()
     unrecognized_kinds: Counter[str] = Counter()
-    refs = getattr(context, "source_derived_contract_refs", None) or {}
-    for resolution in refs.values():
-        if isinstance(resolution, SourceDerivedContextManagerRefV1):
+    for resolution in _effective_cm_resolutions_for_source(
+        context, source_cid=source_cid
+    ).values():
+        if isinstance(
+            resolution,
+            (
+                SourceDerivedContextManagerRefV1,
+                SourceDerivedGeneratorResourceRefV1,
+                ContextManagerContractRefV1,
+            ),
+        ):
+            # Constructed manager testimony (source-derived or authenticated bind).
             buckets["derived-contract"] += 1
             continue
         if isinstance(resolution, ContextManagerResolutionGapV1):
@@ -348,7 +406,7 @@ def _tally_cm_resolutions(
             continue
         raise TypeError(
             "With resolution table contains a value outside the closed "
-            f"derived-contract | ContextManagerResolutionGapV1 union: "
+            "constructed-ref | ContextManagerResolutionGapV1 union: "
             f"{type(resolution).__name__}"
         )
     return buckets, unrecognized_kinds
@@ -359,7 +417,12 @@ def _with_census_partition(
     ast_sites: Counter[str],
     unrecognized_kinds: Counter[str] | None = None,
 ) -> dict[str, Any]:
-    """Conserve every synchronous With item into constructed or one typed gap."""
+    """Conserve every synchronous With item into constructed or one typed gap.
+
+    Conservation identity (binding):
+    ``site:with-item == constructed + typed_gaps`` over the same use-site set.
+    Refusal when this fails is Class B honest accounting — never suppress it.
+    """
     from sugar_source_tree.panic import WithConstructionGapKind
 
     vocabulary = tuple(member.value for member in WithConstructionGapKind)
@@ -394,23 +457,31 @@ def _with_census_partition(
         )
     total = int(ast_sites.get("site:with-item", 0))
     constructed = int(cm_resolutions.get("derived-contract", 0))
-    accounted = constructed + sum(typed_gaps.values())
+    typed_gap_total = sum(typed_gaps.values())
+    accounted = constructed + typed_gap_total
     if accounted != total:
+        unaccounted = total - accounted
         raise ValueError(
-            "With census does not conserve: "
-            f"with_items_total={total} constructed={constructed} "
-            f"typed_gaps={sum(typed_gaps.values())} accounted={accounted}"
+            "With census does not conserve. "
+            f"LAW: {WITH_CENSUS_CONSERVATION_IDENTITY}. "
+            f"REFUSED: with_items_total={total} constructed={constructed} "
+            f"typed_gaps={typed_gap_total} accounted={accounted} "
+            f"unaccounted={unaccounted} "
+            f"(unaccounted>0 ⇒ residual/table miss; unaccounted<0 ⇒ overcount). "
+            "Do not suppress this raise; fix the partition or name residual."
         )
     return {
+        "conservationIdentity": WITH_CENSUS_CONSERVATION_IDENTITY,
         "with_items_total": total,
         "constructed": constructed,
         "typed_gap_kinds_total": len(vocabulary),
         "typed_gaps": typed_gaps,
         "unrecognized_resolution_kinds": dict(sorted(unrecognized_kinds.items())),
         "accounted": accounted,
+        "unaccounted": 0,
         "reconciliation": (
             f"{total} = {constructed} constructed + "
-            f"{sum(typed_gaps.values())} typed gaps"
+            f"{typed_gap_total} typed gaps"
         ),
         "conserves": True,
     }
@@ -596,10 +667,12 @@ def _measure_file(
             # Derivation can hit a real missing sugar before any function walk.
             tally_construction(type(gap).__name__, line=0)
             return reporter
-        # Resolution partition from the derived table (manager-expression
-        # sites, not functions-blocked), keyed by authenticated gap kind.
+        # Effective resolution set for THIS source unit only: source-derived
+        # over contract_refs (same door as With construction). Never tally the
+        # whole shared provisional table without source_cid — that multiplies.
         file_cm_resolutions, file_unrecognized_kinds = _tally_cm_resolutions(
-            construction_context
+            construction_context,
+            source_cid=source_file.unit.source_cid,
         )
         cm_resolutions.update(file_cm_resolutions)
         unrecognized_cm_kinds.update(file_unrecognized_kinds)
