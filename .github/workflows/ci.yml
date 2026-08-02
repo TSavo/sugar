@@ -177,8 +177,8 @@ jobs:
         with:
           subject-path: implementations/rust/target/release/sugar
 
-  # Showcase shards warm their own bins inside `make test-showcases`.
-  # Concurrent shards share the filesystem shelf; single-flight prevents stampede.
+  # ------------------------------------------------------------------
+  # claim-mass + python-format: N pins / N packages ⇒ N jobs + enrollment.
   # ------------------------------------------------------------------
   claim-mass-matrix:
     name: emit claim-mass pin matrix
@@ -370,8 +370,54 @@ jobs:
             --require-commit "$GITHUB_SHA" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # ------------------------------------------------------------------
+  # Showcases: shared wheelhouse + 4 shards + enrollment (#7020).
+  # One wheelhouse for third-party deps; 4 shards measure partitions;
+  # enrollment is existence (missing shard body = UNMEASURED).
+  # No needs: prepare — that job was deleted by #7021.
+  # Concurrent showcase shards still warm bins via make test-showcases;
+  # stamp-keyed single-flight covers multi-job cold miss.
+  # ------------------------------------------------------------------
+
+  showcase-prepare:
+    name: showcase env (shared wheelhouse)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Build wheelhouse (one resolve for all shards)
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_dir="$RUNNER_TEMP/showcase-wheelhouse"
+          rm -rf "$env_dir"
+          mkdir -p "$env_dir"
+          # Same package set every showcase shard used to install independently.
+          python -m pip wheel --quiet --wheel-dir "$env_dir" \
+            ./implementations/python/sugar-build-witness \
+            './implementations/python/sugar-lift-py-tests[test]' \
+            ./implementations/python/sugar-lift-python-source \
+            ./implementations/python/sugar-lift-py-pytest-witness
+          # Keep third-party wheels only. First-party installs from checkout
+          # paths so each shard measures this tip's tree.
+          shopt -s nullglob
+          rm -f "$env_dir"/sugar_*.whl
+          ls -la "$env_dir" | head -50
+      - name: Upload showcase wheelhouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: showcase-wheelhouse
+          path: ${{ runner.temp }}/showcase-wheelhouse/
+          if-no-files-found: error
+
   showcases:
     name: showcases (${{ matrix.shard }}/4)
+    needs: [showcase-prepare]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
     strategy:
@@ -390,12 +436,21 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-          cache: 'pip'
 
-      - name: Install lift package deps
-        # Sole dep authority: sugar-lift-py-tests[test] (pyproject.toml).
+      - name: Download shared wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: showcase-wheelhouse
+          path: ${{ runner.temp }}/showcase-wheelhouse
+
+      - name: Install Python deps from wheelhouse (no network resolve)
+        shell: bash
         run: |
+          set -euo pipefail
+          # Third-party from the prepared wheelhouse; first-party from checkout
+          # paths so the shard measures this tip's tree.
           python -m pip install --quiet \
+            --no-index --find-links "$RUNNER_TEMP/showcase-wheelhouse" \
             -e implementations/python/sugar-build-witness \
             -e 'implementations/python/sugar-lift-py-tests[test]' \
             -e implementations/python/sugar-lift-python-source \
@@ -407,7 +462,7 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Install system deps
+      - name: Install system deps (per-runner; apt no-op if already present)
         run: |
           tools/ci-apt-install.sh z3 cvc5 maven unzip b3sum
           if ! command -v vampire >/dev/null 2>&1; then
@@ -416,13 +471,68 @@ jobs:
             sudo install -m 0755 /tmp/vampire-bin/vampire /usr/local/bin/vampire
           fi
 
-      - name: Run showcase shard
-        run: make test-showcases
+      - name: Run showcase shard ${{ matrix.shard }}
+        id: shard
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          make test-showcases
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          python3 - <<PY
+          import json, os
+          from pathlib import Path
+          body = {
+              "schemaVersion": 1,
+              "measurementClass": "test-showcases",
+              "shardIndex": int("${{ matrix.shard }}"),
+              "shardCount": 4,
+              "measuredCommit": os.environ.get("GITHUB_SHA"),
+              "status": "completed",
+              "exitCode": $exit_code,
+          }
+          Path("showcase-shard-body.json").write_text(
+              json.dumps(body, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          exit "$exit_code"
         env:
           CI: '1'
           GH_TOKEN: ${{ github.token }}
           SHOWCASE_SHARD_COUNT: '4'
           SHOWCASE_SHARD_INDEX: ${{ matrix.shard }}
+
+      - name: Upload shard measurement body
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: showcase-shard-${{ matrix.shard }}
+          path: showcase-shard-body.json
+          if-no-files-found: error
+
+  showcase-attendance:
+    name: showcase enrollment (all shards)
+    if: always() && !cancelled()
+    needs: [showcase-prepare, showcases]
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: showcase-shard-*
+          path: runs
+      - name: Roll call — every showcase shard attended
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/showcase_shard_attendance.py \
+            --reports-dir runs \
+            --shard-count 4 \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
   acid-test:
     name: acid test (make ci)
@@ -435,7 +545,7 @@ jobs:
       - core-shelf
       - claim-mass-attendance
       - python-format-attendance
-      - showcases
+      - showcase-attendance
     runs-on: ubuntu-latest
     steps:
       - name: Report the complete acid-test vector
@@ -445,7 +555,7 @@ jobs:
           CORE_SHELF_RESULT: ${{ needs.core-shelf.result }}
           CLAIM_MASS_RESULT: ${{ needs.claim-mass-attendance.result }}
           FORMAT_RESULT: ${{ needs.python-format-attendance.result }}
-          SHOWCASE_RESULT: ${{ needs.showcases.result }}
+          SHOWCASE_RESULT: ${{ needs.showcase-attendance.result }}
         run: |
           echo "apt=$APT_RESULT core=$CORE_RESULT core-shelf=$CORE_SHELF_RESULT claim-mass=$CLAIM_MASS_RESULT format=$FORMAT_RESULT showcases=$SHOWCASE_RESULT"
           test "$APT_RESULT" = success
