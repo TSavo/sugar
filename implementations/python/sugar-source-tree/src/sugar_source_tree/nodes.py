@@ -5079,8 +5079,19 @@ class Assign(Statement):
         # Destructure only an already-constructed Tuple/List display.  This is
         # structural projection, not an iterator guess: a symbolic/opaque RHS
         # has no authenticated cardinality and therefore stays loud.
+        #
+        # Lexical binding patterns only. Attribute/Subscript (and mixed) unpack
+        # targets are intentionally NOT enrolled as binding patterns (see
+        # ``_is_binding_target_pattern`` and
+        # ``test_attribute_only_unpack_is_not_minted_as_a_binding_pattern``).
+        # Calling ``require_target_pattern`` when none was minted is a hierarchy
+        # lie — it dresses a non-binding unpack as ``foreign-target-occurrence``
+        # and aborts the file. Return None so mixed/store unpack falls through
+        # to ``_flat_store_unpack_pairs`` / store construction.
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)):
+            return None
+        if not self.unit.target_patterns_for(self):
             return None
         pattern = self.unit.require_target_pattern(self, target)
         return pattern.bindings_for(self.value)
