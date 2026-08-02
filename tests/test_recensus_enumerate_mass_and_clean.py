@@ -66,7 +66,7 @@ def test_residual_failure_preserves_roster_functions_total(monkeypatch) -> None:
     assert row["functionsTotal"] == 3
     assert row["functionsEnumerated"] == 3
     assert row["rosterPreservedAfterResidualFailure"] is True
-    assert row["category"] == "backend-defect"
+    assert row["category"] == "panic"
     # Clean must not claim 3/3 perfection after residual failure.
     assert row["functionsClean"] is None
     assert row["cleanRatioRefused"] is True
@@ -87,7 +87,7 @@ def test_open_roster_failure_still_zero_when_no_ast(monkeypatch) -> None:
     )
     assert row["functionsTotal"] == 0
     assert row["functionsEnumerated"] == 0
-    assert row["category"] == "backend-defect"
+    assert row["category"] == "panic"
 
 
 def test_roster_failure_banks_ast_population_not_silent_zero(monkeypatch) -> None:
@@ -179,7 +179,7 @@ def test_compose_refuses_tautological_clean_on_board() -> None:
         (
             "blind.py",
             {
-                "category": "backend-defect",
+                "category": "panic",
                 "functionsTotal": 10,
                 "functionsEnumerated": 0,
                 "functionsClean": None,
@@ -282,7 +282,7 @@ def test_outer_shell_escape_banks_recovered_roster_not_zero(
         relative="multi.py",
         workspace_root=tmp_path,
         error=NewBaseExceptionGap("escaped past consumer"),
-        category="backend-defect",
+        category="panic",
     )
     assert row["functionsTotal"] == 3, (
         f"outer shell must bank recovered roster, got {row.get('functionsTotal')}"
@@ -322,7 +322,7 @@ def test_outer_shell_escape_banks_ast_when_roster_demand_also_fails(
         relative="multi.py",
         workspace_root=tmp_path,
         error=RuntimeError("outer escape"),
-        category="backend-defect",
+        category="panic",
     )
     assert row["functionsTotal"] == 2  # AST FunctionDef count
     assert row["functionsEnumerated"] == 0

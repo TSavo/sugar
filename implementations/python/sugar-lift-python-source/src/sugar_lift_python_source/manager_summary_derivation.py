@@ -2822,9 +2822,7 @@ def _install_derivation_gap(
     """Publish a CM resolution gap for this enrolled demand.
 
     Derivation ran; the demand has no ``ContextManagerContractRefV1``.
-    Unwritten: the row means no contract ref — the
-    ground is constructible via ``gap.enrolled_demand_unresolved_ground()``
-    and is minted on consume in ``With._raise_resolution_gap``.
+    With construction panics when it consumes this gap — construct or panic.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
@@ -2838,7 +2836,4 @@ def _install_derivation_gap(
         (),
         detail,
     )
-    # Prove the C3 ground is mintable from the live table world (still a gap).
-    # Does not raise; With consumption mints the panic with the same ground.
-    gap.enrolled_demand_unresolved_ground()
     context.source_derived_contract_refs[coordinate] = gap

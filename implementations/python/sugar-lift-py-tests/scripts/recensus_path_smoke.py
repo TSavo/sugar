@@ -456,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
             cm.update({k: int(v) for k, v in (row.get("cmResolutions") or {}).items()})
             sites.update({k: int(v) for k, v in (row.get("sites") or {}).items()})
             families.update({k: int(v) for k, v in (row.get("families") or {}).items()})
-            if row.get("category") == "construction-panic":
+            if row.get("category") in {"panic", "construction-panic"}:
                 panic = row.get("panic")
                 if isinstance(panic, dict):
                     construction_panics.append(panic)
