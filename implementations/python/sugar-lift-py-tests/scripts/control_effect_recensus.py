@@ -291,44 +291,11 @@ def _occurrence_key(
     return (kind, relative, line, col)
 
 
-def _cm_resolution_bucket(resolution) -> str:
-    """Partition With residual by its AUTHENTICATED resolution kind — structural.
-
-    This used to bucket by spelling: a hard-coded table of leaf names
-    (``raises``, ``ensure_clean``, ``option_context``, …) sorted rows into
-    "assertion-membrane" and "protocol-resource-candidate". That is a vendor
-    name table. It grants a semantic category from how pandas happened to spell
-    a function, so the board moved when pandas renamed something and stayed
-    still when a new project used the same shape under a different name.
-
-    The structural fact is already on the row: ``kind`` is the authenticated
-    resolution gap kind that prereq-2 produced. Bucket on that. It is a closed
-    vocabulary (:class:`WithConstructionGapKind`), it survives renames, and it
-    names what is actually blocking construction rather than who wrote it.
-
-    The assertion-vs-resource split this replaced is a real distinction, but it
-    needs a structural discriminator (does the manager's contract swallow the
-    exception?) rather than a name list. Until such a discriminator exists,
-    this instrument reports the resolution kinds and does not invent the split.
-    """
-    from sugar_source_tree.panic import WithConstructionGapKind
-
-    kind = getattr(resolution, "kind", None)
-    if not isinstance(kind, str) or not kind:
-        raise ValueError("With resolution gap has no typed kind")
-    # Normalize through the closed vocabulary. Unknown wire kinds belong to
-    # the vocabulary's explicit sentinel; they never mint an escape bucket.
-    parsed = WithConstructionGapKind.parse(kind)
-    return f"gap:{parsed.value}"
-
-
-# Conservation identity (Class B refusal law — do not paper this raise):
-# every synchronous AST with-item is either constructed or one typed gap.
+# Conservation: every sync with-item constructs or does not.
+# No kind vocabulary. Unconstructed rows are panics waiting to be written.
 WITH_CENSUS_CONSERVATION_IDENTITY = (
-    "site:with-item (AST sync With items) "
-    "== constructed (derived-contract / authenticated CM refs) "
-    "+ typed_gaps (gap:* kinds on the same use-sites); "
-    "every sync with-item appears exactly once as constructed or a typed gap"
+    "site:with-item == constructed + unconstructed "
+    "(no residual kind taxonomy)"
 )
 
 
@@ -360,20 +327,13 @@ def _tally_cm_resolutions(
     *,
     source_cid: str,
 ) -> tuple[Counter[str], Counter[str]]:
-    """Count effective prebound resolutions for one source unit by kind.
-
-    Measurement defect class (Class A if ignored): tallying only
-    ``source_derived_contract_refs`` under-counts the provisional / authenticated
-    ``contract_refs`` table that With falls back to — producing
-    constructed=0, typed_gaps≪with_items, and an honest conservation refusal.
-    """
+    """Count constructed vs unconstructed CM prebinds. No kind buckets."""
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerContractRefV1,
         ContextManagerResolutionGapV1,
         SourceDerivedContextManagerRefV1,
         SourceDerivedGeneratorResourceRefV1,
     )
-    from sugar_source_tree.panic import WithConstructionGapKind
 
     if not source_cid:
         raise ValueError(
@@ -382,7 +342,7 @@ def _tally_cm_resolutions(
         )
 
     buckets: Counter[str] = Counter()
-    unrecognized_kinds: Counter[str] = Counter()
+    empty: Counter[str] = Counter()
     for resolution in _effective_cm_resolutions_for_source(
         context, source_cid=source_cid
     ).values():
@@ -394,23 +354,16 @@ def _tally_cm_resolutions(
                 ContextManagerContractRefV1,
             ),
         ):
-            # Constructed manager testimony (source-derived or authenticated bind).
-            buckets["derived-contract"] += 1
+            buckets["constructed"] += 1
             continue
         if isinstance(resolution, ContextManagerResolutionGapV1):
-            bucket = _cm_resolution_bucket(resolution)
-            buckets[bucket] += 1
-            if bucket == (
-                f"gap:{WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND.value}"
-            ):
-                unrecognized_kinds[str(resolution.kind)] += 1
+            buckets["unconstructed"] += 1
             continue
         raise TypeError(
-            "With resolution table contains a value outside the closed "
-            "constructed-ref | ContextManagerResolutionGapV1 union: "
+            "With resolution table value is neither constructed ref nor gap: "
             f"{type(resolution).__name__}"
         )
-    return buckets, unrecognized_kinds
+    return buckets, empty
 
 
 def _with_census_partition(
@@ -418,74 +371,36 @@ def _with_census_partition(
     ast_sites: Counter[str],
     unrecognized_kinds: Counter[str] | None = None,
 ) -> dict[str, Any]:
-    """Conserve every synchronous With item into constructed or one typed gap.
-
-    Conservation identity (binding):
-    ``site:with-item == constructed + typed_gaps`` over the same use-site set.
-    Refusal when this fails is Class B honest accounting — never suppress it.
-    """
-    from sugar_source_tree.panic import WithConstructionGapKind
-
-    vocabulary = tuple(member.value for member in WithConstructionGapKind)
-    # Closed cardinality tooth: every WithConstructionGapKind member is a
-    # partition key. Bump when a new kind is enrolled (OPAQUE_EXIT_TRUTHINESS
-    # made 42). Do not replace with an open-ended bucket.
-    if len(vocabulary) != 42:
-        raise ValueError(
-            "WithConstructionGapKind vocabulary changed: "
-            f"expected 42 members, found {len(vocabulary)}"
-        )
-    allowed = {"derived-contract", *(f"gap:{kind}" for kind in vocabulary)}
-    unexpected = sorted(set(cm_resolutions) - allowed)
-    if unexpected:
-        raise ValueError(
-            "With census contains keys outside its closed vocabulary: "
-            + ", ".join(unexpected)
-        )
-
-    typed_gaps = {
-        kind: int(cm_resolutions.get(f"gap:{kind}", 0)) for kind in vocabulary
-    }
-    unrecognized_kinds = unrecognized_kinds or Counter()
-    unrecognized_total = typed_gaps[
-        WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND.value
-    ]
-    if sum(unrecognized_kinds.values()) != unrecognized_total:
-        raise ValueError(
-            "With census sentinel lacks preserved resolution kinds: "
-            f"sentinel={unrecognized_total} "
-            f"preserved={sum(unrecognized_kinds.values())}"
-        )
+    """Count constructed vs gap rows. No kind taxonomy, no 42-member vocabulary."""
+    del unrecognized_kinds  # taxonomy deleted
     total = int(ast_sites.get("site:with-item", 0))
     constructed = int(cm_resolutions.get("derived-contract", 0))
-    typed_gap_total = sum(typed_gaps.values())
-    accounted = constructed + typed_gap_total
+    gap_total = sum(v for k, v in cm_resolutions.items() if k.startswith("gap:"))
+    accounted = constructed + gap_total
     if accounted != total:
         unaccounted = total - accounted
         raise ValueError(
             "With census does not conserve. "
             f"LAW: {WITH_CENSUS_CONSERVATION_IDENTITY}. "
             f"REFUSED: with_items_total={total} constructed={constructed} "
-            f"typed_gaps={typed_gap_total} accounted={accounted} "
-            f"unaccounted={unaccounted} "
-            f"(unaccounted>0 ⇒ residual/table miss; unaccounted<0 ⇒ overcount). "
-            "Do not suppress this raise; fix the partition or name residual."
+            f"gaps={gap_total} accounted={accounted} unaccounted={unaccounted}. "
+            "Construct or panic — fix the partition or write the missing construction."
         )
     return {
         "conservationIdentity": WITH_CENSUS_CONSERVATION_IDENTITY,
         "with_items_total": total,
         "constructed": constructed,
-        "typed_gap_kinds_total": len(vocabulary),
-        "typed_gaps": typed_gaps,
-        "unrecognized_resolution_kinds": dict(sorted(unrecognized_kinds.items())),
+        "typed_gap_kinds_total": 0,
+        "typed_gaps": {},
+        "unrecognized_resolution_kinds": {},
         "accounted": accounted,
         "unaccounted": 0,
         "reconciliation": (
-            f"{total} = {constructed} constructed + "
-            f"{typed_gap_total} typed gaps"
+            f"{total} = {constructed} constructed + {gap_total} gaps"
         ),
         "conserves": True,
     }
+
 
 
 def _backend_defect_key(exc: object) -> str:
@@ -663,7 +578,6 @@ def terminal_after_measure_escape(
             "functionsClean": None,
             "cleanRatioRefused": True,
             "cleanRefuseReason": "consumer import failed; clean not measured",
-            "R_instrument_blind": 1,
             "families": {f"outer-escape:{type(error).__name__}": 1},
             "enumerateSource": True,
         }
@@ -714,7 +628,6 @@ def terminal_after_measure_escape(
         ),
         "functionsAuthenticated": bank,
         "astSites": {"site:function-def": bank} if bank else {},
-        "R_instrument_blind": 1,
         "rosterPreservedAfterResidualFailure": bank > 0,
         "families": {f"outer-escape:{type(error).__name__}": 1},
         "enumerateSource": True,

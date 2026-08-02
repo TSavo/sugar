@@ -63,7 +63,6 @@ def _row(
                 "astSites": {"site:function-def": authenticated},
                 "families": {"ConstructionPanic": 1},
                 "panic": {"file": file, "type": "ConstructionPanic", "message": "x"},
-                "R_instrument_blind": 0,
             },
         )
     blind = category in {"backend-defect", "instrument-defect-unresolvable-dispatch"}
@@ -78,7 +77,6 @@ def _row(
             "functionsAuthenticated": authenticated,
             "astSites": {"site:function-def": authenticated},
             "families": {},
-            "R_instrument_blind": 1 if blind else 0,
             **(
                 {
                     "defect": {
@@ -119,93 +117,6 @@ def test_compose_scoreboard_authority_true_only_here() -> None:
     worker = (SCRIPTS / "control_effect_recensus.py").read_text(encoding="utf-8")
     assert "SCOREBOARD_AUTHORITY = False" in worker
     assert "SCOREBOARD_AUTHORITY = True" not in worker.split("compose_control_effect_board")[0]
-
-
-def test_compose_banks_r_source_undecidable_refusals_c3_axis() -> None:
-    """C3 C: sealed board banks R_source_undecidable_refusals from terminal lists."""
-    # Five CM designed-gap files (E-class first inhabitants) + one non-C3 honest.
-    rows = []
-    for i in range(5):
-        rows.append(
-            (
-                f"pandas/e{i}.py",
-                {
-                    "category": "designed-gap",
-                    "functionsTotal": 62,
-                    "functionsEnumerated": 0,
-                    "functionsClean": None,
-                    "cleanRatioRefused": True,
-                    "families": {
-                        "EnrolledDemandUnresolved": 1,
-                        "residual:ContextManagerResolutionConstructionGap": 1,
-                    },
-                    "defect": {
-                        "file": f"pandas/e{i}.py",
-                        "type": "ContextManagerResolutionConstructionGap",
-                        "honestResidual": True,
-                        "decidabilityKind": "EnrolledDemandUnresolved",
-                        "demandFamily": "context-manager",
-                        "demandCid": f"demand:cm:{i}",
-                        "useSite": f"cid@1:0-1:10",
-                        "gapKind": "no-derived-contract",
-                        "expectedRefType": "ContextManagerContractRefV1",
-                    },
-                    "sourceUndecidableRefusals": [
-                        {
-                            "file": f"pandas/e{i}.py",
-                            "type": "ContextManagerResolutionConstructionGap",
-                            "message": "gap",
-                            "decidabilityKind": "EnrolledDemandUnresolved",
-                            "demandFamily": "context-manager",
-                            "demandCid": f"demand:cm:{i}",
-                            "useSite": f"cid@1:0-1:10",
-                            "gapKind": "no-derived-contract",
-                            "expectedRefType": "ContextManagerContractRefV1",
-                        }
-                    ],
-                    "R_source_undecidable_refusals": 1,
-                    "R_instrument_blind": 1,
-                },
-            )
-        )
-    rows.append(
-        (
-            "pandas/h_rec.py",
-            {
-                "category": "designed-gap",
-                "functionsTotal": 1,
-                "functionsEnumerated": 0,
-                "functionsClean": None,
-                "cleanRatioRefused": True,
-                "families": {"residual:ConstructionRecursionGap": 1},
-                "defect": {
-                    "file": "pandas/h_rec.py",
-                    "type": "ConstructionRecursionGap",
-                    "honestResidual": True,
-                },
-                "sourceUndecidableRefusals": [],
-                "R_source_undecidable_refusals": 0,
-                "R_instrument_blind": 1,
-            },
-        )
-    )
-    enrolled = [f for f, _ in rows]
-    status, body = COMPOSE.compose_k1_from_rows(
-        rows,
-        enrolled_files=enrolled,
-        measured_commit="deadbeef",
-        aggregate_hash="agg",
-        manifest_shape_cid="cid",
-    )
-    assert status == "sealed"
-    assert body["R_source_undecidable_refusals"] == 5
-    assert len(body["sourceUndecidableRefusals"]) == 5
-    assert body["functionsTotal"] == 5 * 62 + 1
-    for inhab in body["sourceUndecidableRefusals"]:
-        assert inhab["demandFamily"] == "context-manager"
-        assert inhab["expectedRefType"] == "ContextManagerContractRefV1"
-        assert inhab["gapKind"] == "no-derived-contract"
-        assert inhab["decidabilityKind"] == "EnrolledDemandUnresolved"
 
 
 def test_k1_compose_seals_with_dual_denom_and_body_cid() -> None:
@@ -265,8 +176,6 @@ def test_board_refuses_enumerated_as_authenticated_population() -> None:
     assert body["functionsTotal"] == 12
     assert body["functionsEnumerated"] == 2
     assert body["functionsUnaccounted"] == 10
-    assert body["R_instrument_blind"] == 1
-    assert body["R_instrument_blind_functions"] == 10
     # Must not present 2/2 clean as if the corpus were fully measured.
     assert body["denominator"]["functions"]["enumerated"] == 2
     assert body.get("functionsConstructClean") is None

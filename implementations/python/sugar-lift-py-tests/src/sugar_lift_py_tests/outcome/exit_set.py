@@ -1291,11 +1291,7 @@ def outcome_to_exitset(outcome) -> ExitSet:
         ).normalize()
 
     if isinstance(outcome, NativeOperationExitCarrierV1):
-        from sugar_lift_py_tests.sealed_ground import (
-            FormalDemandArtifact,
-            FormalDemandUndischarged,
-        )
-
+        
         construction_panic_gap(
             owner="outcome_to_exitset",
             blame=outcome.demand.source_node,

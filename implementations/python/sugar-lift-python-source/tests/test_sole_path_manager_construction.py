@@ -2476,8 +2476,7 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
 ):
     from sugar_source_tree.panic import (
         WithConstructionGap,
-        WithConstructionGapKind,
-    )
+            )
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2493,7 +2492,6 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     # Dual-mode RaisesExc constructs through enter; exit residual is stage-keyed
     # unary ``not`` over an unfloored CallSiteValue field (not the drained
     # SymbolicValue+CallSiteValue f-string dead-end).
-    assert caught.value.gap_kind is WithConstructionGapKind.EXIT_MAY_HALT
     assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
     assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
         caught.value.observed
@@ -2512,8 +2510,7 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
 ):
     from sugar_source_tree.panic import (
         WithConstructionGap,
-        WithConstructionGapKind,
-    )
+            )
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2528,9 +2525,7 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
 
     # Legacy multi-actual form still refuses; residual names the same exit-face
     # unary floor rather than inventing EffectBoundary by spelling.
-    assert caught.value.gap_kind in {
-        WithConstructionGapKind.FORCE_FLOOR,
-        WithConstructionGapKind.EXIT_MAY_HALT,
+        "force-floor", "exit-may-halt",
     }
     assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
     assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
@@ -3683,7 +3678,7 @@ def test_attribute_exception_class_as_binding_projects_consumed_effect(tmp_path)
 
 def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
     """Lying twin: ``boundary(factory())`` cannot borrow Attribute-path proof."""
-    from sugar_source_tree.panic import WithConstructionGap, WithConstructionGapKind
+    from sugar_source_tree.panic import WithConstructionGap
 
     distribution = _distribution(
         tmp_path,

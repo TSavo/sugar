@@ -293,9 +293,7 @@ class ContextManagerResolutionGapV1:
     reading one row, and are never a bucket key.  A measurement a vendor rename
     can move is not a measurement.
 
-    Criterion 3: each gap is an enrolled demand after derivation with no
-    contract ref.  :meth:`enrolled_demand_unresolved_ground` is the sealed
-    ground for R_source_undecidable_refusals (not kit-incomplete).
+    Unresolved demand after derivation: construct the contract or panic.
     """
 
     demand_cid: str
@@ -306,28 +304,6 @@ class ContextManagerResolutionGapV1:
     # In-process only.  Not read from or written to the wire, so no preimage
     # and no CID changes: the authenticated table hashes the bytes present.
     detail: str | None = None
-
-    def enrolled_demand_unresolved_ground(self):
-        """C3 sealed ground for this table row (holds when still a gap)."""
-        from sugar_lift_py_tests.sealed_ground import (
-            enrolled_demand_unresolved,
-            require_refusal_ground_holds,
-        )
-
-        site = self.use_site
-        use_site = (
-            f"{site.source_cid}@{site.start_line}:{site.start_col}"
-            f"-{site.end_line}:{site.end_col}"
-        )
-        ground = enrolled_demand_unresolved(
-            demand_family="context-manager",
-            demand_cid=self.demand_cid,
-            use_site=use_site,
-            gap_kind=self.kind,
-            expected_ref_type="ContextManagerContractRefV1",
-        )
-        require_refusal_ground_holds(ground, {"enrolled_demand_unresolved": True})
-        return ground
 
 
 ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolutionGapV1
@@ -635,27 +611,9 @@ class TreeConstructionContextV1:
         )
 
 
-def _gap_kinds() -> frozenset[str]:
-    """The closed resolution-gap vocabulary, read from its ONE owner.
-
-    This used to be a second hand-maintained copy of ten members, and it drifted:
-    the source-derived path minted fused ``kind:detail`` strings that this very
-    decoder would have refused as ``malformed context-manager resolution gap``.
-    Two lists cannot disagree if there is only one list, so the members come
-    from :class:`WithConstructionGapKind`, which the producers' own typed
-    ``Literal``s are declared against.
-
-    Imported lazily: ``sugar_source_tree`` depends on this module.
-    """
-    from sugar_source_tree.panic import WithConstructionGapKind
-
-    return frozenset(
-        member.value
-        for member in WithConstructionGapKind
-        # The catch-all is a READER's fallback for a kind this build does not
-        # name; no producer may emit it as a gap kind of its own.
-        if member is not WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND
-    )
+def _gap_kinds() -> None:
+    """Deleted closed taxonomy. Kinds are free structural keys, not a census enum."""
+    return None
 
 
 def _cid(value: Any, field: str) -> str:
@@ -804,7 +762,7 @@ def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
             "gap",
         }:
             gap = resolution["gap"]
-            if not isinstance(gap, dict) or gap.get("kind") not in _gap_kinds():
+            if not isinstance(gap, dict) or not isinstance(gap.get("kind"), str) or not gap.get("kind"):
                 raise ContractRefProtocolError(
                     "malformed context-manager resolution gap"
                 )
