@@ -84,3 +84,52 @@ def test_empty_scan_roots_are_refused() -> None:
 def test_empty_surface_is_loud(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no Python source files"):
         _SCANNER.require_python_paths((tmp_path / "missing",))
+
+
+def test_empty_disk_census_skips_with_zero_silent(tmp_path: Path) -> None:
+    """No asserts/bodies → R_silent=0 by predicate; no construction required."""
+    path = tmp_path / "emptyish.py"
+    path.write_text("x = 1\n", encoding="utf-8")
+    category, offenders = _SCANNER._audit_file(path, rel="emptyish.py")
+    assert category == "completed"
+    assert offenders == ()
+    assert _SCANNER.disk_census_empty(
+        census_source(path.read_text(encoding="utf-8"), file="emptyish.py")
+    )
+
+
+def test_register_only_matches_discharge_silent_offenders(tmp_path: Path) -> None:
+    """Identity twin: register-only membership ≡ full discharge for silent.
+
+    Proves the fast path did not change what the floor measures.
+    """
+    samples = {
+        "plain.py": "def f():\n    assert True\n",
+        "multi.py": (
+            "def a():\n    assert 1\n\n"
+            "async def b():\n    assert 2\n\n"
+            "class C:\n    def m(self):\n        assert 3\n"
+        ),
+        "module_level.py": "assert True\nx = 1\n",
+        "no_assert_body.py": "def f():\n    return 1\n",
+        "empty_disk.py": "x = 1\n",
+    }
+    for name, source in samples.items():
+        path = tmp_path / name
+        path.write_text(source, encoding="utf-8")
+        _, reg = _SCANNER._audit_file(path, rel=name)
+        _, dis = _SCANNER._audit_file_discharge(path, rel=name)
+        assert reg == dis, (
+            f"{name}: register-only {reg!r} != discharge {dis!r}"
+        )
+
+
+def test_register_only_matches_discharge_on_small_kit_file() -> None:
+    """Identity twin on one small live kit file (full corpus is CI floors)."""
+    path = _KIT / "src" / "sugar_lift_py_tests" / "filename.py"
+    if not path.is_file():
+        pytest.skip("kit filename.py missing")
+    rel = "filename.py"
+    _, reg = _SCANNER._audit_file(path, rel=rel)
+    _, dis = _SCANNER._audit_file_discharge(path, rel=rel)
+    assert reg == dis, f"register-only != discharge\n{reg!r}\n{dis!r}"

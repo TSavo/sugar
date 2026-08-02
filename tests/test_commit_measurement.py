@@ -1,25 +1,22 @@
-"""CommitMeasurement: identity + body CID; no lease seal."""
+"""Teeth for identity+population+body_cid seal (lease gone on main)."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-GATE = None
 
 
 def _load(name: str, rel: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / rel)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    # Register before exec for dataclasses on some loaders
-    import sys
-
     sys.modules[name] = mod
-    assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
 
@@ -28,156 +25,106 @@ CM = _load("commit_measurement", "tools/commit_measurement.py")
 GATE = _load("commit_measurement_gate", "tools/commit_measurement_gate.py")
 
 
-def test_measured_requires_body_cid() -> None:
-    with pytest.raises(CM.CommitMeasurementError, match="body_artifact_cid"):
-        CM.Measured(0, "", "totals.failed", 1, 0)
-    with pytest.raises(CM.CommitMeasurementError, match="value_field_path"):
-        CM.Measured(0, "body", "", 1, 0)
+def _body(failed: int = 3, collected: int = 12) -> dict:
+    return {
+        "totals": {"failed": failed, "collected": collected},
+        "failedNodeIds": ["x"] * failed,
+    }
 
 
-def test_measured_from_body_unmeasured_without_body_field() -> None:
-    reading = CM.measured_from_body(
-        commit_sha="abc",
-        body={"totals": {}},
-        body_artifact_cid="body:1",
-        value_field_path="totals.failed",
-    )
-    assert isinstance(reading, CM.Unmeasured)
+def test_scoreboard_authority_false() -> None:
+    assert CM.SCOREBOARD_AUTHORITY is False
 
 
-def test_measured_from_body_unmeasured_on_commit_mismatch() -> None:
-    reading = CM.measured_from_body(
-        commit_sha="abc",
-        body={"measuredCommit": "other", "totals": {"failed": 0, "collected": 3}},
-        body_artifact_cid="body:1",
-        value_field_path="totals.failed",
-    )
-    assert isinstance(reading, CM.Unmeasured)
-    assert "commit" in reading.reason
-
-
-def test_measured_from_body_cites_body_value() -> None:
-    body = {"totals": {"failed": 7, "collected": 40}}
-    reading = CM.measured_from_body(
-        commit_sha="abc",
-        body=body,
-        body_artifact_cid=CM.content_cid(body),
-        value_field_path="totals.failed",
-        collected_field_path="totals.collected",
-    )
-    assert isinstance(reading, CM.Measured)
-    assert reading.value == 7
-    assert reading.collected == 40
-    assert reading.body_artifact_cid.startswith("blake2b-256:")
-
-
-def test_unmeasured_is_third_value_not_zero() -> None:
-    u = CM.unmeasured("never ran")
+def test_measured_seal_is_identity_population_body_not_lease() -> None:
     m = CM.measured(
-        0,
-        body_artifact_cid="b",
+        3,
+        identity="python-package-suite",
+        population_id="pop:suite",
+        population_size=12,
+        body=_body(3, 12),
         value_field_path="totals.failed",
-        collected=1,
-        exit_code=0,
+        exit_code=1,
     )
-    assert type(u) is not type(m)
-    assert m.value == 0
-    assert not u.is_measured()
+    assert m.identity == "python-package-suite"
+    assert m.population_id == "pop:suite"
+    assert m.population_size == 12
+    assert m.body_cid == CM.content_cid(_body(3, 12))
+    assert not hasattr(m, "receipt_cid")
+    import inspect
+
+    sig = inspect.signature(CM.measured)
+    assert "receipt_cid" not in sig.parameters
+    assert "lease_receipt_cid" not in sig.parameters
 
 
-def test_complete_has_total_partial_does_not() -> None:
-    complete = CM.commit_measurement(
-        "sha",
-        "roster:tip",
-        {
-            "a": CM.measured(
-                1,
-                body_artifact_cid="b1",
-                value_field_path="totals.failed",
-                collected=2,
-                exit_code=1,
-            ),
-            "b": CM.measured(
-                2,
-                body_artifact_cid="b2",
-                value_field_path="totals.failed",
-                collected=2,
-                exit_code=1,
-            ),
-        },
-    )
-    assert isinstance(complete, CM.CompleteVector)
-    assert complete.total == 3
+def test_measured_requires_body_matching_value() -> None:
+    with pytest.raises(CM.CommitMeasurementError, match="parsed body|NoReport"):
+        CM.measured(
+            3,
+            identity="x",
+            population_id="p",
+            population_size=1,
+            body=None,  # type: ignore[arg-type]
+            value_field_path="totals.failed",
+            exit_code=1,
+        )
+    with pytest.raises(CM.CommitMeasurementError, match="does not match"):
+        CM.measured(
+            99,
+            identity="x",
+            population_id="p",
+            population_size=12,
+            body=_body(3, 12),
+            value_field_path="totals.failed",
+            exit_code=1,
+        )
+
+
+def test_empty_artifacts_partial_gate_red(tmp_path: Path) -> None:
+    empty = tmp_path / "arts"
+    empty.mkdir()
+    v = CM.compose_tip_from_artifacts_dir("deadbeef", empty)
+    assert isinstance(v, CM.PartialVector)
+    path = tmp_path / "cm.json"
+    path.write_text(json.dumps(v.to_json()), encoding="utf-8")
+    assert GATE.main(["--composition", str(path), "--require-complete"]) == 1
+
+
+def test_body_without_lease_is_measured(tmp_path: Path) -> None:
+    body = {
+        "totals": {"failed": 4, "collected": 20},
+        "failedNodeIds": ["a", "b", "c", "d"],
+        "measurementClass": "python-package-suite",
+        "populationId": "pandas-auth-corpus",
+        "populationSize": 20,
+    }
+    (tmp_path / "suite-report.json").write_text(json.dumps(body), encoding="utf-8")
+    v = CM.compose_tip_from_artifacts_dir("deadbeef", tmp_path)
+    assert isinstance(v, CM.PartialVector)
+    axis = v.axes["python-package-suite"]
+    assert isinstance(axis, CM.Measured)
+    assert axis.value == 4
+    assert axis.population_id == "pandas-auth-corpus"
+
+
+def test_partial_has_no_total() -> None:
     partial = CM.commit_measurement(
         "sha",
-        "roster:tip",
+        "roster",
         {
             "a": CM.measured(
                 1,
-                body_artifact_cid="b1",
+                identity="a",
+                population_id="p",
+                population_size=2,
+                body=_body(1, 2),
                 value_field_path="totals.failed",
-                collected=2,
                 exit_code=1,
             ),
-            "b": CM.unmeasured("missing body"),
+            "b": CM.unmeasured("NoReport"),
         },
     )
     assert isinstance(partial, CM.PartialVector)
     with pytest.raises(AttributeError):
         _ = partial.total  # type: ignore[attr-defined]
-
-
-def test_forbidden_board_axis_names() -> None:
-    with pytest.raises(CM.CommitMeasurementError, match="corpus-board"):
-        CM.commit_measurement(
-            "sha",
-            "roster",
-            {"R_construction": CM.unmeasured("no")},
-        )
-
-
-def test_compose_tip_without_body_is_unmeasured(tmp_path: Path) -> None:
-    v = CM.compose_tip_from_receipts_dir("deadbeef", tmp_path)
-    assert isinstance(v, CM.PartialVector)
-    assert "python-package-suite" in v.unmeasured_axes()
-
-
-def test_compose_tip_body_is_measured(tmp_path: Path) -> None:
-    body = {
-        "measurementClass": "python-package-suite",
-        "measuredCommit": "deadbeef",
-        "totals": {"failed": 4, "collected": 20},
-        "failedNodeIds": ["a", "b", "c", "d"],
-    }
-    (tmp_path / "suite-report.json").write_text(json.dumps(body), encoding="utf-8")
-    floor = {
-        "measurementClass": "python-sole-construction-floors",
-        "measuredCommit": "deadbeef",
-        "totals": {"failed": 0},
-        "exitCode": 0,
-    }
-    (tmp_path / "floor-measurement.json").write_text(
-        json.dumps(floor), encoding="utf-8"
-    )
-    v = CM.compose_tip_from_receipts_dir("deadbeef", tmp_path)
-    assert isinstance(v.axes["python-package-suite"], CM.Measured)
-    assert v.axes["python-package-suite"].value == 4
-    assert isinstance(v.axes["python-sole-construction-floors"], CM.Measured)
-
-
-def test_gate_missing_composition_is_red(tmp_path: Path) -> None:
-    assert (
-        GATE.main(["--composition", str(tmp_path / "nope.json"), "--require-complete"])
-        == 1
-    )
-
-
-def test_gate_partial_require_complete_is_red(tmp_path: Path) -> None:
-    v = CM.commit_measurement(
-        "sha",
-        "roster",
-        {"a": CM.unmeasured("gone")},
-    )
-    path = tmp_path / "cm.json"
-    path.write_text(json.dumps(v.to_json()), encoding="utf-8")
-    assert GATE.main(["--composition", str(path), "--require-complete"]) == 1
