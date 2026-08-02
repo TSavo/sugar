@@ -151,7 +151,11 @@ class NativeOperationResolutionV1:
             testimony = self.pre_effect_state
             effect = self.effect
             if testimony is None:
-                effect = RaiseEffect(exception_type_coordinate=self.exception_type_coordinate, occurrence=AuthenticatedRaiseLocus.of(str(occurrence.wire())), blame=str(occurrence.wire()))
+                effect = RaiseEffect(
+                    exception_type_coordinate=self.exception_type_coordinate,
+                    occurrence=AuthenticatedRaiseLocus.of(str(occurrence.wire())),
+                    blame=str(occurrence.wire()),
+                )
             if not isinstance(effect, RaiseEffect):
                 raise TypeError(
                     "exceptional native operation effect must be RaiseEffect"
@@ -1029,7 +1033,14 @@ class NativeOperationExitCarrierV1:
             def resume(value, *, step=continuation):
                 next_outcome = step(value)
                 if isinstance(next_outcome, NativeOperationExitCarrierV1):
-                    if self.pre_effect_state is not None:
+                    # A reducer continuation can mint a later carrier with the
+                    # state reached after this operation completed. Preserve
+                    # that newer reducer-issued testimony; inherit ours only
+                    # when the nested carrier has no state of its own.
+                    if (
+                        self.pre_effect_state is not None
+                        and next_outcome.pre_effect_state is None
+                    ):
                         next_outcome = next_outcome._enroll_pre_effect_state(
                             self.pre_effect_state
                         )

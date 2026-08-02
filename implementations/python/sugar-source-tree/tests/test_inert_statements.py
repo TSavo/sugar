@@ -12,14 +12,22 @@ nothing left for them to say.
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.tree import SourceFile
+
+from native_carrier_testimony import authenticated_function_value
 
 
 def _val(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value
+    function = next(SourceFile(path_source(path)).functions())
+    outcome = function.sugar().desugar()
+    if isinstance(outcome, Complete):
+        return outcome.value
+    # Deleted expectation: the later formal equality completed without caller testimony.
+    return authenticated_function_value(function, operator="equals")
 
 
 def test_import_is_inert():

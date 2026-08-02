@@ -21,6 +21,8 @@ from sugar_lift_py_tests.proofir.terms import term_from_ir
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+from native_carrier_testimony import completed_function_value, native_carrier_for
+
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
@@ -30,7 +32,7 @@ def _fn(src):
 
 
 def _out(src):
-    return _fn(src).sugar().desugar().value.post().args[1]
+    return completed_function_value(_fn(src)).post().args[1]
 
 
 def _is_binding_coordinate(value):
@@ -44,8 +46,15 @@ def test_filtered_listcomp_keeps_ground_true_elements():
 
 
 def test_undecidable_filtered_listcomp_retains_guard_without_guessing_verdict():
-    term = _out("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
-    assert term.args[1].body.name == "python:loop.filter_guard"
+    """Deleted expectation: an undecided filter was an immediately projectable term."""
+    carrier = native_carrier_for(
+        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n"),
+        operator="greater_than",
+    )
+    left, right = carrier.operands
+    assert left.to_term(owner="comprehension carrier tooth").name == "x"
+    assert right.formal_coordinate.declared_name == "limit"
+    assert len(carrier.continuations) == 5
 
 
 def test_dictcomp_over_concrete_range_dissolves():

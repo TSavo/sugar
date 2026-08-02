@@ -9,6 +9,8 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
+from native_carrier_testimony import completed_function_value, native_carrier_for
+
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
@@ -18,7 +20,7 @@ def _fn(src):
 
 
 def _out(src):
-    return _fn(src).sugar().desugar().value.post().args[1]
+    return completed_function_value(_fn(src)).post().args[1]
 
 
 def test_identity_comprehension_is_the_display():
@@ -47,11 +49,15 @@ def test_undecidable_filtered_comprehension_is_typed_filter_guard():
     ``[x for x in [1,2] if x > limit]`` constructs as ``py.listcomp`` carrying
     ``python:loop.filter_guard`` — typed residual, not construction silence.
     """
-    t = _out("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
-    assert t.name == "py.listcomp"
-    # Nested transform includes the filter guard over the formal ``limit``.
-    text = str(t)
-    assert "python:loop.filter_guard" in text or "py.gt" in text
+    # Deleted expectation: the pending comparison already projected py.listcomp.
+    carrier = native_carrier_for(
+        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n"),
+        operator="greater_than",
+    )
+    left, right = carrier.operands
+    assert left.to_term(owner="listcomp carrier tooth").name == "x"
+    assert right.formal_coordinate.declared_name == "limit"
+    assert len(carrier.continuations) == 5
 
 
 def test_symbolic_comprehension_builds_coordinate():

@@ -15,16 +15,23 @@ This also exercises the finished temporal cut: substitute is the sole binder
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.tree import SourceFile
+
+from native_carrier_testimony import authenticated_function_value, native_carrier_for
 
 
 def _post(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return (
-        next(SourceFile(path_source(path)).functions()).sugar().desugar().value.post()
-    )
+    function = next(SourceFile(path_source(path)).functions())
+    outcome = function.sugar().desugar()
+    if isinstance(outcome, Complete):
+        return outcome.value.post()
+    # Deleted expectation: a formal predicate was completed before caller binding.
+    return authenticated_function_value(function, operator="equals").post()
 
 
 def _no_py_conditional(post):
@@ -43,10 +50,20 @@ def test_substitute_is_the_sole_binder_straight_line():
 def test_single_assignment_fold_reads_the_old_binding():
     # x = z + 1; x = x + 1; return x  ->  out == (z + 1) + 1 : the rebind reads
     # the OLD x, the loop-as-repeated-substitute shape.
-    post = _post("def A(z):\n    x = z + 1\n    x = x + 1\n    return x\n")
-    assert post.name == "="
-    outer = post.args[1]
-    assert outer.name == "+" and outer.args[0].name == "+"  # (z+1)+1
+    source = "def A(z):\n    x = z + 1\n    x = x + 1\n    return x\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(source)
+        path = f.name
+    function = next(SourceFile(path_source(path)).functions())
+    # Deleted expectation: z+1 projected before the caller authenticated z.
+    carrier = native_carrier_for(function, operator="add")
+    left, right = carrier.operands
+    assert left.to_term(owner="assignment-fold carrier tooth").name == "z"
+    assert right.value == 1
+    post = authenticated_function_value(
+        function, operator="add", actuals=(TermValue(2),)
+    ).post()
+    assert post.name == "=" and post.args[1].value == 4
 
 
 def test_direct_ifexp_predicate_distributes():

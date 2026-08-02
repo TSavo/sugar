@@ -10,6 +10,8 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
+from native_carrier_testimony import completed_function_value, native_carrier_for
+
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
@@ -19,7 +21,7 @@ def _fn(src):
 
 
 def _inv(src):
-    return _fn(src).sugar().desugar().value.invs()[0]
+    return completed_function_value(_fn(src)).invs()[0]
 
 
 def test_is_is_identity():
@@ -39,10 +41,14 @@ def test_float_literal_is_real_sorted():
 
 
 def test_membership_lifts_for_a_symbolic_container():
-    # `x in xs` is `xs.contains(x)`: a symbolic container is the py.in coordinate.
-    inv = _inv("def A(x, xs):\n    assert x in xs\n    return x\n")
-    assert inv.name == "py.in"
-    assert inv.args[0].name == "x" and inv.args[1].name == "xs"
+    """Deleted expectation: formal membership immediately projected py.in."""
+    carrier = native_carrier_for(
+        _fn("def A(x, xs):\n    assert x in xs\n    return x\n"),
+        operator="contains",
+    )
+    container, item = carrier.operands
+    assert container.to_term(owner="membership carrier tooth").name == "xs"
+    assert item.to_term(owner="membership carrier tooth").name == "x"
 
 
 if __name__ == "__main__":

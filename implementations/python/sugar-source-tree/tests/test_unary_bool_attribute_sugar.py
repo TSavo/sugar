@@ -11,6 +11,8 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
+from native_carrier_testimony import native_carrier_for
+
 
 def _fn(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
@@ -19,96 +21,87 @@ def _fn(src: str):
     return next(SourceFile(path_source(path)).functions())
 
 
-def _post(src):
-    return _fn(src).sugar().desugar().value.post()
-
-
-def _invs(src):
-    return _fn(src).sugar().desugar().value.invs()
+def _carrier(src, operator):
+    return native_carrier_for(_fn(src), operator=operator)
 
 
 # ---- UnaryOp -----------------------------------------------------------------
 
 
 def test_undecided_unary_ops_are_named_refusals():
-    """``-z`` / ``~z`` / ``+z`` cannot invent a success face without z's type."""
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
+    """Deleted expectation: formal unary operations panicked before caller binding."""
     for source, operator in (
-        ("def A(z):\n    return -z\n", "-"),
-        ("def A(z):\n    return ~z\n", "~"),
-        ("def A(z):\n    return +z\n", "+"),
+        ("def A(z):\n    return -z\n", "unary_minus"),
+        ("def A(z):\n    return ~z\n", "bitwise_invert"),
+        ("def A(z):\n    return +z\n", "unary_plus"),
     ):
-        try:
-            _post(source)
-        except ConstructionPanic as panic:
-            assert panic.info.owner == "unary_operation_exception_floor"
-            assert panic.info.observed == f"SymbolicValue {operator}"
-        else:
-            raise AssertionError(f"undecided unary {operator} invented a completion")
+        carrier = _carrier(source, operator)
+        assert carrier.operands[0].to_term(owner="unary carrier tooth").name == "z"
 
 
 def test_not_is_truth_then_negate():
-    # if not (z == 1): the guard is not(z == 1), so the body's fact rides under it.
-    invs = _invs(
-        "def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n"
+    """Deleted expectation: formal equality/truth projected a completed guard."""
+    carrier = _carrier(
+        "def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n",
+        "equals",
     )
-    authentication = invs[0]
-    observed = authentication.operands[0].operands[1]
-    assert observed.kind == "not"
-    assert observed.operands[0].name == "py.eq"
+    left, right = carrier.operands
+    assert left.to_term(owner="not carrier tooth").name == "z"
+    assert right.value == 1
+    assert len(carrier.continuations) >= 6
 
 
 # ---- BoolOp ------------------------------------------------------------------
 
 
 def test_and_conjoins_operand_truthiness():
-    invs = _invs("def A(z):\n    assert (z == 1) and (z == 3)\n    return z\n")
-    assert invs[0].kind == "and"
-    assert all(op.name == "py.eq" for op in invs[0].operands)
+    """Deleted expectation: formal BoolOp projected a completed conjunction."""
+    carrier = _carrier(
+        "def A(z):\n    assert (z == 1) and (z == 3)\n    return z\n", "equals"
+    )
+    assert carrier.operands[0].to_term(owner="and carrier tooth").name == "z"
+    assert carrier.operands[1].value == 1
+    assert len(carrier.continuations) == 6
 
 
 def test_or_disjoins_operand_truthiness():
-    invs = _invs("def A(z):\n    assert (z == 1) or (z == 2)\n    return z\n")
-    assert invs[0].kind == "or"
+    """Deleted expectation: formal BoolOp projected a completed disjunction."""
+    carrier = _carrier(
+        "def A(z):\n    assert (z == 1) or (z == 2)\n    return z\n", "equals"
+    )
+    assert carrier.operands[0].to_term(owner="or carrier tooth").name == "z"
+    assert carrier.operands[1].value == 1
+    assert len(carrier.continuations) == 6
 
 
 def test_bare_operands_refuse_undecided_truth():
-    """``a and b`` cannot invent ``py.truthy`` when operand runtime types are open."""
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
-    try:
-        _invs("def A(a, b):\n    assert a and b\n    return a\n")
-    except ConstructionPanic as panic:
-        assert panic.info.owner == "boolean_operation_exception_floor"
-        assert panic.info.observed == "SymbolicValue and"
-    else:
-        raise AssertionError("undecided BoolOp invented py.truthy")
+    """Deleted expectation: bare formal BoolOp truth panicked before binding."""
+    carrier = _carrier(
+        "def A(a, b):\n    assert a and b\n    return a\n", "boolop_truth"
+    )
+    assert carrier.operands[0].to_term(owner="boolop truth carrier tooth").name == "a"
 
 
 # ---- Attribute ---------------------------------------------------------------
 
 
 def _attribute_refusal(source):
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
-    try:
-        _post(source)
-    except ConstructionPanic as panic:
-        return panic.info
-    raise AssertionError("symbolic attribute invented a completed projection")
+    # Deleted expectation: formal attribute lookup panicked before caller binding.
+    return _carrier(source, "attribute_named")
 
 
 def test_attribute_is_named_undecided():
-    info = _attribute_refusal("def A(z):\n    return z.numerator\n")
-    assert info.owner == "SymbolicValue.attribute"
-    assert info.observed.endswith("SymbolicValue.numerator")
+    carrier = _attribute_refusal("def A(z):\n    return z.numerator\n")
+    receiver, name = carrier.operands
+    assert receiver.to_term(owner="attribute carrier tooth").name == "z"
+    assert name.value == "numerator"
 
 
 def test_attribute_chain_refuses_at_the_first_unowned_lookup():
-    info = _attribute_refusal("def A(z):\n    return z.a.b\n")
-    assert info.owner == "SymbolicValue.attribute"
-    assert info.observed.endswith("SymbolicValue.a")
+    carrier = _attribute_refusal("def A(z):\n    return z.a.b\n")
+    receiver, name = carrier.operands
+    assert receiver.to_term(owner="attribute chain carrier tooth").name == "z"
+    assert name.value == "a"
 
 
 if __name__ == "__main__":

@@ -4,6 +4,9 @@ import tempfile
 
 import pytest
 
+from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+from sugar_lift_py_tests.floor.string_value import StringValue
+from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.backend import Leaf, MaybeChild, materialize
 from sugar_source_tree.panic import BackendDefect
@@ -54,12 +57,24 @@ def _with_bare_format_spec(node):
     )
 
 
-def test_fstring_concatenates_literal_and_interpolation():
-    # f"n={z}" -> "n=" ++ python:fstring_value(z, None, None)
-    term = _post_term('def A(z):\n    return f"n={z}"\n')
-    assert term.name == "+"
-    assert term.args[0].value == "n="
-    assert term.args[1].name == "python:fstring_value"
+def test_fstring_concat_preserves_operands_in_native_operation_carrier():
+    """Do not restore the deleted ``.value`` false-completion expectation.
+
+    ``str + SymbolicValue`` deliberately stays pending until native-operation
+    discharge.  The carrier must retain the exact f-string operands instead of
+    fabricating the completed ``+`` term this test asserted before #7060.
+    """
+    outcome = _fn('def A(z):\n    return f"n={z}"\n').sugar().desugar()
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    with pytest.raises(AttributeError, match="value"):
+        _ = outcome.value
+
+    assert outcome.demand.operator == "add"
+    left, right = outcome.operands
+    assert isinstance(left, StringValue) and left.value == "n="
+    assert isinstance(right, SymbolicValue)
+    assert right.to_term(owner="f-string carrier tooth").name == "python:fstring_value"
 
 
 def test_fstring_with_only_a_literal_is_the_string():
