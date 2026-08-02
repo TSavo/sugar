@@ -3166,7 +3166,10 @@ class FunctionDef(Statement):
             (
                 ()
                 if generator_steps is not None
-                else tuple(statement.sugar() for statement in substituted_body)
+                else tuple(
+                    self._sugar_body_statement(statement)
+                    for statement in substituted_body
+                )
             ),
             self.fragment,
         )
@@ -3224,7 +3227,10 @@ class FunctionDef(Statement):
         if self._source_visible_generator_steps_from(substituted_body) is not None:
             return SourceVisibleFunctionBodySugar((), self.fragment)
         return SourceVisibleFunctionBodySugar(
-            tuple(statement.sugar() for statement in substituted_body), self.fragment
+            tuple(
+                self._sugar_body_statement(statement) for statement in substituted_body
+            ),
+            self.fragment,
         )
 
     def _source_visible_generator_steps(self, scope):
@@ -4029,6 +4035,13 @@ class FunctionDef(Statement):
 
 
 class AsyncFunctionDef(Statement):
+    """`async def` — same FunctionUniverse body door as FunctionDef (L1a).
+
+    Fields match FunctionDef. Construction does not invent a second path:
+    substitute, formals, and body statements all share FunctionDef's door so
+    every async function walks child-before-parent via ``_sugar_body_statement``.
+    """
+
     name: str
     params: Tuple[Param, ...]
     body: Tuple[Statement, ...]
@@ -4042,9 +4055,28 @@ class AsyncFunctionDef(Statement):
         return _arguments_projection(self.params)
 
     def substitute(self, scope):
-        """Same scope shape as FunctionDef (identical fields): masks its
-        parameters for the threaded body."""
+        """Same scope shape as FunctionDef (identical fields)."""
         return FunctionDef.substitute(self, scope)
+
+    def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
+        return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
+
+    def _formal_coordinate(self, parameter: Param, ordinal: int):
+        return FunctionDef._formal_coordinate(self, parameter, ordinal)
+
+    def formal_coordinates(self) -> tuple:
+        return FunctionDef.formal_coordinates(self)
+
+    def _make_parameter_ref(self, parameter: Param, ordinal: int) -> "Node":
+        return FunctionDef._make_parameter_ref(self, parameter, ordinal)
+
+    def _sugar_body_statement(self, stmt: "Node") -> object:
+        """One body door: statement constructs through its children."""
+        return FunctionDef._sugar_body_statement(self, stmt)
+
+    def _construct_sugar(self):
+        """L1a: FunctionUniverse body construction — same door as FunctionDef."""
+        return FunctionDef._construct_sugar(self)
 
 
 class ClassDef(Statement):
