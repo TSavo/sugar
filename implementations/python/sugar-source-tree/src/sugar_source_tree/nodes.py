@@ -6640,32 +6640,57 @@ class If(Statement):
         become the PHI, emitted HERE, ONCE, as explicit spliced SSA assignments
         after the if: `x = <then> if <test> else <else>`. Resolve at
         construction -- the reads downstream are O(1) Assign bindings, never a
-        re-walk of the branches (the re-read was 2^nesting on real code)."""
+        re-walk of the branches (the re-read was 2^nesting on real code).
+
+        Branch-result slot identity is the SOURCE condition occurrence at the
+        first mint (``branch_result_slot(self.test)`` before rewrite). A later
+        substitute must REUSE that retained pair — not recompute a slot from
+        the rewritten test. Name substitution can replace ``if hashable:`` with
+        the bound RHS node (e.g. ``is_hashable(other)``) whose span is the
+        assignment RHS, not the use site; recomputing the slot from that node
+        invents a "foreign" address for the same condition (D-class hierarchy
+        lie). Foreign means stored ≠ authenticated; rewritten test is not foreign.
+        """
         from .shadow import rewrite
 
-        expected_slot = branch_result_slot(self.test)
         stored_slot_id = getattr(self, "branch_result_slot_id", None)
         authenticated_slot_id = getattr(
             self, "authenticated_branch_result_slot_id", None
         )
-        retained_slot = stored_slot_id is not None or authenticated_slot_id is not None
-        if retained_slot and (
-            stored_slot_id != expected_slot.slot_id
-            or authenticated_slot_id != expected_slot.slot_id
-        ):
-            backend_defect(
-                blame=self.fragment,
-                owner="If.substitute",
-                observed="If retained a foreign branch-result slot",
-                requested="the stored and authenticated slot for this exact If.test",
-                fix="preserve the one slot minted by the first ordinary substitution",
-            )
+        # Both ids are written together on first mint. Either alone is incomplete.
+        retained_slot = (
+            stored_slot_id is not None and authenticated_slot_id is not None
+        )
+        if retained_slot:
+            if stored_slot_id != authenticated_slot_id:
+                backend_defect(
+                    blame=self.fragment,
+                    owner="If.substitute",
+                    observed=(
+                        "If retained branch-result slot ids that disagree with "
+                        "each other "
+                        f"(stored={stored_slot_id!r}, "
+                        f"authenticated={authenticated_slot_id!r})"
+                    ),
+                    requested=(
+                        "one stored id equal to one authenticated id, both "
+                        "minted once for this If.test occurrence"
+                    ),
+                    fix=(
+                        "preserve the pair written by the first ordinary "
+                        "substitution; do not recompute slot identity from a "
+                        "rewritten test node"
+                    ),
+                )
+            slot = BranchResultSlot(stored_slot_id)
+        else:
+            # First mint: address the SOURCE test occurrence before rewrite.
+            slot = branch_result_slot(self.test)
 
         changed = {}
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        slot = expected_slot
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
