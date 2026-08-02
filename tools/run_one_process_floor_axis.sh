@@ -2,11 +2,11 @@
 # Run exactly one Criterion-2 process floor axis; emit identity-bound report.
 #
 # Usage: tools/run_one_process_floor_axis.sh <axis_id> <script_name>
-#   axis_id: silent | native-crash | bare-exception | timeout
-#   script:  silent_zero_tolerance.py | …
 #
-# Host-durable terminal cache (cross-job): default HOME/.cache/sugar/…
-# Workspace-local cache is job-private and would cold-lift every matrix axis.
+# Exit vocabulary (enrollment mint):
+#   0 — scan completed, residual green
+#   1 — scan completed, residual red
+#   2+ — scan did not complete (auth/init/crash) → report UNMEASURED
 
 set -uo pipefail
 
@@ -26,14 +26,30 @@ PANDAS_CORPUS="$(
   python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
 )" || {
   echo "::error::cannot authenticate pandas corpus for process floor $axis_id"
-  exit 1
+  # Auth failure is infrastructure UNMEASURED, not residual red.
+  commit="${GITHUB_SHA:-unpinned}"
+  case "$axis_id" in
+    silent) display=R_silent ;;
+    native-crash) display=R_native_crashes ;;
+    bare-exception) display=R_bare_exceptions ;;
+    timeout) display=R_timeouts ;;
+    *) display="R_${axis_id}" ;;
+  esac
+  python3 tools/sole_construction_floor_enrollment.py \
+    --mint-report floor-axis-report.json \
+    --axis-id "$axis_id" \
+    --display "$display" \
+    --kind process \
+    --commit-sha "$commit" \
+    --exit-code 2 \
+    --no-scan-completed \
+    --unmeasured-reason "authenticated pandas corpus auth/init failed"
+  exit 2
 }
 
 FLOOR_SCRATCH="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}/.sugar/ci-floors/${axis_id}"
 export SUGAR_FLOOR_WORKSPACE="${SUGAR_FLOOR_WORKSPACE:-${GITHUB_WORKSPACE:-${RUNNER_TEMP:-$(pwd)}}}"
 
-# Cross-job shelf: HOME survives separate matrix jobs on self-hosted runners.
-# Workspace paths do not. Override with SUGAR_PROCESS_FLOOR_CACHE_DIR=off to disable.
 if [ -z "${SUGAR_PROCESS_FLOOR_CACHE_DIR+x}" ]; then
   export SUGAR_PROCESS_FLOOR_CACHE_DIR="${HOME}/.cache/sugar/process-floor-terminals"
 fi
@@ -60,12 +76,19 @@ case "$axis_id" in
   *) display="R_${axis_id}" ;;
 esac
 
-python3 tools/sole_construction_floor_enrollment.py \
-  --mint-report floor-axis-report.json \
-  --axis-id "$axis_id" \
-  --display "$display" \
-  --kind process \
-  --commit-sha "$commit" \
+# 0/1 = scan completed (green/red residual); >=2 = infrastructure UNMEASURED
+mint_args=(
+  --mint-report floor-axis-report.json
+  --axis-id "$axis_id"
+  --display "$display"
+  --kind process
+  --commit-sha "$commit"
   --exit-code "$exit_code"
+)
+if [ "$exit_code" -ge 2 ]; then
+  mint_args+=(--no-scan-completed --unmeasured-reason "process floor exit=${exit_code} (auth/init/bootstrap/crash — not residual)")
+fi
+
+python3 tools/sole_construction_floor_enrollment.py "${mint_args[@]}"
 
 exit "$exit_code"
