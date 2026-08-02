@@ -41,11 +41,25 @@ import time
 # teardown-phase failure is an ERROR.
 _ERROR_PHASES = ("setup", "teardown")
 
+# Job-log doctrine: pytest -q's TTY progress bar does not flush in CI — a
+# 200s silence after "[15%]" is blind by construction. Heartbeat every ≤30s
+# (and every N finished tests) with running counts so a hard kill still leaves
+# what the shard found in the Actions log.
+_JOB_LOG_EVERY_N = max(1, int(os.environ.get("SUITE_JOB_LOG_EVERY_N", "25")))
+
 # One owner for "is this field an excuse rather than a value".
 from python_suite_identity_gate import (  # noqa: E402
     IDENTITY_FIELDS,
     unavailable_marker as _unavailable_marker,
 )
+
+try:
+    from job_log_heartbeat import JobLogHeartbeat, narrate  # noqa: E402
+except ImportError:  # pragma: no cover — tools/ not on path in exotic launches
+    JobLogHeartbeat = None  # type: ignore[misc, assignment]
+
+    def narrate(msg: str) -> None:
+        print(msg, flush=True)
 
 
 class SuiteIdentityUnresolved(Exception):
@@ -154,6 +168,8 @@ class SuiteReporter:
         self._wall_start = time.perf_counter()
         self._cpu_start = os.times()
         self.shuffle_seed = None
+        self._beat: object | None = None
+        self._current_nodeid: str | None = None
         # Resolved NOW, so an unresolvable identity costs zero measurement.
         self.identity = self._identity()
         self.measured_commit = self._measured_commit()
@@ -174,6 +190,7 @@ class SuiteReporter:
             self.shuffle_seed = seed
             random.Random(seed).shuffle(items)
         self.executed_order = [item.nodeid for item in items]
+        self._start_job_log_heartbeat()
 
     def pytest_collectreport(self, report):
         # A collection failure is an error with no test node behind it; it is
@@ -183,6 +200,12 @@ class SuiteReporter:
 
     # -- execution ----------------------------------------------------------
 
+    def pytest_runtest_logstart(self, nodeid, location):
+        """Current test — so a 30s alive line names what is blocking."""
+        del location
+        self._current_nodeid = nodeid
+        self._heartbeat(force=False, status="running")
+
     def pytest_runtest_logreport(self, report):
         nodeid = report.nodeid
         if report.failed:
@@ -191,18 +214,73 @@ class SuiteReporter:
             else:
                 self._record(self.failed, nodeid)
             self._seen_outcome.add(nodeid)
+            self._heartbeat_after_outcome(nodeid)
         elif report.skipped:
             if getattr(report, "wasxfail", None) is not None:
                 self._record(self.xfailed, nodeid)
             else:
                 self._record(self.skipped, nodeid)
             self._seen_outcome.add(nodeid)
+            self._heartbeat_after_outcome(nodeid)
         elif report.when == "call":
             if getattr(report, "wasxfail", None) is not None:
                 self._record(self.xpassed, nodeid)
             else:
                 self._record(self.passed, nodeid)
             self._seen_outcome.add(nodeid)
+            self._heartbeat_after_outcome(nodeid)
+
+    def _heartbeat_after_outcome(self, nodeid: str) -> None:
+        done = len(self._seen_outcome)
+        total = len(self.executed_order) or len(self.collected) or 0
+        force = (
+            done == 1
+            or done == total
+            or (done % _JOB_LOG_EVERY_N == 0)
+        )
+        self._current_nodeid = nodeid
+        self._heartbeat(force=force, status="outcome")
+
+    def _start_job_log_heartbeat(self) -> None:
+        total = len(self.executed_order) or len(self.collected)
+        shard_i = self.config.getoption("--suite-shard-index")
+        shard_n = self.config.getoption("--suite-shard-count")
+        label = self.config.getoption("--suite-label") or "suite"
+        if shard_i is not None and shard_n is not None:
+            phase = f"suite-pytest-shard-{int(shard_i):02d}-of-{int(shard_n)}"
+        else:
+            phase = f"suite-pytest-{label}"
+        narrate(
+            f"JOB_LOG phase={phase} status=collection_done "
+            f"collected={len(self.collected)} to_run={total} "
+            f"order={self.config.getoption('--suite-order')}"
+        )
+        if JobLogHeartbeat is None or total <= 0:
+            return
+        self._beat = JobLogHeartbeat(phase, total=total)
+        # Watch keeps ≤30s silence if one test hangs without logreport.
+        self._beat.watch()
+
+    def _heartbeat(self, *, force: bool, status: str) -> None:
+        beat = self._beat
+        if beat is None:
+            return
+        done = len(self._seen_outcome)
+        extra = {
+            "passed": len(self.passed),
+            "failed": len(self.failed),
+            "error": len(self.errored),
+            "skipped": len(self.skipped),
+            "xfailed": len(self.xfailed),
+            "xpassed": len(self.xpassed),
+        }
+        if self._current_nodeid:
+            # Keep nodeid short enough for log grepping without multi-line mess.
+            node = self._current_nodeid
+            if len(node) > 160:
+                node = node[:157] + "..."
+            extra["nodeid"] = node
+        beat.tick(n=done, force=force, status=status, **extra)
 
     @staticmethod
     def _record(bucket, nodeid):
@@ -212,6 +290,15 @@ class SuiteReporter:
     # -- report -------------------------------------------------------------
 
     def pytest_sessionfinish(self, session, exitstatus):
+        # Stop heartbeat first so the last line carries final running counts
+        # even if report write fails or the process is about to die.
+        if self._beat is not None:
+            self._heartbeat(force=True, status="sessionfinish")
+            try:
+                self._beat.stop(status=f"exit={int(exitstatus)}")
+            except Exception:  # noqa: BLE001 — never fail report for narration
+                pass
+            self._beat = None
         path = self.config.getoption("--suite-report")
         if not path:
             return
