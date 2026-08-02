@@ -10,7 +10,7 @@ permissions:
 
 # NO `concurrency:` BLOCK. GitHub keeps only ONE pending run per group and
 # replaces a queued run with a newer one even under cancel-in-progress: false.
-# Every run must survive; tools/heavy_measurement_lease.py serializes the box.
+# No machine-wide heavy-measurement lease; jobs run in parallel.
 
 jobs:
   datetime-claim-twins:

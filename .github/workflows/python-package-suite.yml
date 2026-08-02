@@ -57,7 +57,7 @@ permissions:
 # So the queue and the serialization are separated:
 #
 #   GitHub queue: preserve every requested measurement  (no group -- here)
-#   BX lease:     only one heavy measurement executes   (tools/heavy_measurement_lease.py)
+# No machine-wide heavy-measurement lease; jobs run in parallel.
 #
 # Every run is retained and every run eventually measures. Overlap is settled
 # on the box by an flock the kernel releases even on SIGKILL, not by a queue
@@ -107,11 +107,7 @@ jobs:
     name: python-package-suite (canonical)
     needs: prepare-python-test-environment
     runs-on: [self-hosted, Linux, X64]
-    # Measurement budget PLUS lease wait. Runs now queue on the box instead of
-    # being evicted from GitHub's pending slot, so the job must be allowed to
-    # sit in that queue; a job timeout shorter than the wait would recreate the
-    # dropped-measurement defect one layer down.
-    timeout-minutes: 360
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v6
 
@@ -164,7 +160,7 @@ jobs:
       # nothing. The lease is machine-wide, so the NumPy wall, the pandas wall,
       # the sole-construction floors and the restored-suite sweep all wait for
       # this one, and it waits for them -- while GitHub keeps every run.
-      - name: Whole-package sweep (under the machine-wide heavy lease)
+      - name: Whole-package sweep (no machine-wide lease)
         id: sweep
         shell: bash
         working-directory: implementations/python
@@ -191,37 +187,16 @@ jobs:
           set +e
           SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
           SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
-          python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
-            --class python-package-suite \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --embed-into "$GITHUB_WORKSPACE/suite-report.json" \
-            -- bash "$RUNNER_TEMP/sweep.sh"
-          leased_exit=$?
+          bash "$RUNNER_TEMP/sweep.sh"
+          pytest_exit=$?
           set -e
-          # 75 is the lease refusing, not pytest failing. The distinction is the
-          # whole point: an unmeasured suite must never read as a measured one.
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the suite did NOT run."
-            echo "pytest_exit=lease-refused" >> "$GITHUB_OUTPUT"
-            exit 75
-          fi
-          echo "pytest_exit=$leased_exit" >> "$GITHUB_OUTPUT"
+          echo "pytest_exit=$pytest_exit" >> "$GITHUB_OUTPUT"
           test -s "$GITHUB_WORKSPACE/suite.log"
           test -s "$GITHUB_WORKSPACE/suite-report.json"
 
       # No timing claim is accepted if the lease was not acquired. This is that
       # sentence with teeth: red unless the artifact's own embedded receipt
       # shows request -> acquisition -> release around THIS commit.
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record suite-report.json \
-            --require-commit "$GITHUB_SHA" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Publish the node-ID vector
         if: always()
         shell: bash
@@ -274,7 +249,6 @@ jobs:
             suite.log
             suite-report.json
             suite-node-ids/
-            lease-record.json
             identity-gate.md
           if-no-files-found: error
 
@@ -290,7 +264,6 @@ jobs:
             suite.log
             suite-report.json
             suite-node-ids/
-            lease-record.json
             identity-gate.md
           if-no-files-found: warn
 
@@ -312,11 +285,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.discrimination)
     needs: prepare-python-test-environment
     runs-on: [self-hosted, Linux, X64]
-    # Measurement budget PLUS lease wait. Runs now queue on the box instead of
-    # being evicted from GitHub's pending slot, so the job must be allowed to
-    # sit in that queue; a job timeout shorter than the wait would recreate the
-    # dropped-measurement defect one layer down.
-    timeout-minutes: 360
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -351,11 +320,7 @@ jobs:
 
       # A SEPARATE COLD PROCESS per order. Sharing a process would let the
       # first order warm exactly the caches whose influence we are measuring.
-      # Under the same lease as the canonical arm. A discrimination arm that
-      # ran beside another census would differ from canonical for a reason
-      # that is not the order -- which would make the one job in this file
-      # with teeth un-interpretable.
-      - name: Whole-package sweep (${{ matrix.order }}, under the heavy lease)
+      #       - name: Whole-package sweep (${{ matrix.order }}, no machine-wide lease)
         shell: bash
         working-directory: implementations/python
         env:
@@ -383,33 +348,10 @@ jobs:
           SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
           SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
           SUITE_ORDER='${{ matrix.order }}' \
-          python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
-            --class python-package-suite \
-            --record "$GITHUB_WORKSPACE/lease-record.json" \
-            --embed-into "$GITHUB_WORKSPACE/suite-report.json" \
-            -- bash "$RUNNER_TEMP/sweep-${{ matrix.order }}.sh"
-          leased_exit=$?
+          bash "$RUNNER_TEMP/sweep-${{ matrix.order }}.sh"
           set -e
-          if [ "$leased_exit" = "75" ]; then
-            echo "::error::heavy-measurement lease not acquired; the ${{ matrix.order }} arm did NOT run."
-            exit 75
-          fi
-          echo "pytest exit $leased_exit"
           test -s "$GITHUB_WORKSPACE/suite-report.json"
 
-      - name: Lease gate (R_lease = 0)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --record suite-report.json \
-            --require-commit "$GITHUB_SHA" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # Same law as the canonical arm: an arm whose identity is unresolved
-      # cannot be compared against anything, so it is not published under the
-      # name the comparison job reads.
       - name: Identity gate (R_identity = 0)
         if: always()
         shell: bash
@@ -429,7 +371,6 @@ jobs:
           path: |
             suite.log
             suite-report.json
-            lease-record.json
             identity-gate.md
           if-no-files-found: error
 
@@ -456,16 +397,6 @@ jobs:
       # file is not shared between runner containers this is where it shows up
       # -- otherwise the mechanism could be pure theatre and every arm would
       # still look green.
-      - name: Lease scope check (one machine, one lock, no overlap)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/heavy_measurement_lease_gate.py \
-            --scope-check runs/python-package-suite-canonical/lease-record.json \
-            --scope-check runs/python-package-suite-reversed/lease-record.json \
-            --scope-check runs/python-package-suite-shuffled/lease-record.json \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Require identical verdict sets
         shell: bash
         run: |

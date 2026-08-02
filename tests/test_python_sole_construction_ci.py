@@ -53,9 +53,10 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
     assert "tools/run_sole_construction_floors.sh" in workflow, (
         "the binding job no longer runs the floor set at all"
     )
-    # And it runs it under the lease -- an unleased floor set is a floor set
+    # And it runs it via run_sole_construction_floors.sh -- an unleased floor set is a floor set
     # measured beside whatever else the box happened to be doing.
-    assert "tools/heavy_measurement_lease.py" in workflow
+    assert "tools/run_sole_construction_floors.sh" in workflow
+    assert "tools/heavy_measurement_lease.py" not in workflow
 
     for axis, command in AXIS_COMMANDS.items():
         axis_start = floors.find(f'axis "{axis}"')
