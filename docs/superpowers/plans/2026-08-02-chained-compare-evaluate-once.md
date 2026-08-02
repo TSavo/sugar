@@ -26,7 +26,9 @@
 
 **Interfaces:**
 - Consumes: production `Compare.sugar()` result with ordered `.values` leg sugars.
-- Produces: a count tooth and a semantic-effect tooth that both fail on the current BoolOp-of-pairs reduction.
+- Produces: exact-count, left-to-right, short-circuit, per-leg-ownership, and
+  semantic-effect teeth. The count, order, and semantic-effect assertions fail
+  on the current BoolOp-of-pairs reduction.
 
 - [ ] **Step 1: Write the shared-middle probe and production-chain fixture**
 
@@ -55,7 +57,14 @@ The production mutation caught is removal of the carried reduced-right value: th
 
 Use a `_ChangingMiddleSugar` that returns `TermValue(1)` on its first desugar and `TermValue(2)` on its second. Assert `0 < middle() < 2` returns `TrueBoolLiteralSugar`; the broken implementation returns false because its second leg observes `2 < 2`.
 
-- [ ] **Step 4: Run the focused file and verify RED**
+- [ ] **Step 4: Write order, short-circuit, and ownership regressions**
+
+Wrap all three operand sugars with labeled recording sugars. Assert the true
+chain trace is exactly `left, middle, right`; assert a false first leg records
+only `left, middle`; and assert a mixed `<` then `==` chain retains
+`ComparisonOpSugar` then `EqualityOpSugar` legs.
+
+- [ ] **Step 5: Run the focused file and verify RED**
 
 Run:
 
@@ -63,9 +72,11 @@ Run:
 PYTHONPATH=implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-python-source/src /usr/local/opt/python@3.12/bin/python3.12 -m pytest -q implementations/python/sugar-lift-py-tests/tests/test_chained_compare_evaluate_once.py
 ```
 
-Expected: two assertion failures for count `2` and false semantic result, with successful collection.
+Expected: three assertion failures for count `2`, the duplicated-middle order
+trace, and the false semantic result, with all five tests collected. The
+short-circuit and ownership floors already pass.
 
-- [ ] **Step 5: Commit the red teeth**
+- [ ] **Step 6: Commit the red teeth**
 
 ```bash
 git add implementations/python/sugar-lift-py-tests/tests/test_chained_compare_evaluate_once.py

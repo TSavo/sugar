@@ -57,7 +57,13 @@ replaces the shared middle child with a falsifiable probe.
 
 1. Exact-count tooth: `middle_desugar_count == 1`. Removing the carry-forward
    behavior makes this fail with `2` even though the outcome remains Complete.
-2. Semantic-effect tooth: the middle probe returns `1` on its first evaluation
+2. Left-to-right tooth: the complete evaluation trace is exactly
+   `left, middle, right`, with no duplicated or reordered operand.
+3. Short-circuit tooth: a false first leg evaluates `left, middle` and never
+   evaluates the later right operand.
+4. Per-leg ownership tooth: mixed chains retain their ordered
+   `ComparisonOpSugar` and `EqualityOpSugar` owners.
+5. Semantic-effect tooth: the middle probe returns `1` on its first evaluation
    and `2` on its second. `0 < middle() < 2` must be true. The broken double
    evaluation makes the second leg `2 < 2` and produces false.
 

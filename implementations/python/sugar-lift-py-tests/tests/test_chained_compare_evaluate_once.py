@@ -6,6 +6,9 @@ from dataclasses import dataclass, field, replace
 
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
+from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -57,8 +60,29 @@ class _ChangingMiddleSugar(ConstructedTermSugar):
         return self.inner.to_term(owner=owner)
 
 
-def _production_chain(middle_type):
-    source = "result = 0 < 1 < 2\n"
+@dataclass(frozen=True)
+class _RecordingSugar(ConstructedTermSugar):
+    inner: ConstructedTermSugar
+    evaluations: list[str] = field(compare=False)
+    label: str
+
+    @property
+    def site(self):
+        return self.inner.site
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        self.evaluations.append(self.label)
+        return self.inner.desugar(ctx)
+
+    def to_term(self, *, owner: str):
+        return self.inner.to_term(owner=owner)
+
+
+def _chain(source: str = "result = 0 < 1 < 2\n"):
     tree = SourceFile(
         (source, "chained-compare-once.py", blake3_512_of(source.encode()))
     )
@@ -66,6 +90,11 @@ def _production_chain(middle_type):
     chain = compare.sugar()
     assert len(chain.values) == 2
     assert chain.values[0].right is chain.values[1].left
+    return chain
+
+
+def _production_chain(middle_type):
+    chain = _chain()
 
     evaluations: list[int] = []
     middle = middle_type(chain.values[0].right, evaluations)
@@ -90,3 +119,42 @@ def test_second_middle_evaluation_would_change_the_comparison_result() -> None:
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, TrueBoolLiteralSugar)
+
+
+def test_chained_compare_evaluates_operands_once_in_left_to_right_order() -> None:
+    chain = _chain()
+    evaluations: list[str] = []
+    left = _RecordingSugar(chain.values[0].left, evaluations, "left")
+    middle = _RecordingSugar(chain.values[0].right, evaluations, "middle")
+    right = _RecordingSugar(chain.values[1].right, evaluations, "right")
+    first = replace(chain.values[0], left=left, right=middle)
+    second = replace(chain.values[1], left=middle, right=right)
+    instrumented = replace(chain, values=(first, second))
+
+    instrumented.desugar(None)
+
+    assert evaluations == ["left", "middle", "right"]
+
+
+def test_false_first_leg_does_not_evaluate_the_later_operand() -> None:
+    chain = _chain("result = 2 < 1 < 0\n")
+    evaluations: list[str] = []
+    left = _RecordingSugar(chain.values[0].left, evaluations, "left")
+    middle = _RecordingSugar(chain.values[0].right, evaluations, "middle")
+    right = _RecordingSugar(chain.values[1].right, evaluations, "right")
+    first = replace(chain.values[0], left=left, right=middle)
+    second = replace(chain.values[1], left=middle, right=right)
+    instrumented = replace(chain, values=(first, second))
+
+    outcome = instrumented.desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    assert evaluations == ["left", "middle"]
+
+
+def test_chained_compare_preserves_each_leg_owner() -> None:
+    chain = _chain("result = 0 < 1 == 1\n")
+
+    assert isinstance(chain.values[0], ComparisonOpSugar)
+    assert isinstance(chain.values[1], EqualityOpSugar)
