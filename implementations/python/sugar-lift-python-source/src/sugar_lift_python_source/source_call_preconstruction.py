@@ -111,9 +111,16 @@ def populate_source_visible_call_frames(
             frame_result = resolve_source_visible_frame(
                 resolved, graph=graph, session=session
             )
-        except SugarNotWritten as exc:
+        except (SugarNotWritten, TypeError) as exc:
+            # TypeError is the second costume of populate-path roster erasure
+            # (#7062 SNW arm only). Cite, continue; never abort the open.
+            kind = (
+                "source-body-gap"
+                if isinstance(exc, SugarNotWritten)
+                else "source-body-type-error"
+            )
             context.source_call_resolutions[coordinate] = (
-                SourceCallPreconstructionGapV1("source-body-gap", coordinate, str(exc))
+                SourceCallPreconstructionGapV1(kind, coordinate, str(exc))
             )
             continue
         if isinstance(frame_result, ManagerConstructionGapV1):

@@ -1072,12 +1072,13 @@ def prefix_has_completed_fallthrough(
         session.remember_fallthrough(fallthrough_key, True)
         return True
 
-    # Prefix sugar can SNW (e.g. decorated FunctionDef without publication).
-    # That is not "fallthrough completed"; it is incomplete prefix — cite as
-    # dynamic-export at the export door, never abort the open's population.
+    # Prefix sugar can SNW (e.g. decorated FunctionDef without publication) or
+    # TypeError on construction (IfExp/spread require_* costume). Neither is
+    # "fallthrough completed"; both cite as dynamic-export at the export door
+    # and must never abort the open's population. Named classes only.
     try:
         exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
-    except SugarNotWritten:
+    except (SugarNotWritten, TypeError):
         session.remember_fallthrough(fallthrough_key, False)
         return False
     if len(exits.exits) != 1:
@@ -2344,9 +2345,10 @@ def _resolve_source_visible_frame_uncached(
                 dependency_graphs=dependency_graphs,
                 session=session,
             )
-        except SugarNotWritten as exc:
-            # Imported callee body is incomplete: park the obligation, do not
-            # erase the outer authenticated target frame.
+        except (SugarNotWritten, TypeError) as exc:
+            # Imported callee body is incomplete or construction TypeError'd:
+            # park the obligation, do not erase the outer authenticated target
+            # frame (same law as populate SNW — TypeError is the second costume).
             _install_opaque_call_obligation(
                 context,
                 call,
@@ -2486,7 +2488,7 @@ def _resolve_source_visible_frame_uncached(
                 break
             try:
                 local_bases.append(reaching_classes[base_name].sugar())
-            except SugarNotWritten as exc:
+            except (SugarNotWritten, TypeError) as exc:
                 owner = getattr(exc, "owner", None) or type(exc).__name__
                 observed = getattr(exc, "observed", None) or str(exc)
                 return ManagerConstructionGapV1(
@@ -2977,12 +2979,13 @@ def _resolve_external_call_frame(
 
     try:
         projected = resolve_source_visible_frame(callee, graph=graph, session=session)
-    except SugarNotWritten:
+    except (SugarNotWritten, TypeError):
         # Callee body is incomplete (e.g. Compare leg gap inside a method of a
-        # class this target only *names*).  Park the free-name obligation; do
-        # not erase the outer authenticated target frame.  When that broken
-        # definition IS the outer target, resolve_source_visible_frame is the
-        # entry door and the panic stays loud there.
+        # class this target only *names*) or construction TypeError'd.  Park the
+        # free-name obligation; do not erase the outer authenticated target
+        # frame.  When that broken definition IS the outer target,
+        # resolve_source_visible_frame is the entry door and the panic stays
+        # loud there. Named classes only — never bare except.
         return _ExternalCallTargetGap("call-target-export-unresolved")
     if isinstance(projected, ManagerConstructionGapV1):
         # A cycle reached through a re-export hop is still a cycle.  Read the

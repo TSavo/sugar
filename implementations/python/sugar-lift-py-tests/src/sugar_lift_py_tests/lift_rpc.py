@@ -242,10 +242,82 @@ def open_source_file_for_construction(
         # File-open is a multi-resolve owner: one session for every receipt in
         # this population. session_or_new keeps an explicit shared session.
         session = session_or_new(resolution_session)
-        populate_source_derived_resource_refs(
-            source_file, root=root, path=path, session=session
-        )
+        # After SourceFile succeeds, populate must never erase the function
+        # roster. Per-receipt doors cite SugarNotWritten and TypeError (#7063
+        # + TypeError costume of #7062). This outer belt catches either if it
+        # still escapes — residual stays loud, roster stays. Open-path failure
+        # before SourceFile still raises — correctly empty denominator.
+        # Named classes only: never bare except (panics stay loud).
+        from sugar_source_tree.panic import SugarNotWritten
+
+        try:
+            populate_source_derived_resource_refs(
+                source_file, root=root, path=path, session=session
+            )
+        except (SugarNotWritten, TypeError) as populate_gap:
+            _record_populate_path_residual(source_file, populate_gap)
     return source_file
+
+
+def _record_populate_path_residual(
+    source_file, error: BaseException
+) -> None:
+    """Keep a populate-path gap loud without discarding the open roster.
+
+    Named residual on the construction context when present so boards can see
+    the gap; absence of a context still returns the SourceFile (denominator
+    law). Never a silent swallow.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if isinstance(error, SugarNotWritten):
+        err_type = "SugarNotWritten"
+        owner = str(getattr(error, "owner", None) or err_type)
+        observed = str(getattr(error, "observed", None) or error)
+        requested = str(getattr(error, "requested", None) or "")
+        fix = str(getattr(error, "fix", None) or "")
+    elif isinstance(error, TypeError):
+        err_type = "TypeError"
+        owner = "open_source_file_for_construction.populate"
+        observed = str(error)
+        requested = (
+            "per-receipt cite of construction TypeError inside populate "
+            "(source-body-type-error); outer belt must not erase SourceFile"
+        )
+        fix = (
+            "catch TypeError beside SugarNotWritten at resolve_source_visible_frame "
+            "and related populate doors; keep the enrolled function roster"
+        )
+    else:
+        raise TypeError(
+            f"_record_populate_path_residual got unexpected {type(error).__name__}; "
+            f"callers must catch only SugarNotWritten and TypeError"
+        ) from error
+
+    unit = getattr(source_file, "unit", None) or getattr(
+        getattr(source_file, "root", None), "unit", None
+    )
+    context = getattr(unit, "construction_context", None) if unit is not None else None
+    residual = {
+        "phase": "populate",
+        "owner": owner,
+        "type": err_type,
+        "observed": observed,
+        "requested": requested,
+        "fix": fix,
+    }
+    if context is None:
+        return
+    existing = getattr(context, "populate_residuals", None)
+    if existing is None:
+        try:
+            object.__setattr__(context, "populate_residuals", [residual])
+        except (AttributeError, TypeError):
+            # Frozen / slots context: residual still exists as the exception
+            # that was caught; roster preservation is the load-bearing law.
+            return
+    else:
+        existing.append(residual)
 
 
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
