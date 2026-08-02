@@ -8,46 +8,43 @@ A number that secretly means several things is the same defect as
 
 | Name | Meaning | One door |
 | --- | --- | --- |
-| **functionsPopulation** (`functionsTotal` back-compat) | How many functions **exist** on the pin (AST / population) | `seal_functions_population_v1` |
-| **functionsEnumerated** | How many the construction door **processed** (roster) | `seal_functions_enumerated_v1` |
+| **functionsPopulation** (`functionsTotal` back-compat) | How many functions **exist** on the pin | `seal_functions_population_v1` |
+| **functionsEnumerated** | How many the construction door **processed** | `seal_functions_enumerated_v1` |
 | **functionsConstructClean** | How many were **clean** (or refused — never defaulted) | `seal_functions_clean_v1` |
 | **functionsUnaccounted** | population − enumerated (derived at compose) | `board_fields_from_sealed_facts` |
 
-Those nearly sealed as one figure. They are three sealed facts.
-
-## Files unit (same shape, was three names for one slot)
+## Files unit (distinct quantities)
 
 | Name | Meaning |
 | --- | --- |
-| **filesEnrolled** | How many files **exist** on the pin |
-| **filesTerminal** | How many we **processed** (got a terminal row) |
-| **filesCompleted** | How many **constructed** |
-| **filesPanicked** | How many terminals **panicked** (not constructed) |
-| **filesMissing** | Enrolled with **no** terminal row |
+| **filesEnrolled** | exist on the pin |
+| **filesTerminal** | we processed (got a row) |
+| **filesCompleted** | constructed |
+| **filesPanicked** | terminal but did not construct |
+| **filesMissing** | enrolled, no terminal row |
 
-Aliases (same meaning as enrolled — not a fourth fact): `filesTotal`,
-`enrolledFiles`, `populationSize`.
+Aliases of enrolled only: `filesTotal`, `enrolledFiles`, `populationSize`.
 
-## Residual counts (not kind taxonomies)
+## Residual counts (quantities, not failure kinds)
 
 | Name | Meaning |
 | --- | --- |
-| **R_construction_panics** | `len(constructionPanics)` — construction failed loud |
+| **R_construction_panics** | `len(constructionPanics)` |
 | **R_desugar_construction_panics** | desugar-phase panics only |
-| **R_desugar_defects** | desugar defects only |
-| **R_desugar_owed_work** / **R_desugar_accounted_semantics** | desugar partition parts when present |
 | **R_cm_constructed** / **R_cm_unconstructed** | with-items that constructed vs not |
-| **R_defects** | `len(defects)` |
 
-**Deleted as sole residual:** bag totals that summed heterogeneous family tables
-into one `R` / `R_construction` / bare `R_desugar` and looked like a single
-remaining-work number. Family tables may still appear for owner detail; they
-are **not** the residual counter.
+### Dropped — kinds wearing counts (do not re-seal)
 
-## Rule for the next agent
+| Was | Why dropped |
+| --- | --- |
+| **R_desugar_defects** | “Defect” = Exception path vs ConstructionPanic — a **kind of failure**, not a second quantity. Under the law, failed construction is panic. |
+| **R_desugar_owed_work** (typed-refusal) | Outcome label for SugarNotWritten rows in a mixed R_desugar bag — **kind of row**, not a separate physical count of enrolled work. |
+| **R_desugar_accounted_semantics** (constructed-effect) | Successful desugar products (Incomplete/effect) counted as residual — **not unwritten work at all**. The 7.6× lie. |
+| **R** / **R_construction** family bag | Sum of heterogeneous owner tags as one residual. |
+| Bare **R_desugar** bag | Sum of refusal + effect rows as one remaining-work number. |
 
-Before sealing a new board field:
+## Rule
 
-1. Name **one** meaning in the field name.  
-2. Point at **one** place that computes it.  
-3. If two meanings share a spelling, **split** — do not document the overload.
+Before sealing a field: is this a **quantity that exists regardless of failure labels**
+(enrolled vs terminal, constructed vs panicked), or a **kind of failure**?
+Ship only the first.

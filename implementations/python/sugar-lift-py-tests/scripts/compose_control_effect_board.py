@@ -431,17 +431,15 @@ def seal_board_from_aggregate(
     """Mint the sealed authoritative board body. Sole mint of the class."""
     file_names = list(agg["enrolled_files"])
     families = Counter(agg["families"])
-    desugar_families = Counter(agg["desugar_families"])
-    desugar_categories = Counter(agg["desugar_categories"])
     backend_defects = Counter(agg["backend_defects"])
     construction_panics = list(agg["construction_panics"])
     defects = list(agg["defects"])
     # One meaning each — never bag-sum-as-the-residual.
+    # Desugar: only panic count is residual. defects / typed-refusal / constructed-effect
+    # were outcome KINDS (Exception vs SugarNotWritten vs Incomplete), not quantities
+    # of unwritten work. Dropped as residual axes (T correction: two outcomes only).
     r_construction_panics = len(construction_panics)
     r_desugar_panics = len(agg["desugar_construction_panics"])
-    r_desugar_defects = len(agg["desugar_defects"])
-    r_desugar_owed = int(desugar_categories.get("typed-refusal", 0))
-    r_desugar_accounted = int(desugar_categories.get("constructed-effect", 0))
     r_backend = sum(backend_defects.values())
     cm = Counter(agg["cm_resolutions"])
     r_cm_constructed = int(cm.get("constructed", 0) + cm.get("derived-contract", 0))
@@ -565,22 +563,8 @@ def seal_board_from_aggregate(
         "R_defects": len(defects),
         "desugarConstructionPanics": list(agg["desugar_construction_panics"]),
         "R_desugar_construction_panics": r_desugar_panics,
-        "desugarDefects": list(agg["desugar_defects"]),
-        "R_desugar_defects": r_desugar_defects,
-        "R_desugar_owed_work": r_desugar_owed,
-        "R_desugar_accounted_semantics": r_desugar_accounted,
-        "desugarCategories": dict(
-            sorted(desugar_categories.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "desugarByCategoryOwner": dict(
-            sorted(
-                Counter(agg["desugar_by_category_owner"]).items(),
-                key=lambda item: (-item[1], item[0]),
-            )
-        ),
-        "desugarFamilies": dict(
-            sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
-        ),
+        # desugarDefects / typed-refusal / constructed-effect NOT sealed as R_* —
+        # those were kinds of outcome, not independent quantities of unwritten work.
         "cmResolutions": dict(sorted(cm.items(), key=lambda item: (-item[1], item[0]))),
         "R_cm_constructed": r_cm_constructed,
         "R_cm_unconstructed": r_cm_unconstructed,
@@ -605,10 +589,7 @@ def seal_board_from_aggregate(
             "files": "enrolled | terminal | completed | panicked | missing",
             "functions": "population | enumerated | clean (or clean refused)",
             "construction": "R_construction_panics = len(constructionPanics)",
-            "desugar": (
-                "R_desugar_construction_panics | R_desugar_defects | "
-                "R_desugar_owed_work | R_desugar_accounted_semantics"
-            ),
+            "desugar": "R_desugar_construction_panics only (constructed or panicked)",
             "cm": "R_cm_constructed | R_cm_unconstructed",
         },
         "elapsedSeconds": elapsed_seconds,

@@ -112,12 +112,15 @@ def test_seal_board_splits_file_and_residual_meanings() -> None:
     assert body["functionsEnumerated"] == 9
     assert body["functionsUnaccounted"] == 1
     assert body["functionsConstructClean"] == 7
-    # Residual = panic counts, not bag totals
+    # Residual = panic counts, not kind bags
     assert body["R_construction_panics"] == 1
     assert body["R_desugar_construction_panics"] == 1
-    assert body["R_desugar_defects"] == 0
     assert body["R_cm_constructed"] == 3
     assert body["R_cm_unconstructed"] == 1
-    assert "R_construction" not in body  # bag total deleted
-    assert "R" not in body or body.get("R") is None
+    # Dropped: defect / owed / accounted were failure KINDS, not quantities
+    assert "R_desugar_defects" not in body
+    assert "R_desugar_owed_work" not in body
+    assert "R_desugar_accounted_semantics" not in body
+    assert "R_construction" not in body
+    assert "R" not in body
     assert "boardNumberMeanings" in body
