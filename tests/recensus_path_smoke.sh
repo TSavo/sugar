@@ -42,4 +42,7 @@ fi
 grep -Fq 'recensus-path-smoke' "$cm" || fail 'commit_measurement must know recensus-path-smoke'
 grep -Fq 'recensus-path-smoke-verdict' "$cm" || fail 'commit_measurement must refuse smoke kind'
 
+# Discrimination arms are run by CI or locally when PYTHONPATH is wired.
+# Static wall still passes without a live measure.
+
 echo 'PASS: recensus-path-smoke walls (static)'
