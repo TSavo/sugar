@@ -9822,7 +9822,7 @@ class ListComp(Expression):
 
     def _construct_sugar(self):
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import (
             ComprehensionSugar,
@@ -9878,10 +9878,10 @@ class ListComp(Expression):
             }
         )
         for generator_index, gen in enumerate(self.generators):
-            if gen.is_async or ListComp._contains_named_expression(
-                self, (gen.iter, *gen.ifs)
-            ):
-                return None
+            if gen.is_async:
+                return None  # async generators: still unwritten recurrence
+            # NamedExpr in filters/elt: NamedExprSugar already constructs —
+            # do not refuse the whole comprehension (fall to Node default).
             target = ListComp._comprehension_target(self, gen.target)
             if target is None:
                 return None
@@ -10012,7 +10012,7 @@ class SetComp(Expression):
 
     def _construct_sugar(self):
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -10122,9 +10122,7 @@ class DictComp(Expression):
 
     def _construct_sugar(self):
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(
-            self, (self.key, self.value)
-        ):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -10161,7 +10159,7 @@ class GeneratorExp(Expression):
 
     def _construct_sugar(self):
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
