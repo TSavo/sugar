@@ -25,7 +25,7 @@ from __future__ import annotations
 import ast
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 SCOREBOARD_AUTHORITY = False
 
@@ -328,6 +328,60 @@ def _classify_honest_residual(
     return name, msg, False
 
 
+def _enrolled_demand_unresolved_wire(
+    error: BaseException,
+) -> dict[str, Any] | None:
+    """C3 A: project EnrolledDemandUnresolved ground → board wire fields.
+
+    Returns None when the residual has no sealed C3 ground (kit-incomplete,
+    raw TypeError, etc.). The five artifact fields name what source could not
+    see — not merely the exception type.
+    """
+    decidability = getattr(error, "decidability", None)
+    if decidability is None:
+        return None
+    try:
+        from sugar_lift_py_tests.sealed_ground import EnrolledDemandUnresolved
+    except ImportError:
+        if type(decidability).__name__ != "EnrolledDemandUnresolved":
+            return None
+    else:
+        if not isinstance(decidability, EnrolledDemandUnresolved):
+            return None
+    art = getattr(decidability, "artifact", None)
+    if art is None:
+        return None
+    return {
+        "decidabilityKind": "EnrolledDemandUnresolved",
+        "demandFamily": str(getattr(art, "demand_family", "") or ""),
+        "demandCid": str(getattr(art, "demand_cid", "") or ""),
+        "useSite": str(getattr(art, "use_site", "") or ""),
+        "gapKind": str(getattr(art, "gap_kind", "") or ""),
+        "expectedRefType": str(getattr(art, "expected_ref_type", "") or ""),
+    }
+
+
+def _source_undecidable_refusal_row(
+    *,
+    file_rel: str,
+    err_type: str,
+    err_msg: str,
+    wire: Mapping[str, Any],
+) -> dict[str, Any]:
+    """One C3 inhabitant for R_source_undecidable_refusals (compose input)."""
+    return {
+        "file": file_rel,
+        "type": err_type,
+        "message": err_msg,
+        "decidabilityKind": wire["decidabilityKind"],
+        "demandFamily": wire["demandFamily"],
+        "demandCid": wire["demandCid"],
+        "useSite": wire["useSite"],
+        "gapKind": wire["gapKind"],
+        "expectedRefType": wire["expectedRefType"],
+    }
+
+
 def terminal_from_enumerate(
     *,
     file_rel: str,
@@ -347,6 +401,8 @@ def terminal_from_enumerate(
     families: Counter[str] = Counter()
     construction_panics: list[dict[str, Any]] = []
     defects: list[dict[str, Any]] = []
+    # C3 B: live mint path → named list (compose banks R_source_undecidable_refusals)
+    source_undecidable_refusals: list[dict[str, Any]] = []
 
     if function_gaps and not function_nodes:
         # File-level roster demand failed — true empty denominator.
@@ -421,15 +477,27 @@ def terminal_from_enumerate(
 
     if residual_phase_failed and residual_error is not None:
         err_type, err_msg, honest = _classify_honest_residual(residual_error)
-        defects.append(
-            {
-                "file": file_rel,
-                "type": err_type,
-                "message": err_msg,
-                "phase": "residual",
-                "honestResidual": honest,
-            }
-        )
+        # C3 A: attach sealed-ground artifact fields on the defect row when present.
+        defect_row: dict[str, Any] = {
+            "file": file_rel,
+            "type": err_type,
+            "message": err_msg,
+            "phase": "residual",
+            "honestResidual": honest,
+        }
+        c3_wire = _enrolled_demand_unresolved_wire(residual_error)
+        if c3_wire is not None:
+            defect_row.update(c3_wire)
+            source_undecidable_refusals.append(
+                _source_undecidable_refusal_row(
+                    file_rel=file_rel,
+                    err_type=err_type,
+                    err_msg=err_msg,
+                    wire=c3_wire,
+                )
+            )
+            families["EnrolledDemandUnresolved"] += 1
+        defects.append(defect_row)
         families[f"residual:{err_type}"] += 1
 
     clean, clean_refused, clean_reason = _honest_functions_clean(
@@ -486,6 +554,9 @@ def terminal_from_enumerate(
         row["panic"] = construction_panics[0]
     if defects and category != "completed":
         row["defect"] = defects[0]
+    # C3 B: always present (empty when no EnrolledDemandUnresolved mint).
+    row["sourceUndecidableRefusals"] = list(source_undecidable_refusals)
+    row["R_source_undecidable_refusals"] = len(source_undecidable_refusals)
     # Roster was banked; instrument-blind only if residual failed without construction.
     if residual_phase_failed:
         row["R_instrument_blind"] = 1
@@ -540,18 +611,31 @@ def measure_file_via_enumerate(
         # (instrument-blind mass, not a silent zero when the file has functions).
         auth = int(ast_fn) if ast_fn is not None else 0
         err_type, err_msg, honest = _classify_honest_residual(error)
-        return _empty_shell(
+        defect: dict[str, Any] = {
+            "file": file_rel,
+            "type": err_type,
+            "message": err_msg,
+            "phase": "roster",
+            "honestResidual": honest,
+        }
+        source_undecidable: list[dict[str, Any]] = []
+        c3_wire = _enrolled_demand_unresolved_wire(error)
+        if c3_wire is not None:
+            defect.update(c3_wire)
+            source_undecidable.append(
+                _source_undecidable_refusal_row(
+                    file_rel=file_rel,
+                    err_type=err_type,
+                    err_msg=err_msg,
+                    wire=c3_wire,
+                )
+            )
+        shell = _empty_shell(
             file_rel=file_rel,
             category="designed-gap" if honest else "backend-defect",
             functions_total=auth,
             functions_enumerated=0,
-            defect={
-                "file": file_rel,
-                "type": err_type,
-                "message": err_msg,
-                "phase": "roster",
-                "honestResidual": honest,
-            },
+            defect=defect,
             functions_clean=None if auth > 0 else 0,
             clean_ratio_refused=auth > 0,
             clean_refuse_reason=(
@@ -559,6 +643,15 @@ def measure_file_via_enumerate(
             ),
             ast_fn=ast_fn,
         )
+        shell["sourceUndecidableRefusals"] = source_undecidable
+        shell["R_source_undecidable_refusals"] = len(source_undecidable)
+        if source_undecidable:
+            fam = dict(shell.get("families") or {})
+            fam["EnrolledDemandUnresolved"] = (
+                int(fam.get("EnrolledDemandUnresolved") or 0) + len(source_undecidable)
+            )
+            shell["families"] = fam
+        return shell
 
     if function_gaps and not function_nodes:
         return terminal_from_enumerate(

@@ -48,6 +48,19 @@ _TOOLS = Path(__file__).resolve().parents[4] / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
+# Package root for sealed board function facts (C4 Step 1).
+_PKG_SRC = Path(__file__).resolve().parents[1] / "src"
+if _PKG_SRC.is_dir() and str(_PKG_SRC) not in sys.path:
+    sys.path.insert(0, str(_PKG_SRC))
+
+from sugar_lift_py_tests.c4.board_function_facts import (  # noqa: E402
+    LocalReading,
+    board_fields_from_sealed_facts,
+    seal_functions_clean_v1,
+    seal_functions_enumerated_v1,
+    seal_functions_population_v1,
+)
+
 
 def _blake3_512(data: bytes) -> str:
     try:
@@ -293,6 +306,8 @@ def aggregate_terminal_rows(
     desugar_construction_panics: list[dict[str, Any]] = []
     desugar_defects: list[dict[str, Any]] = []
     desugar_designed_gaps: list[dict[str, Any]] = []
+    # C3: EnrolledDemandUnresolved inhabitants (mint-live → board-visible)
+    source_undecidable_refusals: list[dict[str, Any]] = []
     unresolvable_dispatch: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
     defects: list[dict[str, Any]] = []
@@ -344,6 +359,32 @@ def aggregate_terminal_rows(
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
         desugar_defects.extend(row.get("desugarDefects") or [])
         desugar_designed_gaps.extend(row.get("desugarDesignedGaps") or [])
+        # C3 C: bank sealed refusals from terminal rows (A/B already projected).
+        row_c3 = row.get("sourceUndecidableRefusals")
+        if isinstance(row_c3, list) and row_c3:
+            for item in row_c3:
+                if isinstance(item, dict):
+                    source_undecidable_refusals.append(dict(item))
+        else:
+            # Fallback: defect row carries decidabilityKind when list omitted.
+            defect_probe = row.get("defect")
+            if (
+                isinstance(defect_probe, dict)
+                and defect_probe.get("decidabilityKind") == "EnrolledDemandUnresolved"
+            ):
+                source_undecidable_refusals.append(
+                    {
+                        "file": file,
+                        "type": defect_probe.get("type"),
+                        "message": defect_probe.get("message"),
+                        "decidabilityKind": "EnrolledDemandUnresolved",
+                        "demandFamily": defect_probe.get("demandFamily") or "",
+                        "demandCid": defect_probe.get("demandCid") or "",
+                        "useSite": defect_probe.get("useSite") or "",
+                        "gapKind": defect_probe.get("gapKind") or "",
+                        "expectedRefType": defect_probe.get("expectedRefType") or "",
+                    }
+                )
         if category == "completed":
             files_completed += 1
         elif category == "construction-panic":
@@ -389,6 +430,7 @@ def aggregate_terminal_rows(
         "desugar_construction_panics": desugar_construction_panics,
         "desugar_defects": desugar_defects,
         "desugar_designed_gaps": desugar_designed_gaps,
+        "source_undecidable_refusals": source_undecidable_refusals,
         "unresolvable_dispatch": unresolvable_dispatch,
         "construction_panics": construction_panics,
         "defects": defects,
@@ -440,6 +482,45 @@ def seal_board_from_aggregate(
     r_desugar = sum(desugar_families.values())
     r_backend = sum(backend_defects.values())
 
+    # C4 Step 1: three sealed meanings, not one overloaded int.
+    # LocalReadings are free; only the seal doors + board_fields_from_sealed_facts
+    # may mint board function fields. Bare ints cannot pass the consumer.
+    pin_id = (
+        aggregate_hash
+        or (plan or {}).get("aggregateHash")
+        or _PANDAS_3_0_3_AGGREGATE_HASH
+    )
+    pop_fact = seal_functions_population_v1(
+        LocalReading(int(agg["functions_total"]), "functions_total"),
+        tip=measured_commit,
+        pin=str(pin_id),
+    )
+    enum_fact = seal_functions_enumerated_v1(
+        LocalReading(int(agg.get("functions_enumerated") or 0), "functions_enumerated"),
+        tip=measured_commit,
+        pin=str(pin_id),
+    )
+    if agg.get("clean_ratio_refused"):
+        clean_fact = seal_functions_clean_v1(
+            LocalReading(None, "functions_clean"),
+            tip=measured_commit,
+            pin=str(pin_id),
+            refused=True,
+            refuse_reason=(
+                "one or more files refused functionsClean "
+                "(would be tautological clean%)"
+            ),
+        )
+    else:
+        clean_fact = seal_functions_clean_v1(
+            LocalReading(int(agg["functions_clean"]), "functions_clean"),
+            tip=measured_commit,
+            pin=str(pin_id),
+            refused=False,
+        )
+    # Consumer close: bare int cannot become a board field.
+    fn_fields = board_fields_from_sealed_facts(pop_fact, enum_fact, clean_fact)
+
     body: dict[str, Any] = {
         "schemaVersion": 1,
         "kind": KIND_SEALED,
@@ -471,6 +552,7 @@ def seal_board_from_aggregate(
         "isolation": "in-process",
         "paths": dict(paths or {}),
         # Dual unit denominator — files and functions NEVER share a slot.
+        # functions.* comes only from sealed meaning types (C4 consumer close).
         "denominator": {
             "files": {
                 "enrolled": len(file_names),
@@ -483,33 +565,7 @@ def seal_board_from_aggregate(
                 "malformedRows": list(agg["malformed_rows"]),
                 "complete": bool(agg["files_complete"]),
             },
-            "functions": {
-                # Population = sum of row functionsTotal (roster-preserved mass).
-                "total": int(agg["functions_total"]),
-                "enumerated": int(agg.get("functions_enumerated") or 0),
-                "unaccounted": max(
-                    0,
-                    int(agg["functions_total"])
-                    - int(agg.get("functions_enumerated") or 0),
-                ),
-                # clean only when every row could measure it; else refused.
-                **(
-                    {
-                        "clean": None,
-                        "cleanRatioRefused": True,
-                        "cleanRefuseReason": (
-                            "one or more files refused functionsClean "
-                            "(would be tautological clean%)"
-                        ),
-                    }
-                    if agg.get("clean_ratio_refused")
-                    else {
-                        "clean": int(agg["functions_clean"]),
-                        "cleanRatioRefused": False,
-                    }
-                ),
-                "unit": "construction-function-locus",
-            },
+            "functions": dict(fn_fields["denominator_functions"]),
             # Back-compat flat keys (file unit only) for older readers.
             "enrolled": len(file_names),
             "terminalRows": int(agg["terminal_count"]),
@@ -534,19 +590,13 @@ def seal_board_from_aggregate(
         ),
         "constructionPanics": construction_panics,
         "R_construction_panics": len(construction_panics),
-        "functionsTotal": int(agg["functions_total"]),
-        "functionsEnumerated": int(agg.get("functions_enumerated") or 0),
-        "functionsUnaccounted": max(
-            0,
-            int(agg["functions_total"]) - int(agg.get("functions_enumerated") or 0),
-        ),
-        # Never mint a tautological clean: null when any file refused clean.
-        "functionsConstructClean": (
-            None
-            if agg.get("clean_ratio_refused")
-            else int(agg["functions_clean"])
-        ),
-        "cleanRatioRefused": bool(agg.get("clean_ratio_refused")),
+        # Function fields only via sealed types — bare ints cannot land here.
+        "functionsTotal": fn_fields["functionsTotal"],
+        "functionsEnumerated": fn_fields["functionsEnumerated"],
+        "functionsUnaccounted": fn_fields["functionsUnaccounted"],
+        "functionsConstructClean": fn_fields["functionsConstructClean"],
+        "cleanRatioRefused": fn_fields["cleanRatioRefused"],
+        "sealedFunctionFactCids": dict(fn_fields["sealedFactCids"]),
         "cleanRefuseReasons": list(agg.get("clean_refuse_reasons") or []),
         "R": r_construction,
         "R_construction": r_construction,
@@ -596,6 +646,13 @@ def seal_board_from_aggregate(
         "R_desugar_defects": len(agg["desugar_defects"]),
         "desugarDesignedGaps": list(agg["desugar_designed_gaps"]),
         "R_desugar_designed_gaps": len(agg["desugar_designed_gaps"]),
+        # Criterion 3 sealed axis: EnrolledDemandUnresolved mints (CM first).
+        "sourceUndecidableRefusals": list(
+            agg.get("source_undecidable_refusals") or []
+        ),
+        "R_source_undecidable_refusals": len(
+            agg.get("source_undecidable_refusals") or []
+        ),
         "unresolvableDispatchTargets": list(agg["unresolvable_dispatch"]),
         "R_unresolvable_dispatch_targets": len(agg["unresolvable_dispatch"]),
         "elapsedSeconds": elapsed_seconds,
