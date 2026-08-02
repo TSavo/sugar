@@ -8,6 +8,7 @@ exhaustion. Missing coordinate is SugarNotWritten — never a name fallback.
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,11 +30,11 @@ def test_truthful_stop_iteration_coordinate_is_exhaustion() -> None:
     identity, mro = _stop_identity()
     effect = RaiseEffect.for_builtin("StopIteration",
         
-        exception_type_coordinate=identity,
         exception_type_mro=mro,
         occurrence="loop.py:1:0",
         producer_node_owner="project_next",
     )
+    assert effect.exception_type_coordinate == identity
     assert _is_authenticated_stop_iteration(effect) is True
 
 
@@ -41,7 +42,6 @@ def test_lying_twin_same_spelling_foreign_coordinate_is_not_exhaustion() -> None
     identity, mro = _stop_identity()
     truthful = RaiseEffect.for_builtin("StopIteration",
         
-        exception_type_coordinate=identity,
         exception_type_mro=mro,
         occurrence="loop.py:1:0",
     )
@@ -60,10 +60,9 @@ def test_lying_twin_same_spelling_foreign_coordinate_is_not_exhaustion() -> None
 
 
 def test_missing_coordinate_throws_named_not_name_fallback() -> None:
-    effect = RaiseEffect.for_builtin("StopIteration",
-        
+    effect = SimpleNamespace(
+        exception_name="StopIteration",
         exception_type_coordinate=None,
-        occurrence="loop.py:2:0",
     )
     with pytest.raises(SugarNotWritten) as caught:
         _is_authenticated_stop_iteration(effect)

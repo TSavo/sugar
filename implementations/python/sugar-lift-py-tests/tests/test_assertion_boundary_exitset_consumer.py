@@ -257,7 +257,6 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
         
         blame="pandas/tests/arithmetic/common.py:144:8",
         occurrence="pandas/tests/arithmetic/common.py:144:8",
-        exception_type_coordinate=producer_coordinate,
         exception_type_mro=(producer_coordinate,),
         raised_value=CallSiteValue(
             "TypeError",
@@ -268,6 +267,7 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
         ),
         producer_node_owner="ComparisonOpSugar.desugar",
     )
+    assert producer_effect.exception_type_coordinate == expected.identity
     matching = Halted(true_guard(), producer_effect, _state("compare"))
     other = _raise("ValueError", "other-type")
     nameless_effect = UndeterminedRaiseEffect(
@@ -319,8 +319,7 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     assert binding is not None
     assert binding.slot_id == "excinfo"
     assert binding.effect is producer_effect
-    assert binding.effect.exception_type_coordinate is producer_coordinate
-    assert binding.effect.exception_type_coordinate is not expected.identity
+    assert binding.effect.exception_type_coordinate == expected.identity
     assert binding.effect.producer_node_owner == "ComparisonOpSugar.desugar"
     assert binding.effect.occurrence_id == "pandas/tests/arithmetic/common.py:144:8"
     assert failed_message.effect is producer_effect
@@ -631,7 +630,6 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
         
         blame=occurrence,
         occurrence=occurrence,
-        exception_type_coordinate=_identity("ValueError"),
         exception_type_mro=(_identity("ValueError"),),
         raised_value=CallSiteValue(
             "ValueError",
@@ -658,10 +656,8 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
     binding = _observed_binding(none_consumed[0])
     assert binding.slot_id == "excinfo"
     assert binding.effect is producer
-    assert binding.effect.occurrence == occurrence
-    assert (
-        binding.effect.exception_type_coordinate is producer.exception_type_coordinate
-    )
+    assert binding.effect.occurrence_id == occurrence
+    assert binding.effect.exception_type_coordinate == _identity("ValueError")
     assert binding.effect.producer_node_owner == "Compare.desugar"
 
 
@@ -674,7 +670,6 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
         
         blame=occurrence,
         occurrence=occurrence,
-        exception_type_coordinate=_identity("ValueError"),
         exception_type_mro=(_identity("ValueError"),),
         raised_value=CallSiteValue(
             "ValueError",
@@ -707,7 +702,7 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
     assert held_binding is not None
     assert held_binding.slot_id == "excinfo"
     assert held_binding.effect is producer
-    assert held_binding.effect.occurrence == occurrence
+    assert held_binding.effect.occurrence_id == occurrence
 
     # Complement preserves the original halt and authenticates no slot.
     assert failed.effect is producer
@@ -726,7 +721,6 @@ def test_factored_as_binding_faces_keep_distinct_guards_and_identities():
         
         blame="producer.py:1:0",
         occurrence="producer.py:1:0",
-        exception_type_coordinate=_identity("ValueError"),
         exception_type_mro=(_identity("ValueError"),),
         raised_value=CallSiteValue(
             "ValueError",
@@ -771,7 +765,6 @@ def test_factored_none_face_without_as_slot_consumes_without_binding():
         
         blame="producer.py:2:0",
         occurrence="producer.py:2:0",
-        exception_type_coordinate=_identity("ValueError"),
         exception_type_mro=(_identity("ValueError"),),
         raised_value=CallSiteValue(
             "ValueError",

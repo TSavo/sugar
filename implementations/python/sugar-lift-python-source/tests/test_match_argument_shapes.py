@@ -723,10 +723,8 @@ def _raise_effect_with_message(message: str):
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.ir import ctor
 
-    identity = TermValue(1).to_term(owner="match-pattern-identity")
     raised = CallSiteValue(
         "ValueError",
         (StringValue(message),),
@@ -735,19 +733,17 @@ def _raise_effect_with_message(message: str):
         None,
     )
 
+    effect = RaiseEffect.for_builtin(
+        "ValueError",
+        occurrence=f"{message}@match-pattern",
+        raised_value=raised,
+    )
+
     class _Handler:
         def exception_type_identity(self):
-            return identity
+            return effect.exception_type_coordinate
 
-    return (
-        RaiseEffect.for_builtin("ValueError",
-            
-            exception_type_coordinate=identity,
-            occurrence=f"{message}@match-pattern",
-            raised_value=raised,
-        ),
-        _Handler(),
-    )
+    return effect, _Handler()
 
 
 @pytest.mark.parametrize(
