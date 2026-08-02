@@ -38,14 +38,33 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
+      # Host path ($HOME/...) only shares when matrix jobs land the same
+      # self-hosted user. Fleet-wide: restore/save CA terminal shelf via
+      # actions/cache. Key is tip; MeasurementKey still gates corpus/file
+      # content so a restored shelf cannot serve wrong population.
+      - name: Resolve process-floor CA shelf path
+        id: shelf
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${HOME}/.cache/sugar/process-floor-terminals"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_PROCESS_FLOOR_CACHE_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Restore process-floor CA terminal shelf (fleet)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.shelf.outputs.dir }}
+          key: process-floor-term-${{ github.sha }}
+          restore-keys: |
+            process-floor-term-
       - name: Run process floor ${{ matrix.axis }}
         id: floor
         shell: bash
         env:
-          # Tip pins the CA terminal key. Cache dir defaults to host-durable
-          # $HOME/.cache/sugar/process-floor-terminals (see run_one_process_floor_axis.sh)
-          # so matrix jobs share hits — workspace .cache is job-private.
+          # Tip pins the CA terminal key. Dir from shelf step (HOME + GHA cache).
           SUGAR_MEASUREMENT_TIP: ${{ github.sha }}
+          SUGAR_PROCESS_FLOOR_CACHE_DIR: ${{ steps.shelf.outputs.dir }}
         run: |
           set -uo pipefail
           chmod +x tools/run_one_process_floor_axis.sh
@@ -57,6 +76,14 @@ jobs:
           # Always keep the identity report for enrollment even when residual red.
           test -f floor-axis-report.json
           exit "$code"
+      # Save after every attempt so partial fills warm peers / next runs.
+      # Concurrent saves of the same key: first wins; content is CA so safe.
+      - name: Save process-floor CA terminal shelf (fleet)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.shelf.outputs.dir }}
+          key: process-floor-term-${{ github.sha }}
       - name: Upload axis report
         if: always()
         uses: actions/upload-artifact@v4
