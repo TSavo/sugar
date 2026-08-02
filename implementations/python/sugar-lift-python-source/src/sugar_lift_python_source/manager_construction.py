@@ -1729,8 +1729,9 @@ def resolve_source_visible_frame(
 
     The projection is memoized on ``session``: the same authenticated
     definition is projected once per repeated call-site receipt in pandas
-    megamodules, and re-materializing SourceFile + class base sugar each time
-    was the residual wall after export/revalidation amortization.
+    megamodules. Module SourceFile materialize is also session-memoized
+    (per source CID, not per definition): without it, in-population modules
+    like ``pandas/_config/config.py`` rebuild N times for N definitions.
 
     The memo may NOT be process-global even though its key is a content
     address.  ``_resolve_source_visible_frame_uncached`` mints a fresh
@@ -1807,6 +1808,33 @@ def resolve_source_visible_frame(
     return result
 
 
+def _module_materialize_key(
+    *,
+    graph: DependencyArtifactGraph,
+    module,
+    dependency_graphs: dict[str, DependencyArtifactGraph] | None,
+) -> tuple:
+    """Session key for one authenticated module's SourceFile materialize.
+
+    Per-definition frame projection still keys on the definition coordinate.
+    Materializing the whole module per definition is what multiplied
+    in-population megamodules (``pandas/_config/config.py`` ×18). Key is
+    artifact + dependency seats + source CID + module name — never process
+    state; the session is the authority boundary.
+    """
+    return (
+        graph.distribution_artifact_cid,
+        tuple(
+            sorted(
+                (name, dependency.distribution_artifact_cid)
+                for name, dependency in (dependency_graphs or {}).items()
+            )
+        ),
+        module.source_cid,
+        module.module_name,
+    )
+
+
 def _resolve_source_visible_frame_uncached(
     resolved: ResolvedPythonObjectV1,
     *,
@@ -1822,45 +1850,54 @@ def _resolve_source_visible_frame_uncached(
     )
     from sugar_source_tree.reporter import NULL_REPORTER
 
-    # frame_projection: dual-mode factories may nest With only on non-CM
-    # branches; soft-require those so call-frame projection can complete.
-    context = TreeConstructionContextV1.for_source_call_construction(
-        frame_projection=True
+    dependency_graphs = dict(dependency_graphs or {})
+    dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
+    module_key = _module_materialize_key(
+        graph=graph, module=module, dependency_graphs=dependency_graphs
     )
-    source_file = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
-        construction_context=context,
-    )
-    producer_reporter = ConstructionTestimonyReporterV1(
-        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
-    )
-    producer_root = materialize(
-        source_file.unit, source_file.root.ref, producer_reporter
-    )
-    from sugar_lift_python_source.value_pins import scan_module_value_pins
-    from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
-
-    pin_scan = scan_module_value_pins(
-        source_file.root, source=module.source, source_path=module.source_seat
-    )
-    mutable_global_bindings = tuple(
-        MutableGlobalBindingV1(
-            source_cid=pin.source_cid,
-            binding_occurrence=pin.binding_occurrence,
-            name=pin.name,
-            kind=pin.kind,
-            term=pin.term,
-            line=pin.line,
-            col=pin.col,
+    module_product = session.module_materialize_hit(module_key)
+    if module_product is None:
+        # frame_projection: dual-mode factories may nest With only on non-CM
+        # branches; soft-require those so call-frame projection can complete.
+        context = TreeConstructionContextV1.for_source_call_construction(
+            frame_projection=True
         )
-        for pin in pin_scan.mutable_global_pins
-    )
+        source_file = SourceFile(
+            (module.source, module.source_seat, module.source_cid),
+            construction_context=context,
+        )
+        producer_reporter = ConstructionTestimonyReporterV1(
+            NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+        )
+        producer_root = materialize(
+            source_file.unit, source_file.root.ref, producer_reporter
+        )
+        from sugar_lift_python_source.value_pins import scan_module_value_pins
+        from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
+
+        pin_scan = scan_module_value_pins(
+            source_file.root, source=module.source, source_path=module.source_seat
+        )
+        mutable_global_bindings = tuple(
+            MutableGlobalBindingV1(
+                source_cid=pin.source_cid,
+                binding_occurrence=pin.binding_occurrence,
+                name=pin.name,
+                kind=pin.kind,
+                term=pin.term,
+                line=pin.line,
+                col=pin.col,
+            )
+            for pin in pin_scan.mutable_global_pins
+        )
+        module_product = (source_file, producer_root, mutable_global_bindings)
+        session.remember_module_materialize(module_key, module_product)
+    source_file, producer_root, mutable_global_bindings = module_product
+    context = source_file.unit.construction_context
 
     def with_mutable_globals(frame):
         return replace(frame, mutable_global_bindings=mutable_global_bindings)
 
-    dependency_graphs = dict(dependency_graphs or {})
-    dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
     definitions = tuple(
         item for item in producer_root.body if isinstance(item, (FunctionDef, ClassDef))
     )

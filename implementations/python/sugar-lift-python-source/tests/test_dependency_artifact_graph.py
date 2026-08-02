@@ -1060,3 +1060,113 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
         f"{materializations['count']} times for {n_sites} receipts of one "
         f"definition; amortize source-visible frame projection"
     )
+
+
+def test_session_module_materialize_amortizes_across_definitions(
+    tmp_path: Path,
+) -> None:
+    """In-population modules materialize once per session, not once per def.
+
+    Frame memo is per definition coordinate. Without a module materialize
+    memo, projecting N definitions from one authenticated module rebuilds
+    SourceFile N times — ``pandas/_config/config.py`` ×18 in one ``_json.py``
+    open. Session owns the module product (live context-bound); process-
+    global is forbidden. TARGET: N definitions → 1 SourceFile under one
+    session; distinct sessions still isolate.
+    """
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_python_source import manager_construction as mc
+    from sugar_lift_python_source.manager_construction import (
+        resolve_source_visible_frame,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_source_tree.tree import SourceFile
+
+    implementation = (
+        "def alpha(value):\n"
+        "    return value\n"
+        "def beta(value):\n"
+        "    return value + 1\n"
+        "def gamma(value):\n"
+        "    return value + 2\n"
+        "def delta(value):\n"
+        "    return value + 3\n"
+    )
+    distribution = _install_distribution(
+        tmp_path,
+        package_source=(
+            "from example_pkg.implementation import alpha, beta, gamma, delta\n"
+        ),
+        implementation_source=implementation,
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    session = SourceResolutionSession()
+
+    consumer = (
+        "from example_pkg.implementation import alpha, beta, gamma, delta\n"
+        "alpha(1)\n"
+        "beta(1)\n"
+        "gamma(1)\n"
+        "delta(1)\n"
+    )
+    path = tmp_path / "consumer_multi_def.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode("utf-8"))
+    receipts, _ = authenticated_import_use_receipts(
+        tmp_path, path, consumer, source_cid, module_identities={}
+    )
+    # One receipt per call site; four distinct definitions.
+    resolved = [
+        resolve_import_binding(receipt, graph=graph, session=session)
+        for receipt in receipts
+    ]
+    resolved = [item for item in resolved if isinstance(item, ResolvedPythonObjectV1)]
+    names = {item.definition.name for item in resolved}
+    assert names >= {"alpha", "beta", "gamma", "delta"}, names
+    assert len(resolved) >= 4
+
+    materializations = {"count": 0, "paths": []}
+    original_sf = SourceFile
+
+    class CountingSourceFile(original_sf):
+        def __init__(self, *args, **kwargs):
+            materializations["count"] += 1
+            identity = args[0] if args else None
+            if isinstance(identity, tuple) and len(identity) >= 2:
+                materializations["paths"].append(identity[1])
+            super().__init__(*args, **kwargs)
+
+    mc.SourceFile = CountingSourceFile  # type: ignore[misc, assignment]
+    try:
+        frames = [
+            resolve_source_visible_frame(item, graph=graph, session=session)
+            for item in resolved
+        ]
+    finally:
+        mc.SourceFile = original_sf  # type: ignore[misc, assignment]
+
+    assert all(isinstance(item, tuple) for item in frames)
+    # Only the implementation module should materialize for these projections;
+    # package __init__ reexport may also appear — count implementation seats.
+    impl_hits = sum(
+        1 for p in materializations["paths"] if str(p).endswith("implementation.py")
+    )
+    assert impl_hits == 1, (
+        f"implementation module SourceFile count={impl_hits} (total "
+        f"{materializations['count']}, paths={materializations['paths']}); "
+        f"expected 1 under one session for {len(resolved)} definitions"
+    )
+    assert len(session.module_materializations) >= 1
+
+    # Discrimination: a fresh session re-materializes (isolation, not process memo).
+    other = SourceResolutionSession()
+    materializations["count"] = 0
+    materializations["paths"] = []
+    mc.SourceFile = CountingSourceFile  # type: ignore[misc, assignment]
+    try:
+        resolve_source_visible_frame(resolved[0], graph=graph, session=other)
+    finally:
+        mc.SourceFile = original_sf  # type: ignore[misc, assignment]
+    assert materializations["count"] >= 1, (
+        "fresh session paid zero materialize; process-global memo returned"
+    )
