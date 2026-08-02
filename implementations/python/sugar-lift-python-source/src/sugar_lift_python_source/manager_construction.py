@@ -604,23 +604,56 @@ class _ModuleClassDefinitionBindingSugar:
         return outcome.and_then(bind)
 
 
-def _enroll_imported_decorator_frames(
-    *, module, definition, context, session, dependency_graphs
-) -> None:
-    """Seat exact imported Attribute decorator factories before Sugar caching."""
+def _session_import_use_receipts(session: SourceResolutionSession, module):
+    """Call-door import-use roster once per source body per session."""
     from pathlib import Path
 
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-    from sugar_source_tree.panic import BackendDefect
 
-    decorator_receipts, _ = authenticated_import_use_receipts(
+    hit = session.import_use_hit(module.source_cid)
+    if hit is not None:
+        return hit
+    receipts, _ = authenticated_import_use_receipts(
         Path("."),
         Path(module.source_seat),
         module.source,
         module.source_cid,
         module_identities={},
     )
+    session.remember_import_use(module.source_cid, receipts)
+    return receipts
+
+
+def _session_import_value_receipts(session: SourceResolutionSession, module):
+    """Value-door import roster once per source body per session."""
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
+
+    hit = session.import_value_hit(module.source_cid)
+    if hit is not None:
+        return hit
+    receipts, _ = authenticated_import_value_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    session.remember_import_value(module.source_cid, receipts)
+    return receipts
+
+
+def _enroll_imported_decorator_frames(
+    *, module, definition, context, session, dependency_graphs
+) -> None:
+    """Seat exact imported Attribute decorator factories before Sugar caching."""
+    from pathlib import Path
+
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.panic import BackendDefect
+
+    decorator_receipts = _session_import_use_receipts(session, module)
     receipts_by_span = {}
     for receipt in decorator_receipts:
         receipt_span = (
@@ -718,15 +751,24 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
             f"stdlib seat {module.source_seat!r}; cite via "
             "prefix_has_completed_fallthrough / call-target-off-population"
         )
-    construction_context = TreeConstructionContextV1.for_source_call_construction()
-    producer_reporter = ConstructionTestimonyReporterV1(
-        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
-    )
-    source_file = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
-        reporter=producer_reporter,
-        construction_context=construction_context,
-    )
+    session = session_or_new(session)
+    # One prefix-door SourceFile per source body per session. Export fallthrough
+    # used to rebuild config.py once per export locus (measured 33× SourceFile
+    # on one _json open after the frame-door memo). Value is context-bound to
+    # this session — never process-global.
+    source_file = session.prefix_file_hit(module.source_cid)
+    if source_file is None:
+        construction_context = TreeConstructionContextV1.for_source_call_construction()
+        producer_reporter = ConstructionTestimonyReporterV1(
+            NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+        )
+        source_file = SourceFile(
+            (module.source, module.source_seat, module.source_cid),
+            reporter=producer_reporter,
+            construction_context=construction_context,
+        )
+        session.remember_prefix_file(module.source_cid, source_file)
+    construction_context = source_file.unit.construction_context
     locus_key = (locus.lineno, locus.col_offset)
     prefix = tuple(
         statement
@@ -769,7 +811,6 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
 
     dependency_graphs = {}
     if graph is not None:
-        session = session_or_new(session)
         dependency_graphs[module.module_name.split(".", 1)[0]] = graph
         for definition in prefix_classes:
             _seat_import_value_use_receipts(
@@ -848,21 +889,35 @@ def prefix_has_completed_fallthrough(
 
     from sugar_source_tree.panic import SugarNotWritten
 
+    session = session_or_new(session)
+    fallthrough_key = (
+        module.source_cid,
+        getattr(locus, "lineno", None),
+        getattr(locus, "col_offset", None),
+    )
+    cached = session.fallthrough_hit(fallthrough_key)
+    if cached is not None:
+        return cached
+
     # Prefix sugar can SNW (e.g. decorated FunctionDef without publication).
     # That is not "fallthrough completed"; it is incomplete prefix — cite as
     # dynamic-export at the export door, never abort the open's population.
     try:
         exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
     except SugarNotWritten:
+        session.remember_fallthrough(fallthrough_key, False)
         return False
     if len(exits.exits) != 1:
+        session.remember_fallthrough(fallthrough_key, False)
         return False
     face = exits.exits[0]
-    return (
+    ok = (
         isinstance(face, Completed)
         and face.guard == true_guard()
         and bool(getattr(face.value, "can_fall_through", False))
     )
+    session.remember_fallthrough(fallthrough_key, ok)
+    return ok
 
 
 @dataclass(frozen=True)
@@ -1994,11 +2049,6 @@ def _resolve_source_visible_frame_uncached(
     # without reconstructing either binding from the callee spelling.
     from pathlib import Path
 
-    from sugar_lift_py_tests.import_binding import (
-        authenticated_import_use_receipts,
-        authenticated_import_value_use_receipts,
-    )
-
     reachable_calls = {
         (
             call.line_col_span().start_line,
@@ -2011,21 +2061,8 @@ def _resolve_source_visible_frame_uncached(
         for call in _reachable_attribute_calls(function)
     }
     if reachable_calls:
-        module_path = Path(module.source_seat)
-        import_receipts, _ = authenticated_import_use_receipts(
-            Path("."),
-            module_path,
-            module.source,
-            module.source_cid,
-            module_identities={},
-        )
-        value_receipts, _ = authenticated_import_value_use_receipts(
-            Path("."),
-            module_path,
-            module.source,
-            module.source_cid,
-            module_identities={},
-        )
+        import_receipts = _session_import_use_receipts(session, module)
+        value_receipts = _session_import_value_receipts(session, module)
         value_receipts = _retain_import_value_receipt_roster(
             context, module, tuple(value_receipts)
         )
@@ -3134,9 +3171,6 @@ def _seat_import_value_use_receipts(
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
-    from sugar_lift_py_tests.import_binding import (
-        authenticated_import_value_use_receipts,
-    )
     from sugar_lift_python_source.canonical import blake3_512_of
 
     unit = source_file.unit
@@ -3170,23 +3204,9 @@ def _seat_import_value_use_receipts(
     roster_key = (module.module_name, module.source_seat, module.source_cid)
     receipts = context.source_import_value_receipts.get(roster_key)
     if receipts is None:
-        minted, _ = authenticated_import_value_use_receipts(
-            Path("."),
-            Path(module.source_seat),
-            module.source,
-            module.source_cid,
-            module_identities={},
-        )
+        minted = _session_import_value_receipts(session, module)
         receipts = _retain_import_value_receipt_roster(context, module, tuple(minted))
-    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
-
-    call_receipts, _ = authenticated_import_use_receipts(
-        Path("."),
-        Path(module.source_seat),
-        module.source,
-        module.source_cid,
-        module_identities={},
-    )
+    call_receipts = _session_import_use_receipts(session, module)
     calls_by_cid = {}
     for call_receipt in call_receipts:
         cid = call_receipt.use["cid"]

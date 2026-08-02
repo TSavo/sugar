@@ -402,6 +402,11 @@ def leaky_process_memo(monkeypatch):
     active: set = set()
     modules: dict = {}
 
+    prefixes: dict = {}
+    fallthroughs: dict = {}
+    import_uses: dict = {}
+    import_values: dict = {}
+
     def leaky_init(self, *, enabled: bool = True) -> None:
         self.enabled = enabled
         self.export_resolutions = exports
@@ -409,6 +414,10 @@ def leaky_process_memo(monkeypatch):
         self.frame_holds = holds
         self.frame_active = active
         self.module_materializations = modules
+        self.prefix_files = prefixes
+        self.prefix_fallthrough = fallthroughs
+        self.import_use_rosters = import_uses
+        self.import_value_rosters = import_values
 
     monkeypatch.setattr(SourceResolutionSession, "__init__", leaky_init)
 
