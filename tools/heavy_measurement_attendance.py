@@ -62,7 +62,34 @@ def owed(cadence):
     return [c for c in HEAVY_ROSTER if HEAVY_CADENCE[c] == cadence]
 
 
+# Path-smoke is PATH integrity only (#7048). It must never attend as the
+# authoritative control-effect-recensus board via PATH_HINTS fall-through.
+RECENSUS_PATH_SMOKE_CLASS = "recensus-path-smoke"
+RECENSUS_PATH_SMOKE_KIND = "recensus-path-smoke-verdict"
+RECENSUS_PATH_SMOKE_PATH_MARKER = "recensus-path-smoke"
+
+
+def _is_recensus_path_smoke(path: Path, payload: dict) -> bool:
+    """True for smoke class/kind or a body under the smoke path prefix.
+
+    Defense in depth: class alone is not enough — a smoke seal planted under a
+    path that carries PATH_HINTS fragments must still refuse to attend.
+    """
+    mc = payload.get("measurementClass")
+    if mc == RECENSUS_PATH_SMOKE_CLASS:
+        return True
+    if payload.get("kind") == RECENSUS_PATH_SMOKE_KIND:
+        return True
+    text = str(path).replace("\\", "/")
+    if RECENSUS_PATH_SMOKE_PATH_MARKER in text:
+        return True
+    return False
+
+
 def _class_from_payload(path: Path, payload: dict) -> str | None:
+    # BEFORE roster / path hints: smoke never maps to control-effect-recensus.
+    if _is_recensus_path_smoke(path, payload):
+        return None
     mc = payload.get("measurementClass")
     if isinstance(mc, str) and mc in HEAVY_ROSTER:
         return mc

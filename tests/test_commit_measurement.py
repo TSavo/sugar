@@ -404,3 +404,43 @@ def test_partial_has_no_total() -> None:
     assert isinstance(partial, CM.PartialVector)
     with pytest.raises(AttributeError):
         _ = partial.total  # type: ignore[attr-defined]
+
+
+def test_smoke_body_with_forbidden_product_key_does_not_measure_panics(tmp_path):
+    """Smoke seal carrying R_construction_panics must not Measure panics.
+
+    _is_candidate_body already refuses smoke class/kind. _body_matches_spec must
+    also refuse before match_field short-circuit so a stripped/malformed smoke
+    body that still has the board field cannot compose as Measured.
+    """
+    smoke = {
+        "schemaVersion": 1,
+        "kind": "recensus-path-smoke-verdict",
+        "measurementClass": "recensus-path-smoke",
+        "pathVerdict": "PATH_OK",
+        # Forbidden product key — if present, still must not Measure panics.
+        "R_construction_panics": 0,
+        "measuredCommit": "deadbeef",
+    }
+    # Four green floors so only panics would complete the vector.
+    for axis in ("silent", "native-crash", "bare-exception", "timeout"):
+        (tmp_path / f"floor-{axis}.json").write_text(
+            json.dumps(_floor_body(axis, failed=0)), encoding="utf-8"
+        )
+    # Spoof path carries PATH_HINTS fragment for attendance class of bug.
+    spoof_dir = tmp_path / "pandas-control-effect"
+    spoof_dir.mkdir()
+    (spoof_dir / "smoke.json").write_text(json.dumps(smoke), encoding="utf-8")
+
+    panics_spec = next(
+        s for s in CM.TIP_AXIS_SPECS if s.identity == "R_construction_panics"
+    )
+    assert CM._body_matches_spec(smoke, panics_spec) is False
+    assert CM._is_candidate_body(smoke) is False
+
+    v = CM.compose_tip_from_artifacts_dir("deadbeef", tmp_path)
+    assert "R_construction_panics" in v.unmeasured_axes(), (
+        f"smoke with product key Measured panics: {v.axes!r}"
+    )
+    reading = v.axes["R_construction_panics"]
+    assert not isinstance(reading, CM.Measured), reading

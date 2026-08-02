@@ -601,6 +601,16 @@ TIP_AXIS_SPECS: tuple[TipAxisSpec, ...] = CRITERION2_AXIS_SPECS
 
 
 def _body_matches_spec(body: Mapping[str, Any], spec: TipAxisSpec) -> bool:
+    # Refuse recensus-path-smoke BEFORE match_field short-circuit. A smoke seal
+    # that still carries R_construction_panics (stripped/malformed) must not
+    # Measure panics — _is_candidate_body already refuses, but match_field alone
+    # used to return True first.
+    smoke_cls = body.get("measurementClass") or body.get("leaseClass")
+    if (
+        smoke_cls == "recensus-path-smoke"
+        or body.get("kind") == "recensus-path-smoke-verdict"
+    ):
+        return False
     if spec.match_axis_id is not None:
         if body.get("axisId") == spec.match_axis_id:
             return True
