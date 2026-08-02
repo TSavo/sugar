@@ -603,9 +603,9 @@ shelf_exercise_note_log() {
       crime="${msg%% *}"
       crime="${crime#crime=}"
       ;;
-    filesystem\ shelf\ hit*)
+    phase=resolve-hit\ source=filesystem-shelf*|phase=resolve-hit\ source=prebuilt-cache*|phase=resolve-hit\ source=peer-publish*)
       op=pull; outcome=hit ;;
-    filesystem\ shelf\ miss*)
+    phase=resolve-miss\ source=filesystem-shelf*|phase=resolve-miss\ source=prebuilt-cache*)
       op=pull; outcome=miss ;;
     filesystem\ shelf\ already\ has\ content*)
       op=publish; outcome=already ;;
@@ -615,8 +615,8 @@ shelf_exercise_note_log() {
       op=publish; outcome=raced ;;
     filesystem\ shelf\ publication\ failed*)
       op=publish; outcome=failed ;;
+    # legacy + phase forms for prebuilt (local stamp-keyed cache still shelf path)
     prebuilt\ cache\ hit*|prebuilt\ cache\ rejected*)
-      # Local stamp-keyed cache sits in front of CAS pull — still shelf path.
       op=pull; outcome=prebuilt ;;
     *)
       return 0
@@ -907,15 +907,19 @@ materialize_cached_artifact() {
 
 build_from_source() {
   local stamp="$1" identity="$2"
-  log "building $bin_name once for this session (set SUGAR_BIN to skip)"
-  local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
-  local make_bin="${SUGAR_BINARY_MAKE:-make}"
+  local stamp_short build_start cargo_bin make_bin target_root build_base
+  local family_identity build_root built monorepo_head make_status
+  local hb_pid elapsed now
+  stamp_short="$(_stamp_short "$stamp")"
+  build_start="$(date +%s)"
+  log "phase=resolve-build-start bin=$bin_name stamp=${stamp_short}… profile=$profile"
+  cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
+  make_bin="${SUGAR_BINARY_MAKE:-make}"
   command -v "$make_bin" >/dev/null 2>&1 || {
     log "crime=missing-make owner=bin/sugarbin illegal shape=content-addressed target has no construction engine replacement=install GNU Make or set SUGAR_BINARY_MAKE"
     return 1
   }
-  local target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
-  local build_base
+  target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
   if [[ -n "${SUGAR_BINARY_BUILD_ROOT:-}" ]]; then
     build_base="$SUGAR_BINARY_BUILD_ROOT"
   else
@@ -923,16 +927,27 @@ build_from_source() {
     identity_key="$(build_identity_key)" || return 1
     build_base="$(cache_dir)/.build/$identity_key"
   fi
-  local family_identity
   family_identity="$(build_family_identity "$stamp")" || return $?
-  local build_root="$build_base/$(stamp_for_filename "$family_identity")"
+  build_root="$build_base/$(stamp_for_filename "$family_identity")"
   require_writable_build_root "$build_root" || return 1
-  local built="$build_root/$profile/$bin_name"
+  built="$build_root/$profile/$bin_name"
   # SUGAR_BUILD_STAMP is the authenticated sourceStamp (source matter only).
   # SUGAR_BUILD_GIT_HEAD remains a version/attestation label, not a shelf key.
-  local monorepo_head
   monorepo_head="$(attestation_git_head)"
   [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
+  # Cargo can sit for minutes with no stdout in CI. Heartbeat to the job log
+  # every 30s so a cold rebuild is never a flat spinner (doctrine: narrate).
+  (
+    n=0
+    while true; do
+      sleep 30
+      n=$((n + 30))
+      printf 'sugarbin: phase=resolve-build bin=%s stamp=%s… elapsed_s=%s note=cargo-still-running\n' \
+        "$bin_name" "${stamp_short}" "$n" >&2
+    done
+  ) &
+  hb_pid=$!
+  set +e
   SUGARBIN_OUTPUT="$built" \
     SUGARBIN_TARGET_DIR="$build_root" \
     SUGARBIN_MANIFEST="$rust_workspace/Cargo.toml" \
@@ -943,7 +958,18 @@ build_from_source() {
     SUGARBIN_CARGO="$cargo_bin" \
     SUGARBIN_PROFILE="$profile" \
     "$make_bin" --silent --no-print-directory -f "$repo_root/tools/sugarbin-build.mk" sugarbin-build
+  make_status=$?
+  set -e
+  kill "$hb_pid" 2>/dev/null || true
+  wait "$hb_pid" 2>/dev/null || true
+  now="$(date +%s)"
+  elapsed=$((now - build_start))
+  if [[ "$make_status" != 0 ]]; then
+    log "phase=resolve-build-failed bin=$bin_name stamp=${stamp_short}… elapsed_s=$elapsed exit=$make_status"
+    return "$make_status"
+  fi
   [[ -x "$built" ]] || { log "Cargo did not produce requested executable $built"; return 1; }
+  log "phase=resolve-build-done bin=$bin_name stamp=${stamp_short}… elapsed_s=$elapsed"
 
   # The shared target is a published cache cell, never Cargo's freshness owner.
   # Install only bytes produced inside this exact build-identity directory so a
@@ -1361,19 +1387,31 @@ _rebuild_heartbeat_age_seconds() {
   printf '%s\n' "$age"
 }
 
+# Short stamp for job-log narration (full stamp still used as lock key).
+_stamp_short() {
+  local s="$1"
+  s="${s#blake3-512_}"
+  s="${s#blake3-512:}"
+  printf '%.16s\n' "$s"
+}
+
+# Doctrine: long-running phases emit a named line to the job log (stderr via
+# log()) within 30s and every 30s after. CI is not a TTY — never gate these.
 acquire_rebuild_single_flight() {
   local stamp="$1" name="$2" lock_parent lockdir waited=0 stale_s age
+  local wait_start holder stamp_short now elapsed announced=0
   _rebuild_lock_dir=""
   _rebuild_heartbeat_pid=""
   lock_parent="$(cache_dir)/.rebuild-locks"
   if ! mkdir -p "$lock_parent" 2>/dev/null; then
-    log "rebuild single-flight: cannot create $lock_parent; degraded (no lock)"
+    log "phase=resolve-wait-degraded bin=$bin_name reason=lock-parent-uncreatable path=$lock_parent"
     return 0
   fi
   # Directory name IS the lock: mkdir succeeds for exactly one contender.
   lockdir="$lock_parent/$(platform_key)-${profile}-$(stamp_for_filename "$stamp")-${bin_name}.lock"
   stale_s="$(_rebuild_lock_stale_seconds)"
-  log "rebuild single-flight: waiting for $bin_name stamp lock"
+  stamp_short="$(_stamp_short "$stamp")"
+  wait_start="$(date +%s)"
   while true; do
     if mkdir "$lockdir" 2>/dev/null; then
       printf '%s\n' "$$" >"$lockdir/pid"
@@ -1390,14 +1428,26 @@ acquire_rebuild_single_flight() {
       _rebuild_heartbeat_pid=$!
       # Best-effort release on cancel so the estate is not wedged.
       trap 'release_rebuild_single_flight' EXIT
-      log "rebuild single-flight: acquired $bin_name stamp lock"
+      now="$(date +%s)"
+      elapsed=$((now - wait_start))
+      if (( announced )); then
+        log "phase=resolve-wait-acquired bin=$bin_name stamp=${stamp_short}… pid=$$ waited_s=$elapsed"
+      else
+        log "phase=resolve-lock-acquired bin=$bin_name stamp=${stamp_short}… pid=$$ (no peer wait)"
+      fi
       return 0
+    fi
+    # First contention: announce wait immediately (not after 30s of silence).
+    if (( ! announced )); then
+      holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
+      log "phase=resolve-wait bin=$bin_name stamp=${stamp_short}… holder_pid=${holder:-unknown} waited_s=0 note=waiting-on-peer-publish-or-rebuild"
+      announced=1
     fi
     # Stale reclaim: heartbeat not refreshed → holder dead/cancelled/wedged.
     # Do NOT rely on kill -0: peer containers share the lock dir but not PIDs.
     age="$(_rebuild_heartbeat_age_seconds "$lockdir")"
     if [[ "$age" -ge "$stale_s" ]]; then
-      log "rebuild single-flight: reclaiming stale lock (heartbeat age ${age}s >= ${stale_s}s)"
+      log "phase=resolve-wait-reclaim bin=$bin_name stamp=${stamp_short}… heartbeat_age_s=$age stale_s=$stale_s"
       rm -rf "$lockdir" 2>/dev/null || true
       continue
     fi
@@ -1406,16 +1456,19 @@ acquire_rebuild_single_flight() {
       # brief grace so a peer finishing mkdir can write heartbeat
       sleep 0.5
       if [[ ! -f "$lockdir/heartbeat" ]]; then
-        log "rebuild single-flight: reclaiming lock with no heartbeat"
+        log "phase=resolve-wait-reclaim bin=$bin_name stamp=${stamp_short}… reason=no-heartbeat"
         rm -rf "$lockdir" 2>/dev/null || true
         continue
       fi
     fi
     sleep 0.25
     waited=$((waited + 1))
-    # Loud breadcrumb every ~30s so a wedged lock is not silent.
+    # Heartbeat every ~30s (120 * 0.25s) to the job log — never silent wait.
     if (( waited % 120 == 0 )); then
-      log "rebuild single-flight: still waiting for $bin_name stamp lock (heartbeat age ${age}s, ${waited} ticks)"
+      now="$(date +%s)"
+      elapsed=$((now - wait_start))
+      holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
+      log "phase=resolve-wait bin=$bin_name stamp=${stamp_short}… holder_pid=${holder:-unknown} waited_s=$elapsed heartbeat_age_s=$age note=still-waiting-on-peer"
     fi
   done
 }
@@ -1446,12 +1499,12 @@ pull_from_filesystem_shelf() {
   fi
   if [[ -f "$candidate" && -f "$manifest" ]]; then
     if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
-      log "prebuilt cache hit for $name"
+      log "phase=resolve-hit source=prebuilt-cache bin=$bin_name name=$name stamp=$(_stamp_short "$stamp")…"
       materialize_cached_artifact "$candidate" "$stamp" "$identity"
       return 0
     fi
     # Stale prebuilt is not a hit: drop it so we do not re-serve after shelf heal.
-    log "prebuilt cache rejected for $name; evicting local cache cell"
+    log "phase=resolve-miss source=prebuilt-cache bin=$bin_name name=$name note=evicting-stale"
     rm -f "$candidate" "$manifest" 2>/dev/null || true
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
@@ -1459,7 +1512,7 @@ pull_from_filesystem_shelf() {
   # Shelf leaf is binary name only (not stamp-keyed artifact_name).
   local content_key shelf_name="$bin_name"
   if ! content_key="$(read_filesystem_shelf_stamp_ref "$stamp" "$shelf_name")"; then
-    log "filesystem shelf miss for $shelf_name (no stamp→content ref)"
+    log "phase=resolve-miss source=filesystem-shelf bin=$bin_name name=$shelf_name stamp=$(_stamp_short "$stamp")… note=no-stamp-ref"
     return 1
   fi
   cell="$(filesystem_shelf_cas_cell "$content_key" "$shelf_name")"
@@ -1478,7 +1531,7 @@ pull_from_filesystem_shelf() {
     fi
   fi
   if ! filesystem_shelf_complete "$cell" "$shelf_name"; then
-    log "filesystem shelf miss for $shelf_name (stamp ref $content_key has no CAS cell)"
+    log "phase=resolve-miss source=filesystem-shelf bin=$bin_name name=$shelf_name content=$(_stamp_short "$content_key")… note=stamp-ref-without-cas-cell"
     return 1
   fi
   command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack $shelf_name"; return 2; }
@@ -1506,7 +1559,7 @@ pull_from_filesystem_shelf() {
     evict_shelf_cell "$cell" "$candidate" "$manifest" || return $?
     return 1
   fi
-  log "filesystem shelf hit for $shelf_name content $content_key"
+  log "phase=resolve-hit source=filesystem-shelf bin=$bin_name name=$shelf_name content=$(_stamp_short "$content_key")… stamp=$(_stamp_short "$stamp")…"
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }
 
@@ -1720,9 +1773,10 @@ main() {
   # A resolve that never pulls/publishes is SHELF_NEVER_TOUCHED, not silence.
   shelf_exercise_open_resolve
 
+  log "phase=resolve-start bin=$bin_name profile=$profile stamp=$(_stamp_short "$stamp")…"
   candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
   if verify_artifact_manifest "$candidate" "$stamp" "$identity" "local target"; then
-    log "local target cache hit for $bin_name"
+    log "phase=resolve-hit source=local-target bin=$bin_name stamp=$(_stamp_short "$stamp")…"
     publish_to_filesystem_shelf "$candidate" "$stamp" "$name" || return $?
     printf '%s\n' "$candidate"
     return 0
@@ -1744,21 +1798,20 @@ main() {
   # every docker:solver-z3 caller; set SUGAR_BINARY_ALLOW_BUILD=0 and
   # SUGAR_BINARY_NO_SELF_HEAL=1 only for explicit no-rebuild diagnostics.
   if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" && "${SUGAR_BINARY_NO_SELF_HEAL:-0}" == "1" ]]; then
-    log "no matching $bin_name binary for stamp $stamp and build fallback disabled (NO_SELF_HEAL=1)"
+    log "phase=resolve-miss bin=$bin_name stamp=$(_stamp_short "$stamp")… note=no-self-heal"
     return 1
   fi
-  if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
-    log "shelf miss for $name; self-healing rebuild (regenerable cell)"
-  fi
+  log "phase=resolve-miss bin=$bin_name stamp=$(_stamp_short "$stamp")… note=shelf-and-local-miss entering-single-flight"
 
   # Single-flight rebuild (R_shelf_rebuild_single_flight). Concurrent matrix
   # jobs that all miss the same stamp must not each cargo-build sugar: the
   # publish race dedupes the CAS *cell* after waste; this lock prevents the
   # waste. Key is stamp+bin+platform+profile — not a machine-wide lease.
   # Double-check pull after the lock: the winner's publish is visible to waiters.
+  # Wait narration: phase=resolve-wait every 30s (job log / stderr, not TTY-gated).
   acquire_rebuild_single_flight "$stamp" "$name"
   if candidate="$(pull_from_filesystem_shelf "$stamp" "$identity" "$name")"; then
-    log "rebuild single-flight: peer published $name while we waited"
+    log "phase=resolve-hit source=peer-publish-after-wait bin=$bin_name stamp=$(_stamp_short "$stamp")…"
     release_rebuild_single_flight
     printf '%s\n' "$candidate"
     return 0
