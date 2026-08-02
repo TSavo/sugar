@@ -82,9 +82,14 @@ jobs:
             bin/sugarbin --profile debug --bin "$b" >/dev/null
           done
 
+  # CONSUMERS of prepare (sugarbin shelf warm): self-attest, showcases.
+  # NON-CONSUMERS start immediately — pure Python / fmt checks that never
+  # invoke bin/sugarbin. Measured waste: fleet claim and refusal vocabulary
+  # finished in ~11s but waited 316–586s behind shared Rust prepare.
+
   core:
     name: core (${{ matrix.name }})
-    needs: prepare
+    # No needs: prepare. These targets do not consume the sugarbin shelf.
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
     strategy:
@@ -106,16 +111,13 @@ jobs:
             python: true
             z3: false
             b3sum: false
+          # claim-mass tripwires is pytest over a small file set; b3sum was
+          # matrix baggage, not a sugarbin consumer (make target is pure Python).
           - name: claim-mass tripwires
             target: test-claim-mass-tripwires
             python: true
             z3: false
-            b3sum: true
-          - name: self attestation
-            target: self-attest
-            python: false
-            z3: false
-            b3sum: true
+            b3sum: false
           # coretests-invariants and coretests-source-audit are Makefile targets
           # only (hand / future Rust work). Not on this per-commit matrix.
 
@@ -152,6 +154,46 @@ jobs:
 
       - name: Install sugarbin hashing dependency
         if: matrix.b3sum && !matrix.z3
+        run: tools/ci-apt-install.sh b3sum
+
+      - name: Run core instrument
+        run: make ${{ matrix.target }}
+        env:
+          CI: '1'
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Attest published sugar binary
+        if: matrix.target == 'self-attest' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: implementations/rust/target/release/sugar
+
+
+  core-shelf:
+    name: core (${{ matrix.name }})
+    # Consumes prepare: bin/sugarbin release sugar + sugar-lift for self-attest.
+    needs: prepare
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: self attestation
+            target: self-attest
+            python: false
+            z3: false
+            b3sum: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+
+      - name: Install sugarbin hashing dependency
+        if: matrix.b3sum
         run: tools/ci-apt-install.sh b3sum
 
       - name: Run core instrument
@@ -226,16 +268,18 @@ jobs:
     # Aggregate genuine success/failure results, but do not manufacture a red
     # test result when concurrency intentionally supersedes the whole run.
     if: ${{ always() && !cancelled() }}
-    needs: [prepare, core, showcases]
+    needs: [prepare, core, core-shelf, showcases]
     runs-on: ubuntu-latest
     steps:
       - name: Report the complete acid-test vector
         env:
           PREPARE_RESULT: ${{ needs.prepare.result }}
           CORE_RESULT: ${{ needs.core.result }}
+          CORE_SHELF_RESULT: ${{ needs.core-shelf.result }}
           SHOWCASE_RESULT: ${{ needs.showcases.result }}
         run: |
-          echo "prepare=$PREPARE_RESULT core=$CORE_RESULT showcases=$SHOWCASE_RESULT"
+          echo "prepare=$PREPARE_RESULT core=$CORE_RESULT core-shelf=$CORE_SHELF_RESULT showcases=$SHOWCASE_RESULT"
           test "$PREPARE_RESULT" = success
           test "$CORE_RESULT" = success
+          test "$CORE_SHELF_RESULT" = success
           test "$SHOWCASE_RESULT" = success
