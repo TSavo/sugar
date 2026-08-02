@@ -1606,6 +1606,60 @@ evict_shelf_cell() {
   return 0
 }
 
+# R_shelf_rebuild_single_flight: exclusive lock per (platform, profile, stamp, bin).
+# NOT a machine-wide heavy lease — distinct stamps do not block each other.
+# Concurrent matrix jobs that all miss the same cell must wait here so only
+# one cargo runs; waiters re-pull after the winner publishes.
+#
+# Mechanism: atomic mkdir (portable; no flock(1) dependency). Holder writes
+# pid; waiters reclaim if the holder pid is gone (cancelled job). A subprocess
+# flock would release when the child exits and would NOT protect the parent
+# rebuild — so we never flock in a short-lived child.
+_rebuild_lock_dir=""
+
+acquire_rebuild_single_flight() {
+  local stamp="$1" name="$2" lock_parent lockdir waited=0
+  _rebuild_lock_dir=""
+  lock_parent="$(cache_dir)/.rebuild-locks"
+  if ! mkdir -p "$lock_parent" 2>/dev/null; then
+    log "rebuild single-flight: cannot create $lock_parent; degraded (no lock)"
+    return 0
+  fi
+  # Directory name IS the lock: mkdir succeeds for exactly one contender.
+  lockdir="$lock_parent/$(platform_key)-${profile}-$(stamp_for_filename "$stamp")-${bin_name}.lock"
+  log "rebuild single-flight: waiting for $bin_name stamp lock"
+  while true; do
+    if mkdir "$lockdir" 2>/dev/null; then
+      printf '%s\n' "$$" >"$lockdir/pid"
+      _rebuild_lock_dir="$lockdir"
+      log "rebuild single-flight: acquired $bin_name stamp lock"
+      return 0
+    fi
+    # Stale reclaim: holder pid gone (SIGKILL / cancelled runner job).
+    if [[ -f "$lockdir/pid" ]]; then
+      local holder
+      holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
+      if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+        log "rebuild single-flight: reclaiming stale lock from dead pid $holder"
+        rm -rf "$lockdir" 2>/dev/null || true
+        continue
+      fi
+    fi
+    sleep 0.25
+    waited=$((waited + 1))
+    # Loud breadcrumb every ~30s so a wedged lock is not silent.
+    if (( waited % 120 == 0 )); then
+      log "rebuild single-flight: still waiting for $bin_name stamp lock (${waited} ticks)"
+    fi
+  done
+}
+
+release_rebuild_single_flight() {
+  [[ -n "${_rebuild_lock_dir:-}" ]] || return 0
+  rm -rf "$_rebuild_lock_dir" 2>/dev/null || true
+  _rebuild_lock_dir=""
+}
+
 pull_from_filesystem_shelf() {
   local stamp="$1" identity="$2" name="$3" dir candidate_dir candidate manifest cell tmp
   dir="$(cache_dir)"
@@ -1906,13 +1960,31 @@ main() {
   if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
     log "shelf miss for $name; self-healing rebuild (regenerable cell)"
   fi
+
+  # Single-flight rebuild (R_shelf_rebuild_single_flight). Concurrent matrix
+  # jobs that all miss the same stamp must not each cargo-build sugar: the
+  # publish race dedupes the CAS *cell* after waste; this lock prevents the
+  # waste. Key is stamp+bin+platform+profile — not a machine-wide lease.
+  # Double-check pull after the lock: the winner's publish is visible to waiters.
+  acquire_rebuild_single_flight "$stamp" "$name"
+  if candidate="$(pull_from_filesystem_shelf "$stamp" "$identity" "$name")"; then
+    log "rebuild single-flight: peer published $name while we waited"
+    release_rebuild_single_flight
+    printf '%s\n' "$candidate"
+    return 0
+  fi
   build_from_source "$stamp" "$identity"
   built="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
   if ! verify_artifact_manifest "$built" "$stamp" "$identity" "built binary"; then
     log "built binary did not match requested stamp $stamp"
+    release_rebuild_single_flight
     return 1
   fi
-  publish_to_filesystem_shelf "$built" "$stamp" "$name" || return $?
+  if ! publish_to_filesystem_shelf "$built" "$stamp" "$name"; then
+    release_rebuild_single_flight
+    return 1
+  fi
+  release_rebuild_single_flight
   printf '%s\n' "$built"
 }
 

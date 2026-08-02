@@ -49,6 +49,9 @@ echo 'PASS: sugarbin shelf assets are immutable and race-idempotent'
 # R_shelf_content_addressed_cell: address = h(payload), not sourceStamp name.
 "$repo/tests/sugarbin_shelf_content_addressed.sh" "$repo"
 
+# R_shelf_rebuild_single_flight: 36 matrix jobs must not each cargo the same stamp.
+"$repo/tests/sugarbin_rebuild_single_flight.sh" "$repo"
+
 # R_shelf_exercise: SHELF_EXERCISED_CLEAN ≠ SHELF_NEVER_TOUCHED ≠ SHELF_UNMEASURED.
 # Silence (no crimes) is not load-clear testimony — attendance one layer down.
 "$repo/tests/shelf_exercise_report.sh" "$repo"
