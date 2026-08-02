@@ -1271,6 +1271,11 @@ def populate_source_derived_resource_refs(
             if value[0] in selected_coordinates
         }
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
+    # Seed from session so tops already resolved in frame/prefix projection
+    # are not re-asked (warnings/re/inspect ×21 on test_pandas).
+    if session.enabled:
+        for top, graph in session.dependency_graphs.items():
+            graphs.setdefault(top, graph)
     for receipt in receipts:
         raw_site = receipt.use["useSite"]
         key = (
@@ -1285,6 +1290,10 @@ def populate_source_derived_resource_refs(
         coordinate, call, exit_face_id = selected
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         graph = graphs.get(top_level)
+        if graph is None and session.enabled:
+            graph = session.dependency_graphs.get(top_level)
+            if graph is not None:
+                graphs[top_level] = graph
         if graph is None:
             from .dependency_artifact import (
                 DependencyArtifactAuthenticationError,
@@ -1301,6 +1310,8 @@ def populate_source_derived_resource_refs(
                 )
                 continue
             graphs[top_level] = graph
+            if session.enabled:
+                session.dependency_graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if not isinstance(resolved, ResolvedPythonObjectV1):
             kind = getattr(resolved, "kind", None) or "no-derived-contract"
@@ -2464,7 +2475,14 @@ def _construct_decorator_function(
     if graph is not None:
         graphs.append(graph)
     top_level = module_name.split(".", 1)[0]
-    authenticated_dependency = (dependency_graphs or {}).get(top_level)
+    local_graphs = dependency_graphs if dependency_graphs is not None else {}
+    authenticated_dependency = local_graphs.get(top_level)
+    if authenticated_dependency is None and session is not None and session.enabled:
+        authenticated_dependency = session.dependency_graphs.get(top_level)
+        if authenticated_dependency is not None:
+            local_graphs[top_level] = authenticated_dependency
+            if dependency_graphs is not None:
+                dependency_graphs[top_level] = authenticated_dependency
     if authenticated_dependency is None:
         try:
             authenticated_dependency = authenticate_dependency_top_level(
@@ -2473,22 +2491,24 @@ def _construct_decorator_function(
         except DependencyArtifactAuthenticationError:
             authenticated_dependency = None
         else:
+            local_graphs[top_level] = authenticated_dependency
             if dependency_graphs is not None:
                 dependency_graphs[top_level] = authenticated_dependency
+            if session is not None and session.enabled:
+                session.dependency_graphs[top_level] = authenticated_dependency
     if authenticated_dependency is not None and authenticated_dependency not in graphs:
         graphs.append(authenticated_dependency)
     if not any(module_name in candidate.modules for candidate in graphs):
-        from .dependency_artifact import (
-            DependencyArtifactAuthenticationError,
-            authenticate_dependency_top_level,
-        )
-
         try:
             authenticated_dependency = authenticate_dependency_top_level(
                 top_level, distribution_index=distribution_index
             )
         except DependencyArtifactAuthenticationError:
             return None
+        if session is not None and session.enabled:
+            session.dependency_graphs[top_level] = authenticated_dependency
+        if dependency_graphs is not None:
+            dependency_graphs[top_level] = authenticated_dependency
         if authenticated_dependency not in graphs:
             graphs.append(authenticated_dependency)
     resolved = None

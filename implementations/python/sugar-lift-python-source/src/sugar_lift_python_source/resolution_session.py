@@ -111,6 +111,7 @@ class SourceResolutionSession:
         "import_use_rosters",
         "import_value_rosters",
         "lexical_passes",
+        "dependency_graphs",
     )
 
     def __init__(
@@ -161,6 +162,16 @@ class SourceResolutionSession:
         # source_cid -> full lexical _Pass product (rows + value_rows). One walk
         # fills both roster doors; avoids a second SourceFile for the same body.
         self.lexical_passes: dict[str, Any] = {}
+        # top_level -> DependencyArtifactGraph for this session (and walk). Call
+        # sites used to mint a fresh ``dependency_graphs={}`` per frame /
+        # prefix / populate path, re-entering authenticate_dependency_top_level
+        # 21× for the same warnings/re/inspect tops on one test_pandas open
+        # (65 total across 5 unique tops). Process cache makes each hit cheap;
+        # session ownership makes the ask once per content under the walk.
+        # Graphs are content-addressed install facts (no live construction
+        # context) — process-resident top-level cache remains legal; this
+        # table deletes the path-local re-ask disease.
+        self.dependency_graphs: dict[str, Any] = {}
 
     # -- export resolution memo ------------------------------------------
 

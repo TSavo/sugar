@@ -431,6 +431,9 @@ def leaky_process_memo(monkeypatch):
         self.import_use_rosters = import_uses
         self.import_value_rosters = import_values
         self.lexical_passes = {}
+        # Content-addressed install graphs (not projection); empty per init so
+        # leaky twin still constructs after session.dependency_graphs lands.
+        self.dependency_graphs = {}
 
     monkeypatch.setattr(SourceResolutionSession, "__init__", leaky_init)
 
