@@ -88,5 +88,9 @@ def test_recensus_write_through_file_s_to_lpt_prior() -> None:
     assert "put_for_path" in src
     assert "control-effect-recensus" in src
     assert "file_s" in src
-    # Write-through sits after running-counts persist (same durability belt).
-    assert src.index("running-counts") < src.index("put_for_path")
+    # Buffer during the lift; flush once at end (not per-file on hot path).
+    assert "lpt_prior_rows" in src
+    assert "mode=batch-end-of-lift" in src
+    assert "lpt_prior_rows.append" in src
+    # One put_for_path call site (the batch flush), not a per-file call.
+    assert src.count("prior.put_for_path(") == 1
