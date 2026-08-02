@@ -1000,6 +1000,85 @@ def test_resolve_export_amortizes_repeated_static_scans(tmp_path: Path) -> None:
     assert len({item.module_name for item in results}) == 1
 
 
+def test_resolve_export_reexport_hop_shares_structural_memo(tmp_path: Path) -> None:
+    """Reexport hops must hit the same structural memo as pure entry resolves.
+
+    Plant: package reexports ``build`` from implementation.  A pure resolve of
+    ``implementation.build`` then a reexport resolve of ``example_pkg.build``
+    (or the reverse) must not re-run the export-block walk on the terminal
+    module — warrants are path testimony restamped onto a shared structural
+    answer, not a second key.
+    """
+    from sugar_lift_python_source import dependency_export_adapter as de
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source="def build(value):\n    return value\n",
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    session = SourceResolutionSession()
+
+    scans = {"count": 0, "names": []}
+    # Production door uses _export_block_with_locus (not bare _export_block).
+    original_block = de._export_block_with_locus
+
+    def counting_export_block(statements, name, initial):
+        scans["count"] += 1
+        scans["names"].append(name)
+        return original_block(statements, name, initial)
+
+    de._export_block_with_locus = counting_export_block
+    try:
+        pure = de.resolve_export(
+            graph,
+            binding_cid="binding-pure",
+            module_name="example_pkg.implementation",
+            exported_name="build",
+            warrants=(),
+            seen=frozenset(),
+            session=session,
+        )
+        reexport = de.resolve_export(
+            graph,
+            binding_cid="binding-reexport",
+            module_name="example_pkg",
+            exported_name="build",
+            warrants=(),
+            seen=frozenset(),
+            session=session,
+        )
+        pure_again = de.resolve_export(
+            graph,
+            binding_cid="binding-pure-2",
+            module_name="example_pkg.implementation",
+            exported_name="build",
+            warrants=(),
+            seen=frozenset(),
+            session=session,
+        )
+    finally:
+        de._export_block_with_locus = original_block
+
+    assert isinstance(pure, ResolvedPythonObjectV1)
+    assert isinstance(reexport, ResolvedPythonObjectV1)
+    assert isinstance(pure_again, ResolvedPythonObjectV1)
+    assert pure.definition.fragment_cid == reexport.definition.fragment_cid
+    assert pure.definition.fragment_cid == pure_again.definition.fragment_cid
+    # pure: implementation.build once. reexport: package.build once + recursive
+    # hop to implementation.build must HIT structural memo (no second scan).
+    # pure_again: hit.  Total export-block scans == 2 (package + implementation).
+    assert scans["count"] == 2, (
+        f"export-block scans={scans['count']} names={scans['names']}; "
+        "reexport hop must share structural memo with pure entry resolve"
+    )
+    assert pure_again.import_binding_cid == "binding-pure-2"
+    assert pure.import_binding_cid == "binding-pure"
+    assert reexport.import_binding_cid == "binding-reexport"
+    assert len(reexport.reexport_warrants) == 1
+
+
 def test_resolve_source_visible_frame_amortizes_repeated_materialize(
     tmp_path: Path,
 ) -> None:

@@ -68,6 +68,7 @@ class SourceResolutionSession:
     __slots__ = (
         "enabled",
         "export_resolutions",
+        "export_terminals",
         "frame_results",
         "frame_holds",
         "frame_active",
@@ -81,8 +82,13 @@ class SourceResolutionSession:
 
     def __init__(self, *, enabled: bool = True) -> None:
         self.enabled = enabled
-        # (distribution_artifact_cid, module_name, exported_name) -> resolution
+        # (distribution_artifact_cid, module_name, exported_name) -> pure-entry
+        # resolution (includes module-structural reexport warrants; no path
+        # import_binding_cid).
         self.export_resolutions: dict[tuple[str, str, str], Any] = {}
+        # Same key -> definition/gap only (no warrants). Shared by reexport hops
+        # that carry path warrants and cannot use export_resolutions.
+        self.export_terminals: dict[tuple[str, str, str], Any] = {}
         # definition coordinate -> (frame, target) | ManagerConstructionGapV1
         self.frame_results: dict[tuple, Any] = {}
         # Keep the SourceFile that owns cached (frame, target) node identity
@@ -120,6 +126,13 @@ class SourceResolutionSession:
     def remember_export(self, key: tuple[str, str, str], result: Any) -> None:
         if self.enabled:
             self.export_resolutions[key] = result
+
+    def export_terminal_hit(self, key: tuple[str, str, str]) -> Any | None:
+        return self.export_terminals.get(key) if self.enabled else None
+
+    def remember_export_terminal(self, key: tuple[str, str, str], result: Any) -> None:
+        if self.enabled:
+            self.export_terminals[key] = result
 
     # -- source-visible frame memo ---------------------------------------
 
