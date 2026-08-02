@@ -89,6 +89,17 @@ jobs:
           )
           PY
 
+      # Positive arm alone is decoration. Negative arms re-prove each tooth bites.
+      # crash_mid must be PATH_UNMEASURED (not green, not PATH_RED) — the
+      # crash-banks-measured / crash-prints-zero class already bit this campaign.
+      - name: "Phase: path-smoke discrimination (four one-fault arms)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path-smoke phase=discrimination status=start commit=$GITHUB_SHA"
+          python -u implementations/python/sugar-lift-py-tests/scripts/recensus_path_smoke_discrimination.py
+          echo "path-smoke phase=discrimination status=done"
+
       - name: Upload path-smoke seal
         if: always()
         uses: actions/upload-artifact@v4
