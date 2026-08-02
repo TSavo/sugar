@@ -66,26 +66,35 @@ class ImportAliasValue(FloorValue):
         )
         raise AssertionError("construction_panic_gap returned")
 
+    def runtime_type_is_decided(self) -> bool:
+        """Import alias has no lift-time runtime type — only a binding coordinate."""
+        return False
+
+    # Undecided-attribution door (same law as ImportMemberValue): FloorValue
+    # defaults panic ``write more Floor: implement X.attribute``, miscounting
+    # undecidable import-alias type as OUR missing floor method. Enter
+    # undecided_* instead — vocabulary already on FloorValue.
+
     def subscript(self, index, site):
         return self.undecided_subscript(
             index, site, owner="ImportAliasValue.subscript"
         )
 
-    def getattr_static(self, name: str, site):
-        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        target = self.import_target or self.name
-        construction_panic_gap(
-            owner="ImportAliasValue",
-            blame=site,
-            observed=f"{target}.{name}",
-            requested="authenticated import attribute coordinate",
-            fix="consume an authenticated contract bridge; no source-hunt fallback exists",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
+    def attribute(self, name, site):
+        return self.undecided_attribute(
+            name, site, owner="ImportAliasValue.attribute"
         )
-        raise AssertionError("construction_panic_gap returned")
+
+    def contains(self, item, site):
+        return self.undecided_contains(
+            item, site, owner="ImportAliasValue.contains"
+        )
+
+    def getattr_static(self, name: str, site):
+        """Static getattr on an inert import alias — undecided, not missing floor."""
+        return self.undecided_attribute(
+            name, site, owner="ImportAliasValue.getattr_static"
+        )
 
     def guarded(self, formula):
         del formula
