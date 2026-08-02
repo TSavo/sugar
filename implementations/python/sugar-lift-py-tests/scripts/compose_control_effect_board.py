@@ -48,6 +48,19 @@ _TOOLS = Path(__file__).resolve().parents[4] / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
+# Package root for sealed board function facts (C4 Step 1).
+_PKG_SRC = Path(__file__).resolve().parents[1] / "src"
+if _PKG_SRC.is_dir() and str(_PKG_SRC) not in sys.path:
+    sys.path.insert(0, str(_PKG_SRC))
+
+from sugar_lift_py_tests.c4.board_function_facts import (  # noqa: E402
+    LocalReading,
+    board_fields_from_sealed_facts,
+    seal_functions_clean_v1,
+    seal_functions_enumerated_v1,
+    seal_functions_population_v1,
+)
+
 
 def _blake3_512(data: bytes) -> str:
     try:
@@ -440,6 +453,45 @@ def seal_board_from_aggregate(
     r_desugar = sum(desugar_families.values())
     r_backend = sum(backend_defects.values())
 
+    # C4 Step 1: three sealed meanings, not one overloaded int.
+    # LocalReadings are free; only the seal doors + board_fields_from_sealed_facts
+    # may mint board function fields. Bare ints cannot pass the consumer.
+    pin_id = (
+        aggregate_hash
+        or (plan or {}).get("aggregateHash")
+        or _PANDAS_3_0_3_AGGREGATE_HASH
+    )
+    pop_fact = seal_functions_population_v1(
+        LocalReading(int(agg["functions_total"]), "functions_total"),
+        tip=measured_commit,
+        pin=str(pin_id),
+    )
+    enum_fact = seal_functions_enumerated_v1(
+        LocalReading(int(agg.get("functions_enumerated") or 0), "functions_enumerated"),
+        tip=measured_commit,
+        pin=str(pin_id),
+    )
+    if agg.get("clean_ratio_refused"):
+        clean_fact = seal_functions_clean_v1(
+            LocalReading(None, "functions_clean"),
+            tip=measured_commit,
+            pin=str(pin_id),
+            refused=True,
+            refuse_reason=(
+                "one or more files refused functionsClean "
+                "(would be tautological clean%)"
+            ),
+        )
+    else:
+        clean_fact = seal_functions_clean_v1(
+            LocalReading(int(agg["functions_clean"]), "functions_clean"),
+            tip=measured_commit,
+            pin=str(pin_id),
+            refused=False,
+        )
+    # Consumer close: bare int cannot become a board field.
+    fn_fields = board_fields_from_sealed_facts(pop_fact, enum_fact, clean_fact)
+
     body: dict[str, Any] = {
         "schemaVersion": 1,
         "kind": KIND_SEALED,
@@ -471,6 +523,7 @@ def seal_board_from_aggregate(
         "isolation": "in-process",
         "paths": dict(paths or {}),
         # Dual unit denominator — files and functions NEVER share a slot.
+        # functions.* comes only from sealed meaning types (C4 consumer close).
         "denominator": {
             "files": {
                 "enrolled": len(file_names),
@@ -483,33 +536,7 @@ def seal_board_from_aggregate(
                 "malformedRows": list(agg["malformed_rows"]),
                 "complete": bool(agg["files_complete"]),
             },
-            "functions": {
-                # Population = sum of row functionsTotal (roster-preserved mass).
-                "total": int(agg["functions_total"]),
-                "enumerated": int(agg.get("functions_enumerated") or 0),
-                "unaccounted": max(
-                    0,
-                    int(agg["functions_total"])
-                    - int(agg.get("functions_enumerated") or 0),
-                ),
-                # clean only when every row could measure it; else refused.
-                **(
-                    {
-                        "clean": None,
-                        "cleanRatioRefused": True,
-                        "cleanRefuseReason": (
-                            "one or more files refused functionsClean "
-                            "(would be tautological clean%)"
-                        ),
-                    }
-                    if agg.get("clean_ratio_refused")
-                    else {
-                        "clean": int(agg["functions_clean"]),
-                        "cleanRatioRefused": False,
-                    }
-                ),
-                "unit": "construction-function-locus",
-            },
+            "functions": dict(fn_fields["denominator_functions"]),
             # Back-compat flat keys (file unit only) for older readers.
             "enrolled": len(file_names),
             "terminalRows": int(agg["terminal_count"]),
@@ -534,19 +561,13 @@ def seal_board_from_aggregate(
         ),
         "constructionPanics": construction_panics,
         "R_construction_panics": len(construction_panics),
-        "functionsTotal": int(agg["functions_total"]),
-        "functionsEnumerated": int(agg.get("functions_enumerated") or 0),
-        "functionsUnaccounted": max(
-            0,
-            int(agg["functions_total"]) - int(agg.get("functions_enumerated") or 0),
-        ),
-        # Never mint a tautological clean: null when any file refused clean.
-        "functionsConstructClean": (
-            None
-            if agg.get("clean_ratio_refused")
-            else int(agg["functions_clean"])
-        ),
-        "cleanRatioRefused": bool(agg.get("clean_ratio_refused")),
+        # Function fields only via sealed types — bare ints cannot land here.
+        "functionsTotal": fn_fields["functionsTotal"],
+        "functionsEnumerated": fn_fields["functionsEnumerated"],
+        "functionsUnaccounted": fn_fields["functionsUnaccounted"],
+        "functionsConstructClean": fn_fields["functionsConstructClean"],
+        "cleanRatioRefused": fn_fields["cleanRatioRefused"],
+        "sealedFunctionFactCids": dict(fn_fields["sealedFactCids"]),
         "cleanRefuseReasons": list(agg.get("clean_refuse_reasons") or []),
         "R": r_construction,
         "R_construction": r_construction,
