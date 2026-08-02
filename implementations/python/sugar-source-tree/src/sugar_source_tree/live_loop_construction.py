@@ -65,11 +65,12 @@ def _initial_value_sugar_for_loop_prestate(state):
     """Project one pre-loop binding state into an initial-value sugar.
 
     Hierarchy law: ``GuardedBinding`` / ``UnboundBinding`` / ``LoopProjectedBinding``
-    are binding *states*, not Nodes. Calling ``state.sugar()`` on them is the same
-    class of lie as AttributeError-on-wrong-kind — it aborts the file. Dispatch
-    through the binding-projection door that already owns every state species.
+    are binding *states*, not Nodes. Their ``.sugar()`` routes through the same
+    projection door as this helper (``_project_binding_state_sugar`` /
+    ``_construct_binding_projection``). One door, every species.
     """
-    from .nodes import Node, _construct_binding_projection
+    from .binding_state import _project_binding_state_sugar
+    from .nodes import Node
 
     if isinstance(state, LoopProjectedBinding):
         product = state.constructed_term_product
@@ -81,7 +82,7 @@ def _initial_value_sugar_for_loop_prestate(state):
         return product
     if isinstance(state, Node):
         return state.sugar()
-    return _construct_binding_projection(state)
+    return _project_binding_state_sugar(state)
 
 
 def _formula_cid(formula) -> str:

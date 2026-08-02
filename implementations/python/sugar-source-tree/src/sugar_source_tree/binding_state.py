@@ -47,10 +47,34 @@ def mint_constructed_value_testimony_v1(
     return ConstructedValueTestimonyV1.mint(source_fragment, semantic_value_cid)
 
 
+def _project_binding_state_sugar(state: object) -> object:
+    """Sole door: project a binding state into construction sugar.
+
+    Binding states (``UnboundBinding`` / ``GuardedBinding`` /
+    ``LoopProjectedBinding``) are not AST Nodes. Callers that ask for
+    ``.sugar()`` used to AttributeError (wrong kind). Projection already
+    lives on ``nodes._construct_binding_projection`` — route there instead
+    of inventing a second door or patching call sites one by one (L3c).
+    """
+    from sugar_source_tree.nodes import Node, _construct_binding_projection
+
+    if isinstance(state, LoopProjectedBinding):
+        product = state.constructed_term_product
+        if product is not None:
+            return product
+    if isinstance(state, Node):
+        return state.sugar()
+    return _construct_binding_projection(state)
+
+
 @dataclass(frozen=True)
 class UnboundBinding:
     name: str
     cause: SourceFragment
+
+    def sugar(self) -> object:
+        """Project through the binding door — never a Node.sugar AttributeError."""
+        return _project_binding_state_sugar(self)
 
 
 @dataclass(frozen=True)
@@ -69,6 +93,10 @@ class GuardedBinding:
     slot: BranchResultSlot
     when_true: BindingState
     when_false: BindingState
+
+    def sugar(self) -> object:
+        """Project through the binding door — never a Node.sugar AttributeError."""
+        return _project_binding_state_sugar(self)
 
 
 def _require_runtime_cid(value: str, field: str) -> None:
@@ -156,6 +184,10 @@ class LoopProjectedBinding:
                 raise BindingStateWireGap(
                     "loop projected binding product has a foreign loop occurrence"
                 )
+
+    def sugar(self) -> object:
+        """Project through the binding door — never a Node.sugar AttributeError."""
+        return _project_binding_state_sugar(self)
 
 
 BindingState: TypeAlias = (
