@@ -1652,6 +1652,173 @@ def populate_source_derived_resource_refs(
             )
         )
 
+    # Same-module ClassDef managers have no import receipt. Derive them through
+    # module_direct_bindings → Call.force_floor → protocol → summary — the same
+    # publication door as import-backed ClassDef CMs. Uncovered uses stay empty
+    # for With.require (L3d) to panic.
+    _populate_same_module_class_manager_uses(source_file, context, uses)
+
+
+def _populate_same_module_class_manager_uses(source_file, context, uses) -> None:
+    """Derive CM contracts for same-module ClassDef call managers.
+
+    Import receipts never fire for local constructors. When Call.func Name
+    binds to exactly one module ClassDef, construct the instance via the
+    ordinary Call floor (force_floor), then protocol + summary + native
+    enter/exit publication — one pipeline with the import-backed door.
+    """
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+    )
+    from sugar_lift_py_tests.floor import ObjectValue
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+    from sugar_source_tree.nodes import Call, ClassDef, Name
+    from sugar_source_tree.panic import SugarNotWritten
+
+    from .canonical import cid_of_json
+    from .manager_construction import ConstructedManagerBehaviorV1
+    from .manager_protocol_construction import (
+        ConstructedManagerProtocolV1,
+        construct_manager_protocol,
+    )
+
+    reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
+    for _key, (coordinate, call, exit_face_id) in uses.items():
+        if coordinate in context.source_derived_contract_refs:
+            continue
+        if not isinstance(call, Call) or not isinstance(call.func, Name):
+            continue
+        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
+        if len(binds) != 1 or not isinstance(binds[0], ClassDef):
+            continue
+        class_def = binds[0]
+        target_symbol = f"python:local:{class_def.name}"
+        try:
+            call_outcome = call.sugar().desugar(reduce_ctx)
+            call_value = getattr(call_outcome, "value", None)
+            if call_value is None or not hasattr(call_value, "force_floor"):
+                _install_local_derivation_gap(
+                    context,
+                    coordinate,
+                    target_symbol,
+                    "non-manager-result",
+                    type(call_outcome).__name__,
+                )
+                continue
+            result = call_value.force_floor(
+                reduce_ctx,
+                owner="populate_same_module_class_manager",
+                project_callsite=False,
+            )
+        except (SugarNotWritten, TypeError) as exc:
+            kind, detail = _populate_body_defect_kind_detail(exc)
+            _install_local_derivation_gap(
+                context, coordinate, target_symbol, kind, detail
+            )
+            continue
+        if not isinstance(result, ObjectValue):
+            _install_local_derivation_gap(
+                context,
+                coordinate,
+                target_symbol,
+                "non-manager-result",
+                type(result).__name__,
+            )
+            continue
+        enter_method = next(
+            (m for m in result.methods if m.name == "__enter__"), None
+        )
+        frame = getattr(enter_method, "source_call_frame", None) if enter_method else None
+        frame_cid = getattr(frame, "frame_cid", None) or result.identity
+        preimage = {
+            "kind": "constructed-manager-behavior",
+            "schemaVersion": "1",
+            "resolvedObjectCid": target_symbol,
+            "receiverStateCid": result.identity,
+            "formalActualBindings": [],
+            "sourceCallFrameCid": frame_cid,
+            "factoryPrefixCids": [],
+        }
+        behavior = ConstructedManagerBehaviorV1(
+            resolved_object_cid=target_symbol,
+            manager_construction_cid=cid_of_json(preimage),
+            receiver_state=result,
+            receiver_state_cid=result.identity,
+            formal_actual_bindings=(),
+            source_call_frame_cid=frame_cid,
+            formal_actual_values=(),
+            source_call_frame=frame,
+            factory_prefix=(),
+            factory_prefix_cids=(),
+        )
+        try:
+            protocol = construct_manager_protocol(
+                behavior, exit_face_id=exit_face_id
+            )
+        except (SugarNotWritten, TypeError) as exc:
+            kind, detail = _populate_body_defect_kind_detail(exc)
+            _install_local_derivation_gap(
+                context, coordinate, target_symbol, kind, detail
+            )
+            continue
+        if not isinstance(protocol, ConstructedManagerProtocolV1):
+            kind, detail = _gap_kind_and_detail(protocol)
+            _install_local_derivation_gap(
+                context, coordinate, target_symbol, kind, detail
+            )
+            continue
+        summary = derive_manager_summary(protocol, behavior=behavior)
+        if not isinstance(summary, DerivedManagerSummaryV1):
+            kind, detail = _gap_kind_and_detail(summary)
+            _install_local_derivation_gap(
+                context, coordinate, target_symbol, kind, detail
+            )
+            continue
+        _publish_class_protocol_native_definitions(context, coordinate, behavior)
+        context.source_derived_contract_refs[coordinate] = (
+            SourceDerivedContextManagerRefV1(
+                coordinate,
+                summary.summary_cid,
+                summary.semantics,
+                summary.import_signature,
+                protocol,
+            )
+        )
+
+
+def _install_local_derivation_gap(
+    context, coordinate, target_symbol: str, kind: str, detail: str | None = None
+) -> None:
+    """Gap row for a same-module manager use (no import receipt)."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        _hash_json,
+    )
+
+    demand_cid = _hash_json(
+        {
+            "kind": "local-manager-demand",
+            "useSite": {
+                "sourceCid": coordinate.source_cid,
+                "startLine": coordinate.start_line,
+                "startCol": coordinate.start_col,
+                "endLine": coordinate.end_line,
+                "endCol": coordinate.end_col,
+            },
+            "targetSymbol": target_symbol,
+        }
+    )
+    gap = ContextManagerResolutionGapV1(
+        demand_cid,
+        coordinate,
+        target_symbol,
+        kind,
+        (),
+        detail,
+    )
+    context.source_derived_contract_refs[coordinate] = gap
+
 
 def _publish_native_definition(context, receiver, slot, definition) -> None:
     """Enroll one authenticated definition coordinate into the shared door table.
@@ -2822,9 +2989,9 @@ def _install_derivation_gap(
     """Publish a CM resolution gap for this enrolled demand.
 
     Derivation ran; the demand has no ``ContextManagerContractRefV1``.
-    Unwritten: the row means no contract ref — the
-    ground is constructible via ``gap.enrolled_demand_unresolved_ground()``
-    and is minted on consume in ``With._raise_resolution_gap``.
+    Install the row and continue — do not call deleted C3 ground mint
+    (``enrolled_demand_unresolved_ground``). With consumption panics on the
+    gap via ``ContextManagerResolutionConstructionGap`` (L3d require door).
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
@@ -2838,7 +3005,4 @@ def _install_derivation_gap(
         (),
         detail,
     )
-    # Prove the C3 ground is mintable from the live table world (still a gap).
-    # Does not raise; With consumption mints the panic with the same ground.
-    gap.enrolled_demand_unresolved_ground()
     context.source_derived_contract_refs[coordinate] = gap
