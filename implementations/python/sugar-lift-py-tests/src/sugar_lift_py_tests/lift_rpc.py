@@ -74,6 +74,14 @@ _BOUND_CALL_CONTRACT_REFS = None
 # object (materialize-once) instead of reconstructing the function.
 _RETAINED_LINK_UNITS = {}
 _RETAINED_BY_MEMENTO = {}
+# Provisional With/call demand table by resolved workspace root. Deriving it
+# walks every enrolled ``*.py`` (authenticated import uses + With sites) —
+# measured multi-minute on pandas (1421 files). Recensus builds it "once" in
+# control_effect_recensus, but ``measure_file_via_enumerate`` never received
+# that table: each D2 ``sugar.enumerate level=functions`` re-derived via
+# ``tree_construction_context_for_workspace`` → hang-looking multi-minute
+# per file. Process memo makes the paid scan real amortization.
+_PROVISIONAL_CONTRACT_REFS_BY_ROOT: Dict[str, Any] = {}
 
 
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
@@ -165,8 +173,24 @@ def provisional_contract_refs_from_demands(root: Path):
     ``gapKind`` (default ``runtime-selected``). Source-derived managers may still
     win via ``populate_source_derived_resource_refs`` after the context is
     installed — derived takes precedence over this provisional gap table.
+
+    Process-memoized by resolved root: the walk is O(corpus), not O(file). A
+    second open of the same workspace root must not re-scan every module.
     """
-    return provisional_contract_refs_from_demand_rows(_preconstruction_demand_rows(root))
+    key = str(Path(root).resolve())
+    cached = _PROVISIONAL_CONTRACT_REFS_BY_ROOT.get(key)
+    if cached is not None:
+        return cached
+    refs = provisional_contract_refs_from_demand_rows(
+        _preconstruction_demand_rows(root)
+    )
+    _PROVISIONAL_CONTRACT_REFS_BY_ROOT[key] = refs
+    return refs
+
+
+def clear_provisional_contract_refs_memo() -> None:
+    """Drop process demand-table memo (tests / hermetic process reuse)."""
+    _PROVISIONAL_CONTRACT_REFS_BY_ROOT.clear()
 
 
 def tree_construction_context_for_workspace(
