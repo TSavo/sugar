@@ -204,3 +204,53 @@ def test_process_floor_matrix_restores_and_saves_ca_terminal_shelf():
     assert "process-floor-term-${{ github.sha }}" in text
     assert "process-floor-terminals" in text
     assert "SUGAR_PROCESS_FLOOR_CACHE_DIR" in text
+
+
+def test_smoke_body_under_path_hint_does_not_attend_control_effect_recensus(tmp_path):
+    """False-enrollment spoof: smoke under PATH_HINTS path must not attend the board.
+
+    measurementClass recensus-path-smoke is not on HEAVY_ROSTER, so classification
+    used to fall through to PATH_HINTS. A path containing 'pandas-control-effect'
+    then marked control-effect-recensus ATTENDED from a 0.7s path seal.
+    """
+    module = _attendance_module()
+    # Plant under a path that carries the authoritative PATH_HINT fragment.
+    spoof = tmp_path / "pandas-control-effect" / "smoke_seal.json"
+    spoof.parent.mkdir(parents=True)
+    body = {
+        "schemaVersion": 1,
+        "kind": "recensus-path-smoke-verdict",
+        "measurementClass": "recensus-path-smoke",
+        "pathVerdict": "PATH_OK",
+        "measuredCommit": "deadbeef",
+        # Even with identity-bound markers, smoke must not attend.
+        "environmentIdentityHash": "blake3-512_fake",
+        "totals": {"failed": 0},
+    }
+    spoof.write_text(__import__("json").dumps(body), encoding="utf-8")
+    attended, testimony = module.receipts_attendance(tmp_path)
+    assert "control-effect-recensus" not in attended, (
+        f"smoke under PATH_HINT path attended the board: {attended}"
+    )
+    assert module._class_from_payload(spoof, body) is None
+    # Kind alone under spoof path is also refused.
+    body_kind_only = {
+        "kind": "recensus-path-smoke-verdict",
+        "measuredCommit": "deadbeef",
+        "totals": {"failed": 0},
+    }
+    spoof2 = tmp_path / "control-effect-recensus" / "kind_only.json"
+    spoof2.parent.mkdir(parents=True, exist_ok=True)
+    spoof2.write_text(__import__("json").dumps(body_kind_only), encoding="utf-8")
+    attended2, _ = module.receipts_attendance(tmp_path)
+    assert "control-effect-recensus" not in attended2
+
+
+def test_smoke_workflow_artifact_path_avoids_path_hints():
+    """Defense in depth: smoke seals live under recensus-path-smoke/ only."""
+    text = _text("recensus-path-smoke.yml")
+    assert "recensus-path-smoke" in text
+    # Must not write smoke under PATH_HINTS fragments for the board.
+    assert "pandas-control-effect" not in text
+    # control-effect-recensus as class name in comments is ok; artifact path is not.
+    assert ".sugar/recensus-path-smoke" in text or "RECENSUS_PATH_SMOKE_OUT" in text
