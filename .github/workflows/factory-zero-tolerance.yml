@@ -384,13 +384,22 @@ jobs:
           code=$?
           set -e
           echo "static_floors phase=mint_report exit=$code"
-          python3 -u tools/sole_construction_floor_enrollment.py \
-            --mint-report floor-axis-report.json \
-            --axis-id static-laws \
-            --display R_static_sole_construction \
-            --kind static \
-            --commit-sha "${GITHUB_SHA}" \
+          mint_args=(
+            --mint-report floor-axis-report.json
+            --axis-id static-laws
+            --display R_static_sole_construction
+            --kind static
+            --commit-sha "${GITHUB_SHA}"
             --exit-code "$code"
+          )
+          if [ "$code" -ge 2 ]; then
+            mint_args+=(--no-scan-completed --unmeasured-reason "static floors exit=${code} (crash — not residual)")
+          elif [ -s floor-static-residual.json ]; then
+            mint_args+=(--residual-from-summary floor-static-residual.json)
+          else
+            mint_args+=(--no-scan-completed --unmeasured-reason "static residual summary missing after exit=${code}")
+          fi
+          python3 -u tools/sole_construction_floor_enrollment.py "${mint_args[@]}"
           exit "$code"
       - name: Upload static axis report
         if: always()

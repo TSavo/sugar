@@ -109,6 +109,7 @@ def test_enrollment_missing_axis_is_unmeasured(tmp_path: Path) -> None:
         commit_sha="deadbeef",
         exit_code=0,
         kind="process",
+        residual_count=0,
     )
     path = tmp_path / "floor-axis-silent-s00" / mod.REPORT_FILENAME
     path.parent.mkdir(parents=True)
@@ -123,12 +124,15 @@ def test_enrollment_missing_axis_is_unmeasured(tmp_path: Path) -> None:
 def test_enrollment_complete_with_all_axes(tmp_path: Path) -> None:
     mod = _enroll_mod()
     for axis in mod.ENROLLED:  # process LPT seats + static
+        is_timeout = axis.axis_id.startswith("timeout-")
         report = mod.mint_axis_report(
             axis_id=axis.axis_id,
             display=axis.display,
             commit_sha="abc123",
-            exit_code=0 if not axis.axis_id.startswith("timeout-") else 1,
+            exit_code=0 if not is_timeout else 1,
             kind=axis.kind,
+            # Magnitude from floor summary identity — not invented from exit.
+            residual_count=3 if is_timeout else 0,
         )
         path = tmp_path / f"floor-axis-{axis.axis_id}" / mod.REPORT_FILENAME
         path.parent.mkdir(parents=True)

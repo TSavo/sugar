@@ -118,6 +118,12 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Write pandas-floor-summary-v1 with R_bare_exceptions magnitude.",
+    )
     add_lpt_shard_args(parser)
     args = parser.parse_args()
 
@@ -171,6 +177,37 @@ def main() -> int:
             progress.write(f"{t.file}\t{t.category}\trestarts={t.worker_restarts}\n")
 
     offenders = tuple(row.offender for row in rows if row.offender is not None)
+    if args.json is not None:
+        from pandas_floor_summary import floor_summary, relative_files, write_json
+
+        files = relative_files(paths, args.repo_root)
+        payload = floor_summary(
+            floor="bare-exception",
+            files=files,
+            rows=[
+                {
+                    "file": row.file,
+                    "category": row.category,
+                    "returncode": None,
+                }
+                for row in rows
+            ],
+            totals={
+                "R_bare_exceptions": len(offenders),
+                "completed": sum(
+                    row.category == OUTCOME_COMPLETED for row in rows
+                ),
+                "typedGaps": sum(
+                    row.category == OUTCOME_TYPED_GAP for row in rows
+                ),
+                "timeouts": sum(row.category == "timeout" for row in rows),
+                "nativeCrashes": sum(
+                    row.category == "native-crash" for row in rows
+                ),
+            },
+            measured=True,
+        )
+        write_json(args.json, payload)
     print(
         "BARE-EXCEPTION SURFACE: "
         f"discovered={len(rows)} "
