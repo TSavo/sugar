@@ -67,6 +67,7 @@ class SourceResolutionSession:
 
     __slots__ = (
         "enabled",
+        "enrolled_distributions",
         "export_resolutions",
         "export_terminals",
         "frame_results",
@@ -80,8 +81,19 @@ class SourceResolutionSession:
         "lexical_passes",
     )
 
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        enrolled_distributions: frozenset[str] | None = None,
+    ) -> None:
         self.enabled = enabled
+        # Pin membership for the population membrane.  None = legacy
+        # stdlib-only off-population (pre-#707x).  When set, any graph whose
+        # distribution_name is not in this set is off-pin and must cite, never
+        # MaterializeModule (pytest on a pandas test open was 40 frames / ~3.8s
+        # of residual wall after the stdlib membrane).
+        self.enrolled_distributions: frozenset[str] | None = enrolled_distributions
         # (distribution_artifact_cid, module_name, exported_name) -> pure-entry
         # resolution (includes module-structural reexport warrants; no path
         # import_binding_cid).

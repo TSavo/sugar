@@ -407,9 +407,13 @@ def leaky_process_memo(monkeypatch):
     import_uses: dict = {}
     import_values: dict = {}
 
-    def leaky_init(self, *, enabled: bool = True) -> None:
+    def leaky_init(
+        self, *, enabled: bool = True, enrolled_distributions=None
+    ) -> None:
         self.enabled = enabled
+        self.enrolled_distributions = enrolled_distributions
         self.export_resolutions = exports
+        self.export_terminals = exports  # shared leak for authority twin
         self.frame_results = frames
         self.frame_holds = holds
         self.frame_active = active
@@ -418,6 +422,7 @@ def leaky_process_memo(monkeypatch):
         self.prefix_fallthrough = fallthroughs
         self.import_use_rosters = import_uses
         self.import_value_rosters = import_values
+        self.lexical_passes = {}
 
     monkeypatch.setattr(SourceResolutionSession, "__init__", leaky_init)
 
