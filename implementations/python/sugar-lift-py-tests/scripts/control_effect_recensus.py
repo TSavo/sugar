@@ -787,12 +787,17 @@ def _measure_file(
         end_file_open_profile()
     module_summary = summarize_module_materialize(profile_bag)
     timing["module_materialize"] = module_summary
-    # Dominant phase for one-line cause naming (excludes nested module time
-    # which is already inside t_populate / t_open when materialize runs there).
+    # Explicit materialize wall (sum of materialize_module calls). Nested inside
+    # populate/open wall-clock, but first-class so running-counts answers
+    # "rebuilds" without digging module_materialize.top.
+    timing["t_materialize_s"] = float(module_summary.get("materialize_s") or 0.0)
+    timing["materialize_calls"] = int(module_summary.get("materializeCalls") or 0)
+    # Dominant phase for one-line cause naming.
     phase_seconds = {
         "context": float(timing["t_context_s"]),
         "open": float(timing["t_open_s"]),
         "populate": float(timing["t_populate_s"]),
+        "materialize": float(timing["t_materialize_s"]),
         "cm_tally": float(timing["t_cm_tally_s"]),
         "enumerate": float(timing["t_enumerate_s"]),
         "sugar_loop": float(timing["t_sugar_loop_s"]),
@@ -1567,6 +1572,8 @@ def main() -> int:
                     "fn_total": live_fns,
                     "phase": "per_file_lift",
                     "t_open_s": row_timing.get("t_open_s"),
+                    "t_materialize_s": row_timing.get("t_materialize_s"),
+                    "materialize_calls": row_timing.get("materialize_calls"),
                     "t_populate_s": row_timing.get("t_populate_s"),
                     "t_enumerate_s": row_timing.get("t_enumerate_s"),
                     "t_sugar_loop_s": row_timing.get("t_sugar_loop_s"),
@@ -1602,6 +1609,8 @@ def main() -> int:
                         f"dominant={row_timing.get('dominant_phase')}:"
                         f"{row_timing.get('dominant_phase_s')}s "
                         f"open={row_timing.get('t_open_s')}s "
+                        f"materialize={row_timing.get('t_materialize_s')}s "
+                        f"materialize_calls={row_timing.get('materialize_calls')} "
                         f"populate={row_timing.get('t_populate_s')}s "
                         f"enumerate={row_timing.get('t_enumerate_s')}s "
                         f"sugar_loop={row_timing.get('t_sugar_loop_s')}s "
