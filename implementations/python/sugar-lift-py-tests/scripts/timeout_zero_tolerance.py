@@ -164,11 +164,14 @@ def main() -> int:
     rows = summary.rows
     offenders = summary.offenders
     if args.json is not None:
-        from pandas_floor_summary import relative_files, write_floor_summary_or_residual
+        from pandas_floor_summary import (
+            relative_files,
+            write_floor_summary_or_unmeasured,
+        )
 
         files = relative_files(paths, args.repo_root)
         residual_count = len(offenders)
-        write_floor_summary_or_residual(
+        write_floor_summary_or_unmeasured(
             args.json,
             floor="timeout",
             residual_key="R_timeouts",

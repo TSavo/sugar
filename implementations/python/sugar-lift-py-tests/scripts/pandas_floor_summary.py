@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+_PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_SRC))
+
+from sugar_lift_py_tests.conservation_mint import (  # noqa: E402
+    ConservationFailure,
+    ConservedBody,
+    seal_after_validation,
+)
+
 SCHEMA = "pandas-floor-summary-v1"
+VALIDATOR_STAGE_ID = "pandas-floor-summary.rows-account-for-corpus/v1"
 
 
 def relative_files(paths: Sequence[Path], root: Path) -> list[str]:
@@ -21,7 +33,7 @@ def corpus_cid(files: Sequence[str]) -> str:
     return "sha256:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
 
 
-def floor_summary(
+def _floor_summary_outcome(
     *,
     floor: str,
     files: Sequence[str],
@@ -29,21 +41,14 @@ def floor_summary(
     totals: Mapping[str, int],
     measured: bool,
     unmeasurable_reasons: Sequence[str] = (),
-) -> dict[str, Any]:
+) -> ConservedBody | ConservationFailure:
     ordered_files = sorted(files)
     ordered_rows = sorted((dict(row) for row in rows), key=lambda row: str(row["file"]))
-    if not ordered_files:
-        raise ValueError("a floor summary requires a non-empty measured corpus")
-    if [str(row["file"]) for row in ordered_rows] != ordered_files:
-        raise ValueError("floor rows must account for every corpus file exactly once")
     reasons = sorted(set(unmeasurable_reasons))
-    if measured and reasons:
-        raise ValueError("a measured floor cannot carry unmeasurable reasons")
-    return {
+    payload = {
         "kind": SCHEMA,
         "floor": floor,
-        "measurement": "measured" if measured else "unmeasurable",
-        "unmeasurableReasons": reasons,
+        "unmeasurableReasons": [],
         "corpus": {
             "files": ordered_files,
             "filesTotal": len(ordered_files),
@@ -53,6 +58,60 @@ def floor_summary(
         "totals": dict(sorted(totals.items())),
     }
 
+    def validate() -> None:
+        if not measured:
+            reason = "; ".join(reasons) or "floor producer marked measurement incomplete"
+            raise ValueError(reason)
+        if not ordered_files:
+            raise ValueError("a floor summary requires a non-empty measured corpus")
+        if [str(row["file"]) for row in ordered_rows] != ordered_files:
+            raise ValueError("floor rows must account for every corpus file exactly once")
+        if reasons:
+            raise ValueError("a measured floor cannot carry unmeasurable reasons")
+
+    return seal_after_validation(
+        measured_payload=payload,
+        input_key_manifest=[{"file": file} for file in ordered_files],
+        output_key_manifest=[{"file": str(row["file"])} for row in ordered_rows],
+        validator_stage_id=VALIDATOR_STAGE_ID,
+        validator_source_path=Path(__file__).resolve(),
+        validate=validate,
+    )
+
+
+def floor_summary(
+    *,
+    floor: str,
+    files: Sequence[str],
+    rows: Sequence[Mapping[str, Any]],
+    totals: Mapping[str, int],
+    measured: bool,
+    unmeasurable_reasons: Sequence[str] = (),
+) -> dict[str, Any]:
+    outcome = _floor_summary_outcome(
+        floor=floor,
+        files=files,
+        rows=rows,
+        totals=totals,
+        measured=measured,
+        unmeasurable_reasons=unmeasurable_reasons,
+    )
+    if isinstance(outcome, ConservationFailure):
+        if not measured:
+            body = outcome.to_wire()
+            body.update(
+                {
+                    "kind": "floor-unmeasured-v1",
+                    "floor": floor,
+                    "residualCount": None,
+                    "unmeasurableReasons": [outcome.reason],
+                }
+            )
+            return body
+        reason = outcome.reason.partition(": ")[2] or outcome.reason
+        raise ValueError(reason)
+    return outcome.to_wire()
+
 
 def write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,34 +120,33 @@ def write_json(path: Path, value: Mapping[str, Any]) -> None:
     )
 
 
-def write_floor_residual_v1(
+def write_floor_unmeasured_v1(
     path: Path,
     *,
     residual_key: str,
-    residual_count: int,
     floor: str,
-    emission_fallback: str | None = None,
+    failure: ConservationFailure,
 ) -> None:
-    """Minimal residual body for enrollment mint when full summary cannot seal.
+    """Emit an explicit refusal when full-summary conservation cannot seal.
 
-    Enrollment cites residualCount under residualKey — never invents from exit.
+    The producer may already hold an in-memory candidate magnitude, but failed
+    conservation makes that candidate non-testimony.  The refusal therefore
+    carries no numeric residual for a downstream reader to reseal.
     """
-    if type(residual_count) is not int or residual_count < 0:
-        raise ValueError(
-            f"residual_count must be non-negative int; got {residual_count!r}"
-        )
-    body: dict[str, Any] = {
-        "kind": "floor-residual-v1",
-        "floor": floor,
-        "residualKey": residual_key,
-        "residualCount": residual_count,
-    }
-    if emission_fallback:
-        body["emissionFallback"] = emission_fallback
+    body = failure.to_wire()
+    body.update(
+        {
+            "kind": "floor-unmeasured-v1",
+            "floor": floor,
+            "residualKey": residual_key,
+            "residualCount": None,
+            "unmeasurableReasons": [failure.reason],
+        }
+    )
     write_json(path, body)
 
 
-def write_floor_summary_or_residual(
+def write_floor_summary_or_unmeasured(
     path: Path,
     *,
     floor: str,
@@ -100,29 +158,28 @@ def write_floor_summary_or_residual(
     measured: bool = True,
     unmeasurable_reasons: Sequence[str] = (),
 ) -> str:
-    """Always emit residual magnitude for mint; full summary when conservation holds.
+    """Emit conserved testimony, otherwise an explicit UNMEASURED envelope.
 
-    Product residual is already computed (residual_count). A conservation failure
-    in floor_summary must not erase that mass — fall back to floor-residual-v1
-    so enrollment can cite residualCount (freeze night: exit=1 + no summary).
+    ``residual_count`` is deliberately accepted at the shared producer door so
+    callers cannot accidentally route around it.  It is serialized only inside
+    a conserved full summary (through ``totals``).  A conservation failure must
+    never promote the in-memory candidate into a sealed residual body.
     """
-    try:
-        payload = floor_summary(
-            floor=floor,
-            files=files,
-            rows=rows,
-            totals=totals,
-            measured=measured,
-            unmeasurable_reasons=unmeasurable_reasons,
-        )
-        write_json(path, payload)
-        return "full"
-    except ValueError as error:
-        write_floor_residual_v1(
+    outcome = _floor_summary_outcome(
+        floor=floor,
+        files=files,
+        rows=rows,
+        totals=totals,
+        measured=measured,
+        unmeasurable_reasons=unmeasurable_reasons,
+    )
+    if isinstance(outcome, ConservationFailure):
+        write_floor_unmeasured_v1(
             path,
             residual_key=residual_key,
-            residual_count=residual_count,
             floor=floor,
-            emission_fallback=f"{type(error).__name__}: {error}",
+            failure=outcome,
         )
-        return "residual-only"
+        return "unmeasured"
+    write_json(path, outcome.to_wire())
+    return "full"

@@ -25,6 +25,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+_PACKAGE_SRC = (
+    Path(__file__).resolve().parents[1]
+    / "implementations/python/sugar-lift-py-tests/src"
+)
+if str(_PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_SRC))
+
+from sugar_lift_py_tests.conservation_mint import (  # noqa: E402
+    ConservationFailure,
+    ConservationWitnessV1,
+    ConservedBody,
+    decode_conserved_body,
+    key_manifest_cid,
+    seal_after_validation,
+)
+
 SCOREBOARD_AUTHORITY = False
 
 REPORT_KIND = "sole-construction-floor-axis-report"
@@ -148,29 +164,183 @@ def residual_key_for_axis(axis_id: str) -> str:
     return key
 
 
-def load_residual_count_from_floor_summary(
-    summary_path: Path, *, residual_key: str
-) -> int:
-    """Cite residual magnitude from a floor summary body — never invent.
+@dataclass(frozen=True, slots=True)
+class FloorMeasurementReading:
+    residual_count: int | None
+    unmeasured_reason: str | None
+    conservation_witness: ConservationWitnessV1 | None = None
 
-    Accepts:
-      - pandas-floor-summary-v1 with totals[residual_key]
-      - floor-residual-v1 with residualKey + residualCount
+
+def load_floor_measurement_from_summary(
+    summary_path: Path, *, residual_key: str
+) -> FloorMeasurementReading:
+    """Read conserved residual testimony or an explicit refusal.
+
+    ``floor-residual-v1`` remains valid for producers that directly measure a
+    residual without a per-file conservation table (the static floor), but it
+    must carry its schema manifests and universal passed witness.  The #7051
+    variant is distinguishable by ``emissionFallback`` and is refused: its
+    number was written only because conservation had failed.
     """
     try:
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ValueError(
-            f"cannot read floor summary {summary_path}: {exc}"
-        ) from exc
+        raise ValueError(f"cannot read floor summary {summary_path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"floor summary {summary_path} is not a JSON object")
     kind = payload.get("kind")
+    if kind == "floor-unmeasured-v1":
+        if payload.get("residualKey") != residual_key:
+            raise ValueError(
+                f"floor-unmeasured-v1 residualKey={payload.get('residualKey')!r} "
+                f"!= expected {residual_key!r}"
+            )
+        reasons = payload.get("unmeasurableReasons")
+        if (
+            payload.get("measurement") != "unmeasured"
+            or payload.get("residualCount") is not None
+            or not isinstance(reasons, list)
+            or not reasons
+            or not all(isinstance(reason, str) and reason for reason in reasons)
+        ):
+            raise ValueError(
+                "floor-unmeasured-v1 must carry measurement=unmeasured, "
+                "residualCount=null, and at least one named reason"
+            )
+        return FloorMeasurementReading(
+            residual_count=None,
+            unmeasured_reason="floor summary conservation failed: "
+            + "; ".join(reasons),
+            conservation_witness=None,
+        )
+    if kind == "floor-residual-v1" and payload.get("emissionFallback"):
+        return FloorMeasurementReading(
+            residual_count=None,
+            unmeasured_reason=(
+                "unconserved #7051 fallback refused: "
+                + str(payload["emissionFallback"])
+            ),
+            conservation_witness=None,
+        )
+    if kind == "pandas-floor-summary-v1" and payload.get("measurement") != "measured":
+        reasons = payload.get("unmeasurableReasons") or [
+            "pandas floor summary did not complete measurement"
+        ]
+        return FloorMeasurementReading(
+            residual_count=None,
+            unmeasured_reason="; ".join(str(reason) for reason in reasons),
+            conservation_witness=None,
+        )
+    if kind == "pandas-floor-summary-v1":
+        try:
+            conserved = decode_conserved_body(payload)
+        except ValueError as error:
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason=f"measured floor body refused: {error}",
+                conservation_witness=None,
+            )
+        witness = conserved.witness
+        files = ((payload.get("corpus") or {}).get("files"))
+        rows = payload.get("rows")
+        if not isinstance(files, list) or not all(
+            isinstance(file, str) for file in files
+        ):
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason="measured floor body has no canonical corpus files",
+                conservation_witness=None,
+            )
+        if not isinstance(rows, list) or not all(
+            isinstance(row, dict) and isinstance(row.get("file"), str)
+            for row in rows
+        ):
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason="measured floor body has no canonical row keys",
+                conservation_witness=None,
+            )
+        input_keys = [{"file": file} for file in sorted(files)]
+        output_keys = [
+            {"file": str(row["file"])}
+            for row in sorted(rows, key=lambda row: str(row["file"]))
+        ]
+        witness_crimes: list[str] = []
+        if witness.validator_stage_id != (
+            "pandas-floor-summary.rows-account-for-corpus/v1"
+        ):
+            witness_crimes.append("validatorStageId is not the floor validator")
+        if witness.input_key_manifest_cid != key_manifest_cid(input_keys):
+            witness_crimes.append("inputKeyManifestCid disagrees with corpus files")
+        if witness.output_key_manifest_cid != key_manifest_cid(output_keys):
+            witness_crimes.append("outputKeyManifestCid disagrees with row files")
+        if witness.input_key_count != len(input_keys):
+            witness_crimes.append("inputKeyCount disagrees with corpus files")
+        if witness.output_key_count != len(output_keys):
+            witness_crimes.append("outputKeyCount disagrees with row files")
+        if (
+            witness.input_key_manifest_cid != witness.output_key_manifest_cid
+            or witness.input_key_count != witness.output_key_count
+        ):
+            witness_crimes.append("floor input/output key conservation did not pass")
+        if witness_crimes:
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason="measured floor conservation witness refused: "
+                + "; ".join(witness_crimes),
+                conservation_witness=None,
+            )
+        raw = (payload.get("totals") or {}).get(residual_key)
+        if type(raw) is not int or raw < 0:
+            raise ValueError(
+                f"floor summary residual {residual_key!r} must be a non-negative "
+                f"int; got {type(raw).__name__}={raw!r}"
+            )
+        return FloorMeasurementReading(
+            residual_count=raw,
+            unmeasured_reason=None,
+            conservation_witness=witness,
+        )
     if kind == "floor-residual-v1":
+        try:
+            conserved = decode_conserved_body(payload)
+        except ValueError as error:
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason=f"measured residual body refused: {error}",
+                conservation_witness=None,
+            )
         if payload.get("residualKey") != residual_key:
             raise ValueError(
                 f"floor-residual-v1 residualKey={payload.get('residualKey')!r} "
                 f"!= expected {residual_key!r}"
+            )
+        input_manifest = payload.get("inputKeyManifest")
+        output_manifest = payload.get("outputKeyManifest")
+        if not isinstance(input_manifest, list) or not isinstance(output_manifest, list):
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason=(
+                    "measured residual body lacks schema key manifests"
+                ),
+                conservation_witness=None,
+            )
+        witness = conserved.witness
+        crimes: list[str] = []
+        if witness.input_key_manifest_cid != key_manifest_cid(input_manifest):
+            crimes.append("inputKeyManifestCid disagrees with input manifest")
+        if witness.output_key_manifest_cid != key_manifest_cid(output_manifest):
+            crimes.append("outputKeyManifestCid disagrees with output manifest")
+        if witness.input_key_count != len(input_manifest):
+            crimes.append("inputKeyCount disagrees with input manifest")
+        if witness.output_key_count != len(output_manifest):
+            crimes.append("outputKeyCount disagrees with output manifest")
+        if crimes:
+            return FloorMeasurementReading(
+                residual_count=None,
+                unmeasured_reason="measured residual witness refused: "
+                + "; ".join(crimes),
+                conservation_witness=None,
             )
         raw = payload.get("residualCount")
         if type(raw) is not int or raw < 0:
@@ -178,25 +348,36 @@ def load_residual_count_from_floor_summary(
                 f"floor-residual-v1 residualCount must be non-negative int; "
                 f"got {type(raw).__name__}={raw!r}"
             )
-        return raw
-    totals = payload.get("totals")
-    if not isinstance(totals, dict):
-        raise ValueError(
-            f"floor summary {summary_path} missing totals object "
-            f"(need residual key {residual_key!r} under identity)"
+        return FloorMeasurementReading(
+            residual_count=raw,
+            unmeasured_reason=None,
+            conservation_witness=witness,
         )
-    if residual_key not in totals:
+    return FloorMeasurementReading(
+        residual_count=None,
+        unmeasured_reason=(
+            f"floor summary kind {kind!r} has no conservation-witness consumer"
+        ),
+        conservation_witness=None,
+    )
+
+
+def load_residual_count_from_floor_summary(
+    summary_path: Path, *, residual_key: str
+) -> int:
+    """Cite residual magnitude from a floor summary body — never invent.
+
+    Accepts only a witnessed ``pandas-floor-summary-v1`` or witnessed
+    ``floor-residual-v1``.  A bare magnitude is not testimony.
+    """
+    reading = load_floor_measurement_from_summary(
+        summary_path, residual_key=residual_key
+    )
+    if reading.residual_count is None:
         raise ValueError(
-            f"floor summary {summary_path} totals missing residual key "
-            f"{residual_key!r}; present={sorted(totals)!r}"
+            reading.unmeasured_reason or "floor summary is explicitly unmeasured"
         )
-    raw = totals[residual_key]
-    if type(raw) is not int or raw < 0:
-        raise ValueError(
-            f"floor summary residual {residual_key!r} must be a non-negative "
-            f"int; got {type(raw).__name__}={raw!r}"
-        )
-    return raw
+    return reading.residual_count
 
 
 def mint_axis_report(
@@ -211,12 +392,14 @@ def mint_axis_report(
     residual_count: int | None = None,
     residual_source: str | None = None,
     residual_key: str | None = None,
+    conservation_witness: ConservationWitnessV1 | None = None,
 ) -> dict:
     """Mint an identity-bound axis body.
 
     ``measured=True`` only when the scan completed (exit 0 or 1 by default)
-    **and** residual_count is cited from the floor summary. Auth/init/crash
-    (exit >= 2, or scan_completed=False) mints UNMEASURED with a named reason.
+    **and** residual_count plus its passed conservation witness are cited from
+    the floor summary. Auth/init/crash (exit >= 2, or scan_completed=False)
+    mints UNMEASURED with a named reason.
 
     Do **not** invent residual magnitude from exit code: exit 1 only says
     R>0; the count lives in the floor's own summary under residual_key.
@@ -232,13 +415,18 @@ def mint_axis_report(
                 f"measured mint for {axis_id!r} requires residual_count from "
                 f"the floor summary (do not invent R from exit code={code})"
             )
+        if conservation_witness is None:
+            raise ValueError(
+                f"measured mint for {axis_id!r} requires a passed "
+                "conservation witness from the floor validator"
+            )
         if type(residual_count) is not int or residual_count < 0:
             raise ValueError(
                 f"residual_count must be a non-negative int; got "
                 f"{type(residual_count).__name__}={residual_count!r}"
             )
         rkey = residual_key or residual_key_for_axis(axis_id)
-        return {
+        payload = {
             "schemaVersion": 1,
             "kind": REPORT_KIND,
             "axisId": axis_id,
@@ -262,6 +450,10 @@ def mint_axis_report(
                 "residual": residual_count,
             },
         }
+        return ConservedBody(
+            payload=payload,
+            witness=conservation_witness,
+        ).to_wire()
     reason = unmeasured_reason or (
         f"scan did not complete (exit={code}); infrastructure/auth/init/crash "
         "— not a residual reading"
@@ -421,6 +613,16 @@ def check_attendance(
                 f"axis={axis.axis_id} spoke=partial status=UNRESOLVED"
             )
             continue
+        try:
+            decode_conserved_body(row)
+        except ValueError as error:
+            unresolved.append(axis.axis_id)
+            _log(
+                f"floor_enrollment result index={index}/{len(ENROLLED)} "
+                f"axis={axis.axis_id} spoke=partial status=UNRESOLVED "
+                f"reason=conservation-witness:{error}"
+            )
+            continue
         attended.append(axis.axis_id)
         exit_code = int(row.get("exitCode", 1))
         # Prefer residualCount magnitude when present (S1.1 mass ranking).
@@ -470,20 +672,55 @@ def mint_campaign_body(attendance: dict, *, commit_sha: str) -> dict:
     """Identity-bound campaign body for heavy-measurement attendance roll call."""
     residual = list(attendance.get("residualRed") or [])
     unmeasured = attendance.get("status") != "complete"
-    return {
+    expected = [{"axisId": axis_id} for axis_id in enrolled_ids()]
+    observed = [
+        {"axisId": str(axis_id)} for axis_id in attendance.get("attended") or []
+    ]
+    payload = {
         "schemaVersion": 1,
         "measurementClass": CAMPAIGN_CLASS,
         "measuredCommit": commit_sha,
-        "status": "unmeasured" if unmeasured else "completed",
+        "status": "completed",
+        "measured": True,
         "enrollment": attendance,
-        "exitCode": 1 if unmeasured or residual else 0,
+        "exitCode": 1 if residual else 0,
         "totals": {
-            "failed": 0 if not residual and not unmeasured else 1,
+            "failed": 0 if not residual else 1,
             "enrolledAxes": len(enrolled_ids()),
             "attendedAxes": len(attendance.get("attended") or []),
             "residualRedAxes": len(residual),
         },
     }
+
+    def validate() -> None:
+        if unmeasured:
+            raise ValueError("floor enrollment is incomplete")
+        if sorted(expected, key=lambda row: row["axisId"]) != sorted(
+            observed, key=lambda row: row["axisId"]
+        ):
+            raise ValueError("floor enrollment input/output axis keys differ")
+
+    outcome = seal_after_validation(
+        measured_payload=payload,
+        input_key_manifest=expected,
+        output_key_manifest=observed,
+        validator_stage_id="sole-construction-floor.enrollment-roll-call/v1",
+        validator_source_path=Path(__file__).resolve(),
+        validate=validate,
+    )
+    if isinstance(outcome, ConservationFailure):
+        body = outcome.to_wire()
+        body.update(
+            {
+                "measurementClass": CAMPAIGN_CLASS,
+                "measuredCommit": commit_sha,
+                "status": "unmeasured",
+                "measured": False,
+                "exitCode": 1,
+            }
+        )
+        return body
+    return outcome.to_wire()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -514,21 +751,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Named reason when minting UNMEASURED (auth/init/crash).",
     )
     parser.add_argument(
-        "--residual-count",
-        type=int,
-        default=None,
-        help=(
-            "Residual magnitude from the floor summary (required for measured "
-            "mints). Do not invent from exit code."
-        ),
-    )
-    parser.add_argument(
         "--residual-from-summary",
         type=Path,
         default=None,
         help=(
             "pandas-floor-summary-v1 JSON; residual_count is read from "
-            "totals[residual_key] under identity (preferred over --residual-count)."
+            "totals[residual_key] under its passed conservation witness."
         ),
     )
     parser.add_argument(
@@ -568,16 +796,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     if args.mint_report is not None:
-        residual_count = args.residual_count
+        residual_count = None
         residual_source = None
         residual_key = args.residual_key
+        conservation_witness = None
         if args.residual_from_summary is not None:
             rkey = residual_key or residual_key_for_axis(args.axis_id)
-            residual_count = load_residual_count_from_floor_summary(
+            reading = load_floor_measurement_from_summary(
                 args.residual_from_summary, residual_key=rkey
             )
             residual_source = str(args.residual_from_summary.resolve())
             residual_key = rkey
+            if reading.residual_count is None:
+                residual_count = None
+                args.scan_completed = False
+                args.unmeasured_reason = reading.unmeasured_reason
+            else:
+                residual_count = reading.residual_count
+                conservation_witness = reading.conservation_witness
         _log(
             f"floor_enrollment phase=mint_report axis={args.axis_id} "
             f"exit={args.exit_code} residual_count={residual_count!r} "
@@ -594,6 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             residual_count=residual_count,
             residual_source=residual_source,
             residual_key=residual_key,
+            conservation_witness=conservation_witness,
         )
         args.mint_report.parent.mkdir(parents=True, exist_ok=True)
         args.mint_report.write_text(

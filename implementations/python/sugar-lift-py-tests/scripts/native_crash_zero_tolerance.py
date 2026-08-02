@@ -221,11 +221,14 @@ def main() -> int:
         progress_path=progress_path,
     )
     if args.json is not None:
-        from pandas_floor_summary import relative_files, write_floor_summary_or_residual
+        from pandas_floor_summary import (
+            relative_files,
+            write_floor_summary_or_unmeasured,
+        )
 
         files = relative_files(paths, args.repo_root)
         residual_count = len(summary.offenders)
-        write_floor_summary_or_residual(
+        write_floor_summary_or_unmeasured(
             args.json,
             floor="native-crash",
             residual_key="R_native_crashes",
