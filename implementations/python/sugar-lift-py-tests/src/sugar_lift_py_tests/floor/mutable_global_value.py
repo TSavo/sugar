@@ -44,6 +44,16 @@ class MutableGlobalValue(FloorValue):
     def denotes_value(self) -> bool:
         return True
 
+    def runtime_type_is_decided(self) -> bool:
+        """Only an authenticated dict pin has a source-decided container type.
+
+        Other pin kinds still denote a value, but which ``__getitem__`` /
+        ``__contains__`` / attribute layout Python would select is not fixed by
+        the pin alone.  FloorValue defaults then route through undecided_*,
+        not write-more-Floor.
+        """
+        return self.kind == "dict"
+
     def subscript(self, index, site):
         if self.kind != "dict":
             return self.undecided_subscript(

@@ -8,7 +8,6 @@ import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import MutableGlobalValue, PredicateValue, StringValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic
 from sugar_lift_py_tests.outcome import Complete, ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
@@ -93,17 +92,23 @@ def test_mutable_dict_membership_refuses_same_span_foreign_source(
 def test_non_dict_mutable_global_does_not_borrow_dict_membership(
     tmp_path: Path,
 ) -> None:
+    """Non-dict pin: runtime type undecided → named refusal, not write-more-Floor.
+
+    Borrowing the dict membership arm would invent container testimony. Falling
+    through to construction panic would miscount source-undecided as OUR debt.
+    """
     binding, compare = _source(tmp_path, "wrong_kind.py")
     value, _ctx = _context(binding, kind="list")
     item = StringValue("key")
     site = compare.fragment
 
-    with pytest.raises(ConstructionPanic) as raised:
+    assert value.runtime_type_is_decided() is False
+    with pytest.raises(SugarNotWritten) as raised:
         value.contains(item, site)
 
-    assert raised.value.info.owner == "contains"
-    assert raised.value.info.observed == "MutableGlobalValue"
-    assert raised.value.info.requested == "stand on the membership floor"
+    assert raised.value.owner == "MutableGlobalValue.contains"
+    assert "undecided" in raised.value.observed.lower()
+    assert "write more Floor" not in str(raised.value)
 
 
 def test_symbolic_source_membership_keeps_complementary_dispatch_faces(

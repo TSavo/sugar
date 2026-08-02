@@ -326,6 +326,17 @@ class FloorValue:
         self, operation: AttributeLookupOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
+        # Same two-door law as :meth:`attribute`: undecided type is named
+        # refusal, not an ``attribute_with`` construction gap.
+        if self.denotes_value() and not self.runtime_type_is_decided():
+            site = getattr(operation, "site", None)
+            if site is None:
+                site = getattr(operation, "blame", None)
+            return self.undecided_attribute(
+                operation.name,
+                site,
+                owner=f"{type(self).__name__}.attribute_with",
+            )
         return self._operation_construction_gap(operation, "attribute_with")
 
     def await_with(
@@ -377,6 +388,18 @@ class FloorValue:
         self, operation: ContainsOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
+        if self.denotes_value() and not self.runtime_type_is_decided():
+            site = getattr(operation, "site", None)
+            if site is None:
+                site = getattr(operation, "blame", None)
+            item = getattr(operation, "item", None)
+            if item is None:
+                item = getattr(operation, "operand", None)
+            return self.undecided_contains(
+                item,
+                site,
+                owner=f"{type(self).__name__}.contains_with",
+            )
         return self._operation_construction_gap(operation, "contains_with")
 
     def context_manager_with(
@@ -533,6 +556,15 @@ class FloorValue:
         self, operation: SubscriptOperation, ctx: ReduceContext | None
     ) -> Outcome:
         del ctx
+        if self.denotes_value() and not self.runtime_type_is_decided():
+            site = getattr(operation, "site", None)
+            if site is None:
+                site = getattr(operation, "blame", None)
+            return self.undecided_subscript(
+                operation.index,
+                site,
+                owner=f"{type(self).__name__}.subscript_with",
+            )
         return self._operation_construction_gap(operation, "subscript_with")
 
     def unary_operator_with(
@@ -580,10 +612,14 @@ class FloorValue:
         construction_panic(info)
 
     def subscript(self, index, site):
-        # Default: this value does not stand on the subscript floor -- it cannot
-        # answer what it yields at an index. Values that CAN implement subscript
-        # (concrete folds, symbolic stays the py.subscript coordinate); absence
-        # here is the honest "no".
+        # Two doors, not one.  A value whose runtime TYPE is not source-decided
+        # cannot honestly answer index dispatch — that is named refusal
+        # (:meth:`undecided_subscript`), not "write more Floor".  Construction
+        # panic is only for a decided type whose subscript arm we still owe.
+        if self.denotes_value() and not self.runtime_type_is_decided():
+            return self.undecided_subscript(
+                index, site, owner=f"{type(self).__name__}.subscript"
+            )
         del index
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
@@ -634,10 +670,14 @@ class FloorValue:
         return None
 
     def attribute(self, name, site):
-        # Default: this value does not stand on the attribute floor -- it cannot
-        # answer what it yields at `.name`. A symbolic receiver stays the
-        # py.getattr coordinate; a value that owns a field folds; absence here is
-        # the honest "no".
+        # Two doors, not one.  Undecided runtime type → named refusal
+        # (:meth:`undecided_attribute`).  Decided type with no arm → write more
+        # Floor.  Misrouting the first into the second inflates remaining work
+        # as if we owed code when the source simply has not decided the type.
+        if self.denotes_value() and not self.runtime_type_is_decided():
+            return self.undecided_attribute(
+                name, site, owner=f"{type(self).__name__}.attribute"
+            )
         del name
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
@@ -810,10 +850,13 @@ class FloorValue:
         )
 
     def contains(self, item, site):
-        # Default: this value does not stand on the membership floor -- it cannot
-        # answer whether it holds `item`. Decided containers override and fold
-        # or TypeError; undecided containers use :meth:`undecided_contains`.
-        # Absence of a decided arm here is the honest construction gap.
+        # Two doors, not one.  Undecided container type → named refusal
+        # (:meth:`undecided_contains`).  Decided type with no arm → write more
+        # Floor.  Do not miscount source-undecided membership as kit debt.
+        if self.denotes_value() and not self.runtime_type_is_decided():
+            return self.undecided_contains(
+                item, site, owner=f"{type(self).__name__}.contains"
+            )
         del item
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
