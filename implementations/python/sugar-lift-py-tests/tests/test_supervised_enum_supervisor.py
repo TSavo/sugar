@@ -118,6 +118,18 @@ def test_worker_refuses_file_before_frozen_context_initialization(
         worker.wait(timeout=5)
 
 
+def test_context_init_timeout_for_population_scales() -> None:
+    """Corpus and unit-test populations are different obligations."""
+    assert _SUP.context_init_timeout_for_population(0) <= 60.0
+    assert _SUP.context_init_timeout_for_population(1) <= 60.0
+    assert _SUP.context_init_timeout_for_population(2) <= 60.0
+    assert _SUP.context_init_timeout_for_population(2) < 120.0
+    # Authenticated pandas order-of-magnitude → corpus budget.
+    assert _SUP.context_init_timeout_for_population(1421) == 1800.0
+    assert _SUP.context_init_timeout_for_population(500) == 1800.0
+    assert _SUP.context_init_timeout_for_population(499) < 1800.0
+
+
 def test_context_init_timeout_names_phase_not_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -144,6 +156,47 @@ def test_context_init_timeout_names_phase_not_none(
         assert f"corpus_root={tmp_path.resolve()}" in message
         assert "coordinate=supervised-enum-worker.construction-context" in message
         assert "context_init_timeout_s=1.0" in message
+    finally:
+        supervisor.stop()
+
+
+def test_tiny_population_init_hang_fails_in_seconds_not_corpus_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Suite hang class: tiny tree must not inherit 1800s corpus init budget.
+
+    Shard 3 job 91456853960: worker sat 23+ minutes under the corpus default.
+    Population-scaled default makes unit-spawned workers fail in seconds.
+    """
+    import time
+
+    _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
+    monkeypatch.setenv("SUGAR_SUPERVISOR_PLANT_INIT_HANG", "1")
+    # No explicit context_init_timeout — must derive short budget from population.
+    supervisor = _SUP.SupervisedEnumSupervisor(
+        corpus_root=tmp_path,
+        file_timeout=30.0,
+        allow_local_demand_derivation=True,
+    )
+    assert supervisor.population_file_count == 1
+    assert supervisor.context_init_timeout <= 60.0
+    assert supervisor.context_init_timeout < 1800.0
+    try:
+        t0 = time.perf_counter()
+        with pytest.raises(RuntimeError) as raised:
+            supervisor.start()
+        elapsed = time.perf_counter() - t0
+        message = str(raised.value)
+        assert elapsed < 30.0, (
+            f"tiny-population init hang took {elapsed:.1f}s; "
+            "must fail in seconds, not the 1800s corpus budget"
+        )
+        assert "refused: None" not in message
+        assert "mode=timeout" in message
+        assert "population_file_count=1" in message
+        assert "last_phase='planted-init-hang'" in message
+        assert "context_init_timeout_s=1800" not in message
+        assert f"context_init_timeout_s={supervisor.context_init_timeout}" in message
     finally:
         supervisor.stop()
 
