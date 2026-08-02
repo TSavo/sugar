@@ -1301,9 +1301,12 @@ def populate_source_derived_resource_refs(
         )
 
         # CITE, never abort: frame projection can SNW deep in a dependency
-        # (decorated FunctionDef, incomplete body).  Failure already parks a
-        # gap; success must not discard the open's function roster for the
-        # recensus.  One receipt's body gap is not the enrolled file's zero.
+        # (decorated FunctionDef, incomplete body) OR TypeError on construction
+        # (IfExpSugar body got SpreadCollectionSugar — #7062 second costume).
+        # Failure already parks a gap; success must not discard the open's
+        # function roster for the recensus.  One receipt's body gap is not the
+        # enrolled file's zero. Named classes only — never bare except (panics
+        # stay loud).
         try:
             frame_result = resolve_source_visible_frame(
                 resolved,
@@ -1311,14 +1314,14 @@ def populate_source_derived_resource_refs(
                 dependency_graphs=graphs,
                 session=session,
             )
-        except SugarNotWritten as exc:
-            observed = getattr(exc, "observed", None) or str(exc)
+        except (SugarNotWritten, TypeError) as exc:
+            kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
                 coordinate,
                 receipt,
-                "source-body-gap",
-                str(observed),
+                kind,
+                detail,
             )
             continue
         if isinstance(frame_result, ManagerConstructionGapV1):
@@ -1355,14 +1358,14 @@ def populate_source_derived_resource_refs(
                     distribution_index=distribution_index,
                     resolved_cid=resolved.cid,
                 )
-            except SugarNotWritten as exc:
-                observed = getattr(exc, "observed", None) or str(exc)
+            except (SugarNotWritten, TypeError) as exc:
+                kind, detail = _populate_body_defect_kind_detail(exc)
                 _install_derivation_gap(
                     context,
                     coordinate,
                     receipt,
-                    "source-body-gap",
-                    str(observed),
+                    kind,
+                    detail,
                 )
             continue
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
@@ -1544,14 +1547,14 @@ def populate_source_derived_resource_refs(
                 call_site=call.fragment,
                 session=session,
             )
-        except SugarNotWritten as exc:
-            observed = getattr(exc, "observed", None) or str(exc)
+        except (SugarNotWritten, TypeError) as exc:
+            kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
                 coordinate,
                 receipt,
-                "source-body-gap",
-                str(observed),
+                kind,
+                detail,
             )
             continue
         from .manager_construction import ConstructedManagerBehaviorV1
@@ -1566,14 +1569,14 @@ def populate_source_derived_resource_refs(
             continue
         try:
             protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
-        except SugarNotWritten as exc:
-            observed = getattr(exc, "observed", None) or str(exc)
+        except (SugarNotWritten, TypeError) as exc:
+            kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
                 coordinate,
                 receipt,
-                "source-body-gap",
-                str(observed),
+                kind,
+                detail,
             )
             continue
         if not isinstance(protocol, ConstructedManagerProtocolV1):
@@ -2731,6 +2734,29 @@ def _projected_manager_call_uses(source_file):
         collect(function.substitute({}), projected_names=True)
 
     return uses
+
+
+def _populate_body_defect_kind_detail(exc: BaseException) -> tuple[str, str]:
+    """Name a populate-path body defect for cite-and-continue.
+
+    SugarNotWritten → ``source-body-gap`` (existing #7063 arm).
+    TypeError → ``source-body-type-error`` (#7062 second costume: construction
+    require_* / IfExpSugar post_init failure that used to abort the open and
+    bank functionsTotal=0).
+
+    Callers must catch only these named classes — never bare ``except``.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if isinstance(exc, SugarNotWritten):
+        observed = getattr(exc, "observed", None) or str(exc)
+        return "source-body-gap", str(observed)
+    if isinstance(exc, TypeError):
+        return "source-body-type-error", f"TypeError: {exc}"
+    raise TypeError(
+        f"_populate_body_defect_kind_detail got unexpected {type(exc).__name__}; "
+        f"callers must catch only SugarNotWritten and TypeError"
+    ) from exc
 
 
 def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
