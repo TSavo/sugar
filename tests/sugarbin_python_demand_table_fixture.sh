@@ -18,29 +18,26 @@ printf 'beta = 2\n' >"$tmp/corpus/pkg/b.py"
 printf '{"rows":["publisher-a"]}\n' >"$tmp/table-a.json"
 printf '{"rows":["publisher-b"]}\n' >"$tmp/table-b.json"
 
-python_path="$repo/implementations/python/sugar-lift-py-tests/src:$repo/implementations/python/sugar-lift-python-source/src:$repo/implementations/python/sugar-source-tree/src"
-content_key="$(PYTHONPATH="$python_path" python3 - "$repo" "$tmp/corpus" <<'PY'
-import pathlib
-import sys
-
-from sugar_lift_py_tests.demand_table_identity import demand_table_identity
-
-repo = pathlib.Path(sys.argv[1])
-corpus = pathlib.Path(sys.argv[2])
-identity = demand_table_identity(
-    corpus,
-    sorted(corpus.rglob("*.py")),
-    source_root=repo / "implementations/python/sugar-lift-py-tests/src",
-)
-print(identity.content_key)
-PY
-)"
+# CAS address is h(payload bytes). The content key must be the blake3-512 of
+# the artifact file — not a foreign identity CID. Publishing a table under a
+# demand-table identity that is not h(file) is exactly crime=cas-publish-key-
+# payload-mismatch (the hole this climb closes).
+if ! command -v b3sum >/dev/null 2>&1; then
+  echo 'SKIP: b3sum required for CAS content key of fixture payloads' >&2
+  exit 0
+fi
+content_key="$(b3sum -l 64 --no-names "$tmp/table-a.json" | awk '{print "blake3-512_" $1}')"
+content_key_b="$(b3sum -l 64 --no-names "$tmp/table-b.json" | awk '{print "blake3-512_" $1}')"
+[[ "$content_key" != "$content_key_b" ]] || {
+  echo 'fixture payloads must hash distinctly' >&2
+  exit 1
+}
 
 publish() {
-  local shelf="$1" input="$2"
+  local shelf="$1" input="$2" key="${3:-$content_key}"
   "$repo/bin/sugarbin" artifact publish \
     --kind python-demand-table \
-    --content-key "$content_key" \
+    --content-key "$key" \
     --input "$input" \
     --runtime cpython-3.12.13 \
     --platform test-platform \
@@ -49,10 +46,10 @@ publish() {
 }
 
 pull() {
-  local shelf="$1" output="$2"
+  local shelf="$1" output="$2" key="${3:-$content_key}"
   "$repo/bin/sugarbin" artifact pull \
     --kind python-demand-table \
-    --content-key "$content_key" \
+    --content-key "$key" \
     --output "$output" \
     --runtime cpython-3.12.13 \
     --platform test-platform \
@@ -122,7 +119,9 @@ while True:
 
 incoming = stamp_parent / ".incoming"
 assert stat.S_IMODE(incoming.stat().st_mode) == 0o777
-assert stat.S_IMODE(cell.stat().st_mode) == 0o755
+# Peer-evictable ONE door: cell dir is 0777 (others can empty for eviction).
+cell_mode = stat.S_IMODE(cell.stat().st_mode)
+assert cell_mode == 0o777, f"cell must be peer-evictable 0777, got {cell_mode:04o}"
 for artifact in cell.iterdir():
     assert artifact.is_file(), artifact
     mode = stat.S_IMODE(artifact.stat().st_mode)
@@ -225,28 +224,39 @@ set -e
 [[ "$partial_status" != 0 ]] || { echo 'python-demand-table consumed a partially published shelf cell' >&2; exit 1; }
 [[ ! -e "$tmp/partial-pull.json" ]] || { echo 'python-demand-table materialized bytes from an incomplete shelf cell' >&2; exit 1; }
 
-# Two producers may race on one immutable content cell. Exactly one complete
-# artifact may win; the consumer must observe all bytes from A or all from B.
+# Lying twin: distinct payload under a foreign content key is refused at publish.
 set +e
-publish "$tmp/race-shelf" "$tmp/table-a.json" >"$tmp/publish-a.out" 2>"$tmp/publish-a.err" &
+publish "$tmp/race-shelf" "$tmp/table-b.json" "$content_key" 2>"$tmp/lying-key.err"
+lying_status=$?
+set -e
+[[ "$lying_status" != 0 ]] || {
+  echo 'publish accepted payload under content key that is not h(payload)' >&2
+  exit 1
+}
+grep -Fq 'cas-publish-key-payload-mismatch' "$tmp/lying-key.err" || {
+  echo 'lying content key did not name cas-publish-key-payload-mismatch' >&2
+  exit 1
+}
+
+# Two producers race on the SAME content cell (same bytes ⇒ same address).
+# Exactly one complete artifact may win; consumer must observe those bytes.
+set +e
+publish "$tmp/race-shelf" "$tmp/table-a.json" "$content_key" >"$tmp/publish-a.out" 2>"$tmp/publish-a.err" &
 publisher_a=$!
-publish "$tmp/race-shelf" "$tmp/table-b.json" >"$tmp/publish-b.out" 2>"$tmp/publish-b.err" &
+publish "$tmp/race-shelf" "$tmp/table-a.json" "$content_key" >"$tmp/publish-b.out" 2>"$tmp/publish-b.err" &
 publisher_b=$!
 wait "$publisher_a"; status_a=$?
 wait "$publisher_b"; status_b=$?
 set -e
 [[ "$status_a" == 0 && "$status_b" == 0 ]] || {
   echo "python-demand-table racing publishers failed: publisher-a=$status_a publisher-b=$status_b" >&2
+  cat "$tmp/publish-a.err" "$tmp/publish-b.err" >&2 || true
   exit 1
 }
-pull "$tmp/race-shelf" "$tmp/race-pull.json"
-if cmp -s "$tmp/race-pull.json" "$tmp/table-a.json"; then
-  winner=a
-elif cmp -s "$tmp/race-pull.json" "$tmp/table-b.json"; then
-  winner=b
-else
-  echo 'python-demand-table consumer observed a torn artifact from racing publishers' >&2
+pull "$tmp/race-shelf" "$tmp/race-pull.json" "$content_key"
+cmp -s "$tmp/race-pull.json" "$tmp/table-a.json" || {
+  echo 'python-demand-table consumer observed torn or wrong bytes after race' >&2
   exit 1
-fi
+}
 
-echo "PASS: python-demand-table rejects incomplete publication and consumes coherent racing winner $winner"
+echo "PASS: python-demand-table rejects key/payload lie; race on same cell is coherent"
