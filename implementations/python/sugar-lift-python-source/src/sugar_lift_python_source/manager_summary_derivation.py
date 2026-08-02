@@ -1232,12 +1232,16 @@ def populate_source_derived_resource_refs(
     context = source_file.root.unit.construction_context
     if context is None:
         return
+    # Reuse the already-open typed module. A fresh lexical pass used to
+    # MaterializeModule the consumer body a second time (same source_cid,
+    # absolute vs relative seat in the profile) — residual ~0.25s on _json.
     receipts, _ = authenticated_import_use_receipts(
         Path(root),
         Path(path),
         source_file.unit.source,
         source_file.unit.source_cid,
         module_identities={},
+        module=source_file.root,
     )
     uses = _projected_manager_call_uses(source_file)
     if selected_coordinates is not None:
