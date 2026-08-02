@@ -1293,9 +1293,19 @@ def authenticated_import_use_receipts(
     """Return typed, final-checked Call-target receipts from the lexical pass."""
     # Refuse mismatched claims here (same boundary as AuthenticatedImportUseV1);
     # never rewrite source_cid after minting.
+    if module_identities is None:
+        module_identities = {}
     rows, outcomes = authenticated_import_uses(
         root, path, source, source_cid, module_identities=module_identities
     )
+    # Same pass fills revalidation snapshot so receipt.revalidate() does not
+    # re-Materialize the module (mint+revalidate was a second SourceFile).
+    cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
+    if cache_key not in _REVALIDATION_SNAPSHOTS:
+        _REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(
+            row_cids=frozenset(_hash(row) for row in rows),
+            outcomes=MappingProxyType(dict(outcomes)),
+        )
     return (
         _mint_import_use_receipts(
             rows,
@@ -1323,9 +1333,17 @@ def authenticated_import_value_use_receipts(
     authority.  Call-target receipts remain on
     ``authenticated_import_use_receipts`` unchanged.
     """
+    if module_identities is None:
+        module_identities = {}
     rows, outcomes = authenticated_import_value_uses(
         root, path, source, source_cid, module_identities=module_identities
     )
+    cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
+    if cache_key not in _VALUE_REVALIDATION_SNAPSHOTS:
+        _VALUE_REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(
+            row_cids=frozenset(_hash(row) for row in rows),
+            outcomes=MappingProxyType(dict(outcomes)),
+        )
     return (
         _mint_import_use_receipts(
             rows,

@@ -72,6 +72,10 @@ class SourceResolutionSession:
         "frame_holds",
         "frame_active",
         "module_materializations",
+        "prefix_files",
+        "prefix_fallthrough",
+        "import_use_rosters",
+        "import_value_rosters",
     )
 
     def __init__(self, *, enabled: bool = True) -> None:
@@ -94,6 +98,15 @@ class SourceResolutionSession:
         # megamodules (pandas/_config/config.py ×18 in one _json.py open). The
         # value is live context-bound, so it lives here — never process-global.
         self.module_materializations: dict[tuple, Any] = {}
+        # Prefix-door SourceFile (no frame_projection). Export fallthrough called
+        # _module_prefix_outcome once per export locus and rebuilt config N times.
+        # Separate from module_materializations: different context settings.
+        self.prefix_files: dict[str, Any] = {}
+        # (source_cid, lineno, col_offset) -> bool fallthrough answer
+        self.prefix_fallthrough: dict[tuple, bool] = {}
+        # source_cid -> import-use / value-use receipt tuples (lexical pass once)
+        self.import_use_rosters: dict[str, Any] = {}
+        self.import_value_rosters: dict[str, Any] = {}
 
     # -- export resolution memo ------------------------------------------
 
@@ -124,6 +137,40 @@ class SourceResolutionSession:
     def remember_module_materialize(self, key: tuple, product: Any) -> None:
         if self.enabled:
             self.module_materializations[key] = product
+
+    # -- prefix-door SourceFile + fallthrough (export path) --------------
+
+    def prefix_file_hit(self, source_cid: str) -> Any | None:
+        return self.prefix_files.get(source_cid) if self.enabled else None
+
+    def remember_prefix_file(self, source_cid: str, source_file: Any) -> None:
+        if self.enabled:
+            self.prefix_files[source_cid] = source_file
+
+    def fallthrough_hit(self, key: tuple) -> bool | None:
+        if not self.enabled:
+            return None
+        return self.prefix_fallthrough.get(key)
+
+    def remember_fallthrough(self, key: tuple, value: bool) -> None:
+        if self.enabled:
+            self.prefix_fallthrough[key] = value
+
+    # -- lexical import rosters (call / value doors) ---------------------
+
+    def import_use_hit(self, source_cid: str) -> Any | None:
+        return self.import_use_rosters.get(source_cid) if self.enabled else None
+
+    def remember_import_use(self, source_cid: str, receipts: Any) -> None:
+        if self.enabled:
+            self.import_use_rosters[source_cid] = receipts
+
+    def import_value_hit(self, source_cid: str) -> Any | None:
+        return self.import_value_rosters.get(source_cid) if self.enabled else None
+
+    def remember_import_value(self, source_cid: str, receipts: Any) -> None:
+        if self.enabled:
+            self.import_value_rosters[source_cid] = receipts
 
 
 def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionSession:
