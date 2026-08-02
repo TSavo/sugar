@@ -53,3 +53,40 @@ def test_compose_unmeasured_law_still_named_in_workflow() -> None:
     # Attendance dual-belt only on sealed board.
     assert "measurementClass" in text
     assert "bodyCid" in text
+
+
+def test_lpt_prior_shelf_is_actions_cached_and_pin_keyed() -> None:
+    """CI runners start clean — without actions/cache the shelf dies every run.
+
+    Key must include corpus pin aggregate so a different pin is not the exact
+    restore hit. Entries remain content-addressed by file bytes (#7040).
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "actions/cache/restore@v4" in text
+    assert "actions/cache/save@v4" in text
+    assert "SUGAR_LPT_PRIOR_DIR" in text
+    assert ".cache/sugar/lpt-file-costs" in text
+    assert "lpt-recensus-file-costs-" in text
+    # Pin identity in the key (not tip-only).
+    assert "aggregate_hash" in text
+    assert "lpt-recensus-file-costs-${{ steps.pin.outputs.aggregate_hash }}" in text or (
+        "lpt-recensus-file-costs-${{ needs.plan.outputs.aggregate_hash }}" in text
+    )
+    # Compose unions seat deltas so one full run fills the fleet shelf.
+    assert "lpt-prior-union" in text or "union LPT prior" in text
+    assert "control-effect-recensus-lpt-prior-" in text
+
+
+def test_recensus_write_through_file_s_to_lpt_prior() -> None:
+    """Every measured file_s must land on the CA prior — not only a hand-seed."""
+    recensus = (
+        ROOT
+        / "implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py"
+    )
+    src = recensus.read_text(encoding="utf-8")
+    assert "ContentAddressedCostPrior" in src
+    assert "put_for_path" in src
+    assert "control-effect-recensus" in src
+    assert "file_s" in src
+    # Write-through sits after running-counts persist (same durability belt).
+    assert src.index("running-counts") < src.index("put_for_path")

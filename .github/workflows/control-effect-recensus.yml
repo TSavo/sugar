@@ -55,6 +55,9 @@ jobs:
       root: ${{ steps.population.outputs.root }}
       plan_cid: ${{ steps.plan.outputs.plan_cid }}
       shard_count: ${{ steps.plan.outputs.shard_count }}
+      # Pin-keyed LPT shelf: different corpus pin must not restore as exact key.
+      aggregate_hash: ${{ steps.pin.outputs.aggregate_hash }}
+      lpt_dir: ${{ steps.lpt.outputs.dir }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,8 +79,10 @@ jobs:
           echo "recensus population: authenticated pandas corpus at $PANDAS_CORPUS"
           echo "root=$PANDAS_CORPUS" >> "$GITHUB_OUTPUT"
 
-      - name: "Phase: pin + LPT plan (no measure)"
-        id: plan
+      # Pin first so the LPT cache key includes aggregateHash — empty CI runners
+      # otherwise plan with an empty shelf and degrade to equal-count (1.87× pole).
+      - name: "Phase: pin enrolled files (no measure)"
+        id: pin
         shell: bash
         env:
           PANDAS_CORPUS: ${{ steps.population.outputs.root }}
@@ -86,9 +91,6 @@ jobs:
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
           mkdir -p "$OUT"
-          # Emit enrolled file identities matching the worker's by_file keys:
-          #   {corpus_root.name}/{rel_posix}
-          # and pin aggregate / manifest shape for plan bind.
           python -u - <<'PY'
           import json, os, sys
           from pathlib import Path
@@ -107,7 +109,6 @@ jobs:
           pin = pin_corpus(corpus_root)
           paths = list(SourceTree(corpus_root).paths())
           if subtree:
-              # Bounded dispatch: keep only files under optional subtree.
               sub = (corpus_root / subtree).resolve()
               paths = [p for p in paths if sub == p.resolve() or sub in p.resolve().parents]
           enrolled = sorted(
@@ -118,7 +119,6 @@ jobs:
               print("::error::no enrolled files after pin/subtree filter", file=sys.stderr)
               sys.exit(1)
           manifest_shape_cid = corpus_manifest_shape_cid(list(pin.paths))
-          # Install root seats are recorded against (pandas/foo.py under site-packages).
           installed = install_root_for(str(corpus_root))
           locus_root = corpus_root if installed is None else Path(installed)
           (out / "enrolled-files.json").write_text(
@@ -145,13 +145,49 @@ jobs:
               f"manifest={manifest_shape_cid[:24]}… locus_root={locus_root}",
               flush=True,
           )
+          # Expose pin aggregate for cache key (pin identity, not tip).
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh:
+              gh.write(f"aggregate_hash={pin.aggregate_hash}\n")
           PY
+
+      # Workspace-writable shelf (HOME/.cache may be unwritable on self-hosted).
+      # Keyed by corpus pin aggregate so a different pin cannot be the exact hit;
+      # entries themselves are content-addressed by file bytes (#7040).
+      - name: Resolve LPT file-cost prior path
+        id: lpt
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${GITHUB_WORKSPACE}/.cache/sugar/lpt-file-costs"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_LPT_PRIOR_DIR=$dir" >> "$GITHUB_ENV"
+          echo "JOB_LOG phase=lpt-prior status=resolve dir=$dir population=control-effect-recensus"
+
+      - name: Restore LPT file-cost prior (pin-keyed)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-recensus-file-costs-${{ steps.pin.outputs.aggregate_hash }}-${{ github.run_id }}-plan
+          restore-keys: |
+            lpt-recensus-file-costs-${{ steps.pin.outputs.aggregate_hash }}-
+            lpt-recensus-file-costs-
+
+      - name: "Phase: LPT plan (no measure; uses restored prior)"
+        id: plan
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ steps.population.outputs.root }}
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
           META="$OUT/pin-meta.json"
+          test -f "$META" || { echo "::error::pin-meta.json missing"; exit 1; }
           AGG="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["aggregateHash"])' "$META")"
           MANIFEST="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["manifestShapeCid"])' "$META")"
-          # LPT prior resolves enrolled keys as <locus_root>/<enrolled> so
-          # pandas/core/frame.py lands under site-packages/pandas/core/...
           LOCUS="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["locusRoot"])' "$META")"
+          PRIOR_N="$(find "${SUGAR_LPT_PRIOR_DIR}" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+          echo "JOB_LOG phase=lpt-prior status=pre-plan entries=${PRIOR_N} dir=${SUGAR_LPT_PRIOR_DIR} aggregate=${AGG:0:16}"
           python -u tools/plan_control_effect_recensus_shards.py \
             --enrolled-files "$OUT/enrolled-files.json" \
             --corpus-root "$LOCUS" \
@@ -162,9 +198,10 @@ jobs:
             --out "$OUT/plan.json"
           PLAN_CID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["planCid"])' "$OUT/plan.json")"
           K="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["shardCount"])' "$OUT/plan.json")"
+          MODE="$(python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("splitMode") or json.load(open(sys.argv[1])).get("mode") or "?")' "$OUT/plan.json")"
           echo "plan_cid=$PLAN_CID" >> "$GITHUB_OUTPUT"
           echo "shard_count=$K" >> "$GITHUB_OUTPUT"
-          echo "recensus phase=plan status=done planCid=$PLAN_CID k=$K"
+          echo "recensus phase=plan status=done planCid=$PLAN_CID k=$K mode=$MODE prior_entries=$PRIOR_N"
 
       - name: Upload plan artifacts
         uses: actions/upload-artifact@v4
@@ -202,6 +239,28 @@ jobs:
           name: control-effect-recensus-plan
           path: .sugar/pandas-control-effect
 
+      # Restore pin-keyed LPT shelf so write-through appends to fleet prior,
+      # not an empty local dir that dies when the runner is recycled.
+      - name: Resolve LPT file-cost prior path
+        id: lpt
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${GITHUB_WORKSPACE}/.cache/sugar/lpt-file-costs"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_LPT_PRIOR_DIR=$dir" >> "$GITHUB_ENV"
+          echo "JOB_LOG phase=lpt-prior status=resolve dir=$dir seat=s$(printf '%02d' '${{ matrix.shard }}')"
+
+      - name: Restore LPT file-cost prior (pin-keyed)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-recensus-file-costs-${{ needs.plan.outputs.aggregate_hash }}-${{ github.run_id }}-s${{ matrix.shard }}
+          restore-keys: |
+            lpt-recensus-file-costs-${{ needs.plan.outputs.aggregate_hash }}-
+            lpt-recensus-file-costs-
+
       - name: "Phase: measure shard partial only"
         shell: bash
         env:
@@ -219,6 +278,7 @@ jobs:
           fi
           echo "recensus phase=measure-shard status=start shard=$SHARD/$K corpus_root=$PANDAS_CORPUS commit=$GITHUB_SHA"
           # Worker: --plan-json + --shard-index → PARTIAL only (never seals).
+          # control_effect_recensus write-throughs each file_s → LPT shelf.
           python -u implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py \
             "$PANDAS_CORPUS" \
             --corpus-root "$PANDAS_CORPUS" \
@@ -230,6 +290,8 @@ jobs:
             --partial-out "$OUT/partial-s$(printf '%02d' "$SHARD").json"
           echo "recensus phase=measure-shard status=done shard=$SHARD"
           ls -la "$OUT"/partial-s*.json || true
+          PRIOR_N="$(find "${SUGAR_LPT_PRIOR_DIR}" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+          echo "JOB_LOG phase=lpt-prior-write status=post-shard entries=${PRIOR_N} seat=s$(printf '%02d' "$SHARD")"
 
       - name: Upload shard partial
         if: always()
@@ -237,6 +299,23 @@ jobs:
         with:
           name: control-effect-recensus-partial-s${{ matrix.shard }}
           path: .sugar/pandas-control-effect/partial-s*.json
+          if-no-files-found: warn
+
+      # Per-seat save: concurrent first-wins; content-addressed entries merge
+      # safely across seats. Compose also merges all seats into one fleet key.
+      - name: Save LPT file-cost prior (pin-keyed, per seat)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-recensus-file-costs-${{ needs.plan.outputs.aggregate_hash }}-${{ github.run_id }}-s${{ matrix.shard }}
+
+      - name: Upload LPT prior delta (for compose union)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-effect-recensus-lpt-prior-s${{ matrix.shard }}
+          path: ${{ steps.lpt.outputs.dir }}
           if-no-files-found: warn
 
   # ---------------------------------------------------------------- compose
@@ -267,6 +346,49 @@ jobs:
           pattern: control-effect-recensus-partial-*
           path: .sugar/pandas-control-effect/partials-raw
           merge-multiple: true
+
+      # Union all seat write-throughs into one shelf, then save under the pin
+      # key so the NEXT plan restores a complete prior (not equal-count degrade).
+      - name: Resolve LPT file-cost prior path
+        id: lpt
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${GITHUB_WORKSPACE}/.cache/sugar/lpt-file-costs"
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "SUGAR_LPT_PRIOR_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: Download all shard LPT prior deltas
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          pattern: control-effect-recensus-lpt-prior-*
+          path: .sugar/pandas-control-effect/lpt-prior-raw
+          merge-multiple: true
+
+      - name: "Phase: union LPT prior from all seats (self-maintaining shelf)"
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="${{ steps.lpt.outputs.dir }}"
+          mkdir -p "$DEST"
+          RAW=".sugar/pandas-control-effect/lpt-prior-raw"
+          if [[ -d "$RAW" ]]; then
+            # Content-addressed filenames: last write of same cid wins; union is free.
+            find "$RAW" -type f -name '*.json' -print0 2>/dev/null \
+              | xargs -0 -I{} cp -f {} "$DEST/" 2>/dev/null || true
+          fi
+          N="$(find "$DEST" -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+          echo "JOB_LOG phase=lpt-prior-union status=done entries=${N} dir=${DEST} pin=${{ needs.plan.outputs.aggregate_hash }}"
+
+      - name: Save LPT file-cost prior (pin-keyed, fleet merge)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.lpt.outputs.dir }}
+          key: lpt-recensus-file-costs-${{ needs.plan.outputs.aggregate_hash }}-${{ github.run_id }}-merged
 
       - name: "Phase: compose board (UNMEASURED if any seat missing)"
         shell: bash

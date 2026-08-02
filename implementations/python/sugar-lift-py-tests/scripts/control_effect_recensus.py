@@ -1353,6 +1353,22 @@ def main() -> int:
                         + "\n"
                     )
                     rc_stream.flush()
+                # Content-addressed LPT prior write-through (#7040 law for
+                # recensus). Every measured file_s must land on the shelf so
+                # the next plan is LPT, not equal-count. Hand-seed is not a
+                # standing property; this is. Prior must never kill the walk.
+                # ``path`` is the filesystem seat; ``file`` is the enrolled key.
+                try:
+                    from lpt_file_shards import ContentAddressedCostPrior
+
+                    ContentAddressedCostPrior().put_for_path(
+                        path,
+                        file_s,
+                        source="control-effect-recensus",
+                        path_hint=relative,
+                    )
+                except Exception:  # noqa: BLE001 — prior must not kill scan
+                    pass
                 # One-line cause for slow files (always for first/last/every-N,
                 # and always when wall exceeds 5s so a long open names its phase).
                 slow = file_s >= 5.0
