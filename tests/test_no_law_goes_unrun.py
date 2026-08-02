@@ -3,7 +3,7 @@
 ``bpytest`` runs as root on battleaxe. Root bypasses the DAC mode checks that
 uid-sensitive laws are about, so a test guarding on ``os.getuid() == 0`` and
 skipping is unfalsifiable there: it can never fail, no matter how broken the
-code under it becomes. Two permission laws in ``test_heavy_measurement_lease``
+code under it becomes. Two permission laws in ``test_heavy_measurement_concurrency_topology``
 skipped on the box while passing locally, and nobody noticed, because the suite
 did not go red -- it went *smaller*.
 

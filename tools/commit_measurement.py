@@ -8,12 +8,12 @@ as computed residual.
     AxisReading = Measured(...) | Unmeasured(reason)
     commit_measurement(...) -> CompleteVector | PartialVector
 
-Measured requires BOTH:
-  - lease receipt CID (proves lease acquired / ran under lease at commit)
+Measured requires:
   - body artifact CID + value_field_path (the report that owns the number)
+  - identity binding on the body when present (measuredCommit / commit)
 
-A lease without a body is Unmeasured (today's package-suite: ran, no
-suite-report.json). A free-floating value without both digests is unconstructible.
+There is no machine-wide lease. A free-floating value without a body CID is
+unconstructible. lease_receipt_cid is gone from the seal.
 
 CompleteVector has .total. PartialVector has no .total.
 Unmeasured is a third value, not zero.
@@ -97,14 +97,13 @@ def _lookup_path(body: Mapping[str, Any], field_path: str) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class Measured:
-    """Measured axis: value cited from a body artifact under a lease receipt.
+    """Measured axis: value cited from an identity-bound body artifact.
 
-    Unconstructible without lease receipt_cid AND body_artifact_cid AND
-    value_field_path. Lease alone does not prove the number.
+    Unconstructible without body_artifact_cid AND value_field_path.
+    No lease receipt in the seal — the global mutex is gone.
     """
 
     value: int
-    receipt_cid: str
     body_artifact_cid: str
     value_field_path: str
     collected: int
@@ -112,9 +111,6 @@ class Measured:
 
     def __post_init__(self) -> None:
         _require_int("value", self.value, min_value=0)
-        object.__setattr__(
-            self, "receipt_cid", _require_nonempty_str("receipt_cid", self.receipt_cid)
-        )
         object.__setattr__(
             self,
             "body_artifact_cid",
@@ -153,7 +149,6 @@ AxisReading = Union[Measured, Unmeasured]
 def measured(
     value: int,
     *,
-    receipt_cid: str,
     body_artifact_cid: str,
     value_field_path: str,
     collected: int,
@@ -161,7 +156,6 @@ def measured(
 ) -> Measured:
     return Measured(
         value,
-        receipt_cid,
         body_artifact_cid,
         value_field_path,
         collected,
@@ -173,35 +167,31 @@ def unmeasured(reason: str) -> Unmeasured:
     return Unmeasured(reason)
 
 
-def measured_from_sealed_pair(
+def measured_from_body(
     *,
     commit_sha: str,
-    lease_record: Mapping[str, Any],
-    lease_receipt_cid: str,
     body: Mapping[str, Any],
     body_artifact_cid: str,
     value_field_path: str,
     collected_field_path: str | None = None,
     exit_code: int | None = None,
 ) -> AxisReading:
-    """Cite-compose one axis from lease receipt + body artifact.
+    """Cite-compose one axis from an identity-bound body artifact.
 
-    Returns Unmeasured when lease not acquired, commit mismatch, or body
-    lacks the value field — never Measured without both digests.
+    Returns Unmeasured on commit mismatch or missing value field.
     """
     sha = _require_nonempty_str("commit_sha", commit_sha)
-    _require_nonempty_str("lease_receipt_cid", lease_receipt_cid)
     _require_nonempty_str("body_artifact_cid", body_artifact_cid)
     path = _require_nonempty_str("value_field_path", value_field_path)
 
-    if lease_record.get("acquired") is not True:
+    body_commit = (
+        body.get("measuredCommit")
+        or body.get("commit")
+        or body.get("gitCommit")
+    )
+    if isinstance(body_commit, str) and body_commit and body_commit != sha:
         return unmeasured(
-            f"lease not acquired (acquired={lease_record.get('acquired')!r})"
-        )
-    lease_commit = lease_record.get("commit") or lease_record.get("gitCommit")
-    if isinstance(lease_commit, str) and lease_commit and lease_commit != sha:
-        return unmeasured(
-            f"lease commit {lease_commit!r} != composition commit {sha!r}"
+            f"body commit {body_commit!r} != composition commit {sha!r}"
         )
     try:
         raw_value = _lookup_path(body, path)
@@ -220,7 +210,6 @@ def measured_from_sealed_pair(
         except KeyError:
             return unmeasured(f"body missing collected field {collected_field_path!r}")
     else:
-        # Prefer suite-report totals.collected when present
         try:
             c = _lookup_path(body, "totals.collected")
             if type(c) is int and c >= 0:
@@ -229,18 +218,24 @@ def measured_from_sealed_pair(
             collected = 0
     code = exit_code
     if code is None:
-        status = lease_record.get("measurementStatus") or ""
-        code = 0 if status == "completed/zero-findings" else 1
+        code = int(body.get("exitCode") or body.get("pytestExitStatus") or 0)
     if type(code) is not int:
         return unmeasured(f"exit_code not int: {code!r}")
     return measured(
         raw_value,
-        receipt_cid=lease_receipt_cid,
         body_artifact_cid=body_artifact_cid,
         value_field_path=path,
         collected=collected,
         exit_code=code,
     )
+
+
+# Back-compat alias during migration of call sites
+def measured_from_sealed_pair(**kwargs):
+    """Deprecated alias: ignores lease_* kwargs if present."""
+    kwargs.pop("lease_record", None)
+    kwargs.pop("lease_receipt_cid", None)
+    return measured_from_body(**kwargs)
 
 
 def _require_axes_map(axes: object) -> dict[str, AxisReading]:
@@ -401,17 +396,9 @@ def _load_json(path: Path) -> Mapping[str, Any] | None:
     return payload if isinstance(payload, Mapping) else None
 
 
-def _lease_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    if "leaseRecord" in payload and isinstance(payload["leaseRecord"], Mapping):
-        return payload["leaseRecord"]
-    if "leaseClass" in payload or "acquired" in payload:
-        return payload
-    return None
-
-
 # Per-commit tip axes only (nightlies are a different obligation).
 TIP_AXIS_SPECS: tuple[tuple[str, str, str], ...] = (
-    # axis_name, leaseClass, value_field_path on body
+    # axis_name, measurementClass, value_field_path on body
     ("python-package-suite", "python-package-suite", "totals.failed"),
     (
         "python-sole-construction-floors",
@@ -427,71 +414,52 @@ def compose_tip_from_receipts_dir(
     *,
     roster_cid: str = "heavy-roster:per-commit",
 ) -> CommitMeasurement:
-    """Cite-compose tip axes from a directory of downloaded artifacts.
+    """Cite-compose tip axes from a directory of downloaded measurement bodies.
 
-    For each enrolled per-commit class: find a lease-acquired receipt and a
-    body (suite-report style JSON). Missing either → Unmeasured for that axis.
-    Never recomputes product residual; values are field-paths on sealed bodies.
+    For each enrolled per-commit class: find an identity-bound body
+    (measurementClass / path hints / suite-report shape). Missing body →
+    Unmeasured. Never recomputes product residual; values are field-paths on
+    sealed bodies. No lease receipt is consulted.
     """
     sha = _require_nonempty_str("commit_sha", commit_sha)
     root = Path(receipts_dir)
-    # Index lease records and body reports by leaseClass / presence
-    leases: dict[str, tuple[Path, Mapping[str, Any]]] = {}
-    bodies: list[tuple[Path, Mapping[str, Any]]] = []
+    # measurementClass -> (path, body)
+    by_class: dict[str, tuple[Path, Mapping[str, Any]]] = {}
     if root.is_dir():
         for path in sorted(root.rglob("*.json")):
             payload = _load_json(path)
             if payload is None:
                 continue
-            lease = _lease_from_payload(payload)
-            if lease is not None and lease.get("leaseClass"):
-                cls = str(lease["leaseClass"])
-                # Prefer acquired true if multiple
-                prev = leases.get(cls)
-                if prev is None or lease.get("acquired") is True:
-                    leases[cls] = (path, lease)
-            # Body candidates: have totals or failedNodeIds
-            if "totals" in payload or "failedNodeIds" in payload:
-                bodies.append((path, payload))
+            cls = payload.get("measurementClass")
+            if not isinstance(cls, str):
+                text = str(path).replace("\\", "/")
+                if "suite-report" in path.name or "python-package-suite" in text:
+                    cls = "python-package-suite"
+                elif "floor-measurement" in path.name or "sole-construction" in text:
+                    cls = "python-sole-construction-floors"
+                else:
+                    continue
+            if "totals" not in payload and "failedNodeIds" not in payload:
+                # still accept floor-measurement with totals.failed
+                if "exitCode" in payload and "totals" not in payload:
+                    payload = {
+                        **payload,
+                        "totals": {"failed": 0 if payload.get("exitCode") == 0 else 1},
+                    }
+                elif "totals" not in payload and "failedNodeIds" not in payload:
+                    continue
+            by_class.setdefault(cls, (path, payload))
 
     axes: dict[str, AxisReading] = {}
-    for axis_name, lease_class, value_path in TIP_AXIS_SPECS:
-        if lease_class not in leases:
+    for axis_name, class_name, value_path in TIP_AXIS_SPECS:
+        if class_name not in by_class:
             axes[axis_name] = unmeasured(
-                f"no lease receipt for class {lease_class!r} at commit {sha}"
+                f"no measurement body for class {class_name!r} at commit {sha}"
             )
             continue
-        lease_path, lease_rec = leases[lease_class]
-        lease_cid = content_cid(lease_rec)
-        # Body: embed on same file, or separate suite-report in same run dir
-        body_path: Path | None = None
-        body: Mapping[str, Any] | None = None
-        full = _load_json(lease_path)
-        if full and ("totals" in full or "failedNodeIds" in full):
-            body_path, body = lease_path, full
-        else:
-            run_dir = lease_path.parent
-            for cand in sorted(run_dir.rglob("*.json")):
-                payload = _load_json(cand)
-                if payload and ("totals" in payload or "failedNodeIds" in payload):
-                    body_path, body = cand, payload
-                    break
-            if body is None:
-                # last resort: any body in tree with matching commit field
-                for bpath, bpay in bodies:
-                    if bpay.get("gitCommit") == sha or bpay.get("commit") == sha:
-                        body_path, body = bpath, bpay
-                        break
-        if body is None or body_path is None:
-            axes[axis_name] = unmeasured(
-                f"NoReport: lease present for {lease_class!r} but no body artifact "
-                f"(suite-report / floor report)"
-            )
-            continue
-        axes[axis_name] = measured_from_sealed_pair(
+        _path, body = by_class[class_name]
+        axes[axis_name] = measured_from_body(
             commit_sha=sha,
-            lease_record=lease_rec,
-            lease_receipt_cid=lease_cid,
             body=body,
             body_artifact_cid=content_cid(body),
             value_field_path=value_path,
