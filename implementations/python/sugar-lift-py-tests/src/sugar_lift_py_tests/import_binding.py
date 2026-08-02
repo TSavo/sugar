@@ -166,6 +166,9 @@ class AuthenticatedImportUseV1:
         repr=False, compare=False
     )
     _authority: object = dataclass_field(repr=False, compare=False)
+    # Content address of ``demand`` (the lexical row). Minted once; revalidate
+    # and snapshot membership use this instead of re-hashing the row per path.
+    demand_cid: str = dataclass_field(repr=False, compare=False, default="")
 
     def __post_init__(self) -> None:
         if self._authority is not _IMPORT_AUTHORITY:
@@ -203,6 +206,9 @@ class AuthenticatedImportUseV1:
         else:
             # call-contract-demand — closed call shape only.
             _require_call_contract_demand(self)
+        # Pin demand content address once (mint supplies it; forge path computes).
+        if not self.demand_cid:
+            object.__setattr__(self, "demand_cid", _hash(self.demand))
 
     def revalidate(self) -> None:
         """Demand byte identity against one shared #6090 snapshot per module.
@@ -215,7 +221,20 @@ class AuthenticatedImportUseV1:
         Call-target and value-use demands revalidate against their own
         row/outcome surfaces so Call receipts stay unchanged and neither
         surface can authorize the other.
+
+        Once-per-content (#7083 disease class): a demand that has already
+        proven membership under its content CID is not re-asked when reached
+        by a different path (manager seat, resolve_import_binding, floor,
+        sugar). Black cold profile: revalidate ×1011 on one test_pandas open
+        — answer cannot change; re-ask is design smell, not cost hygiene.
         """
+        if getattr(self, "_revalidated_ok", False):
+            return
+        surface = _revalidation_surface(self.demand)
+        memo_key = (self.demand_cid, surface)
+        if memo_key in _REVALIDATED_DEMANDS:
+            object.__setattr__(self, "_revalidated_ok", True)
+            return
         site = self.use["useSite"]
         key = (
             site["startLine"],
@@ -223,7 +242,7 @@ class AuthenticatedImportUseV1:
             site["endLine"],
             site["endCol"],
         )
-        if self.demand.get("kind") == "import-value-use-demand":
+        if surface == "value":
             snapshot = _lexical_value_revalidation_snapshot(
                 self.root,
                 self.path,
@@ -241,12 +260,14 @@ class AuthenticatedImportUseV1:
                 self.module_identities,
             )
             expected = "authenticated-import-use"
-        if snapshot.outcome_at(key) != expected or not (
-            snapshot.contains_row(self.demand)
+        if snapshot.outcome_at(key) != expected or not snapshot.contains_row_cid(
+            self.demand_cid
         ):
             raise ValueError(
                 "authenticated import use is not byte-identical to lexical revalidation"
             )
+        _REVALIDATED_DEMANDS.add(memo_key)
+        object.__setattr__(self, "_revalidated_ok", True)
 
 
 def _authenticated_binding_target_symbol(binding: ImportBindingV1) -> str:
@@ -1056,25 +1077,42 @@ class _LexicalRevalidationSnapshotV1:
         """Byte identity against the pass's rows, by content address."""
         return _hash(row) in self.row_cids
 
+    def contains_row_cid(self, row_cid: str) -> bool:
+        """Membership by precomputed row content address (no re-hash)."""
+        return row_cid in self.row_cids
+
     def outcome_at(self, site: tuple[int, int, int, int]) -> str | None:
         return self.outcomes.get(site)
 
 
 # Shared #6090 snapshot for revalidation only.  Keyed by consumer module
-# content + identities map so many receipts share one full-module pass.
-# See docs/audits/pandas-recensus-latency-bisect.md.
+# content + package role + identities (not asker path — same disease as
+# path-local auth re-ask). See docs/audits/pandas-recensus-latency-bisect.md
+# and process_resident_file §4 lexical key.
 _REVALIDATION_SNAPSHOTS: dict[
-    tuple[str, str, str, str], _LexicalRevalidationSnapshotV1
+    tuple[str, bool, str], _LexicalRevalidationSnapshotV1
 ] = {}
 _VALUE_REVALIDATION_SNAPSHOTS: dict[
-    tuple[str, str, str, str], _LexicalRevalidationSnapshotV1
+    tuple[str, bool, str], _LexicalRevalidationSnapshotV1
 ] = {}
+
+# Demand content CIDs already proven against their surface.  Pure content fact
+# (h = h(p)): once the demand is in the snapshot, every later path that holds
+# the same demand content is free.  Cleared with snapshots.
+_REVALIDATED_DEMANDS: set[tuple[str, str]] = set()
+
+
+def _revalidation_surface(demand: Mapping[str, Any]) -> str:
+    if demand.get("kind") == "import-value-use-demand":
+        return "value"
+    return "call"
 
 
 def clear_lexical_revalidation_snapshots() -> None:
     """Drop amortized revalidation snapshots (tests / hermetic process reuse)."""
     _REVALIDATION_SNAPSHOTS.clear()
     _VALUE_REVALIDATION_SNAPSHOTS.clear()
+    _REVALIDATED_DEMANDS.clear()
 
 
 def _revalidation_cache_key(
@@ -1082,11 +1120,17 @@ def _revalidation_cache_key(
     path: Path,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]],
-) -> tuple[str, str, str, str]:
+) -> tuple[str, bool, str]:
+    """Content key for the revalidation snapshot (not path-local).
+
+    Same body under two seat spellings must share one snapshot — package role
+    and identities are the only open inputs beyond source_cid (§4 law).
+    ``root``/``path`` remain parameters so miss-path lexical runs still seat.
+    """
+    del root  # seat is not the key; miss path still receives path for package bit
     return (
-        str(root.resolve()),
-        str(path.resolve()),
         source_cid,
+        Path(path).name == "__init__.py",
         _hash(module_identities),
     )
 
@@ -1297,27 +1341,39 @@ def _mint_import_use_receipts(
     source: str,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None,
+    prevalidated: bool = False,
 ) -> list[AuthenticatedImportUseV1]:
+    """Mint seat-bound receipts.
+
+    ``prevalidated=True`` when the caller just installed these exact ``rows``
+    into the revalidation snapshot for this content — membership is proven by
+    construction; later ``revalidate()`` must not re-hash each demand per path.
+    """
     receipts: list[AuthenticatedImportUseV1] = []
     for row in rows:
         binding_value = row["importBinding"]
         binding = ImportBindingV1(
             binding_value, row["importBindingCid"], _IMPORT_AUTHORITY
         )
-        receipts.append(
-            AuthenticatedImportUseV1(
-                import_binding=binding,
-                target_symbol=row["targetSymbol"],
-                use=row["authenticatedImportUse"],
-                demand=row,
-                root=root,
-                path=path,
-                source=source,
-                source_cid=source_cid,
-                module_identities=dict(module_identities or {}),
-                _authority=_IMPORT_AUTHORITY,
-            )
+        demand_cid = _hash(row)
+        receipt = AuthenticatedImportUseV1(
+            import_binding=binding,
+            target_symbol=row["targetSymbol"],
+            use=row["authenticatedImportUse"],
+            demand=row,
+            root=root,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities=dict(module_identities or {}),
+            _authority=_IMPORT_AUTHORITY,
+            demand_cid=demand_cid,
         )
+        if prevalidated:
+            surface = _revalidation_surface(row)
+            _REVALIDATED_DEMANDS.add((demand_cid, surface))
+            object.__setattr__(receipt, "_revalidated_ok", True)
+        receipts.append(receipt)
     return receipts
 
 
@@ -1365,10 +1421,13 @@ def authenticated_import_use_receipts(
         )
     # Same pass fills revalidation snapshot so receipt.revalidate() does not
     # re-Materialize the module (mint+revalidate was a second SourceFile).
+    # Row CIDs are the demand content addresses — mint stamps them and marks
+    # prevalidated so multi-path revalidate is free (once per content).
     cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
+    row_cids = frozenset(_hash(row) for row in rows)
     if cache_key not in _REVALIDATION_SNAPSHOTS:
         _REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(
-            row_cids=frozenset(_hash(row) for row in rows),
+            row_cids=row_cids,
             outcomes=MappingProxyType(dict(outcomes)),
         )
     return (
@@ -1379,6 +1438,7 @@ def authenticated_import_use_receipts(
             source=source,
             source_cid=source_cid,
             module_identities=module_identities,
+            prevalidated=True,
         ),
         outcomes,
     )
@@ -1424,9 +1484,10 @@ def authenticated_import_value_use_receipts(
             root, path, source, source_cid, module_identities=module_identities
         )
     cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
+    row_cids = frozenset(_hash(row) for row in rows)
     if cache_key not in _VALUE_REVALIDATION_SNAPSHOTS:
         _VALUE_REVALIDATION_SNAPSHOTS[cache_key] = _LexicalRevalidationSnapshotV1(
-            row_cids=frozenset(_hash(row) for row in rows),
+            row_cids=row_cids,
             outcomes=MappingProxyType(dict(outcomes)),
         )
     return (
@@ -1437,6 +1498,7 @@ def authenticated_import_value_use_receipts(
             source=source,
             source_cid=source_cid,
             module_identities=module_identities,
+            prevalidated=True,
         ),
         outcomes,
     )
