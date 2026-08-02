@@ -31,12 +31,71 @@ _WORKER = Path(__file__).resolve().parent / "_supervised_enum_worker.py"
 # shared demand table is supplied. Authenticated pandas (~1421 files) is
 # multi-minute work — never share the 30s per-file lift timeout.
 # Floors run 30728650857: POPULATION → refused: None at ~30.0s exactly.
-_DEFAULT_CONTEXT_INIT_TIMEOUT = 1800.0
+#
+# CRITICAL: unit tests must NOT inherit the corpus budget. Suite shard 3
+# hung 23+ minutes on a worker blocked in pipe-read because a tiny-population
+# test shared _CORPUS_CONTEXT_INIT_TIMEOUT (1800s). Corpus and test are
+# different obligations — scale the default with declared population size.
+_CORPUS_CONTEXT_INIT_TIMEOUT = 1800.0
+_CORPUS_POPULATION_FLOOR = 500  # ≥ this many .py files → corpus budget
+_SMALL_POP_INIT_FLOOR_S = 10.0
+_SMALL_POP_INIT_PER_FILE_S = 2.0
+_SMALL_POP_INIT_CAP_S = 60.0
+# Backward-compat alias (was the only default; now corpus-only).
+_DEFAULT_CONTEXT_INIT_TIMEOUT = _CORPUS_CONTEXT_INIT_TIMEOUT
 
 # tools/job_log_heartbeat.py — job log, not file, ≤30s silence.
 _TOOLS = Path(__file__).resolve().parents[4] / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
+
+
+def count_python_population(root: Path) -> int:
+    """Declared scan population size: *.py under root (or 1 if root is a file)."""
+    root = root.resolve()
+    if root.is_file() and root.suffix == ".py":
+        return 1
+    if not root.is_dir():
+        return 0
+    n = 0
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        if path.is_file():
+            n += 1
+    return n
+
+
+def context_init_timeout_for_population(population_file_count: int) -> float:
+    """Seconds for worker context init, scaled by declared population.
+
+    - Full corpus order-of-magnitude (≥500 .py, authenticated pandas ~1421):
+      multi-minute provisional demand derivation → 1800s.
+    - Tiny / fixture populations (unit tests): seconds-scale so a hung init
+      fails the suite fast instead of parking a shard for half an hour.
+    - Env ``SUGAR_SUPERVISED_CONTEXT_INIT_TIMEOUT`` overrides when set.
+    """
+    override = os.environ.get("SUGAR_SUPERVISED_CONTEXT_INIT_TIMEOUT")
+    if override is not None and override.strip():
+        value = float(override)
+        if value <= 0:
+            raise ValueError(
+                "SUGAR_SUPERVISED_CONTEXT_INIT_TIMEOUT must be positive; "
+                f"got {value!r}"
+            )
+        return value
+    if population_file_count >= _CORPUS_POPULATION_FLOOR:
+        return _CORPUS_CONTEXT_INIT_TIMEOUT
+    if population_file_count <= 0:
+        # Missing/empty root still needs a short named refuse, not 1800s.
+        return _SMALL_POP_INIT_FLOOR_S
+    return min(
+        _SMALL_POP_INIT_CAP_S,
+        max(
+            _SMALL_POP_INIT_FLOOR_S,
+            _SMALL_POP_INIT_PER_FILE_S * float(population_file_count) + 5.0,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -81,7 +140,7 @@ class SupervisedEnumSupervisor:
         self,
         *,
         file_timeout: float = 30.0,
-        context_init_timeout: float = _DEFAULT_CONTEXT_INIT_TIMEOUT,
+        context_init_timeout: float | None = None,
         python: str | None = None,
         env: Mapping[str, str] | None = None,
         corpus_root: Path,
@@ -90,10 +149,7 @@ class SupervisedEnumSupervisor:
     ) -> None:
         if file_timeout > 30:
             raise ValueError("per-file timeout may not exceed 30 seconds")
-        if context_init_timeout <= 0:
-            raise ValueError("context_init_timeout must be positive")
         self.file_timeout = float(file_timeout)
-        self.context_init_timeout = float(context_init_timeout)
         self.python = python or sys.executable
         self.env = dict(env or os.environ)
         self.env.setdefault("PYTHONFAULTHANDLER", "1")
@@ -102,6 +158,15 @@ class SupervisedEnumSupervisor:
             None if demand_table_path is None else demand_table_path.resolve()
         )
         self.allow_local_demand_derivation = allow_local_demand_derivation
+        self.population_file_count = count_python_population(self.corpus_root)
+        if context_init_timeout is None:
+            self.context_init_timeout = context_init_timeout_for_population(
+                self.population_file_count
+            )
+        else:
+            if context_init_timeout <= 0:
+                raise ValueError("context_init_timeout must be positive")
+            self.context_init_timeout = float(context_init_timeout)
         self._proc: subprocess.Popen[str] | None = None
         self.worker_restarts = 0
         self._current_file: str | None = None
@@ -157,6 +222,7 @@ class SupervisedEnumSupervisor:
             f"corpus_root={self.corpus_root}",
             f"demand_table_path={demand!r}",
             f"allow_local_demand_derivation={self.allow_local_demand_derivation}",
+            f"population_file_count={self.population_file_count}",
             f"context_init_timeout_s={self.context_init_timeout}",
             f"elapsed_s={elapsed:.1f}",
         ]
@@ -166,7 +232,8 @@ class SupervisedEnumSupervisor:
                 "fix=pass demand_table_path (shared python-demand-table) or "
                 "raise context_init_timeout; local provisional demand derivation "
                 "over authenticated pandas is multi-minute work and must not "
-                "share the 30s per-file lift timeout"
+                "share the 30s per-file lift timeout; unit tests must use a "
+                "population-scaled budget (tiny trees fail in seconds, not 1800s)"
             )
         elif rc is not None:
             parts.append("mode=worker-exited")
@@ -246,6 +313,16 @@ class SupervisedEnumSupervisor:
                 f"response={ready!r}; worker={_WORKER}"
             )
         assert self._proc.stdin is not None
+        # Job log (not file): budget is population-scaled — name it before wait.
+        print(
+            "supervised-enum-context-init: "
+            f"population_file_count={self.population_file_count} "
+            f"context_init_timeout_s={self.context_init_timeout} "
+            f"corpus_root={self.corpus_root} "
+            f"demand_table_path="
+            f"{self.demand_table_path if self.demand_table_path else None}",
+            flush=True,
+        )
         initialize = {"kind": "initialize", "corpus_root": str(self.corpus_root)}
         if self.demand_table_path is not None:
             initialize["demand_table_path"] = str(self.demand_table_path)
@@ -680,9 +757,14 @@ def scan_paths(
     *,
     root: Path,
     file_timeout: float = 30.0,
-    context_init_timeout: float = _DEFAULT_CONTEXT_INIT_TIMEOUT,
+    context_init_timeout: float | None = None,
     demand_table_path: Path | None = None,
 ) -> list[FileTerminal]:
+    """Scan paths under root.
+
+    ``context_init_timeout`` defaults to population-scaled budget (tiny trees
+    seconds; full corpus 1800s). Pass an explicit float only when you mean it.
+    """
     pairs = [(_p, _relative_to_root(_p, root)) for _p in paths]
     supervisor = SupervisedEnumSupervisor(
         file_timeout=file_timeout,
