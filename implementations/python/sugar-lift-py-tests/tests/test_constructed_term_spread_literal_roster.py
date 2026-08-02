@@ -141,7 +141,7 @@ def test_multi_function_file_with_star_call_enumerates_full_roster() -> None:
             workspace_root=workspace,
             file_rel="mod.py",
         )
-    assert row.get("category") != "backend-defect", (
+    assert row.get("category") in {"completed", "panic"}, (
         f"spread call zero-banked the file: {row.get('defect') or row}"
     )
     # Full roster: helper, body, other

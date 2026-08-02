@@ -280,7 +280,7 @@ def _run_parent(args: argparse.Namespace) -> int:
                 "assertionCount": 0,
                 "terminal": {
                     "file": rel,
-                    "category": "backend-defect",
+                    "category": "panic",
                     "reason": f"{type(error).__name__}: {error}",
                 },
             }
