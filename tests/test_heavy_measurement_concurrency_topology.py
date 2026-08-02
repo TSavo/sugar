@@ -157,11 +157,17 @@ def test_the_two_cadences_are_never_summed():
 
 def test_the_authoritative_scoreboard_is_on_the_roster():
     module = _attendance_module()
+    # Sole seal door (serial seal retired from the walk script).
     authority = (
+        ROOT
+        / "implementations/python/sugar-lift-py-tests/scripts/compose_control_effect_board.py"
+    )
+    worker = (
         ROOT
         / "implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py"
     )
     assert "SCOREBOARD_AUTHORITY = True" in authority.read_text()
+    assert "SCOREBOARD_AUTHORITY = False" in worker.read_text()
     assert "control-effect-recensus" in module.HEAVY_ROSTER
     assert module.HEAVY_CADENCE["control-effect-recensus"] == module.NIGHTLY_WINDOW
 

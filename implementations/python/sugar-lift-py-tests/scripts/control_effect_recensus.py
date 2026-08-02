@@ -81,9 +81,11 @@ debugging a named stall needs the full stack flood.
 
 from __future__ import annotations
 
-# The sole authoritative Python corpus scoreboard. Enforced by
-# tests/test_one_authoritative_scoreboard.py: exactly one module may say True.
-SCOREBOARD_AUTHORITY = True
+# Worker / walk only. Sole seal door is compose_control_effect_board.py
+# (SCOREBOARD_AUTHORITY = True). Serial seal retired: this module never mints
+# measurementClass=control-effect-recensus; it emits terminals (+ optional
+# partials) and always seals through compose (k=1 or LPT N).
+SCOREBOARD_AUTHORITY = False
 
 _PANDAS_3_0_3_AGGREGATE_HASH = (
     "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
@@ -892,7 +894,32 @@ def main() -> int:
             "Use --no-progress-stdout only for interactive local quiet."
         ),
     )
+    parser.add_argument(
+        "--plan-json",
+        type=Path,
+        default=None,
+        help=(
+            "LPT shard plan (planCid). With --shard-index, measure only that bin "
+            "and emit a partial (never a sealed board)."
+        ),
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=None,
+        help="shard seat to measure (requires --plan-json); writes partial only",
+    )
+    parser.add_argument(
+        "--partial-out",
+        type=Path,
+        default=None,
+        help="where to write the shard partial JSON (default: <out-dir>/partial-sXX.json)",
+    )
     args = parser.parse_args()
+    if args.shard_index is not None and args.plan_json is None:
+        parser.error("--shard-index requires --plan-json")
+    if args.plan_json is not None and args.shard_index is None:
+        parser.error("--plan-json requires --shard-index for worker mode")
 
     if not args.corpus.exists():
         parser.error(f"corpus not found: {args.corpus}")
@@ -1030,6 +1057,30 @@ def main() -> int:
         parser.error(
             f"enumeration produced {len(paths)} paths but "
             f"{len(file_names)} distinct identities — duplicate enrolled file"
+        )
+    # Shard worker mode: measure only plan.bins[shard_index]; never seal here.
+    shard_plan: dict[str, Any] | None = None
+    if args.plan_json is not None:
+        shard_plan = json.loads(args.plan_json.read_text(encoding="utf-8"))
+        assert args.shard_index is not None
+        k = int(shard_plan["shardCount"])
+        if args.shard_index < 0 or args.shard_index >= k:
+            parser.error(
+                f"--shard-index {args.shard_index} out of range for plan k={k}"
+            )
+        assigned = list(shard_plan["bins"][args.shard_index])
+        unknown = sorted(set(assigned) - set(file_names))
+        if unknown:
+            parser.error(
+                f"plan bin contains files not in this walk: {unknown[:5]}"
+            )
+        file_names = [f for f in file_names if f in set(assigned)]
+        by_file = {f: by_file[f] for f in file_names}
+        _narrate(
+            "RECENSUS SHARD WORKER "
+            f"shard={args.shard_index}/{k} assigned={len(assigned)} "
+            f"planCid={shard_plan.get('planCid')} "
+            f"(partial only — seal is compose_control_effect_board)"
         )
     pending: list[str] = list(file_names)
 
@@ -1554,136 +1605,57 @@ def main() -> int:
 
     from pandas_floor_summary import floor_summary
 
-    r_construction = sum(families.values())
-    r_desugar = sum(desugar_families.values())
-    r_backend = sum(backend_defects.values())
-    with_census = _with_census_partition(
-        cm_resolutions, ast_sites, unrecognized_cm_kinds
-    )
-    result: dict[str, Any] = {
-        "kind": "control-effect-construction-recensus",
-        "corpusAuthentication": {
-            "aggregateHash": observed_pin.aggregate_hash,
-            "requiredAggregateHash": _PANDAS_3_0_3_AGGREGATE_HASH,
-            "manifestShapeCid": manifest_shape_cid,
-            "requiredManifestShapeCid": _PANDAS_3_0_3_MANIFEST_SHAPE_CID,
-        },
-        "authority": (
-            "sole authoritative Python corpus scoreboard; every other census "
-            "output is non-authoritative"
-        ),
-        "commit": args.commit or _git_commit(args.repo),
-        "corpus": str(corpus),
-        "corpusRoot": str(corpus_root),
-        # WHICH corpus — version, manifest length, one aggregate hash. Two runs
-        # are comparable iff these aggregate hashes are equal. The 1,415-file
-        # ledger is a different pandas and is NOT comparable to this board.
-        "corpusPin": observed_pin.summary(),
-        "door": "enum:path_source→SourceFile→functions→sugar→desugar",
-        "isolation": "in-process",
-        "paths": {
+    # Sole seal door — never mint measurementClass=control-effect-recensus here.
+    from compose_control_effect_board import compose_k1_from_rows, mint_partial
+
+    tip_commit = args.commit or _git_commit(args.repo) or "unpinned"
+
+    # Shard worker: emit PARTIAL only (SCOREBOARD False). Compose is a separate step.
+    if shard_plan is not None:
+        assert args.shard_index is not None
+        partial = mint_partial(
+            plan=shard_plan,
+            shard_index=args.shard_index,
+            terminal_rows=measured_rows,
+            measured_commit=tip_commit,
+        )
+        partial_path = args.partial_out or (
+            out / f"partial-s{args.shard_index:02d}.json"
+        )
+        partial_path.parent.mkdir(parents=True, exist_ok=True)
+        partial_path.write_text(
+            json.dumps(partial, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        _narrate(
+            "RECENSUS PARTIAL WRITTEN "
+            f"shard={args.shard_index} measured={partial.get('measured')} "
+            f"status={partial.get('status')} partialCid={partial.get('partialCid')} "
+            f"path={partial_path}"
+        )
+        # Exit 0/1 = scan completed (measured residual may be red later at compose);
+        # exit 2 = unmeasured seat.
+        return 0 if partial.get("measured") else 2
+
+    # Default k=1: one full-bin partial + compose (serial observation, one seal path).
+    seal_status, result = compose_k1_from_rows(
+        measured_rows,
+        enrolled_files=file_names,
+        measured_commit=tip_commit,
+        aggregate_hash=observed_pin.aggregate_hash,
+        manifest_shape_cid=manifest_shape_cid,
+        corpus=str(corpus),
+        corpus_root=str(corpus_root),
+        corpus_pin_summary=observed_pin.summary(),
+        paths={
             "engineLog": str(engine_path.resolve()),
             "progress": str(progress_path.resolve()),
             "checkpoint": str(checkpoint_path.resolve()),
             "result": str(result_path.resolve()),
         },
-        # THE DENOMINATOR — stated, with exact identities, before any rate.
-        "denominator": {
-            "enrolled": len(file_names),
-            "terminalRows": len(measured_rows),
-            "completed": files_completed,
-            "corpusManifestCid": checkpoint.manifest_cid,
-            "enrolledFiles": list(file_names),
-            "missingFiles": missing_files,
-            "duplicateFiles": duplicate_files,
-            "malformedRows": malformed_rows,
-            "complete": (
-                len(measured_rows) == len(file_names)
-                and not missing_files
-                and not duplicate_files
-                and not malformed_rows
-            ),
-        },
-        "filesTotal": len(file_names),
-        "filesCompleted": files_completed,
-        "defects": defects,
-        "constructionPanics": construction_panics,
-        "R_construction_panics": len(construction_panics),
-        "functionsTotal": functions_total,
-        "functionsConstructClean": functions_clean,
-        # Axis 1 — construction totality (tree owned). Occurrence-deduped.
-        # Never merge with R_desugar. Never double-count catch+reporter.
-        "R": r_construction,
-        "R_construction": r_construction,
-        "families": dict(
-            sorted(families.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # Axis 2 — desugar refusals + typed red (#6243). Separate quantity.
-        # R_desugar is MIXED. Read the split, never the total: a typed refusal
-        # owes work, a constructed effect IS the correct output of a reduction
-        # that succeeded. Publishing the sum as work remaining overstated the
-        # earlier board 7.6x.
-        "R_desugar": r_desugar,
-        "desugarCategories": dict(
-            sorted(desugar_categories.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "R_desugar_owed_work": int(desugar_categories.get("typed-refusal", 0)),
-        "R_desugar_accounted_semantics": int(
-            desugar_categories.get("constructed-effect", 0)
-        ),
-        "desugarByCategoryOwner": dict(
-            sorted(
-                desugar_by_category_owner.items(),
-                key=lambda item: (-item[1], item[0]),
-            )
-        ),
-        "desugarFamilies": dict(
-            sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # Table hygiene — not residual mass (probe: 2 BackendDefect files).
-        "R_backend_defects": r_backend,
-        "backendDefects": dict(
-            sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # With residual partition, keyed by AUTHENTICATED resolution kind.
-        # Structural, not spelling: no vendor name table decides these buckets.
-        "cmResolutions": dict(
-            sorted(cm_resolutions.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
-        "withCensus": with_census,
-        # AST SITE PREVALENCE — a denominator, NEVER R. Different question,
-        # different number: prevalence counts shapes present, R counts
-        # authenticated occurrences that failed to construct. Quoting one as
-        # the other is exactly the confusion this board was repaired to end.
-        "astSitePrevalence": dict(
-            sorted(ast_sites.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # Neither of these is semantic R. A construction-law None arm during
-        # desugar is a construction gap; an ordinary exception is an
-        # implementation defect. Both are red, separately.
-        "desugarConstructionPanics": desugar_construction_panics,
-        "R_desugar_construction_panics": len(desugar_construction_panics),
-        "desugarDefects": desugar_defects,
-        "R_desugar_defects": len(desugar_defects),
-        # Correct output from a named mechanism. Disjoint from desugarDefects
-        # (not a bug), from R_desugar (not a typed refusal) and from the panic
-        # collection. Never added to any of them, and never a red reason.
-        "desugarDesignedGaps": desugar_designed_gaps,
-        "R_desugar_designed_gaps": len(desugar_designed_gaps),
-        "desugarDesignedGapOwners": dict(
-            Counter(str(gap.get("owner", "?")) for gap in desugar_designed_gaps)
-        ),
-        # #6329 -- an arm reaching a dispatch target that does not exist. Its
-        # own axis: never semantic R, never quietly a backend defect.
-        "unresolvableDispatchTargets": unresolvable_dispatch,
-        "R_unresolvable_dispatch_targets": len(unresolvable_dispatch),
-        "elapsedSeconds": time.time() - started,
-        "python": sys.version,
-        # WHERE and WHEN this was measured. A board row without its stamp
-        # cannot be re-run, and a number nobody can re-run is not evidence.
-        "sourceStamp": {
-            "commit": args.commit or _git_commit(args.repo),
+        elapsed_seconds=time.time() - started,
+        source_stamp={
+            "commit": tip_commit,
             "repo": str(args.repo.resolve()),
             "python": sys.version,
             "platform": platform.platform(),
@@ -1691,24 +1663,56 @@ def main() -> int:
             "loadAverage": list(os.getloadavg()) if hasattr(os, "getloadavg") else [],
             "measuredAtUnix": time.time(),
         },
-        "floorSummary": floor_summary(
-            floor="control-effect",
-            files=file_names,
-            rows=floor_rows,
-            totals={
-                "R_control_effect": r_construction + len(defects),
-                "R_desugar": r_desugar,
-                "R_backend_defects": r_backend,
-                "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
-                "desugarConstructionPanics": len(desugar_construction_panics),
-                "desugarDefects": len(desugar_defects),
-                "constructionPanics": len(construction_panics),
-                "backendDefectsOrProcessTerminals": len(defects),
-            },
-            measured=len(floor_rows) == len(file_names),
-            unmeasurable_reasons=(),
-        ),
-    }
+        with_census_fn=_with_census_partition,
+        manifest_cid=checkpoint.manifest_cid,
+    )
+    if seal_status != "sealed":
+        _narrate(
+            "RECENSUS COMPOSE UNMEASURED "
+            f"missing={result.get('missingShards')} "
+            f"reasons={result.get('unmeasuredReasons')}"
+        )
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(result, indent=2) + "\n")
+        return 2
+
+    r_construction = int(result.get("R_construction") or 0)
+    r_desugar = int(result.get("R_desugar") or 0)
+    r_backend = int(result.get("R_backend_defects") or 0)
+    construction_panics = list(result.get("constructionPanics") or [])
+    defects = list(result.get("defects") or [])
+    desugar_construction_panics = list(result.get("desugarConstructionPanics") or [])
+    desugar_defects = list(result.get("desugarDefects") or [])
+    unresolvable_dispatch = list(result.get("unresolvableDispatchTargets") or [])
+    families = Counter(result.get("families") or {})
+    desugar_families = Counter(result.get("desugarFamilies") or {})
+    files_completed = int(result.get("filesCompleted") or 0)
+    result["python"] = sys.version
+    result["floorSummary"] = floor_summary(
+        floor="control-effect",
+        files=file_names,
+        rows=floor_rows,
+        totals={
+            "R_control_effect": r_construction + len(defects),
+            "R_desugar": r_desugar,
+            "R_backend_defects": r_backend,
+            "R_cm_derived_contract": int(
+                (result.get("cmResolutions") or {}).get("derived-contract", 0)
+            ),
+            "desugarConstructionPanics": len(desugar_construction_panics),
+            "desugarDefects": len(desugar_defects),
+            "constructionPanics": len(construction_panics),
+            "backendDefectsOrProcessTerminals": len(defects),
+        },
+        measured=len(floor_rows) == len(file_names),
+        unmeasurable_reasons=(),
+    )
+    result["desugarDesignedGapOwners"] = dict(
+        Counter(
+            str(gap.get("owner", "?"))
+            for gap in (result.get("desugarDesignedGaps") or [])
+        )
+    )
     # stableZero -- RULING ON PLACEMENT.
     #
     # This is a ONE-FLOOR term and is deliberately named
