@@ -61,6 +61,29 @@ class LiveForRuntimeV1:
     else_statements: tuple[object, ...]
 
 
+def _initial_value_sugar_for_loop_prestate(state):
+    """Project one pre-loop binding state into an initial-value sugar.
+
+    Hierarchy law: ``GuardedBinding`` / ``UnboundBinding`` / ``LoopProjectedBinding``
+    are binding *states*, not Nodes. Calling ``state.sugar()`` on them is the same
+    class of lie as AttributeError-on-wrong-kind — it aborts the file. Dispatch
+    through the binding-projection door that already owns every state species.
+    """
+    from .nodes import Node, _construct_binding_projection
+
+    if isinstance(state, LoopProjectedBinding):
+        product = state.constructed_term_product
+        if product is None:
+            raise BindingStateWireGap(
+                "loop projected binding lacks constructed_term_product before "
+                "LiveForRuntimeV1 enrollment"
+            )
+        return product
+    if isinstance(state, Node):
+        return state.sugar()
+    return _construct_binding_projection(state)
+
+
 def _formula_cid(formula) -> str:
     # Encode the Value tree once and hash those bytes. Do not decode the
     # canonical JCS string back through JSON merely to re-encode for the CID.
@@ -690,9 +713,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 pattern,
                 carried_names,
                 tuple(
-                    entry.state.constructed_term_product
-                    if isinstance(entry.state, LoopProjectedBinding)
-                    else entry.state.sugar()
+                    _initial_value_sugar_for_loop_prestate(entry.state)
                     for entry in pre_runtime
                 ),
                 tuple(loop.body),
