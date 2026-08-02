@@ -2293,12 +2293,24 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
                 # Walk-scoped multi-resolve owner: same session as other opens
                 # under this workspace root (census / re-open amortization).
-                populate_source_derived_resource_refs(
-                    tree_file,
-                    root=root,
-                    path=full_path,
-                    session=walk_session_for(root),
+                from sugar_source_tree.panic import (
+                    ContextManagerResolutionConstructionGap,
                 )
+
+                try:
+                    populate_source_derived_resource_refs(
+                        tree_file,
+                        root=root,
+                        path=full_path,
+                        session=walk_session_for(root),
+                    )
+                except ContextManagerResolutionConstructionGap:
+                    # Enumeration owns attendance, not construction. Provider-call
+                    # projection can reach an unresolved With while enriching this
+                    # table; retain the already-authenticated provisional rows so
+                    # the context-manager edge conserves exact coordinates. The
+                    # construction demand still reaches and reports this same panic.
+                    pass
                 if level == "context-manager-resolutions":
                     from sugar_lift_py_tests.context_manager_resolution import (
                         context_manager_resolution_outcome,
