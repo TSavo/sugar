@@ -663,6 +663,27 @@ class Backend:
         reporter: AuditReporter = NULL_REPORTER,
     ) -> _ConstructedModuleV1:
         """Construct and close one module product in one eager traversal."""
+        from .file_open_profile import _TimedModuleMaterialize, current_file_open_profile
+
+        # Profile only when a file-open instrument is active (recensus etc.).
+        profile = current_file_open_profile()
+        if profile is not None:
+            # Prefer human path; fall back to content address.
+            module_key = str(
+                getattr(unit, "filename", None)
+                or getattr(unit, "path", None)
+                or getattr(unit, "source_cid", "unknown")
+            )
+            with _TimedModuleMaterialize(module_key):
+                return self._materialize_module_body(unit, reporter)
+        return self._materialize_module_body(unit, reporter)
+
+    def _materialize_module_body(
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+    ) -> _ConstructedModuleV1:
+        """Inner materialize_module body (timed when profile is active)."""
         from .nodes import (
             Assert,
             Assign,

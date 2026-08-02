@@ -81,9 +81,11 @@ debugging a named stall needs the full stack flood.
 
 from __future__ import annotations
 
-# The sole authoritative Python corpus scoreboard. Enforced by
-# tests/test_one_authoritative_scoreboard.py: exactly one module may say True.
-SCOREBOARD_AUTHORITY = True
+# Worker / walk only. Sole seal door is compose_control_effect_board.py
+# (SCOREBOARD_AUTHORITY = True). Serial seal retired: this module never mints
+# measurementClass=control-effect-recensus; it emits terminals (+ optional
+# partials) and always seals through compose (k=1 or LPT N).
+SCOREBOARD_AUTHORITY = False
 
 _PANDAS_3_0_3_AGGREGATE_HASH = (
     "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
@@ -606,12 +608,16 @@ def _measure_file(
 ) -> dict[str, Any]:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
     from sugar_lift_py_tests.desugar_axis import DesugarAxis
-    from sugar_lift_py_tests.lift_rpc import (
-        open_source_file_for_construction,
-        tree_construction_context_for_workspace,
+    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.file_open_profile import (
+        begin_file_open_profile,
+        end_file_open_profile,
+        summarize_module_materialize,
     )
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.tree import SourceFile
 
     functions_total = 0
     functions_clean = 0
@@ -622,6 +628,20 @@ def _measure_file(
     cm_resolutions: Counter[str] = Counter()
     unrecognized_cm_kinds: Counter[str] = Counter()
     desugar_axis = DesugarAxis()
+    # Phase timers — measured live and PERSISTED (running-counts + row), not
+    # only painted on the progress bar and thrown away.
+    timing: dict[str, Any] = {
+        "t_context_s": 0.0,
+        "t_open_s": 0.0,
+        "t_populate_s": 0.0,
+        "t_cm_tally_s": 0.0,
+        "t_enumerate_s": 0.0,
+        "t_sugar_loop_s": 0.0,
+        "t_gap_tally_s": 0.0,
+        "slowest_fn": None,
+        "slowest_fn_s": 0.0,
+        "sugar_fn_count": 0,
+    }
     if workspace_root is None:
         # No silent ``path.parent``. That default made a one-file run derive its
         # demand table from a DIFFERENT tree than the full run, so the same file
@@ -652,39 +672,67 @@ def _measure_file(
         reporter = CollectingReporter()
         # Fresh context per file so source_derived refs stay file-local; the
         # demand/gap table (contract_refs) may be shared across the census.
+        t0 = time.perf_counter()
         construction_context = tree_construction_context_for_workspace(
             root, contract_refs=contract_refs
         )
+        timing["t_context_s"] = round(time.perf_counter() - t0, 6)
+
+        # Split open vs populate so a slow file names which phase owns the 85s.
+        # Same production path as open_source_file_for_construction; timed.
+        t0 = time.perf_counter()
         try:
-            source_file = open_source_file_for_construction(
-                path,
-                root=address_root,
+            source_file = SourceFile(
+                workspace_path_source(str(path), root=str(address_root)),
                 reporter=reporter,
                 construction_context=construction_context,
-                populate_derived=True,
+            )
+        except SugarNotWritten as gap:
+            timing["t_open_s"] = round(time.perf_counter() - t0, 6)
+            tally_construction(type(gap).__name__, line=0)
+            return reporter
+        timing["t_open_s"] = round(time.perf_counter() - t0, 6)
+
+        t0 = time.perf_counter()
+        try:
+            from sugar_lift_python_source.manager_summary_derivation import (
+                populate_source_derived_resource_refs,
+            )
+
+            populate_source_derived_resource_refs(
+                source_file, root=address_root, path=path
             )
         except SugarNotWritten as gap:
             # Derivation can hit a real missing sugar before any function walk.
+            timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
             tally_construction(type(gap).__name__, line=0)
             return reporter
+        timing["t_populate_s"] = round(time.perf_counter() - t0, 6)
+
         # Effective resolution set for THIS source unit only: source-derived
         # over contract_refs (same door as With construction). Never tally the
         # whole shared provisional table without source_cid — that multiplies.
+        t0 = time.perf_counter()
         file_cm_resolutions, file_unrecognized_kinds = _tally_cm_resolutions(
             construction_context,
             source_cid=source_file.unit.source_cid,
         )
         cm_resolutions.update(file_cm_resolutions)
         unrecognized_cm_kinds.update(file_unrecognized_kinds)
+        timing["t_cm_tally_s"] = round(time.perf_counter() - t0, 6)
+
         # Materialize the function population BEFORE the per-function walk.
         # ConstructionPanic is BaseException and escapes this loop; if we
         # increment functions_total inside the loop, a mid-file panic freezes a
         # PARTIAL denominator that is later summed into the board, and Clean%
         # is computed over a silently shrunken set. The full declared count is
         # the denominator; enumeration progress is a separate measurement.
+        t0 = time.perf_counter()
         declared_functions = tuple(source_file.functions())
+        timing["t_enumerate_s"] = round(time.perf_counter() - t0, 6)
         functions_total = len(declared_functions)
         functions_enumerated = 0
+        t_sugar = time.perf_counter()
         for function in declared_functions:
             functions_enumerated += 1
             try:
@@ -711,21 +759,54 @@ def _measure_file(
             if sugar is not None:
                 desugar_axis.measure(sugar, where=where)
             fn_s = time.perf_counter() - t_fn
+            timing["sugar_fn_count"] = functions_enumerated
+            if fn_s >= float(timing["slowest_fn_s"] or 0.0):
+                timing["slowest_fn_s"] = round(fn_s, 6)
+                timing["slowest_fn"] = fn_name
             # Report completion WITH this function's own construction time, so
             # `last=` is per-function and a slow/blowup function is obvious.
             if on_function is not None:
                 on_function(functions_enumerated, functions_clean, fn_name, fn_s)
+        timing["t_sugar_loop_s"] = round(time.perf_counter() - t_sugar, 6)
         # Sole construction-gap source: reporter occurrences, site-deduped.
         # BackendDefect is table hygiene — own counter, never construction R.
+        t0 = time.perf_counter()
         for node, panic in reporter.gaps:
             kind = type(panic).__name__
             if kind == "BackendDefect" or "BackendDefect" in kind:
                 backend_defects[_backend_defect_key(panic)] += 1
                 continue
             tally_construction(kind, node=node)
+        timing["t_gap_tally_s"] = round(time.perf_counter() - t0, 6)
         return reporter
 
-    _reporter, panic_row = collect_construction_panic(relative, construct)
+    profile_bag = begin_file_open_profile()
+    try:
+        _reporter, panic_row = collect_construction_panic(relative, construct)
+    finally:
+        end_file_open_profile()
+    module_summary = summarize_module_materialize(profile_bag)
+    timing["module_materialize"] = module_summary
+    # Explicit materialize wall (sum of materialize_module calls). Nested inside
+    # populate/open wall-clock, but first-class so running-counts answers
+    # "rebuilds" without digging module_materialize.top.
+    timing["t_materialize_s"] = float(module_summary.get("materialize_s") or 0.0)
+    timing["materialize_calls"] = int(module_summary.get("materializeCalls") or 0)
+    # Dominant phase for one-line cause naming.
+    phase_seconds = {
+        "context": float(timing["t_context_s"]),
+        "open": float(timing["t_open_s"]),
+        "populate": float(timing["t_populate_s"]),
+        "materialize": float(timing["t_materialize_s"]),
+        "cm_tally": float(timing["t_cm_tally_s"]),
+        "enumerate": float(timing["t_enumerate_s"]),
+        "sugar_loop": float(timing["t_sugar_loop_s"]),
+        "gap_tally": float(timing["t_gap_tally_s"]),
+    }
+    dominant = max(phase_seconds.items(), key=lambda item: item[1])
+    timing["dominant_phase"] = dominant[0]
+    timing["dominant_phase_s"] = round(dominant[1], 4)
+
     # Two quantities, never one column: resolution residual (R-bearing) and AST
     # site prevalence (denominator, never R).
     resolution_row = {
@@ -743,6 +824,7 @@ def _measure_file(
         "functionsEnumerationComplete": functions_not_enumerated == 0
         and (panic_row is None or functions_total == functions_enumerated),
     }
+    timing_row = {"timing": timing}
     if panic_row is not None:
         # File-level ConstructionPanic is BaseException: it escapes construct()
         # via collect_construction_panic and never lands in reporter.gaps, so
@@ -766,6 +848,7 @@ def _measure_file(
             "R_backend_defects": sum(backend_defects.values()),
             **resolution_row,
             **desugar_axis.row(),
+            **timing_row,
         }
     return {
         "category": "completed",
@@ -775,6 +858,7 @@ def _measure_file(
         "R_backend_defects": sum(backend_defects.values()),
         **resolution_row,
         **desugar_axis.row(),
+        **timing_row,
     }
 
 
@@ -892,7 +976,32 @@ def main() -> int:
             "Use --no-progress-stdout only for interactive local quiet."
         ),
     )
+    parser.add_argument(
+        "--plan-json",
+        type=Path,
+        default=None,
+        help=(
+            "LPT shard plan (planCid). With --shard-index, measure only that bin "
+            "and emit a partial (never a sealed board)."
+        ),
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=None,
+        help="shard seat to measure (requires --plan-json); writes partial only",
+    )
+    parser.add_argument(
+        "--partial-out",
+        type=Path,
+        default=None,
+        help="where to write the shard partial JSON (default: <out-dir>/partial-sXX.json)",
+    )
     args = parser.parse_args()
+    if args.shard_index is not None and args.plan_json is None:
+        parser.error("--shard-index requires --plan-json")
+    if args.plan_json is not None and args.shard_index is None:
+        parser.error("--plan-json requires --shard-index for worker mode")
 
     if not args.corpus.exists():
         parser.error(f"corpus not found: {args.corpus}")
@@ -1030,6 +1139,30 @@ def main() -> int:
         parser.error(
             f"enumeration produced {len(paths)} paths but "
             f"{len(file_names)} distinct identities — duplicate enrolled file"
+        )
+    # Shard worker mode: measure only plan.bins[shard_index]; never seal here.
+    shard_plan: dict[str, Any] | None = None
+    if args.plan_json is not None:
+        shard_plan = json.loads(args.plan_json.read_text(encoding="utf-8"))
+        assert args.shard_index is not None
+        k = int(shard_plan["shardCount"])
+        if args.shard_index < 0 or args.shard_index >= k:
+            parser.error(
+                f"--shard-index {args.shard_index} out of range for plan k={k}"
+            )
+        assigned = list(shard_plan["bins"][args.shard_index])
+        unknown = sorted(set(assigned) - set(file_names))
+        if unknown:
+            parser.error(
+                f"plan bin contains files not in this walk: {unknown[:5]}"
+            )
+        file_names = [f for f in file_names if f in set(assigned)]
+        by_file = {f: by_file[f] for f in file_names}
+        _narrate(
+            "RECENSUS SHARD WORKER "
+            f"shard={args.shard_index}/{k} assigned={len(assigned)} "
+            f"planCid={shard_plan.get('planCid')} "
+            f"(partial only — seal is compose_control_effect_board)"
         )
     pending: list[str] = list(file_names)
 
@@ -1418,6 +1551,11 @@ def main() -> int:
 
                 # Durable running counts — crash at file 900 still leaves 899 rows
                 # on checkpoint AND a jsonl tail of counts on stdout-equivalent disk.
+                # Phase timers + module materialize counts PERSIST here (not only
+                # on the progress bar — that was measured, displayed, thrown away).
+                row_timing = row.get("timing") if isinstance(row, dict) else None
+                if not isinstance(row_timing, dict):
+                    row_timing = {}
                 running = {
                     "schema": "control-effect-recensus-running-v1",
                     "index": live_done,
@@ -1433,6 +1571,20 @@ def main() -> int:
                     "fn_clean": live_clean,
                     "fn_total": live_fns,
                     "phase": "per_file_lift",
+                    "t_open_s": row_timing.get("t_open_s"),
+                    "t_materialize_s": row_timing.get("t_materialize_s"),
+                    "materialize_calls": row_timing.get("materialize_calls"),
+                    "t_populate_s": row_timing.get("t_populate_s"),
+                    "t_enumerate_s": row_timing.get("t_enumerate_s"),
+                    "t_sugar_loop_s": row_timing.get("t_sugar_loop_s"),
+                    "t_context_s": row_timing.get("t_context_s"),
+                    "t_cm_tally_s": row_timing.get("t_cm_tally_s"),
+                    "t_gap_tally_s": row_timing.get("t_gap_tally_s"),
+                    "dominant_phase": row_timing.get("dominant_phase"),
+                    "dominant_phase_s": row_timing.get("dominant_phase_s"),
+                    "slowest_fn": row_timing.get("slowest_fn"),
+                    "slowest_fn_s": row_timing.get("slowest_fn_s"),
+                    "module_materialize": row_timing.get("module_materialize"),
                 }
                 with running_counts_path.open("a", encoding="utf-8") as rc_stream:
                     rc_stream.write(
@@ -1440,15 +1592,33 @@ def main() -> int:
                         + "\n"
                     )
                     rc_stream.flush()
+                # One-line cause for slow files (always for first/last/every-N,
+                # and always when wall exceeds 5s so a long open names its phase).
+                slow = file_s >= 5.0
                 if (
                     live_done == 1
                     or live_done % _PROGRESS_EVERY_N == 0
                     or live_done == len(file_names)
+                    or slow
                 ):
+                    mm = row_timing.get("module_materialize") or {}
                     _narrate(
                         "RECENSUS FILE END "
                         f"{live_done}/{len(file_names)} file={relative} "
                         f"category={cat} file_s={file_s:.3f} "
+                        f"dominant={row_timing.get('dominant_phase')}:"
+                        f"{row_timing.get('dominant_phase_s')}s "
+                        f"open={row_timing.get('t_open_s')}s "
+                        f"materialize={row_timing.get('t_materialize_s')}s "
+                        f"materialize_calls={row_timing.get('materialize_calls')} "
+                        f"populate={row_timing.get('t_populate_s')}s "
+                        f"enumerate={row_timing.get('t_enumerate_s')}s "
+                        f"sugar_loop={row_timing.get('t_sugar_loop_s')}s "
+                        f"slowest_fn={row_timing.get('slowest_fn')}:"
+                        f"{row_timing.get('slowest_fn_s')}s "
+                        f"mod_mat_calls={mm.get('materializeCalls')} "
+                        f"mod_mat_s={mm.get('materialize_s')} "
+                        f"mod_top={mm.get('top')} "
                         f"elapsed_s={time.time() - started:.1f} "
                         f"snw={live_snw} other_gaps={live_other_gaps} "
                         f"cpanic={live_panic} defect={live_defect} "
@@ -1554,136 +1724,57 @@ def main() -> int:
 
     from pandas_floor_summary import floor_summary
 
-    r_construction = sum(families.values())
-    r_desugar = sum(desugar_families.values())
-    r_backend = sum(backend_defects.values())
-    with_census = _with_census_partition(
-        cm_resolutions, ast_sites, unrecognized_cm_kinds
-    )
-    result: dict[str, Any] = {
-        "kind": "control-effect-construction-recensus",
-        "corpusAuthentication": {
-            "aggregateHash": observed_pin.aggregate_hash,
-            "requiredAggregateHash": _PANDAS_3_0_3_AGGREGATE_HASH,
-            "manifestShapeCid": manifest_shape_cid,
-            "requiredManifestShapeCid": _PANDAS_3_0_3_MANIFEST_SHAPE_CID,
-        },
-        "authority": (
-            "sole authoritative Python corpus scoreboard; every other census "
-            "output is non-authoritative"
-        ),
-        "commit": args.commit or _git_commit(args.repo),
-        "corpus": str(corpus),
-        "corpusRoot": str(corpus_root),
-        # WHICH corpus — version, manifest length, one aggregate hash. Two runs
-        # are comparable iff these aggregate hashes are equal. The 1,415-file
-        # ledger is a different pandas and is NOT comparable to this board.
-        "corpusPin": observed_pin.summary(),
-        "door": "enum:path_source→SourceFile→functions→sugar→desugar",
-        "isolation": "in-process",
-        "paths": {
+    # Sole seal door — never mint measurementClass=control-effect-recensus here.
+    from compose_control_effect_board import compose_k1_from_rows, mint_partial
+
+    tip_commit = args.commit or _git_commit(args.repo) or "unpinned"
+
+    # Shard worker: emit PARTIAL only (SCOREBOARD False). Compose is a separate step.
+    if shard_plan is not None:
+        assert args.shard_index is not None
+        partial = mint_partial(
+            plan=shard_plan,
+            shard_index=args.shard_index,
+            terminal_rows=measured_rows,
+            measured_commit=tip_commit,
+        )
+        partial_path = args.partial_out or (
+            out / f"partial-s{args.shard_index:02d}.json"
+        )
+        partial_path.parent.mkdir(parents=True, exist_ok=True)
+        partial_path.write_text(
+            json.dumps(partial, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        _narrate(
+            "RECENSUS PARTIAL WRITTEN "
+            f"shard={args.shard_index} measured={partial.get('measured')} "
+            f"status={partial.get('status')} partialCid={partial.get('partialCid')} "
+            f"path={partial_path}"
+        )
+        # Exit 0/1 = scan completed (measured residual may be red later at compose);
+        # exit 2 = unmeasured seat.
+        return 0 if partial.get("measured") else 2
+
+    # Default k=1: one full-bin partial + compose (serial observation, one seal path).
+    seal_status, result = compose_k1_from_rows(
+        measured_rows,
+        enrolled_files=file_names,
+        measured_commit=tip_commit,
+        aggregate_hash=observed_pin.aggregate_hash,
+        manifest_shape_cid=manifest_shape_cid,
+        corpus=str(corpus),
+        corpus_root=str(corpus_root),
+        corpus_pin_summary=observed_pin.summary(),
+        paths={
             "engineLog": str(engine_path.resolve()),
             "progress": str(progress_path.resolve()),
             "checkpoint": str(checkpoint_path.resolve()),
             "result": str(result_path.resolve()),
         },
-        # THE DENOMINATOR — stated, with exact identities, before any rate.
-        "denominator": {
-            "enrolled": len(file_names),
-            "terminalRows": len(measured_rows),
-            "completed": files_completed,
-            "corpusManifestCid": checkpoint.manifest_cid,
-            "enrolledFiles": list(file_names),
-            "missingFiles": missing_files,
-            "duplicateFiles": duplicate_files,
-            "malformedRows": malformed_rows,
-            "complete": (
-                len(measured_rows) == len(file_names)
-                and not missing_files
-                and not duplicate_files
-                and not malformed_rows
-            ),
-        },
-        "filesTotal": len(file_names),
-        "filesCompleted": files_completed,
-        "defects": defects,
-        "constructionPanics": construction_panics,
-        "R_construction_panics": len(construction_panics),
-        "functionsTotal": functions_total,
-        "functionsConstructClean": functions_clean,
-        # Axis 1 — construction totality (tree owned). Occurrence-deduped.
-        # Never merge with R_desugar. Never double-count catch+reporter.
-        "R": r_construction,
-        "R_construction": r_construction,
-        "families": dict(
-            sorted(families.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # Axis 2 — desugar refusals + typed red (#6243). Separate quantity.
-        # R_desugar is MIXED. Read the split, never the total: a typed refusal
-        # owes work, a constructed effect IS the correct output of a reduction
-        # that succeeded. Publishing the sum as work remaining overstated the
-        # earlier board 7.6x.
-        "R_desugar": r_desugar,
-        "desugarCategories": dict(
-            sorted(desugar_categories.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "R_desugar_owed_work": int(desugar_categories.get("typed-refusal", 0)),
-        "R_desugar_accounted_semantics": int(
-            desugar_categories.get("constructed-effect", 0)
-        ),
-        "desugarByCategoryOwner": dict(
-            sorted(
-                desugar_by_category_owner.items(),
-                key=lambda item: (-item[1], item[0]),
-            )
-        ),
-        "desugarFamilies": dict(
-            sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # Table hygiene — not residual mass (probe: 2 BackendDefect files).
-        "R_backend_defects": r_backend,
-        "backendDefects": dict(
-            sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # With residual partition, keyed by AUTHENTICATED resolution kind.
-        # Structural, not spelling: no vendor name table decides these buckets.
-        "cmResolutions": dict(
-            sorted(cm_resolutions.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
-        "withCensus": with_census,
-        # AST SITE PREVALENCE — a denominator, NEVER R. Different question,
-        # different number: prevalence counts shapes present, R counts
-        # authenticated occurrences that failed to construct. Quoting one as
-        # the other is exactly the confusion this board was repaired to end.
-        "astSitePrevalence": dict(
-            sorted(ast_sites.items(), key=lambda item: (-item[1], item[0]))
-        ),
-        # Neither of these is semantic R. A construction-law None arm during
-        # desugar is a construction gap; an ordinary exception is an
-        # implementation defect. Both are red, separately.
-        "desugarConstructionPanics": desugar_construction_panics,
-        "R_desugar_construction_panics": len(desugar_construction_panics),
-        "desugarDefects": desugar_defects,
-        "R_desugar_defects": len(desugar_defects),
-        # Correct output from a named mechanism. Disjoint from desugarDefects
-        # (not a bug), from R_desugar (not a typed refusal) and from the panic
-        # collection. Never added to any of them, and never a red reason.
-        "desugarDesignedGaps": desugar_designed_gaps,
-        "R_desugar_designed_gaps": len(desugar_designed_gaps),
-        "desugarDesignedGapOwners": dict(
-            Counter(str(gap.get("owner", "?")) for gap in desugar_designed_gaps)
-        ),
-        # #6329 -- an arm reaching a dispatch target that does not exist. Its
-        # own axis: never semantic R, never quietly a backend defect.
-        "unresolvableDispatchTargets": unresolvable_dispatch,
-        "R_unresolvable_dispatch_targets": len(unresolvable_dispatch),
-        "elapsedSeconds": time.time() - started,
-        "python": sys.version,
-        # WHERE and WHEN this was measured. A board row without its stamp
-        # cannot be re-run, and a number nobody can re-run is not evidence.
-        "sourceStamp": {
-            "commit": args.commit or _git_commit(args.repo),
+        elapsed_seconds=time.time() - started,
+        source_stamp={
+            "commit": tip_commit,
             "repo": str(args.repo.resolve()),
             "python": sys.version,
             "platform": platform.platform(),
@@ -1691,24 +1782,56 @@ def main() -> int:
             "loadAverage": list(os.getloadavg()) if hasattr(os, "getloadavg") else [],
             "measuredAtUnix": time.time(),
         },
-        "floorSummary": floor_summary(
-            floor="control-effect",
-            files=file_names,
-            rows=floor_rows,
-            totals={
-                "R_control_effect": r_construction + len(defects),
-                "R_desugar": r_desugar,
-                "R_backend_defects": r_backend,
-                "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
-                "desugarConstructionPanics": len(desugar_construction_panics),
-                "desugarDefects": len(desugar_defects),
-                "constructionPanics": len(construction_panics),
-                "backendDefectsOrProcessTerminals": len(defects),
-            },
-            measured=len(floor_rows) == len(file_names),
-            unmeasurable_reasons=(),
-        ),
-    }
+        with_census_fn=_with_census_partition,
+        manifest_cid=checkpoint.manifest_cid,
+    )
+    if seal_status != "sealed":
+        _narrate(
+            "RECENSUS COMPOSE UNMEASURED "
+            f"missing={result.get('missingShards')} "
+            f"reasons={result.get('unmeasuredReasons')}"
+        )
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(result, indent=2) + "\n")
+        return 2
+
+    r_construction = int(result.get("R_construction") or 0)
+    r_desugar = int(result.get("R_desugar") or 0)
+    r_backend = int(result.get("R_backend_defects") or 0)
+    construction_panics = list(result.get("constructionPanics") or [])
+    defects = list(result.get("defects") or [])
+    desugar_construction_panics = list(result.get("desugarConstructionPanics") or [])
+    desugar_defects = list(result.get("desugarDefects") or [])
+    unresolvable_dispatch = list(result.get("unresolvableDispatchTargets") or [])
+    families = Counter(result.get("families") or {})
+    desugar_families = Counter(result.get("desugarFamilies") or {})
+    files_completed = int(result.get("filesCompleted") or 0)
+    result["python"] = sys.version
+    result["floorSummary"] = floor_summary(
+        floor="control-effect",
+        files=file_names,
+        rows=floor_rows,
+        totals={
+            "R_control_effect": r_construction + len(defects),
+            "R_desugar": r_desugar,
+            "R_backend_defects": r_backend,
+            "R_cm_derived_contract": int(
+                (result.get("cmResolutions") or {}).get("derived-contract", 0)
+            ),
+            "desugarConstructionPanics": len(desugar_construction_panics),
+            "desugarDefects": len(desugar_defects),
+            "constructionPanics": len(construction_panics),
+            "backendDefectsOrProcessTerminals": len(defects),
+        },
+        measured=len(floor_rows) == len(file_names),
+        unmeasurable_reasons=(),
+    )
+    result["desugarDesignedGapOwners"] = dict(
+        Counter(
+            str(gap.get("owner", "?"))
+            for gap in (result.get("desugarDesignedGaps") or [])
+        )
+    )
     # stableZero -- RULING ON PLACEMENT.
     #
     # This is a ONE-FLOOR term and is deliberately named

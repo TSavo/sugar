@@ -254,6 +254,7 @@ def assign_files(
     costs: dict[str, float] = {}
     hits = 0
     misses = len(ordered)
+    prior_disabled = not prior.enabled
     if path_resolver is not None and prior.enabled and ordered:
         costs, hits, misses = prior.costs_for_paths(
             {f: path_resolver[f] for f in ordered if f in path_resolver}
@@ -266,9 +267,11 @@ def assign_files(
     if hits == 0:
         bins = equal_count_bins(sorted(ordered), shard_count)
         loads = [float(len(b)) for b in bins]  # unit cost under equal-count
+        # Tag mode so callers can narrate shelf-disabled vs empty shelf.
+        mode = "equal-count-prior-disabled" if prior_disabled else "equal-count"
         return ShardAssignment(
             bins=bins,
-            mode="equal-count",
+            mode=mode,
             prior_hits=0,
             prior_misses=misses if ordered else 0,
             shard_count=shard_count,
@@ -299,10 +302,23 @@ def narrate_assignment(assignment: ShardAssignment, *, population: str) -> None:
     """
     line = assignment.job_log_line(population=population)
     print(line, file=sys.stderr, flush=True)
-    if assignment.mode == "equal-count":
+    if assignment.mode in {"equal-count", "equal-count-prior-disabled"}:
+        if assignment.mode == "equal-count-prior-disabled":
+            reason = (
+                "prior-shelf-disabled (SUGAR_LPT_PRIOR_DIR=off or no root); "
+                "equal-count is the only packer — not LPT"
+            )
+        else:
+            reason = (
+                "no prior hits for this population; degraded=equal-count "
+                "(next run is LPT only if a prior write succeeds this campaign)"
+            )
         print(
-            "JOB_LOG phase=lpt-shard-assign status=no-prior "
-            "degraded=equal-count (will write prior during this run for next)",
+            f"JOB_LOG phase=lpt-shard-assign status=degraded "
+            f"mode={assignment.mode} population={population} "
+            f"prior_hits={assignment.prior_hits} "
+            f"prior_misses={assignment.prior_misses} "
+            f"reason={reason}",
             file=sys.stderr,
             flush=True,
         )

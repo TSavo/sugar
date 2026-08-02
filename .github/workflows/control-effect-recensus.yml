@@ -2,11 +2,11 @@ name: Control-effect recensus (authoritative scoreboard)
 
 # THE DEFECT THIS FIXES
 #
-# scripts/control_effect_recensus.py declares SCOREBOARD_AUTHORITY = True. It
-# is THE authoritative scoreboard -- every other instrument in the kit declares
-# False, and tests/test_one_authoritative_scoreboard.py pins that there is
-# exactly one. It is the sole producer of R_construction_panics and of the
-# desugar board that every drain is ranked against.
+# scripts/compose_control_effect_board.py declares SCOREBOARD_AUTHORITY = True
+# (sole seal door). The walk script control_effect_recensus.py is SCOREBOARD
+# False and always seals through compose (k=1 or LPT N). It is the sole
+# producer of R_construction_panics and of the desugar board that every drain
+# is ranked against.
 #
 # It appeared in NO WORKFLOW. Searching the repo for it returns docs, ledgers,
 # and two tests -- nothing that runs it. It was a hand-run tool.
@@ -104,24 +104,39 @@ jobs:
             --out-dir "$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
           echo "recensus phase=measure status=done"
 
-      # Phase 3 — attendance body only after a completed measure step.
-      - name: "Phase: write attendance measurement body"
+      # Phase 3 — dual-belt attendance: only a sealed board (status=sealed,
+      # measured=true, bodyCid) credits control-effect-recensus. Do NOT write a
+      # thin measurement.json with measurementClass alone (that zeros R_attendance
+      # while the board is unmeasured — #7049 smoke shape).
+      - name: "Phase: verify sealed board for attendance"
         if: success()
         shell: bash
         run: |
           set -euo pipefail
           echo "recensus phase=attendance status=start"
           python -u -c "
-          import json, os
+          import json, sys
           from pathlib import Path
-          body = {
-              'schemaVersion': 1,
-              'measurementClass': 'control-effect-recensus',
-              'measuredCommit': os.environ.get('GITHUB_SHA'),
-              'status': 'completed',
-          }
-          Path('.sugar/pandas-control-effect/measurement.json').parent.mkdir(parents=True, exist_ok=True)
-          Path('.sugar/pandas-control-effect/measurement.json').write_text(json.dumps(body, indent=2)+chr(10))
+          p = Path('.sugar/pandas-control-effect/recensus.json')
+          if not p.is_file():
+              print('::error::sealed board missing at', p, file=sys.stderr)
+              sys.exit(1)
+          body = json.loads(p.read_text())
+          ok = (
+              body.get('measurementClass') == 'control-effect-recensus'
+              and body.get('status') == 'sealed'
+              and body.get('measured') is True
+              and body.get('bodyCid')
+          )
+          if not ok:
+              print('::error::board not sealed for attendance', {
+                  'measurementClass': body.get('measurementClass'),
+                  'status': body.get('status'),
+                  'measured': body.get('measured'),
+                  'bodyCid': bool(body.get('bodyCid')),
+              }, file=sys.stderr)
+              sys.exit(1)
+          print('recensus attendance sealed bodyCid=', body.get('bodyCid')[:24], '...')
           "
           echo "recensus phase=attendance status=done"
 
