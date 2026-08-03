@@ -1188,6 +1188,32 @@ def _exception_class_testimony_or_absence(unit, node):
         return None
 
 
+def _qualified_enrollment_coordinate(
+    path,
+    *,
+    source_workspace_root,
+    distribution: str | None,
+) -> str:
+    """Qualify a source seat from authenticated authority, never path guesses."""
+    from pathlib import Path
+
+    if not distribution:
+        raise ValueError(
+            "source workspace distribution authority is required; "
+            "refusing to infer it from a relative path segment"
+        )
+    try:
+        relative = Path(path).resolve().relative_to(
+            Path(source_workspace_root).resolve()
+        )
+    except ValueError as error:
+        raise ValueError(
+            "source seat is outside the authenticated source workspace: "
+            f"path={path} source_workspace_root={source_workspace_root}"
+        ) from error
+    return "/".join((distribution, *relative.parts))
+
+
 def populate_source_derived_resource_refs(
     source_file,
     *,
@@ -1246,10 +1272,11 @@ def populate_source_derived_resource_refs(
     # segment under the locus root), not test-only deps (pytest) or stdlib.
     # Without this, one open of pandas/tests/io/json/test_pandas.py projected
     # 40 pytest frames (~3.8s) after the stdlib-only membrane.
-    if source_workspace_root is not None and not distribution:
-        raise ValueError(
-            "source workspace distribution authority is required; "
-            "refusing to infer it from a relative path segment"
+    if source_workspace_root is not None:
+        _qualified_enrollment_coordinate(
+            path,
+            source_workspace_root=source_workspace_root,
+            distribution=distribution,
         )
     if distribution is not None:
         session.enrolled_distributions = frozenset({distribution})
