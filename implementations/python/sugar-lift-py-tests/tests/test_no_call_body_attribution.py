@@ -24,6 +24,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     require_expected_denominators,
     summarize_attribution_outcomes,
     validate_shared_demand_table,
+    _use_site_coordinate,
 )
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
@@ -43,6 +44,35 @@ def _raise_value():
             RaiseEffect(exception_type_coordinate=str_const('TypeError'), occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'))
         )
     )
+
+
+def test_enrollment_coordinate_qualifies_distribution_from_workspace_root(tmp_path):
+    workspace = tmp_path / "site-packages"
+    corpus = workspace / "pandas"
+    path = corpus / "_config" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("x = 1\n", encoding="utf-8")
+    coordinate = _use_site_coordinate(
+        path,
+        corpus,
+        {"startLine": 1, "startCol": 0, "endLine": 1, "endCol": 1},
+        source_workspace_root=workspace,
+    )
+    assert coordinate.startswith("pandas/_config/config.py:1:0-1:1")
+
+
+def test_enrollment_coordinate_refuses_unqualifiable_workspace_root(tmp_path):
+    corpus = tmp_path / "pandas"
+    path = corpus / "_config" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(AttributionInvariantError, match="cannot qualify source seat"):
+        _use_site_coordinate(
+            path,
+            corpus,
+            {"startLine": 1, "startCol": 0, "endLine": 1, "endCol": 1},
+            source_workspace_root=tmp_path / "elsewhere",
+        )
 
 
 def _nameless_raise_value():
