@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import platform
+import re
 import sys
 import sysconfig
 import tomllib
@@ -10,7 +14,7 @@ from functools import lru_cache
 from importlib import import_module, metadata
 from pathlib import Path
 from types import ModuleType
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
 from sugar_lift_py_tests.repo_root import (
@@ -22,6 +26,10 @@ from sugar_lift_py_tests.repo_root import (
 
 class ExecutionEnvironmentMismatch(RuntimeError):
     """The interpreter cannot truthfully name the corpus it would measure."""
+
+
+class RuntimeIdentityResolutionFailure(RuntimeError):
+    """The producing interpreter could not be content-addressed."""
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,37 @@ class InterpreterIdentity:
     implementation: str
     version: str
     executable: Path
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeIdentityV1:
+    """Exact producing interpreter identity; host paths remain testimony only."""
+
+    implementation: str
+    version: str
+    sys_version: str
+    cache_tag: str
+    soabi: str
+    hex_version: str
+    platform_tag: str
+    invoked_executable: str
+    resolved_base_executable: str
+    executable_sha256: str
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "schema": "runtimeIdentity/v1",
+            "implementation": self.implementation,
+            "version": self.version,
+            "sysVersion": self.sys_version,
+            "cacheTag": self.cache_tag,
+            "SOABI": self.soabi,
+            "hexVersion": self.hex_version,
+            "platformTag": self.platform_tag,
+            "invokedExecutable": self.invoked_executable,
+            "resolvedBaseExecutable": self.resolved_base_executable,
+            "executableSha256": self.executable_sha256,
+        }
 
 
 @dataclass(frozen=True)
@@ -97,6 +136,150 @@ def interpreter_identity() -> InterpreterIdentity:
         version=f"{version.major}.{version.minor}.{version.micro}",
         executable=Path(sys.executable).absolute(),
     )
+
+
+_RUNTIME_IDENTITY_FIELDS = frozenset(
+    {
+        "schema",
+        "implementation",
+        "version",
+        "sysVersion",
+        "cacheTag",
+        "SOABI",
+        "hexVersion",
+        "platformTag",
+        "invokedExecutable",
+        "resolvedBaseExecutable",
+        "executableSha256",
+    }
+)
+_RUNTIME_SEMANTIC_FIELDS = (
+    "schema",
+    "implementation",
+    "version",
+    "sysVersion",
+    "cacheTag",
+    "SOABI",
+    "hexVersion",
+    "platformTag",
+    "executableSha256",
+)
+
+
+def _runtime_identity_wire(
+    identity: RuntimeIdentityV1 | Mapping[str, Any],
+) -> dict[str, Any]:
+    wire = identity.to_wire() if isinstance(identity, RuntimeIdentityV1) else dict(identity)
+    if set(wire) != _RUNTIME_IDENTITY_FIELDS:
+        raise RuntimeIdentityResolutionFailure(
+            "runtimeIdentity/v1 fields differ from the closed schema: "
+            f"missing={sorted(_RUNTIME_IDENTITY_FIELDS - set(wire))} "
+            f"extra={sorted(set(wire) - _RUNTIME_IDENTITY_FIELDS)}"
+        )
+    for field in _RUNTIME_IDENTITY_FIELDS - {"executableSha256"}:
+        if not isinstance(wire[field], str) or not wire[field]:
+            raise RuntimeIdentityResolutionFailure(
+                f"runtimeIdentity/v1 {field} must be a non-empty string"
+            )
+    if wire["schema"] != "runtimeIdentity/v1":
+        raise RuntimeIdentityResolutionFailure(
+            f"runtime identity schema is not runtimeIdentity/v1: {wire['schema']!r}"
+        )
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", wire["version"]) is None:
+        raise RuntimeIdentityResolutionFailure(
+            f"runtime identity version is not major.minor.micro: {wire['version']!r}"
+        )
+    if re.fullmatch(r"0x[0-9a-f]+", wire["hexVersion"]) is None:
+        raise RuntimeIdentityResolutionFailure(
+            f"runtime identity hexVersion is not canonical hex: {wire['hexVersion']!r}"
+        )
+    sha256 = wire["executableSha256"]
+    if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+        raise RuntimeIdentityResolutionFailure(
+            "runtimeIdentity/v1 executableSha256 must be 64 lowercase hex digits"
+        )
+    for field in ("invokedExecutable", "resolvedBaseExecutable"):
+        if not Path(wire[field]).is_absolute():
+            raise RuntimeIdentityResolutionFailure(
+                f"runtimeIdentity/v1 {field} must be absolute: {wire[field]!r}"
+            )
+    return wire
+
+
+def runtime_cid_for_identity(
+    identity: RuntimeIdentityV1 | Mapping[str, Any],
+) -> str:
+    """Content-address semantic runtime fields; deliberately exclude host paths."""
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
+    wire = _runtime_identity_wire(identity)
+    semantic = {field: wire[field] for field in _RUNTIME_SEMANTIC_FIELDS}
+    payload = json.dumps(
+        semantic, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return blake3_512_of(payload)
+
+
+def observe_runtime_identity_v1() -> RuntimeIdentityV1:
+    """Resolve and hash the current interpreter before it can produce testimony."""
+    interpreter = interpreter_identity()
+    invoked = interpreter.executable.absolute()
+    base_value = getattr(sys, "_base_executable", None) or sys.executable
+    if not isinstance(base_value, str) or not base_value:
+        raise RuntimeIdentityResolutionFailure(
+            "runtimeIdentity/v1 cannot resolve sys._base_executable or sys.executable"
+        )
+    try:
+        resolved_base = Path(base_value).resolve(strict=True)
+        digest = hashlib.sha256()
+        with resolved_base.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError as error:
+        raise RuntimeIdentityResolutionFailure(
+            "runtimeIdentity/v1 could not hash resolved base executable "
+            f"{base_value!r}: {type(error).__name__}: {error}"
+        ) from error
+    cache_tag = getattr(sys.implementation, "cache_tag", None)
+    soabi = sysconfig.get_config_var("SOABI")
+    identity = RuntimeIdentityV1(
+        implementation=interpreter.implementation,
+        version=interpreter.version,
+        sys_version=sys.version,
+        cache_tag=str(cache_tag) if cache_tag is not None else "",
+        soabi=str(soabi) if soabi is not None else "",
+        hex_version=hex(sys.hexversion),
+        platform_tag=platform.platform(),
+        invoked_executable=str(invoked),
+        resolved_base_executable=str(resolved_base),
+        executable_sha256=digest.hexdigest(),
+    )
+    runtime_cid_for_identity(identity)
+    return identity
+
+
+def authenticate_runtime_identity_v1(identity: RuntimeIdentityV1) -> RuntimeIdentityV1:
+    """Authenticate a fully observed runtime through the existing version door."""
+    authenticate_interpreter_runtime(
+        InterpreterIdentity(
+            identity.implementation,
+            identity.version,
+            Path(identity.invoked_executable),
+        )
+    )
+    runtime_cid_for_identity(identity)
+    return identity
+
+
+def authenticated_runtime_attestation_v1() -> dict[str, Any]:
+    """Resolve once and return the closed runtime testimony consumed by receipts."""
+    identity = observe_runtime_identity_v1()
+    authenticate_runtime_identity_v1(identity)
+    return {
+        "requiredRuntime": declared_interpreter_runtime(),
+        "runtimeIdentity": identity.to_wire(),
+        "runtimeCid": runtime_cid_for_identity(identity),
+    }
 
 
 def declared_interpreter_runtime() -> str:
@@ -265,7 +448,7 @@ def _declared_corpus(package_root: Path) -> tuple[dict[str, str], str]:
 def authenticate_environment() -> (
     tuple[ImportIdentity, ImportIdentity, ImportIdentity, str]
 ):
-    authenticate_interpreter_runtime(interpreter_identity())
+    authenticate_runtime_identity_v1(observe_runtime_identity_v1())
     try:
         repo_root = resolve_repo_root()
         package_root = sugar_lift_py_tests_package_root(repo_root)
