@@ -156,9 +156,12 @@ def _initialize(
     contract_refs = None
     demand_table_identity = None
     if demand_table_path:
-        from sugar_lift_py_tests.no_call_body_attribution import (
-            SHARED_DEMAND_TABLE_CONTENT_KEY,
-            validate_shared_demand_table,
+        from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+        from sugar_lift_py_tests.no_call_body_attribution import SHARED_DEMAND_TABLE_CONTENT_KEY
+        from sugar_lift_py_tests.prebuilt_demand_table import (
+            DemandTableArtifactRefusal,
+            load_prebuilt_demand_table,
+            validate_prebuilt_demand_table,
         )
 
         table_path = Path(demand_table_path)
@@ -180,12 +183,36 @@ def _initialize(
                 "demand_table_path": str(table_path),
                 "phase": "load-shared-demand-table",
             }
-        payload = validate_shared_demand_table(
-            json.loads(table_path.read_text(encoding="utf-8")),
-            expected_content_key=SHARED_DEMAND_TABLE_CONTENT_KEY,
+        corpus = authenticated_pandas_corpus()
+        if corpus.root != root:
+            return {
+                "kind": "initialize-refusal",
+                "coordinate": "supervised-enum-worker.construction-context",
+                "reason": (
+                    f"authenticated demand table corpus root mismatch: "
+                    f"worker={root} authenticated={corpus.root}"
+                ),
+                "corpus_root": str(root),
+                "demand_table_path": str(table_path),
+                "phase": "load-shared-demand-table",
+            }
+        table = load_prebuilt_demand_table(
+            table_path,
+            expected_corpus_pin={
+                "distribution": corpus.distribution,
+                "version": corpus.version,
+                "fileCount": corpus.file_count,
+                "aggregateHash": corpus.manifest_cid,
+            },
         )
-        contract_refs = provisional_contract_refs_from_demand_rows(payload["rows"])
-        demand_table_identity = SHARED_DEMAND_TABLE_CONTENT_KEY
+        if table.semantic_identity.content_key == SHARED_DEMAND_TABLE_CONTENT_KEY:
+            raise DemandTableArtifactRefusal(
+                "legacy shared demand table identity refused: "
+                f"{SHARED_DEMAND_TABLE_CONTENT_KEY}"
+            )
+        validate_prebuilt_demand_table(table, corpus)
+        contract_refs = provisional_contract_refs_from_demand_rows(list(table.rows))
+        demand_table_identity = table.semantic_identity.content_key
     elif not allow_local_demand_derivation:
         return {
             "kind": "initialize-refusal",
