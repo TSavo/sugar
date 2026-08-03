@@ -293,25 +293,36 @@ class AttributionReport:
 
 
 def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
-    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
+    # A type-undetermined raise is still a halted face that this ledger must
+    # retain.  Its distinct type prevents it from entering the authenticated
+    # exceptional-exit arm; dropping it here would instead erase the face
+    # before the UNDISCHARGED identity tripwire can make it loud.
+    raise_effect_types = (RaiseEffect, UndeterminedRaiseEffect)
     if isinstance(outcome, Incomplete):
-        return (outcome.effect,) if isinstance(outcome.effect, RaiseEffect) else ()
+        return (
+            (outcome.effect,)
+            if isinstance(outcome.effect, raise_effect_types)
+            else ()
+        )
     if isinstance(outcome, Complete):
         value = outcome.value
         return (
             (value.effect,)
-            if isinstance(value, RaiseValue) and isinstance(value.effect, RaiseEffect)
+            if isinstance(value, RaiseValue)
+            and isinstance(value.effect, raise_effect_types)
             else ()
         )
     if isinstance(outcome, ExitSet):
         return tuple(
             face.effect
             for face in outcome.exits
-            if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+            if isinstance(face, Halted)
+            and isinstance(face.effect, raise_effect_types)
         )
     return ()
 
