@@ -344,11 +344,18 @@ def open_source_file_for_construction(
 
         # Multi-resolve owner: walk-scoped session when none given so census
         # and same-content re-open share projection memos under one root.
-        session = (
-            resolution_session
-            if resolution_session is not None
-            else walk_session_for(root)
-        )
+        if resolution_session is not None:
+            session = resolution_session
+        else:
+            if distribution is None:
+                raise TypeError(
+                    "open_source_file_for_construction requires distribution "
+                    "to construct the walk session's enrolled distribution roster"
+                )
+            session = walk_session_for(
+                root,
+                enrolled_distributions=frozenset({distribution}),
+            )
         # Catch Exception, not BaseException: KeyboardInterrupt / SystemExit /
         # GeneratorExit still halt the process. Do not enumerate SNW/TypeError
         # here — that was the two-costume allowlist that left the class open.
@@ -2390,19 +2397,25 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 if level == "context-manager-resolutions":
                     distribution = options.get("distribution")
                     source_workspace_root = options.get("sourceWorkspaceRoot")
+                    if not isinstance(distribution, str) or not distribution:
+                        raise TypeError(
+                            "context-manager-resolutions requires distribution "
+                            "to construct the walk session's enrolled distribution roster"
+                        )
                     populate_source_derived_resource_refs(
                         tree_file,
                         root=root,
                         path=full_path,
-                        session=walk_session_for(root),
+                        session=walk_session_for(
+                            root,
+                            enrolled_distributions=frozenset({distribution}),
+                        ),
                         source_workspace_root=(
                             Path(source_workspace_root)
                             if isinstance(source_workspace_root, str)
                             else None
                         ),
-                        distribution=(
-                            str(distribution) if isinstance(distribution, str) else None
-                        ),
+                        distribution=distribution,
                     )
                     from sugar_lift_py_tests.context_manager_resolution import (
                         context_manager_resolution_outcome,
