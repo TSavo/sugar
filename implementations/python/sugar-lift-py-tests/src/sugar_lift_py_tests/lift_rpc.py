@@ -1930,6 +1930,12 @@ def _roll_call_audit_leaf(
     for key in absent_keys:
         node = nodes_by_key[key]
         panic = gaps_by_key.get(key)
+        if panic is None:
+            # The full roll-call minority remains carried by sourceAudit.  A
+            # registered ancestor that never answered because a descendant
+            # panicked has no independent panic payload and therefore cannot
+            # be relabelled as a ConstructionPanic product terminal.
+            continue
         lc = node.line_col_span()
         locus = f"{file_rel}:{lc.start_line}:{lc.start_col}"
         terminal = (
