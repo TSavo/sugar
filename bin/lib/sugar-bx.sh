@@ -294,7 +294,8 @@ sugar_bx_run_ambient() {
   # Quiet path: exclusive remote lease → load under lock → corpus pin →
   # measure. Do not exec-replace the shell that holds the flock fd.
   # Three gates, one law: quiet box, exclusive lease, correct corpus.
-  local lock wait_s max_lit host_lit measured_cmd wrapper selector_def
+  local lock wait_s max_lit host_lit measured_cmd wrapper selector_def login_exec
+  local compact_wrapper
   local pin_path pin_py pin_skip
   lock="${SUGAR_BX_TIMING_LEASE:-}"
   selector_def="$(declare -f sugar_bx_select_timing_lease)"
@@ -455,7 +456,16 @@ printf 'sugarbin: bx-load-gate phase=after host=%s load1_before=%s load1_after=%
   \"\$HOST\" \"\$l1\" \"\$l2\" \"\$idle_pct\" \"\$idle_after\" \"\$n\" \"\$QUIET_METRIC\" >&2
 printf 'sugarbin: bx-timing-lease phase=release host=%s path=%s status=%s\\n' \"\$HOST\" \"\$LOCK\" \"\$st\" >&2
 exit \"\$st\""
-  sugar_bx_ssh "bash -lc $(sugar_bx_quote "$wrapper")"
+  # OpenSSH multiplexes the command through a bounded Unix-domain socket
+  # packet. Comments are not executable testimony; sending them made valid
+  # artifact commands cross that transport boundary. Gate logic is unchanged.
+  compact_wrapper="$(printf '%s\n' "$wrapper" | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d')"
+  # Keep login-shell initialization, then replace that shell before it can run
+  # a status-bearing logout hook. On battleaxe /etc/bash.bash_logout invokes
+  # clear_console, whose exit 1 replaced both remote success and remote 23.
+  # The non-login wrapper's explicit exit is therefore the SSH verdict.
+  login_exec='exec "$@"'
+  sugar_bx_ssh "bash -lc $(sugar_bx_quote "$login_exec") bash bash -c $(sugar_bx_quote "$compact_wrapper")"
 }
 
 sugar_bx_docker_bind_source() {
@@ -558,12 +568,18 @@ sugar_bx_run_docker() {
 
 sugar_bx_is_foreign() { [[ "$(uname -s 2>/dev/null)" != Linux ]] && [[ "$(file -b "$1" 2>/dev/null || true)" == *ELF* ]]; }
 sugar_bx_sync_back() {
-  local remote="$1" local_path="$2" tmp
+  local remote="$1" local_path="$2" tmp transfer_status
   if [[ "${SUGAR_BX_LOCAL:-0}" == 1 && "$remote" == "$local_path" ]]; then return 0; fi
   mkdir -p "$(dirname "$local_path")"; tmp="$(mktemp "${local_path}.sugar-bx-sync.XXXXXX")"
   local src="$SUGAR_BX_HOST:$remote"
   [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]] && src="$remote"
-  "$SUGAR_BX_RSYNC" -az "$src" "$tmp"
+  if "$SUGAR_BX_RSYNC" -az "$src" "$tmp"; then
+    :
+  else
+    transfer_status=$?
+    rm -f "$tmp"
+    return "$transfer_status"
+  fi
   if sugar_bx_is_foreign "$tmp"; then
     echo "sugarbin: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/lib/sugar-bx.sh path=$local_path replacement=run the binary on $SUGAR_BX_HOST or rebuild locally" >&2
     rm -f "$tmp"; [[ -e "$local_path" ]] && sugar_bx_is_foreign "$local_path" && rm -f "$local_path"; return 0

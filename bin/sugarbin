@@ -258,6 +258,7 @@ dispatch_execution_subcommand() {
   ((${#env_names[@]} == 0)) || SUGAR_BX_ENV_NAMES=("${env_names[@]}")
   ((${#sync_backs[@]} == 0)) || SUGAR_BX_SYNC_BACKS=("${sync_backs[@]}")
   local repo_root local_cwd status=0 pair
+  local run_status=0 sync_status=0 pair_status=0 final_status=0
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   [[ -n "$repo_root" ]] || { echo "sugarbin: must be run from inside a git checkout" >&2; return 2; }
   local_cwd="$(pwd -P)"
@@ -315,17 +316,32 @@ dispatch_execution_subcommand() {
   fi
   set +e
   sugar_bx_run_ambient "${command[@]}"
-  status=$?
+  run_status=$?
   set -e
   sugar_bx_report_load_after
-  if [[ "$status" == 0 ]]; then
-    if ((${#SUGAR_BX_SYNC_BACKS[@]} != 0)); then
-      for pair in "${SUGAR_BX_SYNC_BACKS[@]}"; do
-        sugar_bx_sync_back "${pair%%:*}" "${pair#*:}" || { status=$?; break; }
-      done
-    fi
+  # Sync-back is evidence collection, not a reward for exit 0. A failed run's
+  # artifact can be the only explanation of its failure, so attempt every
+  # requested pull regardless of the remote verdict. Keep the two statuses
+  # separate: a real remote failure is primary and can never be laundered by a
+  # successful transfer (or replaced by a transfer failure). A transfer
+  # failure only closes an otherwise-successful run.
+  if ((${#SUGAR_BX_SYNC_BACKS[@]} != 0)); then
+    for pair in "${SUGAR_BX_SYNC_BACKS[@]}"; do
+      set +e
+      sugar_bx_sync_back "${pair%%:*}" "${pair#*:}"
+      pair_status=$?
+      set -e
+      if [[ "$pair_status" != 0 && "$sync_status" == 0 ]]; then
+        sync_status="$pair_status"
+      fi
+    done
   fi
-  sugar_bx_finish "$status"
+  final_status="$run_status"
+  if [[ "$final_status" == 0 && "$sync_status" != 0 ]]; then
+    final_status="$sync_status"
+  fi
+  sugar_bx_finish "$final_status"
+  return "$final_status"
 }
 
 sugarbin_bx_cargo() {

@@ -7,8 +7,10 @@ set -euo pipefail
 #   2. --path-prefix lands in PATH and --env forwards values without provisioning
 #   3. repo-root paths in command args are rewritten to the remote root
 #   4. the remote exit code propagates
-#   5. --sync-back pulls the remote artifact into place
-#   6. a foreign (ELF) sync-back is refused and deposits nothing
+#   5. --sync-back pulls the remote artifact into place after success
+#   6. --sync-back also preserves evidence after remote failure without
+#      laundering the failure status
+#   7. a foreign (ELF) sync-back is refused and deposits nothing
 
 repo_root="${1:-}"
 if [[ -z "$repo_root" ]]; then
@@ -33,6 +35,19 @@ cat >"$fake_bin/ssh" <<'SH'
     printf '<%s>\n' "$arg"
   done
 } >>"$BRUN_FAKE_SSH_LOG"
+if [[ "${BRUN_FAKE_EXEC_REMOTE:-0}" == "1" ]]; then
+  remote_command="${*: -1}"
+  remote_status=0
+  PATH="$BRUN_FAKE_BIN:$PATH" bash -lc "$remote_command" || remote_status=$?
+  # Battleaxe's login-shell logout hook runs clear_console after the generated
+  # wrapper and returns 1, replacing both success and nonzero remote verdicts.
+  # An exec bridge replaces the login shell before that hook can run.
+  if [[ "${BRUN_FAKE_POISON_LOGIN_LOGOUT:-0}" == "1" \
+      && "$remote_command" != *"exec \"\$@\""* ]]; then
+    exit 1
+  fi
+  exit "$remote_status"
+fi
 if [[ "${BRUN_FAKE_CMD_FAIL:-0}" == "1" ]]; then
   for arg in "$@"; do
     case "$arg" in
@@ -45,6 +60,14 @@ fi
 exit 0
 SH
 chmod +x "$fake_bin/ssh"
+
+cat >"$fake_bin/flock" <<'SH'
+#!/usr/bin/env bash
+# The real-shaped local transport arm is serialized by the test process. Its
+# job is to execute the generated quiet wrapper, not to re-test util-linux.
+exit 0
+SH
+chmod +x "$fake_bin/flock"
 
 cat >"$fake_bin/rsync" <<'SH'
 #!/usr/bin/env bash
@@ -65,6 +88,9 @@ for arg in "$@"; do
   esac
 done
 if [[ "$src" == *:* && -n "$dest" ]]; then
+  if [[ "${BRUN_FAKE_PULL_FAIL:-0}" == "1" ]]; then
+    exit 29
+  fi
   printf '%s' "${BRUN_FAKE_PULL_CONTENT:-remote-artifact}" >"$dest"
 fi
 exit 0
@@ -85,7 +111,29 @@ run_brun() {
     BCARGO_RSYNC="$fake_bin/rsync" \
     BRUN_FAKE_SSH_LOG="$ssh_log" \
     BRUN_FAKE_RSYNC_LOG="$rsync_log" \
+    BRUN_FAKE_PULL_CONTENT="${BRUN_FAKE_PULL_CONTENT-}" \
+    BRUN_FAKE_PULL_FAIL="${BRUN_FAKE_PULL_FAIL-}" \
     BCARGO_REAP_DAYS=0 \
+    "$repo_root/bin/brun" "$@"
+  )
+}
+
+run_brun_real_shaped_quiet() {
+  (
+    cd "$repo_root"
+    PATH="$fake_bin:$PATH" \
+    BCARGO_SSH="$fake_bin/ssh" \
+    BCARGO_RSYNC="$fake_bin/rsync" \
+    BRUN_FAKE_SSH_LOG="$ssh_log" \
+    BRUN_FAKE_RSYNC_LOG="$rsync_log" \
+    BRUN_FAKE_BIN="$fake_bin" \
+    BRUN_FAKE_EXEC_REMOTE=1 \
+    BRUN_FAKE_POISON_LOGIN_LOGOUT=1 \
+    BCARGO_REMOTE_ROOT="$tmp/real-shaped-remote" \
+    BCARGO_REAP_DAYS=0 \
+    SUGAR_BX_REQUIRE_QUIET=1 \
+    SUGAR_BX_SKIP_CORPUS_PIN=1 \
+    SUGAR_BX_TIMING_LEASE_PATH="$tmp/real-shaped.lease" \
     "$repo_root/bin/brun" "$@"
   )
 }
@@ -126,6 +174,20 @@ status=0
 BRUN_FAKE_CMD_FAIL=1 run_brun -- true >/dev/null 2>&1 || status=$?
 [[ "$status" -eq 23 ]] || fail "remote exit code not propagated (got $status, want 23)"
 
+# Execute the generated quiet wrapper rather than asking the fake SSH boundary
+# to mint an answer. Success and two distinct failures prove status identity;
+# a wrapper that collapses every nonzero to 1 cannot satisfy these arms.
+status=0
+run_brun_real_shaped_quiet -- true >/dev/null 2>&1 || status=$?
+[[ "$status" -eq 0 ]] || fail "real-shaped quiet success collapsed to $status"
+for expected in 23 41; do
+  status=0
+  run_brun_real_shaped_quiet -- bash -lc "exit $expected" \
+    >/dev/null 2>&1 || status=$?
+  [[ "$status" -eq "$expected" ]] \
+    || fail "real-shaped quiet exit $expected collapsed to $status"
+done
+
 # --- 5: sync-back pulls the artifact ------------------------------------------
 : >"$ssh_log"; : >"$rsync_log"
 dest="$tmp/pulled/report.json"
@@ -134,7 +196,44 @@ run_brun --sync-back "/remote/out/report.json:$dest" -- true >/dev/null
 [[ "$(cat "$dest")" == "remote-artifact" ]] || fail "--sync-back deposited wrong content"
 grep -Fq "/remote/out/report.json" "$rsync_log" || fail "sync-back pull not logged"
 
-# --- 6: foreign ELF sync-back refused -----------------------------------------
+# --- 6: failed remote run still syncs its evidence -----------------------------
+: >"$ssh_log"; : >"$rsync_log"
+failed_dest="$tmp/pulled/failed-report.json"
+status=0
+BRUN_FAKE_CMD_FAIL=1 \
+  run_brun --sync-back "/remote/out/failed-report.json:$failed_dest" -- true \
+  >/dev/null 2>&1 || status=$?
+[[ "$status" -eq 23 ]] \
+  || fail "sync-back laundered remote failure (got $status, want 23)"
+[[ -f "$failed_dest" ]] \
+  || fail "remote failure suppressed its evidence sync-back"
+[[ "$(cat "$failed_dest")" == "remote-artifact" ]] \
+  || fail "failed-run sync-back deposited wrong content"
+grep -Fq "/remote/out/failed-report.json" "$rsync_log" \
+  || fail "failed-run sync-back pull not logged"
+
+# A transfer failure cannot turn a successful remote command green, and it
+# cannot replace a real remote failure with a different verdict. The run
+# status is primary; transfer status only closes an otherwise-successful run.
+: >"$ssh_log"; : >"$rsync_log"
+status=0
+BRUN_FAKE_PULL_FAIL=1 \
+  run_brun --sync-back "/remote/out/missing.json:$tmp/pulled/missing.json" \
+  -- true >/dev/null 2>&1 || status=$?
+[[ "$status" -eq 29 ]] \
+  || fail "sync-back failure reported remote success (got $status, want 29)"
+
+: >"$ssh_log"; : >"$rsync_log"
+status=0
+BRUN_FAKE_CMD_FAIL=1 BRUN_FAKE_PULL_FAIL=1 \
+  run_brun --sync-back "/remote/out/failed-missing.json:$tmp/pulled/failed-missing.json" \
+  -- true >/dev/null 2>&1 || status=$?
+[[ "$status" -eq 23 ]] \
+  || fail "sync-back replaced remote failure (got $status, want 23)"
+grep -Fq "/remote/out/failed-missing.json" "$rsync_log" \
+  || fail "remote failure suppressed attempted sync-back after transfer failure"
+
+# --- 7: foreign ELF sync-back refused -----------------------------------------
 if [[ "$(uname -s)" != "Linux" ]]; then
   : >"$ssh_log"; : >"$rsync_log"
   elf_dest="$tmp/pulled/elf-bin"
