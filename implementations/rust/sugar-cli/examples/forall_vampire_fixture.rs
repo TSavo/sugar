@@ -144,7 +144,7 @@ fn write_fixture(project: &Path) -> Result<(), Box<dyn std::error::Error>> {
     ] {
         let inv = graph.register_atom(FlatAtom::new(json_to_canonical_value(&inv)));
         let body = graph.register_body(ContractBody::new_inv(&inv));
-        graph.register_contract(ContractMemento::new_with_metadata_at(
+        graph.register_contract(ContractMemento::new_obligation_with_metadata_at(
             name,
             &body,
             &metadata,
@@ -183,4 +183,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_fixture(&project)?;
     println!("{}", project.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_constructs_both_formulas_as_direct_obligations() {
+        let project = tempfile::tempdir().expect("create fixture project");
+        write_fixture(project.path()).expect("write forall-vampire fixture");
+
+        let proof_path = fs::read_dir(project.path().join(".sugar"))
+            .expect("read fixture proof directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "proof")
+            })
+            .expect("fixture emitted a .proof catalog");
+        let graph = ProofGraph::read(&fs::read(proof_path).expect("read fixture proof"))
+            .expect("decode fixture proof graph");
+
+        let mut direct_obligations = graph
+            .members()
+            .filter_map(|(_, bytes)| serde_json::from_slice::<Json>(bytes).ok())
+            .filter(|member| {
+                member
+                    .get("header")
+                    .and_then(|header| header.get("invVerification"))
+                    .and_then(Json::as_str)
+                    == Some("obligation")
+            })
+            .filter_map(|member| {
+                member
+                    .get("header")
+                    .and_then(|header| header.get("contractName"))
+                    .and_then(Json::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        direct_obligations.sort();
+
+        assert_eq!(
+            direct_obligations,
+            [
+                "forall_vampire_bad_false_universal".to_string(),
+                "forall_vampire_good_right_identity".to_string(),
+            ],
+            "the showcase formulas must be constructed through the direct-obligation entrance"
+        );
+    }
 }
