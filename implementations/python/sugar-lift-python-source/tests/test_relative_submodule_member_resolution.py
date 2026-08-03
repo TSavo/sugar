@@ -18,8 +18,18 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
     PythonObjectResolutionGapV1,
-    resolve_import_binding,
+    resolve_import_binding as _resolve_import_binding,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+
+def resolve_import_binding(*args, graph, session=None, **kwargs):
+    """Every graph in this file is the authenticated distribution under test."""
+    if session is None:
+        session = SourceResolutionSession(
+            enrolled_distributions=frozenset({graph.distribution_name})
+        )
+    return _resolve_import_binding(*args, graph=graph, session=session, **kwargs)
 
 
 def _graph(

@@ -56,6 +56,8 @@ def _open(tmp_path: Path, path: Path):
         reporter=CollectingReporter(),
         construction_context=ctx,
         populate_derived=True,
+        distribution="roster-floor-fixture",
+        source_workspace_root=tmp_path,
     )
 
 

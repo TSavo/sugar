@@ -13,7 +13,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
     ResolvedPythonObjectV1,
-    resolve_import_binding,
+    resolve_import_binding as _resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
     CALL_TARGET_GAP_KINDS as _CALL_TARGET_GAP_KINDS,
@@ -23,8 +23,8 @@ from sugar_lift_python_source.manager_construction import (
     _call_coordinate,
     _install_opaque_call_obligation,
     _install_source_call_frame,
-    construct_manager_behavior,
-    resolve_source_visible_frame,
+    construct_manager_behavior as _construct_manager_behavior,
+    resolve_source_visible_frame as _resolve_source_visible_frame,
 )
 from sugar_lift_python_source.manager_protocol_construction import (
     ConstructedManagerProtocolV1,
@@ -37,10 +37,44 @@ from sugar_lift_python_source.manager_summary_derivation import (
     derive_manager_summary,
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import BindingEntryV1
 from sugar_source_tree.nodes import Call, ClassDef, Constant, Name
 from sugar_source_tree.tree import SourceFile
+
+
+def _session_enrolling_graph(graph) -> SourceResolutionSession:
+    return SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
+
+
+def resolve_import_binding(*args, graph, session=None, **kwargs):
+    return _resolve_import_binding(
+        *args,
+        graph=graph,
+        session=_session_enrolling_graph(graph) if session is None else session,
+        **kwargs,
+    )
+
+
+def resolve_source_visible_frame(*args, graph, session=None, **kwargs):
+    return _resolve_source_visible_frame(
+        *args,
+        graph=graph,
+        session=_session_enrolling_graph(graph) if session is None else session,
+        **kwargs,
+    )
+
+
+def construct_manager_behavior(*args, graph, session=None, **kwargs):
+    return _construct_manager_behavior(
+        *args,
+        graph=graph,
+        session=_session_enrolling_graph(graph) if session is None else session,
+        **kwargs,
+    )
 
 
 def _distribution(
@@ -426,6 +460,9 @@ def test_dual_mode_effect_boundary_installs_with_effect_boundary_sugar(tmp_path)
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     reference = next(iter(context.source_derived_contract_refs.values()))
@@ -2326,6 +2363,9 @@ def test_preconstruction_populates_resource_ref_from_authenticated_import(tmp_pa
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -2386,6 +2426,9 @@ def test_preconstruction_can_bound_derivation_to_one_authenticated_use(tmp_path)
         path=path,
         distribution_index={"arbitrary": distribution},
         selected_coordinates=frozenset({selected}),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     assert tuple(context.source_derived_contract_refs) == (selected,)
@@ -2434,6 +2477,9 @@ def test_preconstruction_populates_renamed_effect_boundary_from_source(tmp_path)
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     reference = next(iter(context.source_derived_contract_refs.values()))
@@ -2486,7 +2532,15 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
         (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    pytest_distribution = importlib.metadata.distribution("pytest")
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({pytest_distribution.metadata["Name"]})
+        ),
+    )
     return tree, context
 
 
@@ -2602,7 +2656,15 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
         (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    pandas_distribution = importlib.metadata.distribution("pandas")
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({pandas_distribution.metadata["Name"]})
+        ),
+    )
 
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     assert isinstance(boundary, GeneratorWithSugar)
@@ -2634,6 +2696,9 @@ def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     assert isinstance(
@@ -2666,6 +2731,9 @@ def test_imported_ordinary_factory_cannot_lie_as_generator_manager(tmp_path):
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     assert context.source_call_frames == {}
@@ -2698,7 +2766,15 @@ def _installed_plain_expected_halt_reference(tmp_path, function_body: str):
         (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    pytest_distribution = importlib.metadata.distribution("pytest")
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({pytest_distribution.metadata["Name"]})
+        ),
+    )
     reference = next(iter(context.source_derived_contract_refs.values()))
     with_node = next(node for node in tree.nodes() if node.kind == "With")
     if isinstance(reference, SourceDerivedContextManagerRefV1):
@@ -2814,6 +2890,9 @@ def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     reference = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(reference, SourceDerivedContextManagerRefV1)
@@ -2875,6 +2954,9 @@ def test_expects_effect_boundary_never_installs_as_protocol_resource(tmp_path):
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     reference = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(reference, SourceDerivedContextManagerRefV1)
@@ -2912,7 +2994,11 @@ def test_installed_stdlib_suppress_reaches_grouped_unpack_after_graph_authentica
     # Graph authentication of stdlib contextlib succeeds. Later-stage residual
     # (exit method ExitSet / unpack) stays a typed gap — not a bare SugarNotWritten.
     populate_source_derived_resource_refs(
-        tree, root=tmp_path, path=path, artifact_graph_cache=graphs
+        tree,
+        root=tmp_path,
+        path=path,
+        artifact_graph_cache=graphs,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
 
     graph = graphs["contextlib"]
@@ -2977,6 +3063,9 @@ def test_renamed_source_boundary_routes_type_and_message_by_derived_formals(
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
@@ -3194,6 +3283,9 @@ def test_boundary_consumes_authenticated_builtin_ancestry_only_in_one_direction(
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     from sugar_lift_py_tests.outcome import outcome_to_exitset
@@ -3258,6 +3350,9 @@ def _route_boundary_with_binding(
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     from sugar_lift_py_tests.outcome import outcome_to_exitset
 
@@ -3488,6 +3583,9 @@ def test_as_binding_requires_a_contract_that_declares_one(tmp_path):
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     refs = context.source_derived_contract_refs
     coordinate, reference = next(iter(refs.items()))
@@ -3580,6 +3678,9 @@ def _attribute_exception_tree(
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     return tree, context
 
@@ -3722,6 +3823,9 @@ def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     with_node = next(node for node in tree.nodes() if node.kind == "With")
     # Either preconstruction refuses the call actual, or With stays force-floor /

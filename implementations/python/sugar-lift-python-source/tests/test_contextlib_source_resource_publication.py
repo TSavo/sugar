@@ -16,6 +16,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 
@@ -38,7 +39,12 @@ def test_installed_renamed_contextlib_class_manager_publishes_native_definitions
         construction_context=context,
     )
 
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
 
     assert len(context.source_derived_contract_refs) == 1
     receiver, ref = next(iter(context.source_derived_contract_refs.items()))

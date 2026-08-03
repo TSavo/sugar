@@ -22,8 +22,37 @@ from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
     PythonObjectResolutionGapV1,
     ResolvedPythonObjectV1,
-    resolve_import_binding,
+    resolve_import_binding as _resolve_import_binding,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+
+def resolve_import_binding(*args, graph, session=None, **kwargs):
+    """This file's authenticated graph is the distribution under test."""
+    if session is None:
+        name = graph.distribution_name
+        if not name:
+            raise AssertionError("re-export graph test requires a distribution name")
+        session = SourceResolutionSession(enrolled_distributions=frozenset({name}))
+    return _resolve_import_binding(*args, graph=graph, session=session, **kwargs)
+
+
+def _prefix_outcome(module, locus, *, distribution=None, graph=None):
+    """Execute a prefix under the distribution authority owned by the fixture."""
+    from sugar_lift_python_source import manager_construction
+
+    if graph is not None and graph.artifact_kind == "stdlib":
+        roster = frozenset()
+    else:
+        if distribution is None:
+            raise AssertionError("prefix fixture requires distribution authority")
+        roster = frozenset({distribution.metadata["Name"]})
+    return manager_construction._module_prefix_outcome(
+        module,
+        locus,
+        graph=graph,
+        session=SourceResolutionSession(enrolled_distributions=roster),
+    )
 
 
 def _dist(
@@ -468,7 +497,7 @@ def test_module_prefix_execution_binds_exact_class_definition_once(
     ]
     locus = ast.parse(source).body[-1]
 
-    exits = manager_construction._module_prefix_outcome(module, locus)
+    exits = _prefix_outcome(module, locus, distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -506,9 +535,7 @@ def test_module_prefix_defers_forward_function_body_until_prefix_temporal_is_liv
         "module_local_call_prefix_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -541,9 +568,7 @@ def test_module_prefix_does_not_construct_an_uncalled_function_body(
         "lazy_module_function_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -577,9 +602,7 @@ def test_module_prefix_publishes_exact_async_definition_without_running_body(
         "async_module_function_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -613,9 +636,7 @@ def test_module_prefix_refuses_synchronous_async_function_application(
     )
     module = DependencyArtifactGraph.authenticate(dist).modules["async_module_call_pkg"]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
     assert len(exits.exits) == 1
     completed = exits.exits[0]
     assert isinstance(completed, Completed)
@@ -665,9 +686,7 @@ def test_module_prefix_sync_function_application_remains_completed(
     )
     module = DependencyArtifactGraph.authenticate(dist).modules["sync_module_call_pkg"]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -717,7 +736,7 @@ def test_module_prefix_refuses_decorated_async_definition_before_completion(
     ]
 
     with pytest.raises(SugarNotWritten) as raised:
-        manager_construction._module_prefix_outcome(module, ast.parse(source).body[-1])
+        _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert raised.value.owner == "module function definition execution"
     assert raised.value.blame.source_cid == module.source_cid
@@ -754,9 +773,7 @@ def test_module_async_function_application_stays_typed_loud_while_plain_function
     module = DependencyArtifactGraph.authenticate(dist).modules[
         "async_call_application_pkg"
     ]
-    published = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    published = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
     async_callable = published.exits[0].value.context.temporal.value_if_bound(
         "async_target"
     )
@@ -767,19 +784,20 @@ def test_module_async_function_application_stays_typed_loud_while_plain_function
     assert raised.value.owner == "module function definition application"
     assert "AsyncFunctionDef" in raised.value.observed
 
-    plain_module = DependencyArtifactGraph.authenticate(
-        _dist(
-            tmp_path / "plain",
-            name="plain-call-application-pkg",
-            files={
-                "plain_call_application_pkg/__init__.py": source.replace(
-                    "return async_target", "return plain_target"
-                )
-            },
-        )
-    ).modules["plain_call_application_pkg"]
-    plain_published = manager_construction._module_prefix_outcome(
-        plain_module, ast.parse(source).body[-1]
+    plain_dist = _dist(
+        tmp_path / "plain",
+        name="plain-call-application-pkg",
+        files={
+            "plain_call_application_pkg/__init__.py": source.replace(
+                "return async_target", "return plain_target"
+            )
+        },
+    )
+    plain_module = DependencyArtifactGraph.authenticate(plain_dist).modules[
+        "plain_call_application_pkg"
+    ]
+    plain_published = _prefix_outcome(
+        plain_module, ast.parse(source).body[-1], distribution=plain_dist
     )
     plain_callable = plain_published.exits[0].value.context.temporal.value_if_bound(
         "plain_target"
@@ -807,9 +825,7 @@ def test_module_prefix_constructs_one_subscript_delete_statement(
         "module_delete_prefix_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -831,9 +847,7 @@ def test_module_prefix_chained_names_share_one_rhs_value(tmp_path: Path) -> None
         "module_chained_assignment_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -870,9 +884,7 @@ def test_stdlib_makecodes_return_is_rebound_before_exact_slice_delete() -> None:
     )
     expected_count = len(assignment.value.args) - 2
 
-    exits = manager_construction._module_prefix_outcome(
-        module, next_statement, graph=graph
-    )
+    exits = _prefix_outcome(module, next_statement, graph=graph)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -898,7 +910,7 @@ def test_bodyless_call_result_cannot_be_promoted_to_delete_list(tmp_path: Path) 
     locus = ast.parse(source).body[-1]
 
     with pytest.raises(SugarNotWritten) as raised:
-        manager_construction._module_prefix_outcome(module, locus)
+        _prefix_outcome(module, locus, distribution=dist)
 
     assert raised.value.owner == "SubscriptDeleteEffectSugar._delete"
     assert raised.value.observed == (
@@ -933,9 +945,7 @@ def test_module_prefix_execution_publishes_exact_decorator_result(
         "module_decoration_prefix_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -981,9 +991,7 @@ def test_module_prefix_execution_publishes_exact_metaclass_result(
         "module_metaclass_prefix_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -1036,7 +1044,7 @@ def test_module_prefix_refuses_untransported_class_creation_keywords(
     ]
 
     with pytest.raises(SugarNotWritten) as raised:
-        manager_construction._module_prefix_outcome(module, ast.parse(source).body[-1])
+        _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert raised.value.owner == "module definition execution"
     assert raised.value.observed == observed
@@ -1063,9 +1071,7 @@ def test_module_prefix_without_class_creation_keywords_still_publishes(
         "module_class_no_keyword_prefix_pkg"
     ]
 
-    exits = manager_construction._module_prefix_outcome(
-        module, ast.parse(source).body[-1]
-    )
+    exits = _prefix_outcome(module, ast.parse(source).body[-1], distribution=dist)
 
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -1117,7 +1123,9 @@ def test_prefix_adapter_routes_exact_graph_and_session_to_module_execution(
     graph = DependencyArtifactGraph.authenticate(dist)
     module = graph.modules["prefix_consumer_pkg"]
     locus = ast.parse(source).body[-1]
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
     observed = []
 
     def completed_prefix(actual_module, actual_locus, *, graph, session):

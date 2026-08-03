@@ -33,7 +33,8 @@ def test_frame_memo_limit_default() -> None:
 def test_frame_holds_evict_with_memo_row(monkeypatch) -> None:
     """Hold must not outlive the memo it guards."""
     monkeypatch.setenv("SUGAR_SESSION_FRAME_MEMO_LIMIT", "2")
-    session = SourceResolutionSession()
+    # Memo-storage unit test: no distribution graph is enrolled.
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
 
     holds = [object() for _ in range(4)]
     for i, hold in enumerate(holds):
@@ -55,7 +56,7 @@ def test_frame_holds_evict_with_memo_row(monkeypatch) -> None:
 def test_frame_hit_refreshes_lru_order(monkeypatch) -> None:
     """A hit keeps its hold; next eviction drops a colder key."""
     monkeypatch.setenv("SUGAR_SESSION_FRAME_MEMO_LIMIT", "2")
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
     h0, h1, h2 = object(), object(), object()
     session.remember_frame(("k", 0), "r0", hold=h0)
     session.remember_frame(("k", 1), "r1", hold=h1)
@@ -73,7 +74,7 @@ def test_frame_hit_refreshes_lru_order(monkeypatch) -> None:
 def test_remember_frame_without_hold_still_bounded(monkeypatch) -> None:
     """Gap memos (no hold) also count toward the limit."""
     monkeypatch.setenv("SUGAR_SESSION_FRAME_MEMO_LIMIT", "2")
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
     session.remember_frame(("g", 0), "gap0")
     session.remember_frame(("g", 1), "gap1", hold=object())
     session.remember_frame(("g", 2), "gap2")

@@ -129,7 +129,9 @@ def _manager_frame(tmp_path: Path, name: str):
         module_identities={},
     )
     assert len(receipts) == 1
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
     resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
     assert isinstance(resolved, ResolvedPythonObjectV1)
     projected = resolve_source_visible_frame(resolved, graph=graph, session=session)

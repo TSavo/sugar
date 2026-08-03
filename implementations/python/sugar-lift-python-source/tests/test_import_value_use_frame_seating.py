@@ -84,6 +84,8 @@ def _frame_for_box_expected(
     helpers: str,
     types: str = "class ArrayType:\n    pass\n",
 ):
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
     distribution = _distribution(tmp_path, helpers, types)
     path, source_file, context = _consumer(
         tmp_path,
@@ -96,6 +98,9 @@ def _frame_for_box_expected(
         root=tmp_path,
         path=path,
         distribution_index={"unprivileged": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     span = call.line_col_span()
     coordinate = SourceFragmentCoordinateV1(
@@ -417,7 +422,8 @@ def test_exact_import_value_receipt_seats_and_constructs_member(
         source_file=source_file,
         module=module,
         target=function,
-        session=SourceResolutionSession(),
+        # Only stdlib imports are present; no distribution is enrolled.
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
         context=context,
         dependency_graphs={},
     )
@@ -531,7 +537,7 @@ def test_receipt_backed_import_member_is_constructed_call_argument(
         source_file=source_file,
         module=module,
         target=function,
-        session=SourceResolutionSession(),
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
         context=context,
         dependency_graphs={},
     )
@@ -587,7 +593,7 @@ def test_import_member_testimony_canonicalizes_only_its_authenticated_token(
         source_file=source_file,
         module=module,
         target=function,
-        session=SourceResolutionSession(),
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
         context=context,
         dependency_graphs={},
     )

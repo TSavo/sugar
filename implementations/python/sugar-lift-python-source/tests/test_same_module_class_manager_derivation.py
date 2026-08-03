@@ -23,6 +23,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import With
 from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.tree import SourceFile
@@ -97,6 +98,9 @@ def _imported_manager_gap(
         path=path,
         distribution_index=distribution_index,
         distribution=enrolled_distribution,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({enrolled_distribution})
+        ),
     )
     assert len(context.source_derived_contract_refs) == 1
     gap = next(iter(context.source_derived_contract_refs.values()))
@@ -120,7 +124,12 @@ def test_local_classdef_cm_derives_and_constructs(tmp_path: Path):
                 return 1
         """)
     tree, context, path = _source_file(tmp_path, source)
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
 
     assert len(context.source_derived_contract_refs) == 1
     ref = next(iter(context.source_derived_contract_refs.values()))
@@ -142,7 +151,12 @@ def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
                 return 1
         """)
     tree, context, path = _source_file(tmp_path, source)
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
 
     assert len(context.source_derived_contract_refs) == 1
     gap = next(iter(context.source_derived_contract_refs.values()))
@@ -176,7 +190,12 @@ def test_install_gap_never_attribute_errors_on_import_auth_fail(tmp_path: Path):
         """)
     tree, context, path = _source_file(tmp_path, source)
     # No distribution_index → authenticate fails → no-derived-contract gap.
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert len(context.source_derived_contract_refs) == 1
     gap = next(iter(context.source_derived_contract_refs.values()))
     assert type(gap).__name__ == "ContextManagerResolutionGapV1"

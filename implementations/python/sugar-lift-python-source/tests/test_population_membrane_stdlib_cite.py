@@ -132,6 +132,8 @@ def _open_json_once():
             reporter=reporter,
             construction_context=ctx,
             populate_derived=True,
+            distribution="pandas",
+            source_workspace_root=corpus,
         )
     except SugarNotWritten:
         # In-population SNW is not this instrument; seat counts still measured.
@@ -188,7 +190,10 @@ def test_off_population_gap_helper_names_stdlib() -> None:
         module_name = "enum"
 
     stdlib = DependencyArtifactGraph.authenticate_stdlib_module("enum")
-    gap = _off_population_materialize_gap(_Resolved(), graph=stdlib)  # type: ignore[arg-type]
+    empty = SourceResolutionSession(enrolled_distributions=frozenset())
+    gap = _off_population_materialize_gap(
+        _Resolved(), graph=stdlib, session=empty
+    )  # type: ignore[arg-type]
     assert gap is not None
     assert gap.kind == "call-target-off-population"
     assert "enum" in gap.detail
@@ -197,20 +202,27 @@ def test_off_population_gap_helper_names_stdlib() -> None:
     gap_re = _off_population_materialize_gap(
         type("R", (), {"cid": "r", "module_name": "re"})(),
         graph=re_graph,
+        session=empty,
     )
     assert gap_re is not None
     assert gap_re.kind == "call-target-off-population"
 
-    # Legacy (enrolled=None): pin distributions stay on-population.
+    # Explicit enrollment: this test deliberately makes pytest the subject.
     import importlib.metadata
 
     pytest_dist = importlib.metadata.distribution("pytest")
     pytest_graph = DependencyArtifactGraph.authenticate(pytest_dist)
-    gap_legacy = _off_population_materialize_gap(
+    pytest_session = SourceResolutionSession(
+        enrolled_distributions=frozenset({"pytest"})
+    )
+    gap_enrolled = _off_population_materialize_gap(
         type("R", (), {"cid": "p", "module_name": "_pytest.raises"})(),
         graph=pytest_graph,
+        session=pytest_session,
     )
-    assert gap_legacy is None, "without enrolled pin, distributions stay on-population"
+    assert (
+        gap_enrolled is None
+    ), "an explicitly enrolled distribution stays on-population"
 
     # Enrolled pin: foreign distribution is off-population.
     session = SourceResolutionSession(enrolled_distributions=frozenset({"pandas"}))

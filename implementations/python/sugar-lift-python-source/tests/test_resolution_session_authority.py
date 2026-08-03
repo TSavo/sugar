@@ -85,6 +85,13 @@ def _project(tmp_path: Path, name: str, implementation_source: str):
     return graph, _receipt(root)
 
 
+def _session_for(*projects, enabled: bool = True) -> SourceResolutionSession:
+    """Enroll exactly the authenticated project distributions under test."""
+    names = frozenset(project[0].distribution_name for project in projects)
+    assert None not in names
+    return SourceResolutionSession(enabled=enabled, enrolled_distributions=names)
+
+
 def _resolve(project, session):
     graph, receipt = project
     resolved = resolve_import_binding(receipt, graph=graph, session=session)
@@ -141,8 +148,8 @@ def test_cold_result_equals_warm_result(tmp_path: Path) -> None:
     """A warm memo answers exactly what a cold resolution answers."""
     project = _project(tmp_path, "p", _IMPL_A)
 
-    cold = _verdict(project, SourceResolutionSession())
-    session = SourceResolutionSession()
+    cold = _verdict(project, _session_for(project))
+    session = _session_for(project)
     _verdict(project, session)  # warm it
     warm = _verdict(project, session)
 
@@ -155,7 +162,7 @@ def test_cold_result_equals_warm_result(tmp_path: Path) -> None:
         _verdict(project, session)
     assert counter.count == 0, "warm session still re-materialized: memo is dead"
     with _MaterializeCounter() as cold_counter:
-        _verdict(project, SourceResolutionSession())
+        _verdict(project, _session_for(project))
     assert cold_counter.count >= 1, "cold session did no work: twin cannot bite"
 
 
@@ -167,11 +174,11 @@ def test_a_then_b_equals_b_then_a(tmp_path: Path) -> None:
     a = _project(tmp_path, "a", _IMPL_A)
     b = _project(tmp_path, "b", _IMPL_B)
 
-    forward = SourceResolutionSession()
+    forward = _session_for(a, b)
     a_first = _verdict(a, forward)
     b_second = _verdict(b, forward)
 
-    backward = SourceResolutionSession()
+    backward = _session_for(a, b)
     b_first = _verdict(b, backward)
     a_second = _verdict(a, backward)
 
@@ -191,9 +198,9 @@ def test_isolated_result_equals_result_after_other_work(tmp_path: Path) -> None:
     target = _project(tmp_path, "target", _IMPL_A)
     noise = _project(tmp_path, "noise", _IMPL_B)
 
-    isolated = _verdict(target, SourceResolutionSession())
+    isolated = _verdict(target, _session_for(target))
 
-    crowded_session = SourceResolutionSession()
+    crowded_session = _session_for(target, noise)
     _verdict(noise, crowded_session)
     crowded = _verdict(target, crowded_session)
 
@@ -209,9 +216,11 @@ def test_isolated_result_equals_result_after_other_work(tmp_path: Path) -> None:
 
 def test_changed_source_content_invalidates_the_answer(tmp_path: Path) -> None:
     """Different source content must never be served the earlier answer."""
-    session = SourceResolutionSession()
-    before = _verdict(_project(tmp_path, "v1", _IMPL_A), session)
-    after = _verdict(_project(tmp_path, "v2", _IMPL_B), session)
+    before_project = _project(tmp_path, "v1", _IMPL_A)
+    after_project = _project(tmp_path, "v2", _IMPL_B)
+    session = _session_for(before_project, after_project)
+    before = _verdict(before_project, session)
+    after = _verdict(after_project, session)
 
     # Discrimination arm and assertion are the same edge: the memo did not
     # answer for content it never saw.
@@ -230,9 +239,9 @@ def test_changed_source_content_invalidates_the_answer(tmp_path: Path) -> None:
 
 def test_equal_paths_under_different_authorities_do_not_alias(tmp_path: Path) -> None:
     """Same module path + same exported name, different authority, no alias."""
-    session = SourceResolutionSession()
     left_graph, _ = left = _project(tmp_path, "left", _IMPL_A)
     right_graph, _ = right = _project(tmp_path, "right", _IMPL_B)
+    session = _session_for(left, right)
 
     left_answer = _verdict(left, session)
     right_answer = _verdict(right, session)
@@ -275,8 +284,8 @@ def test_distinct_sessions_share_content_prep_not_session_tables(
         )
         return target
 
-    session_a = SourceResolutionSession()
-    session_b = SourceResolutionSession()
+    session_a = _session_for(project)
+    session_b = _session_for(project)
     first = project_target(session_a)
     second = project_target(session_b)
 
@@ -288,7 +297,7 @@ def test_distinct_sessions_share_content_prep_not_session_tables(
     assert session_a.frame_results and session_b.frame_results
 
     # Discrimination: inside ONE session the answer is object-stable.
-    shared = SourceResolutionSession()
+    shared = _session_for(project)
     assert project_target(shared) is project_target(shared)
 
 
@@ -306,12 +315,12 @@ def test_byte_identical_modules_prepare_once_process_wide(tmp_path: Path) -> Non
     a = _project(tmp_path, "a", _IMPL_A)
     b = _project(tmp_path, "b", _IMPL_A)  # byte-identical module source
 
-    session_a = SourceResolutionSession()
+    session_a = _session_for(a)
     _verdict(a, session_a)
     impl_cid = next(iter(session_a.module_materializations.values()))[0].unit.source_cid
     assert prepare_count_for(impl_cid) == 1
 
-    session_b = SourceResolutionSession()
+    session_b = _session_for(b)
     _verdict(b, session_b)
     # Second project of same content does not re-prepare the body.
     assert prepare_count_for(impl_cid) == 1
@@ -332,8 +341,8 @@ def test_memo_disablement_changes_performance_only(tmp_path: Path) -> None:
     """The load-bearing law: a memo that changes an answer is not a memo."""
     project = _project(tmp_path, "p", _IMPL_A)
 
-    enabled = SourceResolutionSession(enabled=True)
-    disabled = SourceResolutionSession(enabled=False)
+    enabled = _session_for(project, enabled=True)
+    disabled = _session_for(project, enabled=False)
 
     with _MaterializeCounter() as enabled_counter:
         first_enabled = _verdict(project, enabled)
@@ -381,11 +390,12 @@ def test_disablement_preserves_parked_obligation_verdicts(tmp_path: Path) -> Non
         )
         return frame.frame_cid, target.name, obligations
 
-    warm_session = SourceResolutionSession()
+    roster = frozenset({graph.distribution_name})
+    warm_session = SourceResolutionSession(enrolled_distributions=roster)
     first_warm = answer(warm_session)
     second_warm = answer(warm_session)
-    cold = answer(SourceResolutionSession())
-    off = answer(SourceResolutionSession(enabled=False))
+    cold = answer(SourceResolutionSession(enrolled_distributions=roster))
+    off = answer(SourceResolutionSession(enabled=False, enrolled_distributions=roster))
 
     assert first_warm == second_warm == cold == off
     assert len(first_warm[2]) == 1
@@ -498,9 +508,9 @@ def test_authority_blind_key_aliases_two_distributions(
     tmp_path: Path, authority_blind_key
 ) -> None:
     """DISCRIMINATION for twins 2/3/4/5: dropping the authority aliases them."""
-    session = SourceResolutionSession()
     left_project = _project(tmp_path, "left", _IMPL_A)
     right_project = _project(tmp_path, "right", _IMPL_B)
+    session = _session_for(left_project, right_project)
 
     left = _resolve(left_project, session)
     right = _resolve(right_project, session)
@@ -571,7 +581,9 @@ def test_shared_session_amortizes_across_two_consumer_files(tmp_path: Path) -> N
             )
             assert isinstance(projected, tuple), projected
 
-    shared = SourceResolutionSession()
+    shared = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
     with _MaterializeCounter() as cold_counter:
         project_once(shared)  # two consumers, one session
     cold = cold_counter.count
@@ -588,8 +600,18 @@ def test_shared_session_amortizes_across_two_consumer_files(tmp_path: Path) -> N
     # Discrimination: isolated leaves (session_or_new(None) per project_once)
     # do not share memos — correct isolation, and proves the warm zero is real.
     with _MaterializeCounter() as isolated_counter:
-        project_once(session_or_new(None))
-        project_once(session_or_new(None))
+        project_once(
+            session_or_new(
+                None,
+                enrolled_distributions=frozenset({graph.distribution_name}),
+            )
+        )
+        project_once(
+            session_or_new(
+                None,
+                enrolled_distributions=frozenset({graph.distribution_name}),
+            )
+        )
     assert isolated_counter.count >= cold * 2, (
         f"isolated sessions only materialized {isolated_counter.count} times "
         f"(cold shared was {cold}); the shared-session twin cannot bite"
@@ -616,14 +638,20 @@ def test_file_open_door_threads_resolution_session(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
 
-    open_source_file_for_construction(path, root=root)
+    distribution = "session-authority-fixture"
+    open_source_file_for_construction(
+        path,
+        root=root,
+        distribution=distribution,
+        source_workspace_root=root,
+    )
     assert len(seen) == 1
     assert isinstance(seen[0], SourceResolutionSession), (
         "file-open dropped the session; populate fell back to session_or_new and "
         "the multi-resolve owner no longer owns amortization"
     )
 
-    shared = SourceResolutionSession()
+    shared = SourceResolutionSession(enrolled_distributions=frozenset({distribution}))
     seen.clear()
     open_source_file_for_construction(path, root=root, resolution_session=shared)
     assert seen == [shared], "explicit package session must reach populate unchanged"

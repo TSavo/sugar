@@ -14,6 +14,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     _projected_manager_call_uses,
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import With
 from sugar_source_tree.tree import SourceFile
 
@@ -182,7 +183,12 @@ def test_pandas_303_both_option_context_managers_construct_through_bindings() ->
     site = _line_32_with(tree)
     context = tree.root.unit.construction_context
 
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset({"pandas"})),
+    )
 
     seats = sorted(
         (coordinate.start_line, coordinate.start_col)
@@ -260,7 +266,12 @@ def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) 
         if node.kind == "With" and node.line_col_span().start_line == 4
     )
     context = tree.root.unit.construction_context
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=source)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=source,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
 
     assert context.source_manager_provider_calls == {}
     assert _projected_manager_call_uses(tree) == {}
@@ -431,6 +442,9 @@ def test_truthful_local_two_assigned_generators_construct_and_desugar(
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     site = next(node for node in tree.nodes() if isinstance(node, With))
@@ -476,6 +490,9 @@ def test_independent_manager_coordinates_survive_shared_provider_spelling(
         root=tmp_path,
         path=path,
         distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     site = next(node for node in tree.nodes() if isinstance(node, With))
     use_coords = [item._manager_use_site_span() for item in site.items]

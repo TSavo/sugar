@@ -11,6 +11,10 @@ from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.dependency_artifact import (
+    authenticate_dependency_top_level,
+)
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import Attribute, With
 from sugar_source_tree.panic import SugarNotWritten
@@ -40,7 +44,16 @@ def _tree(tmp_path: Path, source: str) -> SourceFile:
         workspace_path_source(str(path), root=str(tmp_path)),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    pytest_graph = authenticate_dependency_top_level("pytest")
+    if pytest_graph.artifact_kind != "distribution":
+        raise AssertionError("installed pytest slice requires a distribution graph")
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({pytest_graph.distribution_name})
+    )
+    session.dependency_graphs["pytest"] = pytest_graph
+    populate_source_derived_resource_refs(
+        tree, root=tmp_path, path=path, session=session
+    )
     return tree
 
 

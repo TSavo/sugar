@@ -38,7 +38,7 @@ def test_regexflag_relative_member_receipt_survives_repeated_frame_seating() -> 
         for node in source_file.root.body
         if isinstance(node, ClassDef) and node.name == "RegexFlag"
     )
-    session = SourceResolutionSession(enabled=False)
+    session = SourceResolutionSession(enrolled_distributions=frozenset(), enabled=False)
 
     for _ in range(2):
         _seat_import_value_use_receipts(
@@ -97,7 +97,9 @@ def test_regexflag_relative_member_missing_foreign_and_crosswired_receipts_refus
         source_file=source_file,
         module=module,
         target=regex_flag,
-        session=SourceResolutionSession(enabled=False),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(), enabled=False
+        ),
         context=context,
         dependency_graphs={"re": graph},
     )
@@ -149,7 +151,9 @@ def test_regexflag_receipt_transports_across_exact_parser_owned_units() -> None:
         source_file=first,
         module=module,
         target=regex_flag,
-        session=SourceResolutionSession(enabled=False),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(), enabled=False
+        ),
         context=context,
         dependency_graphs={"re": graph},
     )
@@ -207,7 +211,9 @@ def test_regexflag_cached_class_sugar_retains_manager_context_product() -> None:
         source_file=manager,
         module=module,
         target=manager_class,
-        session=SourceResolutionSession(enabled=False),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(), enabled=False
+        ),
         context=manager_context,
         dependency_graphs={"re": graph},
     )
@@ -246,7 +252,9 @@ def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
         source_file=source_file,
         module=module,
         target=regex_flag,
-        session=SourceResolutionSession(enabled=False),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(), enabled=False
+        ),
         context=external_context,
         dependency_graphs={"re": graph},
     )
@@ -310,13 +318,14 @@ def test_regexflag_field_is_not_swallowed_by_a_parked_imported_call(
     )
     call = next(row for row in calls if row.target_symbol == "python:re.search")
     graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
-    resolved = resolve_import_binding(call, graph=graph)
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
+    resolved = resolve_import_binding(call, graph=graph, session=session)
     assert isinstance(resolved, ResolvedPythonObjectV1)
     from sugar_lift_python_source.manager_construction import (
         resolve_source_visible_frame,
     )
 
-    projected = resolve_source_visible_frame(resolved, graph=graph)
+    projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
     assert isinstance(projected, tuple)
     frame, _ = projected
     context = frame.owner.unit.construction_context
@@ -338,7 +347,9 @@ def test_regexflag_field_is_not_swallowed_by_a_parked_imported_call(
         source_file=source_file,
         module=module,
         target=regex_flag,
-        session=SourceResolutionSession(enabled=False),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(), enabled=False
+        ),
         context=context,
         dependency_graphs={"re": graph},
     )

@@ -75,7 +75,8 @@ def test_static_pure_binding_prefix_admits_without_outcome(monkeypatch) -> None:
         "sugar_lift_python_source.manager_construction._module_prefix_outcome",
         counting,
     )
-    session = SourceResolutionSession()
+    # This tooth has no dependency graph: its authoritative population is empty.
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
     assert prefix_has_completed_fallthrough(module, locus, session=session) is True
     assert (
         calls["n"] == 0
@@ -116,5 +117,13 @@ def test_stdlib_graph_still_short_circuits(monkeypatch) -> None:
         "sugar_lift_python_source.manager_construction._static_prefix_always_fallthrough",
         boom,
     )
-    assert prefix_has_completed_fallthrough(module, locus, graph=graph) is True
+    assert (
+        prefix_has_completed_fallthrough(
+            module,
+            locus,
+            graph=graph,
+            session=SourceResolutionSession(enrolled_distributions=frozenset()),
+        )
+        is True
+    )
     assert calls["n"] == 0

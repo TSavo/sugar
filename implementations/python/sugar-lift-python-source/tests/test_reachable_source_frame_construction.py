@@ -26,6 +26,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_call_preconstruction import (
     populate_source_visible_call_frames,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import Call as SourceCall
 from sugar_source_tree.tree import SourceFile
@@ -79,6 +80,9 @@ def _populate(
         root=tmp_path,
         path=path,
         distribution_index={package: dist},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     return context, tree
 

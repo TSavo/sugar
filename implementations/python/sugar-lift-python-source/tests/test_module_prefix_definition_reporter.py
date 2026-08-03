@@ -14,6 +14,7 @@ from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
 from sugar_lift_python_source.manager_construction import _module_prefix_outcome
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
     ConstructionTestimonyReporterV1,
@@ -57,7 +58,11 @@ def _coordinate(call: Call) -> SourceFragmentCoordinateV1:
 
 def _published_definition(module: AuthenticatedModuleSourceV1, name: str):
     locus = ast.parse(module.source).body[-1]
-    exits = _module_prefix_outcome(module, locus)
+    exits = _module_prefix_outcome(
+        module,
+        locus,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert len(exits.exits) == 1
     completed = exits.exits[0]
     assert isinstance(completed, Completed)
