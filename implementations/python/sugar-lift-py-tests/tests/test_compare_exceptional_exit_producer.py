@@ -12,7 +12,13 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    FloorValue,
+    NoneValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
@@ -80,6 +86,23 @@ class _ValueSugar(ConstructedTermSugar):
             (str_const(type(self.value).__name__),),
             symbol_kind="coordinate",
         )
+
+
+class _OperationReceiverProjectionProbe(FloorValue):
+    """Record the exact operation-receiver door without changing equality."""
+
+    def __init__(self, label: str, calls: list[tuple], projected: TermValue) -> None:
+        self.label = label
+        self.calls = calls
+        self.projected = projected
+
+    def project_operation_receiver(self, ctx: object, *, owner: str):
+        self.calls.append((self.label, ctx, owner))
+        return self.projected
+
+    def equals(self, other, site):
+        peer = other.projected if isinstance(other, type(self)) else other
+        return self.projected.equals(peer, site)
 
 
 def _repo_root() -> Path:
@@ -437,6 +460,26 @@ def test_ground_decided_equality_still_completes() -> None:
     assert isinstance(outcome, Complete)
     assert not isinstance(outcome, ExitSet)
     assert isinstance(outcome.value, FalseBoolLiteralSugar)
+
+
+def test_equality_projects_both_operation_receivers_with_exact_owners() -> None:
+    calls: list[tuple] = []
+    ctx = object()
+    left = _OperationReceiverProjectionProbe("left", calls, TermValue(1))
+    right = _OperationReceiverProjectionProbe("right", calls, TermValue(1))
+
+    outcome = EqualityOpSugar(
+        _ValueSugar(left),
+        _ValueSugar(right),
+        "compare-site",
+    ).desugar(ctx)
+
+    assert calls == [
+        ("left", ctx, "EqualityOpSugar left operation receiver"),
+        ("right", ctx, "EqualityOpSugar right operation receiver"),
+    ]
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
 
 @pytest.mark.parametrize(
