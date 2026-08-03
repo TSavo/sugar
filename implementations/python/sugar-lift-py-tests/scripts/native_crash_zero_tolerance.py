@@ -86,9 +86,7 @@ def r_native_crashes(offenders: Sequence[NativeCrashOffender]) -> int:
 
 def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
     lines = [
-        format_completed_axis_report(
-            "R_native_crashes", r_native_crashes(offenders)
-        ),
+        format_completed_axis_report("R_native_crashes", r_native_crashes(offenders)),
         (
             "Replacement: corpus children terminate with completed testimony, "
             "typed gap, bare-exception row, or loud timeout; never signal."

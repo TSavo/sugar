@@ -43,8 +43,7 @@ def test_source_tuple_pandas_stride_slices_preserve_order_and_identity(
     even, odd = _subscripts(
         tmp_path,
         monkeypatch,
-        "even = (0, 1, 2, 3)[::2]\n"
-        "odd = (0, 1, 2, 3)[1::2]\n",
+        "even = (0, 1, 2, 3)[::2]\n" "odd = (0, 1, 2, 3)[1::2]\n",
     )
 
     assert _values(_desugar(even)) == (0, 2)
@@ -71,9 +70,7 @@ def test_source_tuple_negative_and_open_slice_bounds_match_python(
 def test_source_tuple_zero_slice_step_is_exact_value_error(
     tmp_path: Path, monkeypatch
 ) -> None:
-    (subscript,) = _subscripts(
-        tmp_path, monkeypatch, "result = (0, 1, 2)[::0]\n"
-    )
+    (subscript,) = _subscripts(tmp_path, monkeypatch, "result = (0, 1, 2)[::0]\n")
     sugar = subscript.sugar()
     site = sugar.site
 
@@ -89,9 +86,7 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
 def test_source_tuple_symbolic_slice_bound_stays_typed_loud(
     tmp_path: Path, monkeypatch
 ) -> None:
-    (subscript,) = _subscripts(
-        tmp_path, monkeypatch, "result = (0, 1, 2)[start:]\n"
-    )
+    (subscript,) = _subscripts(tmp_path, monkeypatch, "result = (0, 1, 2)[start:]\n")
 
     with pytest.raises(SugarNotWritten) as raised:
         _desugar(subscript)

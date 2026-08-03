@@ -80,15 +80,10 @@ CODEX3 = (
 
 DELITEM_HELPER = "def helper(obj, key):\n    del obj[key]\n"
 MULTI_PRIOR_STORE = (
-    "def multi(obj, key):\n"
-    "    a = [0]\n"
-    "    a[0] = 9\n"
-    "    del obj[key]\n"
+    "def multi(obj, key):\n" "    a = [0]\n" "    a[0] = 9\n" "    del obj[key]\n"
 )
 METHOD_DROP = (
-    "class Holder:\n"
-    "    def drop(self, obj, key):\n"
-    "        del obj[key]\n"
+    "class Holder:\n" "    def drop(self, obj, key):\n" "        del obj[key]\n"
 )
 
 
@@ -132,17 +127,16 @@ def _delitem_keyerror_halt(
     function = next(
         node
         for node in tree.nodes()
-        if isinstance(node, FunctionDef)
-        and node.name in {"helper", "multi", "drop"}
+        if isinstance(node, FunctionDef) and node.name in {"helper", "multi", "drop"}
     )
     pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1), (
-        f"{CODEX1}: expected delitem carrier, got {type(pending).__name__}"
-    )
+    assert isinstance(
+        pending, NativeOperationExitCarrierV1
+    ), f"{CODEX1}: expected delitem carrier, got {type(pending).__name__}"
     assert pending.demand.operator == "delitem"
-    assert pending.pre_effect_state is not None, (
-        f"{CODEX1}: reducer did not enroll pre_effect_state on delitem carrier"
-    )
+    assert (
+        pending.pre_effect_state is not None
+    ), f"{CODEX1}: reducer did not enroll pre_effect_state on delitem carrier"
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         {
@@ -154,13 +148,16 @@ def _delitem_keyerror_halt(
     halted = exits.exits[0]
     assert isinstance(halted, Halted), halted
     assert halted.effect.exception_type_coordinate == _identity("KeyError")
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    assert halted.state is pending.pre_effect_state.state, (
-        f"{CODEX1}: halt.state is not enrolled pre-effect state identity"
-    )
+    assert (
+        halted.state is pending.pre_effect_state.state
+    ), f"{CODEX1}: halt.state is not enrolled pre-effect state identity"
     return pending, halted
 
 
@@ -237,9 +234,9 @@ def test_earlier_bindings_survive_delete_halt_in_multi_statement_body() -> None:
     pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE)
     assert halted.state is not None, f"{CODEX1}: multi-statement halt dropped state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
-    assert lists == [ListValue((TermValue(9),))], (
-        f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
-    )
+    assert lists == [
+        ListValue((TermValue(9),))
+    ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
     assert halted.state is pending.pre_effect_state.state
 
 
@@ -280,17 +277,16 @@ def test_bound_method_delete_retains_obj_key_demand_not_self() -> None:
     )
     assert pending.demand.operator == "delitem"
     names = tuple(value.term.name for value in pending.operands)
-    assert names == ("obj", "key"), (
-        f"{CODEX3}: delitem formals shifted by self: {names}"
-    )
+    assert names == (
+        "obj",
+        "key",
+    ), f"{CODEX3}: delitem formals shifted by self: {names}"
     method_formals = tuple(p.name for p in method.params)
     assert method_formals[0] == "self"
     assert method_formals[1:] == ("obj", "key")
     # Self formal coordinate is not a delitem operand.
     self_coord = method.formal_coordinates()[0]
-    assert self_coord.coordinate_cid not in set(
-        pending.demand.operand_coordinate_cids
-    )
+    assert self_coord.coordinate_cid not in set(pending.demand.operand_coordinate_cids)
 
 
 def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> None:
@@ -306,9 +302,9 @@ def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> N
     )
     assert len(calls) == 1
     constructed = calls[0].sugar().desugar(None)
-    assert isinstance(constructed, Complete), (
-        f"{CODEX3}: expected Complete(CallSiteValue), got {type(constructed).__name__}"
-    )
+    assert isinstance(
+        constructed, Complete
+    ), f"{CODEX3}: expected Complete(CallSiteValue), got {type(constructed).__name__}"
     site = constructed.value
     assert isinstance(site, CallSiteValue)
     assert site.parameters == ("self", "obj", "key")
@@ -337,18 +333,20 @@ def test_bound_method_delete_producer_outcome_halts_with_named_keyerror() -> Non
     site = calls[0].sugar().desugar(None).value
     assert isinstance(site, CallSiteValue)
     outcome = site.producer_outcome(None)
-    assert isinstance(outcome, ExitSet), (
-        f"{CODEX3}: expected ExitSet halt, got {type(outcome).__name__}"
-    )
+    assert isinstance(
+        outcome, ExitSet
+    ), f"{CODEX3}: expected ExitSet halt, got {type(outcome).__name__}"
     halted = next((e for e in outcome.exits if isinstance(e, Halted)), None)
     assert halted is not None, f"{CODEX3}: no Halted face in {outcome.exits!r}"
     assert halted.effect.exception_name == "KeyError" or (
         halted.effect.exception_type_coordinate == _identity("KeyError")
     )
-    assert halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
-    assert halted.state is not None, (
-        f"{CODEX1}: bound-method delete halt dropped pre-effect state"
+    assert (
+        halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
     )
+    assert (
+        halted.state is not None
+    ), f"{CODEX1}: bound-method delete halt dropped pre-effect state"
 
 
 # ===========================================================================
@@ -364,9 +362,9 @@ def test_fabricated_empty_state_is_not_pre_delete_when_store_preceded() -> None:
     assert halted.state is pending.pre_effect_state.state
     with pytest.raises(AssertionError):
         assert halted.state is fabricated
-    assert any(isinstance(e, ListValue) for e in halted.state.entries), (
-        f"{CODEX1}: prior store absent from entries={halted.state.entries!r}"
-    )
+    assert any(
+        isinstance(e, ListValue) for e in halted.state.entries
+    ), f"{CODEX1}: prior store absent from entries={halted.state.entries!r}"
 
 
 def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:

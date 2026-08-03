@@ -99,9 +99,7 @@ def test_short_circuit_truthful_second_leg_joins_untouched_stopping_face():
     continuing_guard = atomic("test:first-leg-truth", [])
     continuing_face, stopped_face = partition("test:carrier-short-circuit")
     stopped_value = TermValue(41)
-    stopped = ExitSet.completed(
-        stopped_value, complement_guard(continuing_guard)
-    )
+    stopped = ExitSet.completed(stopped_value, complement_guard(continuing_guard))
 
     exits = carrier.short_circuit(
         continuing_guard=continuing_guard,
@@ -137,9 +135,7 @@ def test_short_circuit_lying_second_leg_retains_its_authentic_halt_occurrence():
     carrier, left, right = _carrier(operator="less_than")
     continuing_guard = atomic("test:first-leg-truth", [])
     continuing_face, stopped_face = partition("test:carrier-short-circuit-halt")
-    stopped = ExitSet.completed(
-        TermValue(42), complement_guard(continuing_guard)
-    )
+    stopped = ExitSet.completed(TermValue(42), complement_guard(continuing_guard))
 
     raw = carrier.discharge(
         {
@@ -180,7 +176,9 @@ def test_short_circuit_preserves_first_leg_halt_without_stopping_face():
             first_right.coordinate_cid: TermValue(2),
         }
     )
-    first_halt = next(exit_ for exit_ in first_result.exits if isinstance(exit_, Halted))
+    first_halt = next(
+        exit_ for exit_ in first_result.exits if isinstance(exit_, Halted)
+    )
 
     second, second_left, second_right = _carrier(operator="less_than")
     continuing_guard = atomic("test:first-leg-completed-truthy", [])
@@ -189,9 +187,9 @@ def test_short_circuit_preserves_first_leg_halt_without_stopping_face():
     stopped = ExitSet(
         (
             first_halt,
-            ExitSet.completed(
-                stopped_value, complement_guard(continuing_guard)
-            ).exits[0],
+            ExitSet.completed(stopped_value, complement_guard(continuing_guard)).exits[
+                0
+            ],
         )
     )
 
@@ -235,9 +233,7 @@ def test_short_circuit_exception_keeps_actual_map_and_exact_temporal_state():
 
     exits = carrier.short_circuit(
         continuing_guard=continuing_guard,
-        stopped=ExitSet.completed(
-            TermValue(0), complement_guard(continuing_guard)
-        ),
+        stopped=ExitSet.completed(TermValue(0), complement_guard(continuing_guard)),
         continuing_face=continuing_face,
         stopped_face=stopped_face,
     ).discharge(actuals)
@@ -257,9 +253,7 @@ def test_short_circuit_missing_second_leg_actual_remains_explicitly_undischarged
     continuing_face, stopped_face = partition("test:short-circuit-undischarged")
     composed = carrier.short_circuit(
         continuing_guard=continuing_guard,
-        stopped=ExitSet.completed(
-            TermValue(0), complement_guard(continuing_guard)
-        ),
+        stopped=ExitSet.completed(TermValue(0), complement_guard(continuing_guard)),
         continuing_face=continuing_face,
         stopped_face=stopped_face,
     )
@@ -519,10 +513,12 @@ def test_complementary_guard_tooth_rejects_same_guard_mutation():
 
 def test_multiple_guards_are_explicitly_conjoined():
     carrier, left, right = _carrier()
-    exits = carrier.guarded(atomic("outer", [])).guarded(
-        atomic("inner", [])
-    ).discharge(
-        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    exits = (
+        carrier.guarded(atomic("outer", []))
+        .guarded(atomic("inner", []))
+        .discharge(
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        )
     )
     assert exits.exits[0].guard.kind == "and"
     assert len(exits.exits[0].guard.operands) == 2
@@ -583,7 +579,9 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
     assert isinstance(halted, Halted)
     assert halted.effect.exception_name is None
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
-    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+    assert (
+        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence!r}"
     )
@@ -888,7 +886,9 @@ def test_setitem_discharges_and_halts_with_named_exception_identity():
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _Expected("IndexError").identity
-    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+    assert (
+        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence!r}"
     )
@@ -1060,12 +1060,10 @@ def test_production_minted_operators_equal_projector_table_exactly():
     missing_projectors = production - projectors
     orphan_projectors = projectors - production
     assert missing_projectors == frozenset(), (
-        "production mints operators with no projector: "
-        f"{sorted(missing_projectors)}"
+        "production mints operators with no projector: " f"{sorted(missing_projectors)}"
     )
     assert orphan_projectors == frozenset(), (
-        "projectors with no production mint path: "
-        f"{sorted(orphan_projectors)}"
+        "projectors with no production mint path: " f"{sorted(orphan_projectors)}"
     )
     assert "subscript" in projectors
     assert "setitem" in projectors
@@ -1099,9 +1097,7 @@ def test_symbolic_formal_subscript_discharges_completed_through_projector():
 
     exits = outcome.discharge(
         {
-            receiver_coordinate.coordinate_cid: ListValue(
-                (TermValue(7), TermValue(8))
-            ),
+            receiver_coordinate.coordinate_cid: ListValue((TermValue(7), TermValue(8))),
         }
     )
     assert len(exits.exits) == 1
@@ -1123,14 +1119,14 @@ def test_symbolic_formal_subscript_discharges_authenticated_exceptional_through_
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "subscript"
 
-    exits = outcome.discharge(
-        {receiver_coordinate.coordinate_cid: NoneValue()}
-    )
+    exits = outcome.discharge({receiver_coordinate.coordinate_cid: NoneValue()})
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
-    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+    assert (
+        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence!r}"
     )

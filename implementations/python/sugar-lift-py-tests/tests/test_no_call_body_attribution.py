@@ -41,7 +41,10 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
 def _raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(exception_type_coordinate=str_const('TypeError'), occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'))
+            RaiseEffect(
+                exception_type_coordinate=str_const("TypeError"),
+                occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
+            )
         )
     )
 
@@ -82,7 +85,11 @@ def _nameless_raise_value():
 def _call_owned_raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(exception_type_coordinate=str_const('TypeError'), occurrence=AuthenticatedRaiseLocus.of('pandas/example.py:1:4'), producer_node_owner='Call')
+            RaiseEffect(
+                exception_type_coordinate=str_const("TypeError"),
+                occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
+                producer_node_owner="Call",
+            )
         )
     )
 
@@ -718,6 +725,7 @@ def test_selected_family_denominator_remains_fixed() -> None:
 
 def test_attribute_family_denominator_is_native_root_inventory() -> None:
     assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 53
+
 
 def test_discovery_has_no_last_named_exclusions_side_channel() -> None:
     """Lying twin: the side-channel shell must not reappear.

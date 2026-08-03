@@ -57,4 +57,6 @@ def test_lying_twin_spelling_does_not_override_authenticated_type() -> None:
 def test_missing_type_term_throws() -> None:
     with pytest.raises(SugarNotWritten) as caught:
         _class().python_isinstance("tuple", None, "site")
-    assert "type_term" in caught.value.observed or "python:type" in caught.value.requested
+    assert (
+        "type_term" in caught.value.observed or "python:type" in caught.value.requested
+    )

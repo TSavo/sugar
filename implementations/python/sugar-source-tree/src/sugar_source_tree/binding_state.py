@@ -466,7 +466,10 @@ class ConstructionTestimonyReporterV1:
 
         if type(producer) is ConstructionTestimonyReporterV1:
             registered = producer._materialized_by_ref.get(node.ref)
-        elif type(producer) is CollectingReporter and getattr(node, "reporter", None) is producer:
+        elif (
+            type(producer) is CollectingReporter
+            and getattr(node, "reporter", None) is producer
+        ):
             # File-open door: CollectingReporter witnessed construction; the
             # node itself is the authenticated occurrence for this ref.
             registered = node

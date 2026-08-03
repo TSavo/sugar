@@ -58,9 +58,7 @@ def _classes(tmp_path: Path):
         encoding="utf-8",
     )
     tree = SourceFile.from_path(path)
-    definitions = tuple(
-        item for item in tree.root.body if isinstance(item, ClassDef)
-    )
+    definitions = tuple(item for item in tree.root.body if isinstance(item, ClassDef))
     replacement, original, same_name_foreign = definitions
     raw = _class_value(original)
     final = _class_value(replacement)
@@ -182,9 +180,7 @@ def test_class_definition_value_refuses_missing_or_wrong_binding_authority() -> 
     with pytest.raises(TypeError):
         ClassDefinitionValue("Original", "class-cid", (), None)  # type: ignore[call-arg]
 
-    with pytest.raises(
-        TypeError, match="exact SourceFragmentCoordinateV1"
-    ):
+    with pytest.raises(TypeError, match="exact SourceFragmentCoordinateV1"):
         ClassDefinitionValue(
             "Original",
             "class-cid",

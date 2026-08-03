@@ -29,9 +29,7 @@ def _tree(tmp_path: Path, name: str) -> SourceFile:
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
     path = tmp_path / name
-    path.write_text(
-        "result = tuple(item for item in unknown)[1:]\n", encoding="utf-8"
-    )
+    path.write_text("result = tuple(item for item in unknown)[1:]\n", encoding="utf-8")
     return SourceFile.from_path(
         path,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
@@ -66,7 +64,9 @@ def _context(owner: str):
     return ReduceContext.root(owner=owner).with_temporal(builtin_name_temporal())
 
 
-def test_source_builtin_tuple_constructs_authenticated_coordinate(tmp_path: Path) -> None:
+def test_source_builtin_tuple_constructs_authenticated_coordinate(
+    tmp_path: Path,
+) -> None:
     call, _ = _nodes(_tree(tmp_path, "truth.py"))
     ctx = _context("tuple-coordinate-truth")
 
@@ -92,9 +92,7 @@ def test_source_builtin_tuple_constructs_authenticated_coordinate(tmp_path: Path
     assert isinstance(length, CallSiteValue)
     assert length.arg_values == (constructed,)
     assert length.site is use_site
-    assert length.term == ctor(
-        "call:len", (constructed.term,), symbol_kind="builtin"
-    )
+    assert length.term == ctor("call:len", (constructed.term,), symbol_kind="builtin")
 
 
 def test_source_tuple_slice_extends_receiver_coordinate_and_occurrence(
@@ -158,7 +156,8 @@ def test_tuple_coordinate_length_keeps_receiver_and_use_sites_distinct(
         receiver.call_occurrence, source_cid="blake3-512:" + "e" * 128
     )
     with pytest.raises(
-        ValueError, match="tuple coordinate call occurrence does not authenticate source"
+        ValueError,
+        match="tuple coordinate call occurrence does not authenticate source",
     ):
         replace(receiver, call_occurrence=foreign_occurrence)
     with pytest.raises(
@@ -194,7 +193,8 @@ def test_tuple_coordinate_rejects_all_reminted_testimony(tmp_path: Path) -> None
     )
 
     with pytest.raises(
-        ValueError, match="tuple coordinate call occurrence does not authenticate source"
+        ValueError,
+        match="tuple coordinate call occurrence does not authenticate source",
     ):
         replace(constructed, call_occurrence=foreign_occurrence)
     with pytest.raises(
@@ -256,7 +256,10 @@ def test_guarded_tuple_slice_preserves_exact_occurrence_in_both_arms(
     assert outcome.value.guard == guard
     assert outcome.value.when_true.use_occurrence is occurrence
     assert outcome.value.when_false.use_occurrence is occurrence
-    assert outcome.value.when_true.coordinate_cid == outcome.value.when_false.coordinate_cid
+    assert (
+        outcome.value.when_true.coordinate_cid
+        == outcome.value.when_false.coordinate_cid
+    )
 
 
 def test_guarded_subscript_preserves_foreign_occurrence_refusal(
@@ -269,14 +272,10 @@ def test_guarded_subscript_preserves_foreign_occurrence_refusal(
     foreign_occurrence = replace(
         _coordinate(subscript), source_cid="blake3-512:" + "d" * 128
     )
-    guarded = GuardedValue(
-        atomic("foreign_slice_guard", ()), receiver, receiver
-    )
+    guarded = GuardedValue(atomic("foreign_slice_guard", ()), receiver, receiver)
 
     with pytest.raises(SugarNotWritten) as raised:
-        guarded.subscript_with_occurrence(
-            index, subscript.fragment, foreign_occurrence
-        )
+        guarded.subscript_with_occurrence(index, subscript.fragment, foreign_occurrence)
 
     assert raised.value.owner == "TupleCoordinateValue.subscript"
     assert raised.value.observed == "slice use occurrence outside tuple source"

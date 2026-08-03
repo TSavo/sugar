@@ -34,14 +34,20 @@ def test_guarded_binding_sugar_routes_to_projection_door() -> None:
     # Same door as the explicit projection path and loop prestate helper:
     assert type(_construct_binding_projection(state)).__name__ == "GuardedProjection"
     assert type(_project_binding_state_sugar(state)).__name__ == "GuardedProjection"
-    assert type(_initial_value_sugar_for_loop_prestate(state)).__name__ == "GuardedProjection"
+    assert (
+        type(_initial_value_sugar_for_loop_prestate(state)).__name__
+        == "GuardedProjection"
+    )
 
 
 def test_unbound_binding_sugar_routes_to_projection_door() -> None:
     state = UnboundBinding("x", "never-bound")
     sugar = state.sugar()
     assert type(sugar).__name__ == "UnboundProjection"
-    assert type(_initial_value_sugar_for_loop_prestate(state)).__name__ == "UnboundProjection"
+    assert (
+        type(_initial_value_sugar_for_loop_prestate(state)).__name__
+        == "UnboundProjection"
+    )
 
 
 def test_nested_guarded_binding_projects_recursively() -> None:

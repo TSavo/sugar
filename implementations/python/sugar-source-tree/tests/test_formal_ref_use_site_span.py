@@ -23,11 +23,7 @@ def _tree(source: str) -> SourceFile:
 
 
 def test_formal_ref_at_use_keeps_use_site_span_not_param_span() -> None:
-    source = (
-        "def f(month):\n"
-        "    assert 1 <= month <= 12\n"
-        "    return month\n"
-    )
+    source = "def f(month):\n" "    assert 1 <= month <= 12\n" "    return month\n"
     tree = _tree(source)
     fn = next(n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f")
     substituted = fn.substitute({})

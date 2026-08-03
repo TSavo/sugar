@@ -20,9 +20,7 @@ from typing import Any
 
 # Kinds whose constructed answer reads ControlConstructionContextV1.
 # Everyone else resolves identically inside or outside a loop/handler.
-CONTROL_SENSITIVE_KINDS: frozenset[str] = frozenset(
-    ("Break", "Continue", "Raise")
-)
+CONTROL_SENSITIVE_KINDS: frozenset[str] = frozenset(("Break", "Continue", "Raise"))
 
 
 def control_key_fragment(
@@ -44,6 +42,7 @@ def control_key_fragment(
     # Raise
     slots = getattr(control_context, "exception_slots", ()) or ()
     return ("exc", slots[-1] if slots else None)
+
 
 # The construction-shape CID is a CATEGORY of content-addressed work: a pure
 # function of a backend ref (fragment + subtree preimage). It is NOT unit-scoped

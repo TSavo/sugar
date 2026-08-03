@@ -59,8 +59,7 @@ def test_value_use_receipt_changes_when_source_moves(tmp_path: Path) -> None:
     assert early_f[0].use["useSite"] != late_f[0].use["useSite"]
     assert early_f[0].use["cid"] != late_f[0].use["cid"]
     assert (
-        early_f[0].use["useSite"]["startLine"]
-        != late_f[0].use["useSite"]["startLine"]
+        early_f[0].use["useSite"]["startLine"] != late_f[0].use["useSite"]["startLine"]
     )
 
 
@@ -97,9 +96,7 @@ def test_package_relative_member_receipts_refuse_cross_package_substitution(
         package = tmp_path / package_name
         package.mkdir()
         path = package / "__init__.py"
-        source, source_cid = _write(
-            path, "from . import helper\nvalue = helper.FLAG\n"
-        )
+        source, source_cid = _write(path, "from . import helper\nvalue = helper.FLAG\n")
         rows, _ = authenticated_import_value_use_receipts(
             tmp_path, path, source, source_cid, module_identities={}
         )
@@ -120,9 +117,7 @@ def test_non_init_module_relative_import_keeps_parent_package(
     package = tmp_path / "sibling_control"
     package.mkdir()
     path = package / "consumer.py"
-    source, source_cid = _write(
-        path, "from . import helper\nvalue = helper.FLAG\n"
-    )
+    source, source_cid = _write(path, "from . import helper\nvalue = helper.FLAG\n")
 
     rows, _ = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
@@ -150,7 +145,9 @@ def test_tampered_source_cid_refuses_value_use_receipts(tmp_path: Path) -> None:
     source, honest_cid = _write(path, "from pkg import f\nx = f\n")
     lying = "blake3-512:" + "0" * 128
     assert lying != honest_cid
-    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+    with pytest.raises(
+        ValueError, match="authenticated import-use source CID is stale"
+    ):
         authenticated_import_value_use_receipts(
             tmp_path, path, source, lying, module_identities={}
         )
@@ -161,9 +158,7 @@ def test_same_name_shadowing_does_not_authorize_value_use(tmp_path: Path) -> Non
     path = tmp_path / "shadow.py"
     source, source_cid = _write(
         path,
-        "from pkg import f\n"
-        "f = 1\n"
-        "x = f\n",
+        "from pkg import f\n" "f = 1\n" "x = f\n",
     )
     receipts, _ = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
@@ -195,8 +190,7 @@ def test_wildcard_import_does_not_authorize_value_use(tmp_path: Path) -> None:
     path = tmp_path / "star.py"
     source, source_cid = _write(
         path,
-        "from pkg import *\n"
-        "x = f\n",
+        "from pkg import *\n" "x = f\n",
     )
     receipts, outcomes = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
@@ -212,8 +206,7 @@ def test_chained_attribute_coordinates_without_spelling_resolution(
     path = tmp_path / "chain.py"
     source, source_cid = _write(
         path,
-        "import os\n"
-        "x = os.path.join\n",
+        "import os\n" "x = os.path.join\n",
     )
     receipts, _ = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
@@ -313,8 +306,7 @@ def test_nearby_call_receipt_does_not_authorize_value_use(tmp_path: Path) -> Non
     path = tmp_path / "call_only.py"
     source, source_cid = _write(
         path,
-        "from pkg import f\n"
-        "f(1)\n",
+        "from pkg import f\n" "f(1)\n",
     )
     call_receipts, call_outcomes = authenticated_import_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
@@ -535,7 +527,9 @@ def test_forged_value_role_on_call_shape_is_refused_at_mint(tmp_path: Path) -> N
     forged_demand = dict(call.demand)
     forged_demand["authenticatedImportUse"] = forged_use_cid
     forged_demand["role"] = "value-use"
-    with pytest.raises(ValueError, match="cannot carry value-use role|cannot carry a use role"):
+    with pytest.raises(
+        ValueError, match="cannot carry value-use role|cannot carry a use role"
+    ):
         AuthenticatedImportUseV1(
             import_binding=call.import_binding,
             target_symbol=call.target_symbol,

@@ -169,7 +169,11 @@ _RUNTIME_SEMANTIC_FIELDS = (
 def _runtime_identity_wire(
     identity: RuntimeIdentityV1 | Mapping[str, Any],
 ) -> dict[str, Any]:
-    wire = identity.to_wire() if isinstance(identity, RuntimeIdentityV1) else dict(identity)
+    wire = (
+        identity.to_wire()
+        if isinstance(identity, RuntimeIdentityV1)
+        else dict(identity)
+    )
     if set(wire) != _RUNTIME_IDENTITY_FIELDS:
         raise RuntimeIdentityResolutionFailure(
             "runtimeIdentity/v1 fields differ from the closed schema: "
@@ -405,9 +409,7 @@ def activate_checkout_import_roots(repo_root: Path, search_path: list[str]) -> N
         # already on sys.path (the common authenticated-pytest entry shape).
         import importlib.util
 
-        tool = (
-            Path(repo_root).resolve() / "tools" / "managed_checkout_pythonpath.py"
-        )
+        tool = Path(repo_root).resolve() / "tools" / "managed_checkout_pythonpath.py"
         spec = importlib.util.spec_from_file_location(
             "managed_checkout_pythonpath", tool
         )
@@ -469,7 +471,9 @@ def authenticate_environment() -> (
     # Prefer the already-loaded package (process-start path) over a second
     # import_module after path mutation, which would leave a wrong copy in
     # sys.modules if the first import came from site-packages.
-    lift = sys.modules.get("sugar_lift_py_tests") or import_module("sugar_lift_py_tests")
+    lift = sys.modules.get("sugar_lift_py_tests") or import_module(
+        "sugar_lift_py_tests"
+    )
     pandas_distribution = metadata.distribution("pandas")
     numpy_distribution = metadata.distribution("numpy")
     pandas_identity = authenticate_distribution(

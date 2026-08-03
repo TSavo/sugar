@@ -12,7 +12,6 @@ from .closed_operation_witness import (
 )
 from .floor_value import FloorValue
 
-
 _TUPLE_COORDINATE_OWNER = object()
 
 
@@ -79,9 +78,7 @@ class TupleCoordinateValue(FloorValue):
         runtime: PythonRuntimeIdentity,
     ) -> "TupleCoordinateValue":
         source_term = source.to_term(owner="python.tuple.construct")
-        term = ctor(
-            "python.tuple.construct", (source_term,), symbol_kind="coordinate"
-        )
+        term = ctor("python.tuple.construct", (source_term,), symbol_kind="coordinate")
         witness = ClosedSemanticOperationWitness.mint(
             runtime, "python.tuple.construct", (source_term,), term
         )

@@ -27,7 +27,10 @@ def test_native_protocol_slots_share_one_authenticated_definition_door():
         {},
         {(receiver, NativeProtocolSlot.CONTEXT_EXIT): definition},
     )
-    assert refs.require_native_definition(receiver, NativeProtocolSlot.CONTEXT_EXIT) == definition
+    assert (
+        refs.require_native_definition(receiver, NativeProtocolSlot.CONTEXT_EXIT)
+        == definition
+    )
     gap = refs.require_native_definition(receiver, NativeProtocolSlot.TRUTH)
     assert isinstance(gap, NativeDefinitionCoordinateGapV1)
     assert gap.reason.startswith("authenticated source definition")

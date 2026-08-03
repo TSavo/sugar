@@ -74,7 +74,9 @@ def _resolution(
 
 
 def _good_set(unit, cand, owned):
-    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(
+        cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid
+    )
     return (
         ParameterContractResolutionSetV1.mint(
             link_unit_cid=unit.link_unit_cid, resolutions=(res,)
@@ -101,7 +103,9 @@ def test_twin_missing_resolution_panics():
 
 def test_twin_duplicate_resolution_panics():
     unit, cand, owned = _link_unit()
-    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(
+        cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid
+    )
     rset = ParameterContractResolutionSetV1.mint(
         link_unit_cid=unit.link_unit_cid, resolutions=(res, res)
     )
@@ -111,7 +115,9 @@ def test_twin_duplicate_resolution_panics():
 
 def test_twin_stale_resolution_cid_panics():
     unit, cand, owned = _link_unit()
-    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(
+        cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid
+    )
     res["resolutionCid"] = "blake3-512:" + "0" * 128
     rset = ParameterContractResolutionSetV1.mint(
         link_unit_cid=unit.link_unit_cid, resolutions=(res,)
@@ -146,7 +152,9 @@ def test_twin_wrong_candidate_panics():
 
 def test_twin_lost_continuation_panics():
     unit, cand, owned = _link_unit()
-    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(
+        cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid
+    )
     # a set minted for a DIFFERENT continuation key
     foreign = ParameterContractResolutionSetV1.mint(
         link_unit_cid="blake3-512:" + "9" * 128, resolutions=(res,)

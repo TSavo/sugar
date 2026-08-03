@@ -6,9 +6,7 @@ from pathlib import Path
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-_SCRIPT = (
-    Path(__file__).parents[1] / "scripts" / "desugar_repro.py"
-)
+_SCRIPT = Path(__file__).parents[1] / "scripts" / "desugar_repro.py"
 _SPEC = importlib.util.spec_from_file_location("desugar_repro", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 _MOD = importlib.util.module_from_spec(_SPEC)

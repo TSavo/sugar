@@ -116,9 +116,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
     # a spread with no guarded operand desugars to exactly what it did before.
     built = ExitSet((*halted, *tail.exits)).normalize().collapse()
     # Re-attach every hoisted obligation to the finished display, or be loud.
-    return rewrap_pending(
-        pending, built, owner="spread display", blame=str(finish)
-    )
+    return rewrap_pending(pending, built, owner="spread display", blame=str(finish))
 
 
 @dataclass(frozen=True)
@@ -206,9 +204,7 @@ class SpreadDictSugar(ConstructedTermSugar):
         for key, value in self.entries:
             if key is not None:
                 require_constructed_term_sugar(key, owner="SpreadDictSugar.entries.key")
-            require_constructed_term_sugar(
-                value, owner="SpreadDictSugar.entries.value"
-            )
+            require_constructed_term_sugar(value, owner="SpreadDictSugar.entries.value")
 
     @classmethod
     def witnesses(cls):

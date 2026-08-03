@@ -93,6 +93,7 @@ def construction_recognition_scope(package: Path) -> InstrumentScanScope:
         instrument_self=_INSTRUMENT_SELF,
     )
 
+
 VENDORS = frozenset(
     {
         "numpy",

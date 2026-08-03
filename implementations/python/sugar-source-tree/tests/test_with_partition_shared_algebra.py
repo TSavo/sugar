@@ -1026,7 +1026,10 @@ def test_expected_observation_with_no_constructed_occurrence_stays_loud(tmp_path
     with pytest.raises(SugarNotWritten) as raised:
         boundary.desugar()
     assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
-    assert raised.value.observed == "warning boundary carries an unprojected message pattern"
+    assert (
+        raised.value.observed
+        == "warning boundary carries an unprojected message pattern"
+    )
 
 
 def test_discrimination_the_same_site_routes_under_a_constructed_effect_kind(tmp_path):

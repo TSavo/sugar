@@ -130,28 +130,34 @@ def _module_sugar_constructed_identity(
     if not isinstance(input_key, dict):
         return None
     return {
-        "file": input_key.get("file")
-        if isinstance(input_key.get("file"), str)
-        else None,
-        "sourceCid": input_key.get("sourceCid")
-        if isinstance(input_key.get("sourceCid"), str)
-        else None,
+        "file": (
+            input_key.get("file") if isinstance(input_key.get("file"), str) else None
+        ),
+        "sourceCid": (
+            input_key.get("sourceCid")
+            if isinstance(input_key.get("sourceCid"), str)
+            else None
+        ),
         "rowId": row.get("rowId") if isinstance(row.get("rowId"), str) else None,
-        "stageId": row.get("stageId")
-        if isinstance(row.get("stageId"), str)
-        else None,
-        "observedEventType": row.get("observedEventType")
-        if isinstance(row.get("observedEventType"), str)
-        else None,
-        "category": row.get("category")
-        if isinstance(row.get("category"), str)
-        else None,
-        "terminalKind": row.get("terminalKind")
-        if isinstance(row.get("terminalKind"), str)
-        else None,
-        "final_terminal": row.get("final_terminal")
-        if isinstance(row.get("final_terminal"), str)
-        else None,
+        "stageId": row.get("stageId") if isinstance(row.get("stageId"), str) else None,
+        "observedEventType": (
+            row.get("observedEventType")
+            if isinstance(row.get("observedEventType"), str)
+            else None
+        ),
+        "category": (
+            row.get("category") if isinstance(row.get("category"), str) else None
+        ),
+        "terminalKind": (
+            row.get("terminalKind")
+            if isinstance(row.get("terminalKind"), str)
+            else None
+        ),
+        "final_terminal": (
+            row.get("final_terminal")
+            if isinstance(row.get("final_terminal"), str)
+            else None
+        ),
     }
 
 
@@ -177,16 +183,16 @@ def _load_recensus():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     # Workers stay non-authoritative. The separate compose door owns the seal.
-    assert getattr(module, "SCOREBOARD_AUTHORITY", None) is False, (
-        "control_effect_recensus must remain SCOREBOARD_AUTHORITY=False"
-    )
+    assert (
+        getattr(module, "SCOREBOARD_AUTHORITY", None) is False
+    ), "control_effect_recensus must remain SCOREBOARD_AUTHORITY=False"
     from compose_control_effect_board import (
         SCOREBOARD_AUTHORITY as compose_authority,
     )
 
-    assert compose_authority is True, (
-        "compose_control_effect_board must remain the sole scoreboard authority"
-    )
+    assert (
+        compose_authority is True
+    ), "compose_control_effect_board must remain the sole scoreboard authority"
     return module
 
 
@@ -831,9 +837,7 @@ def main(argv: list[str] | None = None) -> int:
             f"elapsed_s={elapsed:.1f} sealed={sealed}"
         )
         if elapsed > 60:
-            _narrate(
-                f"PATH_SMOKE WARNING elapsed_s={elapsed:.1f} exceeded 60s budget"
-            )
+            _narrate(f"PATH_SMOKE WARNING elapsed_s={elapsed:.1f} exceeded 60s budget")
         return 0 if path_verdict == "PATH_OK" else 1
 
     except Exception as exc:  # noqa: BLE001 — crash is UNMEASURED path

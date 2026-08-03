@@ -120,9 +120,7 @@ def select_boolop_operand(
             return on_continue()
 
         rhs_guard = formula if op_kind == "And" else complement_guard(formula)
-        rhs_face, stop_face = partition(
-            ("BoolOpSugar", str(site), index, op_kind)
-        )
+        rhs_face, stop_face = partition(("BoolOpSugar", str(site), index, op_kind))
         rhs = outcome_to_exitset(on_continue()).guarded(rhs_guard, rhs_face)
         stopped = ExitSet.completed(
             selected_operand, complement_guard(rhs_guard)

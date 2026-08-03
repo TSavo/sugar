@@ -37,9 +37,10 @@ class SubscriptSugar(ConstructedTermSugar):
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="SubscriptSugar.receiver")
         require_constructed_term_sugar(self.index, owner="SubscriptSugar.index")
-        if self.use_occurrence is not None and type(
-            self.use_occurrence
-        ) is not SourceFragmentCoordinateV1:
+        if (
+            self.use_occurrence is not None
+            and type(self.use_occurrence) is not SourceFragmentCoordinateV1
+        ):
             raise TypeError(
                 "SubscriptSugar.use_occurrence must be SourceFragmentCoordinateV1"
             )
@@ -170,6 +171,4 @@ class SubscriptSugar(ConstructedTermSugar):
             and type(receiver).subscript_with is not FloorValue.subscript_with
         ):
             return receiver.subscript_with(operation, ctx)
-        return receiver.subscript_with_occurrence(
-            index, self.site, self.use_occurrence
-        )
+        return receiver.subscript_with_occurrence(index, self.site, self.use_occurrence)

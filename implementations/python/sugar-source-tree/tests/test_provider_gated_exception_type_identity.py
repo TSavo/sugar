@@ -38,9 +38,7 @@ def _tree(tmp_path: Path, source: str, name: str = "provider_gate.py"):
 
 def _attribute_named(tree: SourceFile, attr: str):
     return next(
-        node
-        for node in tree.nodes()
-        if node.kind == "Attribute" and node.attr == attr
+        node for node in tree.nodes() if node.kind == "Attribute" and node.attr == attr
     )
 
 
@@ -81,9 +79,7 @@ def test_static_import_attribute_exception_identity_still_works(tmp_path):
     """Ordinary static import remains the primary door."""
     tree = _tree(
         tmp_path,
-        "import pyarrow\n"
-        "def f():\n"
-        "    return pyarrow.ArrowInvalid\n",
+        "import pyarrow\n" "def f():\n" "    return pyarrow.ArrowInvalid\n",
     )
     attr = _attribute_named(tree, "ArrowInvalid")
     assert tree.root.unit.imported_exception_type_identity(attr) == _identity(

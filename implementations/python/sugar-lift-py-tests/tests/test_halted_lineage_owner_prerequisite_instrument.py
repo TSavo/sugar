@@ -33,11 +33,14 @@ def _reduce(tmp_path: Path, stem: str, text: str):
 
 def test_raise_owner_seats_exact_paired_lineage(tmp_path: Path, monkeypatch):
     from sugar_lift_py_tests.sugar import exit_set_routing
+
     seen = []
     original = exit_set_routing.promote_raise_halts
+
     def observe(exits):
         seen.append(exits)
         return original(exits)
+
     monkeypatch.setattr(exit_set_routing, "promote_raise_halts", observe)
     with pytest.raises(owner._HaltLineageProducerMissingV1):
         _reduce(tmp_path, "raise", "def target():\n    raise ValueError('x')\n")
@@ -45,23 +48,34 @@ def test_raise_owner_seats_exact_paired_lineage(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.parametrize("statement", ["break", "continue"])
-def test_loop_control_owner_seats_authenticated_nonraise(tmp_path: Path, statement: str, monkeypatch):
+def test_loop_control_owner_seats_authenticated_nonraise(
+    tmp_path: Path, statement: str, monkeypatch
+):
     from sugar_lift_py_tests.sugar.loop_control_sugar import LoopControlSugar
+
     seen = []
     original = LoopControlSugar.desugar
+
     def observe(self, ctx=None):
         seen.append((self, ctx))
         return original(self, ctx)
+
     monkeypatch.setattr(LoopControlSugar, "desugar", observe)
     with pytest.raises(owner._HaltLineageProducerMissingV1):
-        _reduce(tmp_path, statement, f"def target(xs):\n    for x in xs:\n        {statement}\n")
+        _reduce(
+            tmp_path,
+            statement,
+            f"def target(xs):\n    for x in xs:\n        {statement}\n",
+        )
     assert len(seen) == 1
     assert seen[0][0].target_cid != seen[0][0].occurrence_cid
 
 
 def test_legacy_and_forged_faces_refuse_with_external_zero_work(tmp_path: Path):
     pytest.importorskip("sugar_lift_py_tests.outcome.exit_set")
-    source, _, exits = _reduce(tmp_path, "plain", "def target():\n    raise ValueError('x')\n")
+    source, _, exits = _reduce(
+        tmp_path, "plain", "def target():\n    raise ValueError('x')\n"
+    )
     (face,) = exits.exits
     refusal_type = owner._HaltLineageRefusalV1
     for operation in (
@@ -81,7 +95,9 @@ def test_legacy_and_forged_faces_refuse_with_external_zero_work(tmp_path: Path):
 
 
 def test_transforms_preserve_identity_and_cross_variant_refuses(tmp_path: Path):
-    _, _, exits = _reduce(tmp_path, "transform", "def target():\n    raise ValueError('x')\n")
+    _, _, exits = _reduce(
+        tmp_path, "transform", "def target():\n    raise ValueError('x')\n"
+    )
     (face,) = exits.exits
     lineage = owner._read_halt_lineage(face)
     (guarded,) = owner.ExitSet((face,)).guarded(face.guard).exits

@@ -72,9 +72,7 @@ class _Expected:
 
 
 def _state(marker: str):
-    return _ReducedBlock(
-        entries=(marker,), can_fall_through=False, fall_through=()
-    )
+    return _ReducedBlock(entries=(marker,), can_fall_through=False, fall_through=())
 
 
 class Fixed(Sugar):
@@ -118,12 +116,8 @@ class _RecordingProtocol:
 
 
 def _protocol_calls(slot: str, face_id: str):
-    enter_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "e" * 128, 1, 0, 1, 1
-    )
-    exit_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "x" * 128, 2, 0, 2, 1
-    )
+    enter_definition = SourceFragmentCoordinateV1("blake3-512:" + "e" * 128, 1, 0, 1, 1)
+    exit_definition = SourceFragmentCoordinateV1("blake3-512:" + "x" * 128, 2, 0, 2, 1)
     enter = MethodCallSugar(
         receiver=ManagerRefSugar(slot_id=slot, site=None),
         name="__enter__",
@@ -145,7 +139,9 @@ def _protocol_calls(slot: str, face_id: str):
     return enter, exit_, enter_definition, exit_definition
 
 
-def _source_resource(*, protocol, summary, body, slot="resource-slot", face_id="res-exit"):
+def _source_resource(
+    *, protocol, summary, body, slot="resource-slot", face_id="res-exit"
+):
     enter, exit_, enter_def, exit_def = _protocol_calls(slot, face_id)
     return WithSourceResourceSugar(
         manager=Fixed(Complete(TermValue(1))),
@@ -234,9 +230,7 @@ def _factored_boundary(body: ExitSet, *, pattern=None, observation_slot_id="exci
         manager=Fixed(Complete(manager_value)),
         body=(Fixed(body),),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id=observation_slot_id,
@@ -257,7 +251,15 @@ def _raise(name: str, marker: str, *, message=None, occurrence=None):
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner='StackBody.desugar'),
+        RaiseEffect(
+            exception_type_coordinate=_identity(name),
+            occurrence=AuthenticatedRaiseLocus.of(occ),
+            exception_name=name,
+            blame=occ,
+            exception_type_mro=(_identity(name),),
+            raised_value=raised_value,
+            producer_node_owner="StackBody.desugar",
+        ),
         _state(marker),
     )
 
@@ -332,7 +334,8 @@ def test_resource_outer_assertion_inner_enter_exit_source_order():
 
     # Assertion authority: matching consumed with binding; mismatch restored.
     assert any(
-        isinstance(face, Completed) and _observed_binding(face) is not None
+        isinstance(face, Completed)
+        and _observed_binding(face) is not None
         and _observed_binding(face).effect is matching_effect
         for face in exits.exits
     )
@@ -391,9 +394,7 @@ def test_assertion_outer_resource_inner_enter_exit_source_order():
         manager=Fixed(Complete(manager_value)),
         body=(resource,),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id="excinfo",
@@ -436,9 +437,7 @@ def test_each_outgoing_face_keeps_both_manager_identities():
     # Every face still carries a factored message-face guard.
     for face in exits.exits:
         text = str(face.guard)
-        assert (
-            "match-none-face" in text or "match-pattern-face" in text
-        ), text
+        assert "match-none-face" in text or "match-pattern-face" in text, text
 
 
 def test_suppression_authorities_remain_separate():
@@ -547,9 +546,7 @@ def test_twin_source_order_swaps_outer_type():
         manager=Fixed(Complete(manager_value)),
         body=(resource_inner,),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id="excinfo",
@@ -583,6 +580,4 @@ def test_excinfo_only_on_consumed_occurrence_through_stack():
     }
     assert matching_effect in bound
     assert mismatch_effect not in bound
-    assert all(
-        e.occurrence_id == "body.py:10:8:matching" for e in bound
-    )
+    assert all(e.occurrence_id == "body.py:10:8:matching" for e in bound)

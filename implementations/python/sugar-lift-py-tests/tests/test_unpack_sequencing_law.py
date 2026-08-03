@@ -56,6 +56,7 @@ from sugar_source_tree.nodes import Assign
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+
 def _identity(name: str):
     from sugar_lift_py_tests.floor.ground_exit import (
         _builtin_exception_identity,
@@ -359,7 +360,7 @@ def test_list_indexerror_store_halt_originates_in_setitem_not_boundary(
     effect = halted[0].effect
     assert effect.exception_name == "IndexError"
     assert effect.producer_node_owner == "ground_index_error"
-    assert effect.exception_type_coordinate == _identity('IndexError')
+    assert effect.exception_type_coordinate == _identity("IndexError")
     # Type name may match a boundary expectation; origin is the store producer.
     assert "pytest" not in (effect.producer_node_owner or "").lower()
 

@@ -10,7 +10,9 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
 
-def test_source_call_frame_rejects_same_source_foreign_definition_site(tmp_path) -> None:
+def test_source_call_frame_rejects_same_source_foreign_definition_site(
+    tmp_path,
+) -> None:
     path = tmp_path / "two_frames.py"
     path.write_text(
         "def left(value):\n"
@@ -20,7 +22,9 @@ def test_source_call_frame_rejects_same_source_foreign_definition_site(tmp_path)
         "    return value\n",
         encoding="utf-8",
     )
-    functions = {function.name: function for function in SourceFile.from_path(path).functions()}
+    functions = {
+        function.name: function for function in SourceFile.from_path(path).functions()
+    }
     left = functions["left"].source_visible_call_frame()
     right = functions["right"].source_visible_call_frame()
     actual = TermValue(7)
@@ -69,9 +73,7 @@ def test_class_constructor_rejects_same_arity_foreign_initializer_roster(
         encoding="utf-8",
     )
     source = SourceFile.from_path(path)
-    classes = {
-        node.name: node for node in source.nodes() if isinstance(node, ClassDef)
-    }
+    classes = {node.name: node for node in source.nodes() if isinstance(node, ClassDef)}
     left = classes["Left"].source_visible_constructor_frame()
     right = classes["Right"].source_visible_constructor_frame()
     wrong_roster = replace(

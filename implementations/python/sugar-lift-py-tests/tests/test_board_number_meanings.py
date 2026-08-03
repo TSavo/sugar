@@ -6,9 +6,7 @@ import importlib.util
 from pathlib import Path
 
 _SCRIPT = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "compose_control_effect_board.py"
+    Path(__file__).resolve().parents[1] / "scripts" / "compose_control_effect_board.py"
 )
 
 
@@ -34,12 +32,8 @@ def test_functions_three_meanings_not_one_figure() -> None:
 
     tip = "deadbeef"
     pin = "pin-test"
-    pop = seal_functions_population_v1(
-        LocalReading(100, "pop"), tip=tip, pin=pin
-    )
-    enum = seal_functions_enumerated_v1(
-        LocalReading(90, "enum"), tip=tip, pin=pin
-    )
+    pop = seal_functions_population_v1(LocalReading(100, "pop"), tip=tip, pin=pin)
+    enum = seal_functions_enumerated_v1(LocalReading(90, "enum"), tip=tip, pin=pin)
     clean = seal_functions_clean_v1(
         LocalReading(80, "clean"), tip=tip, pin=pin, refused=False
     )

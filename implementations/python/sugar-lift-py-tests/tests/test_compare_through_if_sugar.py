@@ -9,12 +9,16 @@ from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundaryDisposition,
 )
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect
-from sugar_lift_py_tests.floor import CallSiteValue, GuardedReturn, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    GuardedReturn,
+    ReturnValue,
+    TermValue,
+)
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
-
 
 HELPER = (
     "def helper(left, right):\n"
@@ -33,9 +37,7 @@ def _tree(calls: str = "") -> SourceFile:
 
 
 def _function_outcome():
-    function = next(
-        node for node in _tree().nodes() if isinstance(node, FunctionDef)
-    )
+    function = next(node for node in _tree().nodes() if isinstance(node, FunctionDef))
     return function.sugar().desugar(None)
 
 
@@ -132,7 +134,10 @@ def test_exceptional_condition_bypasses_both_bodies() -> None:
         halted.effect.exception_type_coordinate
         == _expected_exception("TypeError").exception_type_identity()
     )
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -207,6 +212,4 @@ def test_identity_condition_never_acquires_a_carrier() -> None:
     )
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
-    assert not isinstance(
-        function.sugar().desugar(None), NativeOperationExitCarrierV1
-    )
+    assert not isinstance(function.sugar().desugar(None), NativeOperationExitCarrierV1)

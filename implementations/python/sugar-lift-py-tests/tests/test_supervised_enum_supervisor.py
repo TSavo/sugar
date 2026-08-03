@@ -99,10 +99,7 @@ def test_worker_refuses_file_before_frozen_context_initialization(
     try:
         assert json.loads(worker.stdout.readline())["kind"] == "ready"
         worker.stdin.write(
-            json.dumps(
-                {"kind": "lift", "path": str(source), "rel": "clean.py"}
-            )
-            + "\n"
+            json.dumps({"kind": "lift", "path": str(source), "rel": "clean.py"}) + "\n"
         )
         worker.stdin.flush()
         refusal = json.loads(worker.stdout.readline())
@@ -266,9 +263,10 @@ def test_named_lift_error_tail_never_none_none() -> None:
     assert "(message field absent)" in _SUP._named_lift_error_tail(
         {"error_type": "RuntimeError"}
     )
-    assert _SUP._named_lift_error_tail(
-        {"error_type": "RuntimeError", "message": "boom"}
-    ) == "RuntimeError: boom"
+    assert (
+        _SUP._named_lift_error_tail({"error_type": "RuntimeError", "message": "boom"})
+        == "RuntimeError: boom"
+    )
 
 
 def test_lift_error_incomplete_payload_names_artifact(

@@ -380,7 +380,14 @@ def test_discrimination_first_exit_is_not_skipped_on_the_halted_edge():
     unran. Assert the wrong expectation and show it fails."""
     outer_exit, inner_exit = [], []
     sugar = _nested_pair(
-        _FixedSugar(Incomplete(RaiseEffect.for_builtin('OSError', occurrence='implementations/python/sugar-source-tree/tests/test_with_multiple_managers.py:383:0'))),
+        _FixedSugar(
+            Incomplete(
+                RaiseEffect.for_builtin(
+                    "OSError",
+                    occurrence="implementations/python/sugar-source-tree/tests/test_with_multiple_managers.py:383:0",
+                )
+            )
+        ),
         outer_exit_probe=outer_exit,
         inner_exit_probe=inner_exit,
     )

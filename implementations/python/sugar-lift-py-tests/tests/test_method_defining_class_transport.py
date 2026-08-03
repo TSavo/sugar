@@ -34,7 +34,9 @@ def test_receiver_and_inherited_method_retain_distinct_class_owners() -> None:
     _context, base, derived = _constructed_pair()
 
     receiver = derived.construct_receiver_state_from_block(None, "receiver")
-    (owner_method,) = tuple(method for method in receiver.methods if method.name == "owner")
+    (owner_method,) = tuple(
+        method for method in receiver.methods if method.name == "owner"
+    )
 
     assert receiver.defining_class is derived
     assert owner_method.defining_class is base
@@ -58,11 +60,7 @@ def test_inherited_method_binds_lexical_class_not_runtime_receiver_class() -> No
 
 def test_overriding_method_uses_derived_defining_class() -> None:
     base, _ = _definitions()
-    source = (
-        "class Derived:\n"
-        "    def owner(self):\n"
-        "        return __class__\n"
-    )
+    source = "class Derived:\n" "    def owner(self):\n" "        return __class__\n"
     tree = SourceFile((source, "derived_owner.py", blake3_512_of(source.encode())))
     (derived,) = tuple(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test")

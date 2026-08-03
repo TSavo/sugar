@@ -94,7 +94,12 @@ class _Raise(_FixedSugar):
         coordinate, mro = _builtin_exception_identity(name)
         super().__init__(
             Incomplete(
-                RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of(occurrence), exception_name=name, exception_type_mro=mro)
+                RaiseEffect(
+                    exception_type_coordinate=coordinate,
+                    occurrence=AuthenticatedRaiseLocus.of(occurrence),
+                    exception_name=name,
+                    exception_type_mro=mro,
+                )
             ),
             probe=probe,
         )
@@ -301,7 +306,10 @@ def test_exit_face_binding_applied_per_face_without_rebuilding_exit():
 def test_enter_halt_skips_body_and_exit():
     body_ran = []
     exit_ran = []
-    enter_halt = RaiseEffect.for_builtin('OSError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:303:0')
+    enter_halt = RaiseEffect.for_builtin(
+        "OSError",
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:303:0",
+    )
     sugar = _resource(
         enter=_FixedSugar(Incomplete(enter_halt)),
         body=(_Pass(probe=body_ran),),
@@ -337,8 +345,8 @@ def test_completed_body_runs_exit_with_three_explicit_none_coordinates():
 def test_raised_body_routes_exact_face_coordinates_to_exit():
     """Face 3: type/value/traceback coordinates share the exact raised face."""
     face_id = "raised-face-17"
-    effect = RaiseEffect.for_builtin("ValueError",
-        
+    effect = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence="source.py:17:8",
     )
     exit_sugar = _parametric_exit(face_id=face_id)
@@ -635,7 +643,12 @@ def test_never_suppresses_needs_no_second_cleanup_algebra():
     faces = (
         Completed(true_guard(), _FloorValue("body")),
         Halted(
-            true_guard(), RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:637:0'), _FloorValue("pre")
+            true_guard(),
+            RaiseEffect.for_builtin(
+                "ValueError",
+                occurrence="implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:637:0",
+            ),
+            _FloorValue("pre"),
         ),
     )
     for disposition in (NeverSuppresses(), NeverSuppressesDispositionV1()):
@@ -663,8 +676,8 @@ def test_lying_the_equivalence_is_specific_to_never_suppresses():
     _, mro = _builtin_exception_identity("ValueError")
     halted = Halted(
         true_guard(),
-        RaiseEffect.for_builtin("ValueError",
-            
+        RaiseEffect.for_builtin(
+            "ValueError",
             exception_type_mro=mro,
             occurrence="equiv.py:1:0",
         ),

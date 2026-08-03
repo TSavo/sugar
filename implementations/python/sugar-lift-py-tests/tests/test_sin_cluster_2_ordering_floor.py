@@ -72,7 +72,9 @@ def _floor_value_path() -> Path:
     )
 
 
-def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_sin() -> None:
+def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_sin() -> (
+    None
+):
     """LOUD: repository SOURCEFILE_CONSTRUCTION_DOOR auditor is SourceFile-owner scoped only.
 
     It does not AST-walk floor ordering doors for Complete(PredicateValue).
@@ -80,7 +82,11 @@ def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_
     gains a floor-meaning denominator — do not pretend the shared auditor
     closed this sin.
     """
-    auditor = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_auditor.py"
+    auditor = (
+        Path(__file__).resolve().parents[4]
+        / "tests"
+        / "sourcefile_construction_door_auditor.py"
+    )
     assert auditor.is_file(), "sourcefile_construction_door_auditor.py must exist"
     text = auditor.read_text(encoding="utf-8")
     assert "less_than_from_left" not in text
@@ -104,8 +110,13 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
             if item.name not in _ORDERING_METHODS:
                 continue
             for child in ast.walk(item):
-                if isinstance(child, ast.Name) and child.id == "resolve_comparison_atom":
-                    offenders.append(f"{item.name}:{child.lineno}:resolve_comparison_atom")
+                if (
+                    isinstance(child, ast.Name)
+                    and child.id == "resolve_comparison_atom"
+                ):
+                    offenders.append(
+                        f"{item.name}:{child.lineno}:resolve_comparison_atom"
+                    )
                 if isinstance(child, ast.Call):
                     func = child.func
                     if isinstance(func, ast.Name) and func.id == "Complete":
@@ -114,8 +125,13 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
                         # on the default doors (ground arms live on subclasses).
                         offenders.append(f"{item.name}:{child.lineno}:Complete(...)")
                     if isinstance(func, ast.Name) and func.id == "PredicateValue":
-                        offenders.append(f"{item.name}:{child.lineno}:PredicateValue(...)")
-                    if isinstance(func, ast.Attribute) and func.attr == "PredicateValue":
+                        offenders.append(
+                            f"{item.name}:{child.lineno}:PredicateValue(...)"
+                        )
+                    if (
+                        isinstance(func, ast.Attribute)
+                        and func.attr == "PredicateValue"
+                    ):
                         offenders.append(
                             f"{item.name}:{child.lineno}:…PredicateValue(...)"
                         )
@@ -141,9 +157,10 @@ def test_undecided_ordering_operand_throws_named_never_complete(method: str) -> 
     with pytest.raises(SugarNotWritten) as raised:
         getattr(left, method)(right, SITE)
     assert "undecided" in raised.value.observed.lower()
-    assert "ordering" in raised.value.observed.lower() or "ordering" in (
-        raised.value.requested or ""
-    ).lower()
+    assert (
+        "ordering" in raised.value.observed.lower()
+        or "ordering" in (raised.value.requested or "").lower()
+    )
 
 
 @pytest.mark.parametrize(
@@ -272,9 +289,7 @@ def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
         )
     )
     with pytest.raises(ConstructionPanic) as raised:
-        outcome = publish_undecided_ordering_edges(
-            left, right, SITE, "Lt", forged
-        )
+        outcome = publish_undecided_ordering_edges(left, right, SITE, "Lt", forged)
         if isinstance(outcome, ExitSet):
             raise AssertionError(
                 "residual ordering PredicateValue dual-edged — SIN reintroduced"
@@ -332,9 +347,10 @@ def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
         outcome = _symbolic().subtract(TermValue(1), SITE)
         if isinstance(outcome, ExitSet):
             for face in outcome.exits:
-                if isinstance(face, Halted) and getattr(
-                    face.effect, "exception_name", "missing"
-                ) is None:
+                if (
+                    isinstance(face, Halted)
+                    and getattr(face.effect, "exception_name", "missing") is None
+                ):
                     raise AssertionError(
                         "nameless binary halt is the SIN: TypeError boundary "
                         "can never match it"
@@ -357,9 +373,10 @@ def test_undecided_contains_is_named_refusal_not_complete_or_panic() -> None:
 
     with pytest.raises(SugarNotWritten) as raised:
         _symbolic().contains(TermValue(1), SITE)
-    assert "membership" in (raised.value.requested or "").lower() or "contain" in (
-        raised.value.observed or ""
-    ).lower()
+    assert (
+        "membership" in (raised.value.requested or "").lower()
+        or "contain" in (raised.value.observed or "").lower()
+    )
     # Not a construction panic harness failure.
     assert not isinstance(raised.value, ConstructionPanic)
 

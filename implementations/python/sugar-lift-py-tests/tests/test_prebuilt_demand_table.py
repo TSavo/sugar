@@ -30,6 +30,7 @@ _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+
 def _tiny_corpus(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "a.py").write_text("x = 1\n", encoding="utf-8")
@@ -97,7 +98,9 @@ def test_mint_content_cid_stable_for_same_rows(tmp_path: Path) -> None:
 def test_mint_carries_distinct_storage_and_semantic_identities(tmp_path: Path) -> None:
     first_corpus = _tiny_corpus(tmp_path / "first")
     second_corpus = _tiny_corpus(tmp_path / "second")
-    (second_corpus / "b.py").write_text("def different():\n    return 2\n", encoding="utf-8")
+    (second_corpus / "b.py").write_text(
+        "def different():\n    return 2\n", encoding="utf-8"
+    )
     first = mint_prebuilt_demand_table(_authenticated(first_corpus))
     second = mint_prebuilt_demand_table(_authenticated(second_corpus))
     assert first.semantic_identity.content_key != second.semantic_identity.content_key
@@ -118,7 +121,9 @@ def test_validator_refuses_table_for_different_corpus(tmp_path: Path) -> None:
     other = _tiny_corpus(tmp_path / "other")
     (other / "b.py").write_text("def different():\n    return 2\n", encoding="utf-8")
     table = mint_prebuilt_demand_table(_authenticated(corpus))
-    with pytest.raises(DemandTableSemanticIdentityMismatch, match="semantic identity mismatch"):
+    with pytest.raises(
+        DemandTableSemanticIdentityMismatch, match="semantic identity mismatch"
+    ):
         validate_prebuilt_demand_table(table, _authenticated(other))
 
 
@@ -197,9 +202,7 @@ def test_load_refuses_tampered_content_cid(tmp_path: Path) -> None:
     bad = raw.replace(table.content_cid[-4:], "ffff", 1)
     artifact.write_text(bad, encoding="utf-8")
     with pytest.raises(DemandTableArtifactRefusal, match="contentCid mismatch"):
-        load_prebuilt_demand_table(
-            artifact, expected_corpus_pin=_expected_pin(corpus)
-        )
+        load_prebuilt_demand_table(artifact, expected_corpus_pin=_expected_pin(corpus))
 
 
 def test_load_refuses_plan_cid_mismatch(tmp_path: Path) -> None:

@@ -10,7 +10,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "corpus_enrollment_law.py"
 _SPEC = importlib.util.spec_from_file_location("corpus_enrollment_law", _SCANNER_PATH)
@@ -78,9 +77,7 @@ def test_enrollment_from_recensus_missing_terminals(tmp_path: Path) -> None:
             ],
         }
     }
-    report = _SCANNER.measure_enrollment(
-        corpus_root=root, recensus_payload=payload
-    )
+    report = _SCANNER.measure_enrollment(corpus_root=root, recensus_payload=payload)
     assert report.measured_enrollment is True
     assert report.denominator_files == 3
     assert report.enrolled_files == 2
@@ -118,17 +115,19 @@ def test_cli_exits_1_when_unenrolled_nonzero(tmp_path: Path) -> None:
                 "denominator": {
                     "enrolledFiles": [
                         _SCANNER.relative_file_identity(a, corpus_root=root),
-                        _SCANNER.relative_file_identity(root / "b.py", corpus_root=root),
+                        _SCANNER.relative_file_identity(
+                            root / "b.py", corpus_root=root
+                        ),
                     ],
                     "missingFiles": [
-                        _SCANNER.relative_file_identity(root / "b.py", corpus_root=root),
+                        _SCANNER.relative_file_identity(
+                            root / "b.py", corpus_root=root
+                        ),
                     ],
                 }
             }
         ),
         encoding="utf-8",
     )
-    code = _SCANNER.main(
-        ["--corpus-root", str(root), "--from-recensus", str(receipt)]
-    )
+    code = _SCANNER.main(["--corpus-root", str(root), "--from-recensus", str(receipt)])
     assert code == 1

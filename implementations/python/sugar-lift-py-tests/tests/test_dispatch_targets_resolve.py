@@ -103,7 +103,9 @@ def _broken_promises() -> list[str]:
             if not module.startswith("sugar_"):
                 continue  # third-party availability is the closure's business
             if not _resolves(module, name):
-                broken.append(f"{path.relative_to(SRC)}:{line} from {module} import {name}")
+                broken.append(
+                    f"{path.relative_to(SRC)}:{line} from {module} import {name}"
+                )
     return broken
 
 
@@ -131,9 +133,6 @@ def test_the_audit_actually_recognizes(tmp_path) -> None:
     # And the walker must actually see a function-local import, not just
     # module-level ones -- that distinction is the whole point.
     tree = ast.parse(
-        "import os\n"
-        "def f():\n"
-        "    from sugar_x.y import z\n"
-        "    return z\n"
+        "import os\n" "def f():\n" "    from sugar_x.y import z\n" "    return z\n"
     )
     assert _function_local_imports(tree) == [("sugar_x.y", "z", 3)]

@@ -8,7 +8,9 @@ non-display arm only.
 from __future__ import annotations
 
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
-from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import DynamicUnpackAssignSugar
+from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
+    DynamicUnpackAssignSugar,
+)
 from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
     NestedDynamicUnpackAssignSugar,
 )
@@ -69,9 +71,7 @@ def _first_assign_sugar(src: str):
 
 
 def test_nested_name_only_formal_unpack_constructs_nested_dynamic_sugar():
-    sugar = _first_assign_sugar(
-        "def A(p):\n    (a, b), (c, d) = p\n    return a\n"
-    )
+    sugar = _first_assign_sugar("def A(p):\n    (a, b), (c, d) = p\n    return a\n")
     assert isinstance(sugar, NestedDynamicUnpackAssignSugar)
     assert sugar.pattern == (("a", "b"), ("c", "d"))
 
@@ -87,9 +87,7 @@ def test_flat_dynamic_unpack_still_uses_flat_sugar():
 
 
 def test_nested_display_unpack_still_constructs():
-    sugar = _fn_sugar(
-        "def A():\n    (a, b), (c, d) = (1, 2), (3, 4)\n    return a\n"
-    )
+    sugar = _fn_sugar("def A():\n    (a, b), (c, d) = (1, 2), (3, 4)\n    return a\n")
     assert sugar is not None
 
 

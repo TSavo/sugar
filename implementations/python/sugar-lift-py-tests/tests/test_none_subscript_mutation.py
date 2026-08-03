@@ -14,7 +14,9 @@ from sugar_source_tree.tree import SourceFile
 def _sites(tmp_path):
     path = tmp_path / "none_subscript_mutation.py"
     path.write_text("def f(obj, value):\n    obj[0] = value\n    del obj[0]\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     return body[0].fragment, body[1].fragment
 
 
@@ -33,9 +35,16 @@ class _Value(Sugar):
 
 def _outcomes(tmp_path):
     store_site, delete_site = _sites(tmp_path)
-    store = SubscriptStoreEffectSugar(_Value(NoneValue()), _Value(TermValue(0)), _Value(TermValue(7)), store_site).desugar()
-    delete = SubscriptDeleteEffectSugar(_Value(NoneValue()), _Value(TermValue(0)), delete_site).desugar()
-    return ((store, "NoneValue.setitem", store_site), (delete, "NoneValue.delitem", delete_site))
+    store = SubscriptStoreEffectSugar(
+        _Value(NoneValue()), _Value(TermValue(0)), _Value(TermValue(7)), store_site
+    ).desugar()
+    delete = SubscriptDeleteEffectSugar(
+        _Value(NoneValue()), _Value(TermValue(0)), delete_site
+    ).desugar()
+    return (
+        (store, "NoneValue.setitem", store_site),
+        (delete, "NoneValue.delitem", delete_site),
+    )
 
 
 def test_none_subscript_mutations_have_exact_owner_occurrences(tmp_path):

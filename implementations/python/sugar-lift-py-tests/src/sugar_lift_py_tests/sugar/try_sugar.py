@@ -141,10 +141,7 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
 
     exits: list = []
     for incoming in pre_finally.exits:
-        if (
-            isinstance(incoming, Halted)
-            and isinstance(incoming.effect, RaiseEffect)
-        ):
+        if isinstance(incoming, Halted) and isinstance(incoming.effect, RaiseEffect):
             finally_ctx = bind_in_flight_effect(
                 ctx, finally_slot, incoming.effect, blame=site
             )
@@ -155,9 +152,7 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
         for clean in cleanup_es.exits:
             guard = _and_guards(incoming.guard, clean.guard)
             faces = incoming.faces | clean.faces
-            owed = merge_pending(
-                incoming.pending_contracts, clean.pending_contracts
-            )
+            owed = merge_pending(incoming.pending_contracts, clean.pending_contracts)
             if isinstance(clean, Halted):
                 effect = clean.effect
                 # Supersede: cleanup halt wins; retain body raise as context.
@@ -169,15 +164,11 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
                     and effect is not incoming.effect
                 ):
                     effect = replace(effect, context_effect=incoming.effect)
-                exits.append(
-                    Halted(guard, effect, clean.state, faces, owed)
-                )
+                exits.append(Halted(guard, effect, clean.state, faces, owed))
                 continue
             if _finally_restores(clean.value):
                 if isinstance(incoming, Completed):
-                    exits.append(
-                        Completed(guard, incoming.value, faces, owed)
-                    )
+                    exits.append(Completed(guard, incoming.value, faces, owed))
                 else:
                     exits.append(
                         Halted(

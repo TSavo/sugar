@@ -46,7 +46,11 @@ def _ground_atomic_truth(formula):
         _ConstStr,
     )
 
-    if not isinstance(formula, _Atomic) or formula.name != "=" or len(formula.args) != 2:
+    if (
+        not isinstance(formula, _Atomic)
+        or formula.name != "="
+        or len(formula.args) != 2
+    ):
         return None
     left, right = formula.args
     const_types = (_ConstInt, _ConstReal, _ConstBool, _ConstStr)

@@ -20,8 +20,10 @@ def _sites(tmp_path):
 
 @pytest.mark.parametrize(
     ("operation", "owner", "site_index"),
-    (("setitem", "BuiltinExceptionClassValue.setitem", 0),
-     ("delitem", "BuiltinExceptionClassValue.delitem", 1)),
+    (
+        ("setitem", "BuiltinExceptionClassValue.setitem", 0),
+        ("delitem", "BuiltinExceptionClassValue.delitem", 1),
+    ),
 )
 def test_builtin_exception_class_subscript_mutations_have_exact_owner_occurrences(
     tmp_path, operation, owner, site_index

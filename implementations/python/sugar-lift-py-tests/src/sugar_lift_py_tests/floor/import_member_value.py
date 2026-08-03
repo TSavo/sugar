@@ -19,7 +19,6 @@ from typing import Any
 
 from .floor_value import FloorValue
 
-
 _IMPORT_MEMBER_AUTHORITY = object()
 
 
@@ -44,8 +43,7 @@ class ImportMemberValue(FloorValue):
             raise TypeError("ImportMemberValue requires exact authenticated receipt")
         self.receipt.revalidate()
         if (
-            self.qualified_name
-            != self.receipt.target_symbol.removeprefix("python:")
+            self.qualified_name != self.receipt.target_symbol.removeprefix("python:")
             or self.source_cid != self.receipt.source_cid
             or self.import_binding_cid != self.receipt.import_binding.cid
             or self.use_cid != self.receipt.use["cid"]
@@ -100,14 +98,10 @@ class ImportMemberValue(FloorValue):
         )
 
     def attribute(self, name, site):
-        return self.undecided_attribute(
-            name, site, owner="ImportMemberValue.attribute"
-        )
+        return self.undecided_attribute(name, site, owner="ImportMemberValue.attribute")
 
     def contains(self, item, site):
-        return self.undecided_contains(
-            item, site, owner="ImportMemberValue.contains"
-        )
+        return self.undecided_contains(item, site, owner="ImportMemberValue.contains")
 
     def attribute_with(self, operation: Any, ctx: object):
         del ctx

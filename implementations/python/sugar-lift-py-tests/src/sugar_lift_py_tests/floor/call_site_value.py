@@ -539,9 +539,7 @@ class CallSiteValue(FloorValue):
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.contains")
         if dug is not None and dug is not self:
             return dug.contains(item, site)
-        return self.undecided_contains(
-            item, site, owner="CallSiteValue.contains"
-        )
+        return self.undecided_contains(item, site, owner="CallSiteValue.contains")
 
     def subscript(self, index, site):
         return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")

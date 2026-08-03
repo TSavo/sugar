@@ -69,7 +69,10 @@ class _TwoFacedElement:
         self.index = index
         self.guard = _atom(f"g{index}")
         self.halt_guard = _atom(f"h{index}")
-        self.effect = RaiseEffect.for_builtin(f'E{index}', occurrence='implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0')
+        self.effect = RaiseEffect.for_builtin(
+            f"E{index}",
+            occurrence="implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0",
+        )
 
     def desugar(self, ctx=None):
         del ctx
@@ -210,7 +213,11 @@ def _resolve_term(term, assignment: dict):
                 else when_false
             )
             return _resolve_term(chosen, assignment)
-        return ("ctor", term.name, tuple(_resolve_term(a, assignment) for a in term.args))
+        return (
+            "ctor",
+            term.name,
+            tuple(_resolve_term(a, assignment) for a in term.args),
+        )
     if isinstance(term, _Var):
         return ("var", term.name)
     if isinstance(term, _ConstStr):
@@ -355,9 +362,7 @@ def test_arm_population_grows_linearly_with_spread_arity(kind: str) -> None:
 def test_stored_representation_grows_linearly_with_spread_arity(kind: str) -> None:
     """The storage law: the factored value may not hide an exponential either."""
     sizes = {
-        arity: _stored_nodes(
-            _spread([_TwoFacedElement(i) for i in range(arity)], kind)
-        )
+        arity: _stored_nodes(_spread([_TwoFacedElement(i) for i in range(arity)], kind))
         for arity in _GROWTH_ARITIES
     }
     _assert_at_most_linear(sizes, f"{kind}: retained DAG nodes")

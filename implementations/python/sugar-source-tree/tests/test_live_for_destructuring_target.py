@@ -15,13 +15,20 @@ from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_py_tests.temporal import bind_temporal
 from sugar_source_tree.binding_state import mint_binding_coordinate_v1
-from sugar_source_tree.nodes import For, FunctionDef, TargetPatternConstructionGapV1, TargetPatternV1
+from sugar_source_tree.nodes import (
+    For,
+    FunctionDef,
+    TargetPatternConstructionGapV1,
+    TargetPatternV1,
+)
 from sugar_source_tree.tree import SourceFile
 
 
 def _function(source: str) -> FunctionDef:
     with TemporaryDirectory(dir=Path.cwd()) as directory:
-        path = Path(directory).relative_to(Path.cwd()) / "live_for_destructuring_target.py"
+        path = (
+            Path(directory).relative_to(Path.cwd()) / "live_for_destructuring_target.py"
+        )
         path.write_text(source)
         tree = SourceFile.from_path(path)
         return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
@@ -182,7 +189,9 @@ def test_live_pair_target_rejects_foreign_target_and_scope_testimony() -> None:
 
     foreign_site_lie = (foreign_site, pattern.target_coordinates[1])
     with pytest.raises(TargetPatternConstructionGapV1) as site_rejected:
-        pattern.source_unit.require_target_pattern_coordinates(pattern, foreign_site_lie)
+        pattern.source_unit.require_target_pattern_coordinates(
+            pattern, foreign_site_lie
+        )
     assert site_rejected.value.reason == "foreign-target-coordinate"
     assert site_rejected.value.target_pattern is pattern
     assert site_rejected.value.expected_coordinates is pattern.coordinates
@@ -190,7 +199,9 @@ def test_live_pair_target_rejects_foreign_target_and_scope_testimony() -> None:
 
     foreign_scope_lie = (foreign_scope, pattern.target_coordinates[1])
     with pytest.raises(TargetPatternConstructionGapV1) as scope_rejected:
-        pattern.source_unit.require_target_pattern_coordinates(pattern, foreign_scope_lie)
+        pattern.source_unit.require_target_pattern_coordinates(
+            pattern, foreign_scope_lie
+        )
     assert scope_rejected.value.reason == "foreign-target-scope"
     assert scope_rejected.value.target_pattern is pattern
     assert scope_rejected.value.expected_coordinates is pattern.coordinates

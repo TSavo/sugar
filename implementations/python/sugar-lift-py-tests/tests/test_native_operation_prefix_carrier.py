@@ -89,7 +89,9 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     first_obligation = _Pending("first", (_Demand("first-demand"),))
     second_obligation = _Pending("second", (_Demand("second-demand"),))
     stopped_state = object()
-    stopped_effect = UndeterminedRaiseEffect(blame="prefix-halt", occurrence="prefix-halt")
+    stopped_effect = UndeterminedRaiseEffect(
+        blame="prefix-halt", occurrence="prefix-halt"
+    )
     prefix = ExitSet(
         (
             Completed(
@@ -152,7 +154,9 @@ def test_incompatible_prefix_carrier_demands_refuse_loudly() -> None:
         )
     )
 
-    with pytest.raises(ConstructionPanic, match="incompatible native-operation demands"):
+    with pytest.raises(
+        ConstructionPanic, match="incompatible native-operation demands"
+    ):
         NativeOperationExitCarrierV1.compose_prefix(
             prefix,
             lambda value: first if value == TermValue(1) else second,

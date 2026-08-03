@@ -150,8 +150,11 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity('TypeError')
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert halted.effect.exception_type_coordinate == _identity("TypeError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -226,7 +229,9 @@ def _unwrap_return(value):
             value = statements[-1]
             continue
         break
-    raise AssertionError(f"unprojected membership value: {type(value).__name__} {value!r}")
+    raise AssertionError(
+        f"unprojected membership value: {type(value).__name__} {value!r}"
+    )
 
 
 def _membership_bool(outcome) -> bool:
@@ -290,9 +295,7 @@ def test_discrimination_self_is_not_a_contains_operand() -> None:
 def test_positional_keyword_and_default_calls_discharge() -> None:
     sites = (
         _method_callsite(METHOD_BODY + "\nChecker().has([1, 2], 1)\n"),
-        _method_callsite(
-            METHOD_BODY + "\nChecker().has(container=[1, 2], item=1)\n"
-        ),
+        _method_callsite(METHOD_BODY + "\nChecker().has(container=[1, 2], item=1)\n"),
         _method_callsite(METHOD_DEFAULTS + "\nChecker().has([1, 2])\n"),
     )
     for site in sites:
@@ -346,9 +349,7 @@ def test_non_container_receiver_yields_named_typeerror_with_pre_effect() -> None
         "formal contains carrier"
     )
     container_cid, item_cid = _container_item_cids(pending)
-    exits = pending.discharge(
-        {container_cid: NoneValue(), item_cid: TermValue(1)}
-    )
+    exits = pending.discharge({container_cid: NoneValue(), item_cid: TermValue(1)})
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
     assert halted.state is testimony.state
@@ -450,8 +451,7 @@ def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
     assert len(off_by_one) == 2
     assert off_by_one != truthful
     assert not (
-        isinstance(off_by_one[0], ObjectValue)
-        and off_by_one[0].class_name == "Checker"
+        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Checker"
     )
 
 
@@ -467,16 +467,12 @@ def test_swapped_container_item_twins_fail_against_truthful_membership() -> None
     container = ListValue((TermValue(1), TermValue(2)))
     item = TermValue(1)
 
-    truthful = pending.discharge(
-        {container_cid: container, item_cid: item}
-    )
+    truthful = pending.discharge({container_cid: container, item_cid: item})
     assert isinstance(truthful.exits[0], Completed)
 
     # Swapped: container slot gets item (TermValue), item slot gets list.
     # Non-container receiver → TypeError halt, not present-member True.
-    lying = pending.discharge(
-        {container_cid: item, item_cid: container}
-    )
+    lying = pending.discharge({container_cid: item, item_cid: container})
     lying_face = lying.exits[0]
     if isinstance(lying_face, Completed):
         # Must not claim the same completed membership as truthful.

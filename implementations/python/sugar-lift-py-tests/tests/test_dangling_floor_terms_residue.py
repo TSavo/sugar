@@ -18,7 +18,6 @@ from sugar_lift_py_tests.ir import _Ctor, make_var
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_source_tree.tree import SourceFile
 
-
 ROOT = Path(__file__).parents[1] / "src" / "sugar_lift_py_tests" / "floor"
 TARGETS = (
     ROOT / "call_site_value.py",

@@ -123,9 +123,9 @@ def test_recursive_name_call_sugar_does_not_raise_authenticated_new_shape() -> N
         try:
             call.sugar()
         except AttributeError as exc:
-            assert str(exc) != "_authenticated_new_constructor_shape", (
-                "recursive Name-call must not trip ClassDef-only method on FunctionDef"
-            )
+            assert (
+                str(exc) != "_authenticated_new_constructor_shape"
+            ), "recursive Name-call must not trip ClassDef-only method on FunctionDef"
             raise
 
 

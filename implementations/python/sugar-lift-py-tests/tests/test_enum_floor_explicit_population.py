@@ -38,12 +38,12 @@ def test_lying_twin_production_roots_are_not_a_silent_cli_default() -> None:
         "bare_exception_zero_tolerance.py",
     ):
         source = (_SCRIPTS / name).read_text(encoding="utf-8")
-        assert "default=list(production_roots" not in source, (
-            f"{name} still silently defaults paths to production_roots"
-        )
-        assert "require_explicit_scan_roots" in source, (
-            f"{name} must refuse empty path sets at the door"
-        )
+        assert (
+            "default=list(production_roots" not in source
+        ), f"{name} still silently defaults paths to production_roots"
+        assert (
+            "require_explicit_scan_roots" in source
+        ), f"{name} must refuse empty path sets at the door"
 
 
 def test_truthful_named_root_discovers_python(tmp_path: Path) -> None:

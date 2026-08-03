@@ -95,9 +95,7 @@ def rewrap_pending(pending, outcome, *, owner, blame):
     # carries its own formal coordinate, and fusing them would attribute one
     # obligation to a formal that does not own it.
     if isinstance(outcome, ContractConditionalConstructionV1):
-        return replace(
-            outcome, demands=merge_demands(pending.demands, outcome.demands)
-        )
+        return replace(outcome, demands=merge_demands(pending.demands, outcome.demands))
 
     # AN EFFECT: the obligation was incurred BEFORE the effect, on the path that
     # reached it (`o.x = p[k]` evaluates `p[k]`, then the store answers). It is
@@ -134,14 +132,10 @@ def rewrap_pending(pending, outcome, *, owner, blame):
         for exit_ in outcome.exits:
             owed = merge_pending(exit_.pending_contracts, (pending,))
             if isinstance(exit_, Completed):
-                exits.append(
-                    Completed(exit_.guard, exit_.value, exit_.faces, owed)
-                )
+                exits.append(Completed(exit_.guard, exit_.value, exit_.faces, owed))
             else:
                 exits.append(
-                    Halted(
-                        exit_.guard, exit_.effect, exit_.state, exit_.faces, owed
-                    )
+                    Halted(exit_.guard, exit_.effect, exit_.state, exit_.faces, owed)
                 )
         joined = ExitSet(tuple(exits)).normalize()
 

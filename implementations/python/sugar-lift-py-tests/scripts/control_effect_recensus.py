@@ -134,9 +134,7 @@ def _phase_begin(name: str) -> float:
 
 
 def _phase_end(name: str, t0: float) -> None:
-    _narrate(
-        f"RECENSUS PHASE END: {name} elapsed_s={time.perf_counter() - t0:.3f}"
-    )
+    _narrate(f"RECENSUS PHASE END: {name} elapsed_s={time.perf_counter() - t0:.3f}")
 
 
 def _phase_call(name: str, fn):
@@ -174,9 +172,7 @@ def _consume_sealed_files_complete(
             raise TypeError("sealed board denominator testimony is not an object")
         files = denominator["files"]
         if not isinstance(files, dict):
-            raise TypeError(
-                "sealed board denominator.files testimony is not an object"
-            )
+            raise TypeError("sealed board denominator.files testimony is not an object")
         complete = files["complete"]
         if complete is not True:
             raise ValueError(
@@ -285,9 +281,7 @@ class _EngineStdoutHeartbeat(logging.Handler):
         self._last_emit = now
         try:
             msg = self.format(record)
-            extra = (
-                f" suppressed={self._suppressed}" if self._suppressed else ""
-            )
+            extra = f" suppressed={self._suppressed}" if self._suppressed else ""
             self._suppressed = 0
             print(
                 f"RECENSUS ENGINE heartbeat{extra} {msg[:240]}",
@@ -355,9 +349,10 @@ def _occurrence_key(
 # Conservation: every sync with-item constructs or does not.
 # No kind vocabulary. Unconstructed rows are panics waiting to be written.
 WITH_CENSUS_CONSERVATION_IDENTITY = (
-    "site:with-item == constructed + unconstructed "
-    "(no residual kind taxonomy)"
+    "site:with-item == constructed + unconstructed " "(no residual kind taxonomy)"
 )
+
+
 def _tally_cm_resolutions(
     context=None,
     *,
@@ -499,7 +494,6 @@ def _attested_cm_counts(result: dict[str, Any]) -> tuple[int, int]:
     )
 
 
-
 def _backend_defect_key(exc: object) -> str:
     """Classify demand/resolution table hygiene — never construction mass.
 
@@ -629,8 +623,6 @@ def _measure_file(
         "Use sugar.enumerate via recensus_enumerate_consumer; "
         "do not re-open a private SourceFile walk."
     )
-
-
 
 
 def _is_process_control(error: BaseException) -> bool:
@@ -953,6 +945,7 @@ def main() -> int:
         require_pin,
         write_pin,
     )
+
     # Path-shape CID only (relative path names). Content authentication is the
     # pin aggregate. Do NOT call demand_table_identity.corpus_manifest_cid here:
     # that is the content manifest (root, abs paths) -> (blake3, count), a
@@ -1087,9 +1080,7 @@ def main() -> int:
         assigned = list(shard_plan["bins"][args.shard_index])
         unknown = sorted(set(assigned) - set(file_names))
         if unknown:
-            parser.error(
-                f"plan bin contains files not in this walk: {unknown[:5]}"
-            )
+            parser.error(f"plan bin contains files not in this walk: {unknown[:5]}")
         file_names = [f for f in file_names if f in set(assigned)]
         by_file = {f: by_file[f] for f in file_names}
         _narrate(
@@ -1149,9 +1140,7 @@ def main() -> int:
             return 78
         contract_refs = _phase_call(
             "demand_table_load",
-            lambda: install_prebuilt_demand_table(
-                prebuilt, root=workspace_root
-            ),
+            lambda: install_prebuilt_demand_table(prebuilt, root=workspace_root),
         )
         demand_table_cid = prebuilt.content_cid
         _narrate(
@@ -1308,9 +1297,7 @@ def main() -> int:
                 row_families = raw.get("families") or {}
                 live_snw += int(row_families.get("SugarNotWritten") or 0)
                 live_other_gaps += sum(
-                    int(v)
-                    for k, v in row_families.items()
-                    if k != "SugarNotWritten"
+                    int(v) for k, v in row_families.items() if k != "SugarNotWritten"
                 )
                 if cat == "panic":
                     live_panic += 1
@@ -1356,10 +1343,15 @@ def main() -> int:
             force = status not in {"lifting…", "ok", "…"}
             if not force and now - _last_progress_stdout < _JOB_LOG_MAX_SILENCE_S:
                 return
-            if force and now - _last_progress_stdout < 2.0 and status in {
-                "done",
-                "cpanic",
-            }:
+            if (
+                force
+                and now - _last_progress_stdout < 2.0
+                and status
+                in {
+                    "done",
+                    "cpanic",
+                }
+            ):
                 # Allow dense end-of-file lines without flooding.
                 pass
             _last_progress_stdout = now
@@ -1530,9 +1522,7 @@ def main() -> int:
                             ),
                         )
                         sites = _ast_site_prevalence(path)
-                        with_partition = _with_census_partition(
-                            resolution_rows, sites
-                        )
+                        with_partition = _with_census_partition(resolution_rows, sites)
                         row["withResolutionRows"] = resolution_rows
                         row["cmResolutions"] = {
                             "constructed": with_partition["constructed"],
@@ -1541,9 +1531,9 @@ def main() -> int:
                         row["astSites"] = dict(sites)
                         from compose_control_effect_board import EDGE_WITH_PARTITION
 
-                        row.setdefault("edgeWitnesses", {})[
-                            EDGE_WITH_PARTITION
-                        ] = with_partition["edgeWitness"]
+                        row.setdefault("edgeWitnesses", {})[EDGE_WITH_PARTITION] = (
+                            with_partition["edgeWitness"]
+                        )
                 except ConstructionPanic:
                     raise
                 except BaseException as error:  # noqa: BLE001 -- per-file terminal
@@ -1569,9 +1559,7 @@ def main() -> int:
                 # functionsClean may be null when clean ratio is refused.
                 # Law: never treat null clean as 0-of-N and mint clean%=100.
                 _raw_clean = row.get("functionsClean")
-                if row.get("cleanRatioRefused") or (
-                    _raw_clean is None and fn > 0
-                ):
+                if row.get("cleanRatioRefused") or (_raw_clean is None and fn > 0):
                     live_clean_refused = True
                     clean = 0
                 else:
@@ -1749,8 +1737,6 @@ def main() -> int:
                         "mode=batch-end-of-lift degraded=shelf-stale-next-plan"
                     )
             progress_stream.close()
-
-
 
     # Tripwire: the lift loop must never rebind `families` to a row dict.
     if not isinstance(families, Counter):
@@ -1951,6 +1937,7 @@ def main() -> int:
             for gap in (result.get("desugarDesignedGaps") or [])
         )
     )
+
     # stableZero -- RULING ON PLACEMENT.
     #
     # This is a ONE-FLOOR term and is deliberately named

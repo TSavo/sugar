@@ -550,11 +550,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        root = (
-            args.root.resolve()
-            if args.root is not None
-            else resolve_repo_root()
-        )
+        root = args.root.resolve() if args.root is not None else resolve_repo_root()
     except RepoRootUnresolved as error:
         parser.error(str(error))
     output_dir = args.output_dir or (root / ".sugar" / "pandas-wall")

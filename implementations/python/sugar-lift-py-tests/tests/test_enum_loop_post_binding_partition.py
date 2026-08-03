@@ -78,17 +78,16 @@ def test_enum_post_binding_preserves_three_states_and_two_outward_routes(
             record
             for record in graph["records"]
             if record.get("kind") == "loop-post-binding"
-            and record["bindingCoordinateCid"]
-            == kwargs["binding_coordinate"].cid
+            and record["bindingCoordinateCid"] == kwargs["binding_coordinate"].cid
         )
         assert {record["exitPartitionArity"] for record in post_records} == {3}
         assert len(projected.completed_faces) == len(post_records) == 3
-        assert {
-            face.completion_kind for face in projected.completed_faces
-        } == {"BreakExit", "BodyFallthrough", "NormalExhaustion"}
-        assert len(
-            {face.guard_formula_cid for face in projected.completed_faces}
-        ) == 3
+        assert {face.completion_kind for face in projected.completed_faces} == {
+            "BreakExit",
+            "BodyFallthrough",
+            "NormalExhaustion",
+        }
+        assert len({face.guard_formula_cid for face in projected.completed_faces}) == 3
         root = graph["root"]
         assert len(root["breakExitObligationCids"]) == 1
         assert root["exhaustionExitObligationCid"]

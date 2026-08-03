@@ -62,9 +62,7 @@ def test_body_state_is_the_next_condition_input_not_the_stale_initial_state(
     )
 
     assert len(test_transforms) == 2
-    assert initial["testValueConstructionCid"] == (
-        while_node.test.fragment.seal().cid
-    )
+    assert initial["testValueConstructionCid"] == (while_node.test.fragment.seal().cid)
     assert recurrence["testValueConstructionCid"] == initial["testValueConstructionCid"]
     assert initial["inputStateCid"] == graph["root"]["preStateCid"]
     assert latch["inputStateCid"] != graph["root"]["preStateCid"]
@@ -116,9 +114,7 @@ def test_swapping_only_recurrence_test_back_to_pre_state_is_refused(tmp_path: Pa
     latch.clear()
     latch.update(replacement_latch)
     tampered["root"]["latchObligationCids"] = [
-        replacement_latch["latchObligationCid"]
-        if cid == old_latch_cid
-        else cid
+        replacement_latch["latchObligationCid"] if cid == old_latch_cid else cid
         for cid in tampered["root"]["latchObligationCids"]
     ]
     assert old_transform_cid != replacement["testTransformCid"]

@@ -146,9 +146,7 @@ def test_attribute_and_subscript_production_construction() -> None:
 
 
 def test_name_store_name_interleaved_constructs() -> None:
-    function, _ = _helper(
-        "def helper(obj, xs):\n    a, obj.x, b = xs\n    return a\n"
-    )
+    function, _ = _helper("def helper(obj, xs):\n    a, obj.x, b = xs\n    return a\n")
     stmt = next(
         s
         for s in function.sugar().statements
@@ -174,9 +172,7 @@ def test_ground_star_store_rest_and_field() -> None:
         ),
         site=site,
     )
-    exits = reduce_block_to_exitset(
-        (sugar,), ReduceContext.root(owner="ground_star")
-    )
+    exits = reduce_block_to_exitset((sugar,), ReduceContext.root(owner="ground_star"))
     assert isinstance(exits.exits[0], Completed)
     state = exits.exits[0].value
     assert state.context.temporal.value_if_bound("rest") == ListValue(
@@ -205,9 +201,7 @@ def test_interleaved_name_store_name_order() -> None:
 
     receiver = ObjectValue("W", (), (), (), "w1")
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(
-            ListValue((TermValue(1), TermValue(2), TermValue(3)))
-        ),
+        value=_FloorSugar(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
             _OrderName("a"),
             _OrderAttr(_FloorSugar(receiver), "x", site),
@@ -373,10 +367,7 @@ def test_exact_arity_valueerror_identity() -> None:
     effect = _arity_mismatch_effect(sugar.desugar(None))
     assert effect.exception_name == "ValueError"
     assert effect.exception_type_coordinate == _valueerror_type_identity()
-    assert (
-        effect.producer_node_owner
-        == "DynamicUnpackStoreAssignSugar.arity_mismatch"
-    )
+    assert effect.producer_node_owner == "DynamicUnpackStoreAssignSugar.arity_mismatch"
     # Operation occurrence cites the unpack site — not a foreign boundary.
     assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
     assert effect.occurrence_id == str(site)
@@ -511,14 +502,18 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     with pytest.raises(AssertionError):
         assert lying.demand.operand_coordinate_cids == cids
     # Missing formals → typed undischarged refusal, never Complete.
-    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent") as missing:
+    with pytest.raises(
+        SugarNotWritten, match="authenticated caller actual absent"
+    ) as missing:
         projected.discharge({})
     assert "cid:a" in str(missing.value)
     # Lying twin: claiming missing actuals greened a Complete is impossible.
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
         out = projected.discharge({})
         assert isinstance(out, Complete)
-    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent") as partial:
+    with pytest.raises(
+        SugarNotWritten, match="authenticated caller actual absent"
+    ) as partial:
         projected.discharge({"cid:a": ListValue((TermValue(0),))})
     assert "cid:i" in str(partial.value)
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):

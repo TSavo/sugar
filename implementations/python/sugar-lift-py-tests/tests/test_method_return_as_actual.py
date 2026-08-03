@@ -61,18 +61,12 @@ CODEX3_GENERAL_PRODUCER = (
     "not BlockValue body, not unreduced CallSiteValue)"
 )
 
-FACTORY_MAKE_41 = (
-    "class Factory:\n"
-    "    def make(self):\n"
-    "        return 41\n"
-)
+FACTORY_MAKE_41 = "class Factory:\n" "    def make(self):\n" "        return 41\n"
 
 STORE_DEF = "def store(obj, key, value):\n    obj[key] = value\n"
 
 RAISING_FACTORY = (
-    "class Factory:\n"
-    "    def make(self):\n"
-    "        raise ValueError()\n"
+    "class Factory:\n" "    def make(self):\n" "        raise ValueError()\n"
 )
 
 CHAIN_SOURCE = (
@@ -143,9 +137,7 @@ def _attr_call_outcome(source: str, attr: str):
     calls = tuple(
         n
         for n in tree.nodes()
-        if isinstance(n, Call)
-        and isinstance(n.func, Attribute)
-        and n.func.attr == attr
+        if isinstance(n, Call) and isinstance(n.func, Attribute) and n.func.attr == attr
     )
     assert calls, (attr, source)
     return _desugar_or_name_codex3(
@@ -310,7 +302,9 @@ def test_method_return_feeds_compare_isomorphic_to_direct_value() -> None:
     """
     direct = _compare_outcome("41 < 50\n")
     method = _compare_outcome(FACTORY_MAKE_41 + "\nFactory().make() < 50\n")
-    assert _completed_compare_is_true(method) is _completed_compare_is_true(direct) is True, (
+    assert (
+        _completed_compare_is_true(method) is _completed_compare_is_true(direct) is True
+    ), (
         f"{CODEX3_GENERAL_PRODUCER} — Compare method-return face not isomorphic "
         f"to direct 41<50: method={type(method).__name__} direct={type(direct).__name__}"
     )
@@ -484,10 +478,7 @@ def test_swapped_receiver_is_not_the_returned_value() -> None:
     assert dug == TermValue(41)
     assert dug != receiver
     # A swapped lying map that treats self as the returned actual fails.
-    assert not (
-        isinstance(dug, ObjectValue)
-        and dug.class_name == "Factory"
-    )
+    assert not (isinstance(dug, ObjectValue) and dug.class_name == "Factory")
 
 
 def test_discrimination_list_literal_is_not_make_return() -> None:

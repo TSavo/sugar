@@ -58,12 +58,16 @@ def test_second_pass_over_same_files_does_not_reprepare() -> None:
     ]
     for identity in files:
         SourceFile(identity)
-    counts_after_p1 = {identity[2]: prepare_count_for(identity[2]) for identity in files}
+    counts_after_p1 = {
+        identity[2]: prepare_count_for(identity[2]) for identity in files
+    }
     assert all(c == 1 for c in counts_after_p1.values()), counts_after_p1
 
     for identity in files:
         SourceFile(identity)
-    counts_after_p2 = {identity[2]: prepare_count_for(identity[2]) for identity in files}
+    counts_after_p2 = {
+        identity[2]: prepare_count_for(identity[2]) for identity in files
+    }
     assert counts_after_p2 == counts_after_p1
     assert all(c == 1 for c in counts_after_p2.values())
 

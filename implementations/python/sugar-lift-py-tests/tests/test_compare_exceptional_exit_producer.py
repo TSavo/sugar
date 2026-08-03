@@ -212,9 +212,7 @@ def _assert_named_ordering_or_membership_refusal(thunk) -> SugarNotWritten:
 def _assert_compare_dual(node, *, atom: str) -> None:
     """Legacy name: equality still dual-edges; ordering/membership throw named."""
     if atom in {"py.lt", "py.le", "py.gt", "py.ge", "py.in"}:
-        _assert_named_ordering_or_membership_refusal(
-            lambda: node.sugar().desugar(None)
-        )
+        _assert_named_ordering_or_membership_refusal(lambda: node.sugar().desugar(None))
         return
     _assert_dual_dispatch(
         node.sugar().desugar(None), atom=atom, blame=str(node.fragment)

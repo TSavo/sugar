@@ -133,9 +133,7 @@ def test_an_if_without_a_suspension_is_pre_yield_guarded_setup() -> None:
 
 
 def test_pre_yield_if_assign_is_nameable_guarded_setup() -> None:
-    steps = _steps(
-        "def g(c):\n    if c:\n        prior = None\n    yield 1\n"
-    )
+    steps = _steps("def g(c):\n    if c:\n        prior = None\n    yield 1\n")
     assert isinstance(steps[0], IfStepV1)
     from sugar_lift_py_tests.generator_construction import AssignStepV1
 
@@ -158,10 +156,7 @@ def test_pre_yield_if_with_raise_is_raise_step_inside_if() -> None:
 
 def test_raise_step_has_canonical_generator_construction_testimony() -> None:
     steps = _steps(
-        "def g(c):\n"
-        "    if c:\n"
-        "        raise ValueError('boom')\n"
-        "    yield 1\n"
+        "def g(c):\n" "    if c:\n" "        raise ValueError('boom')\n" "    yield 1\n"
     )
 
     preimage = _machine(steps).construction_term_preimage()

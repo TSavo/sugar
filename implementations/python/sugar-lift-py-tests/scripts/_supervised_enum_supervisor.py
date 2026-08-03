@@ -632,7 +632,9 @@ class SupervisedEnumSupervisor:
         )
 
         cache_root = resolve_cache_root()
-        cache = ProcessFloorTerminalCache(cache_root) if cache_root is not None else None
+        cache = (
+            ProcessFloorTerminalCache(cache_root) if cache_root is not None else None
+        )
         tip = resolve_measurement_tip()
         demand_cid = demand_table_cid(self.demand_table_path)
         timeout_ms = int(round(self.file_timeout * 1000))

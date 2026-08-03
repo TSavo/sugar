@@ -32,12 +32,8 @@ class _ListcompLookalike:
         ((TermValue(7), TermValue(7), TermValue(9)), 3),
     ],
 )
-def test_listcomp_finite_roster_length_counts_exact_members(
-    elements, expected
-) -> None:
-    value = ComprehensionValue(
-        ctor("py.listcomp", ()), finite_elements=elements
-    )
+def test_listcomp_finite_roster_length_counts_exact_members(elements, expected) -> None:
+    value = ComprehensionValue(ctor("py.listcomp", ()), finite_elements=elements)
 
     outcome = value.length(object())
 
@@ -102,9 +98,7 @@ def test_valid_foreign_listcomp_constructor_and_site_are_retained_exactly() -> N
     assert first.site is first_site
     assert foreign.site is foreign_site
     assert first.term == ctor("call:len", (first_term,), symbol_kind="builtin")
-    assert foreign.term == ctor(
-        "call:len", (foreign_term,), symbol_kind="builtin"
-    )
+    assert foreign.term == ctor("call:len", (foreign_term,), symbol_kind="builtin")
     assert foreign.term != first.term
 
 
@@ -125,14 +119,10 @@ def test_exitset_listcomp_length_preserves_halt_guard_and_pending() -> None:
         pending_contracts=(completed_pending,),
     )
 
-    result = ExitSet((halted, completed)).and_then(
-        lambda value: value.length(object())
-    )
+    result = ExitSet((halted, completed)).and_then(lambda value: value.length(object()))
 
     halted_after = next(face for face in result.exits if isinstance(face, Halted))
-    completed_after = next(
-        face for face in result.exits if isinstance(face, Completed)
-    )
+    completed_after = next(face for face in result.exits if isinstance(face, Completed))
     assert halted_after is halted
     assert halted_after.guard == halted.guard
     assert halted_after.pending_contracts == (halted_pending,)

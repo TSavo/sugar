@@ -29,12 +29,16 @@ def test_lying_mismatched_source_cid_is_refused_at_import_use_mint(
     lying_cid = "blake3-512:" + "0" * 128
     assert lying_cid != honest_cid
 
-    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+    with pytest.raises(
+        ValueError, match="authenticated import-use source CID is stale"
+    ):
         authenticated_import_uses(
             tmp_path, path, source, lying_cid, module_identities={}
         )
 
-    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+    with pytest.raises(
+        ValueError, match="authenticated import-use source CID is stale"
+    ):
         authenticated_import_use_receipts(
             tmp_path, path, source, lying_cid, module_identities={}
         )
@@ -49,7 +53,9 @@ def test_dual_door_crlf_claim_is_refused_not_repaired(tmp_path: Path) -> None:
     claimed = blake3_512_of(path.read_bytes())
     assert blake3_512_of(source.encode("utf-8")) != claimed
 
-    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+    with pytest.raises(
+        ValueError, match="authenticated import-use source CID is stale"
+    ):
         authenticated_import_use_receipts(
             tmp_path, path, source, claimed, module_identities={}
         )

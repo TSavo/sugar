@@ -227,7 +227,9 @@ def test_neither_obligation_is_weakened_twice():
     formals, same polarities, and a content address the linker's resolution
     table does not have.
     """
-    for name, (_polarity, _antecedent, consequent) in _by_formal(_out(BOTH_ARMS)).items():
+    for name, (_polarity, _antecedent, consequent) in _by_formal(
+        _out(BOTH_ARMS)
+    ).items():
         assert getattr(consequent, "kind", None) != "implies", (
             f"the {name} obligation is nested `face -> (face -> ...)`: it was "
             "weakened twice, and its demand_cid is not the one that was minted"
@@ -329,7 +331,7 @@ def test_the_same_formal_on_both_arms_owes_two_obligations_on_one_formal():
 
 def _subscripted_formal(arm) -> str:
     """The formal a `p[0]`-shaped arm value reads, off the value's own testimony."""
-    (receiver, _index) = arm.arg_values
+    receiver, _index = arm.arg_values
     return receiver.term.name
 
 

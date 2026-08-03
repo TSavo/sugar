@@ -105,9 +105,7 @@ def test_raise_call_form_carries_exception_type_coordinate():
 
 def test_local_exception_class_constructs_authenticated_raise_effect():
     """Source ClassDef exception types construct through the Raise door."""
-    effect = _effect(
-        "class E(Exception):\n    pass\n\ndef A():\n    raise E\n"
-    )
+    effect = _effect("class E(Exception):\n    pass\n\ndef A():\n    raise E\n")
     assert effect.exception_name == "E"
     assert effect.exception_type_coordinate is not None
 

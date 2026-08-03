@@ -146,8 +146,7 @@ class SubscriptDeleteEffectSugar(Sugar):
 
     def _delete(self, receiver, index) -> Outcome:
         coordinates = tuple(
-            getattr(operand, "formal_coordinate", None)
-            for operand in (receiver, index)
+            getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
         )
         if any(coordinate is not None for coordinate in coordinates):
             # Undischarged demand awaiting caller actuals — not a refusal.
@@ -194,8 +193,7 @@ class SubscriptDeleteEffectSugar(Sugar):
         )
 
         coordinates = tuple(
-            getattr(operand, "formal_coordinate", None)
-            for operand in (receiver, index)
+            getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
         )
         if not any(coordinate is not None for coordinate in coordinates):
             raise ValueError(

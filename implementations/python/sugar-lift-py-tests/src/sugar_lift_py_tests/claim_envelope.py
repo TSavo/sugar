@@ -155,6 +155,7 @@ def _authoring_to_value(a: Authoring) -> Value:
             pairs.append(("rationale", vstr(a.rationale)))
         return vobj(pairs)
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
     construction_panic_gap(
         owner="claim_envelope.authoring",
         blame="claim_envelope",

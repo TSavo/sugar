@@ -27,12 +27,8 @@ import pytest
 
 from sugar_source_tree.panic import SugarNotWritten
 
-
 _LIFT_RPC = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "sugar_lift_py_tests"
-    / "lift_rpc.py"
+    Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests" / "lift_rpc.py"
 )
 
 _CONTRACT_ROWS_CALL = "function_contract_rows"
@@ -69,9 +65,8 @@ def _except_exception_continue_wrappers(
             return False  # bare except is a different sin class; other teeth
         if isinstance(t, ast.Name) and t.id == "Exception":
             pass
-        elif (
-            isinstance(t, ast.Tuple)
-            and any(isinstance(e, ast.Name) and e.id == "Exception" for e in t.elts)
+        elif isinstance(t, ast.Tuple) and any(
+            isinstance(e, ast.Name) and e.id == "Exception" for e in t.elts
         ):
             pass
         else:
@@ -79,9 +74,7 @@ def _except_exception_continue_wrappers(
         # body is continue (optionally with pass-only noise)
         if not handler.body:
             return False
-        return all(
-            isinstance(stmt, (ast.Continue, ast.Pass)) for stmt in handler.body
-        )
+        return all(isinstance(stmt, (ast.Continue, ast.Pass)) for stmt in handler.body)
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Try):
@@ -156,7 +149,7 @@ def test_lying_twin_except_exception_continue_manufactures_absence() -> None:
 
 def test_ast_tooth_lying_twin_planted_swallow_is_visible() -> None:
     """AST tooth must recognize the planted except Exception: continue shape."""
-    planted = '''
+    planted = """
 def _handle_enumerate():
     for call in calls:
         try:
@@ -169,7 +162,7 @@ def _handle_enumerate():
             continue
         if rows is None:
             continue
-'''
+"""
     offenders = _except_exception_continue_wrappers(
         planted, call_name=_CONTRACT_ROWS_CALL, path="planted.py"
     )
@@ -184,7 +177,7 @@ def test_ast_tooth_does_not_flag_sugar_not_written_gap_recording() -> None:
     This tooth owns only the Exception-continue swallow class. Other soft
     membranes get their own instruments.
     """
-    clean = '''
+    clean = """
 def universe_arm():
     for fn in functions:
         try:
@@ -192,16 +185,15 @@ def universe_arm():
         except SugarNotWritten as gap:
             gaps.append(gap.observed)
             continue
-'''
+"""
     assert (
-        _except_exception_continue_wrappers(
-            clean, call_name=_CONTRACT_ROWS_CALL
-        )
-        == []
+        _except_exception_continue_wrappers(clean, call_name=_CONTRACT_ROWS_CALL) == []
     )
 
 
-def test_production_lift_rpc_has_zero_exception_continue_on_function_contract_rows() -> None:
+def test_production_lift_rpc_has_zero_exception_continue_on_function_contract_rows() -> (
+    None
+):
     """Production door: R=0 for Exception-continue wraps of function_contract_rows."""
     assert _LIFT_RPC.is_file(), _LIFT_RPC
     source = _LIFT_RPC.read_text(encoding="utf-8")

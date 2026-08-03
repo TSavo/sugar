@@ -7,7 +7,9 @@ from sugar_source_tree.tree import SourceFile
 
 def _sites(tmp_path, monkeypatch):
     path = tmp_path / "encoded_string_attribute_mutation.py"
-    path.write_text("def f(value, replacement):\n    value.attr = replacement\n    del value.attr\n")
+    path.write_text(
+        "def f(value, replacement):\n    value.attr = replacement\n    del value.attr\n"
+    )
     monkeypatch.chdir(tmp_path)
     body = next(SourceFile.from_path(path.name).functions()).body
     return body[0].fragment, body[1].fragment

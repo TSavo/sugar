@@ -13,8 +13,6 @@ def test_symbolic_support_keeps_one_identity_under_a_guard() -> None:
 def test_guard_does_not_become_symbolic_value_content_identity() -> None:
     value = SymbolicValue(make_var("value"))
 
-    assert value.guarded(atomic("left", [])) is value.guarded(
-        atomic("right", [])
-    )
+    assert value.guarded(atomic("left", [])) is value.guarded(atomic("right", []))
     assert value.inv_contribution() == ()
     assert value.post_contribution() == ()

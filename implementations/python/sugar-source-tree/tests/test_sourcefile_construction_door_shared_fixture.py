@@ -57,7 +57,10 @@ def test_backend_materialize_module_is_the_canonical_event_owner() -> None:
 def test_shared_sourcefile_construction_door_evidence_is_typed_sealed_and_closed(
     sourcefile_construction_door_evidence: SourceFileConstructionDoorEvidence,
 ) -> None:
-    assert assert_test_owned_evidence(sourcefile_construction_door_evidence) is sourcefile_construction_door_evidence
+    assert (
+        assert_test_owned_evidence(sourcefile_construction_door_evidence)
+        is sourcefile_construction_door_evidence
+    )
 
 
 def test_projection_callers_are_discovered_not_self_seeded() -> None:
@@ -114,8 +117,7 @@ def test_lying_twin_empty_projection_callers_is_red() -> None:
         owner_source=owner_source,
     )
     assert callers == (), (
-        "empty caller set must stay empty; got fabricated callers: "
-        f"{callers!r}"
+        "empty caller set must stay empty; got fabricated callers: " f"{callers!r}"
     )
 
     # assert_closed projection axis refuses the empty measurement.
@@ -196,34 +198,37 @@ def _graph(tmp_path: Path, sources: dict[str, str]) -> SymbolGraph:
 
 
 def test_symbol_graph_uses_source_ordered_reaching_definitions(tmp_path: Path) -> None:
-    graph = _graph(tmp_path, {
-        "m": (
-            "def first(): pass\n"
-            "def second(): pass\n"
-            "def caller(flag, doomed):\n"
-            "    target = first\n"
-            "    if flag:\n"
-            "        target = second\n"
-            "    target()\n"
-            "    del target\n"
-            "    target()\n"
-            "def loop_caller(flag):\n"
-            "    target = first\n"
-            "    while flag:\n"
-            "        target = second\n"
-            "        flag = False\n"
-            "    target()\n"
-            "def try_caller():\n"
-            "    target = second\n"
-            "    try:\n"
-            "        target = first\n"
-            "    except Exception:\n"
-            "        target = second\n"
-            "    finally:\n"
-            "        target = first\n"
-            "    target()\n"
-        )
-    })
+    graph = _graph(
+        tmp_path,
+        {
+            "m": (
+                "def first(): pass\n"
+                "def second(): pass\n"
+                "def caller(flag, doomed):\n"
+                "    target = first\n"
+                "    if flag:\n"
+                "        target = second\n"
+                "    target()\n"
+                "    del target\n"
+                "    target()\n"
+                "def loop_caller(flag):\n"
+                "    target = first\n"
+                "    while flag:\n"
+                "        target = second\n"
+                "        flag = False\n"
+                "    target()\n"
+                "def try_caller():\n"
+                "    target = second\n"
+                "    try:\n"
+                "        target = first\n"
+                "    except Exception:\n"
+                "        target = second\n"
+                "    finally:\n"
+                "        target = first\n"
+                "    target()\n"
+            )
+        },
+    )
     calls = [edge for edge in graph.calls if edge.expression == "target"]
     assert {target.name for target in calls[0].targets} == {"first", "second"}
     assert calls[0].dynamic is False
@@ -237,25 +242,31 @@ def test_symbol_graph_uses_source_ordered_reaching_definitions(tmp_path: Path) -
 def test_symbol_graph_does_not_fall_through_a_later_local_rebind(
     tmp_path: Path,
 ) -> None:
-    graph = _graph(tmp_path, {
-        "m": (
-            "def outer(): pass\n"
-            "def caller():\n"
-            "    outer()\n"
-            "    outer = lambda: None\n"
-        )
-    })
+    graph = _graph(
+        tmp_path,
+        {
+            "m": (
+                "def outer(): pass\n"
+                "def caller():\n"
+                "    outer()\n"
+                "    outer = lambda: None\n"
+            )
+        },
+    )
     call = next(edge for edge in graph.calls if edge.expression == "outer")
     assert call.targets == ()
     assert call.dynamic is True
 
 
 def test_symbol_graph_resolves_fixed_point_reexports(tmp_path: Path) -> None:
-    graph = _graph(tmp_path, {
-        "a": "def owner(): pass\n",
-        "b": "from a import *\nforwarded = owner\n",
-        "c": "from b import forwarded as again\nagain()\n",
-    })
+    graph = _graph(
+        tmp_path,
+        {
+            "a": "def owner(): pass\n",
+            "b": "from a import *\nforwarded = owner\n",
+            "c": "from b import forwarded as again\nagain()\n",
+        },
+    )
     call = next(edge for edge in graph.calls if edge.expression == "again")
     assert {(target.module, target.name) for target in call.targets} == {("a", "owner")}
     assert call.dynamic is False
@@ -274,14 +285,16 @@ def test_symbol_graph_resolves_fixed_point_reexports(tmp_path: Path) -> None:
         (consumer_path, consumer_source),
     ):
         path.write_text(source, encoding="utf-8")
-    relative_graph = SymbolGraph({
-        "pkg": (init_path, ast.parse(init_source, str(init_path))),
-        "pkg.inner": (inner_path, ast.parse(inner_source, str(inner_path))),
-        "consumer": (
-            consumer_path,
-            ast.parse(consumer_source, str(consumer_path)),
-        ),
-    })
+    relative_graph = SymbolGraph(
+        {
+            "pkg": (init_path, ast.parse(init_source, str(init_path))),
+            "pkg.inner": (inner_path, ast.parse(inner_source, str(inner_path))),
+            "consumer": (
+                consumer_path,
+                ast.parse(consumer_source, str(consumer_path)),
+            ),
+        }
+    )
     relative_call = next(
         edge for edge in relative_graph.calls if edge.expression == "forwarded"
     )
@@ -291,25 +304,26 @@ def test_symbol_graph_resolves_fixed_point_reexports(tmp_path: Path) -> None:
 
 
 def test_symbol_graph_resolves_classmethod_cls_to_its_class(tmp_path: Path) -> None:
-    graph = _graph(tmp_path, {
-        "m": (
-            "class SourceFile:\n"
-            "    def __init__(self, identity): pass\n"
-            "    @classmethod\n"
-            "    def from_path(cls, identity):\n"
-            "        return cls(identity)\n"
-            "def invoke(callback=SourceFile.from_path):\n"
-            "    return callback(('source', 'file.py', 'cid'))\n"
-        )
-    })
+    graph = _graph(
+        tmp_path,
+        {
+            "m": (
+                "class SourceFile:\n"
+                "    def __init__(self, identity): pass\n"
+                "    @classmethod\n"
+                "    def from_path(cls, identity):\n"
+                "        return cls(identity)\n"
+                "def invoke(callback=SourceFile.from_path):\n"
+                "    return callback(('source', 'file.py', 'cid'))\n"
+            )
+        },
+    )
     call = next(edge for edge in graph.calls if edge.expression == "cls")
     assert {(target.name, target.lexical) for target in call.targets} == {
         ("SourceFile", ())
     }
     assert call.dynamic is False
-    callback_call = next(
-        edge for edge in graph.calls if edge.expression == "callback"
-    )
+    callback_call = next(edge for edge in graph.calls if edge.expression == "callback")
     assert {(target.name, target.lexical) for target in callback_call.targets} == {
         ("from_path", ("SourceFile",))
     }

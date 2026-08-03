@@ -9,6 +9,7 @@ from sugar_source_tree.nodes import Name, Subscript
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+
 def _identity(name: str):
     from sugar_lift_py_tests.floor.ground_exit import (
         _builtin_exception_identity,
@@ -16,7 +17,6 @@ def _identity(name: str):
 
     identity, _mro = _builtin_exception_identity(name)
     return identity
-
 
 
 def _sites(tmp_path, source: str, filename: str):
@@ -32,15 +32,14 @@ def _sites(tmp_path, source: str, filename: str):
     return binding, lookup
 
 
-def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_faces(tmp_path, monkeypatch):
+def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_faces(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     binding, site = _sites(
-        tmp_path,
-        "OPTIONS = {}\nvalue = OPTIONS[key]\n", "mutable_global_truth.py"
+        tmp_path, "OPTIONS = {}\nvalue = OPTIONS[key]\n", "mutable_global_truth.py"
     )
-    value = MutableGlobalValue(
-        "OPTIONS", "dict", binding.source_cid, binding.seal()
-    )
+    value = MutableGlobalValue("OPTIONS", "dict", binding.source_cid, binding.seal())
     term = value.to_term(owner="test")
 
     exits = value.subscript(StringValue("display.max_rows"), site)
@@ -66,19 +65,19 @@ def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_f
     assert next(iter(halted.faces)).partition == next(iter(completed.faces)).partition
 
 
-def test_mutable_dict_global_lookup_refuses_foreign_source_coordinate(tmp_path, monkeypatch):
+def test_mutable_dict_global_lookup_refuses_foreign_source_coordinate(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     binding, truthful = _sites(
-        tmp_path,
-        "OPTIONS = {}\nvalue = OPTIONS[key]\n", "mutable_global_truth.py"
+        tmp_path, "OPTIONS = {}\nvalue = OPTIONS[key]\n", "mutable_global_truth.py"
     )
     _foreign_binding, foreign = _sites(
         tmp_path,
-        "OPTIONS = {}\nvalue = OPTIONS[other_key]\n", "mutable_global_foreign.py"
+        "OPTIONS = {}\nvalue = OPTIONS[other_key]\n",
+        "mutable_global_foreign.py",
     )
-    value = MutableGlobalValue(
-        "OPTIONS", "dict", binding.source_cid, binding.seal()
-    )
+    value = MutableGlobalValue("OPTIONS", "dict", binding.source_cid, binding.seal())
 
     assert truthful is not binding
     assert len(value.subscript(StringValue("display.max_rows"), truthful).exits) == 2

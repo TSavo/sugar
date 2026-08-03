@@ -8,11 +8,7 @@ from sugar_source_tree.tree import SourceFile
 
 def _sites(tmp_path):
     path = tmp_path / "class_definition_subscript_mutation.py"
-    path.write_text(
-        "def mutate_class(C):\n"
-        "    C[0] = 7\n"
-        "    del C[0]\n"
-    )
+    path.write_text("def mutate_class(C):\n" "    C[0] = 7\n" "    del C[0]\n")
     body = next(
         SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
     ).body

@@ -38,7 +38,9 @@ class ComprehensionTargetSugar:
         from sugar_lift_py_tests.ir import ctor, str_const
 
         if self.source_name is not None:
-            return ctor("python:comprehension-name-target", (str_const(self.source_name),))
+            return ctor(
+                "python:comprehension-name-target", (str_const(self.source_name),)
+            )
         assert self.coordinates is not None
         return ctor(
             "python:comprehension-destructure-target",
@@ -108,9 +110,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             "py.generatorexp",
         }:
             raise ValueError(f"unknown comprehension kind {self.kind!r}")
-        require_constructed_term_sugar(
-            self.element, owner="ComprehensionSugar.element"
-        )
+        require_constructed_term_sugar(self.element, owner="ComprehensionSugar.element")
         if self.key is not None:
             require_constructed_term_sugar(self.key, owner="ComprehensionSugar.key")
 
@@ -139,7 +139,9 @@ class ComprehensionSugar(ConstructedTermSugar):
                 str_const(self.kind),
                 ctor(
                     "python:comprehension-generators",
-                    tuple(generator.to_term(owner=owner) for generator in self.generators),
+                    tuple(
+                        generator.to_term(owner=owner) for generator in self.generators
+                    ),
                 ),
                 self.element.to_term(owner=owner),
                 key,
@@ -180,17 +182,11 @@ class ComprehensionSugar(ConstructedTermSugar):
         it the generator stays an opaque coordinate and ``not expected_exceptions``
         refuses at the UnaryOp producer.
         """
-        if (
-            index == 0
-            and len(self.generators) == 1
-            and not generator.filters
-        ):
+        if index == 0 and len(self.generators) == 1 and not generator.filters:
             finite = self._finite_map(generator, iterable, ctx)
             if finite is not None:
                 return finite
-        return self._desugar_filters(
-            generator, 0, (), iterable, index, resolved, ctx
-        )
+        return self._desugar_filters(generator, 0, (), iterable, index, resolved, ctx)
 
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
@@ -214,7 +210,10 @@ class ComprehensionSugar(ConstructedTermSugar):
             members = iterable.elements
         elif isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):
             members = iterable.elements[iterable.index :]
-        elif isinstance(iterable, ComprehensionValue) and iterable.finite_elements is not None:
+        elif (
+            isinstance(iterable, ComprehensionValue)
+            and iterable.finite_elements is not None
+        ):
             members = iterable.finite_elements
         if members is None:
             return None
@@ -248,9 +247,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                                 element_term,
                             )
                         ),
-                        ctor(
-                            "python:loop.exhaustion", [], symbol_kind="coordinate"
-                        ),
+                        ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
                     ],
                     symbol_kind="coordinate",
                 )
@@ -440,7 +437,9 @@ def _projection(element, index: int, arity: int):
     )
 
 
-def _target_leaves(target: ComprehensionTargetSugar) -> tuple[ComprehensionTargetSugar, ...]:
+def _target_leaves(
+    target: ComprehensionTargetSugar,
+) -> tuple[ComprehensionTargetSugar, ...]:
     if target.source_name is not None:
         return (target,)
     assert target.coordinates is not None

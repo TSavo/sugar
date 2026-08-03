@@ -71,8 +71,8 @@ class _TermBearingHandler:
 
 def _valueless_effect() -> RaiseEffect:
     """The measured shape: a raise with no value and no authenticated type."""
-    return RaiseEffect.for_builtin("NameError",
-        
+    return RaiseEffect.for_builtin(
+        "NameError",
         blame=OCCURRENCE,
         occurrence=OCCURRENCE,
     )
@@ -160,8 +160,8 @@ def test_a_real_value_term_still_retains_the_question() -> None:
     as a refusal. A guard that refused everything would pass every test above
     and destroy the mechanism.
     """
-    effect = RaiseEffect.for_builtin("ValueError",
-        
+    effect = RaiseEffect.for_builtin(
+        "ValueError",
         blame=OCCURRENCE,
         occurrence=OCCURRENCE,
         raised_value=TermValue(7),
@@ -179,16 +179,14 @@ def test_a_real_value_term_still_retains_the_question() -> None:
 def test_matching_halt_without_message_operand_retains_message_obligation() -> None:
     """Truthful twin: the raised VALUE exists, but its rendered message is open."""
     raised_value = TermValue(7)
-    effect = RaiseEffect.for_builtin("ValueError",
-        
+    effect = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence=OCCURRENCE,
         raised_value=raised_value,
     )
     expected = _AuthenticatedHandler(effect.exception_type_coordinate)
 
-    verdict = raise_effect_message_verdict(
-        effect, expected, StringValue("boom")
-    )
+    verdict = raise_effect_message_verdict(effect, expected, StringValue("boom"))
 
     assert isinstance(verdict, MatchRetained)
     assert verdict.obligation.name == "py.re_search"
@@ -200,8 +198,8 @@ def test_matching_halt_without_message_operand_retains_message_obligation() -> N
 
 def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
     """Lying twin: a source coordinate is not a rendered-message operand."""
-    effect = RaiseEffect.for_builtin("ValueError",
-        
+    effect = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence=OCCURRENCE,
         raised_value=None,
     )
@@ -246,9 +244,7 @@ def test_written_empty_message_regex_rejects_a_nonempty_message() -> None:
     """Lying twin: treating written ``^$`` as absent would consume this halt."""
     effect, expected = _effect_with_message("boom")
 
-    constrained = raise_effect_message_verdict(
-        effect, expected, StringValue("^$")
-    )
+    constrained = raise_effect_message_verdict(effect, expected, StringValue("^$"))
     absent = raise_effect_message_verdict(effect, expected, None)
 
     assert constrained == MatchDecided(False)

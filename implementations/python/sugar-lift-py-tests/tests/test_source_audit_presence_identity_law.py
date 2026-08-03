@@ -120,15 +120,9 @@ def test_ledger_tooth_status_only_sum_is_not_sufficient() -> None:
 def test_ledger_tooth_quiet_when_partition_honest() -> None:
     from sugar_lift_py_tests.tree_enumerate import assert_source_audit_ledger
 
-    assert_source_audit_ledger(
-        warranted=1, unresolved=1, source_loci=2, report_R=1
-    )
-    assert_source_audit_ledger(
-        warranted=2, unresolved=0, source_loci=2, report_R=0
-    )
-    assert_source_audit_ledger(
-        warranted=0, unresolved=2, source_loci=2, report_R=2
-    )
+    assert_source_audit_ledger(warranted=1, unresolved=1, source_loci=2, report_R=1)
+    assert_source_audit_ledger(warranted=2, unresolved=0, source_loci=2, report_R=0)
+    assert_source_audit_ledger(warranted=0, unresolved=2, source_loci=2, report_R=2)
 
 
 def test_lift_rpc_calls_the_one_door_not_cid_alone() -> None:

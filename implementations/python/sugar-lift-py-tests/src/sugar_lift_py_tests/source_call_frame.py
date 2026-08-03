@@ -26,17 +26,23 @@ class MutableGlobalBindingV1:
             raise ValueError("mutable global binding occurrence/source CID mismatch")
         if not self.name or self.kind not in {"dict", "list", "set"}:
             raise ValueError("mutable global binding requires a closed mutable kind")
-        object.__setattr__(self, "cid", cid_of_json({
-            "kind": "mutable-global-binding",
-            "schemaVersion": "1",
-            "sourceCid": self.source_cid,
-            "bindingOccurrence": self.binding_occurrence.to_dict(),
-            "name": self.name,
-            "mutableKind": self.kind,
-            "term": self.term,
-            "line": self.line,
-            "col": self.col,
-        }))
+        object.__setattr__(
+            self,
+            "cid",
+            cid_of_json(
+                {
+                    "kind": "mutable-global-binding",
+                    "schemaVersion": "1",
+                    "sourceCid": self.source_cid,
+                    "bindingOccurrence": self.binding_occurrence.to_dict(),
+                    "name": self.name,
+                    "mutableKind": self.kind,
+                    "term": self.term,
+                    "line": self.line,
+                    "col": self.col,
+                }
+            ),
+        )
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
@@ -185,9 +191,11 @@ class BoundSourceCallActualsV1:
                 and pair.coordinate.projection_path[: len(root.projection_path)]
                 == root.projection_path
             )
-            suffix = pair.coordinate.projection_path[
-                len(matching[0][0].projection_path) :
-            ] if len(matching) == 1 else ()
+            suffix = (
+                pair.coordinate.projection_path[len(matching[0][0].projection_path) :]
+                if len(matching) == 1
+                else ()
+            )
             if (
                 len(matching) != 1
                 or len(suffix) != 2
@@ -258,9 +266,8 @@ class BoundSourceCallActualsV1:
                 continue
             _reauthenticate_native_coordinates((stored_coordinate,))
             ordinal = stored_coordinate.ordinal
-            if (
-                stored_coordinate.coordinate_cid != demanded_cid
-                or ordinal >= len(self.pairs)
+            if stored_coordinate.coordinate_cid != demanded_cid or ordinal >= len(
+                self.pairs
             ):
                 raise SourceCallBindingGap(
                     "native carrier demand is foreign to the retained source frame"
@@ -579,9 +586,7 @@ class SourceVisibleCallFrameV1:
             )
         by_cid = {coordinate.coordinate_cid: coordinate for coordinate in native}
         demanded = pending.demand.operand_coordinate_cids
-        for coordinate_cid, stored in zip(
-            demanded, pending.coordinates, strict=True
-        ):
+        for coordinate_cid, stored in zip(demanded, pending.coordinates, strict=True):
             if coordinate_cid is None:
                 if stored is not None:
                     raise SourceCallBindingGap(
@@ -658,7 +663,9 @@ class SourceVisibleCallFrameV1:
                                 _same_unit_actual_node(
                                     self.owner.unit,
                                     value,
-                                    coordinate.project("variadic-keyword", actual_index),
+                                    coordinate.project(
+                                        "variadic-keyword", actual_index
+                                    ),
                                 ),
                             )
                             for actual_index, (key, value) in enumerate(named.items())
@@ -821,9 +828,7 @@ def _same_unit_actual_node(owner_unit, node, coordinate):
         )
     site_cid = site.get("source_cid") or site.get("sourceCid")
     if site_cid != owner_unit.source_cid:
-        raise SourceCallBindingGap(
-            "formal binding site is not on the frame owner unit"
-        )
+        raise SourceCallBindingGap("formal binding site is not on the frame owner unit")
     span_info = site.get("span")
     if not isinstance(span_info, dict):
         raise SourceCallBindingGap("formal binding site missing sealed span")

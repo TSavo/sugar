@@ -85,5 +85,9 @@ def test_worker_refuses_legacy_key_by_name(tmp_path: Path, monkeypatch):
     )
     worker._CONSTRUCTION_CONTEXT = None
     worker._CORPUS_ROOT = None
-    with pytest.raises(DemandTableArtifactRefusal, match="legacy shared demand table identity refused"):
-        worker._initialize(str(root), str(artifact), allow_local_demand_derivation=False)
+    with pytest.raises(
+        DemandTableArtifactRefusal, match="legacy shared demand table identity refused"
+    ):
+        worker._initialize(
+            str(root), str(artifact), allow_local_demand_derivation=False
+        )

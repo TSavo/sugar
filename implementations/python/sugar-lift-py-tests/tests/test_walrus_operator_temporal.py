@@ -294,9 +294,9 @@ def test_left_hand_comparison_presented_owns_and_carry_binds() -> None:
 
 def test_no_string_predicate_from_left_door() -> None:
     """NamedExpressionValue must not admit comparison via operation:str."""
-    assert "predicate_from_left" not in NamedExpressionValue.__dict__, (
-        "delete string admission; use less_than_from_left etc."
-    )
+    assert (
+        "predicate_from_left" not in NamedExpressionValue.__dict__
+    ), "delete string admission; use less_than_from_left etc."
 
 
 def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
@@ -377,9 +377,9 @@ def test_lying_operator_token_twin_refuses_same_outcome() -> None:
     truthful = ComparisonOpSugar(
         "Lt", _int(0), _walrus("n", _int(5)), site=SITE
     ).desugar(_root("op-true"))
-    lying = ComparisonOpSugar(
-        "Gt", _int(0), _walrus("n", _int(5)), site=SITE
-    ).desugar(_root("op-lie"))
+    lying = ComparisonOpSugar("Gt", _int(0), _walrus("n", _int(5)), site=SITE).desugar(
+        _root("op-lie")
+    )
     assert isinstance(truthful, Complete)
     assert isinstance(lying, Complete)
     # Ground 0 < 5 vs 0 > 5 must not be outcome-identical.

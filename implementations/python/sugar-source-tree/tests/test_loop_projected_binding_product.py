@@ -22,8 +22,7 @@ def _function(source: str):
 
 
 def _product(*, function_name: str = "arbitrary", carried_name: str = "carried"):
-    constructed = _function(
-        f"""
+    constructed = _function(f"""
 def {function_name}(items):
     {carried_name} = 0
     for first in items:
@@ -31,9 +30,10 @@ def {function_name}(items):
     for second in items:
         {carried_name} = second
     return {carried_name}
-"""
-    ).sugar()
-    product = constructed.statements[2].construction.loop_runtime.initial_value_sugars[0]
+""").sugar()
+    product = constructed.statements[2].construction.loop_runtime.initial_value_sugars[
+        0
+    ]
     assert isinstance(product, LoopProjectedBindingProductSugar)
     return product
 
@@ -49,13 +49,28 @@ def test_real_source_loop_reuses_the_exact_producer_owned_product() -> None:
 @pytest.mark.parametrize(
     ("change", "message"),
     (
-        (lambda product, foreign: {"projection": foreign.projection}, "foreign loop occurrence"),
+        (
+            lambda product, foreign: {"projection": foreign.projection},
+            "foreign loop occurrence",
+        ),
         (lambda product, foreign: {"name": "same_spelling"}, "foreign binding name"),
-        (lambda product, foreign: {"binding_coordinate": foreign.binding_coordinate}, "foreign binding name"),
+        (
+            lambda product, foreign: {"binding_coordinate": foreign.binding_coordinate},
+            "foreign binding name",
+        ),
         (lambda product, foreign: {"site": foreign.site}, "foreign read occurrence"),
-        (lambda product, foreign: {"occurrence_cid": foreign.occurrence_cid}, "foreign read occurrence"),
-        (lambda product, foreign: {"target_cid": foreign.target_cid}, "foreign loop occurrence"),
-        (lambda product, foreign: {"_mint_authority": foreign.target_cid}, "authenticated projection mint"),
+        (
+            lambda product, foreign: {"occurrence_cid": foreign.occurrence_cid},
+            "foreign read occurrence",
+        ),
+        (
+            lambda product, foreign: {"target_cid": foreign.target_cid},
+            "foreign loop occurrence",
+        ),
+        (
+            lambda product, foreign: {"_mint_authority": foreign.target_cid},
+            "authenticated projection mint",
+        ),
     ),
 )
 def test_product_substitution_twins_refuse(change, message: str) -> None:
@@ -67,7 +82,9 @@ def test_product_substitution_twins_refuse(change, message: str) -> None:
 
 
 def test_side_door_zero_is_structural() -> None:
-    source = Path(__file__).parents[1] / "src/sugar_source_tree/live_loop_construction.py"
+    source = (
+        Path(__file__).parents[1] / "src/sugar_source_tree/live_loop_construction.py"
+    )
     text = source.read_text()
 
     assert "construct_live_binding_product_sugar" not in text

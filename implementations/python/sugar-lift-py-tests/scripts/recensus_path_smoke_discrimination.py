@@ -58,7 +58,12 @@ def _run_arm(lie: str, out_dir: Path) -> tuple[int, dict[str, Any], float]:
     if proc.stdout:
         print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n", flush=True)
     if proc.stderr:
-        print(proc.stderr, end="" if proc.stderr.endswith("\n") else "\n", file=sys.stderr, flush=True)
+        print(
+            proc.stderr,
+            end="" if proc.stderr.endswith("\n") else "\n",
+            file=sys.stderr,
+            flush=True,
+        )
     seal = out_dir / "path_verdict.json"
     body: dict[str, Any] = {}
     if seal.is_file():

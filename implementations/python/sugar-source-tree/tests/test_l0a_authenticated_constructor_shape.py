@@ -40,9 +40,7 @@ def test_non_class_nodes_answer_none_for_constructor_shape() -> None:
             continue
         # Must not raise AttributeError
         shape = node._authenticated_new_constructor_shape()
-        assert shape is None, (
-            f"{type(node).__name__} must answer None, got {shape!r}"
-        )
+        assert shape is None, f"{type(node).__name__} must answer None, got {shape!r}"
 
 
 def test_classdef_with_authenticated_new_shape_constructs() -> None:

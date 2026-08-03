@@ -102,9 +102,7 @@ def test_ellipsis_literal_is_constructed_term_in_subscript() -> None:
     sf = _sf(source, "ellipsis_sub.py")
     # Constant ... nodes
     constants = [
-        n
-        for n in sf.root.walk()
-        if isinstance(n, Constant) and n.value is Ellipsis
+        n for n in sf.root.walk() if isinstance(n, Constant) and n.value is Ellipsis
     ]
     # Prefer constructing via subscript which owns the index
     subs = [n for n in sf.root.walk() if isinstance(n, Subscript)]
@@ -141,13 +139,14 @@ def test_multi_function_file_with_star_call_enumerates_full_roster() -> None:
             workspace_root=workspace,
             file_rel="mod.py",
         )
-    assert row.get("category") in {"completed", "panic"}, (
-        f"spread call zero-banked the file: {row.get('defect') or row}"
-    )
+    assert row.get("category") in {
+        "completed",
+        "panic",
+    }, f"spread call zero-banked the file: {row.get('defect') or row}"
     # Full roster: helper, body, other
-    assert int(row.get("functionsTotal") or 0) == 3, (
-        f"expected functionsTotal=3 (full roster), got {row!r}"
-    )
+    assert (
+        int(row.get("functionsTotal") or 0) == 3
+    ), f"expected functionsTotal=3 (full roster), got {row!r}"
     # Not a TypeError residual dressed as clean zero
     defect_msg = str((row.get("defect") or {}).get("message") or "")
     assert "ConstructedTermSugar" not in defect_msg

@@ -82,7 +82,10 @@ class MutableGlobalValue(FloorValue):
 
         raises = atomic(
             "python.mutable_dict_lookup_raises_key_error",
-            [self.to_term(owner="mutable global lookup"), index.to_term(owner="mutable global lookup")],
+            [
+                self.to_term(owner="mutable global lookup"),
+                index.to_term(owner="mutable global lookup"),
+            ],
         )
         halted_face, completed_face = partition(
             ("mutable-global-dict-subscript", _occurrence_key(site))

@@ -7,7 +7,9 @@ from sugar_source_tree.tree import SourceFile
 
 def _sites(tmp_path):
     path = tmp_path / "encoded_string_subscript_mutation.py"
-    path.write_text("def f(value, replacement):\n    value[0] = replacement\n    del value[0]\n")
+    path.write_text(
+        "def f(value, replacement):\n    value[0] = replacement\n    del value[0]\n"
+    )
     body = next(
         SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
     ).body

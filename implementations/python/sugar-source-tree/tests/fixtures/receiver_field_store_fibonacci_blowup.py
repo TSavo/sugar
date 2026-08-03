@@ -11,6 +11,7 @@
 # Twelve fib-shaped self-field stores: no numpy, no complex, no *args.
 # With DAG-correct walk (visit-once), construct is linear in statement count.
 
+
 class C:
     def setup_method(self):
         self.a0 = 1

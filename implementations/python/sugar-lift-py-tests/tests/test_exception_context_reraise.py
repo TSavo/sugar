@@ -125,7 +125,10 @@ def test_implicit_context_second_outgoing_first_authenticated_context():
     assert effect.cause_value is None
     assert isinstance(effect.context_effect, RaiseEffect)
     assert effect.context_effect.exception_name == "ValueError"
-    assert isinstance(effect.context_effect.occurrence, str) and ":" in effect.context_effect.occurrence, (
+    assert (
+        isinstance(effect.context_effect.occurrence, str)
+        and ":" in effect.context_effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {effect.context_effect.occurrence!r}"
     )

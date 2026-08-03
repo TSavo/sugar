@@ -190,7 +190,11 @@ def test_string_site_cannot_mint_stop_iteration() -> None:
     with pytest.raises(ConstructionPanic) as caught:
         project_next(ListIteratorValue((), index=0), "iterator-surface-site")
     text = str(caught.value)
-    assert "fragment" in text.lower() or "locus" in text.lower() or "source" in text.lower()
+    assert (
+        "fragment" in text.lower()
+        or "locus" in text.lower()
+        or "source" in text.lower()
+    )
     assert "StopIteration" not in text or "no source fragment" in text
     # Lying twin: claiming string blame yields a greened Incomplete StopIteration.
     with pytest.raises(ConstructionPanic):

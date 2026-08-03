@@ -138,9 +138,7 @@ def _formal_carrier():
     outcome = BoolOpSugar(
         "And",
         (
-            _ProbeSugar(
-                "left", SymbolicValue(make_var("left"), formal), evaluations
-            ),
+            _ProbeSugar("left", SymbolicValue(make_var("left"), formal), evaluations),
             _ProbeSugar("right", right, evaluations),
         ),
         node.fragment,
@@ -229,9 +227,7 @@ def test_halted_left_truth_test_propagates_and_never_reaches_right() -> None:
     truth_calls: list[str] = []
     effect = RaiseEffect(
         exception_type_coordinate=_identity("LeftTruthError"),
-        occurrence=AuthenticatedRaiseLocus.of(
-            "test_bool_op_operand_sequence.py:1:0"
-        ),
+        occurrence=AuthenticatedRaiseLocus.of("test_bool_op_operand_sequence.py:1:0"),
         exception_name="LeftTruthError",
         blame="test_bool_op_operand_sequence.py:1:0",
     )

@@ -143,7 +143,10 @@ def test_binder_refuses_corrupt_formal_coordinate_roster(variant: str) -> None:
     elif variant == "reordered":
         corrupt = tuple(reversed(coordinates))
     else:
-        corrupt = (replace(coordinates[0], scope_owner_cid="blake3-512:" + "00" * 64), coordinates[1])
+        corrupt = (
+            replace(coordinates[0], scope_owner_cid="blake3-512:" + "00" * 64),
+            coordinates[1],
+        )
 
     with pytest.raises(SourceCallBindingGap, match="formal coordinate roster"):
         replace(frame, formal_coordinates=corrupt).bind_actuals(
@@ -195,9 +198,9 @@ def test_binder_refuses_stale_binding_coordinate_cid() -> None:
     stale = replace(frame.formal_coordinates[0], cid="blake3-512:" + "00" * 64)
 
     with pytest.raises(SourceCallBindingGap, match="CID"):
-        replace(frame, formal_coordinates=(stale, frame.formal_coordinates[1])).bind_actuals(
-            (TermValue(1), TermValue(2)), ()
-        )
+        replace(
+            frame, formal_coordinates=(stale, frame.formal_coordinates[1])
+        ).bind_actuals((TermValue(1), TermValue(2)), ())
 
 
 def test_binder_refuses_same_signature_foreign_native_roster() -> None:

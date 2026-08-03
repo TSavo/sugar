@@ -32,18 +32,18 @@ def _write_marker(repo: Path) -> Path:
     repo.mkdir(parents=True, exist_ok=True)
     marker = repo / MARKER
     marker.write_text(
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             [tools]
             python = "3.12.13"
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     return marker
 
 
-def test_resolves_by_walking_from_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolves_by_walking_from_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = tmp_path / "checkout"
     _write_marker(repo)
     nested = repo / "implementations" / "python" / "sugar-lift-py-tests"
@@ -76,7 +76,9 @@ def test_site_packages_layout_resolves_via_github_workspace(
         / "sugar_lift_py_tests"
     )
     site_pkg.mkdir(parents=True)
-    (site_pkg / "authenticated_pytest.py").write_text("# fake install\n", encoding="utf-8")
+    (site_pkg / "authenticated_pytest.py").write_text(
+        "# fake install\n", encoding="utf-8"
+    )
     # Cwd is the temp env (wrong for parents[N]); env names the checkout.
     monkeypatch.chdir(tmp_path / "sugar-python-test-environment")
     monkeypatch.delenv("SUGAR_REPO_ROOT", raising=False)

@@ -96,9 +96,9 @@ def _raise_effects(root: Path) -> dict[str, RaiseEffect]:
     effects: dict[str, RaiseEffect] = {}
     for function in source_file.functions():
         outcome = function.sugar().desugar(None)
-        assert isinstance(outcome, Complete), (
-            f"{function.name} did not construct: {outcome!r}"
-        )
+        assert isinstance(
+            outcome, Complete
+        ), f"{function.name} did not construct: {outcome!r}"
         raises = [
             statement
             for statement in outcome.value.record.statements
@@ -130,12 +130,12 @@ def test_ground_exit_blame_is_workspace_relative(corpus: Path) -> None:
         # The blame renders the fragment, which names the file it cites. That
         # name must be the workspace-relative one -- an absolute spelling is
         # the address no other checkout can resolve.
-        assert "'ground_exits.py'" in blame, (
-            f"{name} blame `{blame}` does not name the workspace-relative locus"
-        )
-        assert str(corpus) not in blame, (
-            f"{name} blame `{blame}` leaks the absolute workspace path"
-        )
+        assert (
+            "'ground_exits.py'" in blame
+        ), f"{name} blame `{blame}` does not name the workspace-relative locus"
+        assert (
+            str(corpus) not in blame
+        ), f"{name} blame `{blame}` leaks the absolute workspace path"
 
 
 def test_ground_exit_cites_the_source_it_locates(corpus: Path) -> None:
@@ -165,9 +165,7 @@ def test_absolute_locus_still_refuses_to_construct_a_ground_exit(
 
     path = corpus / "ground_exits.py"
     source_file = SourceFile(path_source(str(path)))
-    function = next(
-        fn for fn in source_file.functions() if fn.name == "ground_index"
-    )
+    function = next(fn for fn in source_file.functions() if fn.name == "ground_index")
     with pytest.raises(ConstructionPanic) as raised:
         function.sugar().desugar(None)
     message = str(raised.value)

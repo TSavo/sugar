@@ -27,11 +27,7 @@ from pathlib import Path
 
 _KIT = Path(__file__).resolve().parents[1]
 _PLACE = (
-    _KIT
-    / "src"
-    / "sugar_lift_py_tests"
-    / "sugar"
-    / "constructed_object_place_sugar.py"
+    _KIT / "src" / "sugar_lift_py_tests" / "sugar" / "constructed_object_place_sugar.py"
 )
 _ATTR = _KIT / "src" / "sugar_lift_py_tests" / "sugar" / "attribute_sugar.py"
 _NODES = (

@@ -46,7 +46,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
-
 SOURCE = (
     "from dependency import halting, observing\n"
     "def f():\n"
@@ -65,7 +64,7 @@ STRESS_SOURCE = (
     "    if using_feature:\n"
     '        with observing(warn, match="Operation between non"):\n'
     "            with halting(\n"
-    "                pa.lib.ArrowNotImplementedError, match=\"has no kernel\"\n"
+    '                pa.lib.ArrowNotImplementedError, match="has no kernel"\n'
     "            ):\n"
     '                raise pa.lib.ArrowNotImplementedError("has no kernel")\n'
 )
@@ -174,9 +173,7 @@ def _constructed_boundaries(tmp_path, source=SOURCE, *, warning_first=False):
         )
     }
     context = TreeConstructionContextV1(
-        ResolvedContractRefsV1(
-            _cid("c"), _cid("t"), MappingProxyType(rows)
-        )
+        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
     )
     function = next(SourceFile(identity, construction_context=context).functions())
     sugar = function.sugar()
@@ -220,9 +217,7 @@ def test_lying_variable_patterns_do_not_alias_between_boundaries(tmp_path):
 
 def test_reverse_order_branch_constructs_both_native_boundaries(tmp_path):
     """The stress shape stays source-ordered under a branch and local import."""
-    outer, inner = _constructed_boundaries(
-        tmp_path, STRESS_SOURCE, warning_first=True
-    )
+    outer, inner = _constructed_boundaries(tmp_path, STRESS_SOURCE, warning_first=True)
     assert isinstance(outer.semantics.effect_kind, WarningEffectKindV1)
     assert isinstance(inner.semantics.effect_kind, RaiseEffectKindV1)
     assert outer.manager.desugar().value.arg_values[-1] == StringValue(
@@ -230,9 +225,7 @@ def test_reverse_order_branch_constructs_both_native_boundaries(tmp_path):
     )
     inner_call = inner.manager.desugar().value
     assert isinstance(inner_call.arg_values[0], AuthenticatedExceptionTypeValue)
-    assert inner_call.arg_values[-1] == StringValue(
-        "has no kernel"
-    )
+    assert inner_call.arg_values[-1] == StringValue("has no kernel")
 
 
 def test_reassigned_local_import_head_has_no_exception_identity(tmp_path):
@@ -257,6 +250,8 @@ def _pinned_pandas_root() -> Path:
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 
     return authenticated_pandas_corpus().root
+
+
 PINNED_DATETIMELIKE_CID = (
     "blake3-512:a8a3afcef87a93452db841a304673c4bca0a52e29e5a63932580a3b638f39300"
     "2003a95d615bfd1bec91d03c90f792b2600a007f5e5c98120c8ca56bb8b79f00"
@@ -332,7 +327,9 @@ def _with_routers(sugar):
 def _real_three_deep_assertion_resource_chain():
     identity = _pinned_identity("tests/io/test_common.py", PINNED_IO_COMMON_CID)
     probe = SourceFile(identity)
-    function = next(node for node in probe.functions() if node.name == "test_close_on_error")
+    function = next(
+        node for node in probe.functions() if node.name == "test_close_on_error"
+    )
     with_nodes = sorted(
         (node for node in function.walk() if node.kind == "With"),
         key=lambda node: node.line_col_span().start_line,
@@ -438,7 +435,14 @@ def _three_deep_manager_halt(exception_name: str):
     original_middle = middle
     original_inner = inner
     middle_exit, inner_enter, inner_exit = [], [], []
-    effect = RaiseEffect(exception_type_coordinate=ctor('python:exception_type_identity', [str_const('builtins'), str_const(exception_name)]), occurrence=AuthenticatedRaiseLocus.of('test_common.py:640'), exception_name=exception_name)
+    effect = RaiseEffect(
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(exception_name)],
+        ),
+        occurrence=AuthenticatedRaiseLocus.of("test_common.py:640"),
+        exception_name=exception_name,
+    )
     inner = replace(
         inner,
         manager=_FixedOutcomeSugar(Incomplete(effect)),
@@ -588,7 +592,14 @@ def _three_deep_level_receipts(exception_name: str):
     outer, middle, inner = _with_routers(
         _built_function(identity, "test_close_on_error", rows)
     )
-    effect = RaiseEffect(exception_type_coordinate=ctor('python:exception_type_identity', [str_const('builtins'), str_const(exception_name)]), occurrence=AuthenticatedRaiseLocus.of('test_common.py:640'), exception_name=exception_name)
+    effect = RaiseEffect(
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(exception_name)],
+        ),
+        occurrence=AuthenticatedRaiseLocus.of("test_common.py:640"),
+        exception_name=exception_name,
+    )
     inner = replace(
         inner,
         manager=_FixedOutcomeSugar(Incomplete(effect)),
@@ -726,6 +737,7 @@ def test_pinned_juxtaposition_cannot_swap_the_two_item_occurrences():
     outer, inner = _real_juxtaposed_assertion_resource_chain()
     assert not isinstance(outer, WithResourceSugar)
     assert not isinstance(inner, WithEffectBoundarySugar)
+
 
 def _real_resource_outer_boundary_inner():
     root = _pinned_pandas_root()

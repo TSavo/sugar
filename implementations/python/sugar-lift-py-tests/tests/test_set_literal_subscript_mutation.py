@@ -8,17 +8,33 @@ from sugar_source_tree.tree import SourceFile
 
 def _sites(tmp_path):
     path = tmp_path / "set_literal_subscript_mutation.py"
-    path.write_text("def f(target, replacement):\n    target[0] = replacement\n    del target[0]\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    path.write_text(
+        "def f(target, replacement):\n    target[0] = replacement\n    del target[0]\n"
+    )
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     return body[0].fragment, body[1].fragment
 
 
-@pytest.mark.parametrize(("operation", "owner", "site_index"), (("setitem", "SetLiteralValue.setitem", 0), ("delitem", "SetLiteralValue.delitem", 1)))
-def test_set_literal_subscript_mutations_have_exact_owner_occurrences(tmp_path, operation, owner, site_index):
+@pytest.mark.parametrize(
+    ("operation", "owner", "site_index"),
+    (
+        ("setitem", "SetLiteralValue.setitem", 0),
+        ("delitem", "SetLiteralValue.delitem", 1),
+    ),
+)
+def test_set_literal_subscript_mutations_have_exact_owner_occurrences(
+    tmp_path, operation, owner, site_index
+):
     sites = _sites(tmp_path)
     site = sites[site_index]
     value = SetLiteralValue((num(1),))
-    outcome = value.setitem(TermValue(0), TermValue(7), site) if operation == "setitem" else value.delitem(TermValue(0), site)
+    outcome = (
+        value.setitem(TermValue(0), TermValue(7), site)
+        if operation == "setitem"
+        else value.delitem(TermValue(0), site)
+    )
     assert outcome.value.effect.exception_name == "TypeError"
     assert outcome.value.effect.producer_node_owner == owner
     assert outcome.value.effect.occurrence_id == str(site)

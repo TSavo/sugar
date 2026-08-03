@@ -96,8 +96,6 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(
-                ObservedEffectValue(
-                    slot_id=self.slot_id, effect=self.effect, site=site
-                )
+                ObservedEffectValue(slot_id=self.slot_id, effect=self.effect, site=site)
             )
         return super().attribute(name, site)

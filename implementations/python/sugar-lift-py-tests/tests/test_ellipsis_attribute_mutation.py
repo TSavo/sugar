@@ -6,10 +6,15 @@ from sugar_source_tree.tree import SourceFile
 def _outcomes(tmp_path):
     path = tmp_path / "ellipsis_attribute_mutation.py"
     path.write_text("def f(obj, value):\n    obj.attr = value\n    del obj.attr\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     s, d = body[0].fragment, body[1].fragment
     value = EllipsisValue()
-    return ((value.setattr("attr", TermValue(7), s), "EllipsisValue.setattr", s), (value.delattr("attr", d), "EllipsisValue.delattr", d))
+    return (
+        (value.setattr("attr", TermValue(7), s), "EllipsisValue.setattr", s),
+        (value.delattr("attr", d), "EllipsisValue.delattr", d),
+    )
 
 
 def test_ellipsis_attribute_mutations_have_exact_owner_occurrences(tmp_path):

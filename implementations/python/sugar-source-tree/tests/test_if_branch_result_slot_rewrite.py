@@ -22,9 +22,7 @@ def _ifs() -> tuple[If, If]:
         "else:\n"
         "    pass\n"
     )
-    source_file = SourceFile(
-        (source, "if_slot.py", blake3_512_of(source.encode()))
-    )
+    source_file = SourceFile((source, "if_slot.py", blake3_512_of(source.encode())))
     found = tuple(node for node in source_file.nodes() if isinstance(node, If))
     assert len(found) == 2
     return found
@@ -66,9 +64,7 @@ def test_duplicate_or_foreign_branch_slot_never_replaces_the_exact_slot() -> Non
             BackendDefect,
             match="the one slot authenticated for this exact If.test",
         ):
-            first._rewrite_with_slot(
-                {}, attempted, authenticated_slot=attempted
-            )
+            first._rewrite_with_slot({}, attempted, authenticated_slot=attempted)
 
     assert first.branch_result_slot_id == exact_slot.slot_id
     assert first.authenticated_branch_result_slot_id == exact_slot.slot_id

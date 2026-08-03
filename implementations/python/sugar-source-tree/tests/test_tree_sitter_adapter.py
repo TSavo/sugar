@@ -15,7 +15,8 @@ tree_sitter = optional_law_import(
     "tree_sitter", OPTIONAL_PROVIDER, "tree-sitter backend not installed"
 )
 optional_law_import(
-    "tree_sitter_python", OPTIONAL_PROVIDER,
+    "tree_sitter_python",
+    OPTIONAL_PROVIDER,
     "tree-sitter Python grammar not installed",
 )
 

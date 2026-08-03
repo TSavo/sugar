@@ -425,9 +425,7 @@ def test_authenticated_box_expected_actual_names_type_error_edge(
         if isinstance(node, SourceBinOp)
         and node.line_col_span().start_line == pair.operation.lineno
     )
-    produced = actual_return.value.add(
-        StringValue("a"), helper_operation.fragment
-    )
+    produced = actual_return.value.add(StringValue("a"), helper_operation.fragment)
     raised = produced.value
     assert raised.effect.exception_type_coordinate == ctor(
         "python:exception_type_identity",
@@ -505,8 +503,10 @@ def test_installed_box_expected_source_call_has_an_authenticated_frame(
         context.source_call_resolutions[coordinate],
         SourceCallPreconstructionRefV1,
     )
-    result = call.sugar().desugar(None).value._dig_floor_or_none(
-        None, owner="installed box_expected return"
+    result = (
+        call.sugar()
+        .desugar(None)
+        .value._dig_floor_or_none(None, owner="installed box_expected return")
     )
     assert result is not None
     assert not isinstance(result, CallSiteValue)

@@ -38,7 +38,6 @@ from sugar_source_tree.binding_state import mint_binding_coordinate_v1
 from sugar_source_tree.nodes import For, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
-
 _OPTION_PAIR_MANAGER = (
     "def option_pair_manager(ops, undo):\n"
     "    for pat, value in ops:\n"
@@ -169,9 +168,9 @@ def test_option_pair_loops_construct_two_general_for_steps() -> None:
 
     for_steps = _for_steps(_OPTION_PAIR_MANAGER)
 
-    assert len(for_steps) == 2, (
-        "the pre-yield ops loop and finally undo loop must both remain explicit"
-    )
+    assert (
+        len(for_steps) == 2
+    ), "the pre-yield ops loop and finally undo loop must both remain explicit"
     assert all(isinstance(step.iterable, ConstructedTermSugar) for step in for_steps)
     assert all(
         len(step.body_steps) == 1 and isinstance(step.body_steps[0], term_step_type)
@@ -196,12 +195,12 @@ def test_cleanup_iterable_and_target_coordinates_are_not_reconstructed() -> None
     """Lying testimony twin: cleanup identity and both target sites stay distinct."""
     before, cleanup = _for_steps(_OPTION_PAIR_MANAGER)
 
-    assert before.iterable != cleanup.iterable, (
-        "ops and undo are distinct authenticated constructed iterables"
-    )
-    assert _target_coordinate_cids(before) != _target_coordinate_cids(cleanup), (
-        "same target spellings at different loop sites must not share identity"
-    )
+    assert (
+        before.iterable != cleanup.iterable
+    ), "ops and undo are distinct authenticated constructed iterables"
+    assert _target_coordinate_cids(before) != _target_coordinate_cids(
+        cleanup
+    ), "same target spellings at different loop sites must not share identity"
     assert before.fragment_cid != cleanup.fragment_cid
 
 
@@ -388,9 +387,7 @@ def _runtime_for_step(events: list, *, elements=None, body_term=None):
     step = replace(
         produced,
         iterable=_ValueSugar(iterable, source_for.iter.fragment),
-        body_steps=(
-            term_step_type(body_term, source_for.body[0].fragment.seal().cid),
-        ),
+        body_steps=(term_step_type(body_term, source_for.body[0].fragment.seal().cid),),
     )
     return generator_api.GeneratorConstructionV1.allocate(
         allocation_coordinate="call:renamed",
@@ -482,7 +479,9 @@ def test_swapped_authenticated_target_coordinates_swap_observed_values() -> None
     from dataclasses import replace
 
     events = []
-    machine = _runtime_for_step(events, elements=(TupleValue((TermValue(1), TermValue(2))),))
+    machine = _runtime_for_step(
+        events, elements=(TupleValue((TermValue(1), TermValue(2))),)
+    )
     step = machine.steps[0]
     swapped = replace(step, target_coordinates=tuple(reversed(step.target_coordinates)))
     machine = replace(machine, steps=(swapped, generator_api.ReturnStepV1()))
@@ -595,14 +594,10 @@ def test_first_or_second_body_halt_stops_before_the_next_recurrence(
         owner="ForStepV1-body-halt-test",
     )
     visits = []
-    halted_body = _HaltOnBodyVisit(
-        halt_at, effect, visits, events, step.iterable.site
-    )
+    halted_body = _HaltOnBodyVisit(halt_at, effect, visits, events, step.iterable.site)
     halted_step = replace(
         step,
-        body_steps=(
-            _term_step_type()(halted_body, step.body_steps[0].fragment_cid),
-        ),
+        body_steps=(_term_step_type()(halted_body, step.body_steps[0].fragment_cid),),
     )
     machine = replace(machine, steps=(halted_step, generator_api.ReturnStepV1()))
 
@@ -790,9 +785,7 @@ def test_cleanup_body_halt_supersedes_the_incoming_outgoing_face(
     halted_body = _HaltBody(cleanup_effect, events, site)
     loop = replace(
         loop,
-        body_steps=(
-            _term_step_type()(halted_body, loop.body_steps[0].fragment_cid),
-        ),
+        body_steps=(_term_step_type()(halted_body, loop.body_steps[0].fragment_cid),),
     )
     cleanup = replace(cleanup, cleanup_steps=(loop,))
     suspended = replace(

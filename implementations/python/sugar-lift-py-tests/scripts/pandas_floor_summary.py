@@ -61,7 +61,9 @@ def _floor_summary_outcome(
 
     def validate() -> None:
         if not measured:
-            reason = "; ".join(reasons) or "floor producer marked measurement incomplete"
+            reason = (
+                "; ".join(reasons) or "floor producer marked measurement incomplete"
+            )
             raise ValueError(reason)
         if not ordered_files:
             raise ValueError("a floor summary requires a non-empty measured corpus")
@@ -71,9 +73,7 @@ def _floor_summary_outcome(
             observed = Counter(row_files)
             missing = sorted((expected - observed).elements())
             extra = sorted((observed - expected).elements())
-            duplicates = sorted(
-                file for file, count in observed.items() if count > 1
-            )
+            duplicates = sorted(file for file, count in observed.items() if count > 1)
             raise ValueError(
                 "floor rows must account for every corpus file exactly once: "
                 f"expectedRows={len(ordered_files)} observedRows={len(row_files)} "

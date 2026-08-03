@@ -267,8 +267,7 @@ def test_undecidable_guard_retains_complementary_machines_same_instance() -> Non
     assert isinstance(guarded, GuardedValue)
     successors = [guarded.when_true, guarded.when_false]
     assert all(
-        isinstance(successor, GeneratorConstructionV1)
-        for successor in successors
+        isinstance(successor, GeneratorConstructionV1) for successor in successors
     )
     assert {successor.instance_coordinate for successor in successors} == {
         machine.instance_coordinate
@@ -280,17 +279,18 @@ def test_undecidable_guard_retains_complementary_machines_same_instance() -> Non
         guarded.guard,
         not_(guarded.guard),
     }
-    assert minted == [(
-        "generator.branch",
-        machine.instance_coordinate,
-        machine.steps[0].fragment_cid,
-    )]
+    assert minted == [
+        (
+            "generator.branch",
+            machine.instance_coordinate,
+            machine.steps[0].fragment_cid,
+        )
+    ]
     # Neither branch executed during guard production: both successors remain
     # seated at their own first YieldStepV1 with the exact pre-guard bindings.
     assert all(successor.cursor == machine.cursor for successor in successors)
     assert all(
-        successor.binding_state == machine.binding_state
-        for successor in successors
+        successor.binding_state == machine.binding_state for successor in successors
     )
     assert {
         successor.steps[successor.cursor].value.value for successor in successors
@@ -375,11 +375,7 @@ def test_raw_expr_statement_sugar_payload_refused_by_finally_step() -> None:
 
     with pytest.raises(TypeError, match="ConstructedTermSugar"):
         FinallyStepV1(
-            (
-                ExprStatementSugar(
-                    value=IntLiteralSugar(1, site="x"), site="s"
-                ),
-            )
+            (ExprStatementSugar(value=IntLiteralSugar(1, site="x"), site="s"),)
         )
 
 
@@ -438,7 +434,9 @@ def test_try_finally_halt_places_cleanup_before_the_raise_face() -> None:
     assert kinds[:2] == ["FinallyStepV1", "RaiseStepV1"]
 
 
-def test_return_face_runs_cleanup_and_preserves_return_when_cleanup_falls_through() -> None:
+def test_return_face_runs_cleanup_and_preserves_return_when_cleanup_falls_through() -> (
+    None
+):
     steps = _steps(
         "def manager():\n"
         "    try:\n"
@@ -531,13 +529,16 @@ def test_renamed_manager_same_if_finally_producer_shape() -> None:
     assert [type(s).__name__ for s in a] == [type(s).__name__ for s in b]
     assert isinstance(a[0], IfStepV1) and isinstance(b[0], IfStepV1)
     # Content-addressed if-text can match across renames; definition names differ.
-    assert _function(
-        "def alpha(c):\n    if c:\n        yield 1\n    try:\n        yield 2\n"
-        "    finally:\n        restore()\n"
-    ).name != _function(
-        "def beta_renamed(c):\n    if c:\n        yield 1\n    try:\n        yield 2\n"
-        "    finally:\n        restore()\n"
-    ).name
+    assert (
+        _function(
+            "def alpha(c):\n    if c:\n        yield 1\n    try:\n        yield 2\n"
+            "    finally:\n        restore()\n"
+        ).name
+        != _function(
+            "def beta_renamed(c):\n    if c:\n        yield 1\n    try:\n        yield 2\n"
+            "    finally:\n        restore()\n"
+        ).name
+    )
 
 
 def test_branch_occurrence_tamper_changes_fragment_cid() -> None:
@@ -556,10 +557,7 @@ def test_branch_occurrence_tamper_changes_fragment_cid() -> None:
 
 def test_unsupported_x_yield_in_branch_keeps_whole_if_opaque() -> None:
     steps = _steps(
-        "def manager(c):\n"
-        "    if c:\n"
-        "        x = yield 1\n"
-        "    yield 2\n"
+        "def manager(c):\n" "    if c:\n" "        x = yield 1\n" "    yield 2\n"
     )
     assert isinstance(steps[0], OpaqueStepV1)
     assert steps[0].observed == "If"
@@ -607,11 +605,7 @@ def test_cleanup_construction_invariant_failure_stays_loud() -> None:
 
 
 def test_cleanup_call_is_term_step_when_bare_expr_before_yield() -> None:
-    steps = _steps(
-        "def manager():\n"
-        "    setup()\n"
-        "    yield 1\n"
-    )
+    steps = _steps("def manager():\n" "    setup()\n" "    yield 1\n")
     assert isinstance(steps[0], TermStepV1)
     assert steps[0].fragment_cid.startswith("blake3-512:")
     assert isinstance(steps[1], YieldStepV1)
@@ -623,12 +617,8 @@ def test_cleanup_call_is_term_step_when_bare_expr_before_yield() -> None:
 
 
 def test_twin_branch_swap_changes_then_else_payloads() -> None:
-    a = _steps(
-        "def m(c):\n    if c:\n        yield 1\n    else:\n        yield 2\n"
-    )[0]
-    b = _steps(
-        "def m(c):\n    if c:\n        yield 2\n    else:\n        yield 1\n"
-    )[0]
+    a = _steps("def m(c):\n    if c:\n        yield 1\n    else:\n        yield 2\n")[0]
+    b = _steps("def m(c):\n    if c:\n        yield 2\n    else:\n        yield 1\n")[0]
     assert isinstance(a, IfStepV1) and isinstance(b, IfStepV1)
     assert a.then_steps != b.then_steps
     assert a.else_steps != b.else_steps
@@ -666,11 +656,7 @@ def test_twin_wrong_cleanup_order_is_detectable_in_step_sequence() -> None:
         "    finally:\n"
         "        second()\n"
     )
-    term_cids = [
-        s.fragment_cid
-        for s in steps
-        if isinstance(s, TermStepV1)
-    ]
+    term_cids = [s.fragment_cid for s in steps if isinstance(s, TermStepV1)]
     finally_steps = [s for s in steps if isinstance(s, FinallyStepV1)]
     assert term_cids  # first() before yield
     assert finally_steps

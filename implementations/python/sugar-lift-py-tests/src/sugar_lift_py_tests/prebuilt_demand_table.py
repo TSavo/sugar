@@ -27,7 +27,10 @@ from typing import Any, Mapping
 
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
-from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1, demand_table_identity
+from sugar_lift_py_tests.demand_table_identity import (
+    DemandTableIdentityV1,
+    demand_table_identity,
+)
 
 SCHEMA = "python-provisional-demand-table/v1"
 
@@ -240,7 +243,9 @@ def load_prebuilt_demand_table(
             f"want={SCHEMA!r}"
         )
     try:
-        semantic_identity = DemandTableIdentityV1.from_mapping(raw.get("semanticIdentity") or {})
+        semantic_identity = DemandTableIdentityV1.from_mapping(
+            raw.get("semanticIdentity") or {}
+        )
     except (TypeError, ValueError) as exc:
         raise DemandTableArtifactRefusal(
             f"prebuilt demand table semantic identity invalid: {exc}"

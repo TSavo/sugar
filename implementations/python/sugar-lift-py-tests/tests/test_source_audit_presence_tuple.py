@@ -252,4 +252,3 @@ def test_truthful_twin_roll_call_path_conserves_on_real_source(tmp_path: Path) -
     _assert_conserved(audit, report_R=report.R)
     assert audit["totals"]["source_unresolved"] == report.R
     assert audit["totals"]["source_loci"] == len(report.roster)
-
