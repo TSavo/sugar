@@ -2623,6 +2623,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     try:
                         def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     except SugarNotWritten as gap:
+                        # A full-tree mint has no later construction entrance:
+                        # turning this product terminal into an enumeration gap
+                        # lets the Rust fold downgrade it to a diagnostic and
+                        # seal incomplete IR.  Let the existing typed-loud RPC
+                        # membrane carry the structured panic instead.  A
+                        # targeted seek is different: it may still construct an
+                        # applied callee after its abstract universe refused.
+                        if not seek:
+                            raise
                         gaps.append(
                             {
                                 "memento": _tree.function_def_memento(
