@@ -45,9 +45,31 @@ def test_worker_accepts_current_table_and_reaches_context(tmp_path: Path, monkey
     )
     worker._CONSTRUCTION_CONTEXT = None
     worker._CORPUS_ROOT = None
-    result = worker._initialize(str(root), str(artifact), allow_local_demand_derivation=False)
-    assert result["kind"] == "context-ready"
+    result = worker._initialize(
+        str(root),
+        str(artifact),
+        allow_local_demand_derivation=False,
+        source_workspace_root=str(tmp_path),
+    )
+    assert result["kind"] == "context-ready", result
     assert result["demand_table_identity"] == table.semantic_identity.content_key
+
+
+def test_worker_refuses_workspace_root_that_does_not_contain_corpus(
+    tmp_path: Path,
+):
+    root, _handle, table = _fixture(tmp_path)
+    artifact = write_prebuilt_demand_table(table, tmp_path / "table.json")
+    worker._CONSTRUCTION_CONTEXT = None
+    worker._CORPUS_ROOT = None
+    result = worker._initialize(
+        str(root),
+        str(artifact),
+        allow_local_demand_derivation=False,
+        source_workspace_root=str(tmp_path / "unrelated"),
+    )
+    assert result["kind"] == "initialize-refusal"
+    assert "source_workspace_root does not contain corpus_root" in result["reason"]
 
 
 def test_worker_refuses_legacy_key_by_name(tmp_path: Path, monkeypatch):
