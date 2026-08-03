@@ -43,9 +43,51 @@ class AuthenticatedPandasCorpus:
     """Machine-local seat for one machine-independent authenticated corpus."""
 
     root: Path
+    distribution: str
     version: str
     manifest_cid: str
     file_count: int
+
+
+def authenticate_corpus(root: Path) -> AuthenticatedPandasCorpus:
+    """Authenticate a small directory corpus for tests and fixtures.
+
+    Manifest and file count are measured from bytes. A directory may not
+    self-declare the strong pandas identity; that remains package-authenticated
+    exclusively by :func:`authenticated_pandas_corpus`.
+    """
+    from sugar_source_tree.tree import SourceTree
+
+    root = Path(root).resolve()
+    sidecar = root.parent / f"{root.name}.identity.json"
+    if not sidecar.is_file():
+        raise ExecutionEnvironmentMismatch(
+            f"authenticated corpus sidecar missing beside {root}: {sidecar}"
+        )
+    import json
+
+    try:
+        claims = json.loads(sidecar.read_text(encoding="utf-8"))
+        distribution = str(claims["distribution"]).strip()
+        version = str(claims["version"]).strip()
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ExecutionEnvironmentMismatch(
+            f"authenticated corpus sidecar malformed: {sidecar}: {exc}"
+        ) from exc
+    if not distribution or not version or distribution == "pandas":
+        raise ExecutionEnvironmentMismatch(
+            "generic corpus authentication refuses pandas or empty claimed identity"
+        )
+    from sugar_lift_py_tests.corpus_pin import pin_corpus
+
+    pin = pin_corpus(root, distribution=distribution, version=version)
+    return AuthenticatedPandasCorpus(
+        root=root,
+        distribution=distribution,
+        version=version,
+        manifest_cid=pin.aggregate_hash,
+        file_count=pin.file_count,
+    )
 
 
 def interpreter_identity() -> InterpreterIdentity:
@@ -300,6 +342,7 @@ def authenticated_pandas_corpus() -> AuthenticatedPandasCorpus:
         )
     return AuthenticatedPandasCorpus(
         root=root,
+        distribution="pandas",
         version=pandas_identity.version,
         manifest_cid=observed_cid,
         file_count=file_count,

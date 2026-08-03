@@ -6,6 +6,7 @@ Counting walks is a unit test, not a measurement. No stopwatch.
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -19,18 +20,13 @@ from sugar_lift_py_tests.prebuilt_demand_table import (
     mint_prebuilt_demand_table,
     write_prebuilt_demand_table,
 )
+from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
+from sugar_lift_py_tests.authenticated_pytest import authenticate_corpus
+from sugar_lift_py_tests.corpus_pin import pin_corpus
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
-
-_PIN = {
-    "distribution": "tiny-corpus",
-    "version": "0.0.1",
-    "fileCount": 2,
-    "aggregateHash": "sha256:" + ("ab" * 32),
-}
-
 
 def _tiny_corpus(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -45,16 +41,52 @@ def _tiny_corpus(root: Path) -> Path:
         "        pass\n",
         encoding="utf-8",
     )
+    (root.parent / f"{root.name}.identity.json").write_text(
+        json.dumps({"distribution": "tiny-corpus", "version": "0.0.1"}),
+        encoding="utf-8",
+    )
     return root
+
+
+def _authenticated(corpus: Path) -> AuthenticatedPandasCorpus:
+    return authenticate_corpus(corpus)
+
+
+def _expected_pin(corpus: Path) -> dict[str, object]:
+    handle = _authenticated(corpus)
+    return {
+        "distribution": handle.distribution,
+        "version": handle.version,
+        "fileCount": handle.file_count,
+        "aggregateHash": handle.manifest_cid,
+    }
+
+
+def test_authentication_preserves_fixture_manifest_and_count(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    before = pin_corpus(corpus, distribution="tiny-corpus", version="0.0.1")
+    after = _authenticated(corpus)
+    assert after.manifest_cid == before.aggregate_hash
+    assert after.file_count == before.file_count == 2
+
+
+def test_generic_authentication_refuses_pandas_sidecar(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    (corpus.parent / f"{corpus.name}.identity.json").write_text(
+        json.dumps({"distribution": "pandas", "version": "3.0.3"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="refuses pandas"):
+        authenticate_corpus(corpus)
 
 
 def test_mint_content_cid_stable_for_same_rows(tmp_path: Path) -> None:
     corpus = _tiny_corpus(tmp_path / "c1")
     lr.clear_provisional_contract_refs_memo()
     lr.reset_preconstruction_walk_count()
-    first = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    first = mint_prebuilt_demand_table(_authenticated(corpus))
     lr.clear_provisional_contract_refs_memo()
-    second = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    second = mint_prebuilt_demand_table(_authenticated(corpus))
     assert first.content_cid == second.content_cid
     assert first.content_cid.startswith("blake3-512:")
     assert lr.preconstruction_walk_count() == 2  # two mints = two walks
@@ -68,7 +100,7 @@ def test_cold_process_with_prebuilt_table_performs_zero_corpus_walks(
     artifact = tmp_path / "table.json"
     lr.clear_provisional_contract_refs_memo()
     lr.reset_preconstruction_walk_count()
-    table = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
     write_prebuilt_demand_table(table, artifact)
     walks_at_mint = lr.preconstruction_walk_count()
     assert walks_at_mint == 1
@@ -78,7 +110,9 @@ def test_cold_process_with_prebuilt_table_performs_zero_corpus_walks(
     lr.reset_preconstruction_walk_count()
     assert lr.preconstruction_walk_count() == 0
 
-    loaded = load_prebuilt_demand_table(artifact, expected_corpus_pin=_PIN)
+    loaded = load_prebuilt_demand_table(
+        artifact, expected_corpus_pin=_expected_pin(corpus)
+    )
     assert loaded.content_cid == table.content_cid
     refs = install_prebuilt_demand_table(loaded, root=corpus)
     assert lr.preconstruction_walk_count() == 0
@@ -109,7 +143,7 @@ def test_load_refuses_corpus_pin_mismatch(tmp_path: Path) -> None:
     corpus = _tiny_corpus(tmp_path / "c")
     artifact = tmp_path / "table.json"
     lr.clear_provisional_contract_refs_memo()
-    table = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
     write_prebuilt_demand_table(table, artifact)
 
     wrong = {
@@ -126,26 +160,28 @@ def test_load_refuses_tampered_content_cid(tmp_path: Path) -> None:
     corpus = _tiny_corpus(tmp_path / "c")
     artifact = tmp_path / "table.json"
     lr.clear_provisional_contract_refs_memo()
-    table = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
     write_prebuilt_demand_table(table, artifact)
     raw = artifact.read_text(encoding="utf-8")
     # Flip one hex nibble in the presented contentCid.
     bad = raw.replace(table.content_cid[-4:], "ffff", 1)
     artifact.write_text(bad, encoding="utf-8")
     with pytest.raises(DemandTableArtifactRefusal, match="contentCid mismatch"):
-        load_prebuilt_demand_table(artifact, expected_corpus_pin=_PIN)
+        load_prebuilt_demand_table(
+            artifact, expected_corpus_pin=_expected_pin(corpus)
+        )
 
 
 def test_load_refuses_plan_cid_mismatch(tmp_path: Path) -> None:
     corpus = _tiny_corpus(tmp_path / "c")
     artifact = tmp_path / "table.json"
     lr.clear_provisional_contract_refs_memo()
-    table = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
     write_prebuilt_demand_table(table, artifact)
     with pytest.raises(DemandTableArtifactRefusal, match="plan demandTableCid"):
         load_prebuilt_demand_table(
             artifact,
-            expected_corpus_pin=_PIN,
+            expected_corpus_pin=_expected_pin(corpus),
             expected_content_cid="blake3-512:" + ("0" * 128),
         )
 
@@ -154,7 +190,7 @@ def test_install_without_walk_seeds_memo(tmp_path: Path) -> None:
     corpus = _tiny_corpus(tmp_path / "c")
     lr.clear_provisional_contract_refs_memo()
     lr.reset_preconstruction_walk_count()
-    table = mint_prebuilt_demand_table(corpus, corpus_pin=_PIN)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
     walks = lr.preconstruction_walk_count()
     lr.clear_provisional_contract_refs_memo()
     lr.reset_preconstruction_walk_count()
