@@ -182,3 +182,25 @@ def test_kit_has_no_context_manager_admission_declaration_door(monkeypatch):
         },
     )
     assert sent[-1] == {"jsonrpc": "2.0", "id": 9, "result": {"rows": []}}
+
+
+def test_context_manager_edges_is_not_an_enumeration_level(tmp_path, monkeypatch):
+    """Python keeps edge construction; the source-agnostic protocol does not."""
+    sent = []
+    monkeypatch.setattr(lift_rpc, "_send", sent.append)
+
+    lift_rpc._handle_enumerate(
+        10,
+        {
+            "level": "context-manager-edges",
+            "workspace_root": str(tmp_path),
+            "options": {},
+        },
+    )
+
+    assert len(sent) == 1
+    error = sent[0]["error"]
+    assert error == {
+        "code": -32602,
+        "message": "sugar.enumerate: unknown level 'context-manager-edges'",
+    }

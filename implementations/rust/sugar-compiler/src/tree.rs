@@ -108,7 +108,6 @@ pub enum Level {
     ContractDeclarations,
     ProviderContractMembers,
     ContractDemands,
-    ContextManagerEdges,
     ParameterContractLinkUnits,
     ParameterContractResume,
 }
@@ -127,7 +126,6 @@ impl Level {
             Level::ContractDeclarations => "contract-declarations",
             Level::ProviderContractMembers => "provider-contract-members",
             Level::ContractDemands => "contract-demands",
-            Level::ContextManagerEdges => "context-manager-edges",
             Level::ParameterContractLinkUnits => "parameter-contract-link-units",
             Level::ParameterContractResume => "parameter-contract-resume",
         }
@@ -1103,66 +1101,6 @@ fn preconstruction_rows_rpc(conn: &KitConn, level: Level) -> Result<Vec<Value>, 
         })
 }
 
-fn context_manager_edges_rpc(conn: &KitConn) -> Result<Vec<Value>, EnumerateError> {
-    let plugin = conn.surface.clone();
-    let Some((catalog_cid, table_cid)) =
-        conn.transport
-            .contract_ref_generation()
-            .map_err(|error| EnumerateError::Unavailable {
-                plugin: plugin.clone(),
-                reason: error.to_string(),
-            })?
-    else {
-        return Err(EnumerateError::Malformed {
-            plugin,
-            reason: "context-manager edge enumeration requires frozen contract refs".into(),
-        });
-    };
-    let mut options = json!({
-        "contractRefs": {"catalogCid": catalog_cid, "tableCid": table_cid},
-    });
-    if let Some((call_catalog_cid, call_table_cid)) = conn
-        .transport
-        .call_contract_ref_generation()
-        .map_err(|error| EnumerateError::Unavailable {
-            plugin: plugin.clone(),
-            reason: error.to_string(),
-        })?
-    {
-        options["callContractRefs"] = json!({
-            "catalogCid": call_catalog_cid,
-            "tableCid": call_table_cid,
-        });
-    }
-    let response = conn
-        .transport
-        .request(&json!({
-            "level": Level::ContextManagerEdges.wire(),
-            "workspace_root": conn.workspace_root.display().to_string(),
-            "options": options,
-        }))
-        .map_err(|error| EnumerateError::Unavailable {
-            plugin: plugin.clone(),
-            reason: error.to_string(),
-        })?;
-    let result = response
-        .get("result")
-        .unwrap_or(&response)
-        .as_object()
-        .ok_or_else(|| EnumerateError::Malformed {
-            plugin: plugin.clone(),
-            reason: "context-manager edge result must be an object".into(),
-        })?;
-    result
-        .get("contextManagerEdges")
-        .and_then(Value::as_array)
-        .cloned()
-        .ok_or_else(|| EnumerateError::Malformed {
-            plugin,
-            reason: "context-manager edge result missing contextManagerEdges array".into(),
-        })
-}
-
 /// `LiftPluginKit::request` has already checked and removed the JSON-RPC
 /// envelope. Keep this boundary explicit: enumeration consumes that result
 /// payload directly. A second `result` unwrap turns every lawful node set into
@@ -1861,12 +1799,6 @@ fn merge_recovered_audit_core(
 }
 
 impl Kit {
-    pub fn context_manager_edges(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
-        Ok(context_manager_edges_rpc(
-            &self.enumerate_conn(workspace_root),
-        )?)
-    }
-
     pub fn context_manager_demands(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
         Ok(preconstruction_rows_rpc(
             &self.enumerate_conn(workspace_root),

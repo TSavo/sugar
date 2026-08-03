@@ -2111,52 +2111,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 }
             )
             return
-        if level == "context-manager-edges":
-            if _BOUND_CONTRACT_REFS is None:
-                raise ValueError(
-                    "context-manager edge enumeration requires frozen contract refs"
-                )
-            from sugar_lift_python_source.source_oracle import path_source
-            from sugar_source_tree.tree import SourceFile as _TreeSourceFile
-            from sugar_lift_py_tests.context_manager_resolution import (
-                TreeConstructionContextV1,
-            )
-
-            rows = []
-            construction_context = TreeConstructionContextV1(_BOUND_CONTRACT_REFS)
-            # One session for the whole package walk: the same dependency
-            # definition projected for many consumer files amortizes once.
-            from sugar_lift_python_source.resolution_session import walk_session_for
-
-            package_session = walk_session_for(root)
-            for source_path in sorted(root.rglob("*.py")):
-                identity = path_source(str(source_path))
-                source_file = _TreeSourceFile(
-                    identity, construction_context=construction_context
-                )
-                from sugar_lift_python_source.manager_summary_derivation import (
-                    populate_source_derived_resource_refs,
-                )
-
-                populate_source_derived_resource_refs(
-                    source_file,
-                    root=root,
-                    path=source_path,
-                    session=package_session,
-                )
-                for function in source_file.functions():
-                    function_sugar = function.sugar()
-                    rows.extend(
-                        edge.to_rpc() for edge in function_sugar.context_manager_edges()
-                    )
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"contextManagerEdges": rows},
-                }
-            )
-            return
         if level == "source_files":
             # The source_files level IS SourceTree.fragments(): whole-file
             # fragments minted through the SourceOracle — identity without
