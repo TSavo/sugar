@@ -89,6 +89,7 @@ def _initialize(
     demand_table_path: str | None,
     *,
     allow_local_demand_derivation: bool,
+    source_workspace_root: str | None = None,
 ) -> dict:
     global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT
     import os
@@ -132,6 +133,20 @@ def _initialize(
         }
 
     root = Path(corpus_root).resolve()
+    workspace_root = Path(source_workspace_root or corpus_root).resolve()
+    if root != workspace_root and root not in workspace_root.parents:
+        return {
+            "kind": "initialize-refusal",
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": (
+                f"source_workspace_root does not contain corpus_root: "
+                f"source_workspace_root={workspace_root} corpus_root={root}"
+            ),
+            "corpus_root": str(root),
+            "source_workspace_root": str(workspace_root),
+            "demand_table_path": demand_table_path,
+            "phase": "resolve-corpus-root",
+        }
     _progress(
         "resolve-corpus-root",
         corpus_root=str(root),
@@ -248,11 +263,12 @@ def _initialize(
     )
     _CORPUS_ROOT = root
     _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(
-        root, contract_refs=contract_refs
+        workspace_root, contract_refs=contract_refs
     )
     return {
         "kind": "context-ready",
         "corpus_root": str(root),
+        "source_workspace_root": str(workspace_root),
         "demand_table_identity": demand_table_identity,
     }
 
@@ -303,6 +319,11 @@ def main() -> int:
                 response = _initialize(
                     corpus_root,
                     demand_table_path,
+                    source_workspace_root=(
+                        str(msg["source_workspace_root"])
+                        if msg.get("source_workspace_root")
+                        else None
+                    ),
                     allow_local_demand_derivation=bool(
                         msg.get("allow_local_demand_derivation", False)
                     ),
