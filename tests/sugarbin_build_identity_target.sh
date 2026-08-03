@@ -117,9 +117,33 @@ resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
 export SUGAR_BINARY_NO_SHELF=0 SUGAR_BINARY_PUBLISH=1
 export SUGAR_BINARY_SHELF_ROOT="$tmp/shelf"
 "$repo/bin/sugarbin" --bin sugar >/dev/null
-# Cell layout: shelf/<platform>/<profile>/<sourceStamp>/<artifactName>/*.gz
-ls "$tmp/shelf"/*/*/*/*/*.gz >/dev/null 2>&1 \
-  || { echo 'shelf cell missing after publish' >&2; ls -laR "$tmp/shelf" >&2; exit 1; }
+# Current binary shelf identity has two independent parts: the mutable
+# sourceStamp lookup ref and the immutable h(payload) CAS cell it names.
+# Authenticate both rather than pinning the retired stamp-keyed cell layout.
+python3 - "$tmp/shelf" "$SUGAR_BINARY_SOURCE_STAMP" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+shelf = pathlib.Path(sys.argv[1])
+source_stamp = sys.argv[2]
+refs = list(shelf.glob(f"*/release/by-stamp/{source_stamp}/sugar.ref"))
+assert len(refs) == 1, f"sourceStamp ref count={len(refs)}, want 1: {refs}"
+content_key = refs[0].read_text(encoding="utf-8").strip()
+assert re.fullmatch(r"blake3-512_[0-9a-f]{128}", content_key), content_key
+cell = shelf / "cas" / content_key / "sugar"
+expected = {
+    cell / "sugar.gz",
+    cell / "sugar.metadata.json",
+    cell / "sugar.sugarbin.json",
+}
+assert expected == {path for path in cell.iterdir() if path.is_file()}, cell
+metadata = json.loads((cell / "sugar.metadata.json").read_text(encoding="utf-8"))
+assert metadata["buildStamp"] == source_stamp, metadata
+assert metadata["contentKey"] == content_key, metadata
+assert metadata["transport"] == "filesystem-cas-v3", metadata
+PY
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 export SUGAR_BINARY_ALLOW_BUILD=0
 resolved_from_shelf="$("$repo/bin/sugarbin" --bin sugar)"

@@ -244,7 +244,20 @@ chmod +x "$tmp/bin/ssh" "$tmp/bin/rsync"
   BCARGO_SSH="$tmp/bin/ssh" BCARGO_RSYNC="$tmp/bin/rsync" \
   BCARGO_REMOTE_ROOT=/home/tsavo/remote/sugarbin-artifact-manifest-test \
   "$repo/bin/sugarbin" run --host bx --needs sugar,sugar-ir-smt-lib -- true)
-grep -Fq 'bin/sugarbin --platform' "$tmp/ssh.log"
+python3 - "$tmp/ssh.log" <<'PY'
+import pathlib, sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+calls = text.split("bin/sugarbin ")[1:]
+assert len(calls) == 2, f"managed resolver call count={len(calls)}, want 2"
+for call in calls:
+    profile = call.index("--profile")
+    release = call.index("release", profile)
+    platform = call.index("--platform", release)
+    linux = call.index("linux-x86_64", platform)
+    binary = call.index("--bin", linux)
+    assert profile < release < platform < linux < binary, call
+PY
 grep -Fq -- '--bin "$b"' "$tmp/ssh.log"
 grep -Fq 'SUGAR_BINARY_DIR=' "$tmp/ssh.log"
 grep -Fq 'sugar-ir-smt-lib' "$tmp/ssh.log"
