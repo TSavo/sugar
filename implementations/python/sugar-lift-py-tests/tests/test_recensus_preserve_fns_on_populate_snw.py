@@ -1,9 +1,13 @@
-"""Populate SNW must not erase a successful SourceFile function denominator.
+"""Enumerate panics must not erase the authenticated function denominator.
 
 Night finding: _json.py constructed 49 functions, then populate hit SNW on a
 transitive decorated FunctionDef and recensus returned BEFORE functionsTotal,
 banking 0 for a file that just built ~50. 14/14 sampled SNW files had fns>0
 after SourceFile. The refusal stays loud; the zero-function board answer dies.
+
+The current consumer authenticates the AST function population before opening
+the typed tree.  Even an open-path panic therefore preserves that denominator;
+zero is not an honest answer for a parseable file containing a function.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ def test_populate_snw_preserves_function_denominator(
     tmp_path: Path, monkeypatch
 ) -> None:
     """SourceFile succeeds with N functions; populate SNWs; bank N + residual."""
-    module = _load("control_effect_recensus")
+    module = _load("recensus_enumerate_consumer")
     path = tmp_path / "target.py"
     path.write_text(
         "def one():\n"
@@ -60,36 +64,27 @@ def test_populate_snw_preserves_function_denominator(
         boom_populate,
     )
 
-    row = module._measure_file(
-        path,
-        relative="target.py",
+    row = module.measure_file_via_enumerate(
         workspace_root=tmp_path,
+        file_rel="target.py",
         contract_refs={},
     )
 
-    assert row["category"] == "completed"
-    # Successful construction survives.
+    # The product gap is the first terminal, never an instrument failure.
+    assert row["category"] == "panic"
+    assert row["panic"]["owner"] == "module function definition execution"
+    # The independently authenticated population survives even though D2 could
+    # not return its function mementos after populate raised.
     assert row["functionsTotal"] == 3
-    assert row["functionsEnumerated"] == 3
-    assert row["functionsNotEnumerated"] == 0
-    # Populate gap stays LOUD as its own residual — not a zero-function lie.
-    assert row["R_populate_residuals"] == 1
-    residuals = row["populateResiduals"]
-    assert len(residuals) == 1
-    assert residuals[0]["phase"] == "populate"
-    assert residuals[0]["owner"] == "module function definition execution"
-    assert "decorated FunctionDef" in residuals[0]["observed"]
-    # Family key is owner-qualified so the refusal is named in families too.
-    assert row["families"].get(
-        "populate:module function definition execution", 0
-    ) >= 1
+    assert row["functionsEnumerated"] == 0
+    assert row["functionsNotEnumerated"] == 3
 
 
-def test_open_snw_still_zero_functions_when_sourcefile_never_builds(
+def test_open_snw_preserves_authenticated_ast_function_denominator(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Open-path SNW (no SourceFile) remains a true empty denominator."""
-    module = _load("control_effect_recensus")
+    """Open-path SNW preserves the AST-authenticated function population."""
+    module = _load("recensus_enumerate_consumer")
     path = tmp_path / "broken.py"
     path.write_text("def a():\n    return 1\n", encoding="utf-8")
 
@@ -114,9 +109,13 @@ def test_open_snw_still_zero_functions_when_sourcefile_never_builds(
     import sugar_source_tree.tree as tree_mod
 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom_init)
-    row = module._measure_file(
-        path, relative="broken.py", workspace_root=tmp_path, contract_refs={}
+    row = module.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="broken.py",
+        contract_refs={},
     )
-    assert row["functionsTotal"] == 0
-    assert row["R_populate_residuals"] == 0
-    assert row["families"].get("SugarNotWritten", 0) >= 1
+    assert row["category"] == "panic"
+    assert row["panic"]["owner"] == "open-path-gap"
+    assert row["functionsTotal"] == 1
+    assert row["functionsEnumerated"] == 0
+    assert row["functionsNotEnumerated"] == 1
