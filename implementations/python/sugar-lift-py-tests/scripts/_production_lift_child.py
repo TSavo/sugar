@@ -69,6 +69,8 @@ def production_lift_testimony(
     *,
     corpus_root: Path,
     construction_context,
+    source_workspace_root: Path | None = None,
+    distribution: str | None = None,
 ) -> dict[str, object]:
     """Enumerate one file with the caller's frozen corpus context."""
     from sugar_source_tree.reporter import CollectingReporter
@@ -85,6 +87,8 @@ def production_lift_testimony(
             root=corpus_root,
             reporter=reporter,
             construction_context=construction_context,
+            source_workspace_root=source_workspace_root,
+            distribution=distribution,
         )
     except BaseException as error:
         row = _typed_construction_row(error)
