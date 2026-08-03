@@ -290,6 +290,8 @@ def open_source_file_for_construction(
     construction_context=None,
     populate_derived: bool = True,
     resolution_session=None,
+    source_workspace_root: Path | None = None,
+    distribution: str | None = None,
 ):
     """Open a SourceFile the way production enumerate does — never bare context.
 
@@ -352,7 +354,12 @@ def open_source_file_for_construction(
         # here — that was the two-costume allowlist that left the class open.
         try:
             populate_source_derived_resource_refs(
-                source_file, root=root, path=path, session=session
+                source_file,
+                root=root,
+                path=path,
+                session=session,
+                source_workspace_root=source_workspace_root,
+                distribution=distribution,
             )
         except Exception as populate_gap:  # noqa: BLE001 — floor law; see above
             _record_populate_path_residual(source_file, populate_gap)
