@@ -1211,7 +1211,16 @@ def _qualified_enrollment_coordinate(
             "source seat is outside the authenticated source workspace: "
             f"path={path} source_workspace_root={source_workspace_root}"
         ) from error
-    return "/".join((distribution, *relative.parts))
+    parts = relative.parts
+    # An install-root seat already carries its distribution prefix; a package
+    # root seat does not. Preserve one canonical distribution-qualified form.
+    if parts and parts[0] == distribution:
+        return "/".join(parts)
+    return "/".join((distribution, *parts))
+
+
+class MissingEnrolledDistributionRoster(ValueError):
+    """The caller omitted the authenticated population authority."""
 
 
 def populate_source_derived_resource_refs(
@@ -1281,14 +1290,10 @@ def populate_source_derived_resource_refs(
     if distribution is not None:
         session.enrolled_distributions = frozenset({distribution})
     elif session.enrolled_distributions is None:
-        try:
-            coordinate_root = source_workspace_root or root
-            rel = Path(path).resolve().relative_to(Path(coordinate_root).resolve())
-            top = rel.parts[0] if rel.parts else None
-        except ValueError:
-            top = None
-        if top and top.isidentifier() and top not in {"tests", "test", "src"}:
-            session.enrolled_distributions = frozenset({top})
+        raise MissingEnrolledDistributionRoster(
+            "missing-enrolled-distribution-roster: distribution authority was not "
+            "supplied; refusing to infer an enrolled population from a path segment"
+        )
     context = source_file.root.unit.construction_context
     if context is None:
         return

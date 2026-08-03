@@ -2392,11 +2392,23 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # alongside the panic; this producer never converts panic into a
                 # completed resolution response.
                 if level == "context-manager-resolutions":
+                    distribution = options.get("distribution")
+                    source_workspace_root = options.get("sourceWorkspaceRoot")
                     populate_source_derived_resource_refs(
                         tree_file,
                         root=root,
                         path=full_path,
                         session=walk_session_for(root),
+                        source_workspace_root=(
+                            Path(source_workspace_root)
+                            if isinstance(source_workspace_root, str)
+                            else None
+                        ),
+                        distribution=(
+                            str(distribution)
+                            if isinstance(distribution, str)
+                            else None
+                        ),
                     )
                     from sugar_lift_py_tests.context_manager_resolution import (
                         context_manager_resolution_outcome,
