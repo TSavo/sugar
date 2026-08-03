@@ -178,6 +178,27 @@ sugar_bx_quiet_armed() {
   [[ -n "$max_env" || "$require" == 1 || "$require" == true || "$require" == yes ]]
 }
 
+# Select the one lease that is physically shared by host brun processes and
+# CI containers. This judgment belongs to the host that will take the lock,
+# not to the caller assembling the remote command. /var/tmp is deliberately
+# not a fallback: on containerized runners it produces a different inode and
+# only simulates serialization.
+sugar_bx_select_timing_lease() {
+  local tsavo_cache="${1:-/home/tsavo/.cache/sugar/binaries}"
+  local runner_cache="${2:-/home/runner/.cache/sugar/binaries}"
+  if [[ -d "$tsavo_cache" ]]; then
+    printf '%s\n' "$tsavo_cache/.sugar-heavy-measurement.lease"
+    return 0
+  fi
+  if [[ -d "$runner_cache" ]]; then
+    printf '%s\n' "$runner_cache/.sugar-heavy-measurement.lease"
+    return 0
+  fi
+  printf 'sugarbin: crime=timing-lease-path-unavailable candidates=%s,%s replacement=restore one shared host binary-cache directory; do not substitute a container-local lease\n' \
+    "$tsavo_cache" "$runner_cache" >&2
+  return 77
+}
+
 sugar_bx_sample_load() {
   # Prints: load1 nproc  (one line). Uses /proc/loadavg on Linux; falls back
   # to python getloadavg on platforms without it (local-mode macOS tests).
@@ -204,17 +225,13 @@ sugar_bx_require_quiet() {
   fi
   SUGAR_BX_QUIET_ARMED=1
   SUGAR_BX_LOAD_MAX="${SUGAR_BX_MAX_LOADAVG:-}"
-  # Prefer host bind-mount lease (serializes CI containers + host brun).
-  # /var/tmp is per-container lock theatre on battleaxe (same bootId, different
-  # inode). See docs/contributing/heavy-measurement-lease.md.
+  # An explicit path remains an explicit operator assertion. Otherwise leave
+  # selection to the remote host, whose filesystem is authoritative. The
+  # caller cannot truthfully choose between host paths from its own namespace.
   if [[ -n "${SUGAR_BX_TIMING_LEASE_PATH:-}" ]]; then
     SUGAR_BX_TIMING_LEASE="$SUGAR_BX_TIMING_LEASE_PATH"
-  elif [[ -d /home/runner/.cache/sugar/binaries ]]; then
-    SUGAR_BX_TIMING_LEASE=/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease
-  elif [[ -d /home/tsavo/.cache/sugar/binaries ]]; then
-    SUGAR_BX_TIMING_LEASE=/home/tsavo/.cache/sugar/binaries/.sugar-heavy-measurement.lease
   else
-    SUGAR_BX_TIMING_LEASE=/var/tmp/sugar-bx-timing-measurement.lease
+    SUGAR_BX_TIMING_LEASE=""
   fi
   # Default wait 2h (queue). Set SUGAR_BX_TIMING_LEASE_WAIT_S=0 to refuse
   # immediately with exit 77 when another measurement holds the lease.
@@ -228,7 +245,7 @@ sugar_bx_require_quiet() {
   SUGAR_BX_SKIP_CORPUS_PIN="${SUGAR_BX_SKIP_CORPUS_PIN:-0}"
   printf 'sugarbin: bx-load-gate phase=arm host=%s max=%s lease=%s wait_s=%s corpus_pin=%s skip_pin=%s\n' \
     "$SUGAR_BX_HOST" "${SUGAR_BX_LOAD_MAX:-auto(nproc/4,floor=2)}" \
-    "$SUGAR_BX_TIMING_LEASE" "$SUGAR_BX_TIMING_LEASE_WAIT" \
+    "${SUGAR_BX_TIMING_LEASE:-host-selected}" "$SUGAR_BX_TIMING_LEASE_WAIT" \
     "$SUGAR_BX_CORPUS_PIN_PATH" "$SUGAR_BX_SKIP_CORPUS_PIN" >&2
   return 0
 }
@@ -277,18 +294,10 @@ sugar_bx_run_ambient() {
   # Quiet path: exclusive remote lease → load under lock → corpus pin →
   # measure. Do not exec-replace the shell that holds the flock fd.
   # Three gates, one law: quiet box, exclusive lease, correct corpus.
-  local lock wait_s max_lit host_lit measured_cmd wrapper
+  local lock wait_s max_lit host_lit measured_cmd wrapper selector_def
   local pin_path pin_py pin_skip
   lock="${SUGAR_BX_TIMING_LEASE:-}"
-  if [[ -z "$lock" ]]; then
-    if [[ -d /home/runner/.cache/sugar/binaries ]]; then
-      lock=/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease
-    elif [[ -d /home/tsavo/.cache/sugar/binaries ]]; then
-      lock=/home/tsavo/.cache/sugar/binaries/.sugar-heavy-measurement.lease
-    else
-      lock=/var/tmp/sugar-bx-timing-measurement.lease
-    fi
-  fi
+  selector_def="$(declare -f sugar_bx_select_timing_lease)"
   wait_s="${SUGAR_BX_TIMING_LEASE_WAIT:-7200}"
   max_lit="${SUGAR_BX_LOAD_MAX:-}"
   host_lit="$SUGAR_BX_HOST"
@@ -306,7 +315,8 @@ sugar_bx_run_ambient() {
   # 78s — only absolute /tmp pins worked. Pin against SUGAR_BX_REPO, not
   # remote_cwd (may be a subdir when REL_CWD is set). measured_cmd still cds
   # to the caller's cwd via prefix_cmd after the pin authenticates.
-  wrapper="set -euo pipefail
+  wrapper="$selector_def
+set -euo pipefail
 LOCK=$(sugar_bx_quote "$lock")
 WAIT=$(sugar_bx_quote "$wait_s")
 MAX_LIT=$(sugar_bx_quote "$max_lit")
@@ -315,6 +325,14 @@ SKIP_PIN=$(sugar_bx_quote "$pin_skip")
 PIN_PATH=$(sugar_bx_quote "$pin_path")
 PIN_PY=$(sugar_bx_quote "$pin_py")
 REPO_ROOT=$(sugar_bx_quote "$SUGAR_BX_REPO")
+if [[ -z \"\$LOCK\" ]]; then
+  if LOCK=\$(sugar_bx_select_timing_lease); then
+    :
+  else
+    selector_status=\$?
+    exit \"\$selector_status\"
+  fi
+fi
 cd \"\$REPO_ROOT\" || { printf 'sugarbin: crime=corpus-pin-cwd-missing path=%s replacement=synced checkout at SUGAR_BX_REPO must exist before pin check\\n' \"\$REPO_ROOT\" >&2; exit 78; }
 # Root relative pin/python against the synced checkout. Absolute paths (e.g.
 # /tmp/pin.json or a fleet venv) pass through unchanged.
