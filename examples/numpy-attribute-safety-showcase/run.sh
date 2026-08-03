@@ -91,8 +91,8 @@ render_manifests() {
   local suite_dir="$HERE/$suite"
   local base="$suite_dir/.sugar/lift"
   render_one \
-    "$base/python-source/manifest.toml.in" \
-    "$base/python-source/manifest.toml" \
+    "$base/python/manifest.toml.in" \
+    "$base/python/manifest.toml" \
     "$suite_dir"
   render_one \
     "$base/python-pytest-witness/manifest.toml.in" \

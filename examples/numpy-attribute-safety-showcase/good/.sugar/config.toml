@@ -1,7 +1,7 @@
 [[plugins]]
-name = "python-source"
+name = "python-lift"
 kind = "lift"
-surface = "python-source"
+surface = "python"
 workspace_override = "src"
 emit = "ir-document"
 
@@ -20,4 +20,3 @@ default = "z3"
 [solvers.z3]
 binary = "z3"
 flags = ["-smt2", "-in"]
-

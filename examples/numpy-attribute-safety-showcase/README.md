@@ -3,10 +3,12 @@
 This is the Python class-shapes capstone. It proves a small real numpy wrapper
 on two axes:
 
-- `python-source` lifts classShapes and attribute-safety obligations from the
-  library source. The good suite discharges every `self.<attr>` access from
-  guaranteed-present classShapes attributes. The bad suite accesses a
-  non-guaranteed attribute and must refuse.
+- The full `python` construction surface lifts classShapes, parameter links,
+  and attribute-safety obligations from the library source. The good suite
+  discharges every `self.<attr>` access from guaranteed-present classShapes
+  attributes. The bad suite accesses a non-guaranteed attribute and must
+  refuse. The narrower `python-source` surface deliberately remains limited to
+  source-file and universe enumeration.
 - `python-pytest-witness` reruns pytest over the same suite. The good suite
   passes with a real `numpy.ndarray`; the bad suite raises `AttributeError`.
 
