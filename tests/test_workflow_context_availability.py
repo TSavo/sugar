@@ -30,6 +30,60 @@ def _pre_dispatch_runner_context_violations(text: str) -> list[int]:
     return violations
 
 
+def _top_level_event_types(text: str, event: str) -> tuple[str, ...] | None:
+    """Return an event's inline activity types from the top-level ``on`` map."""
+
+    lines = text.splitlines()
+    on_index: int | None = None
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"on:\s*", line):
+            on_index = index
+            break
+    if on_index is None:
+        return None
+
+    event_indent = 2
+    event_pattern = re.compile(rf"{re.escape(event)}:\s*(.*)")
+    for index in range(on_index + 1, len(lines)):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            break
+        if indent != event_indent:
+            continue
+        match = event_pattern.fullmatch(line.strip())
+        if match is None:
+            continue
+        if match.group(1):
+            return ()
+        for child in lines[index + 1 :]:
+            if not child.strip() or child.lstrip().startswith("#"):
+                continue
+            child_indent = len(child) - len(child.lstrip(" "))
+            if child_indent <= event_indent:
+                return ()
+            if child_indent != event_indent + 2:
+                continue
+            types_match = re.fullmatch(r"types:\s*\[([^]]*)\]\s*", child.strip())
+            if types_match is None:
+                continue
+            return tuple(
+                activity.strip()
+                for activity in types_match.group(1).split(",")
+                if activity.strip()
+            )
+        return ()
+    return None
+
+
+def _has_exact_merge_group_trigger(text: str) -> bool:
+    """Return whether GitHub can dispatch the intended merge-group activity."""
+
+    return _top_level_event_types(text, "merge_group") == ("checks_requested",)
+
+
 class WorkflowContextAvailabilityTest(unittest.TestCase):
     def test_runner_context_availability_discriminator(self) -> None:
         workflow = """\
@@ -58,6 +112,46 @@ jobs:
             {},
             "runner context is unavailable in workflow/job env before dispatch; "
             "move each use to step env",
+        )
+
+    def test_merge_group_dispatchability_discriminator(self) -> None:
+        lawful = """\
+on:
+  push:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+jobs: {}
+"""
+        nested_under_push = """\
+on:
+  push:
+    merge_group:
+      types: [checks_requested]
+jobs: {}
+"""
+        wrong_activity = """\
+on:
+  merge_group:
+    types: [closed]
+jobs: {}
+"""
+        missing = """\
+on:
+  push:
+jobs: {}
+"""
+
+        self.assertTrue(_has_exact_merge_group_trigger(lawful))
+        self.assertFalse(_has_exact_merge_group_trigger(nested_under_push))
+        self.assertFalse(_has_exact_merge_group_trigger(wrong_activity))
+        self.assertFalse(_has_exact_merge_group_trigger(missing))
+
+    def test_ci_dispatches_exact_merge_group_checks_requested_event(self) -> None:
+        self.assertTrue(
+            _has_exact_merge_group_trigger((WORKFLOWS / "ci.yml").read_text()),
+            "ci.yml must expose the exact top-level merge_group checks_requested "
+            "event; YAML parsing alone does not prove GitHub can dispatch it",
         )
 
 
