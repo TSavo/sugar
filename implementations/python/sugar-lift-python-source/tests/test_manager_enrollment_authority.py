@@ -1,9 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from sugar_lift_python_source.manager_summary_derivation import (
+    MissingEnrolledDistributionRoster,
     _qualified_enrollment_coordinate,
+    populate_source_derived_resource_refs,
 )
 
 
@@ -22,6 +25,15 @@ def test_package_seat_uses_authenticated_distribution(tmp_path: Path) -> None:
         == "pandas/_config/config.py"
     )
 
+    assert (
+        _qualified_enrollment_coordinate(
+            path,
+            source_workspace_root=workspace.parent,
+            distribution="pandas",
+        )
+        == "pandas/_config/config.py"
+    )
+
 
 def test_missing_distribution_refuses_instead_of_bare_segment(tmp_path: Path) -> None:
     path = tmp_path / "pandas" / "_config" / "config.py"
@@ -32,3 +44,31 @@ def test_missing_distribution_refuses_instead_of_bare_segment(tmp_path: Path) ->
             source_workspace_root=tmp_path,
             distribution=None,
         )
+
+
+def test_missing_enrolled_roster_refuses_instead_of_path_seed(tmp_path: Path) -> None:
+    source_file = SimpleNamespace(
+        root=SimpleNamespace(unit=SimpleNamespace(construction_context=None))
+    )
+    with pytest.raises(
+        MissingEnrolledDistributionRoster,
+        match="missing-enrolled-distribution-roster",
+    ):
+        populate_source_derived_resource_refs(
+            source_file,
+            root=tmp_path,
+            path=tmp_path / "pandas" / "_config" / "config.py",
+        )
+
+
+def test_supplied_enrolled_roster_is_accepted(tmp_path: Path) -> None:
+    source_file = SimpleNamespace(
+        root=SimpleNamespace(unit=SimpleNamespace(construction_context=None))
+    )
+    populate_source_derived_resource_refs(
+        source_file,
+        root=tmp_path,
+        path=tmp_path / "pandas" / "_config" / "config.py",
+        source_workspace_root=tmp_path / "pandas",
+        distribution="pandas",
+    )

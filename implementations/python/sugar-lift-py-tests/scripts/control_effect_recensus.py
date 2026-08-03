@@ -1515,6 +1515,8 @@ def main() -> int:
                         workspace_root=corpus_root,
                         file_rel=relative,
                         contract_refs=contract_refs,
+                        distribution=observed_pin.distribution,
+                        source_workspace_root=locus_root,
                     )
                     if row.get("terminalKind") in {
                         "constructed",

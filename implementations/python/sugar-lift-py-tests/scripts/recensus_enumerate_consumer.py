@@ -353,6 +353,8 @@ def demand_context_manager_resolution_events(
     workspace_root: Path,
     file_rel: str,
     source_cid: str,
+    distribution: str | None = None,
+    source_workspace_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Enumerate the raw, coordinate-keyed table With construction consumed."""
     result = enumerate_rpc(
@@ -360,6 +362,12 @@ def demand_context_manager_resolution_events(
         workspace_root=workspace_root,
         at=file_memento(file_rel=file_rel, source_cid=source_cid),
         seek=False,
+        options={
+            "distribution": distribution,
+            "sourceWorkspaceRoot": (
+                str(source_workspace_root) if source_workspace_root is not None else None
+            ),
+        },
     )
     events: list[dict[str, Any]] = []
     for node in result.get("nodes") or []:
@@ -697,6 +705,8 @@ def measure_file_via_enumerate(
     file_rel: str,
     source_cid: str | None = None,
     contract_refs=None,
+    distribution: str | None = None,
+    source_workspace_root: Path | None = None,
 ) -> dict[str, Any]:
     """Produce one terminal solely from sugar.enumerate demands.
 
@@ -815,6 +825,8 @@ def measure_file_via_enumerate(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
+            distribution=distribution,
+            source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — distinct instrument/product paths
         if _is_process_control(error):
