@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 _CORPUS_ROOT: Path | None = None
+_SOURCE_WORKSPACE_ROOT: Path | None = None
+_DISTRIBUTION: str | None = None
 _CONSTRUCTION_CONTEXT = None
 
 
@@ -69,6 +71,8 @@ def _lift(path: str, rel: str) -> dict:
         rel,
         corpus_root=_CORPUS_ROOT,
         construction_context=_CONSTRUCTION_CONTEXT,
+        source_workspace_root=_SOURCE_WORKSPACE_ROOT,
+        distribution=_DISTRIBUTION,
     )
     return {"kind": "lift-result", "file": rel, "terminal": terminal}
 
@@ -91,7 +95,7 @@ def _initialize(
     allow_local_demand_derivation: bool,
     source_workspace_root: str | None = None,
 ) -> dict:
-    global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT
+    global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT, _SOURCE_WORKSPACE_ROOT, _DISTRIBUTION
     import os
 
     # Test-only plant: hang after first progress so supervisor timeout names phase.
@@ -226,6 +230,7 @@ def _initialize(
                 f"{SHARED_DEMAND_TABLE_CONTENT_KEY}"
             )
         validate_prebuilt_demand_table(table, corpus)
+        _DISTRIBUTION = corpus.distribution
         contract_refs = provisional_contract_refs_from_demand_rows(list(table.rows))
         demand_table_identity = table.semantic_identity.content_key
     elif not allow_local_demand_derivation:
@@ -262,6 +267,7 @@ def _initialize(
         using_provisional_demands=demand_table_path is None,
     )
     _CORPUS_ROOT = root
+    _SOURCE_WORKSPACE_ROOT = workspace_root
     _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(
         workspace_root, contract_refs=contract_refs
     )
