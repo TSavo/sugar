@@ -106,6 +106,29 @@ class DemandTableIdentityV1:
             "fileCount": self.file_count,
         }
 
+    def as_dict(self) -> dict[str, object]:
+        body = dict(self.preimage())
+        body["contentKey"] = self.content_key
+        return body
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, object]) -> "DemandTableIdentityV1":
+        required = ("contentKey", "corpusManifestCid", "schemaVersion",
+                    "producerSourceCid", "resolutionConfigCid",
+                    "parserIdentity", "fileCount")
+        missing = [key for key in required if key not in raw]
+        if missing:
+            raise ValueError(f"demand table semantic identity missing fields: {missing}")
+        return cls(
+            content_key=str(raw["contentKey"]),
+            corpus_manifest_cid=str(raw["corpusManifestCid"]),
+            schema_version=str(raw["schemaVersion"]),
+            producer_source_cid=str(raw["producerSourceCid"]),
+            resolution_config_cid=str(raw["resolutionConfigCid"]),
+            parser_identity=str(raw["parserIdentity"]),
+            file_count=int(raw["fileCount"]),
+        )
+
 
 @dataclass(frozen=True)
 class CorpusManifestDigestAliasesV1:

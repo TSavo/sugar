@@ -92,6 +92,18 @@ def test_mint_content_cid_stable_for_same_rows(tmp_path: Path) -> None:
     assert lr.preconstruction_walk_count() == 2  # two mints = two walks
 
 
+def test_mint_carries_distinct_storage_and_semantic_identities(tmp_path: Path) -> None:
+    first_corpus = _tiny_corpus(tmp_path / "first")
+    second_corpus = _tiny_corpus(tmp_path / "second")
+    (second_corpus / "b.py").write_text("def different():\n    return 2\n", encoding="utf-8")
+    first = mint_prebuilt_demand_table(_authenticated(first_corpus))
+    second = mint_prebuilt_demand_table(_authenticated(second_corpus))
+    assert first.semantic_identity.content_key != second.semantic_identity.content_key
+    assert first.content_cid != second.content_cid
+    assert first.content_cid == first.to_json_dict()["contentCid"]
+    assert first.semantic_identity.as_dict()["contentKey"] != first.content_cid
+
+
 def test_cold_process_with_prebuilt_table_performs_zero_corpus_walks(
     tmp_path: Path,
 ) -> None:

@@ -27,6 +27,7 @@ from typing import Any, Mapping
 
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
+from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1, demand_table_identity
 
 SCHEMA = "python-provisional-demand-table/v1"
 
@@ -101,6 +102,7 @@ class PrebuiltDemandTableV1:
     content_cid: str
     corpus_pin: CorpusPinIdentityV1
     rows: tuple[dict[str, Any], ...]
+    semantic_identity: DemandTableIdentityV1
     schema: str = SCHEMA
 
     def preimage(self) -> dict[str, Any]:
@@ -114,6 +116,7 @@ class PrebuiltDemandTableV1:
     def to_json_dict(self) -> dict[str, Any]:
         body = self.preimage()
         body["contentCid"] = self.content_cid
+        body["semanticIdentity"] = self.semantic_identity.as_dict()
         return body
 
 
@@ -137,6 +140,11 @@ def mint_prebuilt_demand_table(
         aggregate_hash=corpus.manifest_cid,
     )
     rows = tuple(_preconstruction_demand_rows(corpus.root))
+    semantic_identity = demand_table_identity(
+        corpus.root,
+        sorted(corpus.root.rglob("*.py")),
+        source_root=Path(__file__).resolve().parents[1],
+    )
     preimage = {
         "schema": SCHEMA,
         "corpusPin": pin.as_dict(),
@@ -146,6 +154,7 @@ def mint_prebuilt_demand_table(
         content_cid=content_cid_for_preimage(preimage),
         corpus_pin=pin,
         rows=rows,
+        semantic_identity=semantic_identity,
     )
 
 
@@ -192,6 +201,12 @@ def load_prebuilt_demand_table(
             f"prebuilt demand table schema mismatch got={raw.get('schema')!r} "
             f"want={SCHEMA!r}"
         )
+    try:
+        semantic_identity = DemandTableIdentityV1.from_mapping(raw.get("semanticIdentity") or {})
+    except (TypeError, ValueError) as exc:
+        raise DemandTableArtifactRefusal(
+            f"prebuilt demand table semantic identity invalid: {exc}"
+        ) from exc
     if not isinstance(raw.get("rows"), list):
         raise DemandTableArtifactRefusal("prebuilt demand table carries no rows list")
     pin = CorpusPinIdentityV1.from_mapping(raw.get("corpusPin") or {})
@@ -228,6 +243,7 @@ def load_prebuilt_demand_table(
         content_cid=str(presented),
         corpus_pin=pin,
         rows=tuple(raw["rows"]),
+        semantic_identity=semantic_identity,
     )
 
 
