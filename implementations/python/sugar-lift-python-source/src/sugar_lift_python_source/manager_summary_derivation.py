@@ -1406,9 +1406,13 @@ def populate_source_derived_resource_refs(
                 graph = authenticate_dependency_top_level(
                     top_level, distribution_index=distribution_index
                 )
-            except DependencyArtifactAuthenticationError:
+            except DependencyArtifactAuthenticationError as exc:
                 _install_derivation_gap(
-                    context, coordinate, receipt, "no-derived-contract"
+                    context,
+                    coordinate,
+                    receipt,
+                    "no-derived-contract",
+                    str(exc),
                 )
                 continue
             graphs[top_level] = graph
