@@ -18,6 +18,8 @@ from sugar_lift_py_tests.prebuilt_demand_table import (
     install_prebuilt_demand_table,
     load_prebuilt_demand_table,
     mint_prebuilt_demand_table,
+    validate_prebuilt_demand_table,
+    DemandTableSemanticIdentityMismatch,
     write_prebuilt_demand_table,
 )
 from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
@@ -102,6 +104,22 @@ def test_mint_carries_distinct_storage_and_semantic_identities(tmp_path: Path) -
     assert first.content_cid != second.content_cid
     assert first.content_cid == first.to_json_dict()["contentCid"]
     assert first.semantic_identity.as_dict()["contentKey"] != first.content_cid
+
+
+def test_validator_accepts_current_table(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    handle = _authenticated(corpus)
+    table = mint_prebuilt_demand_table(handle)
+    validate_prebuilt_demand_table(table, handle)
+
+
+def test_validator_refuses_table_for_different_corpus(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    other = _tiny_corpus(tmp_path / "other")
+    (other / "b.py").write_text("def different():\n    return 2\n", encoding="utf-8")
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
+    with pytest.raises(DemandTableSemanticIdentityMismatch, match="semantic identity mismatch"):
+        validate_prebuilt_demand_table(table, _authenticated(other))
 
 
 def test_cold_process_with_prebuilt_table_performs_zero_corpus_walks(
