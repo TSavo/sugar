@@ -9,6 +9,7 @@ import pytest
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
 from sugar_lift_python_source import manager_construction
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.binding_state import (
     ConstructedValueCategoryGap,
     ConstructionTestimonyReporterV1,
@@ -44,7 +45,11 @@ def _observe_prefix(monkeypatch, name: str):
 
     monkeypatch.setattr(manager_construction, "SourceFile", RecordingSourceFile)
     locus = ast.parse(module.source).body[-1]
-    manager_construction._module_prefix_outcome(module, locus)
+    manager_construction._module_prefix_outcome(
+        module,
+        locus,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert len(observed) == 1
     return observed[0]
 

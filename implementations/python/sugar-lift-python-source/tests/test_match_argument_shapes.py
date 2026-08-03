@@ -82,6 +82,7 @@ from sugar_lift_python_source.manager_construction import (
     _classify_named_call_target,
     _frame_bound_names,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import (
     Attribute,
     Call,
@@ -849,7 +850,10 @@ def test_name_pattern_reaches_authenticated_base_force_floor() -> None:
     )
 
     populate_source_derived_resource_refs(
-        source_file, root=_corpus_root().parent, path=path
+        source_file,
+        root=_corpus_root().parent,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset({"pandas"})),
     )
 
     row = next(
@@ -897,7 +901,10 @@ def test_pattern_sites_manager_floor_is_named_not_synthetic(
     assert argument.segment().strip() == site.expression
 
     populate_source_derived_resource_refs(
-        source_file, root=_corpus_root().parent, path=path
+        source_file,
+        root=_corpus_root().parent,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset({"pandas"})),
     )
 
     row = next(

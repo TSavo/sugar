@@ -70,6 +70,8 @@ def test_pandas_test_open_never_materializes_pytest() -> None:
             root=address_root,
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
             populate_derived=True,
+            distribution="pandas",
+            source_workspace_root=corpus,
         )
     finally:
         SourceFile.__init__ = orig  # type: ignore[method-assign]

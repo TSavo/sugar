@@ -25,6 +25,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     GeneratorExitHaltFaceV1,
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 
@@ -72,6 +73,9 @@ def _publish(tmp_path: Path, implementation: str):
         root=tmp_path,
         path=path,
         distribution_index={"unprivileged": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     return next(
         v.protocol

@@ -48,19 +48,39 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
     ResolvedPythonObjectV1,
-    resolve_import_binding,
+    resolve_import_binding as _resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
     CALL_TARGET_GAP_KINDS,
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
     _frame_bound_names,
-    construct_manager_behavior,
+    construct_manager_behavior as _construct_manager_behavior,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.nodes import Call, Constant, FunctionDef
 from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 from sugar_source_tree.tree import SourceFile
+
+
+def _session_enrolling_graph(graph):
+    name = graph.distribution_name
+    if not name:
+        raise AssertionError("call-target graph test requires a distribution name")
+    return SourceResolutionSession(enrolled_distributions=frozenset({name}))
+
+
+def resolve_import_binding(*args, graph, session=None, **kwargs):
+    if session is None:
+        session = _session_enrolling_graph(graph)
+    return _resolve_import_binding(*args, graph=graph, session=session, **kwargs)
+
+
+def construct_manager_behavior(*args, graph, session=None, **kwargs):
+    if session is None:
+        session = _session_enrolling_graph(graph)
+    return _construct_manager_behavior(*args, graph=graph, session=session, **kwargs)
 
 
 def _distribution(

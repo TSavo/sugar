@@ -25,19 +25,19 @@ def teardown_function() -> None:
 
 
 def test_walk_session_same_root_is_one_session(tmp_path: Path) -> None:
-    a = walk_session_for(tmp_path)
-    b = walk_session_for(tmp_path / ".")
+    a = walk_session_for(tmp_path, enrolled_distributions=frozenset())
+    b = walk_session_for(tmp_path / ".", enrolled_distributions=frozenset())
     assert a is b
     assert isinstance(a, SourceResolutionSession)
 
 
 def test_walk_session_different_roots_are_isolated(tmp_path: Path) -> None:
-    left = walk_session_for(tmp_path / "left")
-    right = walk_session_for(tmp_path / "right")
+    left = walk_session_for(tmp_path / "left", enrolled_distributions=frozenset())
+    right = walk_session_for(tmp_path / "right", enrolled_distributions=frozenset())
     (tmp_path / "left").mkdir()
     (tmp_path / "right").mkdir()
-    left2 = walk_session_for(tmp_path / "left")
-    right2 = walk_session_for(tmp_path / "right")
+    left2 = walk_session_for(tmp_path / "left", enrolled_distributions=frozenset())
+    right2 = walk_session_for(tmp_path / "right", enrolled_distributions=frozenset())
     assert left2 is left
     assert right2 is right
     assert left is not right
@@ -62,10 +62,14 @@ def test_open_default_uses_walk_session(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
 
-    open_source_file_for_construction(path, root=root)
-    open_source_file_for_construction(path, root=root)
+    distribution = "walk-session-fixture"
+    roster = frozenset({distribution})
+    open_source_file_for_construction(path, root=root, distribution=distribution)
+    open_source_file_for_construction(path, root=root, distribution=distribution)
     assert len(seen) == 2
-    assert seen[0] is seen[1] is walk_session_for(root), (
+    assert (
+        seen[0] is seen[1] is walk_session_for(root, enrolled_distributions=roster)
+    ), (
         "two opens under the same root must share the walk session so same-content "
         "re-open and census multi-file amortize projection memos"
     )
@@ -89,7 +93,8 @@ def test_open_explicit_session_bypasses_walk(tmp_path: Path, monkeypatch) -> Non
 
     monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
 
-    isolated = SourceResolutionSession()
+    roster = frozenset({"walk-session-fixture"})
+    isolated = SourceResolutionSession(enrolled_distributions=roster)
     open_source_file_for_construction(path, root=root, resolution_session=isolated)
     assert seen == [isolated]
-    assert isolated is not walk_session_for(root)
+    assert isolated is not walk_session_for(root, enrolled_distributions=roster)

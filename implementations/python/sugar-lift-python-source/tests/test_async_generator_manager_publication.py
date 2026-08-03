@@ -23,6 +23,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 
@@ -140,6 +141,9 @@ def test_async_generator_without_async_frame_protocol_stays_typed_gap(tmp_path: 
         root=tmp_path,
         path=consumer,
         distribution_index={"resource_pkg": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
 
     assert len(context.source_derived_contract_refs) == 1

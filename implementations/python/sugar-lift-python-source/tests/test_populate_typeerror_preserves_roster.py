@@ -66,6 +66,8 @@ def test_populate_typeerror_preserves_function_roster(
         reporter=CollectingReporter(),
         construction_context=ctx,
         populate_derived=True,
+        distribution="populate-roster-fixture",
+        source_workspace_root=tmp_path,
     )
     assert len(tuple(source_file.functions())) == 3
 
@@ -102,6 +104,8 @@ def test_populate_snw_still_preserves_function_roster(
         reporter=CollectingReporter(),
         construction_context=ctx,
         populate_derived=True,
+        distribution="populate-roster-fixture",
+        source_workspace_root=tmp_path,
     )
     assert len(tuple(source_file.functions())) == 3
 
@@ -189,5 +193,7 @@ def test_per_receipt_typeerror_cites_gap_and_continues(
         reporter=CollectingReporter(),
         construction_context=ctx,
         populate_derived=True,
+        distribution="populate-roster-fixture",
+        source_workspace_root=tmp_path,
     )
     assert len(tuple(source_file.functions())) == 3

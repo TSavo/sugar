@@ -19,11 +19,30 @@ from sugar_lift_py_tests.source_call_resolution import (
     SourceCallPreconstructionRefV1,
 )
 from sugar_lift_python_source.source_call_preconstruction import (
-    populate_source_visible_call_frames,
+    populate_source_visible_call_frames as _populate_source_visible_call_frames,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import Call
 from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+
+
+def populate_source_visible_call_frames(
+    *args, distribution_index, session=None, **kwargs
+):
+    """The fixture distribution index is the population under test."""
+    if session is None:
+        roster = frozenset(
+            distribution.metadata["Name"]
+            for distribution in distribution_index.values()
+        )
+        session = SourceResolutionSession(enrolled_distributions=roster)
+    return _populate_source_visible_call_frames(
+        *args,
+        distribution_index=distribution_index,
+        session=session,
+        **kwargs,
+    )
 
 
 def _distribution(root: Path, implementation: str) -> importlib.metadata.Distribution:

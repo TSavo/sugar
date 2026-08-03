@@ -38,6 +38,8 @@ def test_json_open_plus_populate_materializes_consumer_once() -> None:
             root=install_root,
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
             populate_derived=True,
+            distribution="pandas",
+            source_workspace_root=install_root,
         )
         fns = len(tuple(sf.functions()))
     finally:
