@@ -162,7 +162,7 @@ export BX_FAKE_LEASE_BUSY=0
 
 # 7) brun adapter surfaces quiet + lease + pin env.
 grep -Fq 'SUGAR_BX_REQUIRE_QUIET' "$repo_root/bin/brun" || fail "brun --help text missing quiet gate"
-grep -Fq 'sugar-bx-timing-measurement.lease' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing timing lease path"
+grep -Fq '.sugar-heavy-measurement.lease' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing shared timing lease path"
 grep -Fq 'timing-lease-busy' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing lease-busy crime"
 grep -Fq 'bx_corpus_pin_gate' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing corpus pin gate"
 grep -Fq 'exit 78' "$repo_root/bin/lib/sugar-bx.sh" || fail "sugar-bx missing pin exit 78"
@@ -201,5 +201,40 @@ grep -Fq 'bx_corpus_pin_gate' "$remote_exec_log" \
 grep -Fq 'PIN_PATH=' "$remote_exec_log" "$ssh_log" 2>/dev/null \
   || grep -Fq 'pandas-3.0.3.pin.json' "$remote_exec_log" "$ssh_log" \
   || fail "quiet+pin wrapper missing pin path"
+
+# 9) Lease selection is a host-filesystem judgment. Prefer the authentic
+# host-side tsavo cache when both candidates exist; do not inherit the caller's
+# filesystem shape.
+# shellcheck source=bin/lib/sugar-bx.sh
+source "$repo_root/bin/lib/sugar-bx.sh"
+lease_host="$tmp/lease-host"
+tsavo_cache="$lease_host/home/tsavo/.cache/sugar/binaries"
+runner_cache="$lease_host/home/runner/.cache/sugar/binaries"
+mkdir -p "$tsavo_cache" "$runner_cache"
+selected="$(sugar_bx_select_timing_lease "$tsavo_cache" "$runner_cache")"
+[[ "$selected" == "$tsavo_cache/.sugar-heavy-measurement.lease" ]] \
+  || fail "host with tsavo cache selected $selected"
+
+# 10) No real shared cache means no lease. Refuse with both physical
+# candidates named instead of fabricating a /var/tmp lock that cannot
+# serialize host and container work.
+missing_tsavo="$lease_host/missing/tsavo"
+missing_runner="$lease_host/missing/runner"
+status=0
+sugar_bx_select_timing_lease "$missing_tsavo" "$missing_runner" \
+  >"$tmp/missing-lease.out" 2>"$tmp/missing-lease.err" || status=$?
+[[ "$status" -eq 77 ]] || fail "missing lease candidates status=$status want 77"
+grep -Fq 'crime=timing-lease-path-unavailable' "$tmp/missing-lease.err" \
+  || fail "missing lease candidates did not name the refusal"
+grep -Fq "$missing_tsavo" "$tmp/missing-lease.err" \
+  || fail "missing lease refusal omitted tsavo candidate"
+grep -Fq "$missing_runner" "$tmp/missing-lease.err" \
+  || fail "missing lease refusal omitted runner candidate"
+
+# The selector itself must run on the remote wrapper, after transport. A local
+# selection can only testify to the caller's filesystem.
+grep -Fq 'sugar_bx_select_timing_lease' "$remote_exec_log" \
+  || grep -Fq 'sugar_bx_select_timing_lease' "$ssh_log" \
+  || fail "quiet wrapper did not defer lease selection to the remote host"
 
 echo "PASS: sugarbin_bx_load_gate"
