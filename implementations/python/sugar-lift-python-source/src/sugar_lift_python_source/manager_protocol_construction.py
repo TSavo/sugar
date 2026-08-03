@@ -561,9 +561,7 @@ def enter_generator_resource_outcome(protocol, *, ctx: object = None):
     return enter_bound_generator_resource_outcome(protocol, machine, ctx=ctx)
 
 
-def enter_bound_generator_resource_outcome(
-    protocol, machine, *, ctx: object = None
-):
+def enter_bound_generator_resource_outcome(protocol, machine, *, ctx: object = None):
     """Resume the exact authenticated generator construction at manager enter."""
     del ctx
     from sugar_lift_py_tests.generator_construction import (
@@ -611,6 +609,7 @@ def _project_generator_enter_result(protocol, machine, result):
             lambda value: _project_generator_enter_result(protocol, machine, value)
         )
     if isinstance(result, GuardedValue):
+
         def project_arm(arm):
             if type(arm) is GeneratorConstructionV1:
                 if arm.frame_coordinate != protocol.generator_frame_cid:
@@ -630,11 +629,13 @@ def _project_generator_enter_result(protocol, machine, result):
                 return _project_generator_enter_result(protocol, arm, arm.resume())
             return _project_generator_enter_result(protocol, machine, arm)
 
-        return outcome_to_exitset(project_arm(result.when_true)).guarded(
-            result.guard
-        ).union(
-            outcome_to_exitset(project_arm(result.when_false)).guarded(
-                not_(result.guard)
+        return (
+            outcome_to_exitset(project_arm(result.when_true))
+            .guarded(result.guard)
+            .union(
+                outcome_to_exitset(project_arm(result.when_false)).guarded(
+                    not_(result.guard)
+                )
             )
         )
     if isinstance(result, YieldEffect):

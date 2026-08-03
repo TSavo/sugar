@@ -22,7 +22,6 @@ from sugar_lift_py_tests.import_binding import (
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 
-
 PRODUCTION_MODULE = "sugar_lift_python_source.authenticated_import_member_value"
 
 
@@ -127,9 +126,9 @@ def test_scoped_fixture_preflight_proves_real_indentation_and_scope(
 
 def test_missing_closed_producer_door_is_one_red() -> None:
     """R_missing_door=1: the typed producer module does not exist yet."""
-    assert importlib.util.find_spec(PRODUCTION_MODULE) is not None, (
-        "missing typed closed imported-module member producer door"
-    )
+    assert (
+        importlib.util.find_spec(PRODUCTION_MODULE) is not None
+    ), "missing typed closed imported-module member producer door"
 
 
 _DORMANT_SEMANTIC_TEETH = (

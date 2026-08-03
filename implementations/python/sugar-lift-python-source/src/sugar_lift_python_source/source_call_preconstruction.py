@@ -149,7 +149,9 @@ def populate_source_visible_call_frames(
                 )
             )
             continue
-        _preconstruct_authenticated_attribute_calls(target, graph=graph, session=session)
+        _preconstruct_authenticated_attribute_calls(
+            target, graph=graph, session=session
+        )
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
         try:
@@ -244,9 +246,7 @@ def _preconstruct_authenticated_attribute_calls(
         if isinstance(node, Call) and isinstance(node.func, Attribute)
     )
     calls_by_span = {
-        span: call
-        for call in calls
-        for span in (_span_key(call), _span_key(call.func))
+        span: call for call in calls for span in (_span_key(call), _span_key(call.func))
     }
     for receipt in receipts:
         raw = receipt.use["useSite"]
@@ -261,9 +261,7 @@ def _preconstruct_authenticated_attribute_calls(
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if not isinstance(resolved, ResolvedPythonObjectV1):
             continue
-        projected = resolve_source_visible_frame(
-            resolved, graph=graph, session=session
-        )
+        projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
         if isinstance(projected, ManagerConstructionGapV1):
             continue
         frame, nested_target = projected

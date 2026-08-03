@@ -91,8 +91,7 @@ def _publish(tmp_path: Path, implementation: str, consumer: str | None = None):
     distribution = _distribution(tmp_path, implementation)
     path = tmp_path / "consumer.py"
     path.write_text(
-        consumer
-        or ("from unprivileged import outer\n" "with outer():\n" "    pass\n"),
+        consumer or ("from unprivileged import outer\n" "with outer():\n" "    pass\n"),
         encoding="utf-8",
     )
     context = TreeConstructionContextV1.for_source_call_construction(
@@ -181,8 +180,8 @@ def test_nested_cleanup_runs_before_outer_resume_on_halt(tmp_path: Path) -> None
     machine = entered.machine
     assert isinstance(machine.steps[machine.cursor], NestedManagerExitStepV1)
     # Plant a throw at the post-yield suspension (halted body edge).
-    effect = RaiseEffect.for_builtin("RuntimeError",
-        
+    effect = RaiseEffect.for_builtin(
+        "RuntimeError",
         blame="body",
         occurrence="body:halt",
         raised_value="boom",
@@ -208,9 +207,9 @@ def test_distinct_occurrence_identities_per_layer(tmp_path: Path) -> None:
     layer = protocol.nested_manager_layers[0]
     assert layer.occurrence["cid"] != protocol.generator_frame_cid
     assert layer.nested_generator_frame_cid != protocol.generator_frame_cid
-    assert layer.cid not in {
-        face.cid for face in protocol.yield_faces
-    } | {face.cid for face in protocol.enter_halt_faces}
+    assert layer.cid not in {face.cid for face in protocol.yield_faces} | {
+        face.cid for face in protocol.enter_halt_faces
+    }
 
 
 def test_tampered_inner_source_refuses_stable_layer_identity(tmp_path: Path) -> None:
@@ -229,7 +228,8 @@ def test_tampered_inner_source_refuses_stable_layer_identity(tmp_path: Path) -> 
     assert (
         left_layer.nested_protocol_construction_cid
         != right_layer.nested_protocol_construction_cid
-        or left_layer.nested_generator_frame_cid != right_layer.nested_generator_frame_cid
+        or left_layer.nested_generator_frame_cid
+        != right_layer.nested_generator_frame_cid
     )
 
 
@@ -323,7 +323,9 @@ def test_planted_nested_manager_step_lifecycle_performance() -> None:
     assert isinstance(outcome, Complete)
     entered = outcome.value
     assert entered.enter_value == StringValue("outer")
-    assert any(isinstance(b, NestedEnteredBindingV1) for b in entered.machine.binding_state)
+    assert any(
+        isinstance(b, NestedEnteredBindingV1) for b in entered.machine.binding_state
+    )
     # Exit outer: NestedManagerExitStep exits nested then terminates.
     exit_outcome = outer_protocol.exit_outcome_for(entered)
     exits = outcome_to_exitset(exit_outcome)

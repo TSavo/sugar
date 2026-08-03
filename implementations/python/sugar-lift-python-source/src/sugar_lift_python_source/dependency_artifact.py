@@ -111,9 +111,7 @@ def _fingerprint_disk_cache_path(seat_key: str, fingerprint: str) -> Path:
     return _cache_root() / "dependency-artifact-fingerprints" / f"{digest}.json"
 
 
-def _load_artifact_cid_for_fingerprint(
-    seat_key: str, fingerprint: str
-) -> str | None:
+def _load_artifact_cid_for_fingerprint(seat_key: str, fingerprint: str) -> str | None:
     path = _fingerprint_disk_cache_path(seat_key, fingerprint)
     if not path.is_file():
         return None

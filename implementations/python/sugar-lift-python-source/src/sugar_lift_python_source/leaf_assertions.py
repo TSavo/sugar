@@ -201,7 +201,12 @@ class _TranslatedTerm:
         object.__setattr__(
             self,
             "_seal",
-            (preimage, preimage.unit.source_cid, term_cid, tuple(call._seal for call in calls)),
+            (
+                preimage,
+                preimage.unit.source_cid,
+                term_cid,
+                tuple(call._seal for call in calls),
+            ),
         )
         return self
 
@@ -281,9 +286,7 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
     return result
 
 
-def _lift_assert(
-    stmt: Assert, *, source_contract: FunctionDef
-) -> _LiftedAssertion:
+def _lift_assert(stmt: Assert, *, source_contract: FunctionDef) -> _LiftedAssertion:
     test = stmt.test
     if not isinstance(test, Compare):
         raise _Unsupported("assert is not a comparison")
@@ -322,23 +325,35 @@ def _translate_term(node: Expression) -> _TranslatedTerm:
     if isinstance(node, Constant):
         value = node.value
         if isinstance(value, bool):
-            return _TranslatedTerm._mint(term={
-                "kind": "const",
-                "value": value,
-                "sort": {"kind": "primitive", "name": "Bool"},
-            }, calls=(), preimage=node)
+            return _TranslatedTerm._mint(
+                term={
+                    "kind": "const",
+                    "value": value,
+                    "sort": {"kind": "primitive", "name": "Bool"},
+                },
+                calls=(),
+                preimage=node,
+            )
         if isinstance(value, int):
-            return _TranslatedTerm._mint(term={
-                "kind": "const",
-                "value": value,
-                "sort": {"kind": "primitive", "name": "Int"},
-            }, calls=(), preimage=node)
+            return _TranslatedTerm._mint(
+                term={
+                    "kind": "const",
+                    "value": value,
+                    "sort": {"kind": "primitive", "name": "Int"},
+                },
+                calls=(),
+                preimage=node,
+            )
         if isinstance(value, str):
-            return _TranslatedTerm._mint(term={
-                "kind": "const",
-                "value": value,
-                "sort": {"kind": "primitive", "name": "String"},
-            }, calls=(), preimage=node)
+            return _TranslatedTerm._mint(
+                term={
+                    "kind": "const",
+                    "value": value,
+                    "sort": {"kind": "primitive", "name": "String"},
+                },
+                calls=(),
+                preimage=node,
+            )
         if value is None:
             return _TranslatedTerm._mint(
                 term={"kind": "ctor", "name": "None", "args": []},
@@ -353,11 +368,15 @@ def _translate_term(node: Expression) -> _TranslatedTerm:
             and isinstance(operand.value, int)
             and not isinstance(operand.value, bool)
         ):
-            return _TranslatedTerm._mint(term={
-                "kind": "const",
-                "value": -operand.value,
-                "sort": {"kind": "primitive", "name": "Int"},
-            }, calls=(), preimage=node)
+            return _TranslatedTerm._mint(
+                term={
+                    "kind": "const",
+                    "value": -operand.value,
+                    "sort": {"kind": "primitive", "name": "Int"},
+                },
+                calls=(),
+                preimage=node,
+            )
         raise _Unsupported("unary minus only on int literals")
     if isinstance(node, Call):
         # Single-arg bare call f(arg) -> ctor("f", [<arg>]); the ctor name is
@@ -370,7 +389,11 @@ def _translate_term(node: Expression) -> _TranslatedTerm:
         projected_args = [arg.project() for arg in args]
         occurrence = _CallOccurrence._mint(node)
         return _TranslatedTerm._mint(
-            term={"kind": "ctor", "name": node.func.id, "args": [arg.term for arg in args]},
+            term={
+                "kind": "ctor",
+                "name": node.func.id,
+                "args": [arg.term for arg in args],
+            },
             calls=(occurrence,)
             + tuple(call for _, calls in projected_args for call in calls),
             preimage=node,

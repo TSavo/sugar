@@ -43,9 +43,9 @@ def _files(tmp_path, **sources):
 
 def test_lift_is_no_longer_advertised_as_a_kit_method():
     methods = {m["name"] for m in kit_declaration_result()["rpc"]["methods"]}
-    assert "lift" not in methods, (
-        "`lift` is retired: full-tree construction is sugar.enumerate only"
-    )
+    assert (
+        "lift" not in methods
+    ), "`lift` is retired: full-tree construction is sugar.enumerate only"
     assert ENUMERATE_RPC_METHOD in methods
 
 
@@ -55,7 +55,10 @@ def test_lift_is_no_longer_advertised_as_a_kit_method():
 def test_source_files_censuses_every_python_file_with_oracle_identity(tmp_path):
     _files(
         tmp_path,
-        **{"alpha.py": "def a():\n    return 1\n", "beta.py": "def b():\n    return 2\n"},
+        **{
+            "alpha.py": "def a():\n    return 1\n",
+            "beta.py": "def b():\n    return 2\n",
+        },
     )
     (tmp_path / "notes.txt").write_text("not python", encoding="utf-8")
 
@@ -87,12 +90,15 @@ def test_undecodable_file_is_a_gap_not_a_node_with_a_made_up_identity(tmp_path):
 def test_seek_returns_only_the_named_file(tmp_path):
     _files(
         tmp_path,
-        **{"alpha.py": "def a():\n    return 1\n", "beta.py": "def b():\n    return 2\n"},
+        **{
+            "alpha.py": "def a():\n    return 1\n",
+            "beta.py": "def b():\n    return 2\n",
+        },
     )
 
-    result = _enumerate(
-        tmp_path, "source_files", at={"file": "beta.py"}, seek=True
-    )["result"]
+    result = _enumerate(tmp_path, "source_files", at={"file": "beta.py"}, seek=True)[
+        "result"
+    ]
 
     assert [n["memento"]["file"] for n in result["nodes"]] == ["beta.py"]
 
@@ -109,7 +115,9 @@ def test_universe_constructs_the_demanded_file(tmp_path):
         },
     )
     census = _enumerate(tmp_path, "source_files")["result"]
-    alpha = next(n["memento"] for n in census["nodes"] if n["memento"]["file"] == "alpha.py")
+    alpha = next(
+        n["memento"] for n in census["nodes"] if n["memento"]["file"] == "alpha.py"
+    )
 
     result = _enumerate(tmp_path, "universe", at=alpha)["result"]
 
@@ -125,7 +133,8 @@ def test_universe_rows_match_what_the_retired_lift_produced(tmp_path):
     alpha = census["nodes"][0]["memento"]
 
     through_enumerate = [
-        n["audit"] for n in _enumerate(tmp_path, "universe", at=alpha)["result"]["nodes"]
+        n["audit"]
+        for n in _enumerate(tmp_path, "universe", at=alpha)["result"]["nodes"]
     ]
     through_lift = dispatch(
         {
@@ -152,9 +161,9 @@ def test_universe_refuses_a_forged_memento_that_escapes_the_workspace(tmp_path):
     outside = tmp_path.parent / "outside_secret.py"
     outside.write_text("def secret():\n    return 1\n", encoding="utf-8")
 
-    result = _enumerate(
-        tmp_path, "universe", at={"file": "../outside_secret.py"}
-    )["result"]
+    result = _enumerate(tmp_path, "universe", at={"file": "../outside_secret.py"})[
+        "result"
+    ]
 
     assert result["nodes"] == [], "a traversal must never enumerate outside the root"
     assert len(result["gaps"]) == 1
@@ -181,8 +190,8 @@ def test_universe_reports_a_syntax_refusal_as_a_gap(tmp_path):
 def test_an_unserved_level_is_a_loud_refusal_not_a_false_empty_census(tmp_path, level):
     response = _enumerate(tmp_path, level)
 
-    assert "result" not in response, (
-        f"level {level!r} must not answer an empty census it cannot back"
-    )
+    assert (
+        "result" not in response
+    ), f"level {level!r} must not answer an empty census it cannot back"
     assert response["error"]["code"] == -32602
     assert level in response["error"]["message"]

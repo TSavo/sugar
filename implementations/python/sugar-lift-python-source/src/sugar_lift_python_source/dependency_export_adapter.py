@@ -109,9 +109,7 @@ def resolve_export(
     _bind()
     session = session_or_new(session)
     if (module_name, exported_name) in seen:
-        return _gap(
-            "reexport-cycle", binding_cid, graph, module_name, exported_name
-        )
+        return _gap("reexport-cycle", binding_cid, graph, module_name, exported_name)
     cache_key = (
         graph.distribution_artifact_cid,
         module_name,
@@ -131,9 +129,7 @@ def resolve_export(
         # Reexport hop / path context: share definition identity only.
         terminal = session.export_terminal_hit(cache_key)
         if terminal is not None:
-            return _restamp_export_result(
-                terminal, binding_cid, warrants=warrants
-            )
+            return _restamp_export_result(terminal, binding_cid, warrants=warrants)
 
     result = _resolve_export_uncached(
         graph,

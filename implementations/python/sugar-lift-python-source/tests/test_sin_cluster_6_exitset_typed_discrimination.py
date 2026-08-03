@@ -32,9 +32,12 @@ def test_lying_twin_panic_prose_substring_gate_is_absent() -> None:
     forbidden = 'if "ExitSet" in str(observed):'
     assert forbidden not in module_src
     # Also refuse the looser form that matches any str(observed) ExitSet probe.
-    assert any(
-        line.strip().startswith("if ")
-        and "ExitSet" in line
-        and "str(observed)" in line
-        for line in module_src.splitlines()
-    ) is False
+    assert (
+        any(
+            line.strip().startswith("if ")
+            and "ExitSet" in line
+            and "str(observed)" in line
+            for line in module_src.splitlines()
+        )
+        is False
+    )

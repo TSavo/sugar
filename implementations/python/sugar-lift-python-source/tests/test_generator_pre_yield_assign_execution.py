@@ -62,11 +62,7 @@ class _CountingValue(ConstructedTermSugar):
 
 
 def test_generator_attribute_assign_executes_once_at_exact_target_occurrence():
-    steps = _steps(
-        "def g(holder):\n"
-        "    holder.hidden = True\n"
-        "    yield holder\n"
-    )
+    steps = _steps("def g(holder):\n" "    holder.hidden = True\n" "    yield holder\n")
     assign = steps[0]
     assert isinstance(assign, AttributeAssignStepV1)
     assert assign.attr == "hidden"
@@ -91,15 +87,11 @@ def test_generator_attribute_assign_executes_once_at_exact_target_occurrence():
 
 def test_generator_attribute_assign_rejects_foreign_target_occurrence():
     truthful = _steps(
-        "def g(holder):\n"
-        "    holder.hidden = True\n"
-        "    yield holder\n"
+        "def g(holder):\n" "    holder.hidden = True\n" "    yield holder\n"
     )[0]
-    foreign = _steps(
-        "def h(other):\n"
-        "    other.hidden = True\n"
-        "    yield other\n"
-    )[0]
+    foreign = _steps("def h(other):\n" "    other.hidden = True\n" "    yield other\n")[
+        0
+    ]
     assert isinstance(truthful, AttributeAssignStepV1)
     assert isinstance(foreign, AttributeAssignStepV1)
     with pytest.raises(TypeError, match="target occurrence does not match"):

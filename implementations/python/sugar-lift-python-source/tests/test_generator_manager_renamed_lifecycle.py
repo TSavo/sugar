@@ -265,8 +265,8 @@ class _Fixed(Sugar):
 
 def _nested_body_faces() -> ExitSet:
     """Completed, Returned, and Halted edges under distinct guards."""
-    raise_effect = RaiseEffect.for_builtin("ValueError",
-        
+    raise_effect = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence="body.py:10:8:raise",
         blame="body.py:10:8:raise",
     )
@@ -379,7 +379,10 @@ def _assert_lifecycle_once(sugar, *, shape: str, bind_slot: str | None):
         # GeneratorWithSugar prepends EnterResultBinding facts when slot set.
         if sugar.enter_slot_id is not None and not found:
             # Soft: facts may ride only completed faces; still require slot on sugar.
-            assert sugar.enter_slot_id.endswith("enter_result") or sugar.enter_slot_id == bind_slot
+            assert (
+                sugar.enter_slot_id.endswith("enter_result")
+                or sugar.enter_slot_id == bind_slot
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -412,9 +415,7 @@ def test_shape_exact_seat_and_lifecycle_over_nested_body_faces(
 
 
 @pytest.mark.parametrize("shape", _SHAPES, ids=lambda s: s.shape)
-def test_renamed_alias_shares_lifecycle_seat_law(
-    tmp_path: Path, shape: _ManagerShape
-):
+def test_renamed_alias_shares_lifecycle_seat_law(tmp_path: Path, shape: _ManagerShape):
     """Renamed import alias seats and consumes through the same pipeline."""
     root = tmp_path / f"renamed_{shape.package}"
     root.mkdir()
@@ -513,9 +514,7 @@ def test_cross_seated_twin_cannot_borrow_another_shapes_ref(tmp_path: Path):
     root = tmp_path / "cross"
     root.mkdir()
     # Publish A only via populate.
-    context, tree = _populate(
-        root, shape=a, consumer_source=_direct_consumer(a)
-    )
+    context, tree = _populate(root, shape=a, consumer_source=_direct_consumer(a))
     site = _with_site(tree)
     a_ref = _require_item_ref(site, site.items[0])
     a_coord = _item_coordinate(site, site.items[0])
@@ -751,9 +750,9 @@ def test_stack_two_renamed_managers_source_order_enter_reverse_exit(tmp_path: Pa
         f"lifecycle routers in source order; got {[type(n).__name__ for n in chain]}"
     )
     # Source order: first manager is outer (enter first, exit last).
-    assert chain[1] in getattr(chain[0], "body", ()), (
-        "source-order nesting broken: inner not in outer.body"
-    )
+    assert chain[1] in getattr(
+        chain[0], "body", ()
+    ), "source-order nesting broken: inner not in outer.body"
 
     # Multi-face body on the innermost suite for per-edge cleanup.
     from dataclasses import replace
@@ -785,4 +784,3 @@ def test_stack_two_renamed_managers_source_order_enter_reverse_exit(tmp_path: Pa
             f"MISSING CONSUMER (codex-2): stacked exit lost body face {face_id}; "
             f"guards={guard_text}"
         )
-

@@ -13,7 +13,6 @@ from sugar_lift_python_source.manager_construction import (
 )
 from sugar_source_tree.panic import BackendDefect
 
-
 SOURCE = "from . import helper\nfirst = helper.FLAG\nsecond = helper.OTHER\n"
 
 
@@ -44,9 +43,7 @@ def test_identical_package_bytes_retain_distinct_authenticated_rosters(
     assert first is first_rows
     assert second is second_rows
     assert first is not second
-    assert {row.target_symbol for row in first} != {
-        row.target_symbol for row in second
-    }
+    assert {row.target_symbol for row in first} != {row.target_symbol for row in second}
     assert {row.import_binding.cid for row in first}.isdisjoint(
         row.import_binding.cid for row in second
     )
@@ -62,9 +59,7 @@ def test_same_module_reuses_objects_and_foreign_or_duplicate_rosters_refuse(
     first_module, first_rows = _module_and_rows(tmp_path, "first_package")
     second_module, second_rows = _module_and_rows(tmp_path, "second_package")
     context = TreeConstructionContextV1.for_source_call_construction()
-    retained = _retain_import_value_receipt_roster(
-        context, first_module, first_rows
-    )
+    retained = _retain_import_value_receipt_roster(context, first_module, first_rows)
 
     repeated = _retain_import_value_receipt_roster(
         context, first_module, tuple(first_rows)

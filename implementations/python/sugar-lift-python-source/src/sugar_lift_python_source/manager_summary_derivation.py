@@ -1203,8 +1203,8 @@ def _qualified_enrollment_coordinate(
             "refusing to infer it from a relative path segment"
         )
     try:
-        relative = Path(path).resolve().relative_to(
-            Path(source_workspace_root).resolve()
+        relative = (
+            Path(path).resolve().relative_to(Path(source_workspace_root).resolve())
         )
     except ValueError as error:
         raise ValueError(
@@ -1823,10 +1823,10 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 type(result).__name__,
             )
             continue
-        enter_method = next(
-            (m for m in result.methods if m.name == "__enter__"), None
+        enter_method = next((m for m in result.methods if m.name == "__enter__"), None)
+        frame = (
+            getattr(enter_method, "source_call_frame", None) if enter_method else None
         )
-        frame = getattr(enter_method, "source_call_frame", None) if enter_method else None
         frame_cid = getattr(frame, "frame_cid", None) or result.identity
         preimage = {
             "kind": "constructed-manager-behavior",
@@ -1850,9 +1850,7 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             factory_prefix_cids=(),
         )
         try:
-            protocol = construct_manager_protocol(
-                behavior, exit_face_id=exit_face_id
-            )
+            protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         except (SugarNotWritten, TypeError) as exc:
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_local_derivation_gap(
@@ -2244,7 +2242,10 @@ def _project_nested_manager_layers(
                         ),
                         construction_cid=nested_frame.frame_cid,
                     )
-                    if _generator_protocol_construction_gap(nested_protocol) is not None:
+                    if (
+                        _generator_protocol_construction_gap(nested_protocol)
+                        is not None
+                    ):
                         return (
                             "nested-manager",
                             "nested manager protocol construction refused",
@@ -2388,10 +2389,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
             return ReturnStepV1(
                 None if statement.value is None else statement.value.sugar()
             )
-        if (
-            isinstance(statement, Expr)
-            and isinstance(statement.value, Constant)
-        ):
+        if isinstance(statement, Expr) and isinstance(statement.value, Constant):
             return InertStepV1(statement.kind)
         if isinstance(statement, Pass):
             return InertStepV1(statement.kind)

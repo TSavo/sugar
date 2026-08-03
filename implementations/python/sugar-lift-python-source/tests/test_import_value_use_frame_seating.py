@@ -24,11 +24,20 @@ from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
 from sugar_lift_python_source.source_call_preconstruction import (
     populate_source_visible_call_frames,
 )
-from sugar_source_tree.nodes import BindingCoordinateRef, Call, Constant, Dict, FunctionDef, Tuple_
+from sugar_source_tree.nodes import (
+    BindingCoordinateRef,
+    Call,
+    Constant,
+    Dict,
+    FunctionDef,
+    Tuple_,
+)
 from sugar_source_tree.tree import SourceFile
 
 
-def _distribution(root: Path, helpers: str, types: str = "class ArrayType:\n    pass\n"):
+def _distribution(
+    root: Path, helpers: str, types: str = "class ArrayType:\n    pass\n"
+):
     package = root / "unprivileged"
     package.mkdir()
     (package / "__init__.py").write_text(
@@ -138,7 +147,9 @@ def test_frame_seats_import_value_use_receipts_on_own_unit(tmp_path: Path) -> No
     )
     resolutions = frame.owner.unit._import_value_use_resolutions
     assert resolutions, "frame unit must seat its own value-use receipts"
-    assert all(isinstance(value, ResolvedPythonObjectV1) for value in resolutions.values())
+    assert all(
+        isinstance(value, ResolvedPythonObjectV1) for value in resolutions.values()
+    )
     # Definition-coordinate identity — not spelling.
     seated = next(iter(resolutions.values()))
     assert seated.definition.name == "ArrayType"
@@ -217,9 +228,7 @@ def test_foreign_variadic_actuals_rehost_with_distinct_coordinates(
         (foreign_source, "foreign.py", blake3_512_of(foreign_source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
-    actuals = tuple(
-        node for node in foreign_file.nodes() if isinstance(node, Constant)
-    )
+    actuals = tuple(node for node in foreign_file.nodes() if isinstance(node, Constant))
     frame = function.source_visible_call_frame().bind_node_actuals(actuals, ())
     packed = frame.runtime_entries[0].state
     assert isinstance(packed, Tuple_)
@@ -248,9 +257,7 @@ def test_foreign_variadic_keyword_actuals_rehost_with_distinct_coordinates(
         (foreign_source, "foreign_kw.py", blake3_512_of(foreign_source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
-    actuals = tuple(
-        node for node in foreign_file.nodes() if isinstance(node, Constant)
-    )
+    actuals = tuple(node for node in foreign_file.nodes() if isinstance(node, Constant))
     frame = function.source_visible_call_frame().bind_node_actuals(
         (), (("left", actuals[0]), ("right", actuals[1]))
     )
@@ -388,8 +395,12 @@ def test_exact_import_value_receipt_seats_and_constructs_member(
 
     source = "import re\ndef selected():\n    return re.I\n"
     path, source_file, context = _consumer(tmp_path, source)
-    function = next(node for node in source_file.nodes() if isinstance(node, FunctionDef))
-    attribute = next(node for node in source_file.nodes() if isinstance(node, Attribute))
+    function = next(
+        node for node in source_file.nodes() if isinstance(node, FunctionDef)
+    )
+    attribute = next(
+        node for node in source_file.nodes() if isinstance(node, Attribute)
+    )
     receipts, _ = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_file.unit.source_cid, module_identities={}
     )
@@ -430,13 +441,17 @@ def test_exact_import_value_receipt_seats_and_constructs_member(
 def test_import_value_receipt_state_refuses_wrong_span_foreign_and_conflict(
     tmp_path: Path,
 ) -> None:
-    from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_value_use_receipts,
+    )
     from sugar_source_tree.nodes import Attribute
     from sugar_source_tree.panic import BackendDefect
 
     source = "import re\ndef selected():\n    return re.I\n"
     path, source_file, _ = _consumer(tmp_path, source)
-    attribute = next(node for node in source_file.nodes() if isinstance(node, Attribute))
+    attribute = next(
+        node for node in source_file.nodes() if isinstance(node, Attribute)
+    )
     receipts, _ = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_file.unit.source_cid, module_identities={}
     )
@@ -476,7 +491,9 @@ def test_import_value_receipt_state_refuses_wrong_span_foreign_and_conflict(
         foreign_file.unit.source_cid,
         module_identities={},
     )
-    foreign = next(row for row in foreign_receipts if row.target_symbol == "python:os.X")
+    foreign = next(
+        row for row in foreign_receipts if row.target_symbol == "python:os.X"
+    )
     with pytest.raises(BackendDefect, match="source_cid"):
         source_file.unit.seat_import_value_use_resolution(
             span_key, foreign, source_cid=foreign_file.unit.source_cid
@@ -495,12 +512,12 @@ def test_receipt_backed_import_member_is_constructed_call_argument(
     from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
     source = (
-        "import re\n"
-        "def selected(value):\n"
-        "    return re.search('', value, re.I)\n"
+        "import re\n" "def selected(value):\n" "    return re.search('', value, re.I)\n"
     )
     _path, source_file, context = _consumer(tmp_path, source)
-    function = next(node for node in source_file.nodes() if isinstance(node, FunctionDef))
+    function = next(
+        node for node in source_file.nodes() if isinstance(node, FunctionDef)
+    )
     call = next(node for node in source_file.nodes() if isinstance(node, Call))
     module = AuthenticatedModuleSourceV1(
         module_name="consumer",
@@ -553,8 +570,12 @@ def test_import_member_testimony_canonicalizes_only_its_authenticated_token(
 
     source = "import sys\ndef selected():\n    return sys.modules\n"
     path, source_file, context = _consumer(tmp_path, source)
-    function = next(node for node in source_file.nodes() if isinstance(node, FunctionDef))
-    attribute = next(node for node in source_file.nodes() if isinstance(node, Attribute))
+    function = next(
+        node for node in source_file.nodes() if isinstance(node, FunctionDef)
+    )
+    attribute = next(
+        node for node in source_file.nodes() if isinstance(node, Attribute)
+    )
     module = AuthenticatedModuleSourceV1(
         module_name="consumer",
         source_seat="consumer.py",
@@ -595,7 +616,9 @@ def test_import_member_testimony_canonicalizes_only_its_authenticated_token(
         foreign_file.unit.source_cid,
         module_identities={},
     )
-    foreign = next(row for row in foreign_receipts if row.target_symbol == "python:os.modules")
+    foreign = next(
+        row for row in foreign_receipts if row.target_symbol == "python:os.modules"
+    )
     span = attribute.line_col_span()
     with pytest.raises(BackendDefect, match="source_cid"):
         source_file.unit.seat_import_value_use_resolution(

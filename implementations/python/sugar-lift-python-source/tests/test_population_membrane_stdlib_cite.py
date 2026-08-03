@@ -67,8 +67,10 @@ def _stdlib_seat(filename: str, *, stdlib_root: Path) -> bool:
     # Common relative stdlib spellings used as source_seat
     if seat in {"enum.py", "re.py", "abc.py", "typing.py", "types.py"}:
         return True
-    if seat.startswith("re/") or seat.startswith("collections/") or seat.startswith(
-        "importlib/"
+    if (
+        seat.startswith("re/")
+        or seat.startswith("collections/")
+        or seat.startswith("importlib/")
     ):
         return True
     if seat.endswith("/enum.py") or seat.endswith("/re.py"):

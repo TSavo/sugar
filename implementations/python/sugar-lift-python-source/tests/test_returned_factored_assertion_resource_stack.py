@@ -128,7 +128,9 @@ def _with_chain(sugar):
 
 def _item_use_site_coordinate(site: With, item):
     """Exact SourceFragmentCoordinate for one With-item occurrence."""
-    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
 
     start_line, start_col, end_line, end_col = item._manager_use_site_span()
     return SourceFragmentCoordinateV1(
@@ -228,6 +230,7 @@ def test_returned_stack_resource_then_assertion_preserves_both_identities(
     assert _item_use_site_coordinate(site, site.items[0]) != _item_use_site_coordinate(
         site, site.items[1]
     )
+
 
 def test_returned_stack_assertion_then_resource_swaps_outer(
     tmp_path: Path,
@@ -375,7 +378,9 @@ def test_discrimination_lying_resource_cannot_borrow_assertion_in_stack(
     # Exact seats: item 0 is resource; item 1 must not become EffectBoundary.
     refs = _require_item_refs(site)
     assert _ref_kind(refs[0]) == "resource", _ref_kind(refs[0])
-    assert _ref_kind(refs[1]) != "boundary" and _ref_kind(refs[1]) != "factored-boundary", (
+    assert (
+        _ref_kind(refs[1]) != "boundary" and _ref_kind(refs[1]) != "factored-boundary"
+    ), (
         _ref_kind(refs[1]),
         refs[1],
     )

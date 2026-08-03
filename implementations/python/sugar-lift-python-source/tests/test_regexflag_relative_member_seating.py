@@ -219,9 +219,12 @@ def test_regexflag_cached_class_sugar_retains_manager_context_product() -> None:
 
     assert type(outcome.value) is ImportMemberValue
     assert not foreign_context.source_import_value_receipts_by_site
-    assert outcome.value.receipt in manager_context.source_import_value_receipts[
-        (module.module_name, module.source_seat, module.source_cid)
-    ]
+    assert (
+        outcome.value.receipt
+        in manager_context.source_import_value_receipts[
+            (module.module_name, module.source_seat, module.source_cid)
+        ]
+    )
 
 
 def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
@@ -268,12 +271,13 @@ def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
     )
 
     assert type(outcome.value) is ImportMemberValue
-    assert outcome.value.receipt is unit_context.source_import_value_receipts_by_site[
-        site_key
-    ]
-    assert outcome.value.receipt in unit_context.source_import_value_receipts[
-        roster_key
-    ]
+    assert (
+        outcome.value.receipt
+        is unit_context.source_import_value_receipts_by_site[site_key]
+    )
+    assert (
+        outcome.value.receipt in unit_context.source_import_value_receipts[roster_key]
+    )
     assert len(unit_context.source_import_value_receipts_by_site) > 1
     assert not external_context.source_import_value_receipts
     assert not external_context.source_import_value_receipts_by_site

@@ -161,11 +161,11 @@ def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
 
         shape = (
             (
-            "BlockValue["
-            + ",".join(describe(statement) for statement in final_class.statements)
-            + "]"
-            + f"; canFallThrough={final_class.can_fall_through}"
-            + f"; fallThroughGuards={len(final_class.fall_through)}"
+                "BlockValue["
+                + ",".join(describe(statement) for statement in final_class.statements)
+                + "]"
+                + f"; canFallThrough={final_class.can_fall_through}"
+                + f"; fallThroughGuards={len(final_class.fall_through)}"
             )
             if isinstance(final_class, BlockValue)
             else type(final_class).__name__
@@ -972,32 +972,32 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
             if isinstance(statement, (FunctionDef, AsyncFunctionDef))
             else (
                 _ModuleClassDefinitionBindingSugar(
-                statement, source_file.construction_event_receipt_cid
-            )
-            if isinstance(statement, ClassDef)
+                    statement, source_file.construction_event_receipt_cid
+                )
+                if isinstance(statement, ClassDef)
                 else (
                     _ModuleNameAssignmentBindingSugar(
                         statement, tuple(statement.targets)
                     )
-            if (
-                isinstance(statement, Assign)
+                    if (
+                        isinstance(statement, Assign)
                         and statement.targets
                         and all(
                             isinstance(target, Name) for target in statement.targets
-            )
+                        )
                     )
                     else (
                         _ModuleSubscriptDeleteBindingSugar(
-                statement, statement.targets[0].value
-            )
-            if (
-                isinstance(statement, Delete)
-                and len(statement.targets) == 1
-                and isinstance(statement.targets[0], Subscript)
-                and isinstance(statement.targets[0].value, Name)
-            )
-            else statement.sugar()
-        )
+                            statement, statement.targets[0].value
+                        )
+                        if (
+                            isinstance(statement, Delete)
+                            and len(statement.targets) == 1
+                            and isinstance(statement.targets[0], Subscript)
+                            and isinstance(statement.targets[0].value, Name)
+                        )
+                        else statement.sugar()
+                    )
                 )
             )
         )
@@ -2076,9 +2076,7 @@ def resolve_source_visible_frame(
     # success must cite, never rebuild.  Placed AFTER artifact identity checks
     # and BEFORE any SourceFile / MaterializeModule.  Failure already cites via
     # _install_opaque_call_obligation; success must take the same door.
-    off_pop = _off_population_materialize_gap(
-        resolved, graph=graph, session=session
-    )
+    off_pop = _off_population_materialize_gap(resolved, graph=graph, session=session)
     if off_pop is not None:
         return off_pop
     definition = resolved.definition
@@ -2172,9 +2170,7 @@ def _resolve_source_visible_frame_uncached(
     )
     from sugar_source_tree.reporter import NULL_REPORTER
 
-    dependency_graphs = _bind_dependency_graphs(
-        session, dict(dependency_graphs or {})
-    )
+    dependency_graphs = _bind_dependency_graphs(session, dict(dependency_graphs or {}))
     top = resolved.module_name.split(".", 1)[0]
     dependency_graphs[top] = graph
     if session.enabled:

@@ -219,9 +219,7 @@ def test_returned_manager_match_none_preserves_no_message_pattern(tmp_path: Path
 
 def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
     """Returned match=pattern seals the obligation; excinfo binds consumed occurrence."""
-    dist = _distribution(
-        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
-    )
+    dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
     consumer = (
         "import arbitrary\n"
         "def use():\n"
@@ -267,16 +265,18 @@ def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
         or getattr(binding.effect, "blame", None)
     )
     assert occurrence == str(binding)
-    assert all(_observed_binding(face) is None for face in exits.exits if isinstance(face, Halted))
+    assert all(
+        _observed_binding(face) is None
+        for face in exits.exits
+        if isinstance(face, Halted)
+    )
 
 
 def test_direct_imported_name_manager_with_keyword_uses_source_contract(
     tmp_path: Path,
 ):
     """Exact imported callee identity advances to its deeper source-body gap."""
-    dist = _distribution(
-        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
-    )
+    dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
     consumer = (
         "from arbitrary import boundary as hold\n"
         "def use():\n"
@@ -301,9 +301,7 @@ def test_direct_imported_name_manager_with_double_star_stays_loud(
     tmp_path: Path,
 ):
     """Imported ``**kwargs`` call advances to the same earlier provider-body gap."""
-    dist = _distribution(
-        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
-    )
+    dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
     consumer = (
         "from arbitrary import boundary as hold\n"
         "def use(options):\n"
@@ -328,9 +326,7 @@ def test_direct_imported_name_manager_with_double_star_stays_loud(
 
 def test_shadowed_imported_name_manager_is_not_authorized(tmp_path: Path):
     """A nearby import cannot authorize a parameter-shadowed manager call."""
-    dist = _distribution(
-        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
-    )
+    dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
     consumer = (
         "from arbitrary import boundary\n"
         "def use(boundary):\n"
@@ -346,9 +342,7 @@ def test_returned_manager_pattern_mismatch_preserves_halt_without_binding(
     tmp_path: Path,
 ):
     """Discrimination: message mismatch keeps the identical halt unbound."""
-    dist = _distribution(
-        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
-    )
+    dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
     consumer = (
         "import arbitrary\n"
         "def use():\n"
@@ -469,9 +463,7 @@ def test_assigned_returned_manager_projects_to_same_effect_boundary(tmp_path: Pa
     # EffectBoundary sugar from the projected ref (not a gap / resource lie).
     assert sugar.semantics is not None or sugar.boundary_faces is not None
     if isinstance(sugar.semantics, EffectBoundarySemanticsV1):
-        assert isinstance(
-            sugar.semantics.message_pattern_operand, NoMessagePatternV1
-        )
+        assert isinstance(sugar.semantics.message_pattern_operand, NoMessagePatternV1)
 
 
 def test_lying_wrapper_cannot_borrow_assertion_contract(tmp_path: Path):
@@ -487,9 +479,9 @@ def test_lying_wrapper_cannot_borrow_assertion_contract(tmp_path: Path):
     reference, node = _reference(context, tree)
 
     if isinstance(reference, SourceDerivedContextManagerRefV1):
-        assert not isinstance(reference.semantics, EffectBoundarySemanticsV1), (
-            reference.semantics
-        )
+        assert not isinstance(
+            reference.semantics, EffectBoundarySemanticsV1
+        ), reference.semantics
         # Resource path is honest; EffectBoundary must not be invented.
         assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
     else:
@@ -578,7 +570,13 @@ def test_returned_factored_dual_face_manager_preserves_both_guards(tmp_path: Pat
         "detail": getattr(reference, "detail", None),
         "semantics_type": type(getattr(reference, "semantics", None)).__name__,
         "message_operand": (
-            type(getattr(getattr(reference, "semantics", None), "message_pattern_operand", None)).__name__
+            type(
+                getattr(
+                    getattr(reference, "semantics", None),
+                    "message_pattern_operand",
+                    None,
+                )
+            ).__name__
             if isinstance(reference, SourceDerivedContextManagerRefV1)
             else None
         ),

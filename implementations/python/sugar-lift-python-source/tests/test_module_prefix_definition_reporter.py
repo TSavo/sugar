@@ -144,8 +144,8 @@ def test_definition_registration_lies_stay_loud(axis) -> None:
         candidate = definition
         candidate_reporter = NullReporter()
     elif axis == "foreign-reporter-table-ref":
-        _foreign_tree, _foreign_definition, candidate_reporter = (
-            _registered_definition("def foreign():\n    return 2\n")
+        _foreign_tree, _foreign_definition, candidate_reporter = _registered_definition(
+            "def foreign():\n    return 2\n"
         )
         candidate = definition
     elif axis == "late-retroactive-registration":
@@ -168,9 +168,7 @@ def test_definition_registration_lies_stay_loud(axis) -> None:
         )
         duplicate_root = materialize(tree.unit, tree.root.ref, duplicate_reporter)
         candidate = next(
-            node
-            for node in duplicate_root.walk()
-            if isinstance(node, FunctionDef)
+            node for node in duplicate_root.walk() if isinstance(node, FunctionDef)
         )
         candidate_reporter = producer
         assert candidate is not definition
@@ -178,4 +176,3 @@ def test_definition_registration_lies_stay_loud(axis) -> None:
 
     with pytest.raises(BackendDefect):
         consumer.retain_registered_node_from(candidate, candidate_reporter)
-
