@@ -1067,11 +1067,18 @@ class CallSiteValue(FloorValue):
     def subscript_with(self, operation, ctx):
         """Subscript on a callsite result (revealed after binary dig progress).
 
-        Same dig-or-symbolic totalizer as binary_operator_with.
+        Dig when the body floors; otherwise retain this callsite's symbolic
+        term. The operation owns the submission door -- the deleted central
+        dispatcher must never be rediscovered here.
         """
-        return self._dig_or_symbolic_redispatch(
-            operation, ctx, owner_suffix="callsite subscript receiver"
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        floor = self._dig_floor_or_none(
+            ctx,
+            owner=f"{operation.owner} callsite subscript receiver",
         )
+        receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
+        return operation.submit(receiver, ctx)
 
     def project_sequence_with(self, operation, ctx):
         """``a, b = f(...)``: unpack of a callsite result.
