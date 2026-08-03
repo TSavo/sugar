@@ -189,4 +189,225 @@ line="$(tail -1 "$tmp/docker.log")"
 examples="$(run explain --host bx --task examples-gate)"
 [[ "$examples" == *"network=required"* ]] || fail "examples-gate network requirement not explicit"
 
+# Artifact-manifest refusal belongs to the managed entrypoint, after the
+# toolchain has authenticated. Exercise that real shell boundary with /opt
+# relocated into this test's private root; only absolute fixture paths change.
+entrypoint_root="$tmp/entrypoint-root"
+entrypoint_under_test="$tmp/entrypoint-under-test.sh"
+entrypoint_bin="$tmp/entrypoint-bin"
+mkdir -p "$entrypoint_root/opt/sugar/bin" \
+  "$entrypoint_root/opt/pyright/nodeenv/bin" "$entrypoint_bin"
+python3 - "$repo/tools/sugar-build/entrypoint.sh" \
+  "$entrypoint_under_test" "$entrypoint_root" <<'PY'
+from pathlib import Path
+import sys
+
+source, target, root = map(Path, sys.argv[1:])
+target.write_text(source.read_text().replace("/opt/", f"{root}/opt/"))
+PY
+cat >"$entrypoint_bin/rustc" <<'SH'
+#!/usr/bin/env bash
+printf 'rustc 1.96.0\n'
+SH
+cat >"$entrypoint_bin/cargo" <<'SH'
+#!/usr/bin/env bash
+printf 'cargo 1.96.0\n'
+SH
+cat >"$entrypoint_bin/black" <<'SH'
+#!/usr/bin/env bash
+printf 'black 26.5.1\n'
+SH
+cat >"$entrypoint_bin/b3sum" <<'SH'
+#!/usr/bin/env bash
+printf 'b3sum 1.8.1\n'
+SH
+cat >"$entrypoint_bin/python" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --version) printf 'Python 3.12.13\n' ;;
+  -m) printf 'pyright 1.1.411\n' ;;
+  -c) printf 'node 26.5.0\n' ;;
+  -) exec "$REAL_PYTHON" "$@" ;;
+  *) exec "$REAL_PYTHON" "$@" ;;
+esac
+SH
+printf '#!/usr/bin/env bash\nexit 0\n' \
+  >"$entrypoint_root/opt/pyright/nodeenv/bin/node"
+printf 'node 26.5.0\n' >"$entrypoint_root/opt/pyright/node-version"
+chmod +x "$entrypoint_under_test" "$entrypoint_bin"/* \
+  "$entrypoint_root/opt/pyright/nodeenv/bin/node"
+
+manifest="$entrypoint_root/opt/sugar/required-artifacts.json"
+printf '{"artifacts":[]}{}\n' >"$manifest"
+status=0
+PATH="$entrypoint_bin:$PATH" REAL_PYTHON="$(command -v python3)" \
+  "$entrypoint_under_test" true >"$tmp/manifest-parse.out" \
+  2>"$tmp/manifest-parse.err" || status=$?
+[[ "$status" == 70 ]] || fail "malformed artifact manifest status=$status, want 70"
+grep -Fq 'crime=artifact-manifest-parse-failed' "$tmp/manifest-parse.err" \
+  || fail "malformed artifact manifest did not name parse failure"
+grep -Fq "$manifest" "$tmp/manifest-parse.err" \
+  || fail "malformed artifact manifest did not name its file"
+grep -Fq 'Extra data' "$tmp/manifest-parse.err" \
+  || fail "malformed artifact manifest did not retain the parse error"
+! grep -Fq 'artifact checksum mismatch' "$tmp/manifest-parse.err" \
+  || fail "malformed JSON was misreported as a checksum mismatch"
+
+artifact="$entrypoint_root/opt/sugar/bin/sugar"
+printf 'artifact payload\n' >"$artifact"
+chmod +x "$artifact"
+expected="$(printf '%064d' 0)"
+observed="$(python3 - "$artifact" <<'PY'
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+printf '{"artifacts":[{"name":"sugar","sha256":"%s"}]}\n' \
+  "$expected" >"$manifest"
+status=0
+PATH="$entrypoint_bin:$PATH" REAL_PYTHON="$(command -v python3)" \
+  "$entrypoint_under_test" true >"$tmp/manifest-checksum.out" \
+  2>"$tmp/manifest-checksum.err" || status=$?
+[[ "$status" == 70 ]] || fail "artifact checksum mismatch status=$status, want 70"
+grep -Fq 'crime=artifact-checksum-mismatch' "$tmp/manifest-checksum.err" \
+  || fail "checksum mismatch did not name its cause"
+grep -Fq "manifest=$manifest" "$tmp/manifest-checksum.err" \
+  || fail "checksum mismatch did not name its manifest"
+grep -Fq "artifact=$artifact" "$tmp/manifest-checksum.err" \
+  || fail "checksum mismatch did not name its artifact"
+grep -Fq "expected=$expected" "$tmp/manifest-checksum.err" \
+  || fail "checksum mismatch did not report its expected digest"
+grep -Fq "observed=$observed" "$tmp/manifest-checksum.err" \
+  || fail "checksum mismatch did not report its observed digest"
+! grep -Fq 'crime=artifact-manifest-parse-failed' "$tmp/manifest-checksum.err" \
+  || fail "checksum mismatch was misreported as a parse failure"
+
+# Exercise the exact writer script used by the Docker artifact builder. A
+# signal after the first artifact has been appended must leave the prior final
+# manifest byte-identical; existence alone would admit a truncated replacement.
+source "$repo/bin/lib/sugar-bx.sh"
+writer_workspace="$tmp/writer-workspace"
+writer_out="$tmp/writer-out"
+mkdir -p "$writer_workspace/bin" "$writer_out" "$tmp/writer-payloads"
+cat >"$writer_workspace/bin/sugarbin" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+binary=""
+while (($#)); do
+  if [[ "$1" == --bin ]]; then binary="$2"; shift 2; else shift; fi
+done
+[[ -n "$binary" ]]
+if [[ "$binary" == second && -n "${WRITER_BLOCK_MARKER:-}" ]]; then
+  : >"$WRITER_BLOCK_MARKER"
+  kill -TERM "$PPID"
+  exit 143
+fi
+printf '%s/%s\n' "$WRITER_PAYLOAD_ROOT" "$binary"
+SH
+chmod +x "$writer_workspace/bin/sugarbin"
+for binary in first second; do
+  printf '%s payload\n' "$binary" >"$tmp/writer-payloads/$binary"
+  printf '{}\n' >"$tmp/writer-payloads/$binary.sugarbin.json"
+done
+
+prior_manifest="$tmp/prior-required-artifacts.json"
+printf '{"prior":"evidence"}\n' >"$writer_out/required-artifacts.json"
+cp "$writer_out/required-artifacts.json" "$prior_manifest"
+writer_script="$(sugar_bx_artifact_build_script \
+  first,second release "$writer_workspace" "$writer_out")"
+status=0
+WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" \
+WRITER_BLOCK_MARKER="$tmp/writer-blocked" \
+  bash -c "$writer_script" || status=$?
+[[ -e "$tmp/writer-blocked" ]] || fail "writer never reached the mid-write kill point"
+[[ "$status" != 0 ]] || fail "killed manifest writer returned success"
+cmp -s "$prior_manifest" "$writer_out/required-artifacts.json" \
+  || fail "killed writer replaced the prior final manifest"
+if find "$writer_out" -maxdepth 1 -name '.required-artifacts.json.*' -print -quit | grep -q .; then
+  fail "killed writer left staging residue"
+fi
+
+unset WRITER_BLOCK_MARKER
+rm -f "$writer_out/required-artifacts.json"
+writer_script="$(sugar_bx_artifact_build_script \
+  first release "$writer_workspace" "$writer_out")"
+WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" bash -c "$writer_script"
+python3 - "$writer_out" <<'PY'
+import hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "required-artifacts.json").read_text())
+assert len(manifest["artifacts"]) == 1, manifest
+item = manifest["artifacts"][0]
+assert item["name"] == "first", item
+assert item["sha256"] == hashlib.sha256((root / "first").read_bytes()).hexdigest(), item
+assert not list(root.glob(".required-artifacts.json.*"))
+PY
+
+# Malformed prior manifests are evidence. Quarantine them by content before the
+# full artifact reset, collapse repeats, and make bounded eviction loud.
+quarantine_artifacts="$tmp/quarantine-artifacts"
+quarantine="$tmp/quarantine"
+mkdir -p "$quarantine_artifacts" "$quarantine"
+printf '{"artifacts":[' >"$quarantine_artifacts/required-artifacts.json"
+corrupt_digest="$(python3 - "$quarantine_artifacts/required-artifacts.json" <<'PY'
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+sugar_bx_quarantine_required_artifacts \
+  "$quarantine_artifacts" "$quarantine" 64 2>"$tmp/quarantine.err"
+quarantined="$quarantine/required-artifacts.sha256-$corrupt_digest.json"
+cmp -s "$quarantine_artifacts/required-artifacts.json" "$quarantined" \
+  || fail "quarantine did not preserve malformed bytes"
+sugar_bx_quarantine_required_artifacts \
+  "$quarantine_artifacts" "$quarantine" 64 2>>"$tmp/quarantine.err"
+[[ "$(find "$quarantine" -type f | wc -l | tr -d ' ')" == 1 ]] \
+  || fail "identical corruption did not collapse by content"
+
+cap_quarantine="$tmp/cap-quarantine"
+mkdir -p "$cap_quarantine"
+python3 - "$cap_quarantine" <<'PY'
+import os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+for index in range(64):
+    path = root / f"required-artifacts.sha256-{index:064x}.json"
+    path.write_text(f"old-{index}\n")
+    stamp = 1_700_000_000 + index
+    os.utime(path, (stamp, stamp))
+PY
+sugar_bx_quarantine_required_artifacts \
+  "$quarantine_artifacts" "$cap_quarantine" 64 2>"$tmp/quarantine-cap.err"
+[[ "$(find "$cap_quarantine" -type f | wc -l | tr -d ' ')" == 64 ]] \
+  || fail "quarantine cap did not conserve 64 entries"
+[[ ! -e "$cap_quarantine/required-artifacts.sha256-$(printf '%064x' 0).json" ]] \
+  || fail "quarantine did not evict the oldest entry first"
+[[ -e "$cap_quarantine/required-artifacts.sha256-$corrupt_digest.json" ]] \
+  || fail "quarantine evicted the newly observed corruption"
+grep -Fq 'crime=artifact-manifest-quarantine-cap-exceeded' \
+  "$tmp/quarantine-cap.err" || fail "quarantine eviction was silent"
+grep -Fq 'currentCount=65' "$tmp/quarantine-cap.err" \
+  || fail "quarantine eviction did not report its current count"
+
+valid_artifacts="$tmp/valid-artifacts"
+valid_quarantine="$tmp/valid-quarantine"
+mkdir -p "$valid_artifacts" "$valid_quarantine"
+printf '{"artifacts":[]}\n' >"$valid_artifacts/required-artifacts.json"
+sugar_bx_quarantine_required_artifacts \
+  "$valid_artifacts" "$valid_quarantine" 64
+[[ "$(find "$valid_quarantine" -type f | wc -l | tr -d ' ')" == 0 ]] \
+  || fail "valid manifest was quarantined"
+
+python3 - "$repo/bin/lib/sugar-bx.sh" <<'PY'
+import pathlib, sys
+source = pathlib.Path(sys.argv[1]).read_text()
+body = source.split("sugar_bx_build_artifacts_docker() {", 1)[1]
+body = body.split("\n}", 1)[0]
+quarantine = body.index(
+    'sugar_bx_quarantine_required_artifacts '
+    '$(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")'
+)
+reset = body.index('rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")')
+assert quarantine < reset, "malformed-manifest evidence is destroyed before quarantine"
+PY
+
 echo "PASS: sugarbin Docker execution contract"
