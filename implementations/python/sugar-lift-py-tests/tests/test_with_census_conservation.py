@@ -325,3 +325,39 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
     assert edge["missingKeys"] == []
     assert edge["extraKeys"] == []
     assert edge["duplicateKeys"] == []
+
+
+def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
+    tmp_path: Path,
+) -> None:
+    """A provider-call projection cannot erase its own unresolved With seat."""
+    _load()
+    from recensus_enumerate_consumer import demand_context_manager_resolution_events
+    from sugar_lift_py_tests.lift_rpc import (
+        install_provisional_contract_refs,
+        provisional_contract_refs_from_demands,
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+
+    path = tmp_path / "provider.py"
+    path.write_text(
+        "def run():\n"
+        "    handle_data = get_data()\n"
+        "    with handle_data as payload:\n"
+        "        return payload\n",
+        encoding="utf-8",
+    )
+    refs = provisional_contract_refs_from_demands(tmp_path)
+    install_provisional_contract_refs(tmp_path, refs)
+    source_cid = path_source(str(path))[2]
+
+    events, gaps = demand_context_manager_resolution_events(
+        workspace_root=tmp_path,
+        file_rel="provider.py",
+        source_cid=source_cid,
+    )
+
+    assert gaps == []
+    assert len(events) == 1
+    assert events[0]["outcome"] == "unconstructed"
+    assert events[0]["inputKey"]["sourceCid"] == source_cid
