@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,10 @@ ROSTER = [contract for batch in BATCHES.values() for contract in batch]
 
 def _body_path(reports_dir: Path, contract: str) -> Path:
     return reports_dir / f"{Path(contract).stem}.json"
+
+
+def _setup_path(reports_dir: Path) -> Path:
+    return reports_dir / "setup.json"
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -80,6 +85,20 @@ def _body(
 
 
 def initialize(reports_dir: Path, *, commit: str) -> int:
+    _write_json(
+        _setup_path(reports_dir),
+        {
+            "schemaVersion": 1,
+            "measurementClass": "sugarbin-shell-tier-setup",
+            "measuredCommit": commit,
+            "status": "unmeasured",
+            "reason": "preflight-not-run",
+            "requiredTools": [],
+            "missingTools": [],
+            "setupSteps": {},
+            "failedSteps": [],
+        },
+    )
     for contract in ROSTER:
         _write_json(
             _body_path(reports_dir, contract),
@@ -91,6 +110,58 @@ def initialize(reports_dir: Path, *, commit: str) -> int:
             ),
         )
     print(f"sugarbin-shell init roster={len(ROSTER)} absent={len(ROSTER)}")
+    return 0
+
+
+def preflight(
+    reports_dir: Path,
+    *,
+    commit: str,
+    required_tools: list[str],
+    setup_outcomes: list[str],
+) -> int:
+    tools = list(dict.fromkeys(required_tools))
+    outcomes: dict[str, str] = {}
+    for item in setup_outcomes:
+        name, separator, outcome = item.partition("=")
+        if not separator or not name or not outcome:
+            print(
+                f"::error::invalid setup outcome {item!r}; expected NAME=OUTCOME",
+                file=sys.stderr,
+            )
+            return 2
+        outcomes[name] = outcome
+
+    missing_tools = [tool for tool in tools if shutil.which(tool) is None]
+    failed_steps = [name for name, outcome in outcomes.items() if outcome != "success"]
+    refused = bool(missing_tools or failed_steps)
+    _write_json(
+        _setup_path(reports_dir),
+        {
+            "schemaVersion": 1,
+            "measurementClass": "sugarbin-shell-tier-setup",
+            "measuredCommit": commit,
+            "status": "refused" if refused else "ready",
+            "reason": "setup-refused" if refused else "setup-ready",
+            "requiredTools": tools,
+            "missingTools": missing_tools,
+            "setupSteps": outcomes,
+            "failedSteps": failed_steps,
+        },
+    )
+    if refused:
+        details: list[str] = []
+        if missing_tools:
+            details.append(f"missing required tools: {', '.join(missing_tools)}")
+        if failed_steps:
+            details.append(f"failed provisioning steps: {', '.join(failed_steps)}")
+        print(
+            f"::error::sugarbin shell tier setup refused: {'; '.join(details)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"sugarbin shell tier setup ready: {', '.join(tools)}")
     return 0
 
 
@@ -196,6 +267,31 @@ def audit(
     failed = 0
     test_elapsed_seconds = 0.0
 
+    setup, setup_read_error = _read_body(_setup_path(reports_dir))
+    setup_status = "unmeasured"
+    setup_reason = setup_read_error or "setup-report-invalid"
+    setup_missing_tools: list[str] = []
+    setup_failed_steps: list[str] = []
+    if setup_read_error is None:
+        assert setup is not None
+        if setup.get("measurementClass") != "sugarbin-shell-tier-setup":
+            setup_reason = "setup-measurement-class-mismatch"
+        elif require_commit and setup.get("measuredCommit") != require_commit:
+            setup_reason = "setup-commit-mismatch"
+        else:
+            setup_status = str(setup.get("status", "unmeasured"))
+            setup_reason = str(setup.get("reason", "setup-reason-missing"))
+            missing = setup.get("missingTools")
+            failed_setup = setup.get("failedSteps")
+            if isinstance(missing, list) and all(
+                isinstance(item, str) for item in missing
+            ):
+                setup_missing_tools = missing
+            if isinstance(failed_setup, list) and all(
+                isinstance(item, str) for item in failed_setup
+            ):
+                setup_failed_steps = failed_setup
+
     for contract in ROSTER:
         payload, read_error = _read_body(_body_path(reports_dir, contract))
         if read_error is not None:
@@ -252,7 +348,15 @@ def audit(
         "schemaVersion": 1,
         "measurementClass": "sugarbin-shell-tier-attendance",
         "measuredCommit": require_commit,
-        "status": "complete" if attended == len(ROSTER) else "unmeasured",
+        "status": (
+            "complete"
+            if setup_status == "ready" and attended == len(ROSTER)
+            else "unmeasured"
+        ),
+        "setupStatus": setup_status,
+        "setupReason": setup_reason,
+        "setupMissingTools": setup_missing_tools,
+        "setupFailedSteps": setup_failed_steps,
         "roster": len(ROSTER),
         "attended": attended,
         "passed": passed,
@@ -265,6 +369,11 @@ def audit(
 
     print("### sugarbin shell tier attendance")
     print()
+    print(f"- setup: `{setup_status}` ({setup_reason})")
+    if setup_missing_tools:
+        print(f"- missing tools: `{', '.join(setup_missing_tools)}`")
+    if setup_failed_steps:
+        print(f"- failed setup steps: `{', '.join(setup_failed_steps)}`")
     print(f"- roster: `{len(ROSTER)}`")
     print(f"- attended: `{attended}`")
     print(f"- passed: `{passed}`")
@@ -283,7 +392,13 @@ def audit(
     print(f"**R_sugarbin_shell_attendance = {absent}**")
     for crime in crimes:
         print(f"::error::{crime}", file=sys.stderr)
-    return 0 if attended == len(ROSTER) and passed == len(ROSTER) else 1
+    return (
+        0
+        if setup_status == "ready"
+        and attended == len(ROSTER)
+        and passed == len(ROSTER)
+        else 1
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -296,6 +411,12 @@ def main(argv: list[str] | None = None) -> int:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--reports-dir", type=Path, required=True)
     init_parser.add_argument("--commit", required=True)
+
+    preflight_parser = subparsers.add_parser("preflight")
+    preflight_parser.add_argument("--reports-dir", type=Path, required=True)
+    preflight_parser.add_argument("--commit", required=True)
+    preflight_parser.add_argument("--require-tool", action="append", default=[])
+    preflight_parser.add_argument("--setup-outcome", action="append", default=[])
 
     batch_parser = subparsers.add_parser("run-batch")
     batch_parser.add_argument("batch", choices=BATCHES)
@@ -319,6 +440,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "init":
         return initialize(args.reports_dir, commit=args.commit)
+    if args.command == "preflight":
+        return preflight(
+            args.reports_dir,
+            commit=args.commit,
+            required_tools=args.require_tool,
+            setup_outcomes=args.setup_outcome,
+        )
     if args.command == "run-batch":
         return run_batch(
             args.batch,

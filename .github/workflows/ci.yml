@@ -569,12 +569,39 @@ jobs:
         if: always() && !cancelled()
         run: python3 tests/test_sugarbin_shell_tier.py
 
-      - name: Install shell-contract dependency
+      - name: Provision Rust and pinned b3sum through the authoritative entrance
+        id: shell_contract_rust
         if: always() && !cancelled()
-        run: tools/ci-apt-install.sh b3sum
+        uses: ./.github/actions/setup-rust-cache
+
+      - name: Provision rsync through the authoritative package entrance
+        id: shell_contract_rsync
+        if: always() && !cancelled()
+        run: tools/ci-apt-install.sh rsync
+
+      # Provisioning failure is one setup refusal, not nine mysterious test
+      # failures. This step runs after either provisioner fails so it can name
+      # every absent tool; the batches run only when this exact precondition is
+      # green.
+      - name: Require the complete shell-contract toolset
+        id: shell_contract_preconditions
+        if: always() && !cancelled()
+        shell: bash
+        env:
+          SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
+          RUST_SETUP_OUTCOME: ${{ steps.shell_contract_rust.outcome }}
+          RSYNC_SETUP_OUTCOME: ${{ steps.shell_contract_rsync.outcome }}
+        run: |
+          python3 tools/sugarbin_shell_tier.py preflight \
+            --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
+            --commit "$GITHUB_SHA" \
+            --require-tool b3sum \
+            --require-tool rsync \
+            --setup-outcome "rust=$RUST_SETUP_OUTCOME" \
+            --setup-outcome "rsync=$RSYNC_SETUP_OUTCOME"
 
       - name: Run batch 1/3 — execution routes
-        if: always() && !cancelled()
+        if: ${{ always() && !cancelled() && steps.shell_contract_preconditions.outcome == 'success' }}
         shell: bash
         env:
           SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
@@ -585,7 +612,7 @@ jobs:
             --commit "$GITHUB_SHA"
 
       - name: Run batch 2/3 — guards and wrappers
-        if: always() && !cancelled()
+        if: ${{ always() && !cancelled() && steps.shell_contract_preconditions.outcome == 'success' }}
         shell: bash
         env:
           SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
@@ -596,7 +623,7 @@ jobs:
             --commit "$GITHUB_SHA"
 
       - name: Run batch 3/3 — artifacts and identities
-        if: always() && !cancelled()
+        if: ${{ always() && !cancelled() && steps.shell_contract_preconditions.outcome == 'success' }}
         shell: bash
         env:
           SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
