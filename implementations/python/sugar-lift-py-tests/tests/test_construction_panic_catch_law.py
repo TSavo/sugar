@@ -188,6 +188,77 @@ def audit():
     }
 
 
+def test_current_recensus_membranes_and_reraises_are_recognized(
+    tmp_path: Path,
+) -> None:
+    """The seven reviewed loci are accepted by shape, not by filename."""
+    package = tmp_path / "src" / "sugar_lift_py_tests"
+    package.mkdir(parents=True)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for name in (
+        "control_effect_recensus.py",
+        "recensus_enumerate_consumer.py",
+    ):
+        (scripts / name).write_text(
+            (_KIT / "scripts" / name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+    offenders = _SCANNER.scan_repository(tmp_path)
+
+    assert offenders == [], _SCANNER.format_report(offenders)
+
+
+def test_recensus_membrane_path_still_rejects_a_planted_suppressor(
+    tmp_path: Path,
+) -> None:
+    """An exact membrane path cannot authorize a swallow; pure re-raise can."""
+    package = tmp_path / "src" / "sugar_lift_py_tests"
+    package.mkdir(parents=True)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    consumer = scripts / "recensus_enumerate_consumer.py"
+    consumer.write_text(
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def measure_file_via_enumerate():
+    try:
+        raise ConstructionPanic(None)
+    except ConstructionPanic:
+        pass
+""",
+        encoding="utf-8",
+    )
+
+    rejected = _SCANNER.scan_repository(tmp_path)
+
+    assert [(row.path, row.kind) for row in rejected] == [
+        (
+            "scripts/recensus_enumerate_consumer.py",
+            "construction-panic-catch-outside-membrane",
+        )
+    ]
+
+    consumer.write_text(
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def measure_file_via_enumerate():
+    try:
+        raise ConstructionPanic(None)
+    except ConstructionPanic:
+        raise
+""",
+        encoding="utf-8",
+    )
+
+    accepted = _SCANNER.scan_repository(tmp_path)
+
+    assert accepted == []
+
+
 def test_named_membrane_path_does_not_hide_parse_error(tmp_path: Path) -> None:
     package = tmp_path / "src" / "sugar_lift_py_tests"
     package.mkdir(parents=True)
