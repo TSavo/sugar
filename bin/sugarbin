@@ -626,7 +626,7 @@ shelf_exercise_note_log() {
   reporter="$repo_root/tools/shelf_exercise_report.py"
   [[ -f "$reporter" ]] || return 0
   case "$msg" in
-    crime=unevictable-shelf-*|crime=private-filesystem-shelf-*|crime=cas-address-payload-mismatch*|crime=corrupt-shelf-cell*|crime=uncreatable-filesystem-shelf-*|crime=private-shared-cache-cell*)
+    crime=unevictable-shelf-*|crime=private-filesystem-shelf-*|crime=cas-address-payload-mismatch*|crime=corrupt-shelf-cell*|crime=uncreatable-filesystem-shelf-*|crime=private-shared-cache-cell*|crime=shelf-manifest-*|crime=read-only-shelf-recovery*)
       op=crime
       outcome=crime
       crime="${msg%% *}"
@@ -833,6 +833,101 @@ for key, value in expected.items():
 with open(path, "rb") as f: actual = hashlib.sha256(f.read()).hexdigest()
 if data.get("sha256") != actual:
     print("sugarbin: artifact checksum mismatch", file=sys.stderr); raise SystemExit(1)
+PY
+}
+
+# Filesystem-CAS membership is intentionally narrower than local build
+# identity. The cell is addressed by h(payload), while its manifest carries
+# stable source/platform/target/profile authority. Full cargo/rustc -Vv output
+# remains strict for local targets and mutable cache cells, but diagnostic host
+# OS residue cannot make identical bytes invalid at their content address.
+verify_filesystem_shelf_artifact() {
+  local binary_path="$1" stamp="$2" identity="$3" content_key="$4" cell="$5"
+  local manifest actual_key
+  manifest="$(artifact_manifest_path "$binary_path")"
+  [[ -f "$binary_path" && -x "$binary_path" ]] || return 1
+  [[ -f "$manifest" ]] || {
+    log "crime=shelf-manifest-parse-failed owner=bin/sugarbin cell=$cell path=$manifest error=missing-manifest replacement=republish the CAS cell from an authenticated artifact"
+    return 1
+  }
+
+  actual_key="$(blake3_512_file "$binary_path")" || return 1
+  if [[ "$actual_key" != "$content_key" ]]; then
+    log "crime=cas-address-payload-mismatch owner=bin/sugarbin cell=$cell address=$content_key payload=$actual_key replacement=evict the CAS cell; a content-addressed shelf cannot host p under h≠h(p)"
+    return 1
+  fi
+
+  python3 - "$manifest" "$binary_path" "$cell" "$bin_name" "$package" \
+    "$stamp" "$identity" "$(platform_key)" "$target_triple" "$profile" <<'PY'
+import hashlib
+import json
+import sys
+
+manifest, path, cell, binary, package, stamp, identity, platform, target, profile = sys.argv[1:]
+try:
+    with open(manifest, encoding="utf-8") as source:
+        data = json.load(source)
+except Exception as error:
+    print(
+        "sugarbin: crime=shelf-manifest-parse-failed "
+        f"owner=bin/sugarbin cell={cell} path={manifest} "
+        f"error={type(error).__name__}:{error} "
+        "replacement=republish the CAS cell from an authenticated artifact",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+expected = {
+    "schema": 1,
+    "binary": binary,
+    "package": package,
+    "sourceStamp": stamp,
+    "buildIdentity": identity,
+    "platform": platform,
+    "targetTriple": target,
+    "profile": profile,
+    "features": [],
+    "built": True,
+    "executed": False,
+}
+for field, expected_value in expected.items():
+    observed = data.get(field)
+    if observed != expected_value:
+        print(
+            "sugarbin: crime=shelf-manifest-identity-mismatch "
+            f"owner=bin/sugarbin cell={cell} field={field} "
+            f"expected={expected_value!r} observed={observed!r} "
+            "replacement=republish the CAS cell for the requested stable identity",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+# These fields are provenance retained for diagnosis, not CAS membership.
+# Absence is still a malformed manifest; differing verbose text is lawful.
+for field in ("rustc", "cargo"):
+    observed = data.get(field)
+    if not isinstance(observed, str) or not observed:
+        print(
+            "sugarbin: crime=shelf-manifest-identity-mismatch "
+            f"owner=bin/sugarbin cell={cell} field={field} "
+            f"expected='non-empty diagnostic provenance' observed={observed!r} "
+            "replacement=republish the CAS cell with complete provenance",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+with open(path, "rb") as payload:
+    actual_sha256 = hashlib.sha256(payload.read()).hexdigest()
+expected_sha256 = data.get("sha256")
+if expected_sha256 != actual_sha256:
+    print(
+        "sugarbin: crime=shelf-manifest-checksum-mismatch "
+        f"owner=bin/sugarbin cell={cell} path={path} "
+        f"expected={expected_sha256!r} observed={actual_sha256} "
+        "replacement=republish the manifest for these content-addressed bytes",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 PY
 }
 
@@ -1367,16 +1462,22 @@ PY
 }
 
 evict_shelf_cell() {
-  # Mechanism (not a comment): remove a regenerable stamp-keyed cell so resolve
-  # can rebuild. Fail-closed verify stays strict; recovery is eviction+rebuild.
+  # Recovery authority is supplied by the transport. A read-only bind is not
+  # an ownership failure and must never be narrated as root-owned corruption.
   local cell="$1" candidate="${2:-}" manifest="${3:-}"
+  if [[ "${SUGAR_BINARY_SHELF_READ_ONLY:-0}" == 1 ]]; then
+    [[ -z "$candidate" ]] || rm -f "$candidate" 2>/dev/null || true
+    [[ -z "$manifest" ]] || rm -f "$manifest" 2>/dev/null || true
+    log "crime=read-only-shelf-recovery owner=bin/sugarbin cell=$cell illegal shape=the authenticated shelf cell needs recovery but the transport mounted the shelf read-only replacement=repair or republish the cell through a writable shelf publisher; do not diagnose mount policy as corruption or ownership"
+    return 2
+  fi
   log "evicting regenerable shelf cell: $cell"
   rm -rf "$cell" 2>/dev/null || true
   [[ -z "$candidate" ]] || rm -f "$candidate" 2>/dev/null || true
   [[ -z "$manifest" ]] || rm -f "$manifest" 2>/dev/null || true
-  # Root-owned cells may survive unprivileged rm; leave a loud breadcrumb.
+  # A writable shelf cell that survives removal is a real mode/ownership arm.
   if [[ -d "$cell" ]]; then
-    log "crime=unevictable-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove as a privileged operator (sudo rm -rf cell) then rebuild; peer runners cannot heal root-owned cells"
+    log "crime=unevictable-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a writable shelf cell survived peer eviction replacement=repair its parent/cell modes through finalize_peer_evictable_shelf_cell, then rebuild"
     return 2
   fi
   return 0
@@ -1552,6 +1653,9 @@ pull_from_filesystem_shelf() {
   fi
   if filesystem_shelf_complete "$cell" "$shelf_name" \
     && ! filesystem_shelf_cell_is_peer_evictable "$cell" "$shelf_name"; then
+    if [[ "${SUGAR_BINARY_SHELF_READ_ONLY:-0}" == 1 ]]; then
+      evict_shelf_cell "$cell" || return $?
+    fi
     # Readable but peer-unevictable (classic root-owned 0755): do not serve as a
     # healthy hit. Try finalize heal; if that fails, miss → rebuild path.
     if ! finalize_peer_evictable_shelf_cell "$cell" "$shelf_name"; then
@@ -1571,23 +1675,17 @@ pull_from_filesystem_shelf() {
   chmod 0755 "$candidate_dir" "$tmp"
   chmod 0644 "$manifest"
   mv -f "$tmp" "$candidate"
-  # CAS membership: payload at address h must satisfy h(payload) = address.
-  local actual_key
-  if ! actual_key="$(blake3_512_file "$candidate")"; then
-    rm -f "$candidate" "$manifest" 2>/dev/null || true
-    return 1
-  fi
-  if [[ "$actual_key" != "$content_key" ]]; then
-    log "crime=cas-address-payload-mismatch owner=bin/sugarbin cell=$cell address=$content_key payload=$actual_key replacement=evict the CAS cell; a content-addressed shelf cannot host p under h≠h(p)"
+  if ! verify_filesystem_shelf_artifact \
+    "$candidate" "$stamp" "$identity" "$content_key" "$cell"; then
+    # Named verifier refusal: remove a writable regenerable cell, or refuse by
+    # read-only recovery authority without mislabeling the cell.
     evict_shelf_cell "$cell" "$candidate" "$manifest" || return $?
     return 1
   fi
-  if ! verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"; then
-    # Strict check failed: do not serve. Evict regenerable cell → miss → rebuild.
-    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=evict cell and rebuild from declared inputs"
-    evict_shelf_cell "$cell" "$candidate" "$manifest" || return $?
-    return 1
-  fi
+  # The shelf manifest retains publisher provenance. The mutable local cache
+  # and target require testimony for the current cargo/rustc environment, so
+  # mint that testimony only after CAS and stable identity authenticate.
+  write_artifact_manifest "$candidate" "$stamp" "$identity"
   log "phase=resolve-hit source=filesystem-shelf bin=$bin_name name=$shelf_name content=$(_stamp_short "$content_key")… stamp=$(_stamp_short "$stamp")…"
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }

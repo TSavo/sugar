@@ -40,10 +40,19 @@ Manifest parse failure and stable-field mismatch receive named terminals.
 Payload-address mismatch remains the existing CAS crime. No failure is called
 byte corruption unless payload bytes fail a byte-integrity check.
 
+After shelf authentication, the mutable local cache remints its manifest with
+the current diagnostic Cargo/Rust provenance before strict local
+materialization. The shelf retains publisher provenance; the local target does
+not pretend the publisher environment is the current execution environment.
+
 The battleaxe transport also declares when the shelf bind is read-only.
 Recovery checks that declaration before attempting eviction and reports a
 read-only recovery refusal. A writable shelf that genuinely cannot remove a
 cell retains the peer-ownership/mode refusal.
+
+Both new refusal families remain crimes in the shelf-exercise receipt. More
+accurate reason names must not turn an exercised refusal into apparent clean
+silence.
 
 ## Discrimination
 
@@ -59,4 +68,3 @@ An end-to-end temporary shelf contract proves four arms:
 
 The test also proves that the strict local verifier still rejects Cargo
 identity drift. No existing shelf cell is deleted, chmodded, or rewritten.
-

@@ -92,6 +92,7 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$build_line" == *"'$core_ref'"* && "$build_line" == *"bin/sugarbin"* ]] || fail "artifact was not resolved inside managed core: $build_line"
 [[ "$build_line" == *"dst=/root/.cache/sugar/binaries"* ]] || fail "managed builder omitted persistent verified cache"
 [[ "$build_line" == *"dst=/root/.cache/sugar/binary-shelf-v2,readonly"* ]] || fail "ordinary managed resolution shelf is missing or writable"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_SHELF_READ_ONLY=1'"* ]] || fail "ordinary managed resolution did not carry read-only shelf authority"
 [[ "$build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=0'"* ]] || fail "ordinary managed resolution retained an implicit build fallback"
 [[ "$build_line" == *"CARGO_TARGET_DIR=/managed-target"* ]] || fail "managed builder reused ambient Cargo target"
 [[ "$build_line" == *"SUGAR_BINARY_TARGET_ROOT=/managed-target"* ]] || fail "managed manifest root diverges from Cargo target"
@@ -119,6 +120,7 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" == *"src=C:"* ]] || fail "WSL bind source was not translated"
 [[ "$line" == *"dst=/opt/sugar/bin,readonly"* ]] || fail "artifact mount not read-only"
 [[ "$line" == *"dst=/root/.cache/sugar/binary-shelf-v2,readonly"* ]] || fail "managed task cannot consume exact shelf payloads"
+[[ "$line" == *"'--env' 'SUGAR_BINARY_SHELF_READ_ONLY=1'"* ]] || fail "managed task did not carry read-only shelf authority"
 [[ "$line" == *"required-artifacts.json,readonly"* ]] || fail "stamp mount not read-only"
 [[ "$line" != *"--env' 'SUGAR_BIN="* ]] || fail "orchestrator forged SUGAR_BIN before manifest verification"
 [[ "$entrypoint" == *'export SUGAR_BIN=/opt/sugar/bin/sugar'* ]] || fail "entrypoint does not inject verified sugar"
@@ -127,6 +129,16 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" != *docker.sock* ]] || fail "Docker socket leaked into task"
 [[ "$line" != *"--network' 'none"* ]] || fail "ad-hoc Docker command was forced offline"
 [[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] || fail "managed build/task count wrong"
+
+# Shelf mount authority belongs to the transport, never to caller-forwarded
+# environment. A payload cannot turn the read-only task mount into writable
+# recovery authority by forwarding a contradictory value.
+: >"$tmp/docker.log"
+SUGAR_BINARY_SHELF_READ_ONLY=0 run run --host bx --env docker:core \
+  --env SUGAR_BINARY_SHELF_READ_ONLY -- sh -c 'echo authority' >/dev/null
+line="$(tail -1 "$tmp/docker.log")"
+[[ "$line" == *"'--env' 'SUGAR_BINARY_SHELF_READ_ONLY=1'"* ]] || fail "task lost transport-owned read-only shelf authority"
+[[ "$line" != *"'--env' 'SUGAR_BINARY_SHELF_READ_ONLY=0'"* ]] || fail "task forwarded forged writable shelf authority"
 
 : >"$tmp/docker.log"
 run build --host bx --env docker:core --profile debug --needs sugar >/dev/null
@@ -144,6 +156,7 @@ build_line="$(head -1 "$tmp/docker.log")"
 [[ "$build_line" == *"'--env' 'SUGAR_BINARY_REQUIRE_PUBLISH=1'"* ]] || fail "explicit managed publisher did not require a complete shelf cell"
 [[ "$build_line" != *"SUGAR_BINARY_PUBLISH=0 bin/sugarbin"* ]] || fail "managed build script overrode explicit publish authority"
 [[ "$build_line" == *"dst=/root/.cache/sugar/binary-shelf-v2"* && "$build_line" != *"dst=/root/.cache/sugar/binary-shelf-v2,readonly"* ]] || fail "explicit managed publisher did not receive the writable shelf"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_SHELF_READ_ONLY=0'"* ]] || fail "explicit managed publisher retained read-only shelf authority"
 : >"$tmp/docker.log"
 
 status=0

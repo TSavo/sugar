@@ -104,12 +104,16 @@ _LOG_EXERCISE = (
     re.compile(r"sugarbin:\s*prebuilt cache hit\b"),
     re.compile(r"sugarbin:\s*prebuilt cache rejected\b"),
 )
-# Crimes that mean the shelf path was entered and refused.
-_LOG_CRIME = re.compile(
-    r"sugarbin:\s*crime=(?:unevictable-shelf-|private-filesystem-shelf-|"
+# Crimes that mean the shelf path was entered and refused. This fragment owns
+# both recognition and reason extraction so adding a truthful terminal cannot
+# silently disappear from one side of the receipt.
+_SHELF_CRIME_NAME = (
+    r"(?:unevictable-shelf-|private-filesystem-shelf-|"
     r"cas-address-payload-mismatch|corrupt-shelf-cell|"
-    r"uncreatable-filesystem-shelf-|private-shared-cache-cell)"
+    r"uncreatable-filesystem-shelf-|private-shared-cache-cell|"
+    r"shelf-manifest-|read-only-shelf-recovery)"
 )
+_LOG_CRIME = re.compile(rf"sugarbin:\s*crime={_SHELF_CRIME_NAME}")
 # Evidence the binary resolve path ran at all (so NEVER_TOUCHED is claimable).
 _LOG_RESOLVE = (
     re.compile(r"sugarbin:\s*phase=resolve-start\b"),
@@ -274,9 +278,7 @@ def classify_log(text: str) -> tuple[str, list[str]]:
 
     # Extract crime= tags for the reason line.
     crime_tags = re.findall(
-        r"sugarbin:\s*(crime=(?:unevictable-shelf-|private-filesystem-shelf-|"
-        r"cas-address-payload-mismatch|corrupt-shelf-cell|"
-        r"uncreatable-filesystem-shelf-|private-shared-cache-cell)[^\s]*)",
+        rf"sugarbin:\s*(crime={_SHELF_CRIME_NAME}[^\s]*)",
         text,
     )
 
