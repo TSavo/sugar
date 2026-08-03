@@ -270,6 +270,78 @@ def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
     assert all(_observed_binding(face) is None for face in exits.exits if isinstance(face, Halted))
 
 
+def test_direct_imported_name_manager_with_keyword_uses_source_contract(
+    tmp_path: Path,
+):
+    """Exact imported callee identity advances to its deeper source-body gap."""
+    dist = _distribution(
+        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
+    )
+    consumer = (
+        "from arbitrary import boundary as hold\n"
+        "def use():\n"
+        "    pattern = 'needle'\n"
+        "    with hold(ValueError, match=pattern) as info:\n"
+        "        raise ValueError('needle')\n"
+    )
+    tree, context, _ = _populate(tmp_path, consumer, dist=dist)
+    reference, _ = _reference(context, tree)
+
+    assert isinstance(reference, ContextManagerResolutionGapV1), reference
+    assert reference.target_symbol == "python:arbitrary.boundary"
+    assert reference.kind == "source-body-gap"
+    assert "CallSiteSugar at arbitrary/manager.py:18:11" in reference.detail
+    assert (
+        "source call definition is not this call's exact typed occurrence"
+        in reference.detail
+    )
+
+
+def test_direct_imported_name_manager_with_double_star_stays_loud(
+    tmp_path: Path,
+):
+    """Imported ``**kwargs`` call advances to the same earlier provider-body gap."""
+    dist = _distribution(
+        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
+    )
+    consumer = (
+        "from arbitrary import boundary as hold\n"
+        "def use(options):\n"
+        "    with hold(ValueError, **options) as info:\n"
+        "        raise ValueError('needle')\n"
+    )
+    tree, context, _ = _populate(tmp_path, consumer, dist=dist)
+    reference, _ = _reference(context, tree)
+
+    assert isinstance(reference, ContextManagerResolutionGapV1), reference
+    assert reference.target_symbol == "python:arbitrary.boundary"
+    # The provider body fails before actual binding, so the prospective
+    # ``incomplete-call-actuals`` terminal is not observable yet.  Pin the
+    # earlier owner rather than pretending the **kwargs layer executed.
+    assert reference.kind == "source-body-gap"
+    assert "CallSiteSugar at arbitrary/manager.py:18:11" in reference.detail
+    assert (
+        "source call definition is not this call's exact typed occurrence"
+        in reference.detail
+    )
+
+
+def test_shadowed_imported_name_manager_is_not_authorized(tmp_path: Path):
+    """A nearby import cannot authorize a parameter-shadowed manager call."""
+    dist = _distribution(
+        tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
+    )
+    consumer = (
+        "from arbitrary import boundary\n"
+        "def use(boundary):\n"
+        "    with boundary(ValueError, match='needle') as info:\n"
+        "        raise ValueError('needle')\n"
+    )
+    _, context, _ = _populate(tmp_path, consumer, dist=dist)
+
+    assert context.source_derived_contract_refs == {}
+
+
 def test_returned_manager_pattern_mismatch_preserves_halt_without_binding(
     tmp_path: Path,
 ):
