@@ -63,6 +63,7 @@ status=0
 (cd "$fixture" && SUGARBIN_WRAPPER_STATUS=37 bin/bpytest -q tests/unit) || status=$?
 [[ "$status" -eq 37 ]] || { echo "bpytest returned $status, expected 37" >&2; exit 1; }
 [[ "$(wc -c <"$SUGARBIN_WRAPPER_COUNT" | tr -d ' ')" -eq 1 ]] || { echo "bpytest invoked sugarbin more than once" >&2; exit 1; }
-assert_args run --host bx --task python-unit -- -q tests/unit
+assert_args run --host bx --env SUGAR_BINARY_ALLOW_BUILD \
+  --task authenticated-python-lift -- -q tests/unit
 
 echo "PASS: sugarbin wrapper compatibility contract"
