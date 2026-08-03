@@ -40,23 +40,50 @@ def _bind() -> None:
         g[name] = getattr(da, name)
 
 
-def _export_terminal_result(result: Any) -> Any:
-    """Definition/gap only — no path warrants or import-binding CID.
+def _export_terminal_result(
+    result: Any,
+    *,
+    incoming_warrants: tuple[ReexportWarrantV1, ...],
+) -> Any:
+    """Definition/gap plus the structural suffix owned by this cache key.
 
-    Reexport hops carry path warrants and cannot share the pure-entry memo
-    (that memo keeps module-structural reexport warrants).  The terminal memo
-    is the shared definition identity both doors restamp onto.
+    The caller's incoming prefix is path-specific testimony and is stripped.
+    The remainder is the cache key's structural path to the definition and
+    must survive so a later caller can compose its own prefix onto it.
     """
     if isinstance(result, ResolvedPythonObjectV1):
+        prefix_length = len(incoming_warrants)
+        if result.reexport_warrants[:prefix_length] != incoming_warrants:
+            raise ValueError(
+                "resolved re-export warrants do not preserve incoming prefix"
+            )
         return replace(
             result,
             import_binding_cid="",
-            reexport_warrants=(),
+            reexport_warrants=result.reexport_warrants[prefix_length:],
             cid="",
         )
     if isinstance(result, PythonObjectResolutionGapV1):
         return replace(result, import_binding_cid="")
     return result
+
+
+def _compose_reexport_warrants(
+    incoming_prefix: tuple[ReexportWarrantV1, ...],
+    cached_suffix: tuple[ReexportWarrantV1, ...],
+) -> tuple[ReexportWarrantV1, ...]:
+    """Join caller-owned path testimony to cache-owned structural testimony."""
+    if incoming_prefix and cached_suffix:
+        prefix_end = incoming_prefix[-1]
+        suffix_start = cached_suffix[0]
+        if (
+            prefix_end.to_module != suffix_start.from_module
+            or prefix_end.to_source_cid != suffix_start.from_source_cid
+        ):
+            raise ValueError(
+                "cached re-export warrant suffix does not compose with incoming prefix"
+            )
+    return (*incoming_prefix, *cached_suffix)
 
 
 def _restamp_export_result(
@@ -71,7 +98,9 @@ def _restamp_export_result(
             result,
             import_binding_cid=binding_cid,
             reexport_warrants=(
-                warrants if warrants is not None else result.reexport_warrants
+                _compose_reexport_warrants(warrants, result.reexport_warrants)
+                if warrants is not None
+                else result.reexport_warrants
             ),
             cid="",
         )
@@ -98,11 +127,13 @@ def resolve_export(
     * **pure-entry** (``export_resolutions``): how THIS module exports the name,
       including module-structural reexport warrants.  Filled only on pure entry
       (no path warrants / empty seen).
-    * **terminal** (``export_terminals``): definition/gap only.  Filled on every
-      successful resolve so a reexport hop with path warrants can hit after a
-      pure resolve of the same symbol (or after another hop) without re-running
-      prefix fallthrough.  Measured on _json: pure-entry hit for repeats, but
-      reexport hops with warrants skipped the memo and re-paid ~0.8s prefix.
+    * **terminal** (``export_terminals``): definition/gap plus the structural
+      warrant suffix from this key to the definition.  Filled on every
+      successful resolve so a reexport hop can prepend its incoming path after
+      a pure resolve of the same symbol (or after another hop) without
+      re-running prefix fallthrough.  Measured on _json: pure-entry hit for
+      repeats, but reexport hops with warrants skipped the memo and re-paid
+      ~0.8s prefix.
 
     ``seen`` still owns cycle detection and is checked before either memo.
     """
@@ -144,8 +175,12 @@ def resolve_export(
         seen,
         session=session,
     )
-    # Terminal definition/gap: always, so the next hop can hit.
-    session.remember_export_terminal(cache_key, _export_terminal_result(result))
+    # Terminal definition/gap plus this key's structural warrant suffix:
+    # always, so the next hop can hit without losing path testimony.
+    session.remember_export_terminal(
+        cache_key,
+        _export_terminal_result(result, incoming_warrants=warrants),
+    )
     # Pure-entry form (keeps module-structural warrants): pure door only.
     if pure_entry:
         session.remember_export(

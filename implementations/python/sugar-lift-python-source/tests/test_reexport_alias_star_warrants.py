@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import csv
+from dataclasses import replace
 import importlib.metadata
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ from sugar_lift_python_source.dependency_artifact import (
     ResolvedPythonObjectV1,
     resolve_import_binding,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
 
 def _dist(root: Path, *, name: str, files: dict[str, str]) -> importlib.metadata.Distribution:
@@ -101,6 +103,104 @@ def test_chained_reexport_still_resolves(tmp_path: Path) -> None:
     assert isinstance(result, ResolvedPythonObjectV1)
     assert result.module_name == "example_pkg.implementation"
     assert len(result.reexport_warrants) == 2
+
+
+def test_cached_reexport_suffix_composes_with_incoming_prefix(tmp_path: Path) -> None:
+    """A terminal memo retains the structural path from its key to definition."""
+    dist = _dist(
+        tmp_path,
+        name="example-pkg",
+        files={
+            "example_pkg/__init__.py": "from example_pkg.mid import build\n",
+            "example_pkg/mid.py": "from example_pkg.implementation import build\n",
+            "example_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    session = SourceResolutionSession()
+
+    primed = resolve_import_binding(
+        _call_demand(
+            tmp_path,
+            "from example_pkg.mid import build\nbuild(1)\n",
+        ),
+        graph=graph,
+        session=session,
+    )
+    resolved = resolve_import_binding(
+        _call_demand(tmp_path, "import example_pkg\nexample_pkg.build(1)\n"),
+        graph=graph,
+        session=session,
+    )
+
+    assert isinstance(primed, ResolvedPythonObjectV1)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    assert resolved.module_name == "example_pkg.implementation"
+    assert [
+        (warrant.from_module, warrant.to_module)
+        for warrant in resolved.reexport_warrants
+    ] == [
+        ("example_pkg", "example_pkg.mid"),
+        ("example_pkg.mid", "example_pkg.implementation"),
+    ]
+
+
+def test_cached_reexport_suffix_refuses_noncomposable_prefix(tmp_path: Path) -> None:
+    """A terminal memo may never drop a suffix it cannot join to the caller path."""
+    dist = _dist(
+        tmp_path,
+        name="example-pkg",
+        files={
+            "example_pkg/__init__.py": "from example_pkg.mid import build\n",
+            "example_pkg/mid.py": "from example_pkg.implementation import build\n",
+            "example_pkg/other.py": "from example_pkg.implementation import build\n",
+            "example_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    session = SourceResolutionSession()
+    primed = resolve_import_binding(
+        _call_demand(
+            tmp_path,
+            "from example_pkg.mid import build\nbuild(1)\n",
+        ),
+        graph=graph,
+        session=session,
+    )
+    assert isinstance(primed, ResolvedPythonObjectV1)
+    assert len(primed.reexport_warrants) == 1
+
+    suffix = primed.reexport_warrants[0]
+    incompatible_suffix = replace(
+        suffix,
+        from_module="example_pkg.other",
+        from_source_cid=graph.modules["example_pkg.other"].source_cid,
+        cid="",
+    )
+    terminal = replace(
+        primed,
+        import_binding_cid="",
+        reexport_warrants=(incompatible_suffix,),
+        cid="",
+    )
+    session.remember_export_terminal(
+        (
+            graph.distribution_artifact_cid,
+            "example_pkg.mid",
+            "build",
+        ),
+        terminal,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cached re-export warrant suffix does not compose with incoming prefix",
+    ):
+        resolve_import_binding(
+            _call_demand(tmp_path, "import example_pkg\nexample_pkg.build(1)\n"),
+            graph=graph,
+            session=session,
+        )
 
 
 def test_static_alias_records_both_occurrences(tmp_path: Path) -> None:
