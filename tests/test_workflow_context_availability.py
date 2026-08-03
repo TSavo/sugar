@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
+ACTIONLINT = os.environ.get("ACTIONLINT", "actionlint")
+ACTIONLINT_VERSION = "v1.7.12"
+
+
+def _run_actionlint(*paths: Path) -> subprocess.CompletedProcess[str]:
+    """Run the version-pinned GitHub workflow schema/expression validator."""
+
+    return subprocess.run(
+        [
+            ACTIONLINT,
+            "-oneline",
+            *(str(path) for path in paths),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _pre_dispatch_runner_context_violations(text: str) -> list[int]:
@@ -85,6 +106,64 @@ def _has_exact_merge_group_trigger(text: str) -> bool:
 
 
 class WorkflowContextAvailabilityTest(unittest.TestCase):
+    def test_actionlint_version_is_pinned(self) -> None:
+        result = subprocess.run(
+            [ACTIONLINT, "-version"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.splitlines()[0], ACTIONLINT_VERSION)
+
+    def test_actionlint_dispatchability_discriminator(self) -> None:
+        illegal = """\
+name: planted illegal context
+on: workflow_dispatch
+jobs:
+  planted:
+    name: illegal ${{ env.NOT_AVAILABLE_BEFORE_DISPATCH }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unreachable
+"""
+        lawful = """\
+name: lawful workflow
+on: workflow_dispatch
+jobs:
+  planted:
+    name: lawful static name
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo reachable
+"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "workflow.yml"
+            path.write_text(illegal)
+            rejected = _run_actionlint(path)
+            rejected_output = rejected.stdout + rejected.stderr
+            self.assertNotEqual(rejected.returncode, 0, rejected_output)
+            self.assertIn('context "env" is not allowed here', rejected_output)
+            self.assertIn(f"{path}:5:23", rejected_output)
+
+            path.write_text(lawful)
+            accepted = _run_actionlint(path)
+            self.assertEqual(
+                accepted.returncode,
+                0,
+                accepted.stdout + accepted.stderr,
+            )
+
+    def test_every_workflow_is_schema_and_expression_valid(self) -> None:
+        workflows = tuple(
+            sorted((*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")))
+        )
+        self.assertTrue(workflows, "workflow audit denominator must be non-empty")
+        result = _run_actionlint(*workflows)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_runner_context_availability_discriminator(self) -> None:
         workflow = """\
 env:
