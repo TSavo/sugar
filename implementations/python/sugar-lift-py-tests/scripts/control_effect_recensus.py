@@ -893,6 +893,36 @@ def main() -> int:
     if args.plan_json is not None and args.shard_index is None:
         parser.error("--plan-json requires --shard-index for worker mode")
 
+    # Runtime identity is producer identity. Authenticate it before corpus
+    # selection, demand derivation, checkpoints, or any construction stage.
+    from compose_control_effect_board import (
+        resolve_executing_runtime_attestation,
+        unmeasured_envelope,
+    )
+
+    runtime_attestation, runtime_failure = resolve_executing_runtime_attestation()
+    if runtime_attestation is None:
+        result_path = args.json or (args.out_dir / "recensus.json")
+        result = unmeasured_envelope(
+            plan=None,
+            missing_shards=["runtime"],
+            unmeasured_reasons={
+                "runtime": str(
+                    runtime_failure.get("runtimeIdentityFailure")
+                    or runtime_failure.get("runtimeIdentityMismatch")
+                    or "runtimeIdentity/v1 refused"
+                )
+            },
+            measured_commit=args.commit,
+            runtime_failure=runtime_failure,
+        )
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return 2
+
     if not args.corpus.exists():
         parser.error(f"corpus not found: {args.corpus}")
 
@@ -1807,6 +1837,7 @@ def main() -> int:
             shard_index=args.shard_index,
             terminal_rows=measured_rows,
             measured_commit=tip_commit,
+            runtime_attestation=runtime_attestation,
         )
         partial_path = args.partial_out or (
             out / f"partial-s{args.shard_index:02d}.json"
@@ -1854,6 +1885,7 @@ def main() -> int:
         },
         with_census_fn=_with_census_partition,
         manifest_cid=checkpoint.manifest_cid,
+        runtime_attestation=runtime_attestation,
     )
     if seal_status != "sealed":
         _narrate(

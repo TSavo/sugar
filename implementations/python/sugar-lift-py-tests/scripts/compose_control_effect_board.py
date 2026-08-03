@@ -53,6 +53,7 @@ _TERMINAL_CONVENTION = {
     "blocking_terminal_count": "number of terminals that blocked construction",
     "final_terminal": "last observed terminal, separate from both counts",
 }
+_RUNTIME_AUTO = object()
 
 _PANDAS_3_0_3_AGGREGATE_HASH = (
     "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
@@ -93,6 +94,111 @@ def canonical_cid(obj: Mapping[str, Any]) -> str:
     """Content id of a JSON-stable object (sort_keys, no host noise)."""
     rendered = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
     return _blake3_512(rendered.encode("utf-8"))
+
+
+def _runtime_attestation_fields(
+    runtime_attestation: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate one closed runtime witness without trusting its claimed CID."""
+    from sugar_lift_py_tests.authenticated_pytest import runtime_cid_for_identity
+
+    required_fields = {"requiredRuntime", "runtimeIdentity", "runtimeCid"}
+    if not required_fields.issubset(runtime_attestation):
+        return None, (
+            "runtimeIdentity/v1 absent: "
+            f"missing={sorted(required_fields - set(runtime_attestation))}"
+        )
+    required = runtime_attestation.get("requiredRuntime")
+    identity = runtime_attestation.get("runtimeIdentity")
+    claimed_cid = runtime_attestation.get("runtimeCid")
+    if not isinstance(required, str) or not required:
+        return None, "requiredRuntime absent from runtimeIdentity/v1 testimony"
+    if not isinstance(identity, Mapping):
+        return None, "runtimeIdentity/v1 absent"
+    try:
+        recomputed_cid = runtime_cid_for_identity(identity)
+    except Exception as error:  # closed runtime schema names its own defect
+        return None, f"runtimeIdentity/v1 malformed: {type(error).__name__}: {error}"
+    if claimed_cid != recomputed_cid:
+        return None, "runtimeCid is not recomputable from runtimeIdentity/v1"
+    observed_required = (
+        f"{identity.get('implementation')}-{identity.get('version')}"
+    )
+    if required != observed_required:
+        return None, (
+            "requiredRuntime mismatches its runtimeIdentity/v1: "
+            f"required={required} observed={observed_required}"
+        )
+    return {
+        "requiredRuntime": required,
+        "runtimeIdentity": dict(identity),
+        "runtimeCid": recomputed_cid,
+    }, None
+
+
+def resolve_executing_runtime_attestation() -> tuple[
+    dict[str, Any] | None, dict[str, Any]
+]:
+    """Authenticate the executing interpreter before any producer input opens."""
+    from sugar_lift_py_tests import authenticated_pytest as runtime_authority
+
+    try:
+        required = runtime_authority.declared_interpreter_runtime()
+    except Exception as error:
+        return None, {
+            "runtimeIdentityFailure": (
+                f"requiredRuntime resolution failed: {type(error).__name__}: {error}"
+            )
+        }
+    try:
+        identity = runtime_authority.observe_runtime_identity_v1()
+    except Exception as error:
+        return None, {
+            "requiredRuntime": required,
+            "runtimeIdentityFailure": str(error),
+        }
+
+    identity_wire = identity.to_wire()
+    try:
+        runtime_cid = runtime_authority.runtime_cid_for_identity(identity)
+    except Exception as error:
+        return None, {
+            "requiredRuntime": required,
+            "runtimeIdentityFailure": str(error),
+        }
+    observed = {
+        "requiredRuntime": required,
+        "runtimeIdentity": identity_wire,
+        "runtimeCid": runtime_cid,
+    }
+    try:
+        runtime_authority.authenticate_runtime_identity_v1(identity)
+    except runtime_authority.ExecutionEnvironmentMismatch as error:
+        return None, {**observed, "runtimeIdentityMismatch": str(error)}
+    except Exception as error:
+        return None, {
+            **observed,
+            "runtimeIdentityFailure": f"{type(error).__name__}: {error}",
+        }
+    validated, reason = _runtime_attestation_fields(observed)
+    if validated is None:
+        return None, {**observed, "runtimeIdentityFailure": str(reason)}
+    return validated, {}
+
+
+def _resolve_runtime_argument(
+    runtime_attestation: Mapping[str, Any] | None | object,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if runtime_attestation is _RUNTIME_AUTO:
+        return resolve_executing_runtime_attestation()
+    if runtime_attestation is None:
+        return None, {"runtimeIdentityFailure": "runtimeIdentity/v1 absent"}
+    if not isinstance(runtime_attestation, Mapping):
+        return None, {"runtimeIdentityFailure": "runtimeIdentity/v1 malformed"}
+    validated, reason = _runtime_attestation_fields(runtime_attestation)
+    if validated is None:
+        return None, {"runtimeIdentityFailure": str(reason)}
+    return validated, {}
 
 
 def shard_file_set_cid(files: Sequence[str]) -> str:
@@ -712,8 +818,10 @@ def mint_partial(
     measured_commit: str | None = None,
     status: str = "completed",
     unmeasured_reason: str | None = None,
+    runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> dict[str, Any]:
     """Mint a shard partial. Never includes R_construction_panics top-level."""
+    runtime, runtime_failure = _resolve_runtime_argument(runtime_attestation)
     shard_count = int(plan["shardCount"])
     if shard_index < 0 or shard_index >= shard_count:
         raise ValueError(f"shard_index {shard_index} out of range for k={shard_count}")
@@ -778,6 +886,13 @@ def mint_partial(
                 else {"file": file, "type": cat, "message": cat}
             )
 
+    if runtime is None:
+        status = "unmeasured"
+        unmeasured_reason = str(
+            runtime_failure.get("runtimeIdentityFailure")
+            or runtime_failure.get("runtimeIdentityMismatch")
+            or "runtimeIdentity/v1 refused"
+        )
     measured = status == "completed" and files_complete and unmeasured_reason is None
     if not measured and unmeasured_reason is None:
         unmeasured_reason = (
@@ -839,6 +954,10 @@ def mint_partial(
         "measured": measured,
         "unmeasuredReason": unmeasured_reason,
     }
+    if runtime is not None:
+        body.update(runtime)
+    else:
+        body.update(runtime_failure)
     # Forbidden fields must never appear:
     assert "R_construction_panics" not in body
     body["partialCid"] = canonical_cid(
@@ -1104,8 +1223,24 @@ def seal_board_from_aggregate(
     source_stamp: Mapping[str, Any] | None = None,
     with_census: Mapping[str, Any] | None = None,
     frontier_attestation: Mapping[str, Any] | None = None,
+    runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> dict[str, Any]:
     """Mint the sealed authoritative board body. Sole mint of the class."""
+    runtime, runtime_failure = _resolve_runtime_argument(runtime_attestation)
+    if runtime is None:
+        return unmeasured_envelope(
+            plan=plan,
+            missing_shards=["runtime"],
+            unmeasured_reasons={
+                "runtime": str(
+                    runtime_failure.get("runtimeIdentityFailure")
+                    or runtime_failure.get("runtimeIdentityMismatch")
+                    or "runtimeIdentity/v1 refused"
+                )
+            },
+            measured_commit=measured_commit,
+            runtime_failure=runtime_failure,
+        )
     file_names = list(agg["enrolled_files"])
     families = Counter(agg["families"])
     backend_defects = Counter(agg["backend_defects"])
@@ -1274,6 +1409,7 @@ def seal_board_from_aggregate(
         "planCid": (plan or {}).get("planCid"),
         "perShardCids": dict(sorted((per_shard_cids or {}).items())),
         "composeSchema": COMPOSE_SCHEMA,
+        **runtime,
     }
     if frontier_attestation is not None:
         body["frontierAttestation"] = dict(frontier_attestation)
@@ -1305,7 +1441,9 @@ def seal_board_from_aggregate(
         ),
     )
     if isinstance(outcome, ConservationFailure):
-        return outcome.to_wire()
+        failure_body = outcome.to_wire()
+        failure_body.update(runtime)
+        return failure_body
     body = outcome.to_wire()
 
     # Both seals are required: schema-local function facts and the universal
@@ -1329,6 +1467,8 @@ def unmeasured_envelope(
     measured_commit: str | None = None,
     instrument_failures: Sequence[Mapping[str, Any]] = (),
     d3_residency_exposure: Mapping[str, Any] | None = None,
+    runtime_attestation: Mapping[str, Any] | None = None,
+    runtime_failure: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attendance testimony only. NEVER measurementClass=control-effect-recensus."""
     env: dict[str, Any] = {
@@ -1347,6 +1487,10 @@ def unmeasured_envelope(
     }
     if d3_residency_exposure is not None:
         env["d3ResidencyExposure"] = dict(d3_residency_exposure)
+    if runtime_attestation is not None:
+        env.update(dict(runtime_attestation))
+    if runtime_failure is not None:
+        env.update(dict(runtime_failure))
     assert "measurementClass" not in env
     assert "R_construction_panics" not in env
     assert "frontierWidth" not in env
@@ -1365,8 +1509,24 @@ def compose_from_partials(
     elapsed_seconds: float | None = None,
     source_stamp: Mapping[str, Any] | None = None,
     with_census_fn=None,
+    runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> tuple[str, dict[str, Any]]:
     """Sole compose door. Returns (\"sealed\"|\"unmeasured\", body)."""
+    runtime, runtime_failure = _resolve_runtime_argument(runtime_attestation)
+    if runtime is None:
+        return "unmeasured", unmeasured_envelope(
+            plan=plan,
+            missing_shards=["runtime"],
+            unmeasured_reasons={
+                "runtime": str(
+                    runtime_failure.get("runtimeIdentityFailure")
+                    or runtime_failure.get("runtimeIdentityMismatch")
+                    or "runtimeIdentity/v1 refused"
+                )
+            },
+            measured_commit=str(plan.get("measuredCommit") or ""),
+            runtime_failure=runtime_failure,
+        )
     k = int(plan["shardCount"])
     by_index: dict[int, Mapping[str, Any]] = {}
     missing: list[str] = []
@@ -1379,6 +1539,7 @@ def compose_from_partials(
             continue
         by_index[idx] = p
 
+    first_partial_runtime_cid: str | None = None
     for i in range(k):
         seat = f"s{i:02d}"
         p = by_index.get(i)
@@ -1417,6 +1578,39 @@ def compose_from_partials(
             missing.append(seat)
             reasons[seat] = "partial carries forbidden top-level R_construction_panics"
             continue
+        partial_runtime, partial_runtime_reason = _runtime_attestation_fields(p)
+        if partial_runtime is None:
+            missing.append(seat)
+            reasons[seat] = str(partial_runtime_reason)
+            continue
+        if partial_runtime["requiredRuntime"] != runtime["requiredRuntime"]:
+            missing.append(seat)
+            reasons[seat] = (
+                "requiredRuntime mismatches authenticated compose requirement: "
+                f"partial={partial_runtime['requiredRuntime']} "
+                f"compose={runtime['requiredRuntime']}"
+            )
+            continue
+        partial_runtime_cid = str(partial_runtime["runtimeCid"])
+        if (
+            first_partial_runtime_cid is not None
+            and partial_runtime_cid != first_partial_runtime_cid
+        ):
+            missing.append(seat)
+            reasons[seat] = (
+                "runtimeCid disagrees across shard partials: "
+                f"first={first_partial_runtime_cid} current={partial_runtime_cid}"
+            )
+            continue
+        if partial_runtime_cid != runtime["runtimeCid"]:
+            missing.append(seat)
+            reasons[seat] = (
+                "runtimeCid mismatches authenticated compose runtime: "
+                f"partial={partial_runtime_cid} compose={runtime['runtimeCid']}"
+            )
+            continue
+        if first_partial_runtime_cid is None:
+            first_partial_runtime_cid = partial_runtime_cid
 
     if missing:
         return "unmeasured", unmeasured_envelope(
@@ -1424,6 +1618,7 @@ def compose_from_partials(
             missing_shards=missing,
             unmeasured_reasons=reasons,
             measured_commit=str(plan.get("measuredCommit") or ""),
+            runtime_attestation=runtime,
         )
 
     # Concat terminals in enrolled order for determinism.
@@ -1457,6 +1652,7 @@ def compose_from_partials(
             measured_commit=str(plan.get("measuredCommit") or ""),
             instrument_failures=instrument_failures,
             d3_residency_exposure=d3_residency_exposure,
+            runtime_attestation=runtime,
         )
     agg = aggregate_terminal_rows(
         measured_rows,
@@ -1475,6 +1671,7 @@ def compose_from_partials(
             },
             measured_commit=str(plan.get("measuredCommit") or ""),
             d3_residency_exposure=d3_residency_exposure,
+            runtime_attestation=runtime,
         )
 
     partial_cids_sorted = sorted(per_shard_cids.values())
@@ -1510,6 +1707,7 @@ def compose_from_partials(
         source_stamp=source_stamp,
         with_census=with_census,
         frontier_attestation=frontier_attestation,
+        runtime_attestation=runtime,
     )
     if board.get("measurement") != "measured":
         failure = board.get("conservationFailure")
@@ -1524,6 +1722,7 @@ def compose_from_partials(
             if isinstance(failure, Mapping)
             else [{"reason": "common conservation mint refused without diagnostic"}],
             d3_residency_exposure=d3_residency_exposure,
+            runtime_attestation=runtime,
         )
     return "sealed", board
 
@@ -1543,8 +1742,24 @@ def compose_k1_from_rows(
     source_stamp: Mapping[str, Any] | None = None,
     with_census_fn=None,
     manifest_cid: str | None = None,
+    runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> tuple[str, dict[str, Any]]:
     """k=1 path: one full-bin partial + compose (serial observation, one seal door)."""
+    runtime, runtime_failure = _resolve_runtime_argument(runtime_attestation)
+    if runtime is None:
+        return "unmeasured", unmeasured_envelope(
+            plan=None,
+            missing_shards=["runtime"],
+            unmeasured_reasons={
+                "runtime": str(
+                    runtime_failure.get("runtimeIdentityFailure")
+                    or runtime_failure.get("runtimeIdentityMismatch")
+                    or "runtimeIdentity/v1 refused"
+                )
+            },
+            measured_commit=measured_commit,
+            runtime_failure=runtime_failure,
+        )
     enrolled = sorted(enrolled_files)
     plan = build_plan(
         enrolled_files=enrolled,
@@ -1563,6 +1778,7 @@ def compose_k1_from_rows(
         shard_index=0,
         terminal_rows=list(measured_rows),
         measured_commit=measured_commit,
+        runtime_attestation=runtime,
     )
     return compose_from_partials(
         plan,
@@ -1574,6 +1790,7 @@ def compose_k1_from_rows(
         elapsed_seconds=elapsed_seconds,
         source_stamp=source_stamp,
         with_census_fn=with_census_fn,
+        runtime_attestation=runtime,
     )
 
 
@@ -1598,6 +1815,25 @@ def main(argv: list[str] | None = None) -> int:
         help="sealed board or unmeasured envelope path",
     )
     args = parser.parse_args(argv)
+    runtime, runtime_failure = resolve_executing_runtime_attestation()
+    if runtime is None:
+        body = unmeasured_envelope(
+            plan=None,
+            missing_shards=["runtime"],
+            unmeasured_reasons={
+                "runtime": str(
+                    runtime_failure.get("runtimeIdentityFailure")
+                    or runtime_failure.get("runtimeIdentityMismatch")
+                    or "runtimeIdentity/v1 refused"
+                )
+            },
+            runtime_failure=runtime_failure,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(
+            json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 1
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
     partials: list[dict[str, Any]] = []
     for path in sorted(args.partials_dir.glob("*.json")):
@@ -1607,7 +1843,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if isinstance(data, dict) and data.get("kind") == KIND_PARTIAL:
             partials.append(data)
-    status, body = compose_from_partials(plan, partials)
+    status, body = compose_from_partials(
+        plan, partials, runtime_attestation=runtime
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
