@@ -5,6 +5,11 @@ repo="${1:?usage: sugarbin_python_demand_table_fixture.sh REPO_ROOT}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# This fixture exercises the publisher itself. Its caller may have disabled
+# publication while testing a different resolver face; that ambient setting
+# cannot turn this fixture into a no-op that later looks like a missing cell.
+export SUGAR_BINARY_PUBLISH=1
+
 mkdir -p \
   "$tmp/corpus/pkg" \
   "$tmp/seed-shelf" \
