@@ -101,4 +101,129 @@ if [[ "$(uname -s)" != Linux ]]; then
   grep -Fq 'crime=foreign-platform-binary' "$tmp/elf.err" || fail "foreign ELF diagnostic missing"
 fi
 
+# Directory artifacts cross the real rsync boundary. Existence is not
+# testimony: compare the complete physical file population and every byte.
+# Exercise both rsync source spellings because requiring a trailing slash
+# would leave existing callers with a directory-without-slash trap.
+assert_tree_identical() {
+  local expected="$1" actual="$2" expected_files actual_files relative
+  expected_files="$tmp/expected-files.txt"
+  actual_files="$tmp/actual-files.txt"
+  (cd "$expected" && find . -type f -print | LC_ALL=C sort) >"$expected_files"
+  (cd "$actual" && find . -type f -print | LC_ALL=C sort) >"$actual_files"
+  cmp "$expected_files" "$actual_files" \
+    || fail "directory sync changed the physical file population"
+  while IFS= read -r relative; do
+    cmp "$expected/$relative" "$actual/$relative" \
+      || fail "directory sync changed bytes at $relative"
+  done <"$expected_files"
+}
+
+real_rsync="$(command -v rsync)"
+real_source="$tmp/real-directory-source"
+mkdir -p "$real_source/nested/deeper"
+printf 'root-evidence\n' >"$real_source/root.txt"
+printf 'nested-evidence\n' >"$real_source/nested/report.json"
+printf '\000\001\002binary-evidence\377' >"$real_source/nested/deeper/payload.bin"
+mkdir -p "$tmp/real-directory-trailing"
+
+(
+  # Directly exercise the production sync door with real rsync. SUGAR_BX_LOCAL
+  # changes transport only; staging and deposit are the production function.
+  source "$repo_root/bin/lib/sugar-bx.sh"
+  SUGAR_BX_LOCAL=1
+  SUGAR_BX_HOST=local-test
+  SUGAR_BX_RSYNC="$real_rsync"
+  sugar_bx_sync_back "$real_source/" "$tmp/real-directory-trailing/"
+)
+assert_tree_identical "$real_source" "$tmp/real-directory-trailing"
+
+(
+  source "$repo_root/bin/lib/sugar-bx.sh"
+  SUGAR_BX_LOCAL=1
+  SUGAR_BX_HOST=local-test
+  SUGAR_BX_RSYNC="$real_rsync"
+  sugar_bx_sync_back "$real_source" "$tmp/real-directory-no-slash"
+)
+assert_tree_identical "$real_source" "$tmp/real-directory-no-slash"
+
+# A successful replacement is a tree replacement, not a merge that can retain
+# plausible stale evidence from the prior run.
+replacement_destination="$tmp/real-directory-replacement"
+mkdir -p "$replacement_destination/stale"
+printf 'must-disappear\n' >"$replacement_destination/stale/old-row.json"
+(
+  source "$repo_root/bin/lib/sugar-bx.sh"
+  SUGAR_BX_LOCAL=1
+  SUGAR_BX_HOST=local-test
+  SUGAR_BX_RSYNC="$real_rsync"
+  sugar_bx_sync_back "$real_source/" "$replacement_destination/"
+)
+assert_tree_identical "$real_source" "$replacement_destination"
+
+# The directory staging path must preserve the already-proven file contract.
+real_file_source="$tmp/real-file-source.bin"
+real_file_destination="$tmp/real-file-destination.bin"
+printf '\000\377file-evidence\001\002' >"$real_file_source"
+printf 'stale-file-evidence\n' >"$real_file_destination"
+(
+  source "$repo_root/bin/lib/sugar-bx.sh"
+  SUGAR_BX_LOCAL=1
+  SUGAR_BX_HOST=local-test
+  SUGAR_BX_RSYNC="$real_rsync"
+  sugar_bx_sync_back "$real_file_source" "$real_file_destination"
+)
+cmp "$real_file_source" "$real_file_destination" \
+  || fail "directory staging regressed file sync-back bytes"
+
+# Empty is valid only when the source is itself empty.
+empty_source="$tmp/real-empty-source"
+mkdir -p "$empty_source"
+(
+  source "$repo_root/bin/lib/sugar-bx.sh"
+  SUGAR_BX_LOCAL=1
+  SUGAR_BX_HOST=local-test
+  SUGAR_BX_RSYNC="$real_rsync"
+  sugar_bx_sync_back "$empty_source/" "$tmp/real-empty-destination/"
+)
+[[ -d "$tmp/real-empty-destination" ]] \
+  || fail "empty source directory did not produce a directory artifact"
+[[ -z "$(find "$tmp/real-empty-destination" -mindepth 1 -print -quit)" ]] \
+  || fail "empty source directory acquired fabricated content"
+
+# Recovery is part of the evidence contract, not cleanup trivia. Force only
+# the final staged-artifact deposit to fail, after PRIOR has moved aside, and
+# require the entire prior tree to return byte-identical.
+prior_expected="$tmp/prior-expected"
+prior_destination="$tmp/prior-destination"
+mkdir -p "$prior_expected/nested" "$prior_destination"
+printf 'prior-root\n' >"$prior_expected/root.txt"
+printf 'prior-nested\n' >"$prior_expected/nested/report.json"
+printf '\377\003prior-binary\000' >"$prior_expected/nested/payload.bin"
+"$real_rsync" -a "$prior_expected/" "$prior_destination/"
+
+status=0
+(
+  source "$repo_root/bin/lib/sugar-bx.sh"
+  SUGAR_BX_LOCAL=1
+  SUGAR_BX_HOST=local-test
+  SUGAR_BX_RSYNC="$real_rsync"
+  failed_deposit=0
+  mv() {
+    if [[ "$failed_deposit" == 0 && "$1" == *'.sugar-bx-sync.'*'/payload' \
+        && "$2" == "$prior_destination" ]]; then
+      failed_deposit=1
+      return 71
+    fi
+    command mv "$@"
+  }
+  sugar_bx_sync_back "$real_source/" "$prior_destination/"
+) || status=$?
+[[ "$status" -eq 71 ]] \
+  || fail "forced deposit failure returned $status, want 71"
+assert_tree_identical "$prior_expected" "$prior_destination"
+[[ -z "$(find "$(dirname "$prior_destination")" -maxdepth 1 \
+  -name "$(basename "$prior_destination").sugar-bx-sync.*" -print -quit)" ]] \
+  || fail "deposit recovery left a staged prior tree behind"
+
 echo "PASS: sugarbin bx execution contract"

@@ -568,23 +568,60 @@ sugar_bx_run_docker() {
 
 sugar_bx_is_foreign() { [[ "$(uname -s 2>/dev/null)" != Linux ]] && [[ "$(file -b "$1" 2>/dev/null || true)" == *ELF* ]]; }
 sugar_bx_sync_back() {
-  local remote="$1" local_path="$2" tmp transfer_status
+  local remote="$1" local_path="$2" staging payload artifact prior
+  local remote_base transfer_status deposit_status restore_status
   if [[ "${SUGAR_BX_LOCAL:-0}" == 1 && "$remote" == "$local_path" ]]; then return 0; fi
-  mkdir -p "$(dirname "$local_path")"; tmp="$(mktemp "${local_path}.sugar-bx-sync.XXXXXX")"
+  while [[ "$local_path" != / && "$local_path" == */ ]]; do local_path="${local_path%/}"; done
+  mkdir -p "$(dirname "$local_path")"
+  staging="$(mktemp -d "${local_path}.sugar-bx-sync.XXXXXX")" || return $?
+  payload="$staging/payload"
   local src="$SUGAR_BX_HOST:$remote"
   [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]] && src="$remote"
-  if "$SUGAR_BX_RSYNC" -az "$src" "$tmp"; then
+  if "$SUGAR_BX_RSYNC" -az "$src" "$payload"; then
     :
   else
     transfer_status=$?
-    rm -f "$tmp"
+    rm -rf "$staging"
     return "$transfer_status"
   fi
-  if sugar_bx_is_foreign "$tmp"; then
-    echo "sugarbin: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/lib/sugar-bx.sh path=$local_path replacement=run the binary on $SUGAR_BX_HOST or rebuild locally" >&2
-    rm -f "$tmp"; [[ -e "$local_path" ]] && sugar_bx_is_foreign "$local_path" && rm -f "$local_path"; return 0
+  artifact="$payload"
+  if [[ "$remote" != */ && -d "$payload" ]]; then
+    remote_base="${remote##*/}"
+    [[ ! -d "$payload/$remote_base" ]] || artifact="$payload/$remote_base"
   fi
-  mv -f "$tmp" "$local_path"
+  if sugar_bx_is_foreign "$artifact"; then
+    echo "sugarbin: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/lib/sugar-bx.sh path=$local_path replacement=run the binary on $SUGAR_BX_HOST or rebuild locally" >&2
+    rm -rf "$staging"; [[ -e "$local_path" ]] && sugar_bx_is_foreign "$local_path" && rm -f "$local_path"; return 0
+  fi
+  prior=""
+  if [[ -e "$local_path" || -L "$local_path" ]]; then
+    prior="$staging/prior"
+    if mv "$local_path" "$prior"; then
+      :
+    else
+      deposit_status=$?
+      rm -rf "$staging"
+      return "$deposit_status"
+    fi
+  fi
+  if mv "$artifact" "$local_path"; then
+    rm -rf "$staging"
+    return 0
+  else
+    deposit_status=$?
+    if [[ -z "$prior" ]]; then
+      rm -rf "$staging"
+      return "$deposit_status"
+    fi
+    if mv "$prior" "$local_path"; then
+      rm -rf "$staging"
+      return "$deposit_status"
+    else
+      restore_status=$?
+      echo "sugarbin: crime=sync-back-prior-restore-failed local=$local_path staged_prior=$prior deposit_status=$deposit_status restore_status=$restore_status replacement=restore the byte-preserved prior from staged_prior; do not treat LOCAL existence as evidence" >&2
+      return "$restore_status"
+    fi
+  fi
 }
 sugar_bx_cleanup() { sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT")"; }
 sugar_bx_finish() { local status="$1"; if [[ "$SUGAR_BX_CLEAN" == always || ( "$SUGAR_BX_CLEAN" == success && "$status" == 0 ) ]]; then sugar_bx_cleanup || true; fi; return "$status"; }
