@@ -40,6 +40,10 @@ class DemandTableArtifactRefusal(ValueError):
     """Artifact is missing, malformed, or its contentCid does not recompute."""
 
 
+class DemandTableSemanticIdentityMismatch(DemandTableArtifactRefusal):
+    """Table meaning does not describe the authenticated current corpus."""
+
+
 @dataclass(frozen=True)
 class CorpusPinIdentityV1:
     """Minimal corpus pin fields the demand table authenticates against."""
@@ -122,6 +126,40 @@ class PrebuiltDemandTableV1:
 
 def content_cid_for_preimage(preimage: Mapping[str, Any]) -> str:
     return cid_of_json(dict(preimage))
+
+
+def validate_prebuilt_demand_table(
+    table: PrebuiltDemandTableV1,
+    corpus: AuthenticatedPandasCorpus,
+    *,
+    source_root: Path | None = None,
+    config: Mapping[str, object] | None = None,
+) -> None:
+    """Validate storage bytes and semantic meaning against current inputs.
+
+    This is intentionally standalone: Slice 2 defines the shared door, while
+    workers begin consuming it only in Slice 3.
+    """
+    payload_cid = content_cid_for_preimage(table.preimage())
+    if payload_cid != table.content_cid:
+        raise DemandTableArtifactRefusal(
+            f"demand table payload contentCid mismatch: "
+            f"presented={table.content_cid!r} recomputed={payload_cid!r}"
+        )
+    root = corpus.root
+    expected_identity = demand_table_identity(
+        root,
+        sorted(root.rglob("*.py")),
+        source_root=source_root or Path(__file__).resolve().parents[1],
+        config=config,
+    )
+    if table.semantic_identity != expected_identity:
+        raise DemandTableSemanticIdentityMismatch(
+            "demand table semantic identity mismatch: "
+            f"table={table.semantic_identity.as_dict()!r} "
+            f"expected={expected_identity.as_dict()!r}; "
+            "refuse table for a different corpus, producer, parser, or config"
+        )
 
 
 def mint_prebuilt_demand_table(
