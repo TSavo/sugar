@@ -1197,6 +1197,8 @@ def populate_source_derived_resource_refs(
     artifact_graph_cache: dict | None = None,
     session=None,
     selected_coordinates: frozenset | None = None,
+    source_workspace_root=None,
+    distribution: str | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows.
 
@@ -1244,9 +1246,17 @@ def populate_source_derived_resource_refs(
     # segment under the locus root), not test-only deps (pytest) or stdlib.
     # Without this, one open of pandas/tests/io/json/test_pandas.py projected
     # 40 pytest frames (~3.8s) after the stdlib-only membrane.
-    if session.enrolled_distributions is None:
+    if source_workspace_root is not None and not distribution:
+        raise ValueError(
+            "source workspace distribution authority is required; "
+            "refusing to infer it from a relative path segment"
+        )
+    if distribution is not None:
+        session.enrolled_distributions = frozenset({distribution})
+    elif session.enrolled_distributions is None:
         try:
-            rel = Path(path).resolve().relative_to(Path(root).resolve())
+            coordinate_root = source_workspace_root or root
+            rel = Path(path).resolve().relative_to(Path(coordinate_root).resolve())
             top = rel.parts[0] if rel.parts else None
         except ValueError:
             top = None
