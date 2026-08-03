@@ -426,18 +426,28 @@ jobs:
         run: |
           set -euo pipefail
           env_dir="$RUNNER_TEMP/showcase-wheelhouse"
+          build_requirements="$RUNNER_TEMP/showcase-build-requirements.txt"
           rm -rf "$env_dir"
           mkdir -p "$env_dir"
-          # Same package set every showcase shard used to install independently.
+          python tools/showcase_wheelhouse.py derive \
+            --repo-root . \
+            --editable-requirements .github/showcase-editable-requirements.txt \
+            --output "$build_requirements"
+          # Resolve both dependency families. The editable manifest owns the
+          # runtime population; each package's [build-system].requires owns
+          # the build-isolation population.
           python -m pip wheel --quiet --wheel-dir "$env_dir" \
-            ./implementations/python/sugar-build-witness \
-            './implementations/python/sugar-lift-py-tests[test]' \
-            ./implementations/python/sugar-lift-python-source \
-            ./implementations/python/sugar-lift-py-pytest-witness
+            --requirement .github/showcase-editable-requirements.txt
+          python -m pip wheel --quiet --wheel-dir "$env_dir" \
+            --requirement "$build_requirements"
           # Keep third-party wheels only. First-party installs from checkout
           # paths so each shard measures this tip's tree.
           shopt -s nullglob
           rm -f "$env_dir"/sugar_*.whl
+          python tools/showcase_wheelhouse.py verify \
+            --repo-root . \
+            --editable-requirements .github/showcase-editable-requirements.txt \
+            --wheelhouse "$env_dir"
           ls -la "$env_dir" | head -50
       - name: Upload showcase wheelhouse
         uses: actions/upload-artifact@v4
@@ -482,10 +492,7 @@ jobs:
           # paths so the shard measures this tip's tree.
           python -m pip install --quiet \
             --no-index --find-links "$RUNNER_TEMP/showcase-wheelhouse" \
-            -e implementations/python/sugar-build-witness \
-            -e 'implementations/python/sugar-lift-py-tests[test]' \
-            -e implementations/python/sugar-lift-python-source \
-            -e implementations/python/sugar-lift-py-pytest-witness
+            --requirement .github/showcase-editable-requirements.txt
 
       - name: Set up Java 21
         uses: actions/setup-java@v4

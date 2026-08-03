@@ -5,22 +5,187 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+
+import showcase_wheelhouse  # noqa: E402
+
 CI = ROOT / ".github/workflows/ci.yml"
 ATTEND = ROOT / "tools/showcase_shard_attendance.py"
 
 
+def _write_build_project(root: Path, name: str, requires: list[str]) -> Path:
+    project = root / name
+    project.mkdir(parents=True)
+    quoted = ", ".join(json.dumps(requirement) for requirement in requires)
+    (project / "pyproject.toml").write_text(
+        "[build-system]\n"
+        f"requires = [{quoted}]\n"
+        'build-backend = "setuptools.build_meta"\n',
+        encoding="utf-8",
+    )
+    return project
+
+
+def _write_editable_manifest(path: Path, projects: list[Path], root: Path) -> None:
+    path.write_text(
+        "".join(f"-e {project.relative_to(root)}\n" for project in projects),
+        encoding="utf-8",
+    )
+
+
+def _write_wheel(
+    wheelhouse: Path,
+    distribution: str,
+    version: str,
+    *,
+    requires: tuple[str, ...] = (),
+) -> None:
+    filename_name = distribution.replace("-", "_")
+    dist_info = f"{filename_name}-{version}.dist-info"
+    wheel = wheelhouse / f"{filename_name}-{version}-py3-none-any.whl"
+    requires_dist = "".join(f"Requires-Dist: {item}\n" for item in requires)
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{dist_info}/METADATA",
+            "Metadata-Version: 2.1\n"
+            f"Name: {distribution}\n"
+            f"Version: {version}\n"
+            f"{requires_dist}",
+        )
+        archive.writestr(
+            f"{dist_info}/WHEEL",
+            "Wheel-Version: 1.0\n"
+            "Generator: showcase-wheelhouse-test\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n",
+        )
+        archive.writestr(f"{dist_info}/RECORD", "")
+        archive.writestr(
+            f"{filename_name}/_vendor/nested-1.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: nested\nVersion: 1\n",
+        )
+
+
 def test_showcase_prepare_builds_one_wheelhouse_for_all_shards() -> None:
     text = CI.read_text(encoding="utf-8")
+    prepare = text.split("  showcase-prepare:", 1)[1].split("\n  showcases:", 1)[0]
     assert "showcase-prepare" in text
     assert "showcase-wheelhouse" in text
     assert "pip wheel" in text
+    assert "tools/showcase_wheelhouse.py derive" in prepare
+    assert "tools/showcase_wheelhouse.py verify" in prepare
+    assert ".github/showcase-editable-requirements.txt" in prepare
+    assert "setuptools>=68" not in prepare
     # Shards consume the artifact — not four independent network resolves of
     # the same package set as the only install path.
     assert "Download shared wheelhouse" in text
     assert "--no-index --find-links" in text or "--find-links" in text
+
+
+def test_build_requirements_are_derived_from_every_editable_project(
+    tmp_path: Path,
+) -> None:
+    first = _write_build_project(
+        tmp_path,
+        "first",
+        ["setuptools>=68", "wheel"],
+    )
+    second = _write_build_project(
+        tmp_path,
+        "second",
+        ["hatchling>=1", "setuptools>=68"],
+    )
+    manifest = tmp_path / "editables.txt"
+    output = tmp_path / "build-requirements.txt"
+    _write_editable_manifest(manifest, [first, second], tmp_path)
+
+    returncode = showcase_wheelhouse.main(
+        [
+            "derive",
+            "--repo-root",
+            str(tmp_path),
+            "--editable-requirements",
+            str(manifest),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert returncode == 0
+    assert output.read_text(encoding="utf-8") == (
+        "hatchling>=1\nsetuptools>=68\nwheel\n"
+    )
+
+
+def test_incomplete_wheelhouse_refuses_by_missing_distribution_name(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    project = _write_build_project(
+        tmp_path,
+        "first",
+        ["missing-build-backend>=68"],
+    )
+    manifest = tmp_path / "editables.txt"
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    _write_editable_manifest(manifest, [project], tmp_path)
+
+    returncode = showcase_wheelhouse.main(
+        [
+            "verify",
+            "--repo-root",
+            str(tmp_path),
+            "--editable-requirements",
+            str(manifest),
+            "--wheelhouse",
+            str(wheelhouse),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert returncode != 0
+    assert "missing distribution 'missing-build-backend'" in captured.err
+    assert "required for offline editable install" in captured.err
+
+
+def test_transitive_build_requirement_is_part_of_the_verified_closure(
+    tmp_path: Path, capsys
+) -> None:
+    project = _write_build_project(tmp_path, "first", ["fixture-backend>=1"])
+    manifest = tmp_path / "editables.txt"
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    _write_editable_manifest(manifest, [project], tmp_path)
+    _write_wheel(
+        wheelhouse,
+        "fixture-backend",
+        "1",
+        requires=("fixture-build-hook>=2",),
+    )
+
+    args = [
+        "verify",
+        "--repo-root",
+        str(tmp_path),
+        "--editable-requirements",
+        str(manifest),
+        "--wheelhouse",
+        str(wheelhouse),
+    ]
+    assert showcase_wheelhouse.main(args) != 0
+    captured = capsys.readouterr()
+    assert "missing distribution 'fixture-build-hook'" in captured.err
+    assert "required for offline editable install" in captured.err
+
+    _write_wheel(wheelhouse, "fixture-build-hook", "2")
+    assert showcase_wheelhouse.main(args) == 0
+    captured = capsys.readouterr()
+    assert "showcase-wheelhouse-verified" in captured.out
 
 
 def test_four_shards_remain_for_genuine_per_shard_work() -> None:

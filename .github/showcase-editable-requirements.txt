@@ -1,0 +1,5 @@
+# The one enrolled first-party population for showcase environment construction.
+-e implementations/python/sugar-build-witness
+-e implementations/python/sugar-lift-py-tests[test]
+-e implementations/python/sugar-lift-python-source
+-e implementations/python/sugar-lift-py-pytest-witness
