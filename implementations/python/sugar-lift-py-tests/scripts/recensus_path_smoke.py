@@ -8,8 +8,9 @@ WALLS (advisor, binding):
      and refuse CommitMeasurement panics ingestion by construction.
   2. SCOREBOARD_AUTHORITY stays False here. Sole bankable panics producer is
      control_effect_recensus on the authenticated pandas corpus.
-  3. Teeth are the instrument: constructed>0, cpanic=1, unconstructed not
-     vanish, exact two-item accounting closes, sealed body on PATH_OK.
+  3. Teeth are the instrument: constructed>0, the exact named construction-
+     panic identities are conserved, unconstructed does not vanish, exact
+     two-item accounting closes, sealed body on PATH_OK.
      Crash → PATH_UNMEASURED.
   4. Coverage honesty: four planted files retire serial path-rot discovery,
      not Class B corpus scale (thousands of with-items) or the full walk.
@@ -56,6 +57,49 @@ _FORBIDDEN_PRODUCT_KEYS = frozenset(
         "SCOREBOARD_AUTHORITY",
     }
 )
+
+_EXPECTED_CONSTRUCTION_PANIC_IDENTITIES = (
+    {
+        "file": "planted_clean.py",
+        "owner": "Module.sugar",
+        "coordinate": "planted_clean.py:1:0-6:0[Module]",
+        "observedEventType": "sugar_source_tree.panic.SugarNotWritten",
+        "requested": "a constructed sugar object",
+        "entrance": "sugar.enumerate:facts:auditFrontier",
+    },
+    {
+        "file": "planted_panic_host.py",
+        "owner": "recensus-path-smoke-planted-panic",
+        "coordinate": "planted_panic_host.py:1:0",
+        "observedEventType": "sugar_lift_py_tests.gap.panic.ConstructionPanic",
+        "requested": "constructed value",
+        "entrance": "sugar.enumerate:roster",
+    },
+)
+
+
+def _construction_panic_identity(panic: dict[str, Any]) -> dict[str, str | None]:
+    """Project the stable fields that distinguish real terminals and duplicates."""
+    return {
+        key: panic.get(key) if isinstance(panic.get(key), str) else None
+        for key in (
+            "file",
+            "owner",
+            "coordinate",
+            "observedEventType",
+            "requested",
+            "entrance",
+        )
+    }
+
+
+def _sorted_panic_identities(
+    panics: list[dict[str, Any]],
+) -> list[dict[str, str | None]]:
+    return sorted(
+        (_construction_panic_identity(panic) for panic in panics),
+        key=lambda row: tuple(str(row.get(key) or "") for key in sorted(row)),
+    )
 
 
 def _narrate(msg: str) -> None:
@@ -260,7 +304,7 @@ def _measure_opaque(module, path: Path, workspace: Path) -> dict[str, Any]:
 
 
 def _measure_clean(module, path: Path, workspace: Path) -> dict[str, Any]:
-    """Production enumerate consumer for a clean function."""
+    """Production enumerate consumer for the planted Module.sugar terminal."""
     import shutil
     import tempfile
 
@@ -333,6 +377,7 @@ def _run_teeth(
     with_items_total: int,
     accounted: int,
     cpanic: int,
+    construction_panics: list[dict[str, Any]],
     conserves: bool,
     sealed_path: Path | None,
     path_verdict_so_far: str,
@@ -355,10 +400,23 @@ def _run_teeth(
     else:
         fail("known_constructed", f"constructed={constructed} expected >0")
 
-    if cpanic == 1:
-        ok("known_panic", f"cpanic={cpanic}")
+    observed_panic_identities = _sorted_panic_identities(construction_panics)
+    expected_panic_identities = _sorted_panic_identities(
+        [dict(row) for row in _EXPECTED_CONSTRUCTION_PANIC_IDENTITIES]
+    )
+    if observed_panic_identities == expected_panic_identities:
+        ok(
+            "known_panic",
+            "exact terminal identities conserved: "
+            + json.dumps(observed_panic_identities, sort_keys=True),
+        )
     else:
-        fail("known_panic", f"cpanic={cpanic} expected 1")
+        fail(
+            "known_panic",
+            f"cpanic={cpanic}; exact terminal identity mismatch: "
+            f"observed={json.dumps(observed_panic_identities, sort_keys=True)} "
+            f"expected={json.dumps(expected_panic_identities, sort_keys=True)}",
+        )
 
     if unconstructed >= 1:
         ok("known_unconstructed", f"unconstructed={unconstructed}")
@@ -606,6 +664,9 @@ def main(argv: list[str] | None = None) -> int:
             "constructed": constructed,
             "unconstructed": unconstructed,
             "cpanic": cpanic,
+            "constructionPanicIdentities": _sorted_panic_identities(
+                construction_panics
+            ),
             "families": dict(sorted(families.items())),
             "cmResolutions": dict(sorted(cm.items())),
             "firstTerminalChain": first_terminal_chain,
@@ -648,6 +709,7 @@ def main(argv: list[str] | None = None) -> int:
             with_items_total=with_items_total,
             accounted=accounted,
             cpanic=cpanic,
+            construction_panics=construction_panics,
             conserves=conserves,
             sealed_path=sealed,
             path_verdict_so_far="PATH_OK",
