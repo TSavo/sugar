@@ -21,7 +21,11 @@ from sugar_lift_python_source.bind_lifter import (
     _public_reexport_map,
     lift_source,
 )
-from sugar_lift_python_source.bind_rpc import dispatch, initialize_result
+from sugar_lift_python_source.bind_rpc import (
+    ENUMERATE_RPC_METHOD,
+    dispatch,
+    initialize_result,
+)
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.op_cid import local_op_cid
 from sugar_lift_python_source.canonical import cid_of_json
@@ -842,7 +846,7 @@ def test_bind_rpc_kit_declaration_returns_python_bind_surface() -> None:
     assert required_by_name == {
         "initialize": True,
         KIT_DECLARATION_RPC_METHOD: True,
-        "lift": True,
+        ENUMERATE_RPC_METHOD: True,
         "shutdown": False,
     }
     assert result["proofResolution"] == {"strategy": "pip"}
