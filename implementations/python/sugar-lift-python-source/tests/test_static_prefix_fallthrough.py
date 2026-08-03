@@ -76,12 +76,10 @@ def test_static_pure_binding_prefix_admits_without_outcome(monkeypatch) -> None:
         counting,
     )
     session = SourceResolutionSession()
+    assert prefix_has_completed_fallthrough(module, locus, session=session) is True
     assert (
-        prefix_has_completed_fallthrough(module, locus, session=session) is True
-    )
-    assert calls["n"] == 0, (
-        f"pure-binding prefix must not run _module_prefix_outcome; n={calls['n']}"
-    )
+        calls["n"] == 0
+    ), f"pure-binding prefix must not run _module_prefix_outcome; n={calls['n']}"
 
 
 def test_static_open_control_prefix_declines_static_door() -> None:

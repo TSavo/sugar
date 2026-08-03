@@ -1529,7 +1529,9 @@ def test_non_uniform_message_faces_do_not_collapse_to_one_operand():
     )
 
     assert not isinstance(result, DerivedManagerSummaryGapV1)
-    assert not isinstance(result, (NoMessagePatternV1, OptionalFormalArgumentProjectionV1))
+    assert not isinstance(
+        result, (NoMessagePatternV1, OptionalFormalArgumentProjectionV1)
+    )
     assert isinstance(result, ExitSet)
     assert len(result.exits) == 2
 
@@ -1543,7 +1545,12 @@ def test_soft_boundary_emits_both_effect_boundary_faces_for_non_uniform_match():
         NoMessagePatternV1,
         OptionalFormalArgumentProjectionV1,
     )
-    from sugar_lift_py_tests.floor import FloorValue, NoneValue, ObjectValue, StringValue
+    from sugar_lift_py_tests.floor import (
+        FloorValue,
+        NoneValue,
+        ObjectValue,
+        StringValue,
+    )
     from sugar_lift_py_tests.floor.object_field import ObjectField
     from sugar_lift_py_tests.floor.receiver_state_partition_value import (
         ReceiverStatePartitionValue,
@@ -1613,7 +1620,12 @@ def test_soft_boundary_uniform_none_match_stays_one_no_message_summary():
         EffectBoundarySemanticsV1,
         NoMessagePatternV1,
     )
-    from sugar_lift_py_tests.floor import FloorValue, NoneValue, ObjectValue, StringValue
+    from sugar_lift_py_tests.floor import (
+        FloorValue,
+        NoneValue,
+        ObjectValue,
+        StringValue,
+    )
     from sugar_lift_py_tests.floor.object_field import ObjectField
     from sugar_lift_py_tests.floor.receiver_state_partition_value import (
         ReceiverStatePartitionValue,
@@ -1742,9 +1754,7 @@ def test_factored_summary_installs_factored_ref_not_no_derived_contract():
         FactoredEffectBoundarySummaryV1,
     )
 
-    coordinate = SourceFragmentCoordinateV1(
-        "blake3-512:" + ("ab" * 64), 2, 9, 2, 40
-    )
+    coordinate = SourceFragmentCoordinateV1("blake3-512:" + ("ab" * 64), 2, 9, 2, 40)
     faces = _factored_boundary_faces()
     signature = _factored_import_signature()
     protocol = SimpleNamespace()
@@ -1878,9 +1888,7 @@ def test_factored_raise_routing_uses_none_and_pattern_message_faces():
     )
 
     faces = _factored_boundary_faces()
-    coordinate = SourceFragmentCoordinateV1(
-        "blake3-512:" + ("cd" * 64), 1, 0, 1, 10
-    )
+    coordinate = SourceFragmentCoordinateV1("blake3-512:" + ("cd" * 64), 1, 0, 1, 10)
     contract_ref = FactoredSourceDerivedContextManagerRefV1(
         coordinate,
         "factored-protocol",
@@ -1902,7 +1910,9 @@ def test_factored_raise_routing_uses_none_and_pattern_message_faces():
     guarded = sugar._guarded_semantics()
     assert len(guarded) == 2
     by_name = {guard.name: semantics for guard, semantics in guarded}
-    assert isinstance(by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1)
+    assert isinstance(
+        by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1
+    )
     assert by_name["match-pattern-face"].message_pattern_operand == (
         OptionalFormalArgumentProjectionV1(1)
     )
@@ -1915,7 +1925,13 @@ def test_factored_raise_routing_uses_none_and_pattern_message_faces():
     )
     raise_face = Halted(
         true_guard(),
-        RaiseEffect.for_builtin('ValueError', blame='t.py:2:8', exception_type_mro=(type_term,), raised_value=StringValue('needle'), occurrence='t.py:2:8'),
+        RaiseEffect.for_builtin(
+            "ValueError",
+            blame="t.py:2:8",
+            exception_type_mro=(type_term,),
+            raised_value=StringValue("needle"),
+            occurrence="t.py:2:8",
+        ),
         None,
     )
     assert raise_face.effect.exception_type_coordinate == type_term
@@ -1939,7 +1955,8 @@ def test_factored_raise_routing_uses_none_and_pattern_message_faces():
         )
         # Matcher construction is the routing face content: both arms exist.
         assert disposition.matcher.message_pattern is (
-            None if isinstance(semantics.message_pattern_operand, NoMessagePatternV1)
+            None
+            if isinstance(semantics.message_pattern_operand, NoMessagePatternV1)
             else pattern
         )
         assert body.exits and isinstance(body.exits[0], Halted)
@@ -1970,9 +1987,7 @@ def test_uniform_none_source_derived_ref_stays_single_sealed_summary():
         NoMessagePatternV1(),
         ExceptionInfoBindingV1(),
     )
-    coordinate = SourceFragmentCoordinateV1(
-        "blake3-512:" + ("ef" * 64), 1, 0, 1, 10
-    )
+    coordinate = SourceFragmentCoordinateV1("blake3-512:" + ("ef" * 64), 1, 0, 1, 10)
     sealed = SourceDerivedContextManagerRefV1(
         coordinate,
         "summary-cid",

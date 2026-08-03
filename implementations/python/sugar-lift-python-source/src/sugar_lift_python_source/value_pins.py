@@ -193,7 +193,9 @@ def scan_module_value_pins(
             mutable_kind = _direct_mutable_kind(candidate.value)
             if mutable_kind is not None:
                 if candidate.binding_occurrence is None:
-                    raise AssertionError("mutable global candidate lost binding occurrence")
+                    raise AssertionError(
+                        "mutable global candidate lost binding occurrence"
+                    )
                 scan.mutable_global_pins.append(
                     MutableGlobalPin(
                         source_cid=tree.unit.source_cid,

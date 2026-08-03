@@ -418,9 +418,7 @@ def leaky_process_memo(monkeypatch):
     import_uses: dict = {}
     import_values: dict = {}
 
-    def leaky_init(
-        self, *, enabled: bool = True, enrolled_distributions=None
-    ) -> None:
+    def leaky_init(self, *, enabled: bool = True, enrolled_distributions=None) -> None:
         self.enabled = enabled
         self.enrolled_distributions = enrolled_distributions
         self.export_resolutions = exports
@@ -566,9 +564,7 @@ def test_shared_session_amortizes_across_two_consumer_files(tmp_path: Path) -> N
                 module_identities={},
             )
             assert len(receipts) == 1
-            resolved = resolve_import_binding(
-                receipts[0], graph=graph, session=session
-            )
+            resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
             assert isinstance(resolved, ResolvedPythonObjectV1)
             projected = resolve_source_visible_frame(
                 resolved, graph=graph, session=session

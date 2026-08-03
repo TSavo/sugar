@@ -34,10 +34,7 @@ def _steps(source: str):
 
 def test_pre_yield_if_assign_emits_if_step_then_yield():
     steps = _steps(
-        "def g(flag):\n"
-        "    if flag:\n"
-        "        prior = None\n"
-        "    yield 1\n"
+        "def g(flag):\n" "    if flag:\n" "        prior = None\n" "    yield 1\n"
     )
     assert isinstance(steps[0], IfStepV1)
     assert isinstance(steps[0].then_steps[0], AssignStepV1)
@@ -46,10 +43,7 @@ def test_pre_yield_if_assign_emits_if_step_then_yield():
 
 def test_ground_true_pre_yield_if_assigns_then_yields():
     steps = _steps(
-        "def g():\n"
-        "    if True:\n"
-        "        prior = None\n"
-        "    yield 1\n"
+        "def g():\n" "    if True:\n" "        prior = None\n" "    yield 1\n"
     )
     assert isinstance(steps[0], IfStepV1)
     yielded = GeneratorConstructionV1.allocate(
@@ -73,10 +67,7 @@ def test_ground_true_pre_yield_if_assigns_then_yields():
 
 def test_ground_false_pre_yield_if_skips_then_yields():
     steps = _steps(
-        "def g():\n"
-        "    if False:\n"
-        "        prior = None\n"
-        "    yield 7\n"
+        "def g():\n" "    if False:\n" "        prior = None\n" "    yield 7\n"
     )
     yielded = GeneratorConstructionV1.allocate(
         allocation_coordinate="enter:if-false",
@@ -94,10 +85,7 @@ def test_ground_false_pre_yield_if_skips_then_yields():
 
 def test_undecided_pre_yield_if_partitions():
     steps = _steps(
-        "def g(flag):\n"
-        "    if flag:\n"
-        "        prior = None\n"
-        "    yield 1\n"
+        "def g(flag):\n" "    if flag:\n" "        prior = None\n" "    yield 1\n"
     )
     outcome = GeneratorConstructionV1.allocate(
         allocation_coordinate="enter:if-undecided",
@@ -142,10 +130,7 @@ def test_enter_resource_outcome_runs_pre_yield_if_assign():
     )
 
     steps = _steps(
-        "def g():\n"
-        "    if True:\n"
-        "        prior = None\n"
-        "    yield 1\n"
+        "def g():\n" "    if True:\n" "        prior = None\n" "    yield 1\n"
     )
     frame = SimpleNamespace(
         frame_cid=cid_of_json({"f": "pre-yield-if-enter"}),

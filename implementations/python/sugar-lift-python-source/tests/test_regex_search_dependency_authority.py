@@ -29,10 +29,11 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_source_tree.nodes import Attribute, Call, FunctionDef
 from sugar_source_tree.panic import BackendDefect
 from sugar_source_tree.tree import SourceFile
+
 SOURCE = (
     "import re\n"
     "def selected(subject):\n"
-    "    return re.search(\"needle\", subject, re.I)\n"
+    '    return re.search("needle", subject, re.I)\n'
 )
 
 
@@ -90,9 +91,7 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
         frame.owner.unit.construction_context.opaque_source_call_obligations.values()
     )
     warnings = tuple(
-        item
-        for item in obligations
-        if item.target_name == "python:warnings.warn"
+        item for item in obligations if item.target_name == "python:warnings.warn"
     )
     assert len(warnings) == 1
     relation = warnings[0].import_call_value_subsumption
@@ -190,9 +189,7 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     with pytest.raises(ValueError, match="cross-wired"):
         replace(warnings[0], resolution_kind=wrong_kind)
     with pytest.raises(ValueError, match="cross-wired"):
-        replace(
-            warnings[0], resolved_object_cid="blake3-512:" + "6" * 128
-        )
+        replace(warnings[0], resolved_object_cid="blake3-512:" + "6" * 128)
     with pytest.raises(ValueError, match="producer authority"):
         replace(
             relation,
@@ -237,9 +234,7 @@ def test_duplicate_identical_call_receipt_is_loud_before_pairing(
         receipts, outcomes = original(*args, **kwargs)
         return tuple(receipts) + tuple(receipts), outcomes
 
-    monkeypatch.setattr(
-        import_binding, "authenticated_import_use_receipts", duplicated
-    )
+    monkeypatch.setattr(import_binding, "authenticated_import_use_receipts", duplicated)
     with pytest.raises(BackendDefect, match="duplicate authenticated call receipt CID"):
         resolve_source_visible_frame(
             resolved,
@@ -309,7 +304,7 @@ def test_alias_import_search_resolves_the_same_exact_stdlib_definition(
     source = (
         "import re as regex\n"
         "def selected(subject):\n"
-        "    return regex.search(\"needle\", subject, regex.I)\n"
+        '    return regex.search("needle", subject, regex.I)\n'
     )
     path = tmp_path / "alias_consumer.py"
     path.write_text(source, encoding="utf-8")
@@ -334,8 +329,8 @@ def test_alias_import_search_resolves_the_same_exact_stdlib_definition(
 @pytest.mark.parametrize(
     "source",
     [
-        "def selected(re, subject):\n    return re.search(\"x\", subject)\n",
-        "re = object()\ndef selected(subject):\n    return re.search(\"x\", subject)\n",
+        'def selected(re, subject):\n    return re.search("x", subject)\n',
+        're = object()\ndef selected(subject):\n    return re.search("x", subject)\n',
     ],
 )
 def test_shadowed_or_local_re_binding_mints_no_import_call_receipt(

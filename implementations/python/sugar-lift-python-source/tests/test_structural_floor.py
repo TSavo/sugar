@@ -59,9 +59,7 @@ def test_floor_detects_pattern_growth(monkeypatch):
 # --- the two holes the floor caught while being built ---
 
 
-@optional_law_skipif(
-    not hasattr(ast, "TryStar"), HOST_GRAMMAR, "needs except* (3.11+)"
-)
+@optional_law_skipif(not hasattr(ast, "TryStar"), HOST_GRAMMAR, "needs except* (3.11+)")
 def test_except_star_as_rebinding_refuses_pin():
     scan = _scan(
         "X = 1\n" "try:\n" "    pass\n" "except* ValueError as X:\n" "    pass\n"

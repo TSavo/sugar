@@ -74,12 +74,8 @@ class _RecordingProtocol:
 
 
 def _protocol_calls(face_id: str = "exit-face"):
-    enter_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "e" * 128, 1, 0, 1, 1
-    )
-    exit_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "x" * 128, 2, 0, 2, 1
-    )
+    enter_definition = SourceFragmentCoordinateV1("blake3-512:" + "e" * 128, 1, 0, 1, 1)
+    exit_definition = SourceFragmentCoordinateV1("blake3-512:" + "x" * 128, 2, 0, 2, 1)
     enter = MethodCallSugar(
         receiver=ManagerRefSugar(slot_id="manager-slot", site=None),
         name="__enter__",
@@ -136,37 +132,39 @@ def _never_summary():
 
 
 def _state(marker: str):
-    return _ReducedBlock(
-        entries=(marker,), can_fall_through=False, fall_through=()
-    )
+    return _ReducedBlock(entries=(marker,), can_fall_through=False, fall_through=())
 
 
 def _nested_body_faces():
     """One ExitSet with Completed, Returned, and Halted faces under distinct guards."""
-    raise_effect = RaiseEffect.for_builtin("ValueError",
+    raise_effect = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence="body.py:10:8:raise",
         blame="body.py:10:8:raise",
-        )
-    return ExitSet(
-        (
-            Completed(
-                _Atomic("body-completed", ()),
-                BlockValue((), can_fall_through=True),
-            ),
-            Completed(
-                _Atomic("body-returned", ()),
-                BlockValue(
-                    (ReturnValue(TermValue("early-return")),),
-                    can_fall_through=False,
+    )
+    return (
+        ExitSet(
+            (
+                Completed(
+                    _Atomic("body-completed", ()),
+                    BlockValue((), can_fall_through=True),
                 ),
-            ),
-            Halted(
-                _Atomic("body-halted", ()),
-                raise_effect,
-                _state("pre-raise"),
-            ),
-        )
-    ), raise_effect
+                Completed(
+                    _Atomic("body-returned", ()),
+                    BlockValue(
+                        (ReturnValue(TermValue("early-return")),),
+                        can_fall_through=False,
+                    ),
+                ),
+                Halted(
+                    _Atomic("body-halted", ()),
+                    raise_effect,
+                    _state("pre-raise"),
+                ),
+            )
+        ),
+        raise_effect,
+    )
 
 
 def _binding_kinds(exits, face_id: str):
@@ -216,12 +214,8 @@ def test_one_enter_and_exit_per_nested_body_face():
     assert "body-halted" in guard_text
 
     # Face-derived bindings: completed faces bind None; raise binds occurrence.
-    completed_binding = ExitFaceBinding.from_body_exit(
-        "exit-face", body.exits[0]
-    )
-    returned_binding = ExitFaceBinding.from_body_exit(
-        "exit-face", body.exits[1]
-    )
+    completed_binding = ExitFaceBinding.from_body_exit("exit-face", body.exits[0])
+    returned_binding = ExitFaceBinding.from_body_exit("exit-face", body.exits[1])
     halted_binding = ExitFaceBinding.from_body_exit("exit-face", body.exits[2])
     assert completed_binding.kind == "completed"
     assert returned_binding.kind == "completed"
@@ -294,10 +288,11 @@ def test_truthy_exit_suppresses_only_the_incoming_raise():
 def test_exit_halt_supersedes_every_incoming_body_face():
     """A halted __exit__ supersedes Completed, Returned, and Halted body faces."""
     body, raise_effect = _nested_body_faces()
-    exit_halt = RaiseEffect.for_builtin("RuntimeError",
+    exit_halt = RaiseEffect.for_builtin(
+        "RuntimeError",
         occurrence="exit.py:1:0",
         blame="exit.py:1:0",
-        )
+    )
     protocol = _RecordingProtocol(exit_outcome=Incomplete(exit_halt))
     sugar = _source_resource(
         protocol=protocol,
@@ -327,14 +322,16 @@ def test_exit_halt_supersedes_every_incoming_body_face():
 
 def test_face_occurrence_lying_twin_discriminates_exit_bindings():
     """Lying twin: distinct raise occurrences mint distinct ExitFaceBinding rows."""
-    a = RaiseEffect.for_builtin("ValueError",
+    a = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence="body.py:1:0:A",
         blame="body.py:1:0:A",
-        )
-    b = RaiseEffect.for_builtin("ValueError",
+    )
+    b = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence="body.py:2:0:B",
         blame="body.py:2:0:B",
-        )
+    )
     bind_a = ExitFaceBinding.from_body_exit(
         "exit-face", Halted(true_guard(), a, _state("a"))
     )

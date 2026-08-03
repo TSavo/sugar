@@ -57,7 +57,9 @@ def _distribution(root: Path, package: str, module_source: str, export: str):
     return importlib.metadata.Distribution.at(meta)
 
 
-def _populate(tmp_path: Path, package: str, module_source: str, export: str, consumer: str):
+def _populate(
+    tmp_path: Path, package: str, module_source: str, export: str, consumer: str
+):
     dist = _distribution(tmp_path, package, module_source, export)
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
@@ -99,9 +101,7 @@ def test_target_with_broken_sibling_constructs_authenticated_frame(tmp_path: Pat
         package="reach_pkg",
         module_source=_BROKEN_SIBLING_MODULE,
         export="target_fn",
-        consumer=(
-            "from reach_pkg import target_fn\n" "result = target_fn(1)\n"
-        ),
+        consumer=("from reach_pkg import target_fn\n" "result = target_fn(1)\n"),
     )
     call = next(
         node
@@ -118,9 +118,9 @@ def test_target_with_broken_sibling_constructs_authenticated_frame(tmp_path: Pat
         span.end_col,
     )
     ref = context.source_call_resolutions.get(coordinate)
-    assert isinstance(ref, SourceCallPreconstructionRefV1), (
-        f"expected authenticated frame for target_fn; got {type(ref).__name__}: {ref}"
-    )
+    assert isinstance(
+        ref, SourceCallPreconstructionRefV1
+    ), f"expected authenticated frame for target_fn; got {type(ref).__name__}: {ref}"
 
 
 def test_target_that_is_broken_class_stays_loud(tmp_path: Path):
@@ -130,9 +130,7 @@ def test_target_that_is_broken_class_stays_loud(tmp_path: Path):
         package="reach_pkg2",
         module_source=_BROKEN_SIBLING_MODULE,
         export="BrokenSibling",
-        consumer=(
-            "from reach_pkg2 import BrokenSibling\n" "obj = BrokenSibling()\n"
-        ),
+        consumer=("from reach_pkg2 import BrokenSibling\n" "obj = BrokenSibling()\n"),
     )
     call = next(
         node
@@ -149,9 +147,9 @@ def test_target_that_is_broken_class_stays_loud(tmp_path: Path):
         span.end_col,
     )
     result = context.source_call_resolutions.get(coordinate)
-    assert not isinstance(result, SourceCallPreconstructionRefV1), (
-        "broken class target must not mint an authenticated frame"
-    )
+    assert not isinstance(
+        result, SourceCallPreconstructionRefV1
+    ), "broken class target must not mint an authenticated frame"
     assert isinstance(result, SourceCallPreconstructionGapV1), type(result)
     # Body gap (Compare leg) or construction gap — never silent green.
     assert result.kind in {
@@ -177,9 +175,7 @@ def test_target_actually_reaching_broken_local_class_stays_loud(tmp_path: Path):
         package="reach_pkg3",
         module_source=module,
         export="target_fn",
-        consumer=(
-            "from reach_pkg3 import target_fn\n" "result = target_fn(1)\n"
-        ),
+        consumer=("from reach_pkg3 import target_fn\n" "result = target_fn(1)\n"),
     )
     call = next(
         node

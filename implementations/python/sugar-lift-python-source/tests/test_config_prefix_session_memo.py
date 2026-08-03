@@ -69,16 +69,16 @@ def test_json_open_config_sourcefile_at_most_once() -> None:
         if "enum.py" in seats or str(row.get("module", "")).endswith("enum.py"):
             mat_enum += count
 
-    assert config_prepares <= 1, (
-        f"config.py prepare_count={config_prepares} (want ≤1); top={summary.get('top')}"
-    )
-    assert enum_prepares <= 1, (
-        f"enum.py prepare_count={enum_prepares} (want ≤1); top={summary.get('top')}"
-    )
-    assert mat_config <= 1, (
-        f"config.py MaterializeModule count={mat_config} (want ≤1); top={summary.get('top')}"
-    )
-    assert mat_enum <= 1, (
-        f"enum.py MaterializeModule count={mat_enum} (want ≤1); top={summary.get('top')}"
-    )
+    assert (
+        config_prepares <= 1
+    ), f"config.py prepare_count={config_prepares} (want ≤1); top={summary.get('top')}"
+    assert (
+        enum_prepares <= 1
+    ), f"enum.py prepare_count={enum_prepares} (want ≤1); top={summary.get('top')}"
+    assert (
+        mat_config <= 1
+    ), f"config.py MaterializeModule count={mat_config} (want ≤1); top={summary.get('top')}"
+    assert (
+        mat_enum <= 1
+    ), f"enum.py MaterializeModule count={mat_enum} (want ≤1); top={summary.get('top')}"
     assert fns >= 40, f"_json open banked {fns} functions"

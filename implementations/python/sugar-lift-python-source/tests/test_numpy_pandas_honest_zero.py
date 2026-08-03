@@ -71,9 +71,9 @@ def test_unknown_package_version_fails_by_name_rather_than_skipping() -> None:
     with pytest.raises(DeclaredCorpusMissing) as exc_info:
         _load_fixture_for_package_versions({"numpy": "9.9.9", "pandas": "3.0.3"})
 
-    assert not isinstance(exc_info.value, pytest.skip.Exception), (
-        "drift off a pinned vendor version must fail, never skip"
-    )
+    assert not isinstance(
+        exc_info.value, pytest.skip.Exception
+    ), "drift off a pinned vendor version must fail, never skip"
     assert "numpy=9.9.9,pandas=3.0.3" in str(exc_info.value)
     assert "numpy_pandas_honest_zero_counts__numpy-9.9.9__pandas-3.0.3.json" in str(
         exc_info.value

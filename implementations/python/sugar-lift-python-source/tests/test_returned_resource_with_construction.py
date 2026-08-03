@@ -76,12 +76,8 @@ _GUARD_SOURCE = (
 def _source_resource(**kwargs):
     manager_slot = kwargs["manager_slot_id"]
     face = kwargs["exit_face_id"]
-    enter_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "e" * 128, 1, 0, 1, 1
-    )
-    exit_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "x" * 128, 2, 0, 2, 1
-    )
+    enter_definition = SourceFragmentCoordinateV1("blake3-512:" + "e" * 128, 1, 0, 1, 1)
+    exit_definition = SourceFragmentCoordinateV1("blake3-512:" + "x" * 128, 2, 0, 2, 1)
     return WithSourceResourceSugar(
         enter=MethodCallSugar(
             receiver=ManagerRefSugar(slot_id=manager_slot, site=None),
@@ -333,7 +329,9 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
 
     assert sys.executable == "/usr/local/bin/python"
     assert platform.python_version() == "3.12.13"
-    assert pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
+    assert (
+        pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
+    )
     print(f"sys.executable={sys.executable}")
     print(f"sys.version={sys.version}")
     print(f"pandas.__file__={pandas.__file__}")
@@ -446,7 +444,9 @@ def test_real_pandas_option_context_runs_authenticated_enter_body_and_exit():
         and any(entry.site is node.fragment for node in body_nodes)
         for entry in entries
     ), "the actual pandas Assert body must produce its occurrence-bound value/effect"
-    rendered = tuple(str(entry.formula) for entry in entries if isinstance(entry, InvValue))
+    rendered = tuple(
+        str(entry.formula) for entry in entries if isinstance(entry, InvValue)
+    )
     assert any("exit_type" in formula for formula in rendered)
     assert any("exit_value" in formula for formula in rendered)
     assert any("exit_traceback" in formula for formula in rendered)
@@ -521,7 +521,9 @@ def test_real_option_context_executes_its_source_body_and_exit():
 
     assert sys.executable == "/usr/local/bin/python"
     assert platform.python_version() == "3.12.13"
-    assert pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
+    assert (
+        pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
+    )
     print(f"sys.executable={sys.executable}")
     print(f"sys.version={sys.version}")
     print(f"pandas.__file__={pandas.__file__}")
@@ -744,8 +746,7 @@ def test_unauthenticated_generator_manager_stays_on_generator_path(tmp_path: Pat
     manager_name = "unsealed_stream"
     dist = _distribution(
         tmp_path,
-        f"def {manager_name}(value):\n"
-        "    yield value\n",
+        f"def {manager_name}(value):\n" "    yield value\n",
         exported=manager_name,
     )
     tree, context, _ = _tree(

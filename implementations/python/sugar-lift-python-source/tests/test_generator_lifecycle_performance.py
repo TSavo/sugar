@@ -131,8 +131,8 @@ def test_enter_bound_generator_construction_refuses_foreign_frame():
 
 def test_enter_bound_generator_sequences_mixed_yield_and_halt_faces():
     true_face, false_face = partition("mixed-enter-guard")
-    effect = RaiseEffect.for_builtin("RenamedError",
-        
+    effect = RaiseEffect.for_builtin(
+        "RenamedError",
         blame="mixed-enter",
         occurrence="mixed-enter:halt",
     )
@@ -239,8 +239,7 @@ def test_enter_projector_resumes_guarded_branch_machines_once():
         TermValue(43),
     }
     assert all(
-        isinstance(face.value, EnteredGeneratorManagerStateV1)
-        for face in completed
+        isinstance(face.value, EnteredGeneratorManagerStateV1) for face in completed
     )
     assert true_machine.cursor == 0
     assert false_machine.cursor == 0
@@ -278,9 +277,7 @@ def test_enter_projector_distributes_guarded_yield_effect_arms_secondarily():
 
     assert isinstance(outcome, ExitSet)
     assert {
-        face.value.enter_value
-        for face in outcome.exits
-        if isinstance(face, Completed)
+        face.value.enter_value for face in outcome.exits if isinstance(face, Completed)
     } == {TermValue(53), TermValue(59)}
 
 
@@ -502,11 +499,13 @@ def test_pre_yield_suspension_assign_twin_does_not_impersonate_ordinary_assign()
         outcome = protocol.enter_resource_outcome()
     except SugarNotWritten as gap:
         # Honest residual until suspension-carrying Assign is constructed.
-        assert "Assign" in str(gap.observed) or "suspension" in str(gap.observed).lower(), (
-            gap.observed
-        )
-        assert "carrying a suspension" in str(gap.observed) or gap.observed == "Assign" or (
-            "Assign carrying a suspension" in str(gap.observed)
+        assert (
+            "Assign" in str(gap.observed) or "suspension" in str(gap.observed).lower()
+        ), gap.observed
+        assert (
+            "carrying a suspension" in str(gap.observed)
+            or gap.observed == "Assign"
+            or ("Assign carrying a suspension" in str(gap.observed))
         ), (
             f"suspension twin must name suspension-carrying Assign, not a foreign "
             f"shape; observed={gap.observed!r}"

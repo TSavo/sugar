@@ -44,6 +44,7 @@ from sugar_source_tree.tree import SourceFile
 # Shared decorator CM wrapper — not a manager; the factory generators differ.
 # ---------------------------------------------------------------------------
 
+
 def _resource_wrapper(*, seal: str) -> str:
     """Per-package CM wrapper. Distinct ``seal`` bytes ⇒ distinct source_cid."""
     return (
@@ -453,9 +454,9 @@ def test_tampered_source_refuses_publication_per_manager(
         files=_package_files(shape, factory_source=tampered_factory),
     )
     pubs = _publications(dirty_ctx)
-    assert pubs == [], (
-        f"tampered {shape.shape} still published generator-backed refs: {pubs}"
-    )
+    assert (
+        pubs == []
+    ), f"tampered {shape.shape} still published generator-backed refs: {pubs}"
     # No SourceDerivedGeneratorResourceRefV1 under any seat for this consumer.
     assert not any(
         isinstance(value, SourceDerivedGeneratorResourceRefV1)
@@ -522,24 +523,24 @@ def test_publication_path_has_no_manager_name_dispatch():
         textwrap.dedent(inspect.getsource(derivation)),
         textwrap.dedent(inspect.getsource(protocol)),
     )
-    forbidden = {
-        shape.export for shape in _SHAPES
-    } | {
-        shape.package for shape in _SHAPES
-    } | {
-        "option_context",
-        "pd.option_context",
-        "ensure_clean",
-        "set_config",
-        "filter_warnings",
-        "hold_state",
-        "catch_warnings",
-        "temporary_state",
-        "apply_settings",
-        "_GeneratorContextManager",
-        "contextmanager",
-        "contextlib.py",
-    }
+    forbidden = (
+        {shape.export for shape in _SHAPES}
+        | {shape.package for shape in _SHAPES}
+        | {
+            "option_context",
+            "pd.option_context",
+            "ensure_clean",
+            "set_config",
+            "filter_warnings",
+            "hold_state",
+            "catch_warnings",
+            "temporary_state",
+            "apply_settings",
+            "_GeneratorContextManager",
+            "contextmanager",
+            "contextlib.py",
+        }
+    )
     for source in sources:
         module = ast.parse(source)
         literals = {
@@ -568,9 +569,9 @@ def test_this_suite_has_no_name_dispatch_in_publication_helpers():
         for child in ast.walk(node):
             if isinstance(child, ast.Constant) and isinstance(child.value, str):
                 # Helpers may mention residual format strings, not export names.
-                assert child.value not in {s.export for s in _SHAPES}, (
-                    f"{node.name} embeds export name {child.value!r}"
-                )
+                assert child.value not in {
+                    s.export for s in _SHAPES
+                }, f"{node.name} embeds export name {child.value!r}"
                 assert child.value not in {s.package for s in _SHAPES}
 
 

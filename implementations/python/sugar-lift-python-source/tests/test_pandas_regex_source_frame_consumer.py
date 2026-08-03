@@ -98,7 +98,9 @@ def test_real_pandas_select_options_installs_authenticated_re_search_frame(
     nested_frame = context.source_call_frames[coordinate]
     assert coordinate not in context.opaque_source_call_obligations
     assert nested_frame.source_identity_cid == regex_graph.modules["re"].source_cid
-    assert nested_frame.definition_site.source_cid == regex_graph.modules["re"].source_cid
+    assert (
+        nested_frame.definition_site.source_cid == regex_graph.modules["re"].source_cid
+    )
 
 
 def test_same_target_foreign_import_binding_cannot_reauthenticate_definition(

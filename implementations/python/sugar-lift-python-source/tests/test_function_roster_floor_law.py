@@ -102,6 +102,7 @@ def test_runtime_error_and_value_error_also_preserve_floor(
         RuntimeError("populate runtime residual"),
         ValueError("populate value residual"),
     ):
+
         def make_boom(planted):
             def boom(source_file, **_k):
                 del source_file

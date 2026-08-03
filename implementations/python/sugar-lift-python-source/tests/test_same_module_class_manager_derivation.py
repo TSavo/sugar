@@ -26,7 +26,9 @@ from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.tree import SourceFile
 
 
-def _source_file(tmp_path: Path, source: str) -> tuple[SourceFile, TreeConstructionContextV1, Path]:
+def _source_file(
+    tmp_path: Path, source: str
+) -> tuple[SourceFile, TreeConstructionContextV1, Path]:
     path = tmp_path / "consumer.py"
     path.write_text(source, encoding="utf-8")
     cid = blake3_512_of(source.encode())
@@ -37,8 +39,7 @@ def _source_file(tmp_path: Path, source: str) -> tuple[SourceFile, TreeConstruct
 
 def test_local_classdef_cm_derives_and_constructs(tmp_path: Path):
     """Visible same-module ClassDef CM: populate derives; With constructs."""
-    source = textwrap.dedent(
-        """\
+    source = textwrap.dedent("""\
         class M:
             def __enter__(self):
                 return self
@@ -47,8 +48,7 @@ def test_local_classdef_cm_derives_and_constructs(tmp_path: Path):
         def f():
             with M():
                 return 1
-        """
-    )
+        """)
     tree, context, path = _source_file(tmp_path, source)
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
 
@@ -63,16 +63,14 @@ def test_local_classdef_cm_derives_and_constructs(tmp_path: Path):
 
 def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
     """ClassDef without __enter__/__exit__: gap row; With panics named."""
-    source = textwrap.dedent(
-        """\
+    source = textwrap.dedent("""\
         class NotCM:
             def run(self):
                 return 1
         def f():
             with NotCM():
                 return 1
-        """
-    )
+        """)
     tree, context, path = _source_file(tmp_path, source)
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
 
@@ -91,25 +89,21 @@ def test_install_gap_never_attribute_errors_on_import_auth_fail(tmp_path: Path):
     """Import CM without dist: gap installs; no AttributeError on deleted ground mint."""
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "__init__.py").write_text(
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             class M:
                 def __enter__(self):
                     return self
                 def __exit__(self, *a):
                     return False
-            """
-        ),
+            """),
         encoding="utf-8",
     )
-    source = textwrap.dedent(
-        """\
+    source = textwrap.dedent("""\
         from pkg import M
         def f():
             with M():
                 return 1
-        """
-    )
+        """)
     tree, context, path = _source_file(tmp_path, source)
     # No distribution_index → authenticate fails → no-derived-contract gap.
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)

@@ -74,7 +74,10 @@ def test_backend_module_construction_receipt_discriminates_foreign_source(
     )
 
     assert truthful.unit.source_cid != foreign.unit.source_cid
-    assert truthful.construction_event_receipt_cid != foreign.construction_event_receipt_cid
+    assert (
+        truthful.construction_event_receipt_cid
+        != foreign.construction_event_receipt_cid
+    )
 
 
 def test_class_definition_carries_ordered_decorator_sugars_and_occurrences(
@@ -303,6 +306,7 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
             try:
                 return self._table.lookup(name)
             except KeyError:
+
                 class _AbsentSymbol:
                     @staticmethod
                     def is_global() -> bool:
@@ -314,9 +318,7 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
             return getattr(self._table, name)
 
     def observed_function_symtable(self, name: str, lineno: int):
-        return _ObservedSymtable(
-            name, original_function_symtable(self, name, lineno)
-        )
+        return _ObservedSymtable(name, original_function_symtable(self, name, lineno))
 
     monkeypatch.setattr(SourceUnit, "function_symtable", observed_function_symtable)
 
@@ -349,8 +351,7 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
     assert isinstance(body_projected, tuple)
     body_frame, _ = body_projected
     assert all(
-        binding.name != "BodyOnly"
-        for binding in body_frame.decorated_class_bindings
+        binding.name != "BodyOnly" for binding in body_frame.decorated_class_bindings
     )
     assert ("global_worker", "Decorated") in contacted
     assert ("shadowed_worker", "Decorated") in contacted
@@ -415,6 +416,7 @@ def test_nested_definition_headers_belong_to_outer_admission_owner(
             try:
                 return self._table.lookup(name)
             except KeyError:
+
                 class _AbsentSymbol:
                     @staticmethod
                     def is_global() -> bool:
@@ -426,9 +428,7 @@ def test_nested_definition_headers_belong_to_outer_admission_owner(
             return getattr(self._table, name)
 
     def observed_function_symtable(self, name: str, lineno: int):
-        return _ObservedSymtable(
-            name, original_function_symtable(self, name, lineno)
-        )
+        return _ObservedSymtable(name, original_function_symtable(self, name, lineno))
 
     monkeypatch.setattr(SourceUnit, "function_symtable", observed_function_symtable)
 
@@ -501,6 +501,6 @@ def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
         field.name for field in binding.publication.final_class.class_fields
     ) == ("token",)
     assert binding.publication.raw_class.class_name == "Original"
-    assert tuple(field.name for field in binding.publication.raw_class.class_fields) == (
-        "stale",
-    )
+    assert tuple(
+        field.name for field in binding.publication.raw_class.class_fields
+    ) == ("stale",)

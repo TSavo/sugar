@@ -82,7 +82,9 @@ def test_module_prefix_tables_are_from_one_reporter_roll(monkeypatch, name) -> N
     assert unit.target_pattern_construction_count == 1
 
     receipt = source_file.constructed_module.construction_event_receipt
-    assert constructed_value_cid_v2(receipt) == source_file.construction_event_receipt_cid
+    assert (
+        constructed_value_cid_v2(receipt) == source_file.construction_event_receipt_cid
+    )
     with pytest.raises(ConstructedValueCategoryGap):
         constructed_value_cid_v2(source_file.constructed_module)
 
@@ -114,6 +116,5 @@ def test_module_prefix_rejects_every_two_roll_cross_wire(monkeypatch) -> None:
     assert all(node.unit is exact.unit for node in exact.unit.function_nodes)
     assert all(node is not foreign.root for node in exact.unit.function_nodes)
     assert all(
-        node.fragment is not foreign.root.fragment
-        for node in exact.unit.function_nodes
+        node.fragment is not foreign.root.fragment for node in exact.unit.function_nodes
     )

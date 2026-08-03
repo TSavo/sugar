@@ -746,7 +746,9 @@ def test_leaf_call_testimony_constructors_and_replace_refuse():
     source_file = leaf_assertions.SourceFile(
         (source, "kept.py", leaf_assertions.blake3_512_of(source.encode("utf-8")))
     )
-    call = next(node for node in source_file.nodes() if isinstance(node, leaf_assertions.Call))
+    call = next(
+        node for node in source_file.nodes() if isinstance(node, leaf_assertions.Call)
+    )
     translated = leaf_assertions._translate_term(call)
     with pytest.raises(TypeError, match="^_TranslatedTerm is producer-minted only$"):
         replace(translated, calls=())
@@ -766,7 +768,9 @@ def test_leaf_call_testimony_refuses_foreign_frame_and_roster_cross_wires():
             if isinstance(node, leaf_assertions.FunctionDef)
         )
         call = next(
-            node for node in source_file.nodes() if isinstance(node, leaf_assertions.Call)
+            node
+            for node in source_file.nodes()
+            if isinstance(node, leaf_assertions.Call)
         )
         return leaf_assertions._translate_term(call), contract
 
@@ -812,12 +816,15 @@ def test_leaf_call_edge_reconstruction_side_door_is_structurally_absent():
     assert {"term", "calls"}.issubset(
         leaf_assertions._TranslatedTerm.__dataclass_fields__
     )
-    assert sum(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_translate_term"
-        for node in ast.walk(functions["_lift_assert"])
-    ) == 2
+    assert (
+        sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_translate_term"
+            for node in ast.walk(functions["_lift_assert"])
+        )
+        == 2
+    )
     assert [
         function.name
         for function in functions.values()

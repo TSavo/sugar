@@ -112,7 +112,9 @@ def _frame_memo_limit() -> int:
     Env ``SUGAR_SESSION_FRAME_MEMO_LIMIT`` (default 512). Hold lifetime must
     track the memo row it guards — never longer (see remember_frame).
     """
-    raw = os.environ.get("SUGAR_SESSION_FRAME_MEMO_LIMIT", str(_DEFAULT_FRAME_MEMO_LIMIT))
+    raw = os.environ.get(
+        "SUGAR_SESSION_FRAME_MEMO_LIMIT", str(_DEFAULT_FRAME_MEMO_LIMIT)
+    )
     try:
         return max(1, int(raw))
     except ValueError:

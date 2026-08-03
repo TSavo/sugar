@@ -33,16 +33,10 @@ def test_dependency_graph_for_top_asks_auth_once(monkeypatch) -> None:
         fake_auth,
     )
 
-    g1 = _dependency_graph_for_top(
-        "warnings", session=session, dependency_graphs=local
-    )
-    g2 = _dependency_graph_for_top(
-        "warnings", session=session, dependency_graphs=local
-    )
+    g1 = _dependency_graph_for_top("warnings", session=session, dependency_graphs=local)
+    g2 = _dependency_graph_for_top("warnings", session=session, dependency_graphs=local)
     # Fresh local map still hits session (ask once per content, not path).
-    g3 = _dependency_graph_for_top(
-        "warnings", session=session, dependency_graphs={}
-    )
+    g3 = _dependency_graph_for_top("warnings", session=session, dependency_graphs={})
     assert g1 is g2 is g3
     assert calls == ["warnings"]
     assert session.dependency_graphs["warnings"] is g1
@@ -81,9 +75,7 @@ def test_five_unique_tops_auth_once_each(monkeypatch) -> None:
     for _ in range(21):
         local: dict = {}
         for top in tops:
-            _dependency_graph_for_top(
-                top, session=session, dependency_graphs=local
-            )
+            _dependency_graph_for_top(top, session=session, dependency_graphs=local)
 
     assert calls == list(tops)
     assert set(session.dependency_graphs) == set(tops)

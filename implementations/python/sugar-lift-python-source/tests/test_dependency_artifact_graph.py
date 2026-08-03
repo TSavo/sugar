@@ -1246,6 +1246,6 @@ def test_session_module_materialize_amortizes_across_definitions(
         resolve_source_visible_frame(resolved[0], graph=graph, session=other)
     finally:
         mc.SourceFile = original_sf  # type: ignore[misc, assignment]
-    assert materializations["count"] >= 1, (
-        "fresh session paid zero materialize; process-global memo returned"
-    )
+    assert (
+        materializations["count"] >= 1
+    ), "fresh session paid zero materialize; process-global memo returned"

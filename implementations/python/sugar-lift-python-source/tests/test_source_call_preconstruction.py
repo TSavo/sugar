@@ -193,8 +193,7 @@ def test_decorator_wrapped_source_call_does_not_borrow_undecorated_body(
     )
     path, source_file, context = _consumer(
         tmp_path,
-        "from unprivileged import arbitrary_helper as renamed\n"
-        "renamed(2) + 3\n",
+        "from unprivileged import arbitrary_helper as renamed\n" "renamed(2) + 3\n",
     )
     call = next(node for node in source_file.nodes() if isinstance(node, Call))
 
@@ -217,13 +216,11 @@ def test_undecorated_twin_still_installs_its_authenticated_return_frame(
 ) -> None:
     distribution = _distribution(
         tmp_path,
-        "def arbitrary_helper(value):\n"
-        "    return value + 1\n",
+        "def arbitrary_helper(value):\n" "    return value + 1\n",
     )
     path, source_file, context = _consumer(
         tmp_path,
-        "from unprivileged import arbitrary_helper as renamed\n"
-        "renamed(2) + 3\n",
+        "from unprivileged import arbitrary_helper as renamed\n" "renamed(2) + 3\n",
     )
     call = next(node for node in source_file.nodes() if isinstance(node, Call))
 
