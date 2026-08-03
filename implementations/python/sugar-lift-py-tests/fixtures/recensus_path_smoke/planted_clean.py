@@ -1,4 +1,4 @@
-"""Clean function plant — completed row, no with-items."""
+"""No-With plant whose authentic first terminal is unwritten ``Module.sugar``."""
 
 
 def ok():
