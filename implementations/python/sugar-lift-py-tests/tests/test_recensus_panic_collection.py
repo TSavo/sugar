@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
@@ -55,6 +57,45 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_terminal(
     assert row["blocking_terminal_count"] == 1
     assert row["panic"]["observedEventType"].endswith(".ConstructionPanic")
     assert len(row["constructionPanics"]) == 1
+
+
+def test_contract_ref_fallback_panic_stays_loud_after_roster_bank(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Fallback derivation follows roster banking and never absorbs its panic."""
+    path = tmp_path / "fixture.py"
+    path.write_text("def a():\n    return 1\n", encoding="utf-8")
+    calls: list[str] = []
+
+    def roster(**_kwargs):
+        calls.append("roster")
+        return ([{"kind": "function-memento"}], [])
+
+    def fallback(_root):
+        calls.append("fallback")
+        raise ConstructionPanic(
+            ConstructionGap(
+                owner="fallback-demand-table-panic",
+                blame="fixture.py:1:0",
+                observed="fallback demand-table construction",
+                requested="authenticated contract refs",
+                fix="keep fallback failure loud after the per-file roster bank",
+            )
+        )
+
+    import sugar_lift_py_tests.lift_rpc as lift_rpc
+
+    monkeypatch.setattr(CONSUMER, "demand_function_roster", roster)
+    monkeypatch.setattr(lift_rpc, "provisional_contract_refs_from_demands", fallback)
+
+    with pytest.raises(ConstructionPanic) as raised:
+        CONSUMER.measure_file_via_enumerate(
+            workspace_root=tmp_path,
+            file_rel="fixture.py",
+        )
+
+    assert raised.value.info.owner == "fallback-demand-table-panic"
+    assert calls == ["roster", "fallback"]
 
 
 def test_mid_file_construction_panic_does_not_shrink_function_denominator(

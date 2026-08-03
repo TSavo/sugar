@@ -701,14 +701,10 @@ def measure_file_via_enumerate(
     Never raises after a roster is banked — residual panic becomes a terminal
     row with functionsTotal preserved (roster-floor).
     """
-    from sugar_lift_py_tests.lift_rpc import (
-        install_provisional_contract_refs,
-        provisional_contract_refs_from_demands,
-    )
+    if contract_refs is not None:
+        from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
 
-    if contract_refs is None:
-        contract_refs = provisional_contract_refs_from_demands(Path(workspace_root))
-    install_provisional_contract_refs(Path(workspace_root), contract_refs)
+        install_provisional_contract_refs(Path(workspace_root), contract_refs)
 
     path = (workspace_root / file_rel).resolve()
     ast_fn = count_ast_function_defs(path)
@@ -796,6 +792,19 @@ def measure_file_via_enumerate(
             ast_fn=ast_fn,
             source_cid=source_cid,
         )
+
+    if contract_refs is None:
+        from sugar_lift_py_tests.lift_rpc import (
+            install_provisional_contract_refs,
+            provisional_contract_refs_from_demands,
+        )
+
+        # The per-file roster is the sanctioned ConstructionPanic membrane.
+        # Bank it before entering the corpus-wide fallback. A panic from this
+        # fallback remains loud: it is not a terminal for this one file and
+        # must never be absorbed or misattributed as one.
+        contract_refs = provisional_contract_refs_from_demands(Path(workspace_root))
+        install_provisional_contract_refs(Path(workspace_root), contract_refs)
 
     try:
         cm_events, cm_gaps = demand_context_manager_resolution_events(
