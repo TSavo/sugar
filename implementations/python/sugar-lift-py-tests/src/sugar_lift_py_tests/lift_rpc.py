@@ -1778,6 +1778,26 @@ def _send_enumerate_result(
     )
 
 
+def _seat_roll_call_reporter(source_file, reporter) -> None:
+    """Seat one audit consumer on an already prepared resident tree.
+
+    Process residency owns parsed preparation, not consumer testimony.  A CID
+    hit returns the prepared shell whose materialized nodes still carry the
+    reporter used by the first opener (often ``NULL_REPORTER``).  Rebinding
+    only ``SourceFile.reporter`` therefore leaves those nodes writing into the
+    old channel and makes the roll call falsely clean.
+
+    Walk the resident tree once, parent before child, rebinding and registering
+    each existing node with this consumer's reporter.  Parent-first order also
+    ensures any lazily materialized child is born on the same channel.  This
+    does not parse, populate, or prepare the SourceFile again.
+    """
+    source_file.reporter = reporter
+    for node in source_file.nodes():
+        object.__setattr__(node, "reporter", reporter)
+        reporter.register(node)
+
+
 def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     from sugar_lift_py_tests.kit_rpc import AuditLeafEnvelopeDto
 
@@ -1795,6 +1815,7 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
 
     reporter = CollectingReporter()
     source_file = SourceFile.from_path(str(full_path), reporter=reporter)
+    _seat_roll_call_reporter(source_file, reporter)
     report = discharge(source_file)
     # ONE door: the same full-tuple presence projection as tree_enumerate.
     # Do not re-derive status by CID alone, and do not mix report.R with a
