@@ -401,6 +401,42 @@ def demand_construction_residual(
     return (audit if isinstance(audit, dict) else None), gaps
 
 
+def _clear_d3_audit_open_observation(source_cid: str) -> None:
+    from sugar_lift_py_tests.lift_rpc import take_d3_residency_observation
+
+    take_d3_residency_observation(source_cid)
+
+
+def _take_d3_audit_open_observation(source_cid: str) -> dict[str, Any] | None:
+    from sugar_lift_py_tests.lift_rpc import take_d3_residency_observation
+
+    return take_d3_residency_observation(source_cid)
+
+
+def _complete_d3_residency_observation(
+    *, source_cid: str, present_before_demand: bool
+) -> dict[str, Any]:
+    """Join the pre-demand sample to the actual audit-open observation.
+
+    Both samples observe opens the production path already performs.  They do
+    not open a SourceFile, clear residency, or change a gate verdict.
+    """
+    row: dict[str, Any] = {
+        "sourceCid": source_cid,
+        "reached": True,
+        "presentBeforeDemand": bool(present_before_demand),
+    }
+    audit_open = _take_d3_audit_open_observation(source_cid)
+    if isinstance(audit_open, dict):
+        row.update(audit_open)
+        row["presenceConfirmed"] = (
+            row.get("presentBeforeDemand") == row.get("presentAtAuditOpen")
+        )
+    else:
+        row["presenceConfirmed"] = False
+    return row
+
+
 def _empty_shell(
     *,
     file_rel: str,
@@ -779,6 +815,15 @@ def measure_file_via_enumerate(
             functions_enumerated=len(function_nodes),
         )
 
+    # Exposure instrument only: D3 follows earlier file demands, but eligibility
+    # is not attendance.  Sample the existing resident map immediately before
+    # the real D3 call, then join it to the audit-open observation afterward.
+    # get_resident's LRU touch is the same touch the immediately-following open
+    # performs, so this adds no open and leaves the post-open cache order intact.
+    from sugar_source_tree.process_resident_file import get_resident
+
+    _clear_d3_audit_open_observation(source_cid)
+    d3_present_before_demand = get_resident(source_cid) is not None
     try:
         audit, construction_gaps = demand_construction_residual(
             workspace_root=workspace_root,
@@ -788,7 +833,7 @@ def measure_file_via_enumerate(
     except BaseException as error:  # noqa: BLE001 — residual failed; roster stands
         if _is_process_control(error):
             raise
-        return terminal_from_enumerate(
+        row = terminal_from_enumerate(
             file_rel=file_rel,
             function_nodes=function_nodes,
             function_gaps=[],
@@ -800,8 +845,13 @@ def measure_file_via_enumerate(
             source_cid=source_cid,
             context_manager_resolution_events=cm_events,
         )
+        row["d3Residency"] = _complete_d3_residency_observation(
+            source_cid=source_cid,
+            present_before_demand=d3_present_before_demand,
+        )
+        return row
 
-    return terminal_from_enumerate(
+    row = terminal_from_enumerate(
         file_rel=file_rel,
         function_nodes=function_nodes,
         function_gaps=function_gaps,
@@ -812,6 +862,11 @@ def measure_file_via_enumerate(
         source_cid=source_cid,
         context_manager_resolution_events=cm_events,
     )
+    row["d3Residency"] = _complete_d3_residency_observation(
+        source_cid=source_cid,
+        present_before_demand=d3_present_before_demand,
+    )
+    return row
 
 
 def assert_no_side_door_imports() -> None:
