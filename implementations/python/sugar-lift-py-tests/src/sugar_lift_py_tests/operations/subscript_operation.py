@@ -30,6 +30,10 @@ class SubscriptOperation:
     blame: object
     use_occurrence: object | None = None
 
+    def submit(self, receiver: Any, ctx: object) -> Outcome:
+        """Ask the receiver to answer this subscript demand."""
+        return receiver.subscript_with(self, ctx)
+
     def subscript_string(self, receiver, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import (
             Bv32Value,
