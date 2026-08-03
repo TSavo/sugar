@@ -45,7 +45,22 @@ jobs:
 
       # This must run in a workflow independent of ci.yml: a workflow rejected
       # before dispatch cannot execute its own context-availability tooth.
-      - name: Check workflow contexts available before dispatch
+      - name: Set up Go for version-pinned actionlint
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.2"
+          cache: false
+
+      - name: Install actionlint v1.7.12
+        shell: bash
+        env:
+          GOBIN: ${{ runner.temp }}/actionlint/bin
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$GOBIN" >> "$GITHUB_PATH"
+
+      - name: Check every workflow before dispatch
         run: python3 tests/test_workflow_context_availability.py
 
       - name: Prepare immutable Python test environment
