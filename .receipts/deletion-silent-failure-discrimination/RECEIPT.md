@@ -2,12 +2,12 @@
 
 ## Pins
 
-- Measured main: `2f442a3bfd664551f35375e9a15f9ad2c5577bed`
-- Exact tested source-law content: `d0caa9b27825fcec0744154950024790d5a74a6f`
-- Rebased source-law commit: `f05224219`
-- Canonical-vocabulary inversion commit: `2507954c2`
-- Producer-door migration commit: `b867572ac`
-- Prior main: `8c117c6568039624eead7f69577dae19bf22f3cc`
+- Measured main: `b5e12027e0011f5691ef3dec5c2b4a95a029f581`
+- Exact tested source-law content: `6266839d45669d2925ec7157456a41277a5550f9`
+- Rebased source-law commit: `875f89d13`
+- Canonical-vocabulary inversion commit: `d878212c8`
+- Producer-door migration commit: `05d2ced42`
+- Prior main: `2f442a3bfd664551f35375e9a15f9ad2c5577bed`
 - Test: `tests/test_deletion_silent_failure_discrimination.py`
 
 Content comparison, not line matching, shows that #7152 repaired four of the
@@ -29,9 +29,9 @@ The rename-collapsed `elif category == "panic"` arm was also removed by #7152.
 Therefore a seal refusal that names all five old coordinates would contradict
 the pinned source.  No corpus conclusion is drawn here; Keaton owns that run.
 
-The relevant production blobs are byte-identical between `8c117c656` and
-`2f442a3bf`; #7157 changes process-floor demand wiring, not the control-effect
-recensus or compose seal.
+The relevant production and test blobs are byte-identical between `2f442a3bf`
+and `b5e12027e`; #7158 changes only the sugarbin wrapper compatibility contract,
+not the control-effect recensus, compose seal, or discriminator inputs.
 
 ## Runtime conservation relationship
 
@@ -92,7 +92,7 @@ reads an unrelated `valuesByUnit` container and was not changed.
 
 ### Exclusive read of an unproduced key
 
-- Exact repaired source content: `d0caa9b27` on main `2f442a3bf`
+- Exact repaired source content: `6266839d4` on main `b5e12027e`
 - Input and former coordinates: `_with_census_partition`'s exclusive
   `derived-contract` and `gap:*` reads, plus `main`'s exclusive
   `derived-contract` read
@@ -104,7 +104,7 @@ reads an unrelated `valuesByUnit` container and was not changed.
 
 ### Rename-collapsed predicate
 
-- Exact repaired source content: `d0caa9b27` on main `2f442a3bf`
+- Exact repaired source content: `6266839d4` on main `b5e12027e`
 - Input and former coordinate: `control_effect_recensus.main`, two arms with
   predicate `category == "panic"`
 - Entrance: physical `if` / `elif` chain predicate normalization
@@ -129,7 +129,7 @@ for name in (
 PY
 ```
 
-At exact source-law content `d0caa9b27` over main `2f442a3bf`, direct local
+At exact source-law content `6266839d4` over main `b5e12027e`, direct local
 execution returned exit `0` with both test functions reporting `PASS`.  Both
 tests execute their lying and truthful planted arms before asserting that the
 live offender set is empty.
