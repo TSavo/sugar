@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from email.parser import BytesParser
 import importlib.machinery
 import importlib.metadata
+import logging
 import os
 from pathlib import Path, PurePosixPath
 import sys
@@ -27,7 +28,13 @@ class DependencyArtifactAuthenticationError(Exception):
     """The selected installed artifact cannot be authenticated exactly."""
 
 
+class DependencyArtifactGraphCoherenceError(DependencyArtifactAuthenticationError):
+    """Authenticated fields describe no graph production intake can mint."""
+
+
+_LOG = logging.getLogger(__name__)
 _ARTIFACT_INTAKE_AUTHORITY = object()
+_DEPENDENCY_ARTIFACT_CACHE_SCHEMA = "dep-graph-v4"
 
 # The authenticated-graph memo is CONTENT-ADDRESSED, and that is the whole
 # reason it may be process-global (#6266's distinction, applied here).
@@ -111,9 +118,7 @@ def _fingerprint_disk_cache_path(seat_key: str, fingerprint: str) -> Path:
     return _cache_root() / "dependency-artifact-fingerprints" / f"{digest}.json"
 
 
-def _load_artifact_cid_for_fingerprint(
-    seat_key: str, fingerprint: str
-) -> str | None:
+def _load_artifact_cid_for_fingerprint(seat_key: str, fingerprint: str) -> str | None:
     path = _fingerprint_disk_cache_path(seat_key, fingerprint)
     if not path.is_file():
         return None
@@ -165,13 +170,25 @@ def _load_authenticate_disk_cache(
     path = _artifact_disk_cache_path(artifact_cid)
     if not path.is_file():
         return None
+    artifact_kind: object = "<unavailable>"
+    distribution_name: object = "<unavailable>"
     try:
         import pickle
 
         with path.open("rb") as stream:
             payload = pickle.load(stream)
-        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v3":
-            return None
+        if not isinstance(payload, dict):
+            raise DependencyArtifactAuthenticationError(
+                "disk cache payload is not a mapping"
+            )
+        artifact_kind = payload.get("artifact_kind", "<unavailable>")
+        distribution_name = payload.get("distribution_name", "<unavailable>")
+        if payload.get("schema") != _DEPENDENCY_ARTIFACT_CACHE_SCHEMA:
+            raise DependencyArtifactAuthenticationError(
+                "disk cache schema mismatch: "
+                f"expected={_DEPENDENCY_ARTIFACT_CACHE_SCHEMA} "
+                f"actual={payload.get('schema')}"
+            )
         graph = DependencyArtifactGraph(
             artifact_kind=payload["artifact_kind"],
             distribution_name=payload["distribution_name"],
@@ -181,14 +198,58 @@ def _load_authenticate_disk_cache(
             modules=MappingProxyType(dict(payload["modules"])),
             _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
-    except Exception:
+    except Exception as exc:
+        _refuse_authenticate_disk_cache(
+            artifact_cid=artifact_cid,
+            path=path,
+            artifact_kind=artifact_kind,
+            distribution_name=distribution_name,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
         return None
     # ``__post_init__`` already recomputed the CID from the retained bytes; this
     # pins that the recomputed CID is the one that was ASKED for, so a payload
     # parked at the wrong seat cannot answer a question it does not address.
     if graph.distribution_artifact_cid != artifact_cid:
+        _refuse_authenticate_disk_cache(
+            artifact_cid=artifact_cid,
+            path=path,
+            artifact_kind=graph.artifact_kind,
+            distribution_name=graph.distribution_name,
+            reason=(
+                "parked artifact CID mismatch: "
+                f"payload={graph.distribution_artifact_cid}"
+            ),
+        )
         return None
     return graph
+
+
+def _refuse_authenticate_disk_cache(
+    *,
+    artifact_cid: str,
+    path: Path,
+    artifact_kind: object,
+    distribution_name: object,
+    reason: str,
+) -> None:
+    """Make one rejected cache seat visible, then make it absent."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        invalidated = False
+    else:
+        invalidated = not path.exists()
+    _LOG.warning(
+        "dependency-artifact-cache-refused "
+        "artifact_cid=%s artifact_kind=%s distribution_name=%s "
+        "reason=%s invalidated=%s",
+        artifact_cid,
+        artifact_kind,
+        distribution_name,
+        reason,
+        invalidated,
+    )
 
 
 def _store_authenticate_disk_cache(
@@ -204,7 +265,9 @@ def _store_authenticate_disk_cache(
             # v3 projects recorded .pyi defining source as modules.  A v2 seat
             # for the same artifact CID is byte-authentic but semantically
             # incomplete, so it must never answer this reader.
-            "schema": "dep-graph-v3",
+            # v4 also authenticates the relationship between intake kind and
+            # distribution identity; individually valid fields are not enough.
+            "schema": _DEPENDENCY_ARTIFACT_CACHE_SCHEMA,
             "artifact_kind": graph.artifact_kind,
             "distribution_name": graph.distribution_name,
             "distribution_version": graph.distribution_version,
@@ -567,7 +630,15 @@ class DependencyArtifactGraph:
                 raise DependencyArtifactAuthenticationError(
                     "distribution identity does not match its METADATA preimage"
                 )
-        elif self.artifact_kind != "stdlib":
+        elif self.artifact_kind == "stdlib":
+            expected_name = f"{sys.implementation.name}-stdlib"
+            if self.distribution_name != expected_name:
+                raise DependencyArtifactGraphCoherenceError(
+                    "stdlib dependency artifact graph identity is incoherent: "
+                    f"artifact_kind=stdlib distribution_name={self.distribution_name} "
+                    f"expected_distribution_name={expected_name}"
+                )
+        else:
             raise DependencyArtifactAuthenticationError(
                 "dependency artifact graph has an unknown intake kind"
             )

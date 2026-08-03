@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import importlib.metadata
+import pickle
 import sys
 from pathlib import Path
 
@@ -423,7 +424,120 @@ def test_disk_memo_survives_a_cold_process_table(tmp_path):
     assert _observable(from_disk) == _observable(warm)
 
 
-# -- twin 6: the value is not mutable, so a writer cannot leak -----------------
+# -- twin 6: cached fields must describe a constructible graph ----------------
+
+
+def test_coherent_disk_graph_is_served_without_refusal(tmp_path, monkeypatch, caplog):
+    """The coherence detector must preserve the real disk-hit path."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    warm = DependencyArtifactGraph.authenticate(distribution)
+    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
+
+    da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
+
+    def forbidden_rebuild(_distribution):
+        raise AssertionError("coherent disk hit rebuilt")
+
+    monkeypatch.setattr(
+        DependencyArtifactGraph,
+        "_read_recorded_installation",
+        staticmethod(forbidden_rebuild),
+    )
+    served = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert _observable(served) == _observable(warm)
+    assert seat.is_file()
+    assert "dependency-artifact-cache-refused" not in caplog.text
+
+
+def test_incoherent_cached_graph_is_refused_invalidated_and_rebuilt(tmp_path, caplog):
+    """Fields may authenticate individually while their relationship is impossible."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    warm = DependencyArtifactGraph.authenticate(distribution)
+    warm_seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
+    with warm_seat.open("rb") as stream:
+        payload = pickle.load(stream)
+
+    payload["artifact_kind"] = "stdlib"
+    payload["distribution_name"] = "pandas"
+    records = [
+        {"path": item.source_seat, "contentCid": item.content_cid}
+        for item in payload["files"]
+    ]
+    forged_cid = da.cid_of_json(
+        {
+            "kind": "python-stdlib-artifact",
+            "schemaVersion": "1",
+            "distributionName": "pandas",
+            "distributionVersion": payload["distribution_version"],
+            "files": records,
+        }
+    )
+    payload["distribution_artifact_cid"] = forged_cid
+    forged_seat = da._artifact_disk_cache_path(forged_cid)
+    forged_seat.parent.mkdir(parents=True, exist_ok=True)
+    with forged_seat.open("wb") as stream:
+        pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
+
+    seat_key = DependencyArtifactGraph._distribution_seat_key(distribution)
+    fingerprint = DependencyArtifactGraph._installation_fingerprint(distribution)
+    da._store_fingerprint_disk_cache(seat_key, fingerprint, forged_cid)
+    da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
+
+    served = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert served.artifact_kind == "distribution"
+    assert served.distribution_name == warm.distribution_name
+    assert served.distribution_artifact_cid == warm.distribution_artifact_cid
+    assert not forged_seat.exists()
+    assert "dependency-artifact-cache-refused" in caplog.text
+    assert forged_cid in caplog.text
+    assert "artifact_kind=stdlib" in caplog.text
+    assert "distribution_name=pandas" in caplog.text
+    assert "DependencyArtifactGraphCoherenceError" in caplog.text
+
+
+def test_previous_cache_schema_is_refused_invalidated_and_rebuilt(tmp_path, caplog):
+    """A byte-authentic v3 seat cannot answer the relationship-aware v4 reader."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    warm = DependencyArtifactGraph.authenticate(distribution)
+    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
+    with seat.open("rb") as stream:
+        payload = pickle.load(stream)
+    assert payload["schema"] == da._DEPENDENCY_ARTIFACT_CACHE_SCHEMA
+    payload["schema"] = "dep-graph-v3"
+    with seat.open("wb") as stream:
+        pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
+
+    da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
+    rebuilt = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert _observable(rebuilt) == _observable(warm)
+    assert "dependency-artifact-cache-refused" in caplog.text
+    assert warm.distribution_artifact_cid in caplog.text
+    assert "disk cache schema mismatch" in caplog.text
+    assert seat.is_file()
+    with seat.open("rb") as stream:
+        replacement = pickle.load(stream)
+    assert replacement["schema"] == "dep-graph-v4"
+
+
+# -- twin 7: the value is not mutable, so a writer cannot leak -----------------
 
 
 def test_a_served_graph_cannot_be_written_into(tmp_path):
