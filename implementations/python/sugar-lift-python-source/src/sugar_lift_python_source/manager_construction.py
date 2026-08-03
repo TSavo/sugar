@@ -1307,18 +1307,18 @@ def _graph_is_off_population(
     """True when ``graph`` is outside the enrolled measurement population.
 
     - stdlib is always off-pin (CPython is not the corpus pin).
-    - when ``session.enrolled_distributions`` is set, any distribution whose
-      name is not in that set is off-pin (pytest on a pandas test open was
-      40 frames / ~3.8s after the stdlib-only membrane — same law, broader door).
-    - when enrolled is None, legacy stdlib-only membrane (backward compatible).
+    - any distribution whose name is absent from the session's authoritative
+      roster is off-pin (pytest on a pandas test open was 40 frames / ~3.8s
+      after the stdlib-only membrane — same law, broader door).
     """
+    if session is None:
+        raise TypeError(
+            "population classification requires an enrolled distribution roster"
+        )
     if getattr(graph, "artifact_kind", None) == "stdlib":
         return True
-    enrolled = None if session is None else session.enrolled_distributions
-    if enrolled is None:
-        return False
     name = getattr(graph, "distribution_name", None)
-    return name is not None and name not in enrolled
+    return name is not None and name not in session.enrolled_distributions
 
 
 def _off_population_materialize_gap(

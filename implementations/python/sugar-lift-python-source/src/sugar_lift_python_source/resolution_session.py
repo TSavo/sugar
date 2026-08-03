@@ -38,7 +38,7 @@ Decision of record (session-memo liveness)
 The memos on this class are real amortization, not decorative. They fire in two
 places:
 
-1. **Inside one call tree** -- even a single-shot ``session_or_new(None)`` entry
+1. **Inside one call tree** -- even a single-shot explicitly constructed session
    still needs ``frame_active`` (cycle detection) and nested export/frame hits
    while that one top-level resolve walks reexports and nested callees.
 2. **Across top-level resolves** -- only when the *same* session object is
@@ -52,9 +52,9 @@ Deletion of these memos is refused: the pandas megamodule wall was re-materializ
 SourceFile + class-base sugar once per call-site receipt of the same authenticated
 definition. The session is the boundary that makes that amortization safe.
 
-``session_or_new(None)`` remains the honest single-shot leaf: slower, always
-correct, never process-global. It is not permission for a multi-resolve owner to
-drop the session.
+An explicitly constructed session remains the honest single-shot leaf: slower,
+always correct, never process-global. ``None`` is unknown population authority
+and refuses; it is not permission for any owner to invent a roster.
 
 Walk-scoped multi-resolve owner (``walk_session_for``)
 ------------------------------------------------------
@@ -84,9 +84,10 @@ Legitimacy (why this is not process-global free-for-all):
   amortization that is real (identical definition coordinates hit). Do not bet
   a 6× census cut on walk session alone.
 
-``walk_session_for(root)`` is the small production default for multi-file doors.
-Callers that need isolation pass an explicit ``SourceResolutionSession()`` or
-``session_or_new(None)``.
+``walk_session_for(root, enrolled_distributions=...)`` is the small production
+default for multi-file doors. Callers that need isolation construct an explicit
+``SourceResolutionSession(enrolled_distributions=...)``. Unknown authority is
+not a session state; an authoritative empty population is ``frozenset()``.
 """
 
 from __future__ import annotations
@@ -96,14 +97,27 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Resolved workspace root path -> walk-owned session. Not content-keyed; not a
-# substitute for §4 residency. Cleared only by tests (clear_walk_sessions).
-_WALK_SESSIONS: dict[str, "SourceResolutionSession"] = {}
+# (resolved workspace root, authenticated population) -> walk-owned session.
+# Not content-keyed; not a substitute for §4 residency. Cleared only by tests.
+_WALK_SESSIONS: dict[tuple[str, frozenset[str]], "SourceResolutionSession"] = {}
+_ROSTER_UNSET = object()
 
 # Default matches process-resident file LRU (#7071). A walk-scoped session that
 # retained frame_holds for every projected SourceFile forever recreated the
 # "shared context degrades across opens" disease at corpus scale.
 _DEFAULT_FRAME_MEMO_LIMIT = 512
+
+
+def _require_enrolled_distribution_roster(value: object) -> frozenset[str]:
+    """Return one explicit population authority; unknown is unconstructible."""
+    if not isinstance(value, frozenset) or not all(
+        isinstance(item, str) and item for item in value
+    ):
+        raise TypeError(
+            "enrolled_distributions must be an authoritative frozenset[str]; "
+            "None is unknown, not empty"
+        )
+    return value
 
 
 def _frame_memo_limit() -> int:
@@ -144,16 +158,18 @@ class SourceResolutionSession:
     def __init__(
         self,
         *,
+        enrolled_distributions: frozenset[str],
         enabled: bool = True,
-        enrolled_distributions: frozenset[str] | None = None,
     ) -> None:
+        enrolled_distributions = _require_enrolled_distribution_roster(
+            enrolled_distributions
+        )
         self.enabled = enabled
-        # Pin membership for the population membrane.  None = legacy
-        # stdlib-only off-population (pre-#707x).  When set, any graph whose
-        # distribution_name is not in this set is off-pin and must cite, never
-        # MaterializeModule (pytest on a pandas test open was 40 frames / ~3.8s
-        # of residual wall after the stdlib membrane).
-        self.enrolled_distributions: frozenset[str] | None = enrolled_distributions
+        # Pin membership for the population membrane. Any graph whose
+        # distribution_name is absent is off-pin and must cite, never
+        # MaterializeModule. An empty set is authoritative emptiness; there is
+        # no unknown/None state that can silently admit every distribution.
+        self.enrolled_distributions = enrolled_distributions
         # (distribution_artifact_cid, module_name, exported_name) -> pure-entry
         # resolution (includes module-structural reexport warrants; no path
         # import_binding_cid).
@@ -318,33 +334,57 @@ class SourceResolutionSession:
             self.lexical_passes[source_cid] = runner
 
 
-def session_or_new(session: SourceResolutionSession | None) -> SourceResolutionSession:
-    """Resolve the caller's session, or open one bounded to this single call tree.
-
-    ``None`` never means "share the process": it means "this call is its own
-    session". Nested resolves inside that call still share the returned object
-    (cycle detection and within-tree amortization stay real). The memo dies with
-    the call tree -- slower across independent top-level calls, always correct.
+def session_or_new(
+    session: SourceResolutionSession | None,
+    *,
+    enrolled_distributions: frozenset[str] | object = _ROSTER_UNSET,
+) -> SourceResolutionSession:
+    """Return the caller's authoritative session; refuse unknown authority.
 
     Multi-resolve owners (populate, package enumeration, file-open, census walk)
     must pass an explicit session — or use ``walk_session_for(workspace_root)``
     — so amortization reaches every receipt they own. Do not call this at those
     doors and throw the result away between receipts.
     """
-    return SourceResolutionSession() if session is None else session
+    if session is None:
+        if enrolled_distributions is _ROSTER_UNSET:
+            raise TypeError(
+                "session construction requires an enrolled distribution roster; "
+                "pass enrolled_distributions=frozenset(...)"
+            )
+        return SourceResolutionSession(
+            enrolled_distributions=_require_enrolled_distribution_roster(
+                enrolled_distributions
+            )
+        )
+    if (
+        enrolled_distributions is not _ROSTER_UNSET
+        and enrolled_distributions != session.enrolled_distributions
+    ):
+        raise ValueError(
+            "supplied enrolled distribution roster differs from session authority"
+        )
+    return session
 
 
-def walk_session_for(workspace_root: Path | str) -> SourceResolutionSession:
+def walk_session_for(
+    workspace_root: Path | str,
+    *,
+    enrolled_distributions: frozenset[str],
+) -> SourceResolutionSession:
     """Return the multi-resolve session owned by one workspace walk.
 
-    One resolved root → one session for the life of the process (or until
-    ``clear_walk_sessions``). Legitimate because a corpus walk is one authority
-    locus; not process-global free-for-all (see module docstring).
+    One resolved root + one explicit roster → one session for the life of the
+    process (or until ``clear_walk_sessions``). Different population authority
+    cannot share projection state merely because the filesystem root matches.
     """
-    key = str(Path(workspace_root).resolve())
+    enrolled_distributions = _require_enrolled_distribution_roster(
+        enrolled_distributions
+    )
+    key = (str(Path(workspace_root).resolve()), enrolled_distributions)
     session = _WALK_SESSIONS.get(key)
     if session is None:
-        session = SourceResolutionSession()
+        session = SourceResolutionSession(enrolled_distributions=enrolled_distributions)
         _WALK_SESSIONS[key] = session
     return session
 
