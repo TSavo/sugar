@@ -85,7 +85,6 @@ class SubscriptOperation:
         del ctx
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         return Complete(
             SymbolicValue(
@@ -93,7 +92,7 @@ class SubscriptOperation:
                     "py.subscript",
                     [
                         receiver.term,
-                        floor_to_term(self.index, owner=f"{self.owner} index"),
+                        self.index.to_term(owner=f"{self.owner} index"),
                     ],
                 )
             )
