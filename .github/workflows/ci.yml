@@ -548,8 +548,6 @@ jobs:
     name: sugarbin shell contracts (9/9 attendance)
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
-    env:
-      SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
     steps:
       - uses: actions/checkout@v6
 
@@ -558,6 +556,9 @@ jobs:
       # smaller denominator.
       - name: Initialize exact nine-contract attendance ledger
         shell: bash
+        env:
+          # runner.* does not exist until dispatch; never move this to job env.
+          SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
         run: |
           set -euo pipefail
           python3 tools/sugarbin_shell_tier.py init \
@@ -575,6 +576,8 @@ jobs:
       - name: Run batch 1/3 — execution routes
         if: always() && !cancelled()
         shell: bash
+        env:
+          SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
         run: |
           python3 -u tools/sugarbin_shell_tier.py run-batch execution \
             --repo "$GITHUB_WORKSPACE" \
@@ -584,6 +587,8 @@ jobs:
       - name: Run batch 2/3 — guards and wrappers
         if: always() && !cancelled()
         shell: bash
+        env:
+          SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
         run: |
           python3 -u tools/sugarbin_shell_tier.py run-batch guards \
             --repo "$GITHUB_WORKSPACE" \
@@ -593,6 +598,8 @@ jobs:
       - name: Run batch 3/3 — artifacts and identities
         if: always() && !cancelled()
         shell: bash
+        env:
+          SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
         run: |
           python3 -u tools/sugarbin_shell_tier.py run-batch artifacts \
             --repo "$GITHUB_WORKSPACE" \
@@ -602,6 +609,8 @@ jobs:
       - name: Audit exact 9/9 attendance and results
         if: always() && !cancelled()
         shell: bash
+        env:
+          SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
         run: |
           set -uo pipefail
           set +e

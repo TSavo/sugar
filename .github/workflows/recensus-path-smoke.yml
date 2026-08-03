@@ -43,6 +43,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # This must run in a workflow independent of ci.yml: a workflow rejected
+      # before dispatch cannot execute its own context-availability tooth.
+      - name: Check workflow contexts available before dispatch
+        run: python3 tests/test_workflow_context_availability.py
+
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
 
