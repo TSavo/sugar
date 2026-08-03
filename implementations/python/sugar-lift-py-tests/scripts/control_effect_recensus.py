@@ -157,6 +157,65 @@ def _phase_call(name: str, fn):
         raise
 
 
+def _consume_sealed_files_complete(
+    result: dict[str, Any],
+    *,
+    measured_commit: str,
+) -> tuple[bool | None, dict[str, Any] | None]:
+    """Read the file-completeness testimony owned by the compose seal.
+
+    A sealed board can only carry ``denominator.files.complete is True``.
+    Missing, malformed, or contradictory testimony is instrument failure and
+    must replace the purported board with an unmeasured envelope.
+    """
+    try:
+        denominator = result["denominator"]
+        if not isinstance(denominator, dict):
+            raise TypeError("sealed board denominator testimony is not an object")
+        files = denominator["files"]
+        if not isinstance(files, dict):
+            raise TypeError(
+                "sealed board denominator.files testimony is not an object"
+            )
+        complete = files["complete"]
+        if complete is not True:
+            raise ValueError(
+                "sealed board denominator.files.complete testimony is not true"
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+        from compose_control_effect_board import (
+            STAGE_TERMINAL_AGGREGATE_SEAL,
+            unmeasured_envelope,
+        )
+
+        reason = (
+            "sealed board missing denominator.files.complete testimony"
+            if isinstance(exc, KeyError)
+            else str(exc)
+        )
+        refusal = unmeasured_envelope(
+            plan={
+                "planCid": result.get("planCid"),
+                "measuredCommit": measured_commit,
+            },
+            missing_shards=["compose"],
+            unmeasured_reasons={"compose": reason},
+            measured_commit=measured_commit,
+            instrument_failures=[
+                {
+                    "stageId": STAGE_TERMINAL_AGGREGATE_SEAL,
+                    "observedEventType": (
+                        f"{type(exc).__module__}.{type(exc).__qualname__}"
+                    ),
+                    "phase": "post-compose-denominator-consumer",
+                    "reason": reason,
+                }
+            ],
+        )
+        return None, refusal
+    return True, None
+
+
 def _git_commit(root: Path) -> str:
     return subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True
@@ -1806,6 +1865,23 @@ def main() -> int:
         result_path.write_text(json.dumps(result, indent=2) + "\n")
         return 2
 
+    denominator_complete, denominator_refusal = _consume_sealed_files_complete(
+        result,
+        measured_commit=tip_commit,
+    )
+    if denominator_refusal is not None:
+        _narrate(
+            "RECENSUS POST-COMPOSE UNMEASURED "
+            f"reasons={denominator_refusal.get('unmeasuredReasons')}"
+        )
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(denominator_refusal, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return 2
+    assert denominator_complete is True
+
     r_construction = int(result.get("R_construction") or 0)
     r_desugar = int(result.get("R_desugar") or 0)
     r_backend = int(result.get("R_backend_defects") or 0)
@@ -1864,8 +1940,6 @@ def main() -> int:
     #
     # Every conjunct is reported beside the term, so a false claim is visible
     # in the same object that makes it.
-    denominator = result["denominator"]
-
     def _matching(needle: str) -> int:
         """Count a named shape wherever it can land — never one hopeful key.
 
@@ -1885,7 +1959,7 @@ def main() -> int:
 
     stable_zero_terms = {
         "completedDenominatorPositive": files_completed > 0,
-        "denominatorComplete": bool(denominator["complete"]),
+        "denominatorComplete": denominator_complete,
         # This instrument has no timeout mechanism: it runs in-process and a
         # hang is a hang, not a row. Any timeout testimony can only arrive as a
         # named defect, so that is where it is counted from.
@@ -1933,7 +2007,7 @@ def main() -> int:
             "files produced a terminal row that is not a completion "
             "(denominator is complete; the completion count is not)"
         )
-    if not denominator["complete"]:
+    if not denominator_complete:
         red_reasons.append("denominator contaminated (missing/duplicate/malformed)")
     result["red"] = bool(red_reasons)
     result["redReasons"] = red_reasons
@@ -1971,7 +2045,7 @@ def main() -> int:
         or desugar_construction_panics
         or desugar_defects
         or files_completed != len(file_names)
-        or not denominator["complete"]
+        or not denominator_complete
         else 0
     )
 
