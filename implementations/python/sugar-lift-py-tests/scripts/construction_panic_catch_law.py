@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R_construction_panic_catches_outside_audit — permanent floor.
 
-``ConstructionPanic`` is a sanctioned typed construction gap. Five membranes
+``ConstructionPanic`` is a sanctioned typed construction gap. Reviewed membranes
 may catch it without pure re-raise:
 
 1. **Audit enumeration** — ``audit_only/collect_construction_gaps.py``,
@@ -13,6 +13,10 @@ may catch it without pure re-raise:
    construction panics are not misclassified as bare Python exceptions.
    That path does NOT convert the panic into Incomplete, opacity, soft None,
    or a missing report row.
+3. **Recensus per-file terminals** — ``scripts/recensus_enumerate_consumer.py``
+   authenticates the panic identity, then emits the exact roster,
+   context-manager, or residual ``category=panic`` terminal. These witnesses
+   are enrolled by exact path, function, and AST shape.
 
 Every other ``except ConstructionPanic`` (or catch via BaseException / bare
 except) under production sources is debt unless the handler body is pure
@@ -152,6 +156,114 @@ except BaseException as error:
 """),
         }
     ),
+    (
+        "recensus_enumerate_consumer.py",
+        "measure_file_via_enumerate",
+    ): frozenset(
+        {
+            _canonical_handler("""
+except BaseException as error:
+    if _is_process_control(error):
+        raise
+    auth = int(ast_fn) if ast_fn is not None else 0
+    panic = _panic_from_exception(error, file_rel=file_rel, phase="roster")
+    if panic is None:
+        return _instrument_failure_row(
+            error,
+            file_rel=file_rel,
+            phase="roster",
+            source_cid=source_cid,
+            function_nodes=[],
+            functions_total=auth,
+            functions_enumerated=0,
+        )
+    row = _empty_shell(
+        file_rel=file_rel,
+        category="panic",
+        functions_total=auth,
+        functions_enumerated=0,
+        defect=panic,
+        panic=panic,
+        functions_clean=None if auth > 0 else 0,
+        clean_ratio_refused=auth > 0,
+        clean_refuse_reason=(
+            "roster demand panicked; clean not measured" if auth > 0 else None
+        ),
+        ast_fn=ast_fn,
+    )
+    return _attest_terminal_row(
+        row,
+        file_rel=file_rel,
+        source_cid=source_cid,
+        function_nodes=[],
+    )
+"""),
+            _canonical_handler("""
+except BaseException as error:
+    if _is_process_control(error):
+        raise
+    panic = _panic_from_exception(
+        error, file_rel=file_rel, phase="context-manager-resolutions"
+    )
+    if panic is None:
+        return _instrument_failure_row(
+            error,
+            file_rel=file_rel,
+            phase="context-manager-resolutions",
+            source_cid=source_cid,
+            function_nodes=function_nodes,
+            functions_total=len(function_nodes),
+            functions_enumerated=len(function_nodes),
+        )
+    row = _empty_shell(
+        file_rel=file_rel,
+        category="panic",
+        functions_total=len(function_nodes),
+        functions_enumerated=len(function_nodes),
+        defect=panic,
+        panic=panic,
+        functions_clean=None,
+        clean_ratio_refused=True,
+        clean_refuse_reason="CM resolution panic after roster; clean not measured",
+        ast_fn=ast_fn,
+    )
+    row["constructionPanics"] = [panic]
+    row["enumerateConstructionPanics"] = [panic]
+    row["contextManagerResolutionEvents"] = _provisional_resolution_events(
+        contract_refs=contract_refs,
+        source_cid=source_cid,
+    )
+    return _attest_terminal_row(
+        row,
+        file_rel=file_rel,
+        source_cid=source_cid,
+        function_nodes=function_nodes,
+    )
+"""),
+            _canonical_handler("""
+except BaseException as error:
+    if _is_process_control(error):
+        raise
+    row = terminal_from_enumerate(
+        file_rel=file_rel,
+        function_nodes=function_nodes,
+        function_gaps=[],
+        audit=None,
+        construction_gaps=[],
+        residual_phase_failed=True,
+        residual_error=error,
+        ast_fn=ast_fn,
+        source_cid=source_cid,
+        context_manager_resolution_events=cm_events,
+    )
+    row["d3Residency"] = _complete_d3_residency_observation(
+        source_cid=source_cid,
+        present_before_demand=d3_present_before_demand,
+    )
+    return row
+"""),
+        }
+    ),
 }
 
 _SANCTIONED_ISINSTANCE_SHAPES = {
@@ -160,7 +272,26 @@ _SANCTIONED_ISINSTANCE_SHAPES = {
 if isinstance(error, ConstructionPanic):
     return _construction_panic_row(error)
 """)}
-    )
+    ),
+    ("recensus_enumerate_consumer.py", "_panic_from_exception"): frozenset(
+        {_canonical_statement("""
+if isinstance(error, ConstructionPanic):
+    info = error.info.to_json()
+    owner = str(info["owner"])
+    coordinate = str(info["blame"])
+    observed = str(info["observed"])
+    requested = str(info["requested"])
+    fix = str(info["fix"])
+elif isinstance(error, SugarNotWritten):
+    owner = str(error.owner)
+    coordinate = str(error.blame)
+    observed = str(error.observed)
+    requested = str(error.requested)
+    fix = str(error.fix)
+else:
+    return None
+""")}
+    ),
 }
 
 
@@ -223,6 +354,31 @@ def _handler_names(handler: ast.ExceptHandler) -> set[str]:
 def _catches_construction_panic(handler: ast.ExceptHandler) -> bool:
     names = _handler_names(handler)
     return bool(names & {"ConstructionPanic", "BaseException"}) or names == {"<bare>"}
+
+
+def _prior_pure_reraise_intercepts_construction_panic(
+    handler: ast.ExceptHandler,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    """Whether an earlier sibling catches ConstructionPanic and pure re-raises.
+
+    Except handlers are ordered. An exact earlier ``except ConstructionPanic``
+    that terminates every path with ``raise`` makes a later BaseException/bare
+    handler unreachable for ConstructionPanic. This is semantic catch
+    precedence, not a path allowlist; removing or softening the earlier handler
+    makes the later broad catch red again.
+    """
+    parent = parents.get(handler)
+    if not isinstance(parent, (ast.Try, ast.TryStar)):
+        return False
+    try:
+        index = parent.handlers.index(handler)
+    except ValueError:
+        return False
+    return any(
+        "ConstructionPanic" in _handler_names(prior) and _pure_reraise(prior)
+        for prior in parent.handlers[:index]
+    )
 
 
 def _is_terminal_raise(stmt: ast.AST) -> bool:
@@ -375,6 +531,8 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
             if not isinstance(node, ast.ExceptHandler):
                 continue
             if not _catches_construction_panic(node):
+                continue
+            if _prior_pure_reraise_intercepts_construction_panic(node, parents):
                 continue
             if _is_sanctioned_handler(rel, node, parents):
                 continue
