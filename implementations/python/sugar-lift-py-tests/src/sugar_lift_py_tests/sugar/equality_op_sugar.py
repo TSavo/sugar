@@ -78,7 +78,17 @@ class EqualityOpSugar(ConstructedTermSugar):
 
     def apply_reduced(self, left, right, ctx: object = None) -> Outcome:
         """Apply equality/refinement to operands already evaluated once."""
-        return _equals_and_refine(left, right, self.site, ctx, self.left_coordinate)
+        return _equals_and_refine(
+            left.project_operation_receiver(
+                ctx, owner="EqualityOpSugar left operation receiver"
+            ),
+            right.project_operation_receiver(
+                ctx, owner="EqualityOpSugar right operation receiver"
+            ),
+            self.site,
+            ctx,
+            self.left_coordinate,
+        )
 
 
 def _finite_equality_face(value, peer, *, matches: bool):
