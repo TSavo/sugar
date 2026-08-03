@@ -378,6 +378,35 @@ def demand_context_manager_resolution_events(
     return events, list(result.get("gaps") or [])
 
 
+def _provisional_resolution_events(
+    *, contract_refs: object, source_cid: str
+) -> list[dict[str, Any]]:
+    """Project the exact canonical fallback keys after enrichment panics.
+
+    ``contract_refs`` is the same installed table the enumerate request used.
+    This projects its coordinate-keyed rows directly; it never reconstructs
+    membership from counters or deleted resolution-kind names.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        context_manager_resolution_outcome,
+    )
+
+    events: list[dict[str, Any]] = []
+    for coordinate, resolution in sorted(
+        (getattr(contract_refs, "by_use_site", None) or {}).items()
+    ):
+        if getattr(coordinate, "source_cid", None) != source_cid:
+            continue
+        events.append(
+            {
+                "inputKey": coordinate.wire(),
+                "observedEventType": _qualified_type(resolution),
+                "outcome": context_manager_resolution_outcome(resolution),
+            }
+        )
+    return events
+
+
 def demand_construction_residual(
     *,
     workspace_root: Path,
@@ -636,10 +665,14 @@ def measure_file_via_enumerate(
     Never raises after a roster is banked — residual panic becomes a terminal
     row with functionsTotal preserved (roster-floor).
     """
-    if contract_refs is not None:
-        from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
+    from sugar_lift_py_tests.lift_rpc import (
+        install_provisional_contract_refs,
+        provisional_contract_refs_from_demands,
+    )
 
-        install_provisional_contract_refs(Path(workspace_root), contract_refs)
+    if contract_refs is None:
+        contract_refs = provisional_contract_refs_from_demands(Path(workspace_root))
+    install_provisional_contract_refs(Path(workspace_root), contract_refs)
 
     path = (workspace_root / file_rel).resolve()
     ast_fn = count_ast_function_defs(path)
@@ -761,6 +794,12 @@ def measure_file_via_enumerate(
             clean_ratio_refused=True,
             clean_refuse_reason="CM resolution panic after roster; clean not measured",
             ast_fn=ast_fn,
+        )
+        row["constructionPanics"] = [panic]
+        row["enumerateConstructionPanics"] = [panic]
+        row["contextManagerResolutionEvents"] = _provisional_resolution_events(
+            contract_refs=contract_refs,
+            source_cid=source_cid,
         )
         return _attest_terminal_row(
             row,
