@@ -541,6 +541,87 @@ jobs:
             --require-commit "$GITHUB_SHA" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # Nine sugarbin shell contracts used to be reachable only through
+  # test-rust, which is deliberately outside per-tip CI. Run the exact shell
+  # population directly: one job, three batches, and one attendance receipt.
+  sugarbin-shell-contracts:
+    name: sugarbin shell contracts (9/9 attendance)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    env:
+      SUGARBIN_SHELL_TIER_ROOT: ${{ runner.temp }}/sugarbin-shell-tier
+    steps:
+      - uses: actions/checkout@v6
+
+      # Initialize every expected row before setup. If setup or a later batch
+      # cannot run, the final audit retains a named absence rather than a
+      # smaller denominator.
+      - name: Initialize exact nine-contract attendance ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/sugarbin_shell_tier.py init \
+            --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
+            --commit "$GITHUB_SHA"
+
+      - name: Verify attendance instrument discrimination twins
+        if: always() && !cancelled()
+        run: python3 tests/test_sugarbin_shell_tier.py
+
+      - name: Install shell-contract dependency
+        if: always() && !cancelled()
+        run: tools/ci-apt-install.sh b3sum
+
+      - name: Run batch 1/3 — execution routes
+        if: always() && !cancelled()
+        shell: bash
+        run: |
+          python3 -u tools/sugarbin_shell_tier.py run-batch execution \
+            --repo "$GITHUB_WORKSPACE" \
+            --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
+            --commit "$GITHUB_SHA"
+
+      - name: Run batch 2/3 — guards and wrappers
+        if: always() && !cancelled()
+        shell: bash
+        run: |
+          python3 -u tools/sugarbin_shell_tier.py run-batch guards \
+            --repo "$GITHUB_WORKSPACE" \
+            --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
+            --commit "$GITHUB_SHA"
+
+      - name: Run batch 3/3 — artifacts and identities
+        if: always() && !cancelled()
+        shell: bash
+        run: |
+          python3 -u tools/sugarbin_shell_tier.py run-batch artifacts \
+            --repo "$GITHUB_WORKSPACE" \
+            --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
+            --commit "$GITHUB_SHA"
+
+      - name: Audit exact 9/9 attendance and results
+        if: always() && !cancelled()
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          python3 tools/sugarbin_shell_tier.py audit \
+            --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
+            --receipt "$SUGARBIN_SHELL_TIER_ROOT/receipt.json" \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          audit_status="${PIPESTATUS[0]}"
+          set -e
+          exit "$audit_status"
+
+      - name: Upload sugarbin shell attendance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sugarbin-shell-tier-${{ github.sha }}
+          path: ${{ runner.temp }}/sugarbin-shell-tier/
+          if-no-files-found: error
+
   acid-test:
     name: acid test (make ci)
     # Aggregate genuine success/failure results, but do not manufacture a red
@@ -553,6 +634,7 @@ jobs:
       - claim-mass-attendance
       - python-format-attendance
       - showcase-attendance
+      - sugarbin-shell-contracts
     runs-on: ubuntu-latest
     steps:
       - name: Report the complete acid-test vector
@@ -563,11 +645,13 @@ jobs:
           CLAIM_MASS_RESULT: ${{ needs.claim-mass-attendance.result }}
           FORMAT_RESULT: ${{ needs.python-format-attendance.result }}
           SHOWCASE_RESULT: ${{ needs.showcase-attendance.result }}
+          SUGARBIN_SHELL_RESULT: ${{ needs.sugarbin-shell-contracts.result }}
         run: |
-          echo "apt=$APT_RESULT core=$CORE_RESULT core-shelf=$CORE_SHELF_RESULT claim-mass=$CLAIM_MASS_RESULT format=$FORMAT_RESULT showcases=$SHOWCASE_RESULT"
+          echo "apt=$APT_RESULT core=$CORE_RESULT core-shelf=$CORE_SHELF_RESULT claim-mass=$CLAIM_MASS_RESULT format=$FORMAT_RESULT showcases=$SHOWCASE_RESULT sugarbin-shell=$SUGARBIN_SHELL_RESULT"
           test "$APT_RESULT" = success
           test "$CORE_RESULT" = success
           test "$CORE_SHELF_RESULT" = success
           test "$CLAIM_MASS_RESULT" = success
           test "$FORMAT_RESULT" = success
           test "$SHOWCASE_RESULT" = success
+          test "$SUGARBIN_SHELL_RESULT" = success
