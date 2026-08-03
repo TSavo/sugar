@@ -144,6 +144,7 @@ class SupervisedEnumSupervisor:
         python: str | None = None,
         env: Mapping[str, str] | None = None,
         corpus_root: Path,
+        source_workspace_root: Path | None = None,
         demand_table_path: Path | None = None,
         allow_local_demand_derivation: bool = False,
     ) -> None:
@@ -154,6 +155,11 @@ class SupervisedEnumSupervisor:
         self.env = dict(env or os.environ)
         self.env.setdefault("PYTHONFAULTHANDLER", "1")
         self.corpus_root = corpus_root.resolve()
+        self.source_workspace_root = (
+            self.corpus_root
+            if source_workspace_root is None
+            else source_workspace_root.resolve()
+        )
         self.demand_table_path = (
             None if demand_table_path is None else demand_table_path.resolve()
         )
@@ -323,7 +329,11 @@ class SupervisedEnumSupervisor:
             f"{self.demand_table_path if self.demand_table_path else None}",
             flush=True,
         )
-        initialize = {"kind": "initialize", "corpus_root": str(self.corpus_root)}
+        initialize = {
+            "kind": "initialize",
+            "corpus_root": str(self.corpus_root),
+            "source_workspace_root": str(self.source_workspace_root),
+        }
         if self.demand_table_path is not None:
             initialize["demand_table_path"] = str(self.demand_table_path)
         initialize["allow_local_demand_derivation"] = self.allow_local_demand_derivation
@@ -756,6 +766,7 @@ def scan_paths(
     paths: Sequence[Path],
     *,
     root: Path,
+    source_workspace_root: Path | None = None,
     file_timeout: float = 30.0,
     context_init_timeout: float | None = None,
     demand_table_path: Path | None = None,
@@ -770,6 +781,7 @@ def scan_paths(
         file_timeout=file_timeout,
         context_init_timeout=context_init_timeout,
         corpus_root=root,
+        source_workspace_root=source_workspace_root,
         demand_table_path=demand_table_path,
         allow_local_demand_derivation=demand_table_path is None,
     )
