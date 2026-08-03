@@ -7,14 +7,27 @@ from sugar_source_tree.tree import SourceFile
 def _sites(tmp_path):
     path = tmp_path / "predicate_subscript_mutation.py"
     path.write_text("def f(obj, value):\n    obj[0] = value\n    del obj[0]\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     return body[0].fragment, body[1].fragment
 
 
 def _outcomes(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     value = PredicateValue(atomic("p", []))
-    return ((value.setitem(TermValue(0), TermValue(7), store_site), "PredicateValue.setitem", store_site), (value.delitem(TermValue(0), delete_site), "PredicateValue.delitem", delete_site))
+    return (
+        (
+            value.setitem(TermValue(0), TermValue(7), store_site),
+            "PredicateValue.setitem",
+            store_site,
+        ),
+        (
+            value.delitem(TermValue(0), delete_site),
+            "PredicateValue.delitem",
+            delete_site,
+        ),
+    )
 
 
 def test_predicate_mutations_have_exact_owner_occurrences(tmp_path):

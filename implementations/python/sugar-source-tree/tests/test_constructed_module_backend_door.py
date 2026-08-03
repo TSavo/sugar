@@ -8,8 +8,14 @@ import tempfile
 
 import pytest
 
-from sourcefile_construction_door_evidence import SourceFileConstructionDoorEvidence, assert_test_owned_evidence
-from sourcefile_construction_door_fixture import _direct_source_file_entry, sourcefile_construction_door_evidence
+from sourcefile_construction_door_evidence import (
+    SourceFileConstructionDoorEvidence,
+    assert_test_owned_evidence,
+)
+from sourcefile_construction_door_fixture import (
+    _direct_source_file_entry,
+    sourcefile_construction_door_evidence,
+)
 from sugar_source_tree.backend import Backend
 from sugar_source_tree.nodes import SourceUnit
 from sugar_source_tree.panic import BackendDefect
@@ -50,7 +56,9 @@ def _authentic_foreign_backend_product(source: str):
             module = importlib.import_module(module_name)
         except ModuleNotFoundError:
             continue
-        products.append(_file(source, backend=getattr(module, class_name)()).constructed_module)
+        products.append(
+            _file(source, backend=getattr(module, class_name)()).constructed_module
+        )
     return products[0] if products else None
 
 
@@ -90,9 +98,15 @@ def authentic_same_preimage_axis_products(constructed_module_door):
     )
     first = _file(source).constructed_module
     same_preimage = _file(source).constructed_module
-    foreign_source = _file(source + "\n# distinct authenticated source\n").constructed_module
-    assert first.constructed_module_identity == same_preimage.constructed_module_identity
-    assert first.constructed_module_identity != foreign_source.constructed_module_identity
+    foreign_source = _file(
+        source + "\n# distinct authenticated source\n"
+    ).constructed_module
+    assert (
+        first.constructed_module_identity == same_preimage.constructed_module_identity
+    )
+    assert (
+        first.constructed_module_identity != foreign_source.constructed_module_identity
+    )
     return first, {
         "source_cid": foreign_source,
         "constructed_module_identity": foreign_source,
@@ -154,27 +168,36 @@ def authentic_leaf_axis_rows(constructed_module_door):
         if foreign_backend_product is None
         else foreign_backend_product.leaf_assertion_rows[0]
     )
-    assert first.constructed_module_identity == same_event_row.constructed_module_identity
-    assert first.construction_event_identity is not same_event_row.construction_event_identity
+    assert (
+        first.constructed_module_identity == same_event_row.constructed_module_identity
+    )
+    assert (
+        first.construction_event_identity
+        is not same_event_row.construction_event_identity
+    )
     assert first.assert_occurrence is second.assert_occurrence
     assert first.call_occurrence is not second.call_occurrence
     assert first.assert_occurrence is not foreign_frame.assert_occurrence
-    return first, second, {
-        "source_cid": foreign_source,
-        "constructed_module_identity": foreign_source,
-        "backend_fingerprint": foreign_backend,
-        "construction_event_identity": same_event_row,
-        "function_occurrence": foreign_frame,
-        "function_locus": foreign_frame,
-        "assert_occurrence": foreign_frame,
-        "assert_locus": foreign_frame,
-        "call_occurrence": second,
-        "call_locus": second,
-        "translated_atom_identity": foreign_frame,
-        "translated_atom_value": foreign_frame,
-        "translated_term_identity": second,
-        "translated_term_value": second,
-    }
+    return (
+        first,
+        second,
+        {
+            "source_cid": foreign_source,
+            "constructed_module_identity": foreign_source,
+            "backend_fingerprint": foreign_backend,
+            "construction_event_identity": same_event_row,
+            "function_occurrence": foreign_frame,
+            "function_locus": foreign_frame,
+            "assert_occurrence": foreign_frame,
+            "assert_locus": foreign_frame,
+            "call_occurrence": second,
+            "call_locus": second,
+            "translated_atom_identity": foreign_frame,
+            "translated_atom_value": foreign_frame,
+            "translated_term_identity": second,
+            "translated_term_value": second,
+        },
+    )
 
 
 class _SealCountingReporter(CollectingReporter):
@@ -213,7 +236,9 @@ def test_source_file_constructs_and_seals_inside_one_reporter_event(
     )
 
     assert source_file.root is source_file.constructed_module.root
-    assert source_file.closed_roll_call is source_file.constructed_module.closed_roll_call
+    assert (
+        source_file.closed_roll_call is source_file.constructed_module.closed_roll_call
+    )
     assert (
         source_file.provider_member_rows
         is source_file.constructed_module.provider_member_rows
@@ -330,7 +355,8 @@ def test_construction_event_receipt_constructor_and_copy_are_closed(
     ),
 )
 def test_construction_event_receipt_cross_wire_refuses_one_axis(
-    field_name, constructed_module_door,
+    field_name,
+    constructed_module_door,
 ) -> None:
     source = (
         "PROVIDER_VALUE = 3\n"
@@ -423,7 +449,9 @@ def test_filename_is_not_construction_identity_authority(
     source = "PROVIDER_VALUE = 3\n"
     first = _constructed(source, "first-name.py")
     renamed = _constructed(source, "unrelated-name.py")
-    foreign_source = _constructed(source + "# changed authenticated bytes\n", "first-name.py")
+    foreign_source = _constructed(
+        source + "# changed authenticated bytes\n", "first-name.py"
+    )
 
     assert first.source_cid == renamed.source_cid
     assert first.backend_fingerprint == renamed.backend_fingerprint
@@ -434,8 +462,7 @@ def test_filename_is_not_construction_identity_authority(
     )
     assert first.source_cid != foreign_source.source_cid
     assert (
-        first.constructed_module_identity
-        != foreign_source.constructed_module_identity
+        first.constructed_module_identity != foreign_source.constructed_module_identity
     )
     assert (
         first.construction_event_receipt.root_identity
@@ -543,9 +570,7 @@ def test_constructed_module_cross_wires_one_axis_only(
     else:
         assert getattr(first, field_name) is not getattr(foreign, field_name)
     proposed = {
-        name: (
-            getattr(foreign, name) if name == field_name else getattr(first, name)
-        )
+        name: (getattr(foreign, name) if name == field_name else getattr(first, name))
         for name in leaves
     }
     assert all(
@@ -573,7 +598,9 @@ def test_constructed_module_cross_wires_one_axis_only(
         replace(first, **{field_name: proposed[field_name]})
 
 
-def test_adapter_cannot_override_final_materialize_module(constructed_module_door) -> None:
+def test_adapter_cannot_override_final_materialize_module(
+    constructed_module_door,
+) -> None:
     with pytest.raises(TypeError, match="final Backend.materialize_module"):
 
         class _LyingBackend(Backend):
@@ -666,7 +693,9 @@ def test_later_definition_and_same_name_other_scope_do_not_authorize(
     ),
 )
 def test_forged_relation_one_axis_refuses(
-    field_name, message, authentic_relation_axis_products,
+    field_name,
+    message,
+    authentic_relation_axis_products,
 ) -> None:
     row, twins = authentic_relation_axis_products
     foreign = twins[field_name]
@@ -723,8 +752,7 @@ def test_constructed_provider_member_carries_exact_term_testimony(
     assert member.definition_occurrence is not None
     assert member.constructed_term_value.value == 3
     assert (
-        member.constructed_term_value_identity
-        == member.constructed_term_value.identity
+        member.constructed_term_value_identity == member.constructed_term_value.identity
     )
     assert member.constructed_term_sort == member.constructed_term_value.sort
     assert member.constructed_module_identity == product.constructed_module_identity
@@ -744,7 +772,9 @@ def test_constructed_provider_member_carries_exact_term_testimony(
     ),
 )
 def test_constructed_provider_member_cross_wire_refuses_one_axis(
-    field_name, message, constructed_module_door,
+    field_name,
+    message,
+    constructed_module_door,
 ) -> None:
     product = _constructed("FIRST_VALUE = 3\nSECOND_VALUE = 'three'\n")
     first, second = product.provider_member_rows
@@ -818,7 +848,10 @@ def test_constructed_provider_member_cross_wire_refuses_one_axis(
     ),
 )
 def test_constructed_provider_member_refuses_product_migration_one_axis(
-    product_kind, field_name, message, constructed_module_door,
+    product_kind,
+    field_name,
+    message,
+    constructed_module_door,
 ) -> None:
     source = "PROVIDER_VALUE = 3\n"
     first_product = _constructed(source)
@@ -914,7 +947,7 @@ def test_leaf_assertion_roster_is_distinct_ordered_same_event_testimony(
         "        return True\n"
         "    assert child() and external()\n"
     )
-    lexical, = product.lexical_call_rows
+    (lexical,) = product.lexical_call_rows
     child, external = product.leaf_assertion_rows
 
     assert product.leaf_assertion_rows is not product.lexical_call_rows

@@ -176,7 +176,9 @@ def _pure_reraise(handler: ast.ExceptHandler) -> bool:
         if isinstance(last, ast.Raise):
             return True
         if isinstance(last, ast.If):
-            return bool(last.orelse) and ends_raise(last.body) and ends_raise(last.orelse)
+            return (
+                bool(last.orelse) and ends_raise(last.body) and ends_raise(last.orelse)
+            )
         return False
 
     return ends_raise(body)
@@ -225,7 +227,11 @@ def _except_assigns_raw_source(handler: ast.ExceptHandler) -> bool:
         if not isinstance(stmt, ast.Assign):
             continue
         for target in stmt.targets:
-            if isinstance(target, ast.Name) and target.id in {"value", "decoded", "lit"}:
+            if isinstance(target, ast.Name) and target.id in {
+                "value",
+                "decoded",
+                "lit",
+            }:
                 # value = text / value = unit.source[...] / value = source[...]
                 rhs = stmt.value
                 if isinstance(rhs, ast.Name) and rhs.id in {

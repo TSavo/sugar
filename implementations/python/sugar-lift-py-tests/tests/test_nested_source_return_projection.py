@@ -85,12 +85,7 @@ def _calls_named(tree, name: str) -> list[Call]:
     ]
 
 
-NESTED = (
-    "def inner():\n"
-    "    return 3\n"
-    "def outer():\n"
-    "    return inner()\n"
-)
+NESTED = "def inner():\n" "    return 3\n" "def outer():\n" "    return inner()\n"
 
 
 # ---------------------------------------------------------------------------
@@ -99,9 +94,7 @@ NESTED = (
 
 
 def test_inner_alone_projects_return_floor() -> None:
-    tree, context, functions = _tree(
-        NESTED + "\ninner()\n", bind=frozenset({"inner"})
-    )
+    tree, context, functions = _tree(NESTED + "\ninner()\n", bind=frozenset({"inner"}))
     call = _calls_named(tree, "inner")[0]
     frame = context.source_call_frames[_coordinate(call)]
     outcome = call.sugar().desugar(None)
@@ -110,18 +103,14 @@ def test_inner_alone_projects_return_floor() -> None:
     assert outcome.value.body is not None
     # Authenticated source call: coordinate is frame CID, not bare spelling.
     assert outcome.value.source_call_frame_cid == frame.frame_cid
-    floor = outcome.value.force_floor(
-        None, owner="inner-alone", project_callsite=False
-    )
+    floor = outcome.value.force_floor(None, owner="inner-alone", project_callsite=False)
     assert isinstance(floor.statements[0], ReturnValue)
     assert floor.statements[0].value == TermValue(3)
     del functions
 
 
 def test_outer_alone_carries_inner_call_in_body() -> None:
-    tree, context, _ = _tree(
-        NESTED + "\nouter()\n", bind=frozenset({"outer", "inner"})
-    )
+    tree, context, _ = _tree(NESTED + "\nouter()\n", bind=frozenset({"outer", "inner"}))
     call = _calls_named(tree, "outer")[0]
     frame = context.source_call_frames[_coordinate(call)]
     outcome = call.sugar().desugar(None)
@@ -134,9 +123,12 @@ def test_outer_alone_carries_inner_call_in_body() -> None:
     assert dug is not None
     # Occurrence of outer is this call site's enrolled frame, not inner's.
     assert outcome.value.site is not None
-    assert outcome.value.source_call_frame_cid != context.source_call_frames[
-        _coordinate(_calls_named(tree, "inner")[0])
-    ].frame_cid
+    assert (
+        outcome.value.source_call_frame_cid
+        != context.source_call_frames[
+            _coordinate(_calls_named(tree, "inner")[0])
+        ].frame_cid
+    )
 
 
 def test_both_call_occurrences_are_distinct_coordinates() -> None:
@@ -180,9 +172,7 @@ def test_swapped_inner_outer_frame_testimony_is_not_truthful() -> None:
         (source, "swap.py", blake3_512_of(source.encode())),
         construction_context=context,
     )
-    functions = {
-        n.name: n for n in tree.nodes() if isinstance(n, FunctionDef)
-    }
+    functions = {n.name: n for n in tree.nodes() if isinstance(n, FunctionDef)}
     outer_call = _calls_named(tree, "outer")[0]
     inner_call = _calls_named(tree, "inner")[0]
     outer_frame = functions["outer"].source_visible_call_frame()
@@ -197,9 +187,7 @@ def test_swapped_inner_outer_frame_testimony_is_not_truthful() -> None:
         (source, "truth.py", blake3_512_of(source.encode())),
         construction_context=truth_ctx,
     )
-    truth_fns = {
-        n.name: n for n in truth_tree.nodes() if isinstance(n, FunctionDef)
-    }
+    truth_fns = {n.name: n for n in truth_tree.nodes() if isinstance(n, FunctionDef)}
     truth_outer = _calls_named(truth_tree, "outer")[0]
     truth_inner = _calls_named(truth_tree, "inner")[0]
     truth_ctx.source_call_frames[_coordinate(truth_outer)] = truth_fns[
@@ -216,14 +204,12 @@ def test_swapped_inner_outer_frame_testimony_is_not_truthful() -> None:
     # without the inner() call hop — not isomorphic to truthful outer.
     assert swapped.value.body != truthful.value.body or (
         swapped.value.parameters != truthful.value.parameters
-        or swapped.value.source_call_frame_cid
-        != truthful.value.source_call_frame_cid
+        or swapped.value.source_call_frame_cid != truthful.value.source_call_frame_cid
     )
     # Frame CIDs on the CallSiteValue must not match the truthful outer frame
     # when testimony was swapped.
     assert (
-        swapped.value.source_call_frame_cid
-        != truthful.value.source_call_frame_cid
+        swapped.value.source_call_frame_cid != truthful.value.source_call_frame_cid
         or swapped.value.body != truthful.value.body
     )
 
@@ -249,12 +235,14 @@ def test_recursion_by_name_is_not_the_transport() -> None:
     a = alpha_call.sugar().desugar(None).value
     b = beta_call.sugar().desugar(None).value
     # Frame CIDs distinguish alpha vs beta — not target_name spelling.
-    assert a.source_call_frame_cid == context.source_call_frames[
-        _coordinate(alpha_call)
-    ].frame_cid
-    assert b.source_call_frame_cid == context.source_call_frames[
-        _coordinate(beta_call)
-    ].frame_cid
+    assert (
+        a.source_call_frame_cid
+        == context.source_call_frames[_coordinate(alpha_call)].frame_cid
+    )
+    assert (
+        b.source_call_frame_cid
+        == context.source_call_frames[_coordinate(beta_call)].frame_cid
+    )
     assert a.source_call_frame_cid != b.source_call_frame_cid
     af = a.force_floor(None, owner="alpha", project_callsite=False)
     bf = b.force_floor(None, owner="beta", project_callsite=False)
@@ -277,20 +265,24 @@ def test_two_hop_return_feeds_binop_through_both_frames() -> None:
     direct_src = "3 + 1\n"
     helper_tree, _, _ = _tree(helper_src, bind=frozenset({"outer", "inner"}))
     direct_tree, _, _ = _tree(direct_src, bind=frozenset())
-    direct = next(n for n in direct_tree.nodes() if isinstance(n, BinOp)).sugar().desugar(
-        None
+    direct = (
+        next(n for n in direct_tree.nodes() if isinstance(n, BinOp))
+        .sugar()
+        .desugar(None)
     )
 
     try:
-        helper = next(
-            n for n in helper_tree.nodes() if isinstance(n, BinOp)
-        ).sugar().desugar(None)
+        helper = (
+            next(n for n in helper_tree.nodes() if isinstance(n, BinOp))
+            .sugar()
+            .desugar(None)
+        )
     except (ConstructionPanic, SugarNotWritten) as exc:
         pytest.fail(f"{CODEX3_OWNER} two-hop binop: {exc}")
 
-    assert isinstance(helper, (Complete, ExitSet)), (
-        f"{CODEX3_OWNER} outcome={type(helper).__name__}"
-    )
+    assert isinstance(
+        helper, (Complete, ExitSet)
+    ), f"{CODEX3_OWNER} outcome={type(helper).__name__}"
 
     def _val(outcome):
         if isinstance(outcome, Complete):
@@ -300,9 +292,9 @@ def test_two_hop_return_feeds_binop_through_both_frames() -> None:
         return completed[0].value
 
     hv, dv = _val(helper), _val(direct)
-    assert hv == dv or getattr(hv, "value", hv) == getattr(dv, "value", dv), (
-        f"{CODEX3_OWNER} helper={hv!r} direct={dv!r}"
-    )
+    assert hv == dv or getattr(hv, "value", hv) == getattr(
+        dv, "value", dv
+    ), f"{CODEX3_OWNER} helper={hv!r} direct={dv!r}"
 
 
 def test_two_hop_preserves_outer_and_inner_occurrences_on_dig_path() -> None:
@@ -321,9 +313,10 @@ def test_two_hop_preserves_outer_and_inner_occurrences_on_dig_path() -> None:
     inner_call = _calls_named(tree, "inner")[0]
     outer_cs = outer_call.sugar().desugar(None).value
     assert outer_cs.source_call_frame_cid is not None
-    assert outer_cs.source_call_frame_cid == context.source_call_frames[
-        _coordinate(outer_call)
-    ].frame_cid
+    assert (
+        outer_cs.source_call_frame_cid
+        == context.source_call_frames[_coordinate(outer_call)].frame_cid
+    )
     # Inner frame remains enrolled under its own coordinate after outer desugar.
     inner_frame = context.source_call_frames[_coordinate(inner_call)]
     assert inner_frame.frame_cid != outer_cs.source_call_frame_cid

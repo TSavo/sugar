@@ -197,12 +197,20 @@ def _is_empty_test(test: ast.AST, name: str) -> bool:
             return True
     if isinstance(test, ast.Compare) and len(test.ops) == 1:
         left, op, right = test.left, test.ops[0], test.comparators[0]
-        if isinstance(op, (ast.Eq, ast.Is)) and isinstance(left, ast.Name) and left.id == name:
+        if (
+            isinstance(op, (ast.Eq, ast.Is))
+            and isinstance(left, ast.Name)
+            and left.id == name
+        ):
             if isinstance(right, (ast.List, ast.Tuple, ast.Set)) and not right.elts:
                 return True
             if isinstance(right, ast.Constant) and right.value in (0, None, False, ""):
                 return True
-        if isinstance(op, (ast.Eq, ast.Is)) and isinstance(right, ast.Name) and right.id == name:
+        if (
+            isinstance(op, (ast.Eq, ast.Is))
+            and isinstance(right, ast.Name)
+            and right.id == name
+        ):
             if isinstance(left, (ast.List, ast.Tuple, ast.Set)) and not left.elts:
                 return True
         if isinstance(op, ast.Eq) and isinstance(left, ast.Call):
@@ -278,14 +286,26 @@ def _is_presence_only_identity(test: ast.AST) -> str | None:
     if not isinstance(test, ast.Compare) or len(test.ops) != 1:
         return None
     left, op, right = test.left, test.ops[0], test.comparators[0]
-    if isinstance(op, ast.IsNot) and isinstance(right, ast.Constant) and right.value is None:
+    if (
+        isinstance(op, ast.IsNot)
+        and isinstance(right, ast.Constant)
+        and right.value is None
+    ):
         if _is_identity_bearing(left):
             return f"assert {_unparse(left)} is not None (presence-only identity)"
-    if isinstance(op, ast.NotEq) and isinstance(right, ast.Constant) and right.value is None:
+    if (
+        isinstance(op, ast.NotEq)
+        and isinstance(right, ast.Constant)
+        and right.value is None
+    ):
         if _is_identity_bearing(left):
             return f"assert {_unparse(left)} != None (presence-only identity)"
     # flipped: None is not x
-    if isinstance(op, ast.IsNot) and isinstance(left, ast.Constant) and left.value is None:
+    if (
+        isinstance(op, ast.IsNot)
+        and isinstance(left, ast.Constant)
+        and left.value is None
+    ):
         if _is_identity_bearing(right):
             return f"assert None is not {_unparse(right)} (presence-only identity)"
     return None

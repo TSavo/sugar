@@ -225,7 +225,8 @@ def test_assign_sequences_one_completed_face_and_bypasses_two_halted_faces(
 
 @pytest.mark.parametrize("consumer", ("return", "yield"))
 def test_return_and_yield_sequence_one_completed_face_and_two_halts(
-    monkeypatch, consumer: str,
+    monkeypatch,
+    consumer: str,
 ) -> None:
     exits, original = _mixed_faces()
     reductions: list[str] = []
@@ -314,13 +315,17 @@ def test_synthetic_all_halted_assign_is_unchanged_and_runs_no_continuation(
     assert isinstance(outcome, ExitSet)
     assert outcome.exits == arms
     assert all(actual is expected for actual, expected in zip(outcome.exits, arms))
-    assert all(face.state is expected.state for face, expected in zip(outcome.exits, arms))
+    assert all(
+        face.state is expected.state for face, expected in zip(outcome.exits, arms)
+    )
     assert machine.cursor == 0
     assert not machine.binding_state
 
 
 @pytest.mark.parametrize("consumer", ("assign", "return", "yield"))
-def test_incomplete_value_becomes_one_halted_face_without_advancing(consumer: str) -> None:
+def test_incomplete_value_becomes_one_halted_face_without_advancing(
+    consumer: str,
+) -> None:
     effect = RaiseEffect.for_builtin("ValueError", occurrence="incomplete:value")
     reductions: list[str] = []
     value = _OutcomeValue(Incomplete(effect), reductions)
@@ -506,7 +511,9 @@ def test_native_exit_carrier_preserves_identity_and_appends_one_continuation(
 
 @pytest.mark.parametrize("consumer", ("assign", "return", "yield"))
 def test_native_exit_carrier_gap_callback_raises_exact_transition_refusal(
-    tmp_path, monkeypatch, consumer: str,
+    tmp_path,
+    monkeypatch,
+    consumer: str,
 ) -> None:
     carrier, _, _, _, _, _ = _carrier(tmp_path)
     reductions: list[str] = []

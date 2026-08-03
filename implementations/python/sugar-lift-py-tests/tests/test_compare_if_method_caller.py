@@ -147,8 +147,11 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity('TypeError')
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert halted.effect.exception_type_coordinate == _identity("TypeError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -299,9 +302,7 @@ def test_discrimination_self_is_not_a_less_than_operand() -> None:
 def test_positional_keyword_and_default_calls_select_correct_branch() -> None:
     sites = (
         _method_callsite(METHOD_BODY + "\nChooser().choose(1, 2)\n"),
-        _method_callsite(
-            METHOD_BODY + "\nChooser().choose(left=1, right=2)\n"
-        ),
+        _method_callsite(METHOD_BODY + "\nChooser().choose(left=1, right=2)\n"),
         _method_callsite(METHOD_DEFAULTS + "\nChooser().choose(1)\n"),
     )
     for site in sites:
@@ -312,9 +313,7 @@ def test_positional_keyword_and_default_calls_select_correct_branch() -> None:
         if isinstance(outcome, Complete):
             from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-            assert (
-                _returned_term(Completed(true_guard(), outcome.value)).value == 1
-            )
+            assert _returned_term(Completed(true_guard(), outcome.value)).value == 1
         else:
             assert _returned_term(_only_completed(outcome)).value == 1
 
@@ -353,9 +352,7 @@ def test_incompatible_ordering_typeerror_with_exact_pre_effect_state() -> None:
     left_cid, right_cid = _left_right_cids(pending)
     from sugar_lift_py_tests.floor import NoneValue
 
-    exits = pending.discharge(
-        {left_cid: NoneValue(), right_cid: TermValue(2)}
-    )
+    exits = pending.discharge({left_cid: NoneValue(), right_cid: TermValue(2)})
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
     assert halted.state is testimony.state
@@ -435,8 +432,7 @@ def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
     assert len(off_by_one) == 2
     assert off_by_one != truthful
     assert not (
-        isinstance(off_by_one[0], ObjectValue)
-        and off_by_one[0].class_name == "Chooser"
+        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Chooser"
     )
 
 

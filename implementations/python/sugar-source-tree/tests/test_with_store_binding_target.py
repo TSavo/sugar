@@ -187,15 +187,11 @@ ATTRIBUTE_TARGET = HEADER + (
 
 # Renamed from the real corpus tuple-destructure site.
 TUPLE_TARGET = HEADER + (
-    "def f():\n"
-    "    with manager() as (yes, no):\n"
-    "        return yes\n"
+    "def f():\n" "    with manager() as (yes, no):\n" "        return yes\n"
 )
 
 NAME_TARGET = HEADER + (
-    "def f():\n"
-    "    with manager() as entered:\n"
-    "        return entered\n"
+    "def f():\n" "    with manager() as entered:\n" "        return entered\n"
 )
 
 NO_TARGET = HEADER + ("def f():\n    with manager():\n        return 1\n")

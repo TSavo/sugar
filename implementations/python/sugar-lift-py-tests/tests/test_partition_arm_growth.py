@@ -61,7 +61,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
 )
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 
-
 OPERAND_COUNTS = (1, 2, 3, 4, 5, 6, 7, 8)
 
 
@@ -80,7 +79,14 @@ def _partitioning_arm(name: str):
     return ExitSet(
         (
             Completed(condition, f"{name}-value"),
-            Halted(not_(condition), RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_partition_arm_growth.py:163:0'), None),
+            Halted(
+                not_(condition),
+                RaiseEffect.for_builtin(
+                    "ValueError",
+                    occurrence="implementations/python/sugar-lift-py-tests/tests/test_partition_arm_growth.py:163:0",
+                ),
+                None,
+            ),
         )
     )
 
@@ -160,7 +166,10 @@ def test_the_halted_arm_survives_the_factoring():
     halted = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
 
     assert len(halted) == 1
-    assert halted[0].effect == RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_partition_arm_growth.py:83:0')
+    assert halted[0].effect == RaiseEffect.for_builtin(
+        "ValueError",
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_partition_arm_growth.py:83:0",
+    )
 
 
 def test_both_faces_values_survive_inside_the_guarded_chain():

@@ -76,19 +76,13 @@ class ImportAliasValue(FloorValue):
     # undecided_* instead — vocabulary already on FloorValue.
 
     def subscript(self, index, site):
-        return self.undecided_subscript(
-            index, site, owner="ImportAliasValue.subscript"
-        )
+        return self.undecided_subscript(index, site, owner="ImportAliasValue.subscript")
 
     def attribute(self, name, site):
-        return self.undecided_attribute(
-            name, site, owner="ImportAliasValue.attribute"
-        )
+        return self.undecided_attribute(name, site, owner="ImportAliasValue.attribute")
 
     def contains(self, item, site):
-        return self.undecided_contains(
-            item, site, owner="ImportAliasValue.contains"
-        )
+        return self.undecided_contains(item, site, owner="ImportAliasValue.contains")
 
     def getattr_static(self, name: str, site):
         """Static getattr on an inert import alias — undecided, not missing floor."""

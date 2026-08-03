@@ -338,9 +338,7 @@ def test_dict_rhs_projects_authenticated_insertion_order_keys() -> None:
     rhs = DictValue(
         ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
     )
-    out = ListValue((TermValue(0),)).setitem(
-        SliceValue(None, None, None), rhs, site
-    )
+    out = ListValue((TermValue(0),)).setitem(SliceValue(None, None, None), rhs, site)
     assert out == Complete(ListValue((StringValue("a"), StringValue("b"))))
 
 
@@ -349,9 +347,7 @@ def test_dict_rhs_is_not_values_or_typeerror() -> None:
     rhs = DictValue(
         ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
     )
-    out = ListValue((TermValue(0),)).setitem(
-        SliceValue(None, None, None), rhs, site
-    )
+    out = ListValue((TermValue(0),)).setitem(SliceValue(None, None, None), rhs, site)
     assert out != Complete(ListValue((TermValue(1), TermValue(2))))
     from sugar_lift_py_tests.floor import RaiseValue
 
@@ -413,7 +409,9 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
             return ()
 
     sugar = SubscriptStoreEffectSugar(
-        receiver=_Obs("receiver", ListValue((TermValue(0), TermValue(1), TermValue(2)))),
+        receiver=_Obs(
+            "receiver", ListValue((TermValue(0), TermValue(1), TermValue(2)))
+        ),
         index=SliceSugar(
             IntLiteralSugar(0, site=site),
             IntLiteralSugar(2, site=site),
@@ -462,9 +460,7 @@ def test_positional_caller_completes_slice_store() -> None:
         "[0, 1, 2, 3], [9, 9]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue(
-        (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
-    )
+    assert stored == ListValue((TermValue(0), TermValue(9), TermValue(9), TermValue(3)))
 
 
 def test_keyword_caller_completes_slice_store() -> None:
@@ -484,9 +480,7 @@ def test_default_caller_completes_slice_store() -> None:
         "[0, 1, 2, 3]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue(
-        (TermValue(0), TermValue(7), TermValue(7), TermValue(3))
-    )
+    assert stored == ListValue((TermValue(0), TermValue(7), TermValue(7), TermValue(3)))
 
 
 def test_full_slice_caller_replaces_entire_list() -> None:
@@ -615,9 +609,7 @@ def test_formal_bound_demand_gap_is_executable_red_law() -> None:
     """
     from sugar_lift_py_tests.outcome import Incomplete
 
-    function, pending = _helper(
-        "def helper(obj, lo, value):\n    obj[lo:3] = value\n"
-    )
+    function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
     # Whatever shell production chooses today must not be a fabricated Complete
     # list store — formal lower bound is still open work.
     if isinstance(pending, NativeOperationExitCarrierV1):

@@ -40,7 +40,6 @@ tree (#5940 builds the tree in isolation).
 from __future__ import annotations
 
 
-
 def _render_blame(blame: object) -> str:
     """Project a native coordinate to actionable prose only at the panic edge."""
     filename = getattr(blame, "filename", None)
@@ -239,7 +238,11 @@ def vocabulary_missing(
     *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "VocabularyMissing":
     raise VocabularyMissing(
-        blame=blame, owner=owner, observed=observed, requested=requested, fix=fix,
+        blame=blame,
+        owner=owner,
+        observed=observed,
+        requested=requested,
+        fix=fix,
     )
 
 
@@ -247,5 +250,9 @@ def backend_defect(
     *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "BackendDefect":
     raise BackendDefect(
-        blame=blame, owner=owner, observed=observed, requested=requested, fix=fix,
+        blame=blame,
+        owner=owner,
+        observed=observed,
+        requested=requested,
+        fix=fix,
     )

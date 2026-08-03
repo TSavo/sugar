@@ -70,6 +70,7 @@ import pytest
 from sugar_source_tree.panic import SugarNotWritten
 from with_resolution_fixture import source_file_with_preconstruction
 
+
 def _identity(name: str):
     from sugar_lift_py_tests.floor.ground_exit import (
         _builtin_exception_identity,
@@ -77,7 +78,6 @@ def _identity(name: str):
 
     identity, _mro = _builtin_exception_identity(name)
     return identity
-
 
 
 def _fn(src: str):
@@ -395,7 +395,7 @@ def test_bare_reraise_preserves_the_same_effect_occurrence():
     # Occurrence is the original raise site (line of ``raise ValueError``),
     # not a reconstructed site at the bare re-raise.
     assert out.effect.occurrence.endswith(":6:8")
-    assert out.effect.exception_type_coordinate == _identity('ValueError')
+    assert out.effect.exception_type_coordinate == _identity("ValueError")
 
 
 def test_bare_reraise_is_not_a_reconstructed_raise_at_handler_site():

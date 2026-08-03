@@ -229,9 +229,9 @@ def test_twin_finally_raise_after_body_raise_must_keep_context():
         )
     )
     assert effect.exception_name == "RuntimeError"
-    assert effect.context_effect is not None, (
-        "MISSING: finally raise after body raise must carry body as context_effect"
-    )
+    assert (
+        effect.context_effect is not None
+    ), "MISSING: finally raise after body raise must carry body as context_effect"
     assert effect.context_effect.exception_name == "ValueError"
     # Refuse swapped primary/context.
     assert not (

@@ -8,17 +8,33 @@ from sugar_source_tree.tree import SourceFile
 
 def _sites(tmp_path):
     path = tmp_path / "set_literal_attribute_mutation.py"
-    path.write_text("def f(target, replacement):\n    target.attr = replacement\n    del target.attr\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    path.write_text(
+        "def f(target, replacement):\n    target.attr = replacement\n    del target.attr\n"
+    )
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     return body[0].fragment, body[1].fragment
 
 
-@pytest.mark.parametrize(("operation", "owner", "site_index"), (("setattr", "SetLiteralValue.setattr", 0), ("delattr", "SetLiteralValue.delattr", 1)))
-def test_set_literal_attribute_mutations_have_exact_owner_occurrences(tmp_path, operation, owner, site_index):
+@pytest.mark.parametrize(
+    ("operation", "owner", "site_index"),
+    (
+        ("setattr", "SetLiteralValue.setattr", 0),
+        ("delattr", "SetLiteralValue.delattr", 1),
+    ),
+)
+def test_set_literal_attribute_mutations_have_exact_owner_occurrences(
+    tmp_path, operation, owner, site_index
+):
     sites = _sites(tmp_path)
     site = sites[site_index]
     value = SetLiteralValue((num(1),))
-    outcome = value.setattr("attr", TermValue(7), site) if operation == "setattr" else value.delattr("attr", site)
+    outcome = (
+        value.setattr("attr", TermValue(7), site)
+        if operation == "setattr"
+        else value.delattr("attr", site)
+    )
     assert outcome.value.effect.exception_name == "AttributeError"
     assert outcome.value.effect.producer_node_owner == owner
     assert outcome.value.effect.occurrence_id == str(site)

@@ -161,6 +161,4 @@ def ground_type_error(*, site, owner: str) -> Outcome:
     completed RaiseValue.  Undecided native dispatch stays on the named-refusal
     / construction-panic laws; this door is only for the decided TypeError.
     """
-    return ground_exceptional_exit(
-        exception_name="TypeError", site=site, owner=owner
-    )
+    return ground_exceptional_exit(exception_name="TypeError", site=site, owner=owner)

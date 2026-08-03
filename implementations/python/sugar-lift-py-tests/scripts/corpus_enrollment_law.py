@@ -408,9 +408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
 
     try:
-        report = measure_enrollment(
-            corpus_root=corpus_root, recensus_payload=payload
-        )
+        report = measure_enrollment(corpus_root=corpus_root, recensus_payload=payload)
     except Exception as error:
         print(
             f"CORPUS-ENROLLMENT LAW RED: measurement failed: "

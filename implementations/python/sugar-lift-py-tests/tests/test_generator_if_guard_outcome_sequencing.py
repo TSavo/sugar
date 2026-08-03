@@ -311,7 +311,8 @@ def test_nonlinear_guard_gap_transition_is_exact_typed_refusal() -> None:
 
 
 def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     path = tmp_path / "guard_carrier.py"
     path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
@@ -358,7 +359,8 @@ def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
 
 
 def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     path = tmp_path / "projected_truth_carrier.py"
     path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")

@@ -335,16 +335,24 @@ def test_leaf_occurrence_identities_survive_partition_and_reraise():
     type_errors = [leaf for leaf in leaves if leaf.exception_name == "TypeError"]
     assert len(value_errors) == 2
     assert len(type_errors) == 1
-    assert isinstance(value_errors[0].occurrence, str) and ":" in value_errors[0].occurrence, (
+    assert (
+        isinstance(value_errors[0].occurrence, str)
+        and ":" in value_errors[0].occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {value_errors[0].occurrence!r}"
     )
-    assert isinstance(value_errors[1].occurrence, str) and ":" in value_errors[1].occurrence, (
+    assert (
+        isinstance(value_errors[1].occurrence, str)
+        and ":" in value_errors[1].occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {value_errors[1].occurrence!r}"
     )
     assert value_errors[0].occurrence != value_errors[1].occurrence
-    assert isinstance(type_errors[0].occurrence, str) and ":" in type_errors[0].occurrence, (
+    assert (
+        isinstance(type_errors[0].occurrence, str) and ":" in type_errors[0].occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {type_errors[0].occurrence!r}"
     )
@@ -518,8 +526,7 @@ def test_grouped_raise_occurrence_is_sealed_coordinate_not_line_col_spelling():
     """Group occurrence is the sealed memento coordinate, not filename:line:col."""
     effect = _grouped_halt(
         _desugar(
-            "def f():\n"
-            "    raise ExceptionGroup('g', [ValueError()])\n",
+            "def f():\n" "    raise ExceptionGroup('g', [ValueError()])\n",
             name="sealed_occ_a.py",
         )
     )
@@ -532,8 +539,7 @@ def test_grouped_raise_occurrence_is_sealed_coordinate_not_line_col_spelling():
     assert effect.occurrence.count(":") >= 4  # file:start:end:source_cid:cid
     other = _grouped_halt(
         _desugar(
-            "def f():\n"
-            "    raise ExceptionGroup('g', [ValueError()])\n",
+            "def f():\n" "    raise ExceptionGroup('g', [ValueError()])\n",
             name="sealed_occ_b.py",
         )
     )
@@ -602,7 +608,10 @@ def test_second_handler_reads_first_handler_temporal_binding():
         raised_value=te_typed,
     )
     group = GroupedRaiseEffect(
-        "group:root", "g", (ve_leaf, te_leaf), occurrence=AuthenticatedRaiseLocus.of("group:root")
+        "group:root",
+        "g",
+        (ve_leaf, te_leaf),
+        occurrence=AuthenticatedRaiseLocus.of("group:root"),
     )
 
     class Fixed(Sugar):
@@ -725,9 +734,7 @@ def test_handler_terminal_return_face_is_retained_not_dropped():
         name="handler_return_face.py",
     )
     assert isinstance(outcome, Complete), outcome
-    returns = [
-        s for s in outcome.value.record.statements if isinstance(s, ReturnValue)
-    ]
+    returns = [s for s in outcome.value.record.statements if isinstance(s, ReturnValue)]
     assert returns and returns[0].value.value == 7
 
 
@@ -837,7 +844,9 @@ def test_guarded_handler_faces_conjoin_body_guard():
         exception_type_mro=(ve_id,),
         raised_value=ve_typed,
     )
-    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence=AuthenticatedRaiseLocus.of("group:root"))
+    group = GroupedRaiseEffect(
+        "group:root", "g", (leaf,), occurrence=AuthenticatedRaiseLocus.of("group:root")
+    )
     body_atom = atomic("body.guard", [str_const("body")])
     handler_atom = atomic("handler.guard", [str_const("handler")])
 
@@ -906,9 +915,7 @@ def test_guarded_handler_faces_conjoin_body_guard():
     if isinstance(effect, RaiseEffect):
         assert effect.exception_name == "RuntimeError"
     else:
-        assert any(
-            leaf.exception_name == "RuntimeError" for leaf in _leaves(effect)
-        )
+        assert any(leaf.exception_name == "RuntimeError" for leaf in _leaves(effect))
 
 
 def test_alternative_exceptional_faces_keep_separate_guards():
@@ -941,7 +948,9 @@ def test_alternative_exceptional_faces_keep_separate_guards():
         exception_type_mro=(ve_id,),
         raised_value=ve_typed,
     )
-    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence=AuthenticatedRaiseLocus.of("group:root"))
+    group = GroupedRaiseEffect(
+        "group:root", "g", (leaf,), occurrence=AuthenticatedRaiseLocus.of("group:root")
+    )
     body_atom = atomic("body.guard", [str_const("body")])
     g1 = atomic("alt.one", [str_const("1")])
     g2 = atomic("alt.two", [str_const("2")])
@@ -962,12 +971,18 @@ def test_alternative_exceptional_faces_keep_separate_guards():
                 (
                     Halted(
                         g1,
-                        RaiseEffect(exception_name="KeyError", occurrence=AuthenticatedRaiseLocus.of("a1")),
+                        RaiseEffect(
+                            exception_name="KeyError",
+                            occurrence=AuthenticatedRaiseLocus.of("a1"),
+                        ),
                         None,
                     ),
                     Halted(
                         g2,
-                        RaiseEffect(exception_name="OSError", occurrence=AuthenticatedRaiseLocus.of("a2")),
+                        RaiseEffect(
+                            exception_name="OSError",
+                            occurrence=AuthenticatedRaiseLocus.of("a2"),
+                        ),
                         None,
                     ),
                 )

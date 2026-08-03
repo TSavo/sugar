@@ -11,7 +11,6 @@ import pytest
 
 import sugar_lift_py_tests.authenticated_pytest as runtime_authority
 
-
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 _SCRIPT = _SCRIPTS / "control_effect_recensus.py"
 
@@ -80,7 +79,9 @@ def test_wrong_runtime_refuses_before_even_missing_corpus_selection(
     )
     receipt = tmp_path / "wrong-runtime.json"
 
-    assert _invoke(module, corpus=tmp_path / "corpus-does-not-exist", receipt=receipt) == 2
+    assert (
+        _invoke(module, corpus=tmp_path / "corpus-does-not-exist", receipt=receipt) == 2
+    )
     body = json.loads(receipt.read_text(encoding="utf-8"))
     assert body["kind"] == "control-effect-recensus-unmeasured/v1"
     assert body["status"] == "unmeasured"
@@ -113,7 +114,9 @@ def test_runtime_hash_failure_is_separate_and_never_fabricates_identity(
     )
     receipt = tmp_path / "identity-failure.json"
 
-    assert _invoke(module, corpus=tmp_path / "corpus-does-not-exist", receipt=receipt) == 2
+    assert (
+        _invoke(module, corpus=tmp_path / "corpus-does-not-exist", receipt=receipt) == 2
+    )
     body = json.loads(receipt.read_text(encoding="utf-8"))
     assert body["status"] == "unmeasured"
     assert body["requiredRuntime"] == "cpython-3.12.13"

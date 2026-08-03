@@ -235,6 +235,7 @@ def _produces_meaning(
     # than thin-wrap, but the comment itself admits the dual entry.
     return _comment_names_normative_peer(lead)
 
+
 def _leading_comment_block(source: str, def_lineno: int) -> str:
     """Comments immediately above ``def`` (1-indexed), stopping at code."""
     lines = source.splitlines()
@@ -479,10 +480,7 @@ def discrimination_self_test() -> bool:
             parents=True, exist_ok=True
         )
 
-        dirty = (
-            root
-            / "sugar-lift-py-tests/src/sugar_lift_py_tests/compat_plant.py"
-        )
+        dirty = root / "sugar-lift-py-tests/src/sugar_lift_py_tests/compat_plant.py"
         dirty.write_text(
             '''
 # Legacy helper -- kept for backward compatibility with existing callers.

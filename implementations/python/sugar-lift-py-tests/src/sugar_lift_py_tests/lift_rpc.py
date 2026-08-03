@@ -1974,9 +1974,7 @@ def _roll_call_audit_leaf(
                     "requested": str(
                         getattr(panic, "requested", f"constructed {node.kind}")
                     ),
-                    "fix": str(
-                        getattr(panic, "fix", f"write {node.kind}.sugar")
-                    ),
+                    "fix": str(getattr(panic, "fix", f"write {node.kind}.sugar")),
                     "entrance": "sugar.enumerate:facts:auditFrontier",
                     "observedEventType": (
                         f"{type(panic).__module__}.{type(panic).__qualname__}"
@@ -2283,9 +2281,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 if level == "facts":
                     expected_source_cid = None
                     if isinstance(at, dict):
-                        expected_source_cid = at.get("source_cid") or at.get(
-                            "file_cid"
-                        )
+                        expected_source_cid = at.get("source_cid") or at.get("file_cid")
                     leaf = _roll_call_audit_leaf(
                         full_path,
                         file_rel,
@@ -2405,9 +2401,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             else None
                         ),
                         distribution=(
-                            str(distribution)
-                            if isinstance(distribution, str)
-                            else None
+                            str(distribution) if isinstance(distribution, str) else None
                         ),
                     )
                     from sugar_lift_py_tests.context_manager_resolution import (
@@ -2708,9 +2702,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # Abstract contracts keyed by authenticated def identity
                 # (source_cid), never by callee spelling. Spelling by_name[t]
                 # reopened first-match after FunctionBindingMiss (#6946 residual).
-                by_source_cid = {
-                    m["source_cid"]: (m, d) for _n, m, d in universes
-                }
+                by_source_cid = {m["source_cid"]: (m, d) for _n, m, d in universes}
                 cued = []
                 cue_gaps: List[Dict[str, Any]] = []
                 seen = set()

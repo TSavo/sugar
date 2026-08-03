@@ -65,4 +65,3 @@ class ReceiverOwnedMutationResult(FloorValue):
                 self.result.to_term(owner=owner),
             ),
         )
-

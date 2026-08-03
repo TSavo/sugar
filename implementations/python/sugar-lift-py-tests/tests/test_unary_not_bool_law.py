@@ -60,14 +60,13 @@ def _identity(name: str):
         [str_const("builtins"), str_const(name)],
     )
 
+
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 )
 NA_SITE_SHA256 = "e46445908318d803ea24ac6c8f09ba2347de6fc31e12f2459555a1ba1b15e703"
-GENERIC_SITE_SHA256 = (
-    "cbc5383e8e1545537baedca85a6c62a487d3bea6942bb56e5e0c7479dd2f188d"
-)
+GENERIC_SITE_SHA256 = "cbc5383e8e1545537baedca85a6c62a487d3bea6942bb56e5e0c7479dd2f188d"
 
 
 @dataclass(frozen=True)
@@ -292,11 +291,11 @@ def test_halted_truth_is_not_negated() -> None:
 
         assert isinstance(face.value, RaiseValue)
         assert face.value.effect.exception_name == "TypeError"
-        assert face.value.effect.exception_type_coordinate == _identity('TypeError')
+        assert face.value.effect.exception_type_coordinate == _identity("TypeError")
     else:
         assert isinstance(face, Halted)
         assert face.effect.exception_name == "TypeError"
-        assert face.effect.exception_type_coordinate == _identity('TypeError')
+        assert face.effect.exception_type_coordinate == _identity("TypeError")
 
 
 def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:
@@ -354,7 +353,10 @@ def test_formal_not_halt_bypasses_negate_continuation() -> None:
         [str_const("builtins"), str_const("TypeError")],
     )
     # Occurrence is the operation site, not a fabricated boundary locus.
-    assert isinstance(exits.exits[0].effect.occurrence_id, str) and ":" in exits.exits[0].effect.occurrence_id, (
+    assert (
+        isinstance(exits.exits[0].effect.occurrence_id, str)
+        and ":" in exits.exits[0].effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {exits.exits[0].effect.occurrence_id!r}"
     )

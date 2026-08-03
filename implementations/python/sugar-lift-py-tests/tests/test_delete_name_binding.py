@@ -114,21 +114,25 @@ def test_del_removes_binding_later_read_is_nameerror() -> None:
     assert isinstance(halted.effect, NameErrorEffect)
     assert halted.effect.exception_name == "NameError"
     assert halted.effect.name == "x"
-    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+    assert (
+        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence!r}"
     )
-    assert "unbound name 'x'" in str(
-        getattr(halted.effect, "reason", "")
-        or getattr(halted.effect, "exception_name", "")
-    ) or halted.effect.name == "x"
+    assert (
+        "unbound name 'x'"
+        in str(
+            getattr(halted.effect, "reason", "")
+            or getattr(halted.effect, "exception_name", "")
+        )
+        or halted.effect.name == "x"
+    )
 
 
 def test_delete_name_sugar_prior_is_bound_value_not_spelling() -> None:
     """DeleteNameSugar carries the prior binding state, not a name-lookup."""
-    function, _ = _function_outcome(
-        "def f():\n" "    x = 1\n" "    del x\n"
-    )
+    function, _ = _function_outcome("def f():\n" "    x = 1\n" "    del x\n")
     deletes = [
         s for s in _universe_statements(function) if isinstance(s, DeleteNameSugar)
     ]
@@ -145,9 +149,7 @@ def test_delete_name_sugar_prior_is_bound_value_not_spelling() -> None:
 
 def test_post_delete_binding_trace_is_unbound_at_delete_site() -> None:
     """Substitution trace: after del, name maps to UnboundBinding at delete site."""
-    function, _ = _function_outcome(
-        "def f():\n" "    x = 1\n" "    del x\n"
-    )
+    function, _ = _function_outcome("def f():\n" "    x = 1\n" "    del x\n")
     sugar = function.sugar()
     trace = getattr(sugar, "substitution_trace", None)
     assert trace is not None
@@ -169,11 +171,7 @@ def test_post_delete_binding_trace_is_unbound_at_delete_site() -> None:
 def test_value_captured_before_del_survives() -> None:
     """``x = 1; y = x; del x; return y`` → Completed return TermValue(1)."""
     _, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    y = x\n"
-        "    del x\n"
-        "    return y\n"
+        "def f():\n" "    x = 1\n" "    y = x\n" "    del x\n" "    return y\n"
     )
     completed = _sole_completed(outcome)
     assert _returned(completed).value == TermValue(1)
@@ -191,11 +189,7 @@ def test_del_then_return_constant_completes() -> None:
 def test_rebind_after_del_restores_binding() -> None:
     """``del x; x = 2; return x`` → TermValue(2)."""
     _, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    del x\n"
-        "    x = 2\n"
-        "    return x\n"
+        "def f():\n" "    x = 1\n" "    del x\n" "    x = 2\n" "    return x\n"
     )
     completed = _sole_completed(outcome)
     assert _returned(completed).value == TermValue(2)
@@ -241,17 +235,11 @@ def test_conditional_del_builds_guarded_projection_on_later_read() -> None:
     when_true → UnboundProjection; when_false → prior bound value.
     """
     function, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    if flag:\n"
-        "        del x\n"
-        "    return x\n"
+        "def f():\n" "    x = 1\n" "    if flag:\n" "        del x\n" "    return x\n"
     )
     # Structure pin on the return sugar.
     returns = [
-        s
-        for s in _universe_statements(function)
-        if type(s).__name__ == "ReturnSugar"
+        s for s in _universe_statements(function) if type(s).__name__ == "ReturnSugar"
     ]
     assert len(returns) == 1
     read = returns[0].value
@@ -278,11 +266,7 @@ def test_conditional_del_builds_guarded_projection_on_later_read() -> None:
 def test_true_branch_del_factors_unbound_and_retained_faces() -> None:
     """``if True: del x; return x`` factors complementary guards (not collapsed silent)."""
     _, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    if True:\n"
-        "        del x\n"
-        "    return x\n"
+        "def f():\n" "    x = 1\n" "    if True:\n" "        del x\n" "    return x\n"
     )
     assert len(outcome.exits) >= 2
     kinds = {type(e).__name__ for e in outcome.exits}
@@ -295,11 +279,7 @@ def test_true_branch_del_factors_unbound_and_retained_faces() -> None:
 def test_false_branch_del_retains_binding_on_completed_arm() -> None:
     """``if False: del x; return x`` — completed arm returns 1 (binding retained)."""
     _, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    if False:\n"
-        "        del x\n"
-        "    return x\n"
+        "def f():\n" "    x = 1\n" "    if False:\n" "        del x\n" "    return x\n"
     )
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert completed
@@ -318,6 +298,7 @@ def test_false_branch_del_retains_binding_on_completed_arm() -> None:
                 values.append(getattr(s, "value", None))
     assert any(v == TermValue(1) or v == 1 for v in values), values
 
+
 # ===========================================================================
 # Absent local → authenticated NameError
 # ===========================================================================
@@ -330,7 +311,9 @@ def test_del_absent_local_is_nameerror() -> None:
     assert isinstance(halted.effect, NameErrorEffect)
     assert halted.effect.exception_name == "NameError"
     assert halted.effect.name == "x"
-    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+    assert (
+        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence!r}"
     )
@@ -340,7 +323,11 @@ def test_del_absent_is_not_silent_completion_twin() -> None:
     _, outcome = _function_outcome("def f():\n" "    del x\n")
     with pytest.raises(AssertionError):
         assert all(isinstance(e, Completed) for e in outcome.exits)
-    assert any(isinstance(e.effect, NameErrorEffect) for e in outcome.exits if isinstance(e, Halted))
+    assert any(
+        isinstance(e.effect, NameErrorEffect)
+        for e in outcome.exits
+        if isinstance(e, Halted)
+    )
 
 
 def test_unboundlocal_only_when_source_authority_distinguishes() -> None:
@@ -372,9 +359,7 @@ def test_attribute_delete_is_not_delete_name_sugar() -> None:
     kind, never discharges attribute delete.
     """
     tree = _tree("def f(obj):\n    del obj.attr\n")
-    function = next(
-        node for node in tree.nodes() if isinstance(node, FunctionDef)
-    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     statements = _universe_statements(function)
     assert any(isinstance(s, AttributeDeleteEffectSugar) for s in statements)
     assert not any(isinstance(s, DeleteNameSugar) for s in statements)
@@ -387,9 +372,7 @@ def test_subscript_delete_is_not_delete_name_sugar() -> None:
     kind, never discharges subscript delete.
     """
     tree = _tree("def f(obj, i):\n    del obj[i]\n")
-    function = next(
-        node for node in tree.nodes() if isinstance(node, FunctionDef)
-    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     statements = _universe_statements(function)
     assert any(isinstance(s, SubscriptDeleteEffectSugar) for s in statements)
     assert not any(isinstance(s, DeleteNameSugar) for s in statements)
@@ -403,11 +386,7 @@ def test_subscript_delete_is_not_delete_name_sugar() -> None:
 def test_delete_targets_exact_name_not_a_homophone() -> None:
     """``del x`` unbinds x; y remains bound."""
     _, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    y = 2\n"
-        "    del x\n"
-        "    return y\n"
+        "def f():\n" "    x = 1\n" "    y = 2\n" "    del x\n" "    return y\n"
     )
     completed = _sole_completed(outcome)
     assert _returned(completed).value == TermValue(2)
@@ -415,11 +394,7 @@ def test_delete_targets_exact_name_not_a_homophone() -> None:
 
 def test_delete_x_does_not_unbind_xx_by_spelling() -> None:
     _, outcome = _function_outcome(
-        "def f():\n"
-        "    x = 1\n"
-        "    xx = 2\n"
-        "    del x\n"
-        "    return xx\n"
+        "def f():\n" "    x = 1\n" "    xx = 2\n" "    del x\n" "    return xx\n"
     )
     completed = _sole_completed(outcome)
     assert _returned(completed).value == TermValue(2)

@@ -7,7 +7,9 @@ from sugar_source_tree.tree import SourceFile
 
 def _sites(tmp_path):
     path = tmp_path / "slice_value_attribute_mutation.py"
-    path.write_text("def f(value, replacement):\n    value.attr = replacement\n    del value.attr\n")
+    path.write_text(
+        "def f(value, replacement):\n    value.attr = replacement\n    del value.attr\n"
+    )
     body = next(
         SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
     ).body

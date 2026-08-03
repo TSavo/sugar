@@ -282,9 +282,7 @@ def test_source_global_then_assign_statement_kinds() -> None:
     """Source ``global x; x = 1; return x``: Global is InertSugar; Assign separate."""
     source = "def f():\n    global x\n    x = 1\n    return x\n"
     function = next(
-        n
-        for n in _tree(source).nodes()
-        if isinstance(n, FunctionDef) and n.name == "f"
+        n for n in _tree(source).nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
     sugar = function.sugar()
     kinds = [type(s).__name__ for s in sugar.statements]
@@ -329,11 +327,7 @@ def test_nonlocal_route_then_read_via_reduce_block() -> None:
     assert isinstance(exits, ExitSet)
     completed = [e for e in exits.exits if isinstance(e, Completed)]
     assert len(completed) == 1, exits.exits
-    rets = [
-        e
-        for e in completed[0].value.entries
-        if isinstance(e, ReturnValue)
-    ]
+    rets = [e for e in completed[0].value.entries if isinstance(e, ReturnValue)]
     assert rets and rets[0].value == TermValue(7), completed[0].value.entries
     # nonlocal_names enrolled on continuing context when present
     cont = completed[0].value.context

@@ -43,9 +43,7 @@ def test_real_literal_term_seals_value_sort_and_exact_occurrence() -> None:
     second = _unary("\n~3.5\n", "second.py").operand.sugar()
     integer_node = next(
         node
-        for node in SourceFile(
-            ("~3\n", "integer.py", blake3_512_of(b"~3\n"))
-        ).nodes()
+        for node in SourceFile(("~3\n", "integer.py", blake3_512_of(b"~3\n"))).nodes()
         if isinstance(node, Constant)
     )
     integer = integer_node.sugar()

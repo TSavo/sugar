@@ -9,12 +9,16 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.floor import CallSiteValue, GuardedReturn, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    GuardedReturn,
+    ReturnValue,
+    TermValue,
+)
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
-
 
 SOURCE = (
     "def lower():\n"
@@ -145,7 +149,10 @@ def test_named_exceptional_source_return_bypasses_both_bodies_with_state() -> No
 
     halted = _only_exit(call.sugar().desugar(None), Halted)
     assert halted.effect.exception_type_coordinate == _type_error_identity()
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -205,7 +212,9 @@ def test_wrong_return_frame_cannot_claim_the_truthful_branch() -> None:
 def test_wrong_occurrence_frame_cannot_claim_the_authentic_return() -> None:
     tree, context, _ = _tree("choose(2)\n")
     lower_calls = tuple(
-        call for call in _calls(tree, "lower") if call.line_col_span().start_line in (8, 10)
+        call
+        for call in _calls(tree, "lower")
+        if call.line_col_span().start_line in (8, 10)
     )
     assert len(lower_calls) == 2
     first_coordinate = _coordinate(lower_calls[0])

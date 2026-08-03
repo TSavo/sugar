@@ -37,10 +37,9 @@ class FormalFloorBindingV1:
     coordinate: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.coordinate_cid, str)
-            or not self.coordinate_cid.startswith("blake3-512:")
-        ):
+        if not isinstance(
+            self.coordinate_cid, str
+        ) or not self.coordinate_cid.startswith("blake3-512:"):
             raise FormalFloorBindingGap(
                 "FormalFloorBindingV1.coordinate_cid must be an authenticated "
                 f"blake3-512 CID, got {self.coordinate_cid!r}"
@@ -59,8 +58,7 @@ class FormalFloorBindingV1:
                 type(self.coordinate) is not BindingCoordinateV1
                 or self.coordinate.cid != self.coordinate_cid
                 or cid_of_json(self.coordinate.preimage) != self.coordinate.cid
-                or BindingCoordinateV1.decode(self.coordinate.wire())
-                != self.coordinate
+                or BindingCoordinateV1.decode(self.coordinate.wire()) != self.coordinate
             ):
                 raise FormalFloorBindingGap(
                     "projected formal floor binding has foreign coordinate testimony"
@@ -205,9 +203,7 @@ class AttributeAssignStepV1:
     occurrence: object = field(compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        _require_constructed_term(
-            self.receiver, owner="AttributeAssignStepV1.receiver"
-        )
+        _require_constructed_term(self.receiver, owner="AttributeAssignStepV1.receiver")
         _require_constructed_term(self.value, owner="AttributeAssignStepV1.value")
         try:
             observed_target_cid = self.occurrence.seal().cid
@@ -250,7 +246,9 @@ class AssertStepV1:
                 span.end_col,
             )
         except (AttributeError, TypeError) as exc:
-            raise TypeError("AssertStepV1 requires an authenticated occurrence") from exc
+            raise TypeError(
+                "AssertStepV1 requires an authenticated occurrence"
+            ) from exc
         if observed_coordinate != self.assert_coordinate:
             raise TypeError(
                 "AssertStepV1 assert occurrence does not match its authenticated coordinate"
@@ -701,9 +699,7 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "assert",
             "assertCid": step.assert_cid,
             "assertCoordinate": step.assert_coordinate.wire(),
-            "test": _generator_value_testimony(
-                step.assert_sugar.test, owner=owner
-            ),
+            "test": _generator_value_testimony(step.assert_sugar.test, owner=owner),
         }
     if isinstance(step, ImportFromStepV1):
         return {
@@ -722,8 +718,7 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "coordinate": step.coordinate.wire(),
             "guard": _generator_value_testimony(step.guard, owner=owner),
             "bodySteps": [
-                _generator_step_testimony(item, owner=owner)
-                for item in step.body_steps
+                _generator_step_testimony(item, owner=owner) for item in step.body_steps
             ],
         }
     if isinstance(step, FinallyStepV1):
@@ -802,9 +797,7 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             ],
         }
     if isinstance(step, NestedManagerStepV1):
-        nested_cid = getattr(
-            step.nested_protocol, "protocol_construction_cid", None
-        )
+        nested_cid = getattr(step.nested_protocol, "protocol_construction_cid", None)
         return {
             "kind": "nested-manager",
             "fragmentCid": step.fragment_cid,
@@ -940,9 +933,7 @@ class GeneratorConstructionV1:
         projected_floor_bindings = tuple(
             item for item in formal_floor_bindings if item.coordinate is not None
         )
-        projected_cids = tuple(
-            item.coordinate_cid for item in projected_floor_bindings
-        )
+        projected_cids = tuple(item.coordinate_cid for item in projected_floor_bindings)
         if len(projected_cids) != len(set(projected_cids)):
             raise FormalFloorBindingGap(
                 "projected formal floor bindings must not duplicate a coordinate"
@@ -1213,9 +1204,7 @@ class GeneratorConstructionV1:
             if isinstance(outcome, Incomplete):
                 return ExitSet.halted(outcome.effect, state=self)
             if not isinstance(outcome, Complete):
-                return self._gap(
-                    requested, f"assert returned {type(outcome).__name__}"
-                )
+                return self._gap(requested, f"assert returned {type(outcome).__name__}")
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, ImportFromStepV1):
@@ -1233,9 +1222,7 @@ class GeneratorConstructionV1:
 
             outcome = step.import_sugar.desugar(self._guard_evaluation_context())
             if not isinstance(outcome, Complete):
-                return self._gap(
-                    requested, f"import returned {type(outcome).__name__}"
-                )
+                return self._gap(requested, f"import returned {type(outcome).__name__}")
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, WhileStepV1):
@@ -1259,7 +1246,9 @@ class GeneratorConstructionV1:
             outcome = step.raise_sugar.desugar(self._guard_evaluation_context())
             if isinstance(outcome, Incomplete):
                 return ExitSet.halted(outcome.effect, state=self)
-            return self._gap(requested, f"raise did not halt ({type(outcome).__name__})")
+            return self._gap(
+                requested, f"raise did not halt ({type(outcome).__name__})"
+            )
         if isinstance(step, TermStepV1):
             outcome = step.term.desugar(self._guard_evaluation_context())
             from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -1422,7 +1411,10 @@ class GeneratorConstructionV1:
             step.fragment_cid,
             step.occurrence,
         )
-        machine = replace(self, steps=(*self.steps[: self.cursor], runtime, *self.steps[self.cursor + 1 :]))
+        machine = replace(
+            self,
+            steps=(*self.steps[: self.cursor], runtime, *self.steps[self.cursor + 1 :]),
+        )
         return machine._transition(requested)
 
     def _transition_yield_from(self, step: YieldFromStepV1, requested: str):
@@ -1531,7 +1523,9 @@ class GeneratorConstructionV1:
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)
             return ExitSet.halted(effect, state=self)
-        if not isinstance(outcome, Complete) or not isinstance(outcome.value, NextResult):
+        if not isinstance(outcome, Complete) or not isinstance(
+            outcome.value, NextResult
+        ):
             return self._gap(requested, f"next_with returned {type(outcome).__name__}")
 
         unpack = PositionalUnpackOperation(
@@ -1543,10 +1537,16 @@ class GeneratorConstructionV1:
         ).submit(outcome.value.value, self._guard_evaluation_context())
         if isinstance(unpack, Incomplete):
             return ExitSet.halted(unpack.effect, state=self)
-        if not isinstance(unpack, Complete) or not isinstance(unpack.value, UnpackMemberRoster):
-            return self._gap(requested, f"target unpack returned {type(unpack).__name__}")
+        if not isinstance(unpack, Complete) or not isinstance(
+            unpack.value, UnpackMemberRoster
+        ):
+            return self._gap(
+                requested, f"target unpack returned {type(unpack).__name__}"
+            )
         bindings = tuple(
-            GeneratorLoopBindingV1(coordinate, member, unpack.value.occurrence, unpack.value.demand_cid)
+            GeneratorLoopBindingV1(
+                coordinate, member, unpack.value.occurrence, unpack.value.demand_cid
+            )
             for coordinate, member in zip(
                 step.target_coordinates, unpack.value.members, strict=True
             )
@@ -1558,7 +1558,9 @@ class GeneratorConstructionV1:
             recurrence,
             *self.steps[self.cursor + 1 :],
         )
-        machine = replace(self, steps=steps, binding_state=(*self.binding_state, *bindings))
+        machine = replace(
+            self, steps=steps, binding_state=(*self.binding_state, *bindings)
+        )
         return machine._transition(requested)
 
     def _transition_nested_manager(self, step: NestedManagerStepV1, requested: str):
@@ -1727,14 +1729,16 @@ class GeneratorConstructionV1:
                 branch_faces = frozenset({then_face, else_face})
                 return ExitSet(
                     tuple(
-                        Completed(
-                            exit_.guard,
-                            exit_.value,
-                            exit_.faces | branch_faces,
-                            exit_.pending_contracts,
+                        (
+                            Completed(
+                                exit_.guard,
+                                exit_.value,
+                                exit_.faces | branch_faces,
+                                exit_.pending_contracts,
+                            )
+                            if isinstance(exit_, Completed)
+                            else exit_
                         )
-                        if isinstance(exit_, Completed)
-                        else exit_
                         for exit_ in factored.exits
                     )
                 )
@@ -1742,9 +1746,7 @@ class GeneratorConstructionV1:
 
         def _project_guard_operand(value):
             projected = self._guard_truth(value)
-            if projected is None or isinstance(
-                projected, GeneratorTransitionGapV1
-            ):
+            if projected is None or isinstance(projected, GeneratorTransitionGapV1):
                 _refuse_transition(projected)
             return projected
 
@@ -1816,9 +1818,7 @@ class GeneratorConstructionV1:
             temporal = base.temporal
 
         for binding in self.formal_floor_bindings:
-            temporal = temporal.bind_value(
-                binding.coordinate_cid, binding.floor_value
-            )
+            temporal = temporal.bind_value(binding.coordinate_cid, binding.floor_value)
         for item in self.binding_state:
             if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
                 temporal = temporal.bind_value(item.name, item.value)

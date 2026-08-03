@@ -134,7 +134,9 @@ class SourceFile:
                 self.backend = backend if backend is not None else _default_backend()
             self.reporter = reporter
             with reduction_span(sugar="MaterializeModule", role="file", site=site):
-                constructed_module = self.backend.materialize_module(self.unit, reporter)
+                constructed_module = self.backend.materialize_module(
+                    self.unit, reporter
+                )
             self.constructed_module = constructed_module
             self.root: Module = constructed_module.root
             self.closed_roll_call = constructed_module.closed_roll_call
@@ -215,6 +217,7 @@ class SourceFile:
         down: a function yields nothing further until asked.
         """
         from sugar_lift_py_tests.engine_log import reduction_span
+
         # First full walk materializes the typed tree (field data memo).
         # Span names that cost so file-level exclusive heat is not a black box.
         with reduction_span(

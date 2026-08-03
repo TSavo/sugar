@@ -60,9 +60,7 @@ class AugAssignSugar(Sugar):
                     operator=self.operator,
                     projector=self.operation,
                     site=self.op_site,
-                ).and_then(
-                    lambda result: Complete(ScopeRebind(self.name, result))
-                )
+                ).and_then(lambda result: Complete(ScopeRebind(self.name, result)))
             )
         )
 
@@ -149,9 +147,7 @@ class SubscriptAugAssignSugar(Sugar):
                             operator=self.operator,
                             projector=self.operation,
                             site=self.op_site,
-                        ).and_then(
-                            lambda result: self._store(receiver, index, result)
-                        )
+                        ).and_then(lambda result: self._store(receiver, index, result))
                     )
                 )
             )

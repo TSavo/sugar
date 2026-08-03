@@ -131,9 +131,7 @@ def test_immutable_slice_store_cannot_fabricate_mutated_receiver(
     assert outcome.effect.producer_node_owner != "TupleValue.setitem"
 
 
-@pytest.mark.parametrize(
-    "receiver", (StringValue("abc"), BytesValue(b"abc"))
-)
+@pytest.mark.parametrize("receiver", (StringValue("abc"), BytesValue(b"abc")))
 def test_immutable_slice_store_halt_preserves_exact_prior_state(tmp_path, receiver):
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.outcome import Halted
@@ -185,7 +183,10 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
             log.append("value")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(exception_type_coordinate=str_const('ValueError'), occurrence=AuthenticatedRaiseLocus.of('store.py:4:12'))
+                    RaiseEffect(
+                        exception_type_coordinate=str_const("ValueError"),
+                        occurrence=AuthenticatedRaiseLocus.of("store.py:4:12"),
+                    )
                 )
             )
 
@@ -219,7 +220,10 @@ def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
             log.append("receiver")
             return Complete(
                 RaiseValue(
-                    RaiseEffect(exception_type_coordinate=str_const('LookupError'), occurrence=AuthenticatedRaiseLocus.of('store.py:4:4'))
+                    RaiseEffect(
+                        exception_type_coordinate=str_const("LookupError"),
+                        occurrence=AuthenticatedRaiseLocus.of("store.py:4:4"),
+                    )
                 )
             )
 

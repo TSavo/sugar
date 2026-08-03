@@ -45,7 +45,9 @@ def test_ordered_binding_keys_non_str_panics() -> None:
         _ordered_binding_keys(["ok", 12])  # type: ignore[list-item]
         raise AssertionError("expected SugarNotWritten")
     except SugarNotWritten as gap:
-        assert "int" in gap.observed or "12" in gap.observed or "not a str" in gap.observed
+        assert (
+            "int" in gap.observed or "12" in gap.observed or "not a str" in gap.observed
+        )
         assert gap.fix
 
 

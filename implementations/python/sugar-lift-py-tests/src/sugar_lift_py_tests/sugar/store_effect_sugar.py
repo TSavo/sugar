@@ -61,9 +61,7 @@ class AttributeStoreEffectSugar(Sugar):
     def desugar_store(self, ctx: object, value) -> Outcome:
         """Store an RHS already reduced once by a chained assignment."""
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.project_setattr(
-                receiver, self.attr, value, self.site
-            )
+            lambda receiver: self.project_setattr(receiver, self.attr, value, self.site)
         )
 
     def _store(self, receiver, value) -> Outcome:

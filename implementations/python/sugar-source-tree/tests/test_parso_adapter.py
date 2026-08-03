@@ -12,9 +12,7 @@ import pytest
 
 from declared_corpus import OPTIONAL_PROVIDER, optional_law_import
 
-parso = optional_law_import(
-    "parso", OPTIONAL_PROVIDER, "parso backend not installed"
-)
+parso = optional_law_import("parso", OPTIONAL_PROVIDER, "parso backend not installed")
 
 from pathlib import Path
 

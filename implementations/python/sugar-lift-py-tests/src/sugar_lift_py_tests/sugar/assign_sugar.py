@@ -166,11 +166,7 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         return typed_red_effect_witness(
             name="dynamic_unpack_store_star",
             owner_sugar="DynamicUnpackStoreAssignSugar",
-            source=(
-                "def A(o, xs):\n"
-                "    o.x, *rest = xs\n"
-                "    return rest\n"
-            ),
+            source=("def A(o, xs):\n" "    o.x, *rest = xs\n" "    return rest\n"),
             effect_class="SequenceUnpackRuntimeEffect",
             reason_needle="sequence unpack",
             blame_needle="at least 1 members",
@@ -214,9 +210,7 @@ class DynamicUnpackStoreAssignSugar(Sugar):
             )
         )
 
-    def _apply_authenticated_roster(
-        self, roster, *, expected_demand_cid: str, ctx
-    ):
+    def _apply_authenticated_roster(self, roster, *, expected_demand_cid: str, ctx):
         """Zip targets only after the roster testifies this unpack occurrence."""
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.operations.positional_unpack_operation import (
@@ -263,9 +257,7 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         return reduce_block_to_exitset(
             tuple(
                 ApplyUnpackMemberSugar(target, member, self.site)
-                for target, member in zip(
-                    self.targets, roster.members, strict=True
-                )
+                for target, member in zip(self.targets, roster.members, strict=True)
             ),
             ctx,
         )

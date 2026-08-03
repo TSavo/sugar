@@ -442,6 +442,7 @@ def format_unmeasured_axis(axis: str, *, reason: str) -> str:
         f"Measurement did not complete; residual is not a completed zero."
     )
 
+
 def timed_enum_file(
     path: Path,
     *,

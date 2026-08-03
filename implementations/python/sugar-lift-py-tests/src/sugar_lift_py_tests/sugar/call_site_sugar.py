@@ -220,8 +220,8 @@ class CallSiteSugar(ConstructedTermSugar):
                 owner := self.source_call_frame.owner, (FunctionDef, AsyncFunctionDef)
             ):
                 table = owner.unit.function_symtable(
-                owner.name, owner.line_col_span().start_line
-            )
+                    owner.name, owner.line_col_span().start_line
+                )
             free_names = tuple(
                 symbol.get_name()
                 for symbol in table.get_symbols()
@@ -233,14 +233,11 @@ class CallSiteSugar(ConstructedTermSugar):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,
-                        observed=(
-                            "closure bindings lack producer coordinates: "
-                            f"{free_names!r}"
-                        ),
+                    observed=(
+                        "closure bindings lack producer coordinates: " f"{free_names!r}"
+                    ),
                     requested="captured binding coordinate testimony",
-                        fix=(
-                            "enroll producer-owned closure actuals before body reduction"
-                        ),
+                    fix=("enroll producer-owned closure actuals before body reduction"),
                 )
         if self.contract_resolution_gap is not None:
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap

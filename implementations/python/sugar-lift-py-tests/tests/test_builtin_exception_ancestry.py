@@ -30,7 +30,9 @@ def _residual_raises(source: str) -> tuple[str, ...]:
     """Every raise that survived the `try` — the effects still on the wall."""
     from sugar_lift_python_source.canonical import blake3_512_of
 
-    source_file = SourceFile((source, "/tmp/ancestry.py", blake3_512_of(source.encode())))
+    source_file = SourceFile(
+        (source, "/tmp/ancestry.py", blake3_512_of(source.encode()))
+    )
     function = next(iter(source_file.functions()))
     exit_set = outcome_to_exitset(function.sugar().desugar())
     names: list[str] = []
@@ -125,9 +127,9 @@ def test_ancestry_is_directional_subclass_does_not_catch_superclass():
 
 
 def test_except_arithmetic_error_does_not_catch_os_error():
-    assert _residual_raises(_try_source(raised="OSError", handled="ArithmeticError")) == (
-        "OSError",
-    )
+    assert _residual_raises(
+        _try_source(raised="OSError", handled="ArithmeticError")
+    ) == ("OSError",)
 
 
 def test_keyboard_interrupt_is_not_an_exception():

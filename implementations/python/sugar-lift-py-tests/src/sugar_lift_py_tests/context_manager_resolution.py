@@ -799,7 +799,11 @@ def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
             "gap",
         }:
             gap = resolution["gap"]
-            if not isinstance(gap, dict) or not isinstance(gap.get("kind"), str) or not gap.get("kind"):
+            if (
+                not isinstance(gap, dict)
+                or not isinstance(gap.get("kind"), str)
+                or not gap.get("kind")
+            ):
                 raise ContractRefProtocolError(
                     "malformed context-manager resolution gap"
                 )

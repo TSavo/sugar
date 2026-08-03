@@ -60,15 +60,13 @@ def test_scanner_flags_soft_function_binding_miss_continue(tmp_path: Path) -> No
     """Lying twin: except FunctionBindingMiss: continue is red."""
     bad = tmp_path / "lift_rpc.py"
     bad.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             def dig(call):
                 try:
                     fn = resolve_function_for_call(call)
                 except FunctionBindingMiss:
                     continue
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     offenders = _SCANNER.scan_sources([bad], root=tmp_path)
@@ -80,27 +78,26 @@ def test_scanner_flags_fn_none_soft_skip(tmp_path: Path) -> None:
     """Lying twin: except FunctionBindingMiss: fn = None reopens soft-None."""
     bad = tmp_path / "lift_rpc.py"
     bad.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             def dig(call):
                 try:
                     fn = resolve_function_for_call(call)
                 except FunctionBindingMiss:
                     fn = None
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     offenders = _SCANNER.scan_sources([bad], root=tmp_path)
-    assert any(o.kind == "function-binding-miss-soft-skip" for o in offenders), offenders
+    assert any(
+        o.kind == "function-binding-miss-soft-skip" for o in offenders
+    ), offenders
 
 
 def test_scanner_flags_spelling_by_name_with_resolve(tmp_path: Path) -> None:
     """Lying twin: by_name[t] on resolve path is the spelling second door."""
     bad = tmp_path / "lift_rpc.py"
     bad.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             def dig(calls, universes):
                 by_name = {name: (m, d) for name, m, d in universes}
                 for call in calls:
@@ -108,8 +105,7 @@ def test_scanner_flags_spelling_by_name_with_resolve(tmp_path: Path) -> None:
                     t = call.func.id
                     if t in by_name:
                         cued.append(by_name[t])
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     offenders = _SCANNER.scan_sources([bad], root=tmp_path)
@@ -120,8 +116,7 @@ def test_scanner_allows_gap_append_then_continue(tmp_path: Path) -> None:
     """Truthful membrane: named gap then continue is not soft silence."""
     ok = tmp_path / "lift_rpc.py"
     ok.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             def dig(call, at, gaps):
                 try:
                     fn = resolve_function_for_call(call)
@@ -131,8 +126,7 @@ def test_scanner_allows_gap_append_then_continue(tmp_path: Path) -> None:
                         "reason": f"FunctionBindingMiss name={miss.name!r} reason={miss.reason}",
                     })
                     continue
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     offenders = _SCANNER.scan_sources([ok], root=tmp_path)
@@ -178,15 +172,13 @@ def test_universe_dig_binding_miss_emits_gap_not_spelling_contract(
     FunctionBindingMiss.
     """
     (tmp_path / "mod.py").write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             def pack(a, *rest):
                 return (a, rest)
 
             def test_a():
                 assert unknown_callee(1) == 1
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     call_at = _call_site_memento(tmp_path, "test_a")
@@ -196,9 +188,9 @@ def test_universe_dig_binding_miss_emits_gap_not_spelling_contract(
         name = (node.get("memento") or {}).get("source_function_name") or (
             node.get("memento") or {}
         ).get("function_name")
-        assert name != "pack", (
-            f"spelling fallback served pack after binding miss: {node}"
-        )
+        assert (
+            name != "pack"
+        ), f"spelling fallback served pack after binding miss: {node}"
     gap_text = " ".join(str(g.get("reason", "")) for g in result["gaps"])
     assert "FunctionBindingMiss" in gap_text, (
         f"expected FunctionBindingMiss gap, got nodes={result['nodes']!r} "
@@ -216,8 +208,7 @@ def test_universe_dig_prefers_module_binding_not_method_spelling(
     identity abstract must serve module ``pack(a, *rest)``.
     """
     (tmp_path / "mod.py").write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             class Holder:
                 def pack(self, *items):
                     return items
@@ -227,17 +218,14 @@ def test_universe_dig_prefers_module_binding_not_method_spelling(
 
             def test_a():
                 assert pack(1, 2) == (1, (2,))
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     call_at = _call_site_memento(tmp_path, "test_a")
     result = _enumerate("universe", tmp_path, at=call_at, seek=True)
     assert result["nodes"], result
     miss_gaps = [
-        g
-        for g in result["gaps"]
-        if "FunctionBindingMiss" in str(g.get("reason", ""))
+        g for g in result["gaps"] if "FunctionBindingMiss" in str(g.get("reason", ""))
     ]
     assert miss_gaps == [], result["gaps"]
     mementos = [n.get("memento") or {} for n in result["nodes"]]

@@ -57,7 +57,6 @@ from sugar_lift_py_tests.floor.raise_value import (
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
 
-
 _SHA = "a" * 64
 _LOCUS = "pkg/mod.py:12:4"
 
@@ -77,7 +76,10 @@ def _named_cited_effect(**overrides) -> RaiseEffect:
         occurrence=_LOCUS,
     )
     fields.update(overrides)
-    return RaiseEffect.for_builtin('ValueError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_render_edge_exceptional_exit_citation.py:79:0')
+    return RaiseEffect.for_builtin(
+        "ValueError",
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_render_edge_exceptional_exit_citation.py:79:0",
+    )
 
 
 def _coordinate_cited_effect(**overrides) -> RaiseEffect:
@@ -92,7 +94,11 @@ def _coordinate_cited_effect(**overrides) -> RaiseEffect:
         occurrence=_LOCUS,
     )
     fields.update(overrides)
-    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of('implementations/python/sugar-lift-py-tests/tests/test_render_edge_exceptional_exit_citation.py:94:0'))
+    return RaiseEffect(
+        occurrence=AuthenticatedRaiseLocus.of(
+            "implementations/python/sugar-lift-py-tests/tests/test_render_edge_exceptional_exit_citation.py:94:0"
+        )
+    )
 
 
 def _is_fabricated_constant(node: ast.AST) -> str | None:
@@ -156,8 +162,16 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
     is the signal the stronger substrate arrived and this note can retire.
     There is no hard-coded R=1; the probe is the absence of those markers.
     """
-    auditor = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_auditor.py"
-    evidence = Path(__file__).resolve().parents[4] / "tests" / "sourcefile_construction_door_evidence.py"
+    auditor = (
+        Path(__file__).resolve().parents[4]
+        / "tests"
+        / "sourcefile_construction_door_auditor.py"
+    )
+    evidence = (
+        Path(__file__).resolve().parents[4]
+        / "tests"
+        / "sourcefile_construction_door_evidence.py"
+    )
     assert auditor.is_file(), auditor
     assert evidence.is_file(), evidence
 
@@ -170,7 +184,7 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
         "render-edge fabrication and retire this module's blind-spot claim"
     )
     assert "exceptional_exit" not in auditor_text
-    assert "or \"reraise\"" not in auditor_text
+    assert 'or "reraise"' not in auditor_text
     assert "source-sha256" not in auditor_text
     assert "RenderEdge" not in evidence_text
     assert "exceptional_exit" not in evidence_text
@@ -185,13 +199,13 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
 
 def test_ast_tooth_lying_twin_or_reraise_is_visible() -> None:
     """Planted BoolOp ``or`` second mechanism must be recognized."""
-    planted = '''
+    planted = """
 def _exceptional_exit_term(effect):
     name = effect.exception_name or "reraise"
     cite = effect.source_sha256 or "unavailable"
     locus = effect.blame or "<unknown raise locus>"
     return name, cite, locus
-'''
+"""
     offenders = fabricated_meaning_offenders(planted, path="planted.py")
     assert len(offenders) == 3, offenders
     assert any("reraise" in row for row in offenders)
@@ -205,13 +219,13 @@ def test_ast_tooth_lying_twin_ifexp_reraise_is_visible() -> None:
     The historical AST tooth only saw BoolOp ``or``. Reintroduction via
     ``x if c else "reraise"`` is the same second mechanism in different clothes.
     """
-    planted = '''
+    planted = """
 def _exceptional_exit_term(effect):
     name = effect.exception_name if effect.exception_name is not None else "reraise"
     cite = "unavailable" if effect.source_sha256 is None else effect.source_sha256
     locus = effect.blame if effect.blame is not None else "<unknown raise locus>"
     return name, cite, locus
-'''
+"""
     offenders = fabricated_meaning_offenders(planted, path="planted_ifexp.py")
     assert len(offenders) == 3, offenders
     assert any("reraise" in row for row in offenders)
@@ -222,9 +236,7 @@ def _exceptional_exit_term(effect):
 def test_ast_tooth_truthful_raise_value_has_zero_fabricated_meaning_defaults() -> None:
     """Production emission door: R=0 for fabricated-meaning default shapes."""
     source = _RAISE_VALUE_PATH.read_text(encoding="utf-8")
-    offenders = fabricated_meaning_offenders(
-        source, path=str(_RAISE_VALUE_PATH)
-    )
+    offenders = fabricated_meaning_offenders(source, path=str(_RAISE_VALUE_PATH))
     assert offenders == [], (
         "render-edge emission invents meaning via default literal; "
         "Law of One: identity comes from the tree only. Offenders:\n"
@@ -234,21 +246,21 @@ def test_ast_tooth_truthful_raise_value_has_zero_fabricated_meaning_defaults() -
 
 def test_ast_tooth_does_not_flag_boolean_existence_ors() -> None:
     """``name is not None or coord is not None`` is existence, not meaning."""
-    clean = '''
+    clean = """
 def has_identity(effect):
     return (
         effect.exception_name is not None
         or effect.exception_type_coordinate is not None
     )
-'''
+"""
     assert fabricated_meaning_offenders(clean) == []
 
 
 def test_ast_tooth_does_not_flag_ifexp_without_fabricated_literal() -> None:
-    clean = '''
+    clean = """
 def pick(a, b, c):
     return a if c else b
-'''
+"""
     assert fabricated_meaning_offenders(clean) == []
 
 
@@ -324,7 +336,9 @@ def test_nameless_raise_value_post_contribution_stays_loud() -> None:
 
 def test_name_without_source_sha_cannot_cite_unavailable() -> None:
     """Placeholder ``#source-sha256=unavailable`` is absent evidence, not a cite."""
-    effect = RaiseEffect.for_builtin('ValueError', blame=_LOCUS, source_sha256=None, occurrence=_LOCUS)
+    effect = RaiseEffect.for_builtin(
+        "ValueError", blame=_LOCUS, source_sha256=None, occurrence=_LOCUS
+    )
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -337,7 +351,9 @@ def test_name_without_source_sha_cannot_cite_unavailable() -> None:
 
 def test_name_without_blame_cannot_cite_unknown_locus() -> None:
     """Placeholder ``<unknown raise locus>`` is not a re-readable citation."""
-    effect = RaiseEffect.for_builtin('ValueError', blame=None, source_sha256=_SHA, occurrence=None)
+    effect = RaiseEffect.for_builtin(
+        "ValueError", blame=None, source_sha256=_SHA, occurrence=None
+    )
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -368,7 +384,9 @@ def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
     citable exit after the first refuse-placeholders shot. Fabricated
     identity is not authenticated identity.
     """
-    effect = RaiseEffect.for_builtin('reraise', blame=_LOCUS, source_sha256=_SHA, occurrence=_LOCUS)
+    effect = RaiseEffect.for_builtin(
+        "reraise", blame=_LOCUS, source_sha256=_SHA, occurrence=_LOCUS
+    )
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
@@ -385,7 +403,12 @@ def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
 )
 def test_every_fabricated_meaning_literal_as_name_is_loud(placeholder: str) -> None:
     """Every denylist member as exception_name is an offender class, not a name."""
-    effect = RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(_LOCUS), exception_name=placeholder, blame=_LOCUS, source_sha256=_SHA)
+    effect = RaiseEffect(
+        occurrence=AuthenticatedRaiseLocus.of(_LOCUS),
+        exception_name=placeholder,
+        blame=_LOCUS,
+        source_sha256=_SHA,
+    )
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
     assert placeholder in raised.value.info.observed
@@ -394,7 +417,9 @@ def test_every_fabricated_meaning_literal_as_name_is_loud(placeholder: str) -> N
 
 def test_empty_exception_name_cannot_reach_fol() -> None:
     """Empty spelling is not tree-authenticated identity."""
-    effect = RaiseEffect.for_builtin('', blame=_LOCUS, source_sha256=_SHA, occurrence=_LOCUS)
+    effect = RaiseEffect.for_builtin(
+        "", blame=_LOCUS, source_sha256=_SHA, occurrence=_LOCUS
+    )
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
     assert "empty" in raised.value.info.observed

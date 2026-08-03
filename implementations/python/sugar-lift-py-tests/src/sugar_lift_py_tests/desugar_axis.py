@@ -238,8 +238,6 @@ class OutcomeWalk:
 # --------------------------------------------------------------------------
 
 
-
-
 class DesugarAxis:
     """Accumulates the four disjoint desugar-layer quantities for a file/run."""
 
@@ -295,7 +293,6 @@ class DesugarAxis:
             if verdict is not None and hasattr(verdict, "row"):
                 row["classification"] = verdict.row()
         self.defects.append(row)
-
 
     # -- the one door -------------------------------------------------------
 

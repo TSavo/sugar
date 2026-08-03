@@ -36,9 +36,7 @@ def _fn(src):
 
 def _exception_identity(function, name: str):
     occurrence = next(
-        node
-        for node in function.walk()
-        if node.kind == "Name" and node.id == name
+        node for node in function.walk() if node.kind == "Name" and node.id == name
     )
     identity = function.unit.exception_type_identity(occurrence)
     assert identity is not None

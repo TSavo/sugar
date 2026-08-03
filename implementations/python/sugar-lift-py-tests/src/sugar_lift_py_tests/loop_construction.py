@@ -635,9 +635,7 @@ def decode_loop_construction_v1(graph: Any) -> LoopConstructionV1:
         record(operation.raw["binderTransformCid"], "loop-binder-transform")
         record(operation.raw["iteratorTestimonyCid"], "loop-iterator-testimony")
     else:
-        initial_test = record(
-            operation.raw["testTransformCid"], "loop-test-transform"
-        )
+        initial_test = record(operation.raw["testTransformCid"], "loop-test-transform")
         if initial_test.raw["inputStateCid"] != pre_state.state_cid:
             raise LoopWireError("initial test input state mismatch")
 

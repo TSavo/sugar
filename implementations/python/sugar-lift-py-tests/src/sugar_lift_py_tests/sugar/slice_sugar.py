@@ -109,17 +109,11 @@ class SliceSugar(ConstructedTermSugar):
                         )
                     )
                 factored = factored_operand(plain)
-                return factored.and_then(
-                    lambda value: Complete((*collected, value))
-                )
+                return factored.and_then(lambda value: Complete((*collected, value)))
 
             outcome = outcome.and_then(_step)
 
         built = outcome.and_then(
-            lambda values: Complete(
-                SliceValue(values[0], values[1], values[2])
-            )
+            lambda values: Complete(SliceValue(values[0], values[1], values[2]))
         )
-        return rewrap_pending(
-            pending, built, owner="SliceSugar", blame=str(self.site)
-        )
+        return rewrap_pending(pending, built, owner="SliceSugar", blame=str(self.site))

@@ -28,8 +28,8 @@ def _stop_identity():
 
 def test_truthful_stop_iteration_coordinate_is_exhaustion() -> None:
     identity, mro = _stop_identity()
-    effect = RaiseEffect.for_builtin("StopIteration",
-        
+    effect = RaiseEffect.for_builtin(
+        "StopIteration",
         exception_type_mro=mro,
         occurrence="loop.py:1:0",
         producer_node_owner="project_next",
@@ -40,8 +40,8 @@ def test_truthful_stop_iteration_coordinate_is_exhaustion() -> None:
 
 def test_lying_twin_same_spelling_foreign_coordinate_is_not_exhaustion() -> None:
     identity, mro = _stop_identity()
-    truthful = RaiseEffect.for_builtin("StopIteration",
-        
+    truthful = RaiseEffect.for_builtin(
+        "StopIteration",
         exception_type_mro=mro,
         occurrence="loop.py:1:0",
     )

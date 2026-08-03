@@ -164,9 +164,7 @@ def audit():
 
     offenders = _SCANNER.scan_repository(tmp_path)
 
-    assert {
-        (row.path, row.kind) for row in offenders
-    } == {
+    assert {(row.path, row.kind) for row in offenders} == {
         (
             "src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py",
             "construction-panic-catch-outside-membrane",
@@ -269,9 +267,7 @@ def test_current_named_membranes_match_their_exact_handler_shapes() -> None:
     )
 
     assert [
-        row
-        for row in offenders
-        if row.path.endswith(named_membrane_suffixes)
+        row for row in offenders if row.path.endswith(named_membrane_suffixes)
     ] == []
 
 

@@ -46,6 +46,7 @@ class _ValueSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
+
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
 # sha256:a223… is historical negative testimony only — never identity.
 PANDAS_MANIFEST_CID = (

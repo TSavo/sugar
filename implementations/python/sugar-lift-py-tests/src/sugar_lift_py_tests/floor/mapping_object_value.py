@@ -17,6 +17,7 @@ class MappingObjectValue(ObjectValue):
     """
 
     entries: tuple = ()
+
     def guarded(self, formula):
         """A constructed mapping state contributes no independent control.
 
@@ -77,17 +78,21 @@ class MappingObjectValue(ObjectValue):
                 "__class__", self.defining_class, blame=f"{self.class_name}.__setitem__"
             )
         )
-        return super().call_method_value(
+        return (
+            super()
+            .call_method_value(
                 "__setitem__",
                 (index, value),
                 owner="MappingObjectValue.setitem",
                 blame=site,
                 ctx=method_ctx,
-            ).and_then(
+            )
+            .and_then(
                 lambda callsite: callsite.reduce_source_outcome(method_ctx).and_then(
                     self._project_setitem_receiver
                 )
             )
+        )
 
     def mapping_builtin_setitem(self, index, value, site):
         """Apply authenticated builtin-dict storage without source redispatch."""
@@ -172,7 +177,9 @@ class MappingObjectValue(ObjectValue):
                 from sugar_lift_py_tests.outcome import Complete
 
                 return Complete(
-                    TupleValue(tuple(TupleValue((key, value)) for key, value in self.entries))
+                    TupleValue(
+                        tuple(TupleValue((key, value)) for key, value in self.entries)
+                    )
                 )
         return super().call_method_value(
             name,
@@ -196,7 +203,7 @@ class MappingObjectValue(ObjectValue):
             _closed_member_equal(key, candidate) for candidate, _ in self.entries
         )
         if any(decision is None for decision in decisions):
-            
+
             construction_panic_gap(
                 owner="MappingObjectValue.get",
                 blame=blame,

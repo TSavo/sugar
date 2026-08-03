@@ -121,9 +121,7 @@ def _runtime_attestation_fields(
         return None, f"runtimeIdentity/v1 malformed: {type(error).__name__}: {error}"
     if claimed_cid != recomputed_cid:
         return None, "runtimeCid is not recomputable from runtimeIdentity/v1"
-    observed_required = (
-        f"{identity.get('implementation')}-{identity.get('version')}"
-    )
+    observed_required = f"{identity.get('implementation')}-{identity.get('version')}"
     if required != observed_required:
         return None, (
             "requiredRuntime mismatches its runtimeIdentity/v1: "
@@ -136,9 +134,9 @@ def _runtime_attestation_fields(
     }, None
 
 
-def resolve_executing_runtime_attestation() -> tuple[
-    dict[str, Any] | None, dict[str, Any]
-]:
+def resolve_executing_runtime_attestation() -> (
+    tuple[dict[str, Any] | None, dict[str, Any]]
+):
     """Authenticate the executing interpreter before any producer input opens."""
     from sugar_lift_py_tests import authenticated_pytest as runtime_authority
 
@@ -392,7 +390,9 @@ def _validate_edge_witness(
                 }
             )
     if attested["missingKeys"] or attested["extraKeys"] or attested["duplicateKeys"]:
-        failures.append({"edgeId": edge_id, "reason": "key conservation failed", **attested})
+        failures.append(
+            {"edgeId": edge_id, "reason": "key conservation failed", **attested}
+        )
     return attested, failures
 
 
@@ -407,12 +407,16 @@ def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, 
         )
         return failures
     input_key = row.get("inputKey")
-    if not isinstance(input_key, dict) or not isinstance(input_key.get("sourceCid"), str):
+    if not isinstance(input_key, dict) or not isinstance(
+        input_key.get("sourceCid"), str
+    ):
         failures.append({"file": file, "reason": "inputKey lacks sourceCid"})
     elif "functionKeyManifest" in input_key:
         function_keys = input_key.get("functionKeyManifest")
         if not isinstance(function_keys, list):
-            failures.append({"file": file, "reason": "functionKeyManifest is not a list"})
+            failures.append(
+                {"file": file, "reason": "functionKeyManifest is not a list"}
+            )
         else:
             if len(function_keys) != int(row.get("functionsTotal") or 0):
                 failures.append(
@@ -503,13 +507,17 @@ def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, 
                 {
                     "file": file,
                     "reason": "non-authenticated ConstructionPanic payload",
-                    "missing": sorted(required - set(panic or {}))
-                    if isinstance(panic, dict)
-                    else sorted(required),
+                    "missing": (
+                        sorted(required - set(panic or {}))
+                        if isinstance(panic, dict)
+                        else sorted(required)
+                    ),
                 }
             )
         elif not isinstance(panic.get("construction_trace"), list):
-            failures.append({"file": file, "reason": "construction_trace is not ordered"})
+            failures.append(
+                {"file": file, "reason": "construction_trace is not ordered"}
+            )
         elif chain_length != len(panic["construction_trace"]):
             failures.append(
                 {"file": file, "reason": "observed_chain_length disagrees with trace"}
@@ -667,12 +675,16 @@ def _frontier_manifests_for_common_seal(
     inputs = edge.get("inputKeyManifest")
     outputs = edge.get("outputKeyManifest")
     return (
-        [dict(row) for row in inputs if isinstance(row, Mapping)]
-        if isinstance(inputs, list)
-        else [],
-        [dict(row) for row in outputs if isinstance(row, Mapping)]
-        if isinstance(outputs, list)
-        else [],
+        (
+            [dict(row) for row in inputs if isinstance(row, Mapping)]
+            if isinstance(inputs, list)
+            else []
+        ),
+        (
+            [dict(row) for row in outputs if isinstance(row, Mapping)]
+            if isinstance(outputs, list)
+            else []
+        ),
     )
 
 
@@ -696,7 +708,10 @@ def _validate_frontier_attestation_for_common_seal(
         else None
     )
     expected_source_cid = _source_file_cid(Path(__file__).resolve())
-    if not isinstance(stage, Mapping) or stage.get("sourceFileCid") != expected_source_cid:
+    if (
+        not isinstance(stage, Mapping)
+        or stage.get("sourceFileCid") != expected_source_cid
+    ):
         raise ValueError("compose validator stage source CID is absent or stale")
 
     edges = frontier_attestation.get("edges")
@@ -741,9 +756,9 @@ def _validate_frontier_attestation_for_common_seal(
         or final_edge["duplicateKeys"]
     ):
         raise ValueError("frontier final disjoint union does not conserve")
-    overlap = {
-        _render_key(row) for row in constructed if isinstance(row, Mapping)
-    } & {_render_key(row) for row in panicked if isinstance(row, Mapping)}
+    overlap = {_render_key(row) for row in constructed if isinstance(row, Mapping)} & {
+        _render_key(row) for row in panicked if isinstance(row, Mapping)
+    }
     if overlap:
         raise ValueError("frontier constructed and panic manifests overlap")
     final_seal = frontier_attestation.get("finalSeal")
@@ -850,8 +865,7 @@ def mint_partial(
         int(
             (r or {}).get("functionsEnumerated")
             if (r or {}).get("functionsEnumerated") is not None
-            else (r or {}).get("functionsTotal")
-            or 0
+            else (r or {}).get("functionsTotal") or 0
         )
         for _, r in terminals
     )
@@ -919,9 +933,7 @@ def mint_partial(
         },
         "shardFileSetCid": shard_file_set_cid(assigned),
         "terminalFiles": terminal_files,
-        "terminalRows": [
-            {"file": f, "result": r} for f, r in terminals
-        ],
+        "terminalRows": [{"file": f, "result": r} for f, r in terminals],
         "subDenominator": {
             "files": {
                 "enrolled": len(assigned),
@@ -1319,9 +1331,7 @@ def seal_board_from_aggregate(
         ),
         "composeMode": "lpt-enrollment-v1" if plan else "k1-compose-v1",
         "corpusAuthentication": {
-            "aggregateHash": aggregate_hash
-            or (plan or {}).get("aggregateHash")
-            or "",
+            "aggregateHash": aggregate_hash or (plan or {}).get("aggregateHash") or "",
             "requiredAggregateHash": _PANDAS_3_0_3_AGGREGATE_HASH,
             "manifestShapeCid": manifest_shape_cid
             or (plan or {}).get("manifestShapeCid")
@@ -1477,8 +1487,7 @@ def unmeasured_envelope(
         # measurementClass OMITTED — dual belt A
         "status": "unmeasured",
         "measured": False,
-        "measuredCommit": measured_commit
-        or (plan or {}).get("measuredCommit"),
+        "measuredCommit": measured_commit or (plan or {}).get("measuredCommit"),
         "planCid": (plan or {}).get("planCid"),
         "missingShards": list(missing_shards),
         "unmeasuredReasons": dict(unmeasured_reasons),
@@ -1718,9 +1727,11 @@ def compose_from_partials(
                 "compose": "common conservation mint refused the census board"
             },
             measured_commit=str(plan.get("measuredCommit") or ""),
-            instrument_failures=[failure]
-            if isinstance(failure, Mapping)
-            else [{"reason": "common conservation mint refused without diagnostic"}],
+            instrument_failures=(
+                [failure]
+                if isinstance(failure, Mapping)
+                else [{"reason": "common conservation mint refused without diagnostic"}]
+            ),
             d3_residency_exposure=d3_residency_exposure,
             runtime_attestation=runtime,
         )
@@ -1843,11 +1854,11 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if isinstance(data, dict) and data.get("kind") == KIND_PARTIAL:
             partials.append(data)
-    status, body = compose_from_partials(
-        plan, partials, runtime_attestation=runtime
-    )
+    status, body = compose_from_partials(plan, partials, runtime_attestation=runtime)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.out.write_text(
+        json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(
         f"COMPOSE status={status} out={args.out} "
         f"missing={body.get('missingShards')} bodyCid={body.get('bodyCid')}",

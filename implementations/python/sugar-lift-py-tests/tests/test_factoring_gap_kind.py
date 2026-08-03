@@ -63,9 +63,7 @@ def test_one_silent_arm_is_partly_stamped_not_unstamped():
     left = _arm(_guard("a"), "one", frozenset({face}))
     right = _arm(_guard("b"), "two")
 
-    assert (
-        classify_factoring_gap(left, right).kind is FactoringGapKind.PARTLY_STAMPED
-    )
+    assert classify_factoring_gap(left, right).kind is FactoringGapKind.PARTLY_STAMPED
 
 
 def test_shared_partition_same_side_is_stamped_not_separating():
@@ -94,9 +92,7 @@ def test_unrelated_partitions_are_stamped_disjoint():
     left = _arm(_guard("a"), "one", frozenset({left_face}))
     right = _arm(_guard("b"), "two", frozenset({right_face}))
 
-    assert (
-        classify_factoring_gap(left, right).kind is FactoringGapKind.STAMPED_DISJOINT
-    )
+    assert classify_factoring_gap(left, right).kind is FactoringGapKind.STAMPED_DISJOINT
 
 
 def test_opposed_faces_never_reach_a_gap_at_all():
@@ -159,7 +155,9 @@ def test_the_flag_reads_either_arm():
     """
     merged = and_([_guard("p"), or_([_guard("a"), _guard("x")])])
 
-    assert classify_factoring_gap(_arm(_guard("b"), "two"), _arm(merged, "one")).merged_arm
+    assert classify_factoring_gap(
+        _arm(_guard("b"), "two"), _arm(merged, "one")
+    ).merged_arm
 
 
 # --------------------------------------------------------------------------
@@ -190,9 +188,7 @@ def test_the_refusal_carries_its_arms_so_a_census_never_parses_the_message():
     starts depending on message formatting.
     """
     with pytest.raises(ExitSetFactoringGap) as raised:
-        ExitSet(
-            (_arm(_guard("a"), "one"), _arm(_guard("b"), "two"))
-        ).factor_completed()
+        ExitSet((_arm(_guard("a"), "one"), _arm(_guard("b"), "two"))).factor_completed()
 
     gap = raised.value
     assert gap.left is not None and gap.right is not None

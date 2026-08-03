@@ -176,7 +176,9 @@ def _initialize(
     demand_table_identity = None
     if demand_table_path:
         from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-        from sugar_lift_py_tests.no_call_body_attribution import SHARED_DEMAND_TABLE_CONTENT_KEY
+        from sugar_lift_py_tests.no_call_body_attribution import (
+            SHARED_DEMAND_TABLE_CONTENT_KEY,
+        )
         from sugar_lift_py_tests.prebuilt_demand_table import (
             DemandTableArtifactRefusal,
             load_prebuilt_demand_table,

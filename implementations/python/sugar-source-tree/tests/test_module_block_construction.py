@@ -29,11 +29,7 @@ def _tree(
 
 def test_module_constructs_each_child_once_in_source_order(monkeypatch) -> None:
     tree = _tree(
-        "def first():\n"
-        "    return 1\n"
-        "\n"
-        "def second():\n"
-        "    return 2\n"
+        "def first():\n" "    return 1\n" "\n" "def second():\n" "    return 2\n"
     )
     calls: list[tuple[str, int]] = []
     constructed: dict[str, object] = {}
@@ -55,7 +51,9 @@ def test_module_constructs_each_child_once_in_source_order(monkeypatch) -> None:
     assert sugar.statements[1] is constructed["second"]
 
 
-def test_module_threads_temporal_scope_before_constructing_children(monkeypatch) -> None:
+def test_module_threads_temporal_scope_before_constructing_children(
+    monkeypatch,
+) -> None:
     tree = _tree("x = 1\nassert x == 1\n")
     observed_asserts: list[Assert] = []
     original = Assert.sugar
@@ -71,19 +69,14 @@ def test_module_threads_temporal_scope_before_constructing_children(monkeypatch)
     assert type(sugar).__name__ == "ModuleBlockSugar"
     assert len(observed_asserts) == 1
     assert not any(
-        isinstance(node, Name) and node.id == "x"
-        for node in observed_asserts[0].walk()
+        isinstance(node, Name) and node.id == "x" for node in observed_asserts[0].walk()
     )
 
 
 def test_module_propagates_the_child_owner_panic_and_stops_the_tail(
     monkeypatch,
 ) -> None:
-    tree = _tree(
-        "type Alias = int\n"
-        "def never_reached():\n"
-        "    return 1\n"
-    )
+    tree = _tree("type Alias = int\n" "def never_reached():\n" "    return 1\n")
     tail_calls = 0
     original = FunctionDef.sugar
 

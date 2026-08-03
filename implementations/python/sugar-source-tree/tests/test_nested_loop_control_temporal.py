@@ -20,33 +20,39 @@ def _returned_int(source: str) -> int:
 
 
 def test_inner_break_preserves_outer_state_and_does_not_suppress_outer_else() -> None:
-    assert _returned_int(
-        "def arbitrary():\n"
-        "    carried = 0\n"
-        "    for outer in (0, 1):\n"
-        "        carried = carried + 10\n"
-        "        for inner in (0, 1):\n"
-        "            carried = carried + 1\n"
-        "            break\n"
-        "    else:\n"
-        "        carried = carried + 100\n"
-        "    return carried\n"
-    ) == 122
+    assert (
+        _returned_int(
+            "def arbitrary():\n"
+            "    carried = 0\n"
+            "    for outer in (0, 1):\n"
+            "        carried = carried + 10\n"
+            "        for inner in (0, 1):\n"
+            "            carried = carried + 1\n"
+            "            break\n"
+            "    else:\n"
+            "        carried = carried + 100\n"
+            "    return carried\n"
+        )
+        == 122
+    )
 
 
 def test_inner_continue_preserves_iteration_state_before_outer_tail() -> None:
-    assert _returned_int(
-        "def arbitrary():\n"
-        "    carried = 0\n"
-        "    for outer in (0, 1):\n"
-        "        for inner in (0, 1):\n"
-        "            carried = carried + 1\n"
-        "            continue\n"
-        "        carried = carried + 10\n"
-        "    else:\n"
-        "        carried = carried + 100\n"
-        "    return carried\n"
-    ) == 124
+    assert (
+        _returned_int(
+            "def arbitrary():\n"
+            "    carried = 0\n"
+            "    for outer in (0, 1):\n"
+            "        for inner in (0, 1):\n"
+            "            carried = carried + 1\n"
+            "            continue\n"
+            "        carried = carried + 10\n"
+            "    else:\n"
+            "        carried = carried + 100\n"
+            "    return carried\n"
+        )
+        == 124
+    )
 
 
 def test_inner_and_outer_controls_mint_distinct_target_coordinates() -> None:
@@ -57,8 +63,6 @@ def test_inner_and_outer_controls_mint_distinct_target_coordinates() -> None:
         "            break\n"
         "        continue\n"
     )
-    controls = [
-        node for node in function.walk() if node.kind in {"Break", "Continue"}
-    ]
+    controls = [node for node in function.walk() if node.kind in {"Break", "Continue"}]
     targets = {node.kind: node.sugar().target_cid for node in controls}
     assert targets["Break"] != targets["Continue"]

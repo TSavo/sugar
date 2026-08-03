@@ -59,9 +59,7 @@ def test_truthful_from_import_importorskip_mints_module(tmp_path: Path) -> None:
 def test_lying_local_def_importorskip_does_not_mint(tmp_path: Path) -> None:
     state = _final_state(
         tmp_path,
-        "def importorskip(m):\n"
-        "    return m\n"
-        'np = importorskip("numpy")\n',
+        "def importorskip(m):\n" "    return m\n" 'np = importorskip("numpy")\n',
     )
     assert state["np"] == [_NON_IMPORT]
     assert not any(

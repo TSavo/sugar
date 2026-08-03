@@ -13,9 +13,9 @@ import sugar_lift_py_tests.authenticated_pytest as authority
 
 
 def _require_v1_api() -> None:
-    assert hasattr(authority, "RuntimeIdentityV1"), (
-        "runtimeIdentity/v1 is not implemented at the authenticated interpreter door"
-    )
+    assert hasattr(
+        authority, "RuntimeIdentityV1"
+    ), "runtimeIdentity/v1 is not implemented at the authenticated interpreter door"
     assert hasattr(authority, "observe_runtime_identity_v1")
     assert hasattr(authority, "runtime_cid_for_identity")
     assert hasattr(authority, "authenticate_runtime_identity_v1")
@@ -74,9 +74,9 @@ def test_changed_runtime_bytes_change_hash_and_runtime_cid(
     right = _observe_with_base(monkeypatch, invoked=second, base=second)
 
     assert left.executable_sha256 != right.executable_sha256
-    assert authority.runtime_cid_for_identity(left) != authority.runtime_cid_for_identity(
-        right
-    )
+    assert authority.runtime_cid_for_identity(
+        left
+    ) != authority.runtime_cid_for_identity(right)
 
 
 def test_runtime_identity_wire_matches_observed_v1_shape(

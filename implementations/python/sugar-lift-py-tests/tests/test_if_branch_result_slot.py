@@ -99,7 +99,9 @@ def test_undecidable_if_elif_else_retains_complementary_faces() -> None:
         TermValue(10),
         TermValue(30),
     }
-    first_guard = next(entry.guards[0] for entry in returns if entry.value == TermValue(10))
+    first_guard = next(
+        entry.guards[0] for entry in returns if entry.value == TermValue(10)
+    )
     assert any(
         guard == not_(first_guard)
         for entry in returns
@@ -118,9 +120,7 @@ def test_condition_halt_bypasses_every_if_elif_else_body() -> None:
     )
     tree = _tree(f"{source}\nchoose(None)\n")
     (outcome,) = tuple(
-        node.sugar().desugar(None)
-        for node in tree.nodes()
-        if isinstance(node, Call)
+        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
     )
 
     halted = _only(outcome, Halted)
@@ -131,12 +131,7 @@ def test_condition_halt_bypasses_every_if_elif_else_body() -> None:
 
 
 def _two_source_ifs() -> tuple[If, If]:
-    tree = _tree(
-        "if left:\n"
-        "    x = 1\n"
-        "if right:\n"
-        "    y = 2\n"
-    )
+    tree = _tree("if left:\n" "    x = 1\n" "if right:\n" "    y = 2\n")
     branches = tuple(node for node in tree.nodes() if isinstance(node, If))
     assert len(branches) == 2
     return branches
@@ -151,7 +146,9 @@ def test_raw_source_if_routes_through_its_exact_slot_at_the_if_occurrence() -> N
     assert sugar.site.seal().cid == branch.fragment.seal().cid
 
 
-def test_truthful_stored_slot_constructs_but_slot_swap_panics_at_its_occurrence() -> None:
+def test_truthful_stored_slot_constructs_but_slot_swap_panics_at_its_occurrence() -> (
+    None
+):
     truthful, unrelated = _two_source_ifs()
     truthful_slot = branch_result_slot(truthful.test)
     unrelated_slot = branch_result_slot(unrelated.test)

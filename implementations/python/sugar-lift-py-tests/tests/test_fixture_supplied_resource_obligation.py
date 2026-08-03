@@ -153,9 +153,7 @@ def test_fixture_resource_is_discharged_at_authenticated_formal_binding():
         cid_of_json({"kind": "external-resource", "state": "ready"}),
     )
     bound = frame.bind_node_actuals((actual,), (), (testimony,))
-    obligation = FixtureSuppliedResourceObligationV1.mint(
-        bound.formal_coordinates[0]
-    )
+    obligation = FixtureSuppliedResourceObligationV1.mint(bound.formal_coordinates[0])
 
     discharge = obligation.discharge(bound.runtime_entries[0])
 
@@ -169,9 +167,7 @@ def test_fixture_resource_without_binding_testimony_is_a_named_refusal():
     function, actual = _function_and_actual()
     frame = function.source_visible_call_frame()
     bound = frame.bind_node_actuals((actual,), ())
-    obligation = FixtureSuppliedResourceObligationV1.mint(
-        bound.formal_coordinates[0]
-    )
+    obligation = FixtureSuppliedResourceObligationV1.mint(bound.formal_coordinates[0])
 
     with pytest.raises(FixtureResourceBindingRefusal) as caught:
         obligation.discharge(bound.runtime_entries[0])
@@ -228,7 +224,11 @@ def test_population_outcomes_require_a_positive_authenticated_exceptional_exit()
 
     obligation, entry = _authenticated_obligation_and_entry()
     positive = classify_fixture_resource_outcome(
-        obligation, entry, lambda: Incomplete(RaiseEffect.for_builtin("ValueError", blame="site", occurrence="site"))
+        obligation,
+        entry,
+        lambda: Incomplete(
+            RaiseEffect.for_builtin("ValueError", blame="site", occurrence="site")
+        ),
     )
     absent = classify_fixture_resource_outcome(
         obligation, entry, lambda: Complete("ordinary completion")

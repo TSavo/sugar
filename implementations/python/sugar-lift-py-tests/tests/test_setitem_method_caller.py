@@ -140,8 +140,11 @@ def _assert_named_halt(outcome) -> Halted:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity('IndexError')
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -232,9 +235,7 @@ def test_discrimination_self_is_not_the_setitem_receiver_slot() -> None:
 def test_positional_keyword_and_default_method_calls_discharge() -> None:
     sites = (
         _method_callsite(METHOD_BODY + "\nHolder().store([0], 0, 9)\n"),
-        _method_callsite(
-            METHOD_BODY + "\nHolder().store(obj=[0], key=0, value=9)\n"
-        ),
+        _method_callsite(METHOD_BODY + "\nHolder().store(obj=[0], key=0, value=9)\n"),
         _method_callsite(METHOD_DEFAULTS + "\nHolder().store([0])\n"),
     )
     for site in sites:

@@ -41,9 +41,7 @@ def _post(source: str):
 def _scoped(post, formals: tuple[str, ...]) -> ScopedFormula:
     sort = UnknownSort(reason="lift is sort-silent; the compiler decides")
     allowed = {name: sort for name in (*formals, "out")}
-    return ScopedFormula(
-        formula_from_ir(post, var_sorts=allowed), allowed_vars=allowed
-    )
+    return ScopedFormula(formula_from_ir(post, var_sorts=allowed), allowed_vars=allowed)
 
 
 def test_module_alias_call_head_projects_a_closed_coordinate() -> None:

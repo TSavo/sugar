@@ -305,9 +305,7 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
     raise_effect_types = (RaiseEffect, UndeterminedRaiseEffect)
     if isinstance(outcome, Incomplete):
         return (
-            (outcome.effect,)
-            if isinstance(outcome.effect, raise_effect_types)
-            else ()
+            (outcome.effect,) if isinstance(outcome.effect, raise_effect_types) else ()
         )
     if isinstance(outcome, Complete):
         value = outcome.value
@@ -321,8 +319,7 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
         return tuple(
             face.effect
             for face in outcome.exits
-            if isinstance(face, Halted)
-            and isinstance(face.effect, raise_effect_types)
+            if isinstance(face, Halted) and isinstance(face.effect, raise_effect_types)
         )
     return ()
 
@@ -768,7 +765,6 @@ def discover_no_call_body_probes(
     )
 
 
-
 def require_expected_denominators(
     probes: Iterable[BodyProbe],
     *,
@@ -813,9 +809,7 @@ def run_authenticated_attribution(
         payload = pull_shared_demand_table(
             repo_root, Path(scratch) / "python-demand-table.json"
         )
-    disposition = discover_no_call_body_probes(
-        payload, corpus.root, families=families
-    )
+    disposition = discover_no_call_body_probes(payload, corpus.root, families=families)
     probes = require_expected_denominators(
         disposition.probes,
         families=families,

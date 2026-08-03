@@ -67,9 +67,11 @@ class MappingPopStateSugar(ConstructedTermSugar):
             )
 
         entries = receiver.mapping_entries()
-        decisions = tuple(_closed_member_equal(key, candidate) for candidate, _ in entries)
+        decisions = tuple(
+            _closed_member_equal(key, candidate) for candidate, _ in entries
+        )
         if any(decision is None for decision in decisions):
-            
+
             construction_panic_gap(
                 owner="MappingPopStateSugar",
                 blame=self.site,
@@ -92,4 +94,6 @@ class MappingPopStateSugar(ConstructedTermSugar):
         if not matching:
             return Complete(receiver)
         index = matching[0]
-        return Complete(receiver.mapping_with_entries(entries[:index] + entries[index + 1 :]))
+        return Complete(
+            receiver.mapping_with_entries(entries[:index] + entries[index + 1 :])
+        )

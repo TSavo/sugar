@@ -78,9 +78,7 @@ def test_tuple_construct_from_tuple_value_is_identity():
 def test_dict_items_then_dict_construct_preserves_exact_entries():
     temporal = builtin_name_temporal()
     source = DictValue(((StringValue("key"), TermValue(3)),))
-    items = source.call_method_value(
-        "items", (), owner="test", blame="site"
-    )
+    items = source.call_method_value("items", (), owner="test", blame="site")
     assert isinstance(items, Complete)
 
     dict_fn = temporal.value_if_bound("dict")

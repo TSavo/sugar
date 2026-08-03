@@ -185,9 +185,7 @@ def test_empty_star_stores_honest_empty_tuple() -> None:
     assert isinstance(exits.exits[0], Completed)
     record = exits.exits[0].value.record
     assert any(
-        isinstance(s, ObjectValue)
-        and s.fields
-        and s.fields[-1].value == TupleValue(())
+        isinstance(s, ObjectValue) and s.fields and s.fields[-1].value == TupleValue(())
         for s in record.statements
     )
 
@@ -262,7 +260,10 @@ def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )

@@ -26,7 +26,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
-
 SOURCE = (
     "class Widget:\n"
     "    @property\n"
@@ -100,7 +99,10 @@ def test_setattr_exception_and_boundary_share_exact_pre_effect_state() -> None:
     assert halted.state is testimony.state
     assert halted.effect.exception_name == "AttributeError"
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )

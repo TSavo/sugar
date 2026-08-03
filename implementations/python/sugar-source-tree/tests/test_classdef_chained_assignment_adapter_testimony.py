@@ -33,9 +33,7 @@ def _available_backends():
             TreeSitterPythonBackend,
         )
 
-        cases.append(
-            pytest.param(TreeSitterPythonBackend(), id="tree-sitter-python")
-        )
+        cases.append(pytest.param(TreeSitterPythonBackend(), id="tree-sitter-python"))
     return tuple(cases)
 
 
@@ -104,9 +102,7 @@ def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
     monkeypatch.setattr(AttributeSugar, "desugar", authenticated_attribute_floor)
 
     sugar = class_node.sugar()
-    fields = tuple(
-        field for field in sugar.fields if field.name in {"IGNORECASE", "I"}
-    )
+    fields = tuple(field for field in sugar.fields if field.name in {"IGNORECASE", "I"})
     assert tuple(field.name for field in fields) == ("IGNORECASE", "I")
     assert fields[0].value_sugar is fields[1].value_sugar
     debug = next(field for field in sugar.fields if field.name == "DEBUG")
@@ -165,9 +161,9 @@ def test_removing_class_chained_assign_arm_restores_exact_re_failure(
     error = excinfo.value
     assert error.owner == "ClassDef._construct_sugar"
     assert error.observed == "unsupported class member Assign"
-    assert error.blame.line_col_span == _line_assignment(
-        class_node, 145
-    ).line_col_span()
+    assert (
+        error.blame.line_col_span == _line_assignment(class_node, 145).line_col_span()
+    )
     assert error.blame.line_col_span.start_line == 145
     assert error.blame.line_col_span.start_col == 4
 

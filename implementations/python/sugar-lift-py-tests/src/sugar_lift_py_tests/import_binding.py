@@ -449,10 +449,17 @@ def _importorskip_module(value: Node | None, state: "State | None") -> str | Non
     func = value.func
     if func.kind == "Name":
         binding = _unique_import_def_from_state(state, func.id)
-        if binding is not None and binding.target_symbol == "python:pytest.importorskip":
+        if (
+            binding is not None
+            and binding.target_symbol == "python:pytest.importorskip"
+        ):
             return module
         return None
-    if func.kind == "Attribute" and func.attr == "importorskip" and func.value.kind == "Name":
+    if (
+        func.kind == "Attribute"
+        and func.attr == "importorskip"
+        and func.value.kind == "Name"
+    ):
         binding = _unique_import_def_from_state(state, func.value.id)
         if binding is not None and binding.target_symbol == "python:pytest":
             return module
@@ -532,17 +539,13 @@ class _Pass:
             # name_targets (closed-coordinate projection).  Value-use receipts
             # are stricter: unique ImportDef only — shadowing, reassignment,
             # unbound join, and wildcard ambiguity do not authorize a value.
-            name_binding = self._unique_import_def(
-                node.id, state, allow_unbound=True
-            )
+            name_binding = self._unique_import_def(node.id, state, allow_unbound=True)
             if name_binding is not None:
                 span = node.line_col_span()
                 self.name_targets[
                     (span.start_line, span.start_col, span.end_line, span.end_col)
                 ] = name_binding.target_symbol
-            value_binding = self._unique_import_def(
-                node.id, state, allow_unbound=False
-            )
+            value_binding = self._unique_import_def(node.id, state, allow_unbound=False)
             if value_binding is not None:
                 self._enroll_value_use(node, value_binding, ())
             return
@@ -1250,9 +1253,7 @@ def authenticated_import_uses(
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
-    runner = _run_lexical_import_pass(
-        root, path, source, source_cid, module_identities
-    )
+    runner = _run_lexical_import_pass(root, path, source, source_cid, module_identities)
     return runner.rows, runner.outcomes
 
 
@@ -1268,9 +1269,7 @@ def authenticated_import_value_uses(
     Same lexical pass as call uses; separate row surface so Call-target
     receipts stay byte-identical.
     """
-    runner = _run_lexical_import_pass(
-        root, path, source, source_cid, module_identities
-    )
+    runner = _run_lexical_import_pass(root, path, source, source_cid, module_identities)
     return runner.value_rows, runner.value_outcomes
 
 

@@ -66,9 +66,11 @@ class MappingPopResultSugar(ConstructedTermSugar):
                 fix="retain pop as typed loud until its receiver floors",
             )
         entries = receiver.mapping_entries()
-        decisions = tuple(_closed_member_equal(key, candidate) for candidate, _ in entries)
+        decisions = tuple(
+            _closed_member_equal(key, candidate) for candidate, _ in entries
+        )
         if any(decision is None for decision in decisions):
-            
+
             construction_panic_gap(
                 owner="MappingPopResultSugar",
                 blame=self.site,

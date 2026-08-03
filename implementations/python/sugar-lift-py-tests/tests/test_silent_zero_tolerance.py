@@ -119,9 +119,7 @@ def test_register_only_matches_discharge_silent_offenders(tmp_path: Path) -> Non
         path.write_text(source, encoding="utf-8")
         _, reg = _SCANNER._audit_file(path, rel=name)
         _, dis = _SCANNER._audit_file_discharge(path, rel=name)
-        assert reg == dis, (
-            f"{name}: register-only {reg!r} != discharge {dis!r}"
-        )
+        assert reg == dis, f"{name}: register-only {reg!r} != discharge {dis!r}"
 
 
 def test_register_only_matches_discharge_on_small_kit_file() -> None:

@@ -46,7 +46,10 @@ class ListIteratorValue(FloorValue):
         return ctor(
             "python:list_iterator",
             (
-                ctor("array", tuple(value.to_term(owner=owner) for value in self.elements)),
+                ctor(
+                    "array",
+                    tuple(value.to_term(owner=owner) for value in self.elements),
+                ),
                 TermValue(self.index).to_term(owner=owner),
             ),
             symbol_kind="coordinate",
@@ -55,22 +58,38 @@ class ListIteratorValue(FloorValue):
     def setattr(self, name, value, site):
         del name, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="ListIteratorValue.setattr")
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="ListIteratorValue.setattr",
+        )
 
     def delattr(self, name, site):
         del name
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="ListIteratorValue.delattr")
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="ListIteratorValue.delattr",
+        )
 
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="TypeError", site=site, owner="ListIteratorValue.setitem")
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="ListIteratorValue.setitem"
+        )
 
     def delitem(self, index, site):
         del index
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="TypeError", site=site, owner="ListIteratorValue.delitem")
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="ListIteratorValue.delitem"
+        )
 
     def next_with(self, operation, ctx):
         del ctx
@@ -96,22 +115,38 @@ class TupleIteratorValue(FloorValue):
     def setattr(self, name, value, site):
         del name, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="TupleIteratorValue.setattr")
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="TupleIteratorValue.setattr",
+        )
 
     def delattr(self, name, site):
         del name
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="TupleIteratorValue.delattr")
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="TupleIteratorValue.delattr",
+        )
 
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="TypeError", site=site, owner="TupleIteratorValue.setitem")
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleIteratorValue.setitem"
+        )
 
     def delitem(self, index, site):
         del index
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="TypeError", site=site, owner="TupleIteratorValue.delitem")
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleIteratorValue.delitem"
+        )
 
     def next_with(self, operation, ctx):
         del ctx

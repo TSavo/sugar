@@ -81,9 +81,7 @@ def _tree(source: str, *, bind: frozenset[str] | None = None, name: str = "sr.py
         construction_context=context,
     )
     functions = {
-        node.name: node
-        for node in tree.nodes()
-        if isinstance(node, FunctionDef)
+        node.name: node for node in tree.nodes() if isinstance(node, FunctionDef)
     }
     for call in tree.nodes():
         if not isinstance(call, Call):
@@ -132,12 +130,25 @@ CODEX3_OWNER = (
 @pytest.mark.parametrize(
     "competing_exit",
     (
-        RaiseValue(RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:140:0')),
+        RaiseValue(
+            RaiseEffect.for_builtin(
+                "TypeError",
+                occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:140:0",
+            )
+        ),
         GuardedRaise(
             (TermValue(True).to_term(owner="guard"),),
-            RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:138:0'),
+            RaiseEffect.for_builtin(
+                "TypeError",
+                occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:138:0",
+            ),
         ),
-        Incomplete(RaiseEffect.for_builtin('TypeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:135:0')),
+        Incomplete(
+            RaiseEffect.for_builtin(
+                "TypeError",
+                occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:135:0",
+            )
+        ),
         LoopControlValue("break", "helper.py:3"),
     ),
 )
@@ -189,8 +200,10 @@ def test_tuple_helper_authenticated_call_projects_container_return() -> None:
         bind=frozenset({"pack_probe"}),
     )
     call = _first(tree, Call)
-    floor = call.sugar().desugar(None).value.force_floor(
-        None, owner="tuple-return-floor", project_callsite=False
+    floor = (
+        call.sugar()
+        .desugar(None)
+        .value.force_floor(None, owner="tuple-return-floor", project_callsite=False)
     )
     assert isinstance(floor.statements[0], ReturnValue)
     assert floor.statements[0].value == TupleValue(
@@ -204,8 +217,10 @@ def test_symbolic_helper_authenticated_call_projects_formal_return() -> None:
         bind=frozenset({"identity_probe"}),
     )
     call = _first(tree, Call)
-    floor = call.sugar().desugar(None).value.force_floor(
-        None, owner="symbolic-return-floor", project_callsite=False
+    floor = (
+        call.sugar()
+        .desugar(None)
+        .value.force_floor(None, owner="symbolic-return-floor", project_callsite=False)
     )
     assert isinstance(floor.statements[0], ReturnValue)
     # Bound formal projects the actual TermValue(7).
@@ -270,8 +285,10 @@ def test_tampered_wrong_body_is_not_the_authenticated_return() -> None:
     context.source_call_frames[_coordinate(call)] = functions[
         "decoy"
     ].source_visible_call_frame()
-    floor = call.sugar().desugar(None).value.force_floor(
-        None, owner="tamper-probe", project_callsite=False
+    floor = (
+        call.sugar()
+        .desugar(None)
+        .value.force_floor(None, owner="tamper-probe", project_callsite=False)
     )
     assert floor.statements[0].value == TermValue(99)
     with pytest.raises(AssertionError):
@@ -297,16 +314,14 @@ def test_scalar_helper_feeds_binop_isomorphic_to_direct() -> None:
     try:
         helper = _first(helper_tree, BinOp).sugar().desugar(None)
     except ConstructionPanic as exc:
-        pytest.fail(
-            f"{CODEX3_OWNER} observed ConstructionPanic on scalar()+2: {exc}"
-        )
+        pytest.fail(f"{CODEX3_OWNER} observed ConstructionPanic on scalar()+2: {exc}")
     except SugarNotWritten as exc:
         pytest.fail(f"{CODEX3_OWNER} observed SugarNotWritten on scalar()+2: {exc}")
 
     # Both complete (or both factored with a completed arm).
-    assert isinstance(helper, (Complete, ExitSet)), (
-        f"{CODEX3_OWNER} helper outcome={type(helper).__name__}"
-    )
+    assert isinstance(
+        helper, (Complete, ExitSet)
+    ), f"{CODEX3_OWNER} helper outcome={type(helper).__name__}"
     hv = _completed_value(helper)
     dv = _completed_value(direct)
     # Outcome-isomorphic: same TermValue (or equal numeric floor).
@@ -351,9 +366,9 @@ def test_scalar_helper_feeds_subscript_index() -> None:
     except (ConstructionPanic, SugarNotWritten) as exc:
         pytest.fail(f"{CODEX3_OWNER} subscript index: {exc}")
     value = _completed_value(outcome)
-    assert value == TermValue(10) or getattr(value, "value", None) == 10, (
-        f"{CODEX3_OWNER} expected TermValue(10), got {value!r}"
-    )
+    assert (
+        value == TermValue(10) or getattr(value, "value", None) == 10
+    ), f"{CODEX3_OWNER} expected TermValue(10), got {value!r}"
 
 
 def test_tuple_helper_feeds_subscript_receiver() -> None:
@@ -366,9 +381,9 @@ def test_tuple_helper_feeds_subscript_receiver() -> None:
     except (ConstructionPanic, SugarNotWritten) as exc:
         pytest.fail(f"{CODEX3_OWNER} tuple subscript: {exc}")
     value = _completed_value(outcome)
-    assert value == TermValue(2) or getattr(value, "value", None) == 2, (
-        f"{CODEX3_OWNER} expected TermValue(2), got {value!r}"
-    )
+    assert (
+        value == TermValue(2) or getattr(value, "value", None) == 2
+    ), f"{CODEX3_OWNER} expected TermValue(2), got {value!r}"
 
 
 def test_scalar_helper_feeds_store_index() -> None:
@@ -389,9 +404,9 @@ def test_scalar_helper_feeds_store_index() -> None:
         pytest.fail(f"{CODEX3_OWNER} store index: {exc}")
     assert isinstance(outcome, (Complete, ExitSet)), CODEX3_OWNER
     if isinstance(outcome, ExitSet):
-        assert any(isinstance(e, Completed) for e in outcome.exits), (
-            f"{CODEX3_OWNER} store did not complete: {outcome.exits!r}"
-        )
+        assert any(
+            isinstance(e, Completed) for e in outcome.exits
+        ), f"{CODEX3_OWNER} store did not complete: {outcome.exits!r}"
 
 
 def test_symbolic_helper_feeds_binop() -> None:
@@ -404,9 +419,9 @@ def test_symbolic_helper_feeds_binop() -> None:
     except (ConstructionPanic, SugarNotWritten) as exc:
         pytest.fail(f"{CODEX3_OWNER} symbolic binop: {exc}")
     value = _completed_value(outcome)
-    assert value == TermValue(5) or getattr(value, "value", None) == 5, (
-        f"{CODEX3_OWNER} expected 5, got {value!r}"
-    )
+    assert (
+        value == TermValue(5) or getattr(value, "value", None) == 5
+    ), f"{CODEX3_OWNER} expected 5, got {value!r}"
 
 
 def test_guarded_helper_return_retains_guards_into_binop() -> None:
@@ -437,9 +452,9 @@ def test_guarded_helper_return_retains_guards_into_binop() -> None:
         assert completed, f"{CODEX3_OWNER} no completed arm: {outcome.exits!r}"
     else:
         value = outcome.value
-        assert value == TermValue(2) or getattr(value, "value", None) == 2, (
-            f"{CODEX3_OWNER} guarded return lost value: {value!r}"
-        )
+        assert (
+            value == TermValue(2) or getattr(value, "value", None) == 2
+        ), f"{CODEX3_OWNER} guarded return lost value: {value!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +516,9 @@ def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
 
-    with pytest.raises(SourceCallBindingGap, match="missing required formal|unconsumed"):
+    with pytest.raises(
+        SourceCallBindingGap, match="missing required formal|unconsumed"
+    ):
         outer.sugar().desugar(None)
 
 
@@ -532,8 +549,10 @@ def test_authenticated_lambda_return_flows_into_binop() -> None:
         bind=frozenset({"consume"}),
     )
     call = _calls_named(tree, "consume")[0]
-    value = call.sugar().desugar(None).value._dig_floor_or_none(
-        None, owner="authenticated-lambda-return"
+    value = (
+        call.sugar()
+        .desugar(None)
+        .value._dig_floor_or_none(None, owner="authenticated-lambda-return")
     )
 
     assert value == TermValue(6)
@@ -547,8 +566,10 @@ def test_renamed_keyword_lambda_return_flows_into_binop() -> None:
         bind=frozenset({"consume"}),
     )
     call = _calls_named(tree, "consume")[0]
-    value = call.sugar().desugar(None).value._dig_floor_or_none(
-        None, owner="renamed-keyword-lambda-return"
+    value = (
+        call.sugar()
+        .desugar(None)
+        .value._dig_floor_or_none(None, owner="renamed-keyword-lambda-return")
     )
 
     assert value == TermValue(6)
@@ -595,8 +616,10 @@ def test_nested_function_source_return_projects_into_outer_caller() -> None:
         bind=frozenset({"outer", "inner"}),
     )
     call = _calls_named(tree, "outer")[0]
-    value = call.sugar().desugar(None).value._dig_floor_or_none(
-        None, owner="nested-function-return"
+    value = (
+        call.sugar()
+        .desugar(None)
+        .value._dig_floor_or_none(None, owner="nested-function-return")
     )
 
     assert value == TermValue(6)
@@ -632,7 +655,11 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         bind=frozenset({"outer", "inner"}),
     )
     call = _calls_named(tree, "outer")[0]
-    nested = [node for node in tree.nodes() if isinstance(node, FunctionDef) and node.name == "inner"]
+    nested = [
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "inner"
+    ]
     assert len(nested) == 2
     # Deliberately seat the outer same-name frame at the nested call: the
     # authenticated coordinate must reject this cross-wired testimony.
@@ -641,7 +668,9 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         for node in tree.nodes()
         if isinstance(node, Call) and getattr(node.func, "id", None) == "inner"
     )
-    context.source_call_frames[_coordinate(nested_call)] = nested[0].source_visible_call_frame()
+    context.source_call_frames[_coordinate(nested_call)] = nested[
+        0
+    ].source_visible_call_frame()
 
     with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
         call.sugar().desugar(None).value._dig_floor_or_none(
@@ -751,7 +780,9 @@ def test_foreign_same_signature_nested_frame_refuses_loudly(
     )
     tree, context, definitions, calls = _nested_definition_and_call(source)
     outer_call = max(calls, key=lambda node: node.line_col_span().start_line)
-    module_definition = min(definitions, key=lambda node: node.line_col_span().start_line)
+    module_definition = min(
+        definitions, key=lambda node: node.line_col_span().start_line
+    )
     wrong_scope_definition = sorted(
         definitions, key=lambda node: node.line_col_span().start_line
     )[1]

@@ -364,6 +364,8 @@ def test_source_visible_new_constructor_refuses_nonexact_field_roster(
 
     assert isinstance(coordinate, CallSiteValue)
     assert coordinate.body is None
+
+
 def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
     """The class producer carries its exact ``__new__`` testimony to the body."""
     context = TreeConstructionContextV1.for_source_call_construction()
@@ -380,9 +382,7 @@ def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
         "        self.value = value\n",
         context=context,
     )
-    classes = {
-        node.name: node for node in source.nodes() if isinstance(node, ClassDef)
-    }
+    classes = {node.name: node for node in source.nodes() if isinstance(node, ClassDef)}
     first_new = next(
         item
         for item in classes["First"].body
@@ -411,6 +411,8 @@ def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
         == _coordinate(second_new)
     )
     assert second_frame.constructed_new_method is not testimony
+
+
 def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(

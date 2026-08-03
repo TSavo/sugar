@@ -105,9 +105,7 @@ def test_undecided_native_bitwise_dispatch_throws_named() -> None:
         ("right_shift", ">>"),
     ),
 )
-def test_undecided_call_result_throws_named_refusal(
-    method: str, operator: str
-) -> None:
+def test_undecided_call_result_throws_named_refusal(method: str, operator: str) -> None:
     _named_refusal(_callsite(), TermValue(2), method, operator)
 
 
@@ -129,9 +127,7 @@ def test_undecided_call_result_throws_named_refusal(
         ("right_shift", ">>"),
     ),
 )
-def test_symbolic_left_operand_throws_named_refusal(
-    method: str, operator: str
-) -> None:
+def test_symbolic_left_operand_throws_named_refusal(method: str, operator: str) -> None:
     _named_refusal(_symbolic(), TermValue(2), method, operator)
 
 
@@ -256,7 +252,6 @@ def test_the_whole_function_publishes_undecided_named_refusal(
     with pytest.raises(SugarNotWritten) as raised:
         fn.sugar().desugar(None)
     assert raised.value.owner == "binary_operation_exception_floor"
-
 
 
 class _FragmentSite:

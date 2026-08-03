@@ -129,8 +129,10 @@ def _status_by_cid_membership(node: ast.AST) -> bool:
         return False
     test = node.test
     # entry.cid in something
-    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(
-        test.ops[0], ast.In
+    if (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.In)
     ):
         left = test.left
         if _is_cid_attr(left):
@@ -251,7 +253,7 @@ def scan_roots(roots: Iterable[Path]) -> tuple[list[Offender], list[dict]]:
 # Historical twins — the shapes SIN CLUSTER 7 actually shipped
 # ---------------------------------------------------------------------------
 
-HISTORICAL_LIFT_RPC_CID_ALONE = '''
+HISTORICAL_LIFT_RPC_CID_ALONE = """
 def _roll_call_audit_leaf(full_path, file_rel):
     report = discharge(source_file)
     present_cids = {entry.cid for entry in report.present}
@@ -272,9 +274,9 @@ def _roll_call_audit_leaf(full_path, file_rel):
         },
     }
     return source_audit
-'''
+"""
 
-HISTORICAL_TREE_ENUMERATE_CID_ALONE = '''
+HISTORICAL_TREE_ENUMERATE_CID_ALONE = """
 def source_audit_from_roll_call(full_path, file_rel):
     report = discharge(sf)
     present_cids = {e.cid for e in report.present}
@@ -285,9 +287,9 @@ def source_audit_from_roll_call(full_path, file_rel):
     warranted = sum(1 for locus in loci if locus["status"] == "warranted")
     unresolved = len(loci) - warranted
     return {"loci": loci, "totals": {"source_warranted": warranted, "source_unresolved": unresolved}}
-'''
+"""
 
-PRODUCTION_ONE_DOOR = '''
+PRODUCTION_ONE_DOOR = """
 def source_audit_from_report(report, file_rel):
     present_keys = {_roll_call_identity(entry) for entry in report.present}
     loci = []
@@ -302,7 +304,7 @@ def _roll_call_audit_leaf(full_path, file_rel):
     report = discharge(source_file)
     source_audit = source_audit_from_report(report, file_rel)
     return source_audit
-'''
+"""
 
 
 def self_test() -> int:
@@ -323,7 +325,9 @@ def self_test() -> int:
                 f"{label}: expected clean, got {[(o.kind, o.line) for o in found]}"
             )
 
-    expect("historical lift_rpc CID-alone", HISTORICAL_LIFT_RPC_CID_ALONE, min_offenders=2)
+    expect(
+        "historical lift_rpc CID-alone", HISTORICAL_LIFT_RPC_CID_ALONE, min_offenders=2
+    )
     expect(
         "historical tree_enumerate CID-alone",
         HISTORICAL_TREE_ENUMERATE_CID_ALONE,

@@ -14,4 +14,3 @@ class GuardStableValue(FloorValue):
     def guarded(self, formula):
         del formula
         return self
-

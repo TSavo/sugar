@@ -213,16 +213,10 @@ def main() -> int:
             ],
             totals={
                 "R_bare_exceptions": residual_count,
-                "completed": sum(
-                    row.category == OUTCOME_COMPLETED for row in rows
-                ),
-                "typedGaps": sum(
-                    row.category == OUTCOME_TYPED_GAP for row in rows
-                ),
+                "completed": sum(row.category == OUTCOME_COMPLETED for row in rows),
+                "typedGaps": sum(row.category == OUTCOME_TYPED_GAP for row in rows),
                 "timeouts": sum(row.category == "timeout" for row in rows),
-                "nativeCrashes": sum(
-                    row.category == "native-crash" for row in rows
-                ),
+                "nativeCrashes": sum(row.category == "native-crash" for row in rows),
             },
             measured=True,
         )

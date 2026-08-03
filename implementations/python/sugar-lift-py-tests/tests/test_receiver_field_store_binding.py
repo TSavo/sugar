@@ -76,8 +76,9 @@ def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
     receiver = ObjectValue("Renamed", (), identity="receiver-1")
     stored = TermValue(17)
     context = ReduceContext.root(owner="receiver-field-store").with_temporal(
-        ReduceContext.root(owner="receiver-field-store-seed")
-        .temporal.bind_value("self", receiver)
+        ReduceContext.root(owner="receiver-field-store-seed").temporal.bind_value(
+            "self", receiver
+        )
     )
 
     exits = reduce_block_to_exitset(
@@ -109,9 +110,7 @@ def test_returned_alias_observes_updated_mapping_receiver_identity():
 
     assert len(exits) == 1
     returned = next(
-        entry
-        for entry in exits[0].value.entries
-        if isinstance(entry, ReturnValue)
+        entry for entry in exits[0].value.entries if isinstance(entry, ReturnValue)
     ).value
     assert isinstance(returned, MappingObjectValue)
     assert returned.identity == receiver.identity
@@ -133,9 +132,7 @@ def test_same_class_different_receiver_identity_is_not_rewritten():
     ).exits
 
     returned = next(
-        entry
-        for entry in exits[0].value.entries
-        if isinstance(entry, ReturnValue)
+        entry for entry in exits[0].value.entries if isinstance(entry, ReturnValue)
     ).value
     assert returned is distinct
     assert returned.identity == "receiver-2"

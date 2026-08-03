@@ -358,9 +358,7 @@ def _run_subprocess_with_file_watchdog(
                 f"the timeout aborted the remaining unattempted files "
                 f"({population_prose})"
             )
-            combined_stderr = (
-                f"{stderr.rstrip()}\n{timeout_row}\n{population_row}\n"
-            )
+            combined_stderr = f"{stderr.rstrip()}\n{timeout_row}\n{population_row}\n"
             return CommandResult(124, stdout, combined_stderr)
 
 

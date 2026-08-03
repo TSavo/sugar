@@ -78,7 +78,14 @@ def test_wrong_match_does_not_bind_slot() -> None:
     from sugar_lift_py_tests.effect_router import route
     from sugar_lift_py_tests.outcome import Incomplete
 
-    entries = (Incomplete(RaiseEffect.for_builtin('KeyError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:81:0')),)
+    entries = (
+        Incomplete(
+            RaiseEffect.for_builtin(
+                "KeyError",
+                occurrence="implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:81:0",
+            )
+        ),
+    )
     out = route(
         entries,
         Expects(matcher=EffectMatcher(kind="raise", name="ValueError")),
@@ -98,8 +105,16 @@ def test_observed_effect_projects_only_an_authenticated_context_preimage() -> No
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     inner_value = TermValue(7)
-    inner = RaiseEffect.for_builtin('ImportError', raised_value=inner_value, occurrence='implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:101:0')
-    outer = RaiseEffect.for_builtin('ValueError', context_effect=inner, occurrence='implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:102:0')
+    inner = RaiseEffect.for_builtin(
+        "ImportError",
+        raised_value=inner_value,
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:101:0",
+    )
+    outer = RaiseEffect.for_builtin(
+        "ValueError",
+        context_effect=inner,
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:102:0",
+    )
 
     projected = ObservedEffectValue(slot_id="S", effect=outer).attribute(
         "__context__", site=None
@@ -132,13 +147,13 @@ def test_effect_ref_observes_the_same_effect_the_route_deposited() -> None:
     from sugar_lift_py_tests.sugar.effect_ref_sugar import EffectRefSugar
 
     inner_value = TermValue(11)
-    inner = RaiseEffect.for_builtin("ImportError",
-        
+    inner = RaiseEffect.for_builtin(
+        "ImportError",
         raised_value=inner_value,
         occurrence="inner.py:1:0",
     )
-    routed = RaiseEffect.for_builtin("ValueError",
-        
+    routed = RaiseEffect.for_builtin(
+        "ValueError",
         occurrence="outer.py:2:4",
         context_effect=inner,
     )

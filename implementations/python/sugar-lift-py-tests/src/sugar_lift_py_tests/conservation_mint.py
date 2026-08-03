@@ -19,9 +19,7 @@ from typing import Any
 
 CONSERVATION_WITNESS_SCHEMA = "sugar.conservation-witness.v1"
 
-_CID_PATTERN = re.compile(
-    r"(?:blake3-512:[0-9a-f]{128}|sha256:[0-9a-f]{64})"
-)
+_CID_PATTERN = re.compile(r"(?:blake3-512:[0-9a-f]{128}|sha256:[0-9a-f]{64})")
 _WITNESS_AUTHORITY = object()
 
 

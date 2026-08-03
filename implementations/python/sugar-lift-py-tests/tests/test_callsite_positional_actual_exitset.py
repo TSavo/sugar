@@ -147,7 +147,9 @@ def test_outer_call_sequences_retained_three_arm_source_actual_once() -> None:
     assert len(outer_completed) == 1
     assert outer_completed[0].guard == produced_completed[0].guard
     assert outer_completed[0].faces == produced_completed[0].faces
-    assert outer_completed[0].pending_contracts == produced_completed[0].pending_contracts
+    assert (
+        outer_completed[0].pending_contracts == produced_completed[0].pending_contracts
+    )
     projected_call = outer_completed[0].value
     assert isinstance(projected_call, CallSiteValue)
     assert projected_call.target_name == "len"
@@ -226,7 +228,9 @@ def test_ordinary_floor_operation_actual_projection_is_identity() -> None:
 def test_retained_source_completion_is_private_and_remint_closed() -> None:
     """Lying twins: constructor and foreign dataclass remints gain no retention."""
     retained = next(
-        item for item in fields(CallSiteValue) if item.name == "_retained_source_completion"
+        item
+        for item in fields(CallSiteValue)
+        if item.name == "_retained_source_completion"
     )
     assert retained.init is False
     inner, body, _ = _source_call_partition()
@@ -309,9 +313,7 @@ def test_identity_memo_starts_only_after_producer_seats_retained_wrapper(
     produced = inner.producer_outcome(None)
 
     assert body.reductions == 1
-    wrapper = next(
-        face.value for face in produced.exits if isinstance(face, Completed)
-    )
+    wrapper = next(face.value for face in produced.exits if isinstance(face, Completed))
     assert wrapper is not inner
     assert callsite_module._callsite_coordinate_memo_size() == 1
     first_hash = hash(wrapper)

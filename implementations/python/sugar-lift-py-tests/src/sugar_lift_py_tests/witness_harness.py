@@ -38,6 +38,8 @@ def _py_source() -> Path:
 
 def _py_pytest_witness() -> Path:
     return _root() / "implementations" / "python" / "sugar-lift-py-pytest-witness"
+
+
 _SUGAR_BUILD_LOCK = Lock()
 _RESOLVED_SUGAR_BIN: Path | None = None
 
@@ -87,8 +89,7 @@ class WitnessPipelineResult:
 
 def _pythonpath() -> str:
     return os.pathsep.join(
-        str(path / "src")
-        for path in (_py_pytest_witness(), _py_tests(), _py_source())
+        str(path / "src") for path in (_py_pytest_witness(), _py_tests(), _py_source())
     )
 
 

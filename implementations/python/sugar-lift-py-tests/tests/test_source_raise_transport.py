@@ -157,7 +157,9 @@ def test_authenticated_raise_helper_publishes_named_halt_at_call() -> None:
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "ValueError"
     assert halted.effect.exception_type_coordinate == _identity("ValueError")
-    assert halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
+    assert (
+        halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
+    )
     # Call boundary re-owns the published edge.
     assert halted.effect.producer_node_owner == "Call"
     assert halted.state is not None
@@ -172,7 +174,9 @@ def test_store_indexerror_raise_helper_carries_named_type_and_occurrence() -> No
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "IndexError"
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence, (
+    assert (
+        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence!r}"
     )
@@ -217,9 +221,9 @@ def test_prior_store_survives_in_pre_effect_state_across_call_boundary() -> None
     halted = _call_halt(tree, "raiser")
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
-    assert lists == [ListValue((TermValue(9),))], (
-        f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
-    )
+    assert lists == [
+        ListValue((TermValue(9),))
+    ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
 
 
 # ===========================================================================
@@ -287,9 +291,9 @@ def test_helper_raise_under_guard_keeps_guard_on_halt_face() -> None:
     )
     call = _calls_named(tree, "maybe")[0]
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, ExitSet), (
-        f"{CODEX3}: guarded raise expected ExitSet, got {type(outcome).__name__}"
-    )
+    assert isinstance(
+        outcome, ExitSet
+    ), f"{CODEX3}: guarded raise expected ExitSet, got {type(outcome).__name__}"
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert len(halted) == 1, f"{CODEX3}: need one halt arm, got {outcome.exits!r}"
@@ -298,13 +302,13 @@ def test_helper_raise_under_guard_keeps_guard_on_halt_face() -> None:
     assert halt.effect.exception_name == "ValueError"
     # Guard is non-trivial (not bare True / empty and).
     guard_s = str(halt.guard)
-    assert "py.truthy" in guard_s or "truthy" in guard_s or "branch" in guard_s, (
-        f"{CODEX3}: guard dropped on raise face: {halt.guard!r}"
-    )
+    assert (
+        "py.truthy" in guard_s or "truthy" in guard_s or "branch" in guard_s
+    ), f"{CODEX3}: guard dropped on raise face: {halt.guard!r}"
     # Completed arm is the complementary not(guard).
-    assert "not" in str(completed[0].guard).lower() or str(
-        completed[0].guard
-    ) != str(halt.guard)
+    assert "not" in str(completed[0].guard).lower() or str(completed[0].guard) != str(
+        halt.guard
+    )
 
 
 def test_helper_raise_under_true_guard_collapses_to_sole_halt() -> None:
@@ -429,9 +433,9 @@ def test_fabricated_empty_state_is_not_pre_effect_when_store_preceded_raise() ->
     halted = _call_halt(tree, "raiser")
     fabricated = _ReducedBlock((), True, ())
     assert halted.state is not None
-    assert halted.state != fabricated or halted.state.entries, (
-        f"{CODEX1}: state collapsed to empty fabricated block"
-    )
+    assert (
+        halted.state != fabricated or halted.state.entries
+    ), f"{CODEX1}: state collapsed to empty fabricated block"
     with pytest.raises(AssertionError):
         assert halted.state is fabricated
     # Positive: prior store present.

@@ -28,12 +28,7 @@ def _loop(tmp_path: Path, source: str, name: str):
     )
 
 
-_BASE = (
-    "def exercise(xs):\n"
-    "    for item in xs:\n"
-    "        pass\n"
-    "    return xs\n"
-)
+_BASE = "def exercise(xs):\n" "    for item in xs:\n" "        pass\n" "    return xs\n"
 
 _CARRIED = (
     "def exercise(xs):\n"
@@ -83,9 +78,7 @@ def _old_loop_term(loop):
             ),
             ctor(
                 "python:loop-outward-face-testimony",
-                tuple(
-                    str_const(cid) for cid in root["outwardHaltedFaceCids"]
-                ),
+                tuple(str_const(cid) for cid in root["outwardHaltedFaceCids"]),
                 symbol_kind="coordinate",
             ),
         ),
@@ -185,9 +178,7 @@ def test_loop_recurrence_rejects_lying_iterable_occurrence(tmp_path: Path):
     truthful = _loop(tmp_path, _CARRIED, "truthful.py")
     lying = _loop(
         tmp_path,
-        _CARRIED.replace("exercise(xs)", "exercise(xs, ys)").replace(
-            "in xs", "in ys"
-        ),
+        _CARRIED.replace("exercise(xs)", "exercise(xs, ys)").replace("in xs", "in ys"),
         "lying.py",
     )
     construction = replace(

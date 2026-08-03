@@ -150,7 +150,10 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
     assert isinstance(halted, Halted)
     assert halted.state is pending.pre_effect_state.state
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -423,9 +426,7 @@ def test_d_unpack_name_binding_survives_later_store_halt() -> None:
     assert isinstance(success, Completed)
     assert isinstance(success.value, UniverseValue)
     returns = [
-        s
-        for s in success.value.record.statements
-        if type(s).__name__ == "ReturnValue"
+        s for s in success.value.record.statements if type(s).__name__ == "ReturnValue"
     ]
     assert len(returns) == 1
     assert returns[0].value.term.name == "p"
@@ -478,11 +479,7 @@ def test_d_free_dual_store_later_halt_retains_prior_store_in_state() -> None:
     assert halted[0].effect.producer_node_owner == "TupleValue.setitem"
     assert halted[0].state is not None
     # Prior binding / store survived: list shows first-store write.
-    lists = [
-        e
-        for e in halted[0].state.entries
-        if isinstance(e, ListValue)
-    ]
+    lists = [e for e in halted[0].state.entries if isinstance(e, ListValue)]
     assert lists == [ListValue((TermValue(2),))]
     # Not fabricated completion of the return.
     with pytest.raises(AssertionError):

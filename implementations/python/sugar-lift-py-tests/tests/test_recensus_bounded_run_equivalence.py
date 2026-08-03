@@ -69,9 +69,7 @@ def _invoke(argv: list[str], capsys=None) -> Completed:
         from sugar_lift_py_tests.corpus_pin import pin_corpus
 
         root = Path(argv[argv.index("--corpus-root") + 1]).resolve()
-        observed = pin_corpus(
-            root, distribution=root.name, version="test-pin"
-        )
+        observed = pin_corpus(root, distribution=root.name, version="test-pin")
         module._PANDAS_3_0_3_AGGREGATE_HASH = observed.aggregate_hash
         module._PANDAS_3_0_3_MANIFEST_SHAPE_CID = corpus_cid(list(observed.paths))
     saved = sys.argv

@@ -150,12 +150,8 @@ class FunctionsPopulationV1:
             )
         object.__setattr__(self, "tip", _require_nonempty_str("tip", self.tip))
         object.__setattr__(self, "pin", _require_nonempty_str("pin", self.pin))
-        object.__setattr__(
-            self, "count", _require_int_ge0("count", self.count)
-        )
-        object.__setattr__(
-            self, "unit", _require_nonempty_str("unit", self.unit)
-        )
+        object.__setattr__(self, "count", _require_int_ge0("count", self.count))
+        object.__setattr__(self, "unit", _require_nonempty_str("unit", self.unit))
         object.__setattr__(
             self, "witness", _require_nonempty_str("witness", self.witness)
         )
@@ -197,12 +193,8 @@ class FunctionsEnumeratedV1:
             )
         object.__setattr__(self, "tip", _require_nonempty_str("tip", self.tip))
         object.__setattr__(self, "pin", _require_nonempty_str("pin", self.pin))
-        object.__setattr__(
-            self, "count", _require_int_ge0("count", self.count)
-        )
-        object.__setattr__(
-            self, "unit", _require_nonempty_str("unit", self.unit)
-        )
+        object.__setattr__(self, "count", _require_int_ge0("count", self.count))
+        object.__setattr__(self, "unit", _require_nonempty_str("unit", self.unit))
         object.__setattr__(
             self, "witness", _require_nonempty_str("witness", self.witness)
         )
@@ -247,9 +239,7 @@ class FunctionsCleanV1:
             )
         object.__setattr__(self, "tip", _require_nonempty_str("tip", self.tip))
         object.__setattr__(self, "pin", _require_nonempty_str("pin", self.pin))
-        object.__setattr__(
-            self, "unit", _require_nonempty_str("unit", self.unit)
-        )
+        object.__setattr__(self, "unit", _require_nonempty_str("unit", self.unit))
         object.__setattr__(
             self, "witness", _require_nonempty_str("witness", self.witness)
         )
@@ -272,9 +262,7 @@ class FunctionsCleanV1:
                     "FunctionsCleanV1 measured body requires a non-negative count; "
                     "absent clean must set refused=True (never default count to 0)"
                 )
-            object.__setattr__(
-                self, "count", _require_int_ge0("count", self.count)
-            )
+            object.__setattr__(self, "count", _require_int_ge0("count", self.count))
             if self.refuse_reason is not None:
                 raise BoardFunctionFactError(
                     "FunctionsCleanV1 measured body forbids refuse_reason"
@@ -327,9 +315,7 @@ def seal_functions_population_v1(
     pin_s = _require_nonempty_str("pin", pin)
     wit = _require_nonempty_str("witness", witness)
     body = {"count": count, "unit": UNIT}
-    cid = _fact_cid(
-        tip=tip_s, pin=pin_s, axis=AXIS_POPULATION, body=body, witness=wit
-    )
+    cid = _fact_cid(tip=tip_s, pin=pin_s, axis=AXIS_POPULATION, body=body, witness=wit)
     return FunctionsPopulationV1(
         tip=tip_s,
         pin=pin_s,
@@ -365,9 +351,7 @@ def seal_functions_enumerated_v1(
     pin_s = _require_nonempty_str("pin", pin)
     wit = _require_nonempty_str("witness", witness)
     body = {"count": count, "unit": UNIT}
-    cid = _fact_cid(
-        tip=tip_s, pin=pin_s, axis=AXIS_ENUMERATED, body=body, witness=wit
-    )
+    cid = _fact_cid(tip=tip_s, pin=pin_s, axis=AXIS_ENUMERATED, body=body, witness=wit)
     return FunctionsEnumeratedV1(
         tip=tip_s,
         pin=pin_s,
@@ -401,8 +385,7 @@ def seal_functions_clean_v1(
     if refused:
         count: int | None = None
         reason = refuse_reason or (
-            "one or more files refused functionsClean "
-            "(would be tautological clean%)"
+            "one or more files refused functionsClean " "(would be tautological clean%)"
         )
         body = {
             "count": None,
@@ -419,9 +402,7 @@ def seal_functions_clean_v1(
         count = _require_int_ge0("clean", reading.value)
         reason = None
         body = {"count": count, "refused": False, "unit": UNIT}
-    cid = _fact_cid(
-        tip=tip_s, pin=pin_s, axis=AXIS_CLEAN, body=body, witness=wit
-    )
+    cid = _fact_cid(tip=tip_s, pin=pin_s, axis=AXIS_CLEAN, body=body, witness=wit)
     return FunctionsCleanV1(
         tip=tip_s,
         pin=pin_s,
@@ -452,18 +433,14 @@ def board_fields_from_sealed_facts(
 
     This is the enforcement point: a bare int cannot become a board field.
     """
-    if isinstance(population, int) or not isinstance(
-        population, FunctionsPopulationV1
-    ):
+    if isinstance(population, int) or not isinstance(population, FunctionsPopulationV1):
         raise BoardFunctionFactError(
             "board_fields_from_sealed_facts refuses non-FunctionsPopulationV1 for "
             f"population (got {type(population).__name__}); a bare int or "
             "LocalReading cannot become a board field. Close the consumer: "
             "compose accepts only the sealed meaning type."
         )
-    if isinstance(enumerated, int) or not isinstance(
-        enumerated, FunctionsEnumeratedV1
-    ):
+    if isinstance(enumerated, int) or not isinstance(enumerated, FunctionsEnumeratedV1):
         raise BoardFunctionFactError(
             "board_fields_from_sealed_facts refuses non-FunctionsEnumeratedV1 for "
             f"enumerated (got {type(enumerated).__name__}); a bare int or "
@@ -477,7 +454,11 @@ def board_fields_from_sealed_facts(
             "cannot become a board field. Close the consumer: compose accepts "
             "only the sealed meaning type."
         )
-    if not population.is_sealed() or not enumerated.is_sealed() or not clean.is_sealed():
+    if (
+        not population.is_sealed()
+        or not enumerated.is_sealed()
+        or not clean.is_sealed()
+    ):
         raise BoardFunctionFactError(
             "board_fields_from_sealed_facts requires sealed facts "
             f"(population.sealed={population.is_sealed()}, "

@@ -7,7 +7,6 @@ from sugar_lift_py_tests.effect import LoopControlEffect
 from sugar_lift_py_tests.outcome import Halted
 from sugar_source_tree.tree import SourceFile
 
-
 SOURCE = (
     "def helper(values):\n"
     "    for value in values:\n"
@@ -27,9 +26,7 @@ def _controls():
             )
         ).functions()
     )
-    return tuple(
-        node for node in function.walk() if node.kind in {"Break", "Continue"}
-    )
+    return tuple(node for node in function.walk() if node.kind in {"Break", "Continue"})
 
 
 @pytest.mark.parametrize("action", ("break", "continue"))

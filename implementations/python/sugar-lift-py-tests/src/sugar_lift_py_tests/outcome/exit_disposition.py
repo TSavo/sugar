@@ -264,11 +264,7 @@ def _exit_suppression_contract_verdict(disposition, effect) -> str:
     coordinate = _require_exception_type_coordinate(effect, owner=owner)
     if not disposition.exception_type_coordinates:
         return "restore"
-    return (
-        "suppress"
-        if disposition.suppresses_coordinate(coordinate)
-        else "restore"
-    )
+    return "suppress" if disposition.suppresses_coordinate(coordinate) else "restore"
 
 
 def _suppresses_verdict(disposition, effect) -> str:

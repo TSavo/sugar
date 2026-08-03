@@ -16,7 +16,6 @@ from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 
-
 DEPENDENT_AXIS_STATUS = {
     "migration_direct43_indirect20": "UNMEASURED: paired lineage door",
     "effect_change_same_event": "UNMEASURED: paired lineage door",
@@ -30,7 +29,9 @@ DEPENDENT_AXIS_STATUS = {
 
 def _paired_gate(axis: str, tmp_path: Path | None = None):
     if tmp_path is not None:
-        source, function, exits = _reduced(tmp_path, f"gate_{axis}", "def target():\n    raise ValueError('gate')\n")
+        source, function, exits = _reduced(
+            tmp_path, f"gate_{axis}", "def target():\n    raise ValueError('gate')\n"
+        )
         (face,) = exits.exits
         lineage = owner._read_halt_lineage(face)
         assert type(lineage) is owner._PairedRaiseFaceV1
@@ -79,7 +80,9 @@ def test_paired_lineage_owner_and_all_downstream_teeth(tmp_path: Path):
 
     (guarded,) = owner.ExitSet((face,)).guarded(face.guard).exits
     (normalized,) = owner.ExitSet((face,)).normalize().exits
-    sequenced = owner.ExitSet((face,)).sequence(lambda value: owner.ExitSet.completed(value))
+    sequenced = owner.ExitSet((face,)).sequence(
+        lambda value: owner.ExitSet.completed(value)
+    )
     assert _read(guarded) is lineage
     assert _read(normalized) is lineage
     (sequenced_face,) = sequenced.exits
@@ -95,7 +98,6 @@ def test_paired_lineage_owner_and_all_downstream_teeth(tmp_path: Path):
         owner.ExitSet((face, distinct)).normalize()
     assert conflict.value.left_lineage is lineage
     assert conflict.value.right_lineage is _read(distinct)
-
 
     # Closed construction/refusal and public capability closure auto-activate
     # with the owner product; no test-only replay/mutation API is introduced.
@@ -113,7 +115,6 @@ def test_paired_lineage_owner_and_all_downstream_teeth(tmp_path: Path):
         assert refusal.value.source is source.unit
         assert refusal.value.occurrence == face.effect.occurrence_id
 
-
     # Real TryStar path: partition lineage retains distinct authenticated
     # original/matched/residual occurrence objects.
     star_source, _, star_exits = _reduced(
@@ -125,7 +126,9 @@ def test_paired_lineage_owner_and_all_downstream_teeth(tmp_path: Path):
         "    except* ValueError:\n"
         "        raise RuntimeError('handler')\n",
     )
-    grouped = tuple(face for face in star_exits.exits if isinstance(face.effect, GroupedRaiseEffect))
+    grouped = tuple(
+        face for face in star_exits.exits if isinstance(face.effect, GroupedRaiseEffect)
+    )
     (grouped_face,) = grouped
     partition = _read(grouped_face).partition_lineage
     assert partition.source_identity is star_source.unit
@@ -140,7 +143,7 @@ def test_authenticated_nonraise_producer_and_cross_variant_refusal(tmp_path: Pat
     variant_name = "_AuthenticatedNonRaiseHaltV1"
     if variant_name not in owner.__dict__:
         pytest.fail(
-        "R_missing_authenticated_nonraise_producer=1: no canonical ordinary "
+            "R_missing_authenticated_nonraise_producer=1: no canonical ordinary "
             "authenticated nonraise producer is available; do not fabricate one",
             pytrace=False,
         )
@@ -188,7 +191,9 @@ def test_handler_matching_binding_has_external_work_counters(tmp_path: Path):
     if not _paired_gate("handler_match_bind_counters", tmp_path):
         return
     source, function, exits = _reduced(
-        tmp_path, "handler", "def target():\n    try:\n        raise ValueError('x')\n    except ValueError as error:\n        raise RuntimeError(str(error))\n    finally:\n        pass\n"
+        tmp_path,
+        "handler",
+        "def target():\n    try:\n        raise ValueError('x')\n    except ValueError as error:\n        raise RuntimeError(str(error))\n    finally:\n        pass\n",
     )
     (face,) = exits.exits
     assert face.effect is not None
@@ -199,7 +204,9 @@ def test_trystar_partition_refusal_is_typed_and_observed(tmp_path: Path):
     if not _paired_gate("trystar_partition_substitution", tmp_path):
         return
     source, _, exits = _reduced(
-        tmp_path, "partition", "def target():\n    try:\n        raise ExceptionGroup('g', [ValueError('v'), TypeError('t')])\n    except* ValueError:\n        raise RuntimeError('handled')\n"
+        tmp_path,
+        "partition",
+        "def target():\n    try:\n        raise ExceptionGroup('g', [ValueError('v'), TypeError('t')])\n    except* ValueError:\n        raise RuntimeError('handled')\n",
     )
     grouped = tuple(f for f in exits.exits if isinstance(f.effect, GroupedRaiseEffect))
     (face,) = grouped

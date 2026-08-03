@@ -210,7 +210,9 @@ def _panic_from_exception(
     }
 
 
-def _panic_from_audit(raw: Mapping[str, Any], *, file_rel: str) -> dict[str, Any] | None:
+def _panic_from_audit(
+    raw: Mapping[str, Any], *, file_rel: str
+) -> dict[str, Any] | None:
     gap = raw.get("gap")
     if not isinstance(gap, dict):
         return None
@@ -285,7 +287,9 @@ def _instrument_failure_row(
     functions_total: int,
     functions_enumerated: int,
 ) -> dict[str, Any]:
-    observed_type = _qualified_type(error) if isinstance(error, BaseException) else "builtins.str"
+    observed_type = (
+        _qualified_type(error) if isinstance(error, BaseException) else "builtins.str"
+    )
     functions_not_enumerated = max(0, functions_total - functions_enumerated)
     row: dict[str, Any] = {
         "functionsTotal": functions_total,
@@ -300,9 +304,7 @@ def _instrument_failure_row(
         "cleanRatioRefused": True,
         "cleanRefuseReason": f"instrument failure during {phase}",
         "functionsAuthenticated": functions_total,
-        "astSites": (
-            {"site:function-def": functions_total} if functions_total else {}
-        ),
+        "astSites": ({"site:function-def": functions_total} if functions_total else {}),
         "rosterPreservedAfterResidualFailure": bool(
             phase in {"residual", "outer-shell-escape"}
             and functions_total > 0
@@ -365,7 +367,9 @@ def demand_context_manager_resolution_events(
         options={
             "distribution": distribution,
             "sourceWorkspaceRoot": (
-                str(source_workspace_root) if source_workspace_root is not None else None
+                str(source_workspace_root)
+                if source_workspace_root is not None
+                else None
             ),
         },
     )
@@ -468,8 +472,8 @@ def _complete_d3_residency_observation(
     audit_open = _take_d3_audit_open_observation(source_cid)
     if isinstance(audit_open, dict):
         row.update(audit_open)
-        row["presenceConfirmed"] = (
-            row.get("presentBeforeDemand") == row.get("presentAtAuditOpen")
+        row["presenceConfirmed"] = row.get("presentBeforeDemand") == row.get(
+            "presentAtAuditOpen"
         )
     else:
         row["presenceConfirmed"] = False
@@ -515,9 +519,9 @@ def _empty_shell(
             if ast_fn is not None
             else ({"site:function-def": functions_total} if functions_total else {})
         ),
-        "functionsAuthenticated": int(ast_fn)
-        if ast_fn is not None
-        else functions_total,
+        "functionsAuthenticated": (
+            int(ast_fn) if ast_fn is not None else functions_total
+        ),
         "desugarFamilies": {},
         "desugarCategories": {},
         "desugarByCategoryOwner": {},
@@ -559,7 +563,11 @@ def _functions_clean(
             except (TypeError, ValueError):
                 return None, True, "sourceAudit.functionsClean unreadable"
             if clean < 0 or clean > functions_total:
-                return None, True, f"functionsClean={clean} outside [0,{functions_total}]"
+                return (
+                    None,
+                    True,
+                    f"functionsClean={clean} outside [0,{functions_total}]",
+                )
             return clean, False, None
     residual_n = len(construction_panics)
     if residual_n > 0:
@@ -678,9 +686,7 @@ def terminal_from_enumerate(
         clean_refuse_reason=clean_reason,
         ast_fn=ast_fn if ast_fn is not None else functions_total,
         roster_preserved_after_residual_failure=(
-            residual_phase_failed
-            and functions_total > 0
-            and functions_enumerated > 0
+            residual_phase_failed and functions_total > 0 and functions_enumerated > 0
         ),
     )
     if construction_panics:

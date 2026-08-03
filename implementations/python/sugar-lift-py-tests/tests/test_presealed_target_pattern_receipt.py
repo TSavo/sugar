@@ -34,14 +34,10 @@ def _products(helper: str = "sink", *, suffix: str = ""):
         construction_context=context,
     )
     calls = tuple(node for node in tree.nodes() if isinstance(node, Call))
-    comprehensions = tuple(
-        node for node in tree.nodes() if isinstance(node, ListComp)
-    )
+    comprehensions = tuple(node for node in tree.nodes() if isinstance(node, ListComp))
     assert len(calls) == len(comprehensions) == 2
     sugars = tuple(call._construct_sugar() for call in calls)
-    patterns = tuple(
-        sugar.args[0].generators[0].target_pattern for sugar in sugars
-    )
+    patterns = tuple(sugar.args[0].generators[0].target_pattern for sugar in sugars)
     assert all(type(pattern) is TargetPatternV1 for pattern in patterns)
     return tree, comprehensions, sugars, patterns
 
@@ -167,4 +163,3 @@ def test_generic_mutable_dataclass_remains_loud() -> None:
     with pytest.raises(ConstructedValueCategoryGap) as gap:
         constructed_value_cid_v2(_UnrelatedMutableDataclass(1))
     assert "MUTABLE dataclass" in str(gap.value)
-

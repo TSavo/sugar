@@ -81,7 +81,10 @@ def test_partition_join_puts_the_obligation_on_every_face():
     partitioned = ExitSet(
         (
             Completed(_guard("hot"), "then-value"),
-            Halted(_guard("cold"), RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom")),
+            Halted(
+                _guard("cold"),
+                RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"),
+            ),
         )
     )
 
@@ -103,7 +106,10 @@ def test_partition_join_does_not_pick_one_face():
     partitioned = ExitSet(
         (
             Completed(_guard("hot"), "then-value"),
-            Halted(_guard("cold"), RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom")),
+            Halted(
+                _guard("cold"),
+                RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"),
+            ),
         )
     )
 
@@ -123,9 +129,7 @@ def test_partition_join_conserves_an_obligation_the_face_already_owed():
     one: two distinct constructions, two carriers, nothing conjoined."""
     already = _carrier("other", ordinal=1, line=7)
     pending = _carrier()
-    partitioned = ExitSet(
-        (Completed(true_guard(), "v", frozenset(), (already,)),)
-    )
+    partitioned = ExitSet((Completed(true_guard(), "v", frozenset(), (already,)),))
 
     joined = rewrap_pending(
         pending, partitioned, owner="test", blame=pending.source_node
@@ -133,9 +137,7 @@ def test_partition_join_conserves_an_obligation_the_face_already_owed():
 
     (arm,) = joined.exits
     assert len(arm.pending_contracts) == 2
-    assert _cids(arm.pending_contracts) == sorted(
-        _cids((already,)) + _cids((pending,))
-    )
+    assert _cids(arm.pending_contracts) == sorted(_cids((already,)) + _cids((pending,)))
 
 
 def test_partition_join_is_idempotent_on_the_same_construction():
@@ -143,9 +145,7 @@ def test_partition_join_is_idempotent_on_the_same_construction():
     outcome DAG is ONE obligation -- `F and F` IS `F`. Exact cardinality: `!= 1`
     would be satisfied by the 2 this is meant to exclude."""
     pending = _carrier()
-    partitioned = ExitSet(
-        (Completed(true_guard(), "v", frozenset(), (pending,)),)
-    )
+    partitioned = ExitSet((Completed(true_guard(), "v", frozenset(), (pending,)),))
 
     joined = rewrap_pending(
         pending, partitioned, owner="test", blame=pending.source_node
@@ -164,9 +164,7 @@ def test_an_unknown_outcome_kind_is_still_loud():
 
     pending = _carrier()
     with pytest.raises(ConstructionPanic):
-        rewrap_pending(
-            pending, object(), owner="test", blame=pending.source_node
-        )
+        rewrap_pending(pending, object(), owner="test", blame=pending.source_node)
 
 
 # ------------------------------------------------------ conservation laws ----
@@ -205,7 +203,10 @@ def test_sequence_carries_the_prefix_obligation_onto_every_tail_exit():
         return ExitSet(
             (
                 Completed(_guard("ok"), "tail"),
-                Halted(_guard("bad"), RaiseEffect.for_builtin("KeyError", blame="k", occurrence="k")),
+                Halted(
+                    _guard("bad"),
+                    RaiseEffect.for_builtin("KeyError", blame="k", occurrence="k"),
+                ),
             )
         )
 
@@ -229,9 +230,7 @@ def test_factoring_unions_obligations_rather_than_intersecting_them():
         (
             Completed(g, "a", frozenset(), (left,)),
             Completed(
-                __import__(
-                    "sugar_lift_py_tests.ir", fromlist=["not_"]
-                ).not_(g),
+                __import__("sugar_lift_py_tests.ir", fromlist=["not_"]).not_(g),
                 "b",
                 frozenset(),
                 (right,),
@@ -242,9 +241,7 @@ def test_factoring_unions_obligations_rather_than_intersecting_them():
     after = before.factor_completed()
 
     (arm,) = [e for e in after.exits if isinstance(e, Completed)]
-    assert _cids(arm.pending_contracts) == sorted(
-        _cids((left,)) + _cids((right,))
-    )
+    assert _cids(arm.pending_contracts) == sorted(_cids((left,)) + _cids((right,)))
 
 
 def test_arms_owing_different_things_do_not_merge():
@@ -339,7 +336,10 @@ def test_sole_completed_outcome_refuses_two_distinct_constructions():
                 true_guard(),
                 "v",
                 frozenset(),
-                (_carrier("left", ordinal=0, line=3), _carrier("right", ordinal=1, line=4)),
+                (
+                    _carrier("left", ordinal=0, line=3),
+                    _carrier("right", ordinal=1, line=4),
+                ),
             ),
         )
     )
@@ -434,7 +434,9 @@ def test_the_nested_statement_splice_conserves_faces_and_obligations():
             (
                 Halted(
                     _guard("h"),
-                    RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"),
+                    RaiseEffect.for_builtin(
+                        "ValueError", blame="boom", occurrence="boom"
+                    ),
                     inner,
                     frozenset({face}),
                     (pending,),
@@ -501,7 +503,15 @@ def test_an_arm_owing_nothing_never_reaches_the_refusal():
         _enrol_exit_obligations,
     )
 
-    clean = ExitSet((Halted(true_guard(), RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"), None),))
+    clean = ExitSet(
+        (
+            Halted(
+                true_guard(),
+                RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"),
+                None,
+            ),
+        )
+    )
 
     assert _enrol_exit_obligations(clean) is clean
 
@@ -542,6 +552,10 @@ def test_a_stateless_halt_that_owes_nothing_keeps_its_state():
         _halt_state,
     )
 
-    clean = Halted(true_guard(), RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"), None)
+    clean = Halted(
+        true_guard(),
+        RaiseEffect.for_builtin("ValueError", blame="boom", occurrence="boom"),
+        None,
+    )
 
     assert _halt_state(_ReducedBlock(("earlier-entry",), True, ()), clean) is None

@@ -91,12 +91,8 @@ def test_one_codomain_door_accepts_complex_and_ellipsis() -> None:
     complex_lit = ComplexLiteralSugar(real=0.0, imag=2.0, site=site)
     ellipsis_lit = EllipsisLiteralSugar(site=site)
     for owner in _OWNERS:
-        assert (
-            require_constructed_term_sugar(complex_lit, owner=owner) is complex_lit
-        )
-        assert (
-            require_constructed_term_sugar(ellipsis_lit, owner=owner) is ellipsis_lit
-        )
+        assert require_constructed_term_sugar(complex_lit, owner=owner) is complex_lit
+        assert require_constructed_term_sugar(ellipsis_lit, owner=owner) is ellipsis_lit
 
 
 def test_binop_slot_constructs_with_complex_literal() -> None:

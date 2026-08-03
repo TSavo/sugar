@@ -21,7 +21,6 @@ from sugar_lift_py_tests.ir import atomic, ctor, implies
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-
 GUARD = atomic("renamed_guard", [])
 
 
@@ -37,9 +36,7 @@ GUARD = atomic("renamed_guard", [])
             "blake3-512:renamed-class-definition",
             (),
             None,
-            SourceFragmentCoordinateV1(
-                "blake3-512:renamed-source", 1, 6, 1, 18
-            ),
+            SourceFragmentCoordinateV1("blake3-512:renamed-source", 1, 6, 1, 18),
         ),
         ComprehensionValue(ctor("renamed-comprehension", [])),
         GuardedValue(

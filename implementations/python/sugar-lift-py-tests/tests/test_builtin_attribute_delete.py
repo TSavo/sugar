@@ -13,7 +13,13 @@ from sugar_source_tree.tree import SourceFile
 def _site(tmp_path):
     path = tmp_path / "builtin_attr_delete.py"
     path.write_text("def f(obj):\n    del obj.attr\n")
-    return next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body[0].fragment
+    return (
+        next(
+            SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+        )
+        .body[0]
+        .fragment
+    )
 
 
 @dataclass(frozen=True)
@@ -33,7 +39,9 @@ class _Receiver(Sugar):
     ("receiver", "owner"),
     ((ListValue(()), "ListValue.delattr"), (NoneValue(), "NoneValue.delattr")),
 )
-def test_builtin_without_instance_dict_delete_has_exact_owner_occurrence(tmp_path, receiver, owner):
+def test_builtin_without_instance_dict_delete_has_exact_owner_occurrence(
+    tmp_path, receiver, owner
+):
     site = _site(tmp_path)
     outcome = AttributeDeleteEffectSugar(_Receiver(receiver), "attr", site).desugar()
     assert isinstance(outcome, Incomplete)
@@ -43,6 +51,10 @@ def test_builtin_without_instance_dict_delete_has_exact_owner_occurrence(tmp_pat
 
 
 @pytest.mark.parametrize("receiver", (ListValue(()), NoneValue()))
-def test_builtin_without_instance_dict_delete_cannot_fabricate_completion(tmp_path, receiver):
-    outcome = AttributeDeleteEffectSugar(_Receiver(receiver), "attr", _site(tmp_path)).desugar()
+def test_builtin_without_instance_dict_delete_cannot_fabricate_completion(
+    tmp_path, receiver
+):
+    outcome = AttributeDeleteEffectSugar(
+        _Receiver(receiver), "attr", _site(tmp_path)
+    ).desugar()
     assert not isinstance(outcome, Complete)

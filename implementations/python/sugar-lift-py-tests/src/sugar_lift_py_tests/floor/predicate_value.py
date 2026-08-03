@@ -78,22 +78,34 @@ class PredicateValue(FloorValue):
     def setattr(self, name, value, site):
         del name, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="PredicateValue.setattr")
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="PredicateValue.setattr"
+        )
 
     def delattr(self, name, site):
         del name
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="PredicateValue.delattr")
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="PredicateValue.delattr"
+        )
 
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="TypeError", site=site, owner="PredicateValue.setitem")
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="PredicateValue.setitem"
+        )
 
     def delitem(self, index, site):
         del index
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        return ground_exceptional_exit(exception_name="TypeError", site=site, owner="PredicateValue.delitem")
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="PredicateValue.delitem"
+        )
 
     def guarded(self, formula):
         """A carried boolean rides under a guard unchanged.
