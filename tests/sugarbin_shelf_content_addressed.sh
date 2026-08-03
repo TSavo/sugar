@@ -53,10 +53,14 @@ grep -Fq 'read_filesystem_shelf_stamp_ref' <<<"$pull_body" || {
   echo 'pull does not resolve stamp→content ref' >&2
   exit 1
 }
-grep -Fq 'cas-address-payload-mismatch' <<<"$pull_body" || {
-  echo 'pull does not enforce h(payload)=address' >&2
+grep -Fq 'verify_filesystem_shelf_artifact' <<<"$pull_body" || {
+  echo 'pull does not route through the filesystem-CAS verifier' >&2
   exit 1
 }
+if grep -Fq 'verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"' <<<"$pull_body"; then
+  echo 'filesystem shelf still routes through strict local-build verification' >&2
+  exit 1
+fi
 
 # --- dynamic: two payloads → two CAS addresses; stamp is not the address ---
 if ! command -v b3sum >/dev/null 2>&1; then
@@ -114,3 +118,8 @@ printf '%s\n' "$key_a" >"$ref2"
 }
 
 echo 'PASS: R_shelf_content_addressed_cell — address is h(payload); stamp is ref only'
+
+# End-to-end discrimination belongs to this enrolled contract: a separate
+# filesystem-CAS verifier accepts diagnostic host drift but still rejects
+# wrong source authority and wrong payload bytes.
+"$repo/tests/sugarbin_shelf_manifest_identity.sh" "$repo"

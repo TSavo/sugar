@@ -90,6 +90,18 @@ python3 "$tool" event --output "$tmp/crime.json" --op crime --outcome crime \
 v="$(verdict_of --receipt "$tmp/crime.json" --advisory)"
 [[ "$v" == "SHELF_EXERCISED_CRIME" ]] || fail "crime receipt should be EXERCISED_CRIME, got $v"
 
+# Named shelf-verifier and recovery crimes remain instrumented after the
+# generic corrupt/ownership terminals split. A more truthful reason must not
+# disappear from the shelf-exercise receipt.
+for named_crime in shelf-manifest-identity-mismatch read-only-shelf-recovery; do
+  cat >"$tmp/named-crime.log" <<LOG
+sugarbin: crime=$named_crime owner=bin/sugarbin cell=/cache/cas/x/sugar
+LOG
+  v="$(verdict_of --log "$tmp/named-crime.log" --advisory)"
+  [[ "$v" == "SHELF_EXERCISED_CRIME" ]] || fail \
+    "$named_crime log should be EXERCISED_CRIME, got $v"
+done
+
 # --- Twin 5: log of the 2026-08-01 failed recensus shape → NEVER_TOUCHED ---
 # Identity/sourceStamp only; no filesystem shelf lines (the real failure mode).
 cat >"$tmp/recensus-early-death.log" <<'LOG'

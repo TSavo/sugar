@@ -623,17 +623,22 @@ mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_B
   local build_script
   build_script="$(sugar_bx_artifact_build_script "$needs" "$profile")"
   local shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly"
+  local shelf_read_only=1
   local name
   if [[ "$provision_artifacts" == 1 ]]; then
     for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
       [[ "$name" != SUGAR_BINARY_PUBLISH || ${!name:-0} != 1 ]] \
-        || shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2"
+        || {
+          shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2"
+          shelf_read_only=0
+        }
     done
   fi
   local -a docker_args=(docker run --rm
     --workdir /workspace/sugar
     --env SUGAR_BINARY_ALLOW_BUILD=0
     --env SUGAR_BINARY_PUBLISH=0
+    --env "SUGAR_BINARY_SHELF_READ_ONLY=$shelf_read_only"
     --env CARGO_TARGET_DIR=/managed-target
     --env SUGAR_BINARY_TARGET_ROOT=/managed-target
     --env "SUGAR_BX_MOUNT_PROOF=$SUGAR_BX_MOUNT_PROOF"
@@ -681,8 +686,11 @@ sugar_bx_run_docker() {
   fi
   local name arg command=""
   for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
+    # Transport-owned mount authority cannot be forged by a payload env.
+    [[ "$name" != SUGAR_BINARY_SHELF_READ_ONLY ]] || continue
     [[ ${!name+x} == x ]] && docker_args+=(--env "$name=${!name}")
   done
+  docker_args+=(--env SUGAR_BINARY_SHELF_READ_ONLY=1)
   docker_args+=("$image" "$@")
   for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
   sugar_bx_ssh "exec${command}"
