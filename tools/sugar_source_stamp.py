@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -38,6 +39,33 @@ SKIP_DIRS = {
     "__pycache__",
 }
 SKIP_FILES = {".DS_Store"}
+
+
+def resolve_source_stamp_tools(cargo: str) -> tuple[str, str] | None:
+    """Resolve the complete toolset before constructing any stamp bytes."""
+
+    commands = (("b3sum", "b3sum"), ("cargo", cargo))
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for name, command in commands:
+        path = shutil.which(command)
+        if path is None:
+            missing.append(name)
+        else:
+            resolved[name] = os.path.abspath(path)
+
+    if missing:
+        if len(missing) == 1:
+            named = f"missing required tool: {missing[0]}"
+            required = f"{missing[0]} is required for source stamping"
+        else:
+            named = f"missing required tools: {', '.join(missing)}"
+            required = f"{' and '.join(missing)} are required for source stamping"
+        print(f"::error::source stamping refused: {named}; {required}", file=sys.stderr)
+        return None
+
+    return resolved["b3sum"], resolved["cargo"]
+
 
 def emit(label: bytes, value: bytes) -> None:
     out = sys.stdout.buffer
@@ -179,24 +207,6 @@ def write_stream(
     for package_root in local_roots:
         seen |= walk_emit(root, package_root)
 
-def stamp_from_stream() -> str:
-    import hashlib
-
-    # When called as library: re-hash stream via external b3sum preferred.
-    # This fallback is blake3 if available, else sha256 prefixed differently.
-    data = sys.stdin.buffer.read()
-    try:
-        from blake3 import blake3  # type: ignore
-
-        digest = blake3(data).hexdigest(length=64)  # 32 bytes? length is output bytes in blake3 py
-        # blake3 hexdigest() default 32 bytes = 64 hex; we need 64 bytes = 128 hex
-        digest = blake3(data).digest(length=64).hex()
-    except Exception:
-        # Prefer matching b3sum -l 64; fall back only if blake3 missing.
-        digest = hashlib.blake2b(data, digest_size=64).hexdigest()
-    return f"blake3-512_{digest}"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, required=True)
@@ -214,14 +224,20 @@ def main(argv: list[str] | None = None) -> int:
         help="write the raw stamp preimage stream to stdout",
     )
     args = parser.parse_args(argv)
-    rust_workspace = args.rust_workspace or (args.repo_root / "implementations" / "rust")
+    rust_workspace = args.rust_workspace or (
+        args.repo_root / "implementations" / "rust"
+    )
+    tools = resolve_source_stamp_tools(args.cargo)
+    if tools is None:
+        return 2
+    b3sum, cargo = tools
 
     if args.stream:
         write_stream(
             repo_root=args.repo_root,
             rust_workspace=rust_workspace,
             package=args.package,
-            cargo=args.cargo,
+            cargo=cargo,
         )
         return 0
 
@@ -231,42 +247,39 @@ def main(argv: list[str] | None = None) -> int:
          "--repo-root", str(args.repo_root),
          "--rust-workspace", str(rust_workspace),
          "--package", args.package,
-         "--cargo", args.cargo],
+         "--cargo", cargo],
         stdout=subprocess.PIPE,
     )
     assert proc.stdout is not None
     b3 = subprocess.run(
-        ["b3sum", "-l", "64", "--no-names"],
+        [b3sum, "-l", "64", "--no-names"],
         stdin=proc.stdout,
         capture_output=True,
         check=False,
     )
-    proc.wait()
+    preimage_status = proc.wait()
+    if preimage_status != 0:
+        print(
+            "::error::source stamping refused: cargo could not construct the "
+            f"source-stamp preimage (exit {preimage_status}); cargo is required "
+            "for source stamping",
+            file=sys.stderr,
+        )
+        return 2
     if b3.returncode == 0 and b3.stdout:
         digest = b3.stdout.decode().strip()
         if len(digest) == 128 and all(c in "0123456789abcdef" for c in digest):
             print(f"blake3-512_{digest}")
             return 0
-    # Fallback: in-process blake3
-    proc2 = subprocess.run(
-        [sys.executable, __file__, "--stream",
-         "--repo-root", str(args.repo_root),
-         "--rust-workspace", str(rust_workspace),
-         "--package", args.package,
-         "--cargo", args.cargo],
-        capture_output=True,
-        check=True,
+    stderr = b3.stderr.decode("utf-8", "replace").strip()
+    detail = f"; stderr={stderr}" if stderr else ""
+    print(
+        "::error::source stamping refused: b3sum did not produce a valid "
+        f"blake3-512 digest (exit {b3.returncode}){detail}; b3sum is required "
+        "for source stamping",
+        file=sys.stderr,
     )
-    try:
-        from blake3 import blake3  # type: ignore
-
-        digest = blake3(proc2.stdout).digest(length=64).hex()
-    except Exception:
-        import hashlib
-
-        digest = hashlib.blake2b(proc2.stdout, digest_size=64).hexdigest()
-    print(f"blake3-512_{digest}")
-    return 0
+    return 2
 
 
 if __name__ == "__main__":
