@@ -548,8 +548,28 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
     )
 
 
-def _use_site_coordinate(path: Path, corpus_root: Path, use_site: Mapping) -> str:
-    rel = path.relative_to(corpus_root).as_posix()
+def _use_site_coordinate(
+    path: Path,
+    corpus_root: Path,
+    use_site: Mapping,
+    *,
+    source_workspace_root: Path | None = None,
+) -> str:
+    coordinate_root = source_workspace_root or corpus_root
+    try:
+        rel = path.resolve().relative_to(coordinate_root.resolve()).as_posix()
+    except ValueError as error:
+        raise AttributionInvariantError(
+            "enrollment coordinate root cannot qualify source seat: "
+            f"source={path} source_workspace_root={coordinate_root} "
+            f"corpus_root={corpus_root}"
+        ) from error
+    if source_workspace_root is not None and "/" not in rel:
+        raise AttributionInvariantError(
+            "enrollment coordinate is not distribution-qualified: "
+            f"source={path} coordinate={rel} "
+            f"source_workspace_root={coordinate_root}"
+        )
     return (
         f"{rel}:{use_site.get('startLine')}:{use_site.get('startCol')}"
         f"-{use_site.get('endLine')}:{use_site.get('endCol')}"
@@ -561,6 +581,7 @@ def discover_no_call_body_probes(
     corpus_root: Path,
     *,
     families: frozenset[ProducerFamily] | None = None,
+    source_workspace_root: Path | None = None,
 ) -> DiscoveryDisposition:
     """Project authenticated assertion demands to their native body producer.
 
@@ -652,7 +673,12 @@ def discover_no_call_body_probes(
                     [],
                 ).append(node)
         for use_site in demands:
-            coordinate = _use_site_coordinate(path, corpus_root, use_site)
+            coordinate = _use_site_coordinate(
+                path,
+                corpus_root,
+                use_site,
+                source_workspace_root=source_workspace_root,
+            )
             managers = managers_by_span.get(
                 (
                     use_site.get("startLine"),
