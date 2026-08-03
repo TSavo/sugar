@@ -100,7 +100,6 @@ const EMPTY_CENSUS_LEVELS: &[&str] = &[
     "contract-declarations",
     "provider-contract-members",
     "contract-demands",
-    "context-manager-edges",
     "parameter-contract-resume",
 ];
 
