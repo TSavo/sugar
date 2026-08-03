@@ -1,0 +1,39 @@
+{
+  "schema": "sealed-frontier-receipt-bank/v1",
+  "measuredCommit": "1b3ac2dd9675b00507ea438a7580306dd95015f7",
+  "sourceArtifact": {
+    "remotePath": "/home/tsavo/remote/sugar-bcargo-6eea67202ea9/sugar/.sugar/attested-census-1b3ac2dd9/recensus.json",
+    "localSourcePath": ".sugar/attested-census-1b3ac2dd9/recensus.json",
+    "sizeBytes": 156717415,
+    "sha256": "cedb430388de1bd85b8bddcdc4d547a8dfcba3954e00e8930d8419bc936274b4",
+    "remoteLocalByteIdentity": true
+  },
+  "bankedArtifacts": [
+    {
+      "path": "recensus.json.gz",
+      "sizeBytes": 23319185,
+      "sha256": "9c6666df423de2d5a647f87ea3d77fa126df1e9bf763131a8b2549df28cd1983",
+      "uncompressedSha256": "cedb430388de1bd85b8bddcdc4d547a8dfcba3954e00e8930d8419bc936274b4"
+    },
+    {
+      "path": "owner-coordinate-breakdown.json",
+      "sizeBytes": 329188,
+      "sha256": "697ef2b63cad2307a2be82cddf7032e65662c34e1b232e09574f1101ce5675e1"
+    },
+    {
+      "path": "drain-list.json",
+      "sizeBytes": 3163381,
+      "sha256": "2965dfbdd6d15cfbafae9acb4d31bf89581c397e4533f6932ecc7e27e2f1b5f7"
+    }
+  ],
+  "sealedIdentities": {
+    "corpusManifestCid": "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0",
+    "planCid": "blake3-512:a4c4688783dd697c01d8d542e227854e5e729812b0efdff02752b348a45424c2e02882702df9449fb9f34ee5a344e2374c373977505d77e390c415e187af6e56",
+    "partialCids": {
+      "s00": "blake3-512:b9457f88dd9c5b60190ae71307fc42c7eb8912a5368d869a1727d7685572288e78a2d4925c08d03b39570bf5c4de7f11ca32ca8c500fd4267d6c7ddacec5dd16"
+    },
+    "composeCid": "blake3-512:dba05c9f65fd382ba022b23eb3446dd585a447dbb006f177dfc9969af443f7145308ad97a03e2a21dc2e58a5ae9347257b078c30cda970cb3c21f79df8bf1bf7",
+    "bodyCid": "blake3-512:e244a8f173af043f9086a2e8f2a3dd97b2dc5a3e74c675c34ae00021335e3124aa615e57f40e9118982ea1acd1f162add1c10c94bb12dfd33686f73552b1bf85",
+    "runtimeCid": "blake3-512:7847022ce2a79bec43b01bc0305fcbf69a921cb0526feb9704efc4c230afc864db299851f08ea07d410ce2a4b3cc472840406b6e991f41f57cd7eabfc7be18bc"
+  }
+}
