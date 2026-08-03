@@ -1218,7 +1218,10 @@ def populate_source_derived_resource_refs(
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceDerivedContextManagerRefV1,
     )
-    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_use_receipts,
+        authenticated_import_value_use_receipts,
+    )
     from sugar_lift_py_tests.ir import _term_content_cid
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
@@ -1263,6 +1266,14 @@ def populate_source_derived_resource_refs(
         module_identities={},
         module=source_file.root,
     )
+    value_receipts, _ = authenticated_import_value_use_receipts(
+        Path(root),
+        Path(path),
+        source_file.unit.source,
+        source_file.unit.source_cid,
+        module_identities={},
+        module=source_file.root,
+    )
     uses = _projected_manager_call_uses(source_file)
     if selected_coordinates is not None:
         uses = {
@@ -1270,23 +1281,72 @@ def populate_source_derived_resource_refs(
             for key, value in uses.items()
             if value[0] in selected_coordinates
         }
+
+    def _receipt_site_key(receipt):
+        raw_site = receipt.use["useSite"]
+        return (
+            raw_site["sourceCid"],
+            raw_site["startLine"],
+            raw_site["startCol"],
+            raw_site["endLine"],
+            raw_site["endCol"],
+        )
+
+    def _unique_receipts_by_site(rows, *, owner: str):
+        indexed = {}
+        for row in rows:
+            key = _receipt_site_key(row)
+            if key in indexed:
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=Path(path),
+                    owner=owner,
+                    observed=f"duplicate authenticated import receipts at {key}",
+                    requested="one authenticated import receipt per physical coordinate",
+                    fix="repair lexical receipt enrollment uniqueness; never choose by order",
+                )
+            indexed[key] = row
+        return indexed
+
+    call_receipts_by_site = _unique_receipts_by_site(
+        receipts,
+        owner="manager_summary_derivation imported manager call receipt pairing",
+    )
+    value_receipts_by_site = _unique_receipts_by_site(
+        value_receipts,
+        owner="manager_summary_derivation imported manager value receipt pairing",
+    )
+    paired_receipts = []
+    for call_key, selected in uses.items():
+        _, call, _ = selected
+        source_cid = call.unit.source_cid
+        # The closed call-contract door remains authoritative whenever it
+        # admitted the full Call.  Only a keyword-bearing direct Name that it
+        # deliberately excludes may fall back to the independently minted
+        # value-use receipt at the exact callee occurrence.  No spelling or
+        # target-symbol join is admissible here.
+        receipt = call_receipts_by_site.get((source_cid, *call_key))
+        if receipt is None and call.func.kind == "Name" and call.keywords:
+            callee_span = call.func.line_col_span()
+            callee_key = (
+                source_cid,
+                callee_span.start_line,
+                callee_span.start_col,
+                callee_span.end_line,
+                callee_span.end_col,
+            )
+            receipt = value_receipts_by_site.get(callee_key)
+        if receipt is not None:
+            paired_receipts.append((receipt, selected))
+
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     # Seed from session so tops already resolved in frame/prefix projection
     # are not re-asked (warnings/re/inspect ×21 on test_pandas).
     if session.enabled:
         for top, graph in session.dependency_graphs.items():
             graphs.setdefault(top, graph)
-    for receipt in receipts:
-        raw_site = receipt.use["useSite"]
-        key = (
-            raw_site["startLine"],
-            raw_site["startCol"],
-            raw_site["endLine"],
-            raw_site["endCol"],
-        )
-        selected = uses.get(key)
-        if selected is None:
-            continue
+    for receipt, selected in paired_receipts:
         coordinate, call, exit_face_id = selected
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         graph = graphs.get(top_level)
