@@ -505,11 +505,115 @@ sugar_bx_docker_bind_source() {
   printf '%s\n' "$resolved"
 }
 
+sugar_bx_quarantine_required_artifacts() {
+  local artifacts_dir="$1" quarantine_dir="$2" cap="${3:-64}"
+  python3 - "$artifacts_dir/required-artifacts.json" "$quarantine_dir" "$cap" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+import tempfile
+
+manifest_path = pathlib.Path(sys.argv[1])
+quarantine_dir = pathlib.Path(sys.argv[2])
+cap = int(sys.argv[3])
+if not manifest_path.is_file():
+    raise SystemExit(0)
+
+raw = manifest_path.read_bytes()
+try:
+    json.loads(raw)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    pass
+else:
+    raise SystemExit(0)
+
+digest = hashlib.sha256(raw).hexdigest()
+quarantine_dir.mkdir(parents=True, exist_ok=True)
+destination = quarantine_dir / f"required-artifacts.sha256-{digest}.json"
+if not destination.exists():
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".required-artifacts-quarantine.", dir=quarantine_dir
+    )
+    temporary = pathlib.Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+entries = sorted(
+    quarantine_dir.glob("required-artifacts.sha256-*.json"),
+    key=lambda path: (path.stat().st_mtime_ns, path.name),
+)
+current_count = len(entries)
+if current_count > cap:
+    evicted = current_count - cap
+    print(
+        "sugarbin: crime=artifact-manifest-quarantine-cap-exceeded "
+        f"path={quarantine_dir} currentCount={current_count} cap={cap} "
+        f"evicted={evicted} remaining={cap} policy=oldest-first",
+        file=sys.stderr,
+    )
+    for path in entries[:evicted]:
+        path.unlink()
+PY
+}
+
+sugar_bx_artifact_build_script() {
+  local needs="$1" profile="$2"
+  local workspace="${3:-/workspace/sugar}" out="${4:-/out}"
+  {
+    printf 'workspace=%q; out=%q; needs=%q; profile=%q; ' \
+      "$workspace" "$out" "$needs" "$profile"
+    cat <<'SCRIPT'
+set -euo pipefail;
+cd "$workspace";
+manifest="$out/required-artifacts.json";
+manifest_tmp="$(mktemp "$out/.required-artifacts.json.XXXXXX")";
+cleanup_manifest_tmp() { [[ -z "${manifest_tmp:-}" ]] || rm -f -- "$manifest_tmp"; };
+trap cleanup_manifest_tmp EXIT;
+trap 'exit 129' HUP;
+trap 'exit 130' INT;
+trap 'exit 143' TERM;
+printf '{"artifacts":[' >"$manifest_tmp";
+first=1;
+IFS=,;
+for b in $needs; do
+  [[ -n "$b" ]] || continue;
+  r="$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR bin/sugarbin --profile "$profile" --platform linux-x86_64 --bin "$b")";
+  cp "$r" "$out/$b";
+  cp "$r.sugarbin.json" "$out/$b.sugarbin.json";
+  sum="$(sha256sum "$out/$b" | cut -d' ' -f1)";
+  [[ "$first" == 1 ]] || printf ',' >>"$manifest_tmp";
+  first=0;
+  printf '{"name":"%s","sha256":"%s"}' "$b" "$sum" >>"$manifest_tmp";
+done;
+printf ']}' >>"$manifest_tmp";
+mv -f -- "$manifest_tmp" "$manifest";
+manifest_tmp="";
+trap - EXIT HUP INT TERM;
+SCRIPT
+  } | tr '\n' ' '
+  printf '\n'
+}
+
 sugar_bx_build_artifacts_docker() {
   local image="$1" needs="$2" profile="$3" provision_artifacts="${4:-0}"
   local image_digest="${image##*@sha256:}"
   local managed_target="${BCARGO_REMOTE_MANAGED_TARGET:-/home/tsavo/.cache/sugar/managed-targets/$image_digest}"
-  sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_BX_BINARY_CACHE") $(sugar_bx_quote "$SUGAR_BX_BINARY_SHELF") $(sugar_bx_quote "$managed_target")" || return $?
+  local quarantine_def reset_command
+  quarantine_def="$(declare -f sugar_bx_quarantine_required_artifacts)"
+  reset_command="set -euo pipefail
+$quarantine_def
+sugar_bx_quarantine_required_artifacts $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_BX_ROOT/artifact-manifest-quarantine") 64
+rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")
+mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_BX_BINARY_CACHE") $(sugar_bx_quote "$SUGAR_BX_BINARY_SHELF") $(sugar_bx_quote "$managed_target")"
+  sugar_bx_ssh "$reset_command" || return $?
   local workspace_source artifacts_source cache_source shelf_source target_source
   workspace_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_REPO")" || return $?
   artifacts_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/artifacts")" || return $?
@@ -517,7 +621,7 @@ sugar_bx_build_artifacts_docker() {
   shelf_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_SHELF")" || return $?
   target_source="$(sugar_bx_docker_bind_source "$managed_target")" || return $?
   local build_script
-  build_script="set -euo pipefail; cd /workspace/sugar; printf '{\"artifacts\":[' >/out/required-artifacts.json; first=1; needs=$(sugar_bx_quote "$needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform linux-x86_64 --bin \"\$b\"); cp \"\$r\" /out/\"\$b\"; cp \"\$r.sugarbin.json\" /out/\"\$b.sugarbin.json\"; sum=\$(sha256sum /out/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>/out/required-artifacts.json; first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>/out/required-artifacts.json; done; printf ']}' >>/out/required-artifacts.json"
+  build_script="$(sugar_bx_artifact_build_script "$needs" "$profile")"
   local shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly"
   local name
   if [[ "$provision_artifacts" == 1 ]]; then

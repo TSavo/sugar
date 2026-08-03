@@ -33,18 +33,38 @@ contract_mismatch() {
 [[ "$(b3sum --version | awk '{print $2}')" == 1.8.1 ]] || contract_mismatch b3sum
 
 if [[ -f /opt/sugar/required-artifacts.json ]]; then
-  artifact_count="$(python - /opt/sugar/required-artifacts.json <<'PY' || {
+  artifact_count="$(python - /opt/sugar/required-artifacts.json /opt/sugar/bin <<'PY' || exit $?
 import hashlib, json, pathlib, sys
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+manifest_path = pathlib.Path(sys.argv[1])
+artifact_root = pathlib.Path(sys.argv[2])
+try:
+    manifest = json.loads(manifest_path.read_text())
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    print(
+        "sugarbin: crime=artifact-manifest-parse-failed "
+        f"path={manifest_path} error={type(error).__name__}: {error}",
+        file=sys.stderr,
+    )
+    raise SystemExit(70)
 for item in manifest["artifacts"]:
-    path = pathlib.Path("/opt/sugar/bin") / item["name"]
-    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
-        raise SystemExit(1)
+    path = artifact_root / item["name"]
+    expected = item["sha256"]
+    observed = (
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.is_file()
+        else "<missing>"
+    )
+    if observed != expected:
+        print(
+            "sugarbin: crime=artifact-checksum-mismatch "
+            f"manifest={manifest_path} artifact={path} "
+            f"expected={expected} observed={observed}",
+            file=sys.stderr,
+        )
+        raise SystemExit(70)
 print(len(manifest["artifacts"]))
 PY
-    echo "artifact checksum mismatch" >&2
-    exit 70
-  })"
+  )"
   if [[ "$artifact_count" -gt 0 ]]; then
     export SUGAR_BINARY_DIR=/opt/sugar/bin
     if [[ -x /opt/sugar/bin/sugar ]]; then
