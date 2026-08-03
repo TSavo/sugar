@@ -224,6 +224,27 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+      - name: Provision Rust and pinned b3sum through the authoritative entrance
+        id: claim_mass_source_stamp_setup
+        uses: ./.github/actions/setup-rust-cache
+      - name: Require the complete source-stamping toolset
+        id: claim_mass_source_stamp_preconditions
+        if: always() && !cancelled()
+        shell: bash
+        env:
+          SOURCE_STAMP_SETUP_OUTCOME: ${{ steps.claim_mass_source_stamp_setup.outcome }}
+        run: |
+          set -uo pipefail
+          source_stamp_status=0
+          python3 tools/sugar_source_stamp.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --package sugar-cli \
+            >/dev/null || source_stamp_status=$?
+          if [[ "$SOURCE_STAMP_SETUP_OUTCOME" != success ]]; then
+            echo "::error::claim-mass source stamping refused: authoritative Rust/b3sum setup outcome=$SOURCE_STAMP_SETUP_OUTCOME" >&2
+            exit 2
+          fi
+          exit "$source_stamp_status"
       - name: Install tripwire deps
         run: |
           python -m pip install --quiet \
@@ -232,6 +253,7 @@ jobs:
             -e 'implementations/python/sugar-lift-py-tests[test]'
       - name: Run pin ${{ matrix.pin }}
         id: pin
+        if: ${{ steps.claim_mass_source_stamp_preconditions.outcome == 'success' }}
         shell: bash
         working-directory: implementations/python/sugar-lift-py-tests
         env:
