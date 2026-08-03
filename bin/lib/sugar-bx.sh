@@ -464,7 +464,7 @@ exit \"\$st\""
   # a status-bearing logout hook. On battleaxe /etc/bash.bash_logout invokes
   # clear_console, whose exit 1 replaced both remote success and remote 23.
   # The non-login wrapper's explicit exit is therefore the SSH verdict.
-  login_exec='exec "$@"'
+  login_exec='exec bash "$1"'
   # The OpenSSH ControlMaster mux has a bounded command packet. Passing the
   # full wrapper through bash -c makes a large payload fail as rc=255 with no
   # artifact. Stage the wrapper over stdin, then invoke it by reference so the
