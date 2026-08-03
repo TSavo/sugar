@@ -55,6 +55,36 @@ class BuildWitness:
     cid: str
 
 
+@dataclass(frozen=True)
+class BuildWitnessPlan:
+    """The authenticated build inputs parsed once from the manifest door."""
+
+    manifest_path: str
+    manifest_cid: str
+    repo_script: str
+    distributed_script: str
+    sources: tuple[str, ...]
+    command: tuple[str, ...]
+    outputs: tuple[dict[str, str], ...]
+    toolchain: str
+    timeout_seconds: int
+
+    @property
+    def authenticated_input_paths(self) -> tuple[str, ...]:
+        """Every workspace file whose bytes the witness authenticates."""
+        return tuple(
+            sorted(
+                {
+                    self.manifest_path,
+                    self.repo_script,
+                    self.distributed_script,
+                    *self.sources,
+                    *(output["distributed"] for output in self.outputs),
+                }
+            )
+        )
+
+
 def _to_value(value: Any):
     if value is None:
         return vnull()
@@ -160,6 +190,32 @@ def _witness_value(w: BuildWitness) -> dict[str, Any]:
     }
 
 
+def load_build_witness_plan(
+    project_dir: str, manifest_path: str = DEFAULT_MANIFEST
+) -> BuildWitnessPlan:
+    """Parse the manifest at the one shared population/construction door."""
+    root = Path(project_dir)
+    manifest_rel = _safe_rel(manifest_path)
+    manifest = _read_manifest(root, manifest_rel)
+    return BuildWitnessPlan(
+        manifest_path=manifest_rel,
+        manifest_cid=_canonical_cid(manifest),
+        repo_script=_safe_rel(str(manifest["repoScript"])),
+        distributed_script=_safe_rel(str(manifest["distributedScript"])),
+        sources=tuple(_safe_rel(str(path)) for path in manifest.get("sources", [])),
+        command=tuple(str(part) for part in manifest["command"]),
+        outputs=tuple(
+            {
+                "distributed": _safe_rel(str(output["distributed"])),
+                "rebuilt": _safe_rel(str(output["rebuilt"])),
+            }
+            for output in manifest.get("outputs", [])
+        ),
+        toolchain=str(manifest.get("toolchain", "build")),
+        timeout_seconds=int(manifest.get("timeoutSeconds", 30)),
+    )
+
+
 def witness_body(w: BuildWitness) -> bytes:
     return _canonical_bytes(_witness_value(w))
 
@@ -168,25 +224,12 @@ def run_build_witness(
     project_dir: str, manifest_path: str = DEFAULT_MANIFEST
 ) -> BuildWitness:
     root = Path(project_dir)
-    manifest_rel = _safe_rel(manifest_path)
-    manifest = _read_manifest(root, manifest_rel)
-    repo_script = _safe_rel(str(manifest["repoScript"]))
-    distributed_script = _safe_rel(str(manifest["distributedScript"]))
-    sources = [_safe_rel(str(p)) for p in manifest.get("sources", [])]
-    command = [str(p) for p in manifest["command"]]
-    outputs = [
-        {
-            "distributed": _safe_rel(str(o["distributed"])),
-            "rebuilt": _safe_rel(str(o["rebuilt"])),
-        }
-        for o in manifest.get("outputs", [])
-    ]
+    plan = load_build_witness_plan(project_dir, manifest_path)
 
-    repo_script_cid = _file_cid(root, repo_script)
-    distributed_script_cid = _file_cid(root, distributed_script)
-    source_tree_cid = _tree_cid(root, sources)
-    manifest_cid = _canonical_cid(manifest)
-    toolchain_id = _toolchain_id(str(manifest.get("toolchain", "build")))
+    repo_script_cid = _file_cid(root, plan.repo_script)
+    distributed_script_cid = _file_cid(root, plan.distributed_script)
+    source_tree_cid = _tree_cid(root, plan.sources)
+    toolchain_id = _toolchain_id(plan.toolchain)
     failures: list[str] = []
 
     if repo_script_cid != distributed_script_cid:
@@ -195,13 +238,14 @@ def run_build_witness(
             f"repo {repo_script_cid} != distributed {distributed_script_cid}"
         )
 
+    outputs = list(plan.outputs)
     _clean_rebuild_outputs(root, outputs)
     proc = subprocess.run(
-        _expand_command(command),
+        _expand_command(list(plan.command)),
         cwd=root,
         capture_output=True,
         text=True,
-        timeout=int(manifest.get("timeoutSeconds", 30)),
+        timeout=plan.timeout_seconds,
     )
     if proc.returncode != 0:
         failures.append(
@@ -230,15 +274,15 @@ def run_build_witness(
 
     outcome = "passed" if not failures else "failed"
     draft = BuildWitness(
-        manifest_path=manifest_rel,
-        manifest_cid=manifest_cid,
-        repo_script=repo_script,
+        manifest_path=plan.manifest_path,
+        manifest_cid=plan.manifest_cid,
+        repo_script=plan.repo_script,
         repo_script_cid=repo_script_cid,
-        distributed_script=distributed_script,
+        distributed_script=plan.distributed_script,
         distributed_script_cid=distributed_script_cid,
         source_tree_cid=source_tree_cid,
         toolchain_id=toolchain_id,
-        command=tuple(command),
+        command=plan.command,
         outputs=tuple(output_rows),
         failures=tuple(failures),
         outcome=outcome,

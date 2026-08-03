@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,38 @@ out = pathlib.Path(sys.argv[3])
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(f"demo-lib\\nmessage={message}\\nversion={version}\\n", encoding="utf-8")
 """
+
+
+def _rpc_process(root: Path) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [sys.executable, "-m", "sugar_build_witness.lift_lsp"],
+        cwd=root,
+        env=os.environ.copy(),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _rpc_request(
+    proc: subprocess.Popen[str], method: str, params: dict, *, msg_id: int = 1
+) -> dict:
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+    proc.stdin.write(
+        json.dumps({"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params})
+        + "\n"
+    )
+    proc.stdin.flush()
+    line = proc.stdout.readline()
+    assert line, proc.stderr.read() if proc.stderr is not None else "no RPC response"
+    return json.loads(line)
+
+
+def _close_rpc(proc: subprocess.Popen[str]) -> None:
+    _rpc_request(proc, "shutdown", {}, msg_id=999)
+    proc.wait(timeout=5)
 
 
 def _write_project(
@@ -169,3 +202,163 @@ def test_tampered_distributed_output_is_named_failure(tmp_path):
     assert any("output artifact CID mismatch" in f for f in w.failures)
     assert verdict == "REFUSED"
     assert "output artifact CID mismatch" in reason
+
+
+def test_build_witness_declaration_advertises_enumerate_and_retires_lift(
+    tmp_path: Path,
+) -> None:
+    _write_project(tmp_path)
+    proc = _rpc_process(tmp_path)
+    try:
+        reply = _rpc_request(proc, "sugar.plugin.kit_declaration", {})
+        methods = {row["name"] for row in reply["result"]["rpc"]["methods"]}
+        assert "sugar.enumerate" in methods
+        assert "lift" not in methods
+    finally:
+        _close_rpc(proc)
+
+
+def test_build_witness_source_files_seals_authenticated_input_population(
+    tmp_path: Path,
+) -> None:
+    _write_project(tmp_path)
+    proc = _rpc_process(tmp_path)
+    try:
+        reply = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {"level": "source_files", "workspace_root": str(tmp_path)},
+        )
+        nodes = reply["result"]["nodes"]
+        assert [node["memento"]["file"] for node in nodes] == [
+            "build-witness.json",
+            "dist/configure.py",
+            "dist/libdemo.txt",
+            "repo/configure.py",
+            "src/message.txt",
+            "src/version.txt",
+        ]
+        assert reply["result"]["gaps"] == []
+        assert all(node["memento"]["source_cid"] for node in nodes)
+    finally:
+        _close_rpc(proc)
+
+
+def test_build_witness_population_fold_equals_whole_population_legacy(
+    tmp_path: Path,
+) -> None:
+    """#7261 promotion proof: whole legacy == sealed per-file fold."""
+    _write_project(tmp_path)
+    proc = _rpc_process(tmp_path)
+    try:
+        legacy = _rpc_request(
+            proc,
+            "lift",
+            {"workspace_root": str(tmp_path), "source_paths": ["."]},
+        )["result"]["ir"]
+        census = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {"level": "source_files", "workspace_root": str(tmp_path)},
+        )["result"]
+        folded: list[dict] = []
+        non_empty: list[str] = []
+        for file_node in census["nodes"]:
+            memento = file_node["memento"]
+            universe = _rpc_request(
+                proc,
+                "sugar.enumerate",
+                {
+                    "level": "universe",
+                    "workspace_root": str(tmp_path),
+                    "at": memento,
+                },
+            )["result"]
+            assert universe["gaps"] == []
+            if universe["nodes"]:
+                non_empty.append(memento["file"])
+            folded.extend(node["audit"] for node in universe["nodes"])
+
+        assert len(legacy) == 3, "the promotion control must carry real claim mass"
+        assert non_empty == ["build-witness.json"]
+        assert folded == legacy
+    finally:
+        _close_rpc(proc)
+
+
+def test_build_witness_universe_requires_prepared_population(tmp_path: Path) -> None:
+    _write_project(tmp_path)
+    proc = _rpc_process(tmp_path)
+    try:
+        reply = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {
+                "level": "universe",
+                "workspace_root": str(tmp_path),
+                "at": {"file": "build-witness.json"},
+            },
+        )
+        assert reply["result"]["nodes"] == []
+        assert len(reply["result"]["gaps"]) == 1
+        assert "prepared source_files census" in reply["result"]["gaps"][0]["reason"]
+    finally:
+        _close_rpc(proc)
+
+
+def test_build_witness_universe_refuses_population_drift(tmp_path: Path) -> None:
+    _write_project(tmp_path)
+    proc = _rpc_process(tmp_path)
+    try:
+        census = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {"level": "source_files", "workspace_root": str(tmp_path)},
+        )["result"]
+        anchor = next(
+            node["memento"]
+            for node in census["nodes"]
+            if node["memento"]["file"] == "build-witness.json"
+        )
+        (tmp_path / "src" / "message.txt").write_text("changed\n", encoding="utf-8")
+
+        reply = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {
+                "level": "universe",
+                "workspace_root": str(tmp_path),
+                "at": anchor,
+            },
+        )["result"]
+        assert reply["nodes"] == []
+        assert len(reply["gaps"]) == 1
+        assert "src/message.txt" in reply["gaps"][0]["reason"]
+        assert "sealed source_files census" in reply["gaps"][0]["reason"]
+    finally:
+        _close_rpc(proc)
+
+
+def test_build_witness_enumeration_refuses_false_empty_levels(tmp_path: Path) -> None:
+    _write_project(tmp_path)
+    proc = _rpc_process(tmp_path)
+    try:
+        link_units = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {
+                "level": "parameter-contract-link-units",
+                "workspace_root": str(tmp_path),
+            },
+        )
+        assert link_units["result"] == {"rows": []}
+
+        unknown = _rpc_request(
+            proc,
+            "sugar.enumerate",
+            {"level": "facts", "workspace_root": str(tmp_path)},
+        )
+        assert unknown["error"]["code"] == -32602
+        assert "false zero" in unknown["error"]["message"]
+    finally:
+        _close_rpc(proc)
