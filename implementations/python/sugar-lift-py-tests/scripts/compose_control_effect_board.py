@@ -831,6 +831,10 @@ def mint_partial(
             "instrumentDefects": instrument_defects,
             "R_construction_panics_shard": len(panics),
         },
+        "d3ResidencyExposure": aggregate_d3_residency_exposure(
+            terminals,
+            enrolled_files=assigned,
+        ),
         "status": status,
         "measured": measured,
         "unmeasuredReason": unmeasured_reason,
@@ -841,6 +845,100 @@ def mint_partial(
         {k: v for k, v in body.items() if k != "partialCid"}
     )
     return body
+
+
+def aggregate_d3_residency_exposure(
+    measured_rows: Sequence[tuple[str, Mapping[str, Any]]],
+    *,
+    enrolled_files: Sequence[str],
+) -> dict[str, Any]:
+    """Count D3 residency reach without changing construction behavior.
+
+    Raw file coordinates stay beside every count.  Missing observation is not a
+    miss: it is either a pre-D3 terminal or an unconfirmed audit open, and the
+    two remain distinct so a partial run cannot manufacture agreement.
+    """
+    enrolled = list(enrolled_files)
+    by_file = {file: dict(raw) for file, raw in measured_rows}
+    reached: list[str] = []
+    present_before: list[str] = []
+    absent_before: list[str] = []
+    hit: list[str] = []
+    miss: list[str] = []
+    audit_observed: list[str] = []
+    audit_unconfirmed: list[str] = []
+    presence_confirmed: list[str] = []
+    presence_mismatch: list[str] = []
+    reporter_seated: list[str] = []
+    reporter_unseated: list[str] = []
+    collector_registered: list[str] = []
+    collector_empty: list[str] = []
+
+    for file in enrolled:
+        observation = by_file.get(file, {}).get("d3Residency")
+        if (
+            not isinstance(observation, Mapping)
+            or observation.get("reached") is not True
+        ):
+            continue
+        reached.append(file)
+        before = observation.get("presentBeforeDemand")
+        at_open = observation.get("presentAtAuditOpen")
+        reused = observation.get("auditOpenReusedResident")
+        if before is True:
+            present_before.append(file)
+        elif before is False:
+            absent_before.append(file)
+        if isinstance(at_open, bool):
+            audit_observed.append(file)
+        else:
+            audit_unconfirmed.append(file)
+        if reused is True:
+            hit.append(file)
+        elif reused is False and at_open is False:
+            miss.append(file)
+        if isinstance(before, bool) and isinstance(at_open, bool):
+            if before == at_open:
+                presence_confirmed.append(file)
+            else:
+                presence_mismatch.append(file)
+        seated = observation.get("rootReporterSeatedAtAuditOpen")
+        if seated is True:
+            reporter_seated.append(file)
+        elif seated is False:
+            reporter_unseated.append(file)
+        registered = observation.get("collectorRegisteredAtAuditExit")
+        if registered is True:
+            collector_registered.append(file)
+        elif registered is False:
+            collector_empty.append(file)
+
+    reached_set = set(reached)
+    not_reached = [file for file in enrolled if file not in reached_set]
+    return {
+        "filesEnrolled": len(enrolled),
+        "d3Reached": len(reached),
+        "d3NotReached": len(not_reached),
+        "presentBeforeDemand": len(present_before),
+        "absentBeforeDemand": len(absent_before),
+        "auditOpenHit": len(hit),
+        "auditOpenMiss": len(miss),
+        "auditOpenObserved": len(audit_observed),
+        "auditOpenUnconfirmed": len(audit_unconfirmed),
+        "presenceConfirmed": len(presence_confirmed),
+        "presenceMismatch": len(presence_mismatch),
+        "reporterSeated": len(reporter_seated),
+        "reporterUnseated": len(reporter_unseated),
+        "collectorRegistered": len(collector_registered),
+        "collectorEmpty": len(collector_empty),
+        "hitFiles": hit,
+        "missFiles": miss,
+        "notReachedFiles": not_reached,
+        "auditOpenUnconfirmedFiles": audit_unconfirmed,
+        "presenceMismatchFiles": presence_mismatch,
+        "reporterUnseatedFiles": reporter_unseated,
+        "collectorEmptyFiles": collector_empty,
+    }
 
 
 def aggregate_terminal_rows(
@@ -982,6 +1080,10 @@ def aggregate_terminal_rows(
         "enrolled_files": file_names,
         "terminal_count": len(measured_rows),
         "manifest_cid": manifest_cid,
+        "d3_residency_exposure": aggregate_d3_residency_exposure(
+            measured_rows,
+            enrolled_files=file_names,
+        ),
     }
 
 
@@ -1167,6 +1269,7 @@ def seal_board_from_aggregate(
             "desugar": "R_desugar_construction_panics only (constructed or panicked)",
             "cm": "R_cm_constructed | R_cm_unconstructed",
         },
+        "d3ResidencyExposure": dict(agg["d3_residency_exposure"]),
         "elapsedSeconds": elapsed_seconds,
         "planCid": (plan or {}).get("planCid"),
         "perShardCids": dict(sorted((per_shard_cids or {}).items())),
@@ -1225,6 +1328,7 @@ def unmeasured_envelope(
     unmeasured_reasons: Mapping[str, str],
     measured_commit: str | None = None,
     instrument_failures: Sequence[Mapping[str, Any]] = (),
+    d3_residency_exposure: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attendance testimony only. NEVER measurementClass=control-effect-recensus."""
     env: dict[str, Any] = {
@@ -1241,6 +1345,8 @@ def unmeasured_envelope(
         "instrumentFailures": [dict(row) for row in instrument_failures],
         "denominator": {"complete": False},
     }
+    if d3_residency_exposure is not None:
+        env["d3ResidencyExposure"] = dict(d3_residency_exposure)
     assert "measurementClass" not in env
     assert "R_construction_panics" not in env
     assert "frontierWidth" not in env
@@ -1336,6 +1442,10 @@ def compose_from_partials(
 
     enrolled = list(plan["enrolledFiles"])
     measured_rows = [(f, row_by_file[f]) for f in enrolled if f in row_by_file]
+    d3_residency_exposure = aggregate_d3_residency_exposure(
+        measured_rows,
+        enrolled_files=enrolled,
+    )
     frontier_attestation, instrument_failures = attest_frontier_rows(measured_rows)
     if instrument_failures:
         return "unmeasured", unmeasured_envelope(
@@ -1346,6 +1456,7 @@ def compose_from_partials(
             },
             measured_commit=str(plan.get("measuredCommit") or ""),
             instrument_failures=instrument_failures,
+            d3_residency_exposure=d3_residency_exposure,
         )
     agg = aggregate_terminal_rows(
         measured_rows,
@@ -1363,6 +1474,7 @@ def compose_from_partials(
                 )
             },
             measured_commit=str(plan.get("measuredCommit") or ""),
+            d3_residency_exposure=d3_residency_exposure,
         )
 
     partial_cids_sorted = sorted(per_shard_cids.values())
@@ -1411,6 +1523,7 @@ def compose_from_partials(
             instrument_failures=[failure]
             if isinstance(failure, Mapping)
             else [{"reason": "common conservation mint refused without diagnostic"}],
+            d3_residency_exposure=d3_residency_exposure,
         )
     return "sealed", board
 

@@ -88,6 +88,23 @@ _PROVISIONAL_CONTRACT_REFS_BY_ROOT: Dict[str, Any] = {}
 # Unit tests count this (do not time it): a cold process given a prebuilt
 # table must leave this at zero after install + measure.
 _PRECONSTRUCTION_WALK_COUNT = 0
+# D3 exposure telemetry, process-local because enumerate_rpc dispatches in-process.
+# The wire DTO stays closed; the recensus consumer takes this observation after
+# the facts demand.  One entry per source CID, popped by the consumer, so a
+# prior file can never masquerade as confirmation for a later demand.
+_D3_RESIDENCY_OBSERVATIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def _record_d3_residency_observation(
+    source_cid: str, observation: Dict[str, Any]
+) -> None:
+    _D3_RESIDENCY_OBSERVATIONS[source_cid] = dict(observation)
+
+
+def take_d3_residency_observation(source_cid: str) -> Dict[str, Any] | None:
+    """Take the real audit-open observation for one D3 source demand."""
+    row = _D3_RESIDENCY_OBSERVATIONS.pop(source_cid, None)
+    return dict(row) if row is not None else None
 
 
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
@@ -1778,7 +1795,32 @@ def _send_enumerate_result(
     )
 
 
-def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
+def _seat_roll_call_reporter(source_file, reporter) -> None:
+    """Seat one audit consumer on an already prepared resident tree.
+
+    Process residency owns parsed preparation, not consumer testimony.  A CID
+    hit returns the prepared shell whose materialized nodes still carry the
+    reporter used by the first opener (often ``NULL_REPORTER``).  Rebinding
+    only ``SourceFile.reporter`` therefore leaves those nodes writing into the
+    old channel and makes the roll call falsely clean.
+
+    Walk the resident tree once, parent before child, rebinding and registering
+    each existing node with this consumer's reporter.  Parent-first order also
+    ensures any lazily materialized child is born on the same channel.  This
+    does not parse, populate, or prepare the SourceFile again.
+    """
+    source_file.reporter = reporter
+    for node in source_file.nodes():
+        object.__setattr__(node, "reporter", reporter)
+        reporter.register(node)
+
+
+def _roll_call_audit_leaf(
+    full_path: Path,
+    file_rel: str,
+    *,
+    expected_source_cid: str | None = None,
+) -> dict:
     from sugar_lift_py_tests.kit_rpc import AuditLeafEnvelopeDto
 
     """Project one construction roll call directly onto the legacy audit wire.
@@ -1793,9 +1835,35 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
 
     from sugar_lift_py_tests.tree_enumerate import source_audit_from_report
 
+    from sugar_source_tree.process_resident_file import get_resident
+
     reporter = CollectingReporter()
-    source_file = SourceFile.from_path(str(full_path), reporter=reporter)
-    report = discharge(source_file)
+    resident_before_open = (
+        get_resident(expected_source_cid) if expected_source_cid is not None else None
+    )
+    source_file = None
+    try:
+        source_file = SourceFile.from_path(str(full_path), reporter=reporter)
+        _seat_roll_call_reporter(source_file, reporter)
+        report = discharge(source_file)
+    finally:
+        if expected_source_cid is not None:
+            _record_d3_residency_observation(
+                expected_source_cid,
+                {
+                    "sourceCid": expected_source_cid,
+                    "presentAtAuditOpen": resident_before_open is not None,
+                    "auditOpenReusedResident": bool(
+                        resident_before_open is not None
+                        and source_file is resident_before_open.source_file
+                    ),
+                    "rootReporterSeatedAtAuditOpen": bool(
+                        source_file is not None
+                        and source_file.root.reporter is reporter
+                    ),
+                    "collectorRegisteredAtAuditExit": bool(reporter.registered),
+                },
+            )
     # ONE door: the same full-tuple presence projection as tree_enumerate.
     # Do not re-derive status by CID alone, and do not mix report.R with a
     # separately keyed warranted count (that pair already drifted).
@@ -1862,6 +1930,12 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     for key in absent_keys:
         node = nodes_by_key[key]
         panic = gaps_by_key.get(key)
+        if panic is None:
+            # The full roll-call minority remains carried by sourceAudit.  A
+            # registered ancestor that never answered because a descendant
+            # panicked has no independent panic payload and therefore cannot
+            # be relabelled as a ConstructionPanic product terminal.
+            continue
         lc = node.line_col_span()
         locus = f"{file_rel}:{lc.start_line}:{lc.start_col}"
         terminal = (
@@ -2200,7 +2274,20 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
 
                 if level == "facts":
-                    leaf = _roll_call_audit_leaf(full_path, file_rel)
+                    expected_source_cid = None
+                    if isinstance(at, dict):
+                        expected_source_cid = at.get("source_cid") or at.get(
+                            "file_cid"
+                        )
+                    leaf = _roll_call_audit_leaf(
+                        full_path,
+                        file_rel,
+                        expected_source_cid=(
+                            str(expected_source_cid)
+                            if isinstance(expected_source_cid, str)
+                            else None
+                        ),
+                    )
                     _send_enumerate_result(
                         msg_id,
                         [{"memento": at, "audit": leaf, "payload": None}],

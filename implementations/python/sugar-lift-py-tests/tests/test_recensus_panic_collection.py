@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
-
-import pytest
 
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
@@ -16,14 +15,19 @@ def _load(name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    if str(_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_SCRIPTS))
     spec.loader.exec_module(module)
     return module
 
 
-def test_recensus_projects_construction_panic_as_a_loud_counted_gap(
+CONSUMER = _load("recensus_enumerate_consumer")
+
+
+def test_recensus_projects_construction_panic_as_a_loud_counted_terminal(
     tmp_path: Path, monkeypatch
 ) -> None:
-    module = _load("control_effect_recensus")
     path = tmp_path / "fixture.py"
     path.write_text("def a():\n    return 1\n", encoding="utf-8")
 
@@ -41,12 +45,16 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_gap(
     import sugar_source_tree.tree as tree_mod
 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
-    row = module._measure_file(path, relative="fixture.py", workspace_root=tmp_path)
-    assert row["category"] == "construction-panic"
-    assert row["panic"]["type"] == "ConstructionPanic"
-    # File-level ConstructionPanic must be enrolled in families at measure time
-    # so aggregation does not invent a family the walk never named.
-    assert row["families"].get("ConstructionPanic", 0) >= 1
+    row = CONSUMER.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="fixture.py",
+    )
+
+    assert row["category"] == "panic"
+    assert row["terminalKind"] == "construction-panic"
+    assert row["blocking_terminal_count"] == 1
+    assert row["panic"]["observedEventType"].endswith(".ConstructionPanic")
+    assert len(row["constructionPanics"]) == 1
 
 
 def test_mid_file_construction_panic_does_not_shrink_function_denominator(
@@ -58,7 +66,6 @@ def test_mid_file_construction_panic_does_not_shrink_function_denominator(
     walk. A panic that escapes still leaves the full denominator on the row so
     the board never computes Clean% over a silently shrunken set.
     """
-    module = _load("control_effect_recensus")
     path = tmp_path / "multi.py"
     path.write_text(
         "def a():\n    return 1\n\ndef b():\n    return 2\n\ndef c():\n    return 3\n",
@@ -82,101 +89,116 @@ def test_mid_file_construction_panic_does_not_shrink_function_denominator(
             )
         return original_sugar(self, *args, **kwargs)
 
-    # Patch after SourceFile constructs so functions() still lists all three.
+    # D2 materializes the complete roster before D3 constructs any function.
     import sugar_source_tree.nodes as nodes_mod
 
-    # FunctionDef.sugar is the door the recensus calls via function.sugar().
+    # D3 reaches FunctionDef.sugar through sugar.enumerate facts/auditFrontier.
     # No skip hatch: if FunctionDef is missing the tooth must fail, not vanish.
     target = nodes_mod.FunctionDef
     original_sugar = target.sugar
 
     monkeypatch.setattr(target, "sugar", flaky_sugar)
-    # Empty contract_refs avoids provisional demand derivation (unrelated to
-    # the denominator law under test).
-    row = module._measure_file(
-        path,
-        relative="multi.py",
+    row = CONSUMER.measure_file_via_enumerate(
         workspace_root=tmp_path,
-        contract_refs={},
+        file_rel="multi.py",
     )
 
-    assert row["category"] == "construction-panic"
+    assert calls["n"] == 2
+    assert row["category"] == "panic"
     assert row["functionsTotal"] == 3
-    assert row["functionsEnumerated"] == 2
-    assert row["functionsNotEnumerated"] == 1
-    assert row["functionsEnumerationComplete"] is False
+    assert row["functionsEnumerated"] == 3
+    assert row["functionsNotEnumerated"] == 0
+    assert row["functionsEnumerationComplete"] is True
+    assert row["panic"]["owner"] == "mid-file-panic"
 
 
 def test_control_effect_recensus_enumerates_one_file(tmp_path: Path) -> None:
-    module = _load("control_effect_recensus")
     path = tmp_path / "clean.py"
     path.write_text("def a(z):\n    return z\n", encoding="utf-8")
-    row = module._measure_file(path, relative="clean.py")
+    row = CONSUMER.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="clean.py",
+    )
+
     assert row["category"] == "completed"
+    assert row["terminalKind"] == "constructed"
+    assert row["enumerateSource"] is True
     assert row["functionsTotal"] == 1
     assert row["functionsClean"] == 1
 
 
 def test_unresolved_with_is_typed_gap_on_enum_path(tmp_path: Path) -> None:
-    module = _load("control_effect_recensus")
     path = tmp_path / "consumer.py"
     path.write_text(
         "def use_resource(manager):\n" "    with manager:\n" "        pass\n",
         encoding="utf-8",
     )
-    row = module._measure_file(path, relative="consumer.py", workspace_root=tmp_path)
-    # Typed loud construction, not a bare crash.
-    assert row["category"] == "completed"
+    row = CONSUMER.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="consumer.py",
+    )
+
+    # The current door carries both the preconstruction resolution and its loud
+    # construction terminal; neither is reconstructed from a family label.
+    assert row["category"] == "panic"
+    assert row["terminalKind"] == "construction-panic"
     assert row["functionsTotal"] == 1
-    assert sum(row["families"].values()) >= 1
-    # With preconstruction authority present, an unresolvable manager is a
-    # resolution gap — not the false-red RuntimeSelected that bare
-    # construction_context=None painted onto every With.
-    assert row["families"].get("RuntimeSelectedContextManager", 0) == 0
-    assert (
-        row["families"].get("SugarNotWritten", 0) >= 1 or row["families"].get("RuntimeSelectedContextManager", 0) >= 0
-        or sum(row["families"].values()) >= 1
+    events = row["contextManagerResolutionEvents"]
+    assert len(events) == 1
+    assert events[0]["outcome"] == "unconstructed"
+    assert events[0]["observedEventType"].endswith(".ContextManagerResolutionGapV1")
+    assert row["panic"]["observedEventType"].endswith(
+        ".ContextManagerResolutionConstructionGap"
     )
 
 
 def test_with_census_injects_construction_context(tmp_path: Path) -> None:
     """Instrument law: census must not call bare SourceFile without context."""
-    module = _load("control_effect_recensus")
     path = tmp_path / "with_open.py"
     path.write_text(
         "def use():\n" "    with open('x') as f:\n" "        pass\n",
         encoding="utf-8",
     )
-    row = module._measure_file(path, relative="with_open.py", workspace_root=tmp_path)
-    assert row["category"] == "completed"
-    # open is not source-derived under provisional gaps — honest residual is a
-    # typed CM gap, never unconditional RuntimeSelected from missing context.
-    assert row["families"].get("RuntimeSelectedContextManager", 0) == 0
+    row = CONSUMER.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="with_open.py",
+    )
+
+    # open is not authenticated by the provisional table. The injected context
+    # therefore carries one explicit unconstructed resolution into the terminal;
+    # a bare SourceFile would have no resolution event at all.
+    events = row["contextManagerResolutionEvents"]
+    assert len(events) == 1
+    assert events[0]["outcome"] == "unconstructed"
+    assert events[0]["observedEventType"].endswith(".ContextManagerResolutionGapV1")
+    assert row["panic"]["observedEventType"].endswith(
+        ".ContextManagerResolutionConstructionGap"
+    )
 
 
 def test_construction_gap_occurrence_counted_once(tmp_path: Path) -> None:
-    """Catch+reporter must not double-tally (392 vs 196 class of defect).
+    """Reporter+throw must not double-tally (392 vs 196 class of defect).
 
-    A With that report_gap then raises is ONE occurrence. Family type total
-    equals distinct with-node gaps, not 2×.
+    A With that reports then raises is ONE occurrence. Terminal panic count
+    equals distinct physical With coordinates, not 2x.
     """
-    module = _load("control_effect_recensus")
     path = tmp_path / "with_param.py"
     path.write_text(
         "def use(manager):\n" "    with manager:\n" "        pass\n",
         encoding="utf-8",
     )
-    row = module._measure_file(path, relative="with_param.py", workspace_root=tmp_path)
-    assert row["category"] == "completed"
-    families = row.get("families") or {}
-    # One With site → one CM gap occurrence (not catch+reporter = 2).
-    cm = families.get("SugarNotWritten", 0)
-    rs = families.get("RuntimeSelectedContextManager", 0)
-    assert rs == 0
-    assert cm >= 1 or sum(families.values()) >= 1, families
-    # No presentation-duplicate keys.
-    assert not any(k.startswith("owner:") for k in families)
-    assert not any(k.startswith("with-node:") for k in families)
+    row = CONSUMER.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="with_param.py",
+    )
+
+    # One physical With coordinate produces one terminal occurrence. The
+    # reporter and the thrown panic must not produce two copies of that locus.
+    panics = row["constructionPanics"]
+    assert len(panics) == 1
+    assert len({panic["coordinate"] for panic in panics}) == 1
+    assert row["blocking_terminal_count"] == 1
+    assert len(row["contextManagerResolutionEvents"]) == 1
 
 
 def test_backend_defect_keys_split_cm_and_call_demand() -> None:
@@ -194,5 +216,3 @@ def test_backend_defect_keys_split_cm_and_call_demand() -> None:
     assert cm != call
     assert other.startswith("BackendDefect:")
     assert other not in {cm, call}
-
-

@@ -82,6 +82,152 @@ def test_residual_failure_preserves_roster_functions_total(
     assert row["cleanRatioRefused"] is True
 
 
+def test_consumer_carries_pre_demand_and_real_audit_open_observations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D3 exposure is carried per file without another SourceFile open."""
+    src = tmp_path / "pkg/mod.py"
+    src.parent.mkdir()
+    src.write_text("def a(): pass\n", encoding="utf-8")
+    nodes = [{"memento": {"function_name": "a"}}]
+    sentinel = object()
+
+    monkeypatch.setattr(CONSUMER, "demand_function_roster", lambda **_k: (nodes, []))
+    monkeypatch.setattr(
+        CONSUMER, "demand_context_manager_resolution_events", lambda **_k: ([], [])
+    )
+    monkeypatch.setattr(
+        CONSUMER,
+        "demand_construction_residual",
+        lambda **_k: ({"semanticCore": {"status": "ok", "panics": []}}, []),
+    )
+    monkeypatch.setattr(CONSUMER, "count_ast_function_defs", lambda _p: 1)
+    monkeypatch.setattr(
+        "sugar_source_tree.process_resident_file.get_resident",
+        lambda _cid: sentinel,
+    )
+    monkeypatch.setattr(
+        CONSUMER,
+        "_take_d3_audit_open_observation",
+        lambda source_cid: {
+            "sourceCid": source_cid,
+            "presentAtAuditOpen": True,
+            "auditOpenReusedResident": True,
+            "rootReporterSeatedAtAuditOpen": False,
+            "collectorRegisteredAtAuditExit": False,
+        },
+    )
+
+    row = CONSUMER.measure_file_via_enumerate(
+        workspace_root=tmp_path,
+        file_rel="pkg/mod.py",
+    )
+
+    assert row["d3Residency"] == {
+        "sourceCid": row["inputKey"]["sourceCid"],
+        "reached": True,
+        "presentBeforeDemand": True,
+        "presentAtAuditOpen": True,
+        "auditOpenReusedResident": True,
+        "rootReporterSeatedAtAuditOpen": False,
+        "collectorRegisteredAtAuditExit": False,
+        "presenceConfirmed": True,
+    }
+
+
+def test_d3_residency_aggregate_keeps_counts_and_file_coordinates() -> None:
+    """Both answers and missing attendance survive partial/refusal transport."""
+    rows = [
+        (
+            "hit.py",
+            {
+                "category": "completed",
+                "functionsTotal": 1,
+                "functionsEnumerated": 1,
+                "functionsClean": 1,
+                "cleanRatioRefused": False,
+                "d3Residency": {
+                    "sourceCid": "cid-hit",
+                    "reached": True,
+                    "presentBeforeDemand": True,
+                    "presentAtAuditOpen": True,
+                    "auditOpenReusedResident": True,
+                    "rootReporterSeatedAtAuditOpen": False,
+                    "collectorRegisteredAtAuditExit": False,
+                    "presenceConfirmed": True,
+                },
+            },
+        ),
+        (
+            "miss.py",
+            {
+                "category": "completed",
+                "functionsTotal": 1,
+                "functionsEnumerated": 1,
+                "functionsClean": 1,
+                "cleanRatioRefused": False,
+                "d3Residency": {
+                    "sourceCid": "cid-miss",
+                    "reached": True,
+                    "presentBeforeDemand": False,
+                    "presentAtAuditOpen": False,
+                    "auditOpenReusedResident": False,
+                    "rootReporterSeatedAtAuditOpen": True,
+                    "collectorRegisteredAtAuditExit": True,
+                    "presenceConfirmed": True,
+                },
+            },
+        ),
+        (
+            "early.py",
+            {
+                "instrumentFailure": {"phase": "roster"},
+                "functionsTotal": 0,
+                "functionsEnumerated": 0,
+                "functionsClean": None,
+                "cleanRatioRefused": True,
+            },
+        ),
+    ]
+
+    agg = COMPOSE.aggregate_terminal_rows(
+        rows,
+        enrolled_files=["hit.py", "miss.py", "early.py"],
+    )
+    exposure = agg["d3_residency_exposure"]
+    assert exposure == {
+        "filesEnrolled": 3,
+        "d3Reached": 2,
+        "d3NotReached": 1,
+        "presentBeforeDemand": 1,
+        "absentBeforeDemand": 1,
+        "auditOpenHit": 1,
+        "auditOpenMiss": 1,
+        "auditOpenObserved": 2,
+        "auditOpenUnconfirmed": 0,
+        "presenceConfirmed": 2,
+        "presenceMismatch": 0,
+        "reporterSeated": 1,
+        "reporterUnseated": 1,
+        "collectorRegistered": 1,
+        "collectorEmpty": 1,
+        "hitFiles": ["hit.py"],
+        "missFiles": ["miss.py"],
+        "notReachedFiles": ["early.py"],
+        "auditOpenUnconfirmedFiles": [],
+        "presenceMismatchFiles": [],
+        "reporterUnseatedFiles": ["hit.py"],
+        "collectorEmptyFiles": ["hit.py"],
+    }
+    envelope = COMPOSE.unmeasured_envelope(
+        plan=None,
+        missing_shards=["compose"],
+        unmeasured_reasons={"compose": "frontier refused"},
+        d3_residency_exposure=exposure,
+    )
+    assert envelope["d3ResidencyExposure"] == exposure
+
+
 def test_open_roster_failure_still_zero_when_no_ast(
     tmp_path: Path, monkeypatch
 ) -> None:

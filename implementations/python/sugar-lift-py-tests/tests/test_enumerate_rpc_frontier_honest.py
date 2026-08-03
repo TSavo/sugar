@@ -19,6 +19,12 @@ from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
     RecoveredAuditDto,
     RecoveredFrontierAuditDto,
 )
+from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.process_resident_file import (
+    clear_process_resident_files,
+    prepare_count_for,
+)
+from sugar_source_tree.tree import SourceFile
 
 
 def _drive_frontier(source: str):
@@ -61,11 +67,12 @@ def _drive_frontier(source: str):
                     leaves, lgaps = enum("facts", d["memento"])
                     assert not lgaps and len(leaves) == 1, (leaves, lgaps)
                     leaf = leaves[0]["audit"]
+                    semantic_core = leaf.get("semanticCore") or leaf
                     # leaf must decode as the closed leaf schema (producer end)
-                    RecoveredAuditDto.from_rpc(leaf)
+                    RecoveredAuditDto.from_rpc(semantic_core)
                     # fold stamps demandedBody/ownerIdentity per demanded body
                     body = d["memento"]
-                    for p in leaf["panics"]:
+                    for p in semantic_core["panics"]:
                         owner = {
                             "demandedBody": body,
                             "demandedSource": p["demandedSource"],
@@ -116,19 +123,19 @@ def test_census_fingers_exactly_the_unwritten_kinds():
     # kind and fingers only the one that is still missing.
     audit = _drive_frontier("def test_one():\n    assert 1 == 1\n")
     assert audit.status == "failed"
-    gap_kinds = {p.gap["kind"] for p in audit.panics}
+    gap_kinds = {p.gap["nodeKind"] for p in audit.panics}
     assert "Module" in gap_kinds, gap_kinds
     for written in ("Assert", "Compare", "Constant", "FunctionDef"):
         assert written not in gap_kinds, f"{written} sugar is written; not a gap"
 
 
-def test_shared_cid_at_distinct_loci_stays_distinct_and_located():
+def test_shared_cid_at_distinct_loci_stays_distinct_without_fake_panics():
     # Two identical `import os` statements register two ImportAlias nodes with
     # the SAME sealed fragment CID (equal source text) at DISTINCT loci. The
-    # roll call counts both; the panic producer must too. Keying panics by CID
-    # alone collapses the second locus onto the first node -- mislocating it to
-    # line 1 AND emitting a duplicate owner identity the Rust reader rejects,
-    # which under-reports the real second-site residual.
+    # roll call counts both.  They remain distinct source-audit members even
+    # when an earlier Module panic blocks their own construction.  A blocked
+    # descendant has no authenticated panic payload and therefore must not be
+    # fabricated as a second ConstructionPanic product terminal.
     with tempfile.TemporaryDirectory() as root:
         path = Path(root, "t.py")
         path.write_text("import os\nimport os\n")
@@ -140,22 +147,63 @@ def test_shared_cid_at_distinct_loci_stays_distinct_and_located():
         set(owners)
     ), f"duplicate recovered-panic owner identity: {owners}"
 
-    alias_lines = sorted(
-        p["terminalGapLocus"]
-        for p in panics
-        if p["terminalGapLocus"].endswith("[ImportAlias]")
+    source_audit = leaf["auxiliaryRows"]["sourceAudit"]
+    alias_loci = sorted(
+        (row["locus"]["line"], row["locus"]["col"], row["source_cid"])
+        for row in source_audit["loci"]
+        if row["kind"] == "ImportAlias"
     )
-    assert alias_lines == [
-        "t.py:1:7-1:9[ImportAlias]",
-        "t.py:2:7-2:9[ImportAlias]",
-    ], f"each import alias must keep its own locus, got {alias_lines}"
+    assert [(line, col) for line, col, _cid in alias_loci] == [(1, 7), (2, 7)]
+    assert alias_loci[0][2] == alias_loci[1][2], "equal text keeps one content CID"
+    assert source_audit["totals"]["source_unresolved"] > len(panics)
+    assert all("observedEventType" in panic["gap"] for panic in panics)
 
-    # The panic list conserves the roll-call minority exactly: one row per
-    # absent source site, no fusion, no inflation.
-    assert (
-        len(panics)
-        == leaf["auxiliaryRows"]["sourceAudit"]["totals"]["source_unresolved"]
-    ), "panic count must equal R (source_unresolved)"
+
+def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
+    """The exposure detector must return both answers at the real D3 open.
+
+    It observes the existing open; it neither clears nor re-opens inside the
+    producer.  The miss arm seats the collector at construction.  The hit arm
+    proves the D3 consumer re-seats the already prepared nodes without paying a
+    second prepare, so both paths testify through the same collector.
+    """
+    path = tmp_path / "t.py"
+    path.write_text("def f():\n    x\n", encoding="utf-8")
+    _source, _filename, source_cid = path_source(str(path))
+
+    clear_process_resident_files()
+    lift_rpc._roll_call_audit_leaf(
+        path,
+        "t.py",
+        expected_source_cid=source_cid,
+    )
+    miss = lift_rpc.take_d3_residency_observation(source_cid)
+    assert prepare_count_for(source_cid) == 1
+    assert miss == {
+        "sourceCid": source_cid,
+        "presentAtAuditOpen": False,
+        "auditOpenReusedResident": False,
+        "rootReporterSeatedAtAuditOpen": True,
+        "collectorRegisteredAtAuditExit": True,
+    }
+
+    clear_process_resident_files()
+    SourceFile.from_path(path)  # D2/CM-shaped prior prepare with NULL_REPORTER.
+    assert prepare_count_for(source_cid) == 1
+    lift_rpc._roll_call_audit_leaf(
+        path,
+        "t.py",
+        expected_source_cid=source_cid,
+    )
+    hit = lift_rpc.take_d3_residency_observation(source_cid)
+    assert prepare_count_for(source_cid) == 1
+    assert hit == {
+        "sourceCid": source_cid,
+        "presentAtAuditOpen": True,
+        "auditOpenReusedResident": True,
+        "rootReporterSeatedAtAuditOpen": True,
+        "collectorRegisteredAtAuditExit": True,
+    }
 
 
 if __name__ == "__main__":
