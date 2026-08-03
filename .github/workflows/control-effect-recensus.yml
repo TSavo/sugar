@@ -65,7 +65,7 @@ jobs:
   # Resolve population, pin denominator, LPT-assign enrolled files into k bins.
   # Does not measure. planCid is the content-addressed identity workers bind.
   plan:
-    name: LPT plan k=${{ env.RECENSUS_SHARD_COUNT }}
+    name: LPT plan
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     outputs:
