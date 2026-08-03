@@ -60,14 +60,6 @@ _FORBIDDEN_PRODUCT_KEYS = frozenset(
 
 _EXPECTED_CONSTRUCTION_PANIC_IDENTITIES = (
     {
-        "file": "planted_clean.py",
-        "owner": "Module.sugar",
-        "coordinate": "planted_clean.py:1:0-6:0[Module]",
-        "observedEventType": "sugar_source_tree.panic.SugarNotWritten",
-        "requested": "a constructed sugar object",
-        "entrance": "sugar.enumerate:facts:auditFrontier",
-    },
-    {
         "file": "planted_panic_host.py",
         "owner": "recensus-path-smoke-planted-panic",
         "coordinate": "planted_panic_host.py:1:0",
@@ -76,6 +68,32 @@ _EXPECTED_CONSTRUCTION_PANIC_IDENTITIES = (
         "entrance": "sugar.enumerate:roster",
     },
 )
+
+_RETIRED_MODULE_SUGAR_PANIC_IDENTITY = {
+    "file": "planted_clean.py",
+    "owner": "Module.sugar",
+    "coordinate": "planted_clean.py:1:0-6:0[Module]",
+    "observedEventType": "sugar_source_tree.panic.SugarNotWritten",
+    "requested": "a constructed sugar object",
+    "entrance": "sugar.enumerate:facts:auditFrontier",
+}
+
+_EXPECTED_MODULE_SUGAR_CONSTRUCTED_IDENTITY = {
+    "file": "planted_clean.py",
+    "sourceCid": (
+        "blake3-512:6b64cbd185cd2da38bea697245ef05b21763197594c483bcbb1b4ae9fe40ed55"
+        "a88d0b48a3d41e6786185707dac26d140110336390a8b53516e04f717f6e2b8b"
+    ),
+    "rowId": (
+        "blake3-512:11e6c281e5d8750dbb061a27bd5589f9dcea7a28d967eea68709cccbfd8cacb3"
+        "bbdba0bc3cce0fcb9204a3c8259d3e27aee4ac5d21cd55691368dedb882d1a95"
+    ),
+    "stageId": "recensus-enumerate-file-terminal/v1",
+    "observedEventType": "builtins.dict",
+    "category": "completed",
+    "terminalKind": "constructed",
+    "final_terminal": "constructed",
+}
 
 
 def _construction_panic_identity(panic: dict[str, Any]) -> dict[str, str | None]:
@@ -100,6 +118,41 @@ def _sorted_panic_identities(
         (_construction_panic_identity(panic) for panic in panics),
         key=lambda row: tuple(str(row.get(key) or "") for key in sorted(row)),
     )
+
+
+def _module_sugar_constructed_identity(
+    row: dict[str, Any] | None,
+) -> dict[str, str | None] | None:
+    """Project the exact constructed row replacing the retired Module panic."""
+    if not isinstance(row, dict):
+        return None
+    input_key = row.get("inputKey")
+    if not isinstance(input_key, dict):
+        return None
+    return {
+        "file": input_key.get("file")
+        if isinstance(input_key.get("file"), str)
+        else None,
+        "sourceCid": input_key.get("sourceCid")
+        if isinstance(input_key.get("sourceCid"), str)
+        else None,
+        "rowId": row.get("rowId") if isinstance(row.get("rowId"), str) else None,
+        "stageId": row.get("stageId")
+        if isinstance(row.get("stageId"), str)
+        else None,
+        "observedEventType": row.get("observedEventType")
+        if isinstance(row.get("observedEventType"), str)
+        else None,
+        "category": row.get("category")
+        if isinstance(row.get("category"), str)
+        else None,
+        "terminalKind": row.get("terminalKind")
+        if isinstance(row.get("terminalKind"), str)
+        else None,
+        "final_terminal": row.get("final_terminal")
+        if isinstance(row.get("final_terminal"), str)
+        else None,
+    }
 
 
 def _narrate(msg: str) -> None:
@@ -378,6 +431,7 @@ def _run_teeth(
     accounted: int,
     cpanic: int,
     construction_panics: list[dict[str, Any]],
+    module_sugar_row: dict[str, Any] | None = None,
     conserves: bool,
     sealed_path: Path | None,
     path_verdict_so_far: str,
@@ -416,6 +470,30 @@ def _run_teeth(
             f"cpanic={cpanic}; exact terminal identity mismatch: "
             f"observed={json.dumps(observed_panic_identities, sort_keys=True)} "
             f"expected={json.dumps(expected_panic_identities, sort_keys=True)}",
+        )
+
+    observed_module_sugar = _module_sugar_constructed_identity(module_sugar_row)
+    retired_module_panic = _construction_panic_identity(
+        dict(_RETIRED_MODULE_SUGAR_PANIC_IDENTITY)
+    )
+    if (
+        observed_module_sugar == _EXPECTED_MODULE_SUGAR_CONSTRUCTED_IDENTITY
+        and retired_module_panic not in observed_panic_identities
+    ):
+        ok(
+            "module_sugar_constructed",
+            "Module.sugar constructed at retired panic coordinate "
+            f"{_RETIRED_MODULE_SUGAR_PANIC_IDENTITY['coordinate']}: "
+            + json.dumps(observed_module_sugar, sort_keys=True),
+        )
+    else:
+        fail(
+            "module_sugar_constructed",
+            "Module.sugar construction identity mismatch at retired panic coordinate "
+            f"{_RETIRED_MODULE_SUGAR_PANIC_IDENTITY['coordinate']}: "
+            f"observed={json.dumps(observed_module_sugar, sort_keys=True)} "
+            "retiredPanicPresent="
+            f"{retired_module_panic in observed_panic_identities}",
         )
 
     if unconstructed >= 1:
@@ -540,7 +618,8 @@ def main(argv: list[str] | None = None) -> int:
         _narrate("PATH_SMOKE measured planted_constructed_with")
         rows.append(_measure_opaque(module, opaque_path, workspace))
         _narrate("PATH_SMOKE measured planted_opaque_with")
-        rows.append(_measure_clean(module, clean_path, workspace))
+        module_sugar_row = _measure_clean(module, clean_path, workspace)
+        rows.append(module_sugar_row)
         _narrate("PATH_SMOKE measured planted_clean")
         rows.append(_measure_panic(module, panic_path, workspace))
         _narrate("PATH_SMOKE measured planted_panic_host")
@@ -667,6 +746,9 @@ def main(argv: list[str] | None = None) -> int:
             "constructionPanicIdentities": _sorted_panic_identities(
                 construction_panics
             ),
+            "moduleSugarConstructedIdentity": (
+                _module_sugar_constructed_identity(module_sugar_row)
+            ),
             "families": dict(sorted(families.items())),
             "cmResolutions": dict(sorted(cm.items())),
             "firstTerminalChain": first_terminal_chain,
@@ -710,6 +792,7 @@ def main(argv: list[str] | None = None) -> int:
             accounted=accounted,
             cpanic=cpanic,
             construction_panics=construction_panics,
+            module_sugar_row=module_sugar_row,
             conserves=conserves,
             sealed_path=sealed,
             path_verdict_so_far="PATH_OK",
