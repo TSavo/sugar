@@ -3105,6 +3105,30 @@ class Module(Node):
             return self
         return rewrite(self, body=new_body)
 
+    def _construct_sugar(self):
+        """Construct the module block after its one temporal scope fold.
+
+        ``Module`` owns only source order and module-level binding scope.  Each
+        statement owns its own meaning and constructs through ``Statement.sugar``
+        exactly once.  A child construction gap therefore propagates with the
+        child's owner; the module neither skips it nor invents completion.
+        """
+        from sugar_lift_py_tests.engine_log import reduction_span
+        from sugar_lift_py_tests.sugar.module_block_sugar import ModuleBlockSugar
+
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line} Module"
+        with reduction_span(sugar="ModuleBlock", role="construction", site=where):
+            with reduction_span(sugar="Substitute", role="temporal", site=where):
+                substituted = self.substitute({})
+            with reduction_span(sugar="Construct", role="construction", site=where):
+                return ModuleBlockSugar(
+                    statements=tuple(
+                        statement.sugar() for statement in substituted.body
+                    ),
+                    site=self.fragment,
+                )
+
 
 class FunctionDef(Statement):
     name: str
