@@ -77,9 +77,7 @@ def find_function_by_name(sf: SourceFile, name: str):
     if len(functions) == 1:
         return functions[0]
     if not functions:
-        raise FunctionBindingMiss(
-            name=name, reason="no module-direct function binding"
-        )
+        raise FunctionBindingMiss(name=name, reason="no module-direct function binding")
     raise FunctionBindingMiss(
         name=name,
         reason=f"{len(functions)} competing module-direct function bindings",
@@ -546,9 +544,7 @@ def source_audit_from_roll_call(full_path: Path, file_rel: str) -> dict:
     return source_audit_from_report(report, file_rel)
 
 
-def source_audit_membership_from_registration(
-    full_path: Path, file_rel: str
-) -> dict:
+def source_audit_membership_from_registration(full_path: Path, file_rel: str) -> dict:
     """Roll-call **membership** only: materialize + register, no sugar discharge.
 
     Used by R_silent, which keys on whether a disk locus is in

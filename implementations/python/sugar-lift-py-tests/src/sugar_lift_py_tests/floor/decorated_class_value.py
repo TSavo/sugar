@@ -6,7 +6,6 @@ from sugar_lift_python_source.canonical import cid_of_json
 
 from .floor_value import FloorValue
 
-
 _APPLICATION_AUTHORITY = object()
 _PUBLICATION_AUTHORITY = object()
 _MEMBER_AUTHORITY = object()
@@ -69,11 +68,22 @@ class DecoratorApplicationPublicationV1:
 
     def __post_init__(self):
         if getattr(self, "_authority", None) is not _APPLICATION_AUTHORITY:
-            raise ValueError("decorated class publication application is not producer-minted")
+            raise ValueError(
+                "decorated class publication application is not producer-minted"
+            )
         callable_cid = _floor_cid(self.callable_floor)
         input_cid = _floor_cid(self.input_floor)
         output_cid = _floor_cid(self.output_floor)
-        application_cid = cid_of_json({"kind": "decorated-class-application", "schemaVersion": "1", "occurrence": self.occurrence.wire(), "callableFloorCid": callable_cid, "inputFloorCid": input_cid, "outputFloorCid": output_cid})
+        application_cid = cid_of_json(
+            {
+                "kind": "decorated-class-application",
+                "schemaVersion": "1",
+                "occurrence": self.occurrence.wire(),
+                "callableFloorCid": callable_cid,
+                "inputFloorCid": input_cid,
+                "outputFloorCid": output_cid,
+            }
+        )
         if (
             self.callable_floor_cid != callable_cid
             or self.input_floor_cid != input_cid
@@ -204,7 +214,21 @@ class DecoratedClassPublicationV1:
             raise ValueError("decorated class publication final result mismatch")
         raw_cid = _floor_cid(self.raw_class)
         final_cid = _floor_cid(self.final_class)
-        publication_cid = cid_of_json({"kind": "decorated-class-publication", "schemaVersion": "1", "sourceCid": self.source_cid, "definition": self.definition.wire(), "bindingOccurrence": self.binding_occurrence.wire(), "rawClassCid": raw_cid, "decoratorApplications": [a.application_cid for a in self.decorator_applications], "finalClassCid": final_cid, "moduleConstructionReceiptCid": self.module_construction_receipt_cid})
+        publication_cid = cid_of_json(
+            {
+                "kind": "decorated-class-publication",
+                "schemaVersion": "1",
+                "sourceCid": self.source_cid,
+                "definition": self.definition.wire(),
+                "bindingOccurrence": self.binding_occurrence.wire(),
+                "rawClassCid": raw_cid,
+                "decoratorApplications": [
+                    a.application_cid for a in self.decorator_applications
+                ],
+                "finalClassCid": final_cid,
+                "moduleConstructionReceiptCid": self.module_construction_receipt_cid,
+            }
+        )
         if (
             self.raw_class_cid != raw_cid
             or self.final_class_cid != final_cid
@@ -474,7 +498,15 @@ class DecoratedClassMemberValue(FloorValue):
         if self.publication_cid != self.publication.publication_cid:
             raise ValueError("decorated class member publication CID mismatch")
         floor_cid = _floor_cid(self.member_floor)
-        member_cid = cid_of_json({"kind": "decorated-class-member-publication", "schemaVersion": "1", "publicationCid": self.publication.publication_cid, "memberDefinition": self.member_definition.wire(), "memberFloorCid": floor_cid})
+        member_cid = cid_of_json(
+            {
+                "kind": "decorated-class-member-publication",
+                "schemaVersion": "1",
+                "publicationCid": self.publication.publication_cid,
+                "memberDefinition": self.member_definition.wire(),
+                "memberFloorCid": floor_cid,
+            }
+        )
         if self.member_floor_cid != floor_cid or self.member_cid != member_cid:
             raise ValueError("decorated class member CID mismatch")
 

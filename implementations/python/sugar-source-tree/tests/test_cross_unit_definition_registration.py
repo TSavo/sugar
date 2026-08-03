@@ -31,7 +31,6 @@ from sugar_source_tree.panic import BackendDefect, ConstructedValueTestimonyNotW
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.tree import SourceFile
 
-
 SOURCE = (
     "def exact(value):\n"
     "    return value\n\n"
@@ -64,9 +63,7 @@ def _registered_unit(identity=None):
         collector, SubstitutionTraceBuilderV1(source.unit.source_cid)
     )
     root = materialize(source.unit, source.root.ref, reporter)
-    definitions = tuple(
-        node for node in root.walk() if isinstance(node, FunctionDef)
-    )
+    definitions = tuple(node for node in root.walk() if isinstance(node, FunctionDef))
     calls = tuple(node for node in root.walk() if isinstance(node, Call))
     assert len(definitions) == 2
     assert len(calls) == 1
@@ -84,9 +81,7 @@ def _consumer_with_frame(frame, identity=None):
         collector, SubstitutionTraceBuilderV1(source.unit.source_cid)
     )
     root = materialize(source.unit, source.root.ref, reporter)
-    definitions = tuple(
-        node for node in root.walk() if isinstance(node, FunctionDef)
-    )
+    definitions = tuple(node for node in root.walk() if isinstance(node, FunctionDef))
     call = next(node for node in root.walk() if isinstance(node, Call))
     return source, definitions, call, reporter, context
 
@@ -180,11 +175,11 @@ def test_same_roll_definition_registration_remains_lawful() -> None:
     context = TreeConstructionContextV1.for_source_call_construction()
     collector = CollectingReporter()
     source = SourceFile(_identity(), reporter=collector, construction_context=context)
-    definition = next(
-        node for node in source.nodes() if isinstance(node, FunctionDef)
-    )
+    definition = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
-    context.source_call_frames[_coordinate(call)] = definition.source_visible_call_frame()
+    context.source_call_frames[_coordinate(call)] = (
+        definition.source_visible_call_frame()
+    )
     reporter = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(source.unit.source_cid)
     )
@@ -216,8 +211,7 @@ def test_distinct_definition_from_empty_reporter_cannot_authorize_frame() -> Non
     with pytest.raises(BackendDefect) as gap:
         call.sugar()
     assert (
-        gap.value.owner
-        == "ConstructionTestimonyReporterV1.retain_registered_node_from"
+        gap.value.owner == "ConstructionTestimonyReporterV1.retain_registered_node_from"
     )
     assert gap.value.observed == "foreign or absent producer node registration"
     assert gap.value.blame.seal() == empty_definition.fragment.seal()

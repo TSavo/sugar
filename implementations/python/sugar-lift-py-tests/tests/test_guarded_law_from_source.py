@@ -37,7 +37,7 @@ from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Complete
 
-CORPUS = '''\
+CORPUS = """\
 def bare_string(flag):
     if flag:
         "a string statement"
@@ -80,7 +80,7 @@ def guarded_obligation(flag, claim):
     if flag:
         assert claim
     return 7
-'''
+"""
 
 # Each function names the Floor category its guarded entry rides as. The six
 # categories are exactly the non-BlockValue owners the ledger records.
@@ -187,9 +187,9 @@ def test_the_guard_is_not_dropped_by_the_stable_category(corpus: Path) -> None:
         for statement in outcome.value.record.statements
         if isinstance(statement, InvValue)
     ]
-    assert len(obligations) == 1, (
-        f"expected exactly one obligation, saw {len(obligations)}"
-    )
+    assert (
+        len(obligations) == 1
+    ), f"expected exactly one obligation, saw {len(obligations)}"
     formula = obligations[0].formula
     assert getattr(formula, "kind", None) == "implies", (
         f"the guarded obligation is `{formula}`, not an implication -- the "

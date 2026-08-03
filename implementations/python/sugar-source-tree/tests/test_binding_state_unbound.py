@@ -59,6 +59,7 @@ def _assert_unpack_arity_obligation(out, *, arity: int, names: tuple[str, ...]):
     assert isinstance(out, Incomplete), type(out).__name__
     return _assert_unpack_effect(out.effect, arity=arity, names=names)
 
+
 def _return(exit_):
     assert isinstance(exit_, Completed)
     assert isinstance(exit_.value, UniverseValue)

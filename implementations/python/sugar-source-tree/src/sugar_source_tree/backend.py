@@ -89,9 +89,7 @@ def materialize(
     cls = ref.resolve_type()
     # Ensure the field row exists (filled lazily on first accessor). Kind
     # selects whether the control stack is part of the coordinate.
-    key = cache.key(
-        ref, reporter, ctx, unit.construction_context, kind=cls.__name__
-    )
+    key = cache.key(ref, reporter, ctx, unit.construction_context, kind=cls.__name__)
     cache.fields.setdefault(key, {})
 
     return cls(
@@ -667,7 +665,10 @@ class Backend:
         reporter: AuditReporter = NULL_REPORTER,
     ) -> _ConstructedModuleV1:
         """Construct and close one module product in one eager traversal."""
-        from .file_open_profile import _TimedModuleMaterialize, current_file_open_profile
+        from .file_open_profile import (
+            _TimedModuleMaterialize,
+            current_file_open_profile,
+        )
 
         # Profile only when a file-open instrument is active (recensus etc.).
         # L0c: key by content CID, not seat path — same module at two seats is

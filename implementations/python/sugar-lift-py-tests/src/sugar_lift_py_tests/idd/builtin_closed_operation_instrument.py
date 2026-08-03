@@ -88,7 +88,6 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
-
 VENDOR_CM_ROOTS: frozenset[str] = frozenset(
     {
         "pytest",
@@ -184,9 +183,7 @@ def exception_type_names(type_node: ast.AST | None) -> frozenset[str]:
 
 
 def is_panic_type_name(name: str) -> bool:
-    return name == "ConstructionPanic" or (
-        name != "<bare>" and name.endswith("Panic")
-    )
+    return name == "ConstructionPanic" or (name != "<bare>" and name.endswith("Panic"))
 
 
 def production_python_scan_roots(repo: Path) -> list[Path]:
@@ -419,13 +416,14 @@ class _Visitor(ast.NodeVisitor):
             return "vendor_cm"
 
         if isinstance(node.left, ast.Name) and node.left.id == "type_name":
-            if any(isinstance(op, (ast.In, ast.NotIn, ast.Eq, ast.NotEq)) for op in node.ops):
+            if any(
+                isinstance(op, (ast.In, ast.NotIn, ast.Eq, ast.NotEq))
+                for op in node.ops
+            ):
                 return "type_name_gate"
 
         attr_names = {
-            operand.attr
-            for operand in operands
-            if isinstance(operand, ast.Attribute)
+            operand.attr for operand in operands if isinstance(operand, ast.Attribute)
         }
         has_str_constant = any(
             isinstance(operand, ast.Constant) and isinstance(operand.value, str)
@@ -467,9 +465,7 @@ class _Visitor(ast.NodeVisitor):
         """
         operands = (node.left, *node.comparators)
         attr_names = {
-            operand.attr
-            for operand in operands
-            if isinstance(operand, ast.Attribute)
+            operand.attr for operand in operands if isinstance(operand, ast.Attribute)
         }
         has_str_constant = any(
             isinstance(operand, ast.Constant) and isinstance(operand.value, str)
@@ -550,9 +546,7 @@ class _Visitor(ast.NodeVisitor):
         return False
 
     def _compare_is_generic_builtin_verdict(self, node: ast.Compare) -> bool:
-        names = {
-            child.id for child in ast.walk(node) if isinstance(child, ast.Name)
-        }
+        names = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
         if not (names & _GENERIC_BUILTIN_VERDICT_NAMES):
             return False
         bools = {

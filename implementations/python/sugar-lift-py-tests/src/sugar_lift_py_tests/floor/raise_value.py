@@ -9,7 +9,6 @@ from .exception_value import ExceptionValue
 from .exception_cause_value import ExceptionCauseValue
 from .floor_value import FloorValue
 
-
 # Placeholder strings that invent exceptional-exit meaning outside the tree.
 # Identity/citation must come from Sugar/the tree — never these spellings.
 # Retirement: when exception_name is a closed typed constructor that can only
@@ -174,8 +173,7 @@ def _require_authenticated_exceptional_exit_citation(effect) -> None:
         _refuse_uncited_exit(
             effect,
             observed=(
-                "raise face has neither exception_name nor "
-                "exception_type_coordinate"
+                "raise face has neither exception_name nor " "exception_type_coordinate"
             ),
             requested=(
                 "an authenticated exception identity (name or type coordinate) "

@@ -438,9 +438,7 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
-    def next_with(
-        self, operation: NextOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> Outcome:
         del ctx
         return self.call_method_value(
             "__next__",

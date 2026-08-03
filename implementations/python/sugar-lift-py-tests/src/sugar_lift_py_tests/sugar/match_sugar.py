@@ -355,10 +355,14 @@ class MatchSugar(Sugar):
                     nested = MatchSugar(sub, self.cases, self.site).desugar(ctx)
                     nested_es = _outcome_as_exitset(nested)
                     parts = parts.union(_restrict(nested_es, face.guard))
-            return parts.normalize() if parts.exits else Complete(
-                __import__(
-                    "sugar_lift_py_tests.floor.block_value", fromlist=["BlockValue"]
-                ).BlockValue((), can_fall_through=True)
+            return (
+                parts.normalize()
+                if parts.exits
+                else Complete(
+                    __import__(
+                        "sugar_lift_py_tests.floor.block_value", fromlist=["BlockValue"]
+                    ).BlockValue((), can_fall_through=True)
+                )
             )
 
         if not isinstance(subject_out, Complete):

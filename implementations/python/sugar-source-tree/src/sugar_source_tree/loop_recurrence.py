@@ -51,7 +51,9 @@ class LoopProjectedBindingProductSugar(ConstructedTermSugar):
                 "loop binding product requires the producer's exact projection"
             )
         if self.projection.target_cid != self.target_cid:
-            raise BindingStateWireGap("loop binding product has a foreign loop occurrence")
+            raise BindingStateWireGap(
+                "loop binding product has a foreign loop occurrence"
+            )
         if cid_of_json(self.binding_coordinate.preimage) != self.binding_coordinate.cid:
             raise BindingStateWireGap("loop binding product has a foreign coordinate")
         expected_name = cid_of_json(
@@ -64,7 +66,9 @@ class LoopProjectedBindingProductSugar(ConstructedTermSugar):
             raise BindingStateWireGap("loop binding product has a foreign binding name")
         expected_occurrence = cid_of_json(self.site.seal().to_dict())
         if self.occurrence_cid != expected_occurrence:
-            raise BindingStateWireGap("loop binding product has a foreign read occurrence")
+            raise BindingStateWireGap(
+                "loop binding product has a foreign read occurrence"
+            )
         if (
             self.binding_coordinate.binding_site["source_cid"]
             != self.site.seal().source_cid
@@ -87,9 +91,7 @@ class LoopProjectedBindingProductSugar(ConstructedTermSugar):
             site,
             binding_coordinate,
             target_cid,
-            cid_of_json(
-                {"bindingCoordinateCid": binding_coordinate.cid, "name": name}
-            ),
+            cid_of_json({"bindingCoordinateCid": binding_coordinate.cid, "name": name}),
             cid_of_json(site.seal().to_dict()),
             _PRODUCT_MINT_AUTHORITY,
         )
@@ -195,8 +197,8 @@ def project_loop_post_binding(
             raise BindingStateWireGap(
                 f"completed face {face.cid} has {len(matches)} entries for binding coordinate"
             )
-        live_guard = None if live_guards is None else live_guards.get(
-            record["guardFormulaCid"]
+        live_guard = (
+            None if live_guards is None else live_guards.get(record["guardFormulaCid"])
         )
         if live_guards is not None:
             if live_guard is None:

@@ -22,8 +22,7 @@ def _source(tmp_path: Path, name: str, *, suffix: str = ""):
     path.write_text(
         "OPTIONS = {}\n"
         "def has_option(key):\n"
-        "    return key in OPTIONS\n"
-        + suffix,
+        "    return key in OPTIONS\n" + suffix,
         encoding="utf-8",
     )
     tree = SourceFile.from_path(path)
@@ -39,9 +38,7 @@ def _source(tmp_path: Path, name: str, *, suffix: str = ""):
 
 
 def _context(binding, *, kind: str):
-    value = MutableGlobalValue(
-        "OPTIONS", kind, binding.source_cid, binding.seal()
-    )
+    value = MutableGlobalValue("OPTIONS", kind, binding.source_cid, binding.seal())
     ctx = ReduceContext.root(owner="mutable-global-membership")
     return value, ctx.with_temporal(ctx.temporal.bind_value("OPTIONS", value))
 

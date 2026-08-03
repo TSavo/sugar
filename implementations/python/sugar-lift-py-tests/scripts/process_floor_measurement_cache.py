@@ -104,10 +104,7 @@ def resolve_cache_root() -> Path | None:
     workspace = os.environ.get("GITHUB_WORKSPACE")
     if workspace:
         return (
-            Path(workspace).resolve()
-            / ".cache"
-            / "sugar"
-            / "process-floor-terminals"
+            Path(workspace).resolve() / ".cache" / "sugar" / "process-floor-terminals"
         )
     home = os.environ.get("HOME")
     if home:
@@ -214,9 +211,7 @@ class ProcessFloorTerminalCache:
             raise CacheRefuse(f"cache row missing terminal in {path}")
         category = str(terminal.get("category") or "")
         if category not in CACHEABLE_CATEGORIES:
-            raise CacheRefuse(
-                f"refusing non-cacheable category {category!r} in {path}"
-            )
+            raise CacheRefuse(f"refusing non-cacheable category {category!r} in {path}")
         return dict(terminal)
 
     def store(self, key: MeasurementKey, terminal: Mapping[str, Any]) -> Path | None:

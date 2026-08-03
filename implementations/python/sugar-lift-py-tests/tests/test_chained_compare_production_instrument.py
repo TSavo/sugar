@@ -19,10 +19,7 @@ from sugar_source_tree.tree import SourceFile
 
 def _helper(expression: str) -> str:
     return (
-        "def chain():\n"
-        f"    if {expression}:\n"
-        "        return 1\n"
-        "    return 0\n"
+        "def chain():\n" f"    if {expression}:\n" "        return 1\n" "    return 0\n"
     )
 
 
@@ -65,9 +62,11 @@ def _type_error_identity():
 
 def test_successful_chain_selects_the_true_body() -> None:
     tree = _tree()
-    outcome = next(
-        node for node in tree.nodes() if isinstance(node, Compare)
-    ).sugar().desugar(None)
+    outcome = (
+        next(node for node in tree.nodes() if isinstance(node, Compare))
+        .sugar()
+        .desugar(None)
+    )
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
@@ -75,9 +74,11 @@ def test_successful_chain_selects_the_true_body() -> None:
 def test_false_first_leg_selects_false_body_and_emits_no_second_occurrence() -> None:
     tree = _tree("chain()\n", _helper("2 < 1 < None"))
     first_site, second_site = _pair_sites(tree)
-    outcome = next(
-        node for node in tree.nodes() if isinstance(node, Compare)
-    ).sugar().desugar(None)
+    outcome = (
+        next(node for node in tree.nodes() if isinstance(node, Compare))
+        .sugar()
+        .desugar(None)
+    )
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, FalseBoolLiteralSugar)
@@ -128,7 +129,11 @@ def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:
 @pytest.mark.parametrize(
     ("expression", "raise_atoms", "identity_first"),
     (
-        ("a < b == c", {"python.lt_dispatch_raises", "python.eq_dispatch_raises"}, False),
+        (
+            "a < b == c",
+            {"python.lt_dispatch_raises", "python.eq_dispatch_raises"},
+            False,
+        ),
         ("a is b < c", {"python.lt_dispatch_raises"}, True),
         (
             "a in b < c",
@@ -148,6 +153,7 @@ def test_mixed_chain_legs_retain_separate_exception_laws(
     assert isinstance(outcome, ExitSet)
 
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+
     def atoms(formula):
         name = getattr(formula, "name", None)
         if isinstance(name, str):

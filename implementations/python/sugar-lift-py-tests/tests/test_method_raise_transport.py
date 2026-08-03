@@ -139,11 +139,7 @@ def _route_try(exits: ExitSet, expected: str) -> ExitSet:
 
 
 def _raise_body(exception: str = "ValueError") -> str:
-    return (
-        "class Raiser:\n"
-        f"    def boom(self):\n"
-        f"        raise {exception}\n"
-    )
+    return "class Raiser:\n" f"    def boom(self):\n" f"        raise {exception}\n"
 
 
 # ===========================================================================
@@ -160,8 +156,7 @@ def test_bound_method_raise_publishes_named_halt_at_call() -> None:
     assert halted.effect.exception_name == "ValueError"
     assert halted.effect.exception_type_coordinate == _identity("ValueError")
     assert (
-        halted.effect.occurrence_id is not None
-        or halted.effect.occurrence is not None
+        halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
     ), f"{CODEX3}: halt missing occurrence"
     # Call boundary re-owns the published edge.
     assert halted.effect.producer_node_owner == "Call"
@@ -224,9 +219,9 @@ def test_prior_store_survives_in_pre_effect_state_across_method_call() -> None:
     halted = _method_halt(source)
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
-    assert lists == [ListValue((TermValue(9),))], (
-        f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
-    )
+    assert lists == [
+        ListValue((TermValue(9),))
+    ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
 
 
 # ===========================================================================
@@ -295,12 +290,12 @@ def test_method_raise_under_guard_keeps_guard_on_halt_face() -> None:
     halt = halted[0]
     assert halt.effect.exception_name == "ValueError"
     guard_s = str(halt.guard)
-    assert "py.truthy" in guard_s or "truthy" in guard_s or "branch" in guard_s, (
-        f"{CODEX3}: guard dropped on method raise face: {halt.guard!r}"
+    assert (
+        "py.truthy" in guard_s or "truthy" in guard_s or "branch" in guard_s
+    ), f"{CODEX3}: guard dropped on method raise face: {halt.guard!r}"
+    assert "not" in str(completed[0].guard).lower() or str(completed[0].guard) != str(
+        halt.guard
     )
-    assert "not" in str(completed[0].guard).lower() or str(
-        completed[0].guard
-    ) != str(halt.guard)
 
 
 def test_method_raise_under_true_guard_collapses_to_sole_halt() -> None:
@@ -389,8 +384,8 @@ def test_wrong_exception_observation_is_not_the_method_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported method edge."""
     source = _raise_body() + "\nRaiser().boom()\n"
     halted = _method_halt(source)
-    foreign = RaiseEffect.for_builtin("ValueError",
-        
+    foreign = RaiseEffect.for_builtin(
+        "ValueError",
         blame="foreign.py:1:0",
         occurrence="foreign.py:1:0",
         exception_type_mro=(_identity("ValueError"),),
@@ -415,14 +410,14 @@ def test_fabricated_empty_state_is_not_pre_effect_when_store_preceded_raise() ->
     halted = _method_halt(source)
     fabricated = _ReducedBlock((), True, ())
     assert halted.state is not None, f"{CODEX1}: missing pre-effect state"
-    assert halted.state != fabricated or halted.state.entries, (
-        f"{CODEX1}: state collapsed to empty fabricated block"
-    )
+    assert (
+        halted.state != fabricated or halted.state.entries
+    ), f"{CODEX1}: state collapsed to empty fabricated block"
     with pytest.raises(AssertionError):
         assert halted.state is fabricated
-    assert any(isinstance(e, ListValue) for e in halted.state.entries), (
-        f"{CODEX1}: prior store absent from entries={halted.state.entries!r}"
-    )
+    assert any(
+        isinstance(e, ListValue) for e in halted.state.entries
+    ), f"{CODEX1}: prior store absent from entries={halted.state.entries!r}"
 
 
 def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
@@ -483,8 +478,8 @@ def test_bound_method_raise_is_sole_exceptional_edge() -> None:
     source = _raise_body() + "\nRaiser().boom()\n"
     outcome = _method_outcome(source)
     assert isinstance(outcome, ExitSet)
-    assert sum(isinstance(e, Halted) for e in outcome.exits) == 1, (
-        f"{CODEX3}: expected sole Halted edge, got {outcome.exits!r}"
-    )
+    assert (
+        sum(isinstance(e, Halted) for e in outcome.exits) == 1
+    ), f"{CODEX3}: expected sole Halted edge, got {outcome.exits!r}"
     with pytest.raises(AssertionError):
         assert all(isinstance(e, Completed) for e in outcome.exits)

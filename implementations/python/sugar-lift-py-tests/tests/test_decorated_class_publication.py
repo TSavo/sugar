@@ -87,9 +87,7 @@ def test_replacing_decorator_publication_ties_member_to_final_class(
 def test_publication_refuses_decorator_chain_reconstruction(
     variant: str, tmp_path: Path, monkeypatch
 ) -> None:
-    publication, raw, _, final, first, second, _ = _publication(
-        tmp_path, monkeypatch
-    )
+    publication, raw, _, final, first, second, _ = _publication(tmp_path, monkeypatch)
     applications = {
         "swapped": (second, first),
         "omitted": (second,),

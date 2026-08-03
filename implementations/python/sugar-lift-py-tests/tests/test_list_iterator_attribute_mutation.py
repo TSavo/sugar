@@ -6,10 +6,19 @@ from sugar_source_tree.tree import SourceFile
 def _outcomes(tmp_path):
     path = tmp_path / "list_iterator_attribute_mutation.py"
     path.write_text("def f(obj, value):\n    obj.attr = value\n    del obj.attr\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     store_site, delete_site = body[0].fragment, body[1].fragment
     value = ListIteratorValue((TermValue(1),))
-    return ((value.setattr("attr", TermValue(7), store_site), "ListIteratorValue.setattr", store_site), (value.delattr("attr", delete_site), "ListIteratorValue.delattr", delete_site))
+    return (
+        (
+            value.setattr("attr", TermValue(7), store_site),
+            "ListIteratorValue.setattr",
+            store_site,
+        ),
+        (value.delattr("attr", delete_site), "ListIteratorValue.delattr", delete_site),
+    )
 
 
 def test_list_iterator_attribute_mutations_have_exact_owner_occurrences(tmp_path):

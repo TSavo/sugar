@@ -53,11 +53,7 @@ def test_if_on_locally_bound_name_substitute_does_not_report_foreign_slot(
     assert rewritten is not None
     # Find the If that retained a slot (the hashable test).
     ifs = [n for n in rewritten.walk() if isinstance(n, If)]
-    slotted = [
-        n
-        for n in ifs
-        if getattr(n, "branch_result_slot_id", None) is not None
-    ]
+    slotted = [n for n in ifs if getattr(n, "branch_result_slot_id", None) is not None]
     assert slotted, "expected at least one If with a retained branch-result slot"
     target = slotted[0]
     stored = target.branch_result_slot_id

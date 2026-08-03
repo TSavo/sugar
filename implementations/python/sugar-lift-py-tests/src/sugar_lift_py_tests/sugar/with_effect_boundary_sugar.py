@@ -94,9 +94,7 @@ class WithEffectBoundarySugar(Sugar):
             # faces are alternative guards over the same body occurrence —
             # re-reducing would re-enter nested resources and invent a second
             # evaluation of the same source suite under each message face.
-            body_es_once = promote_raise_halts(
-                reduce_block_to_exitset(self.body, ctx)
-            )
+            body_es_once = promote_raise_halts(reduce_block_to_exitset(self.body, ctx))
             for face_guard, semantics in self._guarded_semantics():
                 expected = project_formal_selector_v1(
                     semantics.expected_type_operand,
@@ -457,9 +455,7 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             raise SugarNotWritten(
                 blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
-                observed=(
-                    f"{len(observations)} authenticated warning observations"
-                ),
+                observed=(f"{len(observations)} authenticated warning observations"),
                 requested=(
                     "exactly one source-authenticated WarningObservationValue "
                     "on the completed face"
@@ -471,9 +467,7 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             )
         index, observation = observations[0]
         # ONE matcher: identity + optional message. No local MatchDecided mint.
-        verdict = warning_effect_message_verdict(
-            observation.effect, expected, pattern
-        )
+        verdict = warning_effect_message_verdict(observation.effect, expected, pattern)
 
         def successful(guard, faces):
             assert index is not None

@@ -13,7 +13,6 @@ from sugar_source_tree import nodes
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.tree import SourceFile
 
-
 SOURCE = """\
 def fixture(value, items):
     a, (b, *c) = value
@@ -53,14 +52,41 @@ def _open_source_file(path: Path, root: Path) -> SourceFile:
 
 
 EXPECTED = {
-    ("Assign", 2, 0): (("a", ("targets", 0, 0)), ("b", ("targets", 0, 1, 0)), ("c", ("targets", 0, 1, 1, "star"))),
-    ("For", 3, 0): (("a", ("target", 0)), ("b", ("target", 1, 0)), ("c", ("target", 1, 1, "star"))),
-    ("ListComp", 5, 0): (("a", ("generators", 0, "target", 0)), ("b", ("generators", 0, "target", 1, 0)), ("c", ("generators", 0, "target", 1, 1, "star"))),
-    ("SetComp", 6, 0): (("a", ("generators", 0, "target", 0)), ("b", ("generators", 0, "target", 1, 0)), ("c", ("generators", 0, "target", 1, 1, "star"))),
-    ("DictComp", 7, 0): (("a", ("generators", 0, "target", 0)), ("b", ("generators", 0, "target", 1, 0)), ("c", ("generators", 0, "target", 1, 1, "star"))),
-    ("ListComp", 8, 0): (("a", ("generators", 0, "target", 0)), ("rest", ("generators", 0, "target", 1, "star"))),
+    ("Assign", 2, 0): (
+        ("a", ("targets", 0, 0)),
+        ("b", ("targets", 0, 1, 0)),
+        ("c", ("targets", 0, 1, 1, "star")),
+    ),
+    ("For", 3, 0): (
+        ("a", ("target", 0)),
+        ("b", ("target", 1, 0)),
+        ("c", ("target", 1, 1, "star")),
+    ),
+    ("ListComp", 5, 0): (
+        ("a", ("generators", 0, "target", 0)),
+        ("b", ("generators", 0, "target", 1, 0)),
+        ("c", ("generators", 0, "target", 1, 1, "star")),
+    ),
+    ("SetComp", 6, 0): (
+        ("a", ("generators", 0, "target", 0)),
+        ("b", ("generators", 0, "target", 1, 0)),
+        ("c", ("generators", 0, "target", 1, 1, "star")),
+    ),
+    ("DictComp", 7, 0): (
+        ("a", ("generators", 0, "target", 0)),
+        ("b", ("generators", 0, "target", 1, 0)),
+        ("c", ("generators", 0, "target", 1, 1, "star")),
+    ),
+    ("ListComp", 8, 0): (
+        ("a", ("generators", 0, "target", 0)),
+        ("rest", ("generators", 0, "target", 1, "star")),
+    ),
     ("ListComp", 8, 1): (("b", ("generators", 1, "target")),),
-    ("GeneratorExp", 9, 0): (("a", ("generators", 0, "target", 0)), ("b", ("generators", 0, "target", 1, 0)), ("c", ("generators", 0, "target", 1, 1, "star"))),
+    ("GeneratorExp", 9, 0): (
+        ("a", ("generators", 0, "target", 0)),
+        ("b", ("generators", 0, "target", 1, 0)),
+        ("c", ("generators", 0, "target", 1, 1, "star")),
+    ),
 }
 
 
@@ -71,7 +97,7 @@ def _source_file(tmp_path: Path, name: str = "target_patterns.py") -> SourceFile
 
 
 def _products(source_file: SourceFile):
-    function, = tuple(source_file.functions())
+    (function,) = tuple(source_file.functions())
     products = []
     for consumer in function.walk():
         key = (consumer.kind, consumer.line_col_span().start_line)
@@ -127,15 +153,15 @@ def test_ordinary_nested_star_consumers_construct_exact_patterns_once(tmp_path: 
     live_path = tmp_path / "live.py"
     live_path.write_text(LIVE_SOURCE)
     live_file = _open_source_file(live_path, tmp_path)
-    live_function, = tuple(live_file.functions())
+    (live_function,) = tuple(live_file.functions())
     live_loop = next(node for node in live_function.walk() if node.kind == "For")
-    live_pattern, = live_loop.target_patterns
+    (live_pattern,) = live_loop.target_patterns
     live_function.sugar()
     live_function.sugar()
     repeated_live_loop = next(
         node for node in live_function.walk() if node.kind == "For"
     )
-    repeated_live_pattern, = repeated_live_loop.target_patterns
+    (repeated_live_pattern,) = repeated_live_loop.target_patterns
     assert repeated_live_pattern is live_pattern
     assert live_file.unit.target_pattern_construction_count == 1
 
@@ -157,14 +183,10 @@ def test_target_pattern_rejects_wrong_occurrence_and_order(tmp_path: Path):
     assert wrong_occurrence.value.target_occurrence is foreign[0].target_occurrence
 
     first_for = next(
-        pattern
-        for pattern in truthful
-        if pattern.consumer_occurrence.kind == "For"
+        pattern for pattern in truthful if pattern.consumer_occurrence.kind == "For"
     )
     second_for = next(
-        pattern
-        for pattern in foreign
-        if pattern.consumer_occurrence.kind == "For"
+        pattern for pattern in foreign if pattern.consumer_occurrence.kind == "For"
     )
     before_count = first.unit.target_pattern_construction_count
     with pytest.raises(nodes.TargetPatternConstructionGapV1) as foreign_consumer:
@@ -189,11 +211,11 @@ def test_same_unit_foreign_for_cannot_claim_local_target(tmp_path: Path):
     path = tmp_path / "two_loops.py"
     path.write_text(TWO_LOOPS_SOURCE)
     source_file = _open_source_file(path, tmp_path)
-    function, = tuple(source_file.functions())
+    (function,) = tuple(source_file.functions())
     loops = tuple(node for node in function.walk() if node.kind == "For")
     assert len(loops) == 2
-    first_pattern, = loops[0].target_patterns
-    second_pattern, = loops[1].target_patterns
+    (first_pattern,) = loops[0].target_patterns
+    (second_pattern,) = loops[1].target_patterns
     before = source_file.unit.target_pattern_construction_count
 
     with pytest.raises(nodes.TargetPatternConstructionGapV1) as rejected:
@@ -220,20 +242,21 @@ def test_assign_rhs_rewrite_retains_its_authenticated_target_pattern(
         "    return root[leaf]\n"
     )
     source_file = _open_source_file(path, tmp_path)
-    function, = tuple(source_file.functions())
+    (function,) = tuple(source_file.functions())
     original = next(
         node
         for node in function.walk()
         if node.kind == "Assign" and node.line_col_span().start_line == 3
     )
-    original_pattern, = original.target_patterns
+    (original_pattern,) = original.target_patterns
 
     frame = function.source_visible_call_frame()
 
     assert frame.owner is function
-    assert source_file.unit.require_target_pattern(
-        original, original.targets[0]
-    ) is original_pattern
+    assert (
+        source_file.unit.require_target_pattern(original, original.targets[0])
+        is original_pattern
+    )
     assert source_file.unit.target_pattern_construction_count == 1
 
 
@@ -278,7 +301,6 @@ def test_legacy_reharvest_manifestations_are_retired():
         )
         for match in re.finditer(pattern, source)
     )
-    assert offenders == (), (
-        f"R_target_reharvest_manifestations={len(offenders)}; "
-        + "; ".join(offenders)
-    )
+    assert (
+        offenders == ()
+    ), f"R_target_reharvest_manifestations={len(offenders)}; " + "; ".join(offenders)

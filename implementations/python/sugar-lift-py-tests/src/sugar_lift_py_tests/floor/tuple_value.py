@@ -356,8 +356,7 @@ class TupleValue(FloorValue):
         if type(index) is SliceValue:
             bounds = (index.lower, index.upper, index.step)
             if all(
-                bound is None
-                or (type(bound) is TermValue and type(bound.value) is int)
+                bound is None or (type(bound) is TermValue and type(bound.value) is int)
                 for bound in bounds
             ):
                 lower, upper, step = (
@@ -377,9 +376,7 @@ class TupleValue(FloorValue):
                 return Complete(
                     TupleValue(tuple(self.elements[slice(lower, upper, step)]))
                 )
-            return self.undecided_subscript(
-                index, site, owner="TupleValue.subscript"
-            )
+            return self.undecided_subscript(index, site, owner="TupleValue.subscript")
 
         if type(index) is TermValue and isinstance(index.value, int):
             i = index.value

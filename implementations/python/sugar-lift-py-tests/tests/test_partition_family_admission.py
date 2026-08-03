@@ -290,9 +290,7 @@ def test_the_loops_exit_partition_is_two_faced_and_excludes_the_latch():
     carried, and it claims nothing. That is the honest state for an edge that
     is not an exit.
     """
-    brk, done = partition_family(
-        "loop@target", ("BreakExit", "NormalExhaustion")
-    )
+    brk, done = partition_family("loop@target", ("BreakExit", "NormalExhaustion"))
 
     assert brk.arity == done.arity == 2
     factored = ExitSet(

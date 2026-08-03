@@ -34,8 +34,7 @@ def test_live_roots_are_stable_zero() -> None:
     roots = [repo / p for p in _SCANNER._DEFAULT_PACKAGES]
     gaps, summary = _SCANNER.run(roots, repo)
     assert summary["R_total"] == 0, (
-        f"R_total={summary['R_total']} gaps="
-        f"{[g.to_dict() for g in gaps[:5]]}"
+        f"R_total={summary['R_total']} gaps=" f"{[g.to_dict() for g in gaps[:5]]}"
     )
     # Exit-code contract (same as CI axis) without re-printing the full report.
     assert (1 if gaps else 0) == 0

@@ -20,7 +20,11 @@ from sugar_lift_py_tests.context_manager_contract import (
     WarningEffectKindV1,
     WarningObservationBindingV1,
 )
-from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect, WarningEffect
+from sugar_lift_py_tests.effect import (
+    ExpectationNotMetEffect,
+    RaiseEffect,
+    WarningEffect,
+)
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -128,8 +132,7 @@ def test_truthful_warning_observation_completes_and_is_consumed():
     face = routed.exits[0]
     assert isinstance(face, Completed)
     assert not any(
-        isinstance(entry, WarningObservationValue)
-        for entry in face.value.entries
+        isinstance(entry, WarningObservationValue) for entry in face.value.entries
     )
 
 
@@ -150,9 +153,7 @@ def test_multi_authenticated_warning_observations_are_not_a_decided_miss():
     matcher — the lying twin of this package.
     """
     with pytest.raises(SugarNotWritten) as raised:
-        _boundary(
-            _warning("FutureWarning"), _warning("DeprecationWarning")
-        ).desugar()
+        _boundary(_warning("FutureWarning"), _warning("DeprecationWarning")).desugar()
     gap = raised.value
     assert gap.owner == "WithEffectBoundarySugar.warning_observation"
     assert "2 authenticated warning observations" in gap.observed
@@ -266,8 +267,8 @@ def _raise_with_entries(*entries):
         (
             Halted(
                 true_guard(),
-                RaiseEffect.for_builtin("TypeError",
-                    
+                RaiseEffect.for_builtin(
+                    "TypeError",
                     occurrence="body.py:3:4",
                     raised_value=raised_value,
                 ),
@@ -446,8 +447,8 @@ def _raise_after_warning(*, warning_message="deprecated operand"):
         (
             Halted(
                 true_guard(),
-                RaiseEffect.for_builtin("TypeError",
-                    
+                RaiseEffect.for_builtin(
+                    "TypeError",
                     occurrence="renamed.py:6:8",
                     raised_value=raised_value,
                 ),

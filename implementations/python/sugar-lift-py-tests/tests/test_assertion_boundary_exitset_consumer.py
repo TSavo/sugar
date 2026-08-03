@@ -62,7 +62,14 @@ def _raise(name: str, marker: str, *, message: object | None = None):
         )
     return Halted(
         true_guard(),
-        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(f'producer.py:1:{marker}'), exception_name=name, blame=f'producer.py:1:{marker}', exception_type_mro=(_identity(name),), raised_value=raised_value),
+        RaiseEffect(
+            exception_type_coordinate=_identity(name),
+            occurrence=AuthenticatedRaiseLocus.of(f"producer.py:1:{marker}"),
+            exception_name=name,
+            blame=f"producer.py:1:{marker}",
+            exception_type_mro=(_identity(name),),
+            raised_value=raised_value,
+        ),
         _state(marker),
     )
 
@@ -254,8 +261,8 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     producer_coordinate = _identity("TypeError")
     assert producer_coordinate == expected.identity
 
-    producer_effect = RaiseEffect.for_builtin("TypeError",
-        
+    producer_effect = RaiseEffect.for_builtin(
+        "TypeError",
         blame="pandas/tests/arithmetic/common.py:144:8",
         occurrence="pandas/tests/arithmetic/common.py:144:8",
         exception_type_mro=(producer_coordinate,),
@@ -627,8 +634,8 @@ def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence()
     from sugar_lift_py_tests.floor import StringValue
 
     occurrence = "producer.py:4:8:factored-none"
-    producer = RaiseEffect.for_builtin("ValueError",
-        
+    producer = RaiseEffect.for_builtin(
+        "ValueError",
         blame=occurrence,
         occurrence=occurrence,
         exception_type_mro=(_identity("ValueError"),),
@@ -667,8 +674,8 @@ def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
     from sugar_lift_py_tests.floor import StringValue
 
     occurrence = "producer.py:8:4:factored-pattern"
-    producer = RaiseEffect.for_builtin("ValueError",
-        
+    producer = RaiseEffect.for_builtin(
+        "ValueError",
         blame=occurrence,
         occurrence=occurrence,
         exception_type_mro=(_identity("ValueError"),),
@@ -718,8 +725,8 @@ def test_factored_as_binding_faces_keep_distinct_guards_and_identities():
     )
     from sugar_lift_py_tests.floor import StringValue
 
-    producer = RaiseEffect.for_builtin("ValueError",
-        
+    producer = RaiseEffect.for_builtin(
+        "ValueError",
         blame="producer.py:1:0",
         occurrence="producer.py:1:0",
         exception_type_mro=(_identity("ValueError"),),
@@ -762,8 +769,8 @@ def test_factored_none_face_without_as_slot_consumes_without_binding():
     """Discrimination twin: no observation slot means no binding testimony."""
     from sugar_lift_py_tests.floor import StringValue
 
-    producer = RaiseEffect.for_builtin("ValueError",
-        
+    producer = RaiseEffect.for_builtin(
+        "ValueError",
         blame="producer.py:2:0",
         occurrence="producer.py:2:0",
         exception_type_mro=(_identity("ValueError"),),

@@ -102,9 +102,7 @@ def test_nested_list_membership_is_decided_from_constructed_members():
     needle = ListValue((TermValue(1),))
     missing = ListValue((TermValue(3),))
     assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
-    assert isinstance(
-        container.contains(missing, "site").value, FalseBoolLiteralSugar
-    )
+    assert isinstance(container.contains(missing, "site").value, FalseBoolLiteralSugar)
 
 
 def test_nested_tuple_membership_is_decided_from_constructed_members():
@@ -121,9 +119,7 @@ def test_nested_tuple_membership_is_decided_from_constructed_members():
     needle = TupleValue((TermValue(1),))
     missing = TupleValue((TermValue(9),))
     assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
-    assert isinstance(
-        container.contains(missing, "site").value, FalseBoolLiteralSugar
-    )
+    assert isinstance(container.contains(missing, "site").value, FalseBoolLiteralSugar)
 
 
 def test_string_substring_membership_is_decided():

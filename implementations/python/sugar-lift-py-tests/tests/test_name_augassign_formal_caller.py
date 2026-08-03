@@ -323,9 +323,7 @@ def test_halt_blocks_tail_read_of_partial_update() -> None:
     """Through reduce_block: iadd halt leaves temporal unbound for the name."""
     from sugar_lift_py_tests.context import ReduceContext
 
-    face = Incomplete(
-        CoverageGapEffect(boundary="iadd", reason="halt before rebind")
-    )
+    face = Incomplete(CoverageGapEffect(boundary="iadd", reason="halt before rebind"))
 
     class _Halt(FloorValue):
         def inplace_binary_operator_with(self, operation, ctx):
@@ -424,12 +422,9 @@ def test_authenticated_formal_discharge_updates_binding() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "iadd"
     coords = {
-        c.declared_name: c.coordinate_cid
-        for c in function.sugar().formal_coordinates
+        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
-    exits = pending.discharge(
-        {coords["x"]: TermValue(3), coords["rhs"]: TermValue(4)}
-    )
+    exits = pending.discharge({coords["x"]: TermValue(3), coords["rhs"]: TermValue(4)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -461,9 +456,7 @@ def test_arithmetic_halt_is_not_completed_return_of_prior_binding() -> None:
     assert isinstance(outcome, ExitSet)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     assert halted, outcome.exits
-    assert any(
-        getattr(e.effect, "exception_name", None) == "TypeError" for e in halted
-    )
+    assert any(getattr(e.effect, "exception_name", None) == "TypeError" for e in halted)
     for face in (e for e in outcome.exits if isinstance(e, Completed)):
         from sugar_lift_py_tests.floor.return_value import ReturnValue
 

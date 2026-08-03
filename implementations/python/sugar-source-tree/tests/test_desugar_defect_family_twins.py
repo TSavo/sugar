@@ -95,7 +95,9 @@ class _BoundState(Sugar):
 
 def _demand_shape(entry):
     """The demanded formula's outermost connective, as wire vocabulary."""
-    return json.loads(encode_jcs(formula_to_value(entry.sole_demand().demanded_formula)))
+    return json.loads(
+        encode_jcs(formula_to_value(entry.sole_demand().demanded_formula))
+    )
 
 
 # --------------------------------------------------------------------------
@@ -208,7 +210,7 @@ def test_dict_display_pairs_keys_with_their_own_values() -> None:
 
 def test_fstring_over_a_partitioning_part_lifts() -> None:
     """POSITIVE. An f-string interpolation whose value partitions."""
-    out = _out("def f(d, k, v):\n return f\"x={d.setdefault(k, v)}\"\n")
+    out = _out('def f(d, k, v):\n return f"x={d.setdefault(k, v)}"\n')
     assert _statements(out)
 
 
@@ -310,9 +312,7 @@ def test_single_outcome_law_names_the_violated_law() -> None:
     from sugar_lift_py_tests.outcome import ExitSet
 
     with pytest.raises(ConstructionPanic) as raised:
-        require_single_value(
-            ExitSet(()), owner="twin", blame="twin", arm="when_true"
-        )
+        require_single_value(ExitSet(()), owner="twin", blame="twin", arm="when_true")
     assert SINGLE_OUTCOME_LAW in str(raised.value)
     assert "when_true" in str(raised.value)
 
@@ -358,9 +358,7 @@ def test_two_pending_contract_arms_join_and_conserve_both_demands() -> None:
     assert pending
 
     formals = {
-        demand.formal_coordinate_cid
-        for entry in pending
-        for demand in entry.demands
+        demand.formal_coordinate_cid for entry in pending for demand in entry.demands
     }
     assert len(formals) == 2, (
         "a join of two pending arms conserved only one formal's obligation: the "
@@ -426,9 +424,7 @@ def test_delete_over_a_loop_guarded_projection_unions_its_faces() -> None:
             # The loop ran: `y` is bound, so deleting it completes.
             LoopGuardedCompletedFace("normal", entered, _BoundState()),
             # The loop never ran: `y` was never bound, so deleting it halts.
-            LoopGuardedCompletedFace(
-                "normal", empty, UnboundProjection("y", _Site())
-            ),
+            LoopGuardedCompletedFace("normal", empty, UnboundProjection("y", _Site())),
         )
     )
     exits = delete_binding(projection, name="y", site=_Site(), ctx=None)
@@ -508,7 +504,8 @@ def test_loop_outward_face_with_a_plain_return_stays_one_completed_face() -> Non
     returns = [
         row
         for row in _statements(out)
-        if isinstance(row, ReturnValue) or isinstance(getattr(row, "value", None), ReturnValue)
+        if isinstance(row, ReturnValue)
+        or isinstance(getattr(row, "value", None), ReturnValue)
     ]
     assert len(returns) >= 1
 

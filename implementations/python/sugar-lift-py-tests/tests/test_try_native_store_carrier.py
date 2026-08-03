@@ -10,7 +10,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
-
 HELPER = (
     "def helper(a, i, q):\n"
     "    try:\n"
@@ -52,7 +51,9 @@ def _returned(outcome) -> TermValue:
     value = face.value
     if isinstance(value, CallSiteValue):
         value = value._dig_floor_or_none(None, owner="test_try_native_store_carrier")
-    returns = tuple(entry for entry in value.statements if isinstance(entry, ReturnValue))
+    returns = tuple(
+        entry for entry in value.statements if isinstance(entry, ReturnValue)
+    )
     assert len(returns) == 1
     assert isinstance(returns[0].value, TermValue)
     return returns[0].value
@@ -110,7 +111,10 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
     halted = next(exit_ for exit_ in retained.exits if isinstance(exit_, Halted))
     assert pending.pre_effect_state is not None
     assert halted.state is pending.pre_effect_state.state
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )

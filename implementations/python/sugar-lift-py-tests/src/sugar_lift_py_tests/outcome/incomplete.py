@@ -83,11 +83,7 @@ class Incomplete:
         # never has to know the set exists.
         return (
             self,
-            *(
-                row
-                for entry in self.pending_contracts
-                for row in entry.contribution()
-            ),
+            *(row for entry in self.pending_contracts for row in entry.contribution()),
         )
 
     def guarded(self, formula):

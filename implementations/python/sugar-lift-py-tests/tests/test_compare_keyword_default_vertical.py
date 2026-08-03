@@ -11,13 +11,14 @@ from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundaryDisposition,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.effect.expectation_not_met_effect import ExpectationNotMetEffect
+from sugar_lift_py_tests.effect.expectation_not_met_effect import (
+    ExpectationNotMetEffect,
+)
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
-
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -81,7 +82,10 @@ def _named_type_error(outcome: object) -> Halted:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _exception_identity("TypeError")
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -101,7 +105,8 @@ def test_real_pandas_ordering_helper_and_positional_caller_are_content_pinned() 
     helper = next(
         node
         for node in ast.walk(helper_tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "assert_invalid_comparison"
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "assert_invalid_comparison"
     )
     assert helper.lineno == 89
     with_node = next(node for node in ast.walk(helper) if isinstance(node, ast.With))
@@ -109,19 +114,24 @@ def test_real_pandas_ordering_helper_and_positional_caller_are_content_pinned() 
     assert with_node.lineno == 143
     assert isinstance(manager, ast.Call)
     assert ast.unparse(manager.args[0]) == "TypeError"
-    assert [(keyword.arg, ast.unparse(keyword.value)) for keyword in manager.keywords] == [
-        ("match", "msg")
-    ]
+    assert [
+        (keyword.arg, ast.unparse(keyword.value)) for keyword in manager.keywords
+    ] == [("match", "msg")]
     msg = next(
         node
         for node in helper.body
         if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "msg" for target in node.targets)
+        and any(
+            isinstance(target, ast.Name) and target.id == "msg"
+            for target in node.targets
+        )
     )
     assert isinstance(msg.value, ast.Call)
     assert ast.unparse(msg.value.func) == "'|'.join"
     assert len(msg.value.args) == 1 and isinstance(msg.value.args[0], ast.List)
-    assert tuple(ast.literal_eval(item) for item in msg.value.args[0].elts) == MATCH_PARTS
+    assert (
+        tuple(ast.literal_eval(item) for item in msg.value.args[0].elts) == MATCH_PARTS
+    )
     comparison = next(
         node
         for node in ast.walk(with_node)
@@ -136,7 +146,10 @@ def test_real_pandas_ordering_helper_and_positional_caller_are_content_pinned() 
         if isinstance(node, ast.Call)
         and ast.unparse(node.func).endswith("assert_invalid_comparison")
     ]
-    assert any(node.lineno == 90 and len(node.args) == 3 and not node.keywords for node in calls)
+    assert any(
+        node.lineno == 90 and len(node.args) == 3 and not node.keywords
+        for node in calls
+    )
 
 
 def test_helper_alone_is_undischarged_and_all_three_bindings_reach_one_demand() -> None:
@@ -144,19 +157,29 @@ def test_helper_alone_is_undischarged_and_all_three_bindings_reach_one_demand() 
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "less_than"
 
-    halted = tuple(_named_type_error(outcome) for outcome in (positional, keyword, default))
+    halted = tuple(
+        _named_type_error(outcome) for outcome in (positional, keyword, default)
+    )
     assert len({face.effect.occurrence_id for face in halted}) == 1
     assert isinstance(normal, ExitSet)
     assert len(normal.exits) == 1
     assert not any(isinstance(face, Halted) for face in normal.exits)
 
 
-def test_wrong_boundary_type_does_not_consume_or_create_the_exception_identity() -> None:
+def test_wrong_boundary_type_does_not_consume_or_create_the_exception_identity() -> (
+    None
+):
     _, (_, keyword, _, _) = _program_outcomes()
     producer_halt = _named_type_error(keyword)
     separately_minted_expected = _Expected("TypeError")
-    assert producer_halt.effect.exception_type_coordinate == separately_minted_expected.identity
-    assert producer_halt.effect.exception_type_coordinate is not separately_minted_expected.identity
+    assert (
+        producer_halt.effect.exception_type_coordinate
+        == separately_minted_expected.identity
+    )
+    assert (
+        producer_halt.effect.exception_type_coordinate
+        is not separately_minted_expected.identity
+    )
 
     projected = keyword.and_exit(
         ExitSet.completed(object()),
@@ -184,7 +207,8 @@ def test_swapped_ordering_retains_distinct_ordered_coordinates() -> None:
     assert isinstance(forward, NativeOperationExitCarrierV1)
     assert isinstance(swapped, NativeOperationExitCarrierV1)
     assert forward.demand.operand_coordinate_cids == tuple(
-        coordinate.coordinate_cid for coordinate in forward_function.formal_coordinates()
+        coordinate.coordinate_cid
+        for coordinate in forward_function.formal_coordinates()
     )
     assert swapped.demand.operand_coordinate_cids == tuple(
         coordinate.coordinate_cid
@@ -195,8 +219,10 @@ def test_swapped_ordering_retains_distinct_ordered_coordinates() -> None:
 
 def test_identity_law_never_acquires_a_native_operation_carrier() -> None:
     source = "def helper(left, right=2):\n    return left is right\n"
-    outcome = next(
-        node for node in _tree(source).nodes() if isinstance(node, FunctionDef)
-    ).sugar().desugar(None)
+    outcome = (
+        next(node for node in _tree(source).nodes() if isinstance(node, FunctionDef))
+        .sugar()
+        .desugar(None)
+    )
     assert isinstance(outcome, Complete)
     assert not isinstance(outcome, NativeOperationExitCarrierV1)

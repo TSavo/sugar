@@ -26,9 +26,7 @@ def _source_receiver(source: str):
     tree = SourceFile(
         (source, "enum_setitem_lineage.py", blake3_512_of(source.encode()))
     )
-    definition = next(
-        node for node in tree.root.body if isinstance(node, ClassDef)
-    )
+    definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test_enum_setitem_lineage")
     class_outcome = definition.sugar().desugar(context)
     assert isinstance(class_outcome, Complete)
@@ -48,9 +46,9 @@ def _source_method_outcome(receiver, context, key="member", value=7):
         ctx=context,
     )
     assert isinstance(selected, Complete)
-    assert isinstance(selected.value, CallSiteValue), (
-        "a source __setitem__ override must be selected before builtin dict mutation"
-    )
+    assert isinstance(
+        selected.value, CallSiteValue
+    ), "a source __setitem__ override must be selected before builtin dict mutation"
     return receiver.setitem_with_context(
         StringValue(key), TermValue(value), "setitem-site", context
     )
@@ -164,7 +162,5 @@ def test_type_new_consumes_the_post_setitem_namespace_not_its_pre_state() -> Non
     assert isinstance(created.value, RuntimeClassValue)
     class_dict = created.value.attribute("__dict__", "dict-site")
     assert isinstance(class_dict, Complete)
-    assert class_dict.value.entries == (
-        (StringValue("_member_map_"), TermValue(7)),
-    )
+    assert class_dict.value.entries == ((StringValue("_member_map_"), TermValue(7)),)
     assert class_dict.value.entries != namespace.entries

@@ -12,7 +12,9 @@ from sugar_source_tree.tree import SourceFile
 def _sites(tmp_path):
     path = tmp_path / "set_attribute_mutation.py"
     path.write_text("def f(obj, value):\n    obj.attr = value\n    del obj.attr\n")
-    body = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()).body
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
     return body[0].fragment, body[1].fragment
 
 
@@ -32,9 +34,14 @@ class _Value(Sugar):
 def _outcomes(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     receiver = SetValue((TermValue(1),))
-    store = AttributeStoreEffectSugar(_Value(receiver), _Value(TermValue(7)), "attr", store_site).desugar()
+    store = AttributeStoreEffectSugar(
+        _Value(receiver), _Value(TermValue(7)), "attr", store_site
+    ).desugar()
     delete = AttributeDeleteEffectSugar(_Value(receiver), "attr", delete_site).desugar()
-    return ((store, "SetValue.setattr", store_site), (delete, "SetValue.delattr", delete_site))
+    return (
+        (store, "SetValue.setattr", store_site),
+        (delete, "SetValue.delattr", delete_site),
+    )
 
 
 def test_set_attribute_mutations_have_exact_owner_occurrences(tmp_path):

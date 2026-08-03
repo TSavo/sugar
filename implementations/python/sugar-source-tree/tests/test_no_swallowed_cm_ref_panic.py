@@ -37,7 +37,9 @@ def _panic(*, owner: str) -> UnsupportedContextManagerSemantics:
 class _DuckWith:
     """Duck-typed self for With.substitution_binding — avoids frozen Node layout."""
 
-    def __init__(self, *, panic: UnsupportedContextManagerSemantics, frame_projection: bool):
+    def __init__(
+        self, *, panic: UnsupportedContextManagerSemantics, frame_projection: bool
+    ):
         self.unit = SimpleNamespace(
             construction_context=SimpleNamespace(frame_projection=frame_projection)
         )
@@ -95,11 +97,11 @@ def test_production_source_has_no_soft_dual_mode_catch():
     assert "_require_narrow_cm_ref" in binding_src
 
     nodes_src = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "sugar_source_tree"
-        / "nodes.py"
+        Path(__file__).resolve().parents[1] / "src" / "sugar_source_tree" / "nodes.py"
     ).read_text(encoding="utf-8")
-    assert "from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import" not in nodes_src
+    assert (
+        "from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import"
+        not in nodes_src
+    )
     assert "return SoftUnresolvedWithSugar" not in nodes_src
     assert "noqa: BLE001" not in nodes_src

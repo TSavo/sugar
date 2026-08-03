@@ -121,7 +121,15 @@ def _cite_self_sealing(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/scripts/self_sealing_instrument_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_self_sealing")
     if err:
-        return Citation("instrument", "self_sealing", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+        return Citation(
+            "instrument",
+            "self_sealing",
+            rel,
+            -1,
+            {},
+            [err],
+            "missing_owner" if "missing" in err else "collect_error",
+        )
     try:
         # roots default inside scan_roots — never omit via wrong kwargs only.
         findings, errors = mod.scan_roots(repo=repo)
@@ -137,14 +145,30 @@ def _cite_self_sealing(repo: Path) -> Citation:
             list(errors),
         )
     except Exception as exc:  # noqa: BLE001
-        return Citation("instrument", "self_sealing", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+        return Citation(
+            "instrument",
+            "self_sealing",
+            rel,
+            -1,
+            {},
+            [f"{type(exc).__name__}: {exc}"],
+            "collect_error",
+        )
 
 
 def _cite_swallowed_throw(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/scripts/swallowed_throw_second_mechanism_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_swallowed")
     if err:
-        return Citation("product", "swallowed_throw_second_mechanism", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+        return Citation(
+            "product",
+            "swallowed_throw_second_mechanism",
+            rel,
+            -1,
+            {},
+            [err],
+            "missing_owner" if "missing" in err else "collect_error",
+        )
     try:
         python_root = repo / "implementations/python"
         offenders = mod.scan_python_root(python_root)
@@ -154,17 +178,36 @@ def _cite_swallowed_throw(repo: Path) -> Citation:
             "swallowed_throw_second_mechanism",
             rel,
             sum(counts.values()),
-            {"by_axis": counts, "source": "swallowed_throw_second_mechanism_law.scan_python_root"},
+            {
+                "by_axis": counts,
+                "source": "swallowed_throw_second_mechanism_law.scan_python_root",
+            },
         )
     except Exception as exc:  # noqa: BLE001
-        return Citation("product", "swallowed_throw_second_mechanism", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+        return Citation(
+            "product",
+            "swallowed_throw_second_mechanism",
+            rel,
+            -1,
+            {},
+            [f"{type(exc).__name__}: {exc}"],
+            "collect_error",
+        )
 
 
 def _cite_construction_panic_catch(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_panic_catch")
     if err:
-        return Citation("product", "construction_panic_catch", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+        return Citation(
+            "product",
+            "construction_panic_catch",
+            rel,
+            -1,
+            {},
+            [err],
+            "missing_owner" if "missing" in err else "collect_error",
+        )
     try:
         kit = repo / "implementations/python/sugar-lift-py-tests"
         offenders = mod.scan_repository(kit)
@@ -174,17 +217,36 @@ def _cite_construction_panic_catch(repo: Path) -> Citation:
             "construction_panic_catch",
             rel,
             len(panic),
-            {"source": "construction_panic_catch_law.scan_repository", "raw_rows": len(offenders)},
+            {
+                "source": "construction_panic_catch_law.scan_repository",
+                "raw_rows": len(offenders),
+            },
         )
     except Exception as exc:  # noqa: BLE001
-        return Citation("product", "construction_panic_catch", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+        return Citation(
+            "product",
+            "construction_panic_catch",
+            rel,
+            -1,
+            {},
+            [f"{type(exc).__name__}: {exc}"],
+            "collect_error",
+        )
 
 
 def _cite_enumeration_soft_skip(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/scripts/enumeration_binding_soft_skip_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_enum_soft")
     if err:
-        return Citation("product", "enumeration_binding_soft_skip", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+        return Citation(
+            "product",
+            "enumeration_binding_soft_skip",
+            rel,
+            -1,
+            {},
+            [err],
+            "missing_owner" if "missing" in err else "collect_error",
+        )
     try:
         kit = repo / "implementations/python/sugar-lift-py-tests"
         paths = mod.production_scan_roots(kit)
@@ -197,14 +259,30 @@ def _cite_enumeration_soft_skip(repo: Path) -> Citation:
             {"source": "enumeration_binding_soft_skip_law.scan_sources"},
         )
     except Exception as exc:  # noqa: BLE001
-        return Citation("product", "enumeration_binding_soft_skip", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+        return Citation(
+            "product",
+            "enumeration_binding_soft_skip",
+            rel,
+            -1,
+            {},
+            [f"{type(exc).__name__}: {exc}"],
+            "collect_error",
+        )
 
 
 def _cite_source_audit_presence(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/scripts/source_audit_presence_identity_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_presence")
     if err:
-        return Citation("product", "source_audit_presence_identity", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+        return Citation(
+            "product",
+            "source_audit_presence_identity",
+            rel,
+            -1,
+            {},
+            [err],
+            "missing_owner" if "missing" in err else "collect_error",
+        )
     try:
         roots = [
             repo / "implementations/python/sugar-lift-py-tests/src",
@@ -224,7 +302,15 @@ def _cite_source_audit_presence(repo: Path) -> Citation:
             [str(u) for u in unreadable[:20]],
         )
     except Exception as exp:  # noqa: BLE001
-        return Citation("product", "source_audit_presence_identity", rel, -1, {}, [f"{type(exp).__name__}: {exp}"], "collect_error")
+        return Citation(
+            "product",
+            "source_audit_presence_identity",
+            rel,
+            -1,
+            {},
+            [f"{type(exp).__name__}: {exp}"],
+            "collect_error",
+        )
 
 
 def _cite_one_matcher(repo: Path) -> Citation:
@@ -232,7 +318,15 @@ def _cite_one_matcher(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/tests/test_match_decided_one_matcher_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_one_matcher")
     if err:
-        return Citation("product", "one_matcher_match_decided_false", rel, -1, {}, [err], "missing_owner" if "missing" in err else "collect_error")
+        return Citation(
+            "product",
+            "one_matcher_match_decided_false",
+            rel,
+            -1,
+            {},
+            [err],
+            "missing_owner" if "missing" in err else "collect_error",
+        )
     try:
         # Child's structural scan over production packages
         files = mod._production_py_files()
@@ -253,7 +347,15 @@ def _cite_one_matcher(repo: Path) -> Citation:
             },
         )
     except Exception as exc:  # noqa: BLE001
-        return Citation("product", "one_matcher_match_decided_false", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+        return Citation(
+            "product",
+            "one_matcher_match_decided_false",
+            rel,
+            -1,
+            {},
+            [f"{type(exc).__name__}: {exc}"],
+            "collect_error",
+        )
 
 
 def _cite_builtin_name_vendor_gates(repo: Path) -> Citation:
@@ -263,7 +365,15 @@ def _cite_builtin_name_vendor_gates(repo: Path) -> Citation:
     )
     path = repo / rel
     if not path.is_file():
-        return Citation("product", "builtin_name_or_vendor_gates", rel, -1, {}, [f"missing owner file: {rel}"], "missing_owner")
+        return Citation(
+            "product",
+            "builtin_name_or_vendor_gates",
+            rel,
+            -1,
+            {},
+            [f"missing owner file: {rel}"],
+            "missing_owner",
+        )
     try:
         # Import as package if possible; else load file and call collect with roots
         sys.path.insert(0, str(repo / "implementations/python/sugar-lift-py-tests/src"))
@@ -290,11 +400,21 @@ def _cite_builtin_name_vendor_gates(repo: Path) -> Citation:
             "partition": "docs/spelling-dispatch-partition.md",
             "membrane_open_lexical_ast_id": by.get("open_lexical_ast_id", 0),
             "membrane_open_lexical_attr_name": by.get("open_lexical_attr_name", 0),
-            "fabrication_denylist_axis": by.get("exception_name_fabrication_denylist", 0),
+            "fabrication_denylist_axis": by.get(
+                "exception_name_fabrication_denylist", 0
+            ),
         }
         return Citation("product", "builtin_name_or_vendor_gates", rel, r, detail)
     except Exception as exc:  # noqa: BLE001
-        return Citation("product", "builtin_name_or_vendor_gates", rel, -1, {}, [f"{type(exc).__name__}: {exc}"], "collect_error")
+        return Citation(
+            "product",
+            "builtin_name_or_vendor_gates",
+            rel,
+            -1,
+            {},
+            [f"{type(exc).__name__}: {exc}"],
+            "collect_error",
+        )
 
 
 # Climb notes — parent does NOT audit these; names the required hatch.
@@ -306,7 +426,10 @@ CLIMB_NOT_AUDIT = (
             "Codomain climb: RaiseEffect / Halted faces must require authenticated "
             "type coordinate (non-Optional). Auditor forever is ceremony if None still constructs."
         ),
-        "related_children": ["self_sealing PRESENCE-ONLY (tests only)", "RaiseEffect constructor work"],
+        "related_children": [
+            "self_sealing PRESENCE-ONLY (tests only)",
+            "RaiseEffect constructor work",
+        ],
     },
     {
         "face": "dual_producers_one_fact",
@@ -315,7 +438,10 @@ CLIMB_NOT_AUDIT = (
             "One door: delete the second path so dual production is unrepresentable; "
             "then delete any ratchet that watched it. Parent must not keep a permanent axis."
         ),
-        "related_children": ["one_matcher_match_decided_false", "source_audit_presence_identity"],
+        "related_children": [
+            "one_matcher_match_decided_false",
+            "source_audit_presence_identity",
+        ],
     },
 )
 
@@ -350,12 +476,42 @@ MEMBRANE_HONEST = (
 
 
 COLLECTORS: list[tuple[str, str, str, Callable[[Path], Citation]]] = [
-    ("product", "one_matcher_match_decided_false", "test_match_decided_one_matcher_law", _cite_one_matcher),
-    ("product", "swallowed_throw_second_mechanism", "swallowed_throw_second_mechanism_law", _cite_swallowed_throw),
-    ("product", "construction_panic_catch", "construction_panic_catch_law", _cite_construction_panic_catch),
-    ("product", "enumeration_binding_soft_skip", "enumeration_binding_soft_skip_law", _cite_enumeration_soft_skip),
-    ("product", "source_audit_presence_identity", "source_audit_presence_identity_law", _cite_source_audit_presence),
-    ("product", "builtin_name_or_vendor_gates", "builtin_closed_operation_instrument", _cite_builtin_name_vendor_gates),
+    (
+        "product",
+        "one_matcher_match_decided_false",
+        "test_match_decided_one_matcher_law",
+        _cite_one_matcher,
+    ),
+    (
+        "product",
+        "swallowed_throw_second_mechanism",
+        "swallowed_throw_second_mechanism_law",
+        _cite_swallowed_throw,
+    ),
+    (
+        "product",
+        "construction_panic_catch",
+        "construction_panic_catch_law",
+        _cite_construction_panic_catch,
+    ),
+    (
+        "product",
+        "enumeration_binding_soft_skip",
+        "enumeration_binding_soft_skip_law",
+        _cite_enumeration_soft_skip,
+    ),
+    (
+        "product",
+        "source_audit_presence_identity",
+        "source_audit_presence_identity_law",
+        _cite_source_audit_presence,
+    ),
+    (
+        "product",
+        "builtin_name_or_vendor_gates",
+        "builtin_closed_operation_instrument",
+        _cite_builtin_name_vendor_gates,
+    ),
     ("instrument", "self_sealing", "self_sealing_instrument_law", _cite_self_sealing),
 ]
 
@@ -430,7 +586,9 @@ def main(argv: list[str] | None = None) -> int:
     citations = collect_citations(repo)
     print(format_report(citations))
     product_r = sum(c.R for c in citations if c.layer == "product" and c.status == "ok")
-    instrument_r = sum(c.R for c in citations if c.layer == "instrument" and c.status == "ok")
+    instrument_r = sum(
+        c.R for c in citations if c.layer == "instrument" and c.status == "ok"
+    )
     bad = [c for c in citations if c.status != "ok" or c.R != 0]
     if args.json is not None:
         args.json.write_text(

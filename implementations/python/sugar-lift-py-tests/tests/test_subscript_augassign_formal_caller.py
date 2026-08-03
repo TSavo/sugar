@@ -43,7 +43,9 @@ def _tree(source: str, name: str = "subscript_augassign.py") -> SourceFile:
     )
 
 
-def _helper_definition(source: str = "def helper(obj, key, rhs):\n    obj[key] += rhs\n"):
+def _helper_definition(
+    source: str = "def helper(obj, key, rhs):\n    obj[key] += rhs\n",
+):
     tree = _tree(source, "helper_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
@@ -88,7 +90,9 @@ def _production_sites():
     return sugar.get_site, sugar.op_site, sugar.set_site, sugar.site
 
 
-def _production_desugar(receiver, index, rhs, *, operator="iadd", projector=project_iadd):
+def _production_desugar(
+    receiver, index, rhs, *, operator="iadd", projector=project_iadd
+):
     get_site, op_site, set_site, site = _production_sites()
     sugar = SubscriptAugAssignSugar(
         receiver=_FloorSugar(receiver),
@@ -140,9 +144,10 @@ def test_op_site_ignores_same_spelling_string_in_target() -> None:
     # Index string constant span must not equal / contain the operator site.
     index_node = aug.target.slice_
     index_span = index_node.span
-    assert not (
-        op_span.start <= index_span.start and index_span.end <= op_span.end
-    ), (op_span, index_span)
+    assert not (op_span.start <= index_span.start and index_span.end <= op_span.end), (
+        op_span,
+        index_span,
+    )
     # Operator site still sits after the full target (including ['+=']).
     assert op_span.start >= aug.target.span.end
     text = sugar.op_site.unit.source[op_span.start : op_span.end]
@@ -176,7 +181,9 @@ def test_legacy_augmented_subscript_store_effect_sugar_is_deleted() -> None:
     package_root = Path(store_mod.__file__).resolve().parent.parent
     offenders = []
     for path in package_root.rglob("*.py"):
-        if "LegacyAugmentedSubscriptStoreEffectSugar" in path.read_text(encoding="utf-8"):
+        if "LegacyAugmentedSubscriptStoreEffectSugar" in path.read_text(
+            encoding="utf-8"
+        ):
             offenders.append(str(path))
     assert offenders == [], offenders
 
@@ -211,7 +218,8 @@ def test_production_inplace_set_is_independent_of_projector_table() -> None:
     assert production == frozenset(
         cls.inplace_operator
         for cls in __import__(
-            "sugar_source_tree.operators", fromlist=["AUGASSIGN_BINARY_OPERATOR_CLASSES"]
+            "sugar_source_tree.operators",
+            fromlist=["AUGASSIGN_BINARY_OPERATOR_CLASSES"],
         ).AUGASSIGN_BINARY_OPERATOR_CLASSES
     )
 
@@ -246,9 +254,7 @@ def test_projector_keys_equal_independent_production_inplace_set() -> None:
 
 def test_discrimination_circular_tooth_would_hide_missing_projector() -> None:
     """Lying: derive production set from projector table — circular, forbidden."""
-    circular = frozenset(
-        k for k in _NATIVE_OPERATION_PROJECTORS if k.startswith("i")
-    )
+    circular = frozenset(k for k in _NATIVE_OPERATION_PROJECTORS if k.startswith("i"))
     # Independent production must not be computed as circular (same object).
     independent = production_augassign_inplace_operators()
     # They currently equal when healthy — but sources differ: class attrs vs table.
@@ -599,9 +605,7 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
 def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> None:
     assert "iadd" in _NATIVE_OPERATION_PROJECTORS
     assert _NATIVE_OPERATION_PROJECTORS["iadd"] is project_iadd
-    parameters = tuple(
-        __import__("inspect").signature(project_iadd).parameters
-    )
+    parameters = tuple(__import__("inspect").signature(project_iadd).parameters)
     assert parameters == ("left", "right", "site")
 
 
@@ -627,8 +631,7 @@ def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
 def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> None:
     function, pending = _helper_definition()
     coords = {
-        c.declared_name: c.coordinate_cid
-        for c in function.sugar().formal_coordinates
+        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
     exits = pending.discharge(
         {
@@ -646,8 +649,7 @@ def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> N
 def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
     function, pending = _helper_definition()
     coords = {
-        c.declared_name: c.coordinate_cid
-        for c in function.sugar().formal_coordinates
+        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
     exits = pending.discharge(
         {

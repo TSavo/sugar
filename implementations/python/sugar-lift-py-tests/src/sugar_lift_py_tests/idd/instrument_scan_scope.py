@@ -150,9 +150,7 @@ class InstrumentScanScope:
             "declaredRoots": [str(p) for p in self.declared_roots],
             "selfExclusion": True,
             "authPinExclusion": True,
-            "instrumentSelfPaths": sorted(
-                str(p) for p in self.instrument_self_paths
-            ),
+            "instrumentSelfPaths": sorted(str(p) for p in self.instrument_self_paths),
             "authPinInventoryBasenames": sorted(AUTH_PIN_INVENTORY_BASENAMES),
         }
 

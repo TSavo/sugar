@@ -120,7 +120,9 @@ def test_raise_outer_from_handler_binding_keeps_distinct_type_and_occurrence():
     cause_effect = effect.cause_value.effect
     assert isinstance(cause_effect, RaiseEffect)
     assert cause_effect.exception_name == "ValueError"
-    assert isinstance(cause_effect.occurrence, str) and ":" in cause_effect.occurrence, (
+    assert (
+        isinstance(cause_effect.occurrence, str) and ":" in cause_effect.occurrence
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {cause_effect.occurrence!r}"
     )

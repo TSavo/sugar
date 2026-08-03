@@ -128,7 +128,15 @@ def _raise(
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner='TryFinallyBody.desugar'),
+        RaiseEffect(
+            exception_type_coordinate=_identity(name),
+            occurrence=AuthenticatedRaiseLocus.of(occ),
+            exception_name=name,
+            blame=occ,
+            exception_type_mro=(_identity(name),),
+            raised_value=raised_value,
+            producer_node_owner="TryFinallyBody.desugar",
+        ),
         _state(marker),
     )
 
@@ -209,9 +217,7 @@ def _factored_boundary(body: ExitSet, *, pattern=None, observation_slot_id="exci
         manager=Fixed(Complete(manager_value)),
         body=(Fixed(body),),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id=observation_slot_id,
@@ -281,9 +287,7 @@ def test_finally_runs_on_consumed_unmet_and_retained_halt_paths():
         and _observed_binding(face) is not None
     ]
     assert consumed, routed.exits
-    assert all(
-        _observed_binding(face).effect is matching_effect for face in consumed
-    )
+    assert all(_observed_binding(face).effect is matching_effect for face in consumed)
 
     unmet = [
         face
@@ -412,15 +416,15 @@ def test_twin_none_vs_pattern_faces_survive_try_finally():
         "match-pattern-face",
     }
     by_name = {g.name: s for g, s in guarded}
-    assert isinstance(by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1)
+    assert isinstance(
+        by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1
+    )
     assert isinstance(
         by_name["match-pattern-face"].message_pattern_operand,
         OptionalFormalArgumentProjectionV1,
     )
 
-    routed, _ = _join_try_finally(
-        boundary.desugar(), ExitSet.completed("cleanup-done")
-    )
+    routed, _ = _join_try_finally(boundary.desugar(), ExitSet.completed("cleanup-done"))
     text = " ".join(str(face.guard) for face in routed.exits)
     assert "match-none-face" in text and "match-pattern-face" in text
     for face in routed.exits:

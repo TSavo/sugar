@@ -159,7 +159,7 @@ class ControlConstructionContextV1:
                 observed="bare raise has no authenticated in-flight exception slot",
                 requested="an enclosing except handler effect-slot coordinate",
                 fix="construct bare raise only inside the handler that owns its effect",
-        )
+            )
         return self.exception_slots[-1]
 
 
@@ -4135,7 +4135,9 @@ class ClassDef(Statement):
                 fix="carry the parser-owned ClassDef name occurrence as binding_target",
             )
 
-    def _method_descriptor_kind(self, method: "FunctionDef | AsyncFunctionDef") -> Optional[str]:
+    def _method_descriptor_kind(
+        self, method: "FunctionDef | AsyncFunctionDef"
+    ) -> Optional[str]:
         """Authenticate one language descriptor decorator by lexical binding.
 
         The decorator spelling is only a lookup key.  A same-named module
@@ -4253,7 +4255,6 @@ class ClassDef(Statement):
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
-
 
     def _construct_class_method_member(self, method):
         """Enroll one method through the FunctionDef construction door only.
@@ -6851,9 +6852,7 @@ class If(Statement):
             self, "authenticated_branch_result_slot_id", None
         )
         # Both ids are written together on first mint. Either alone is incomplete.
-        retained_slot = (
-            stored_slot_id is not None and authenticated_slot_id is not None
-        )
+        retained_slot = stored_slot_id is not None and authenticated_slot_id is not None
         if retained_slot:
             if stored_slot_id != authenticated_slot_id:
                 backend_defect(

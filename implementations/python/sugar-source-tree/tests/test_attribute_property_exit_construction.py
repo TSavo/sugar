@@ -16,6 +16,7 @@ from sugar_source_tree.nodes import Attribute, With
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
+
 def _identity(name: str):
     from sugar_lift_py_tests.floor.ground_exit import (
         _builtin_exception_identity,
@@ -73,7 +74,7 @@ def test_source_property_getter_publishes_authenticated_exceptional_exit(
     effect = halted[0].effect
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "ValueError"
-    assert effect.exception_type_coordinate == _identity('ValueError')
+    assert effect.exception_type_coordinate == _identity("ValueError")
     assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {effect.occurrence_id!r}"
@@ -103,8 +104,11 @@ def test_property_getter_raise_keeps_imported_bare_exception_coordinate(
     halted = next(face for face in outcome.exits if isinstance(face, Halted))
     assert isinstance(halted.effect, RaiseEffect)
     assert halted.effect.exception_name == "CustomError"
-    assert halted.effect.exception_type_coordinate == _identity('CustomError')
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert halted.effect.exception_type_coordinate == _identity("CustomError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -181,7 +185,7 @@ def test_pandas_303_abstract_method_property_is_the_concrete_reproducer() -> Non
     effect = halted.effect
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "AbstractMethodError"
-    assert effect.exception_type_coordinate == _identity('AbstractMethodError')
+    assert effect.exception_type_coordinate == _identity("AbstractMethodError")
     assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {effect.occurrence_id!r}"

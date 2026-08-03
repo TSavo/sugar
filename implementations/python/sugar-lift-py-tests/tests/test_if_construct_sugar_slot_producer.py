@@ -152,7 +152,10 @@ def test_condition_halt_bypasses_both_if_bodies() -> None:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -173,9 +176,7 @@ def test_condition_halt_emits_no_occurrence_from_toxic_body_twins() -> None:
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
     assert len(comparisons) == 3
     (outcome,) = tuple(
-        node.sugar().desugar(None)
-        for node in tree.nodes()
-        if isinstance(node, Call)
+        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
     )
 
     assert isinstance(outcome, ExitSet)
@@ -247,9 +248,7 @@ def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> N
         for branch, slot in zip(rewritten, slots, strict=True)
     )
     assert expected_guards[0] != expected_guards[1]
-    for outcome, slot, expected in zip(
-        outcomes, slots, expected_guards, strict=True
-    ):
+    for outcome, slot, expected in zip(outcomes, slots, expected_guards, strict=True):
         assert isinstance(outcome, Complete)
         guarded = outcome.value
         assert guarded.guard == expected

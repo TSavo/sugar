@@ -9,7 +9,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Assert, Compare, While
 from sugar_source_tree.tree import SourceFile
 
-
 SOURCE = (
     "def control(left, right):\n"
     "    while left < right:\n"
@@ -29,7 +28,10 @@ def _halt_occurrence(compare: Compare) -> str:
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
-    assert isinstance(halted[0].effect.occurrence_id, str) and ":" in halted[0].effect.occurrence_id, (
+    assert (
+        isinstance(halted[0].effect.occurrence_id, str)
+        and ":" in halted[0].effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted[0].effect.occurrence_id!r}"
     )

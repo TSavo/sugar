@@ -113,9 +113,7 @@ def test_gap_row_panics_with_manager_symbol_and_kind_detail():
         "runtime-selected",
         (),
     )
-    refs = ResolvedContractRefsV1(
-        _cid("c"), _cid("t"), MappingProxyType({site: gap})
-    )
+    refs = ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType({site: gap}))
     sf = SourceFile(
         (src, "l3d_gap.py", blake3_512_of(src.encode())),
         construction_context=TreeConstructionContextV1(refs),

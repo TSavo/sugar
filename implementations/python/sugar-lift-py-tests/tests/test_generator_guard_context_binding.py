@@ -118,15 +118,11 @@ def _production_generator_call(source: str):
         (source, "prod_guard.py", blake3_512_of(source.encode("utf-8"))),
         construction_context=construction,
     )
-    function = next(
-        node for node in tree.nodes() if isinstance(node, FunctionDef)
-    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in tree.nodes() if isinstance(node, Call))
     frame = function.source_visible_call_frame().bind_node_actuals(
         call.args,
-        tuple(
-            (kw.arg, kw.value) for kw in call.keywords if kw.arg is not None
-        ),
+        tuple((kw.arg, kw.value) for kw in call.keywords if kw.arg is not None),
     )
     construction.source_call_frames[_call_coordinate(call)] = frame
     return tree, function, call, frame, construction
@@ -213,9 +209,12 @@ def test_production_positional_bind_actuals_floor_reaches_guard_by_identity() ->
         == frame.formal_coordinates[0].cid
     )
     # Guard table holds binder identity.
-    assert machine._guard_evaluation_context().temporal.value_if_bound(
-        frame.formal_coordinates[0].cid
-    ) is true_arg
+    assert (
+        machine._guard_evaluation_context().temporal.value_if_bound(
+            frame.formal_coordinates[0].cid
+        )
+        is true_arg
+    )
     # Guard resolves and splices then-branch.
     result = machine.resume()
     assert isinstance(result, YieldEffect)
@@ -244,23 +243,23 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
         site=call.fragment,
         source_call_frame=frame,
     )
-    outcome = sugar.desugar(
-        ReduceContext.root(owner="production-keyword-guard")
-    )
+    outcome = sugar.desugar(ReduceContext.root(owner="production-keyword-guard"))
     assert isinstance(outcome, Complete)
     machine = outcome.value
     assert isinstance(machine, GeneratorConstructionV1)
     assert len(machine.formal_floor_bindings) == 2
     by_cid = {
-        item.coordinate_cid: item.floor_value
-        for item in machine.formal_floor_bindings
+        item.coordinate_cid: item.floor_value for item in machine.formal_floor_bindings
     }
     assert by_cid[frame.formal_coordinates[0].cid] is enabled_floor
     # Default formal is the exact object bind_actuals returned.
     assert by_cid[frame.formal_coordinates[1].cid] is bound.actuals[1]
-    assert machine._guard_evaluation_context().temporal.value_if_bound(
-        frame.formal_coordinates[0].cid
-    ) is enabled_floor
+    assert (
+        machine._guard_evaluation_context().temporal.value_if_bound(
+            frame.formal_coordinates[0].cid
+        )
+        is enabled_floor
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +280,7 @@ def test_caller_context_requires_with_temporal_surface() -> None:
             frame_coordinate="frame:probe",
             binding_state=(entry,),
             steps=(ReturnStepV1(),),
-            formal_floor_bindings=(
-                FormalFloorBindingV1(entry.coordinate.cid, floor),
-            ),
+            formal_floor_bindings=(FormalFloorBindingV1(entry.coordinate.cid, floor),),
             reduction_context=_NoWithTemporal(),
         )
 
@@ -311,9 +308,12 @@ def test_binder_floor_reaches_guard_by_identity() -> None:
     floor = TrueBoolLiteralSugar(site=param.fragment)
     machine = _machine(entry=entry, floor=floor)
     assert isinstance(machine.resume(), YieldEffect)
-    assert machine._guard_evaluation_context().temporal.value_if_bound(
-        entry.coordinate.cid
-    ) is floor
+    assert (
+        machine._guard_evaluation_context().temporal.value_if_bound(
+            entry.coordinate.cid
+        )
+        is floor
+    )
 
 
 def test_binder_false_floor_splices_else_branch() -> None:
@@ -345,9 +345,12 @@ def test_renamed_formal_uses_coordinate_not_spelling() -> None:
     floor = TrueBoolLiteralSugar(site=param.fragment)
     machine = _machine(entry=entry, floor=floor)
     assert isinstance(machine.resume(), YieldEffect)
-    assert machine._guard_evaluation_context().temporal.value_if_bound(
-        entry.coordinate.cid
-    ) is floor
+    assert (
+        machine._guard_evaluation_context().temporal.value_if_bound(
+            entry.coordinate.cid
+        )
+        is floor
+    )
 
 
 def test_wrong_coordinate_guard_refuses_when_roster_is_honest() -> None:

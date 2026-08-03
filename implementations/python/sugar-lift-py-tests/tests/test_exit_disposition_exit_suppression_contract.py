@@ -29,7 +29,12 @@ def _guard():
 def _value_error(*, coordinate=None, mro=None, name="ValueError"):
     if coordinate is None and mro is None:
         coordinate, mro = _builtin_exception_identity("ValueError")
-    return RaiseEffect(exception_type_coordinate=coordinate, occurrence=AuthenticatedRaiseLocus.of('exit_suppression.py:1:0'), exception_name=name, exception_type_mro=mro)
+    return RaiseEffect(
+        exception_type_coordinate=coordinate,
+        occurrence=AuthenticatedRaiseLocus.of("exit_suppression.py:1:0"),
+        exception_name=name,
+        exception_type_mro=mro,
+    )
 
 
 def test_truthful_contract_suppresses_matching_coordinate() -> None:

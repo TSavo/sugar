@@ -71,7 +71,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-
 SCOREBOARD_AUTHORITY = False
 
 # Production modules that own and_then / exit-conversion panic mouths.
@@ -115,9 +114,11 @@ def repo_root_from_here() -> Path:
     here = Path(__file__).resolve()
     # .../sugar-lift-py-tests/scripts/this.py → repo root = parents[3]
     for parent in here.parents:
-        if (parent / "implementations" / "python").is_dir() and (
-            parent / "Agents.md"
-        ).is_file() or (parent / "AGENTS.md").is_file():
+        if (
+            (parent / "implementations" / "python").is_dir()
+            and (parent / "Agents.md").is_file()
+            or (parent / "AGENTS.md").is_file()
+        ):
             return parent
     return here.parents[3]
 

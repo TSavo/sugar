@@ -282,9 +282,7 @@ class FloorValue:
         # Default: a record entry posts no exit. ReturnValue overrides.
         return ()
 
-    def add_with(
-        self, operation: AddOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    def add_with(self, operation: AddOperation, ctx: ReduceContext | None) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "add_with")
 
@@ -480,9 +478,7 @@ class FloorValue:
         del ctx
         return self._operation_construction_gap(operation, "iter_with")
 
-    def next_with(
-        self, operation: NextOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "next_with")
 
@@ -1197,9 +1193,7 @@ class FloorValue:
 
     def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):
         """Backward-compatible name: refuse ordering meaning (always throws)."""
-        self._refuse_ordering_meaning(
-            other, site, owner=owner, operator=operator
-        )
+        self._refuse_ordering_meaning(other, site, owner=owner, operator=operator)
 
     def less_than_from_left(self, left, site):
         """Default RHS law for ``left < self`` — never invents FOL meaning.

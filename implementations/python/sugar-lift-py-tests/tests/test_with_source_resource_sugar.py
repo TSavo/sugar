@@ -68,12 +68,8 @@ class _CompletedProtocol:
 
 
 def _protocol_calls():
-    enter_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "e" * 128, 1, 0, 1, 1
-    )
-    exit_definition = SourceFragmentCoordinateV1(
-        "blake3-512:" + "x" * 128, 2, 0, 2, 1
-    )
+    enter_definition = SourceFragmentCoordinateV1("blake3-512:" + "e" * 128, 1, 0, 1, 1)
+    exit_definition = SourceFragmentCoordinateV1("blake3-512:" + "x" * 128, 2, 0, 2, 1)
     enter = MethodCallSugar(
         receiver=ManagerRefSugar(slot_id="manager-slot", site=None),
         name="__enter__",
@@ -144,8 +140,8 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
         body=(
             _FixedSugar(
                 Incomplete(
-                    RaiseEffect.for_builtin("ValueError",
-                        
+                    RaiseEffect.for_builtin(
+                        "ValueError",
                         occurrence="resource.py:4:8",
                         exception_type_mro=mro,
                     )
@@ -240,18 +236,14 @@ def test_source_exit_runs_on_early_return_face():
         ),
         (
             Complete(
-                BlockValue(
-                    (ReturnValue(TermValue("early")),), can_fall_through=False
-                )
+                BlockValue((ReturnValue(TermValue("early")),), can_fall_through=False)
             ),
             TermValue(True),
             Completed,
         ),
         (
             Incomplete(
-                RaiseEffect.for_builtin("ValueError",
-                     occurrence="resource.py:8:8"
-                )
+                RaiseEffect.for_builtin("ValueError", occurrence="resource.py:8:8")
             ),
             TermValue(False),
             Halted,

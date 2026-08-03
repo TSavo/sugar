@@ -26,7 +26,10 @@ def _expression(source_expression: str):
 def _raise_occurrence(outcome) -> str:
     if isinstance(outcome, Complete):
         assert isinstance(outcome.value, RaiseValue)
-        assert isinstance(outcome.value.effect.occurrence_id, str) and ":" in outcome.value.effect.occurrence_id, (
+        assert (
+            isinstance(outcome.value.effect.occurrence_id, str)
+            and ":" in outcome.value.effect.occurrence_id
+        ), (
             "authenticated raise locus must be a file:line:col occurrence id, "
             f"not presence-only; got {outcome.value.effect.occurrence_id!r}"
         )
@@ -34,7 +37,10 @@ def _raise_occurrence(outcome) -> str:
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
-    assert isinstance(halted[0].effect.occurrence_id, str) and ":" in halted[0].effect.occurrence_id, (
+    assert (
+        isinstance(halted[0].effect.occurrence_id, str)
+        and ":" in halted[0].effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted[0].effect.occurrence_id!r}"
     )
@@ -107,20 +113,14 @@ def test_swapping_families_swaps_laws_without_collapsing_occurrences() -> None:
 
 
 def _caller_outcomes(calls: str):
-    source = (
-        "def mixed(a, b, c, d):\n"
-        "    return a < b and c in d\n"
-        f"\n{calls}"
-    )
+    source = "def mixed(a, b, c, d):\n" "    return a < b and c in d\n" f"\n{calls}"
     tree = SourceFile(
         (source, "boolop-mixed-caller.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
     outcomes = tuple(
-        node.sugar().desugar(None)
-        for node in tree.nodes()
-        if isinstance(node, Call)
+        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
     )
     assert len(comparisons) == 2
     return outcomes, comparisons
@@ -140,8 +140,7 @@ def _formal_occurrence(compare: Compare) -> str:
 
 def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> None:
     (toxic, safe), comparisons = _caller_outcomes(
-        "mixed(None, 1, None, 3)\n"
-        "mixed(None, 1, 1, [1])\n"
+        "mixed(None, 1, None, 3)\n" "mixed(None, 1, 1, [1])\n"
     )
     toxic_halt = _only_halted(toxic)
     safe_halt = _only_halted(safe)
@@ -155,7 +154,9 @@ def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> N
     assert toxic_halt.state == safe_halt.state
 
 
-def test_truthful_first_leg_routes_membership_halt_to_second_occurrence_and_state() -> None:
+def test_truthful_first_leg_routes_membership_halt_to_second_occurrence_and_state() -> (
+    None
+):
     (outcome,), comparisons = _caller_outcomes("mixed(1, 2, None, 3)\n")
     halted = _only_halted(outcome)
 

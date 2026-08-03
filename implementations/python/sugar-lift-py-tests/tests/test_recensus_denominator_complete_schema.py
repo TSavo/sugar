@@ -6,7 +6,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 _SCRIPT = _SCRIPTS / "control_effect_recensus.py"
 

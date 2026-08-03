@@ -330,9 +330,7 @@ def test_import_bound_attribute_body_does_not_invent_member_success(tmp_path):
 
     path = tmp_path / "body.py"
     path.write_text(
-        "import pandas as pd\n"
-        "def f():\n"
-        "    return pd.util.foo\n",
+        "import pandas as pd\n" "def f():\n" "    return pd.util.foo\n",
         encoding="utf-8",
     )
     tree = SourceFile(path_source(str(path)))

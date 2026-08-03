@@ -84,7 +84,9 @@ def test_instrument_truthful_floor_shape_is_zero(tmp_path: Path) -> None:
     assert report.offenders == ()
 
 
-def test_instrument_structurally_sees_spelling_gates_of_cluster_five(tmp_path: Path) -> None:
+def test_instrument_structurally_sees_spelling_gates_of_cluster_five(
+    tmp_path: Path,
+) -> None:
     """Sin cluster 5 shapes: name gates outside authenticated coordinates.
 
     The instrument must catch each by AST shape, not by the legacy
@@ -181,7 +183,9 @@ def test_instrument_fixed_cluster_five_production_sites_are_zero() -> None:
         for row in report.offenders
         if row.path in targets and row.axis == "name_or_vendor_gates"
     ]
-    assert hits == [], "cluster-5 production sites still gate on spelling:\n" + "\n".join(
+    assert (
+        hits == []
+    ), "cluster-5 production sites still gate on spelling:\n" + "\n".join(
         f"{row.path}:{row.line}: {row.observed}" for row in hits
     )
 
@@ -204,7 +208,9 @@ def test_instrument_sees_type_name_eq_string_spelling_gate(tmp_path: Path) -> No
     assert any("type_name" in row.observed for row in gates)
 
 
-def test_instrument_sees_effect_router_name_equality_spelling_gate(tmp_path: Path) -> None:
+def test_instrument_sees_effect_router_name_equality_spelling_gate(
+    tmp_path: Path,
+) -> None:
     """Planted ``observed[1] == matcher.name`` style name equality is a gate."""
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
@@ -392,7 +398,9 @@ def test_instrument_does_not_scan_idd_or_plant_self(tmp_path: Path) -> None:
     assert report.offenders == ()
 
 
-def test_partition_does_not_count_lexical_attr_name_as_identity_gate(tmp_path: Path) -> None:
+def test_partition_does_not_count_lexical_attr_name_as_identity_gate(
+    tmp_path: Path,
+) -> None:
     """field.name == name is open-domain membrane, not name_or_vendor_gates."""
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
@@ -411,7 +419,9 @@ def test_partition_does_not_count_lexical_attr_name_as_identity_gate(tmp_path: P
     assert report.r["open_lexical_attr_name"] >= 1
 
 
-def test_partition_func_id_string_is_open_lexical_not_type_identity(tmp_path: Path) -> None:
+def test_partition_func_id_string_is_open_lexical_not_type_identity(
+    tmp_path: Path,
+) -> None:
     """func.id == \"range\" is permanent open-domain membrane."""
     from sugar_lift_py_tests.idd.builtin_closed_operation_instrument import (
         collect_builtin_closed_operation_report,
@@ -421,7 +431,7 @@ def test_partition_func_id_string_is_open_lexical_not_type_identity(tmp_path: Pa
         tmp_path,
         "nodes.py",
         "def _concrete(iterable):\n"
-        "    if iterable.func.id == \"range\":\n"
+        '    if iterable.func.id == "range":\n'
         "        return True\n"
         "    return False\n",
     )

@@ -66,7 +66,8 @@ def _retained_source_call(original: FloorValue | None = None):
     ),
 )
 def test_retained_source_completion_refuses_different_producer_replay(
-    replay_kind: str, replacement_value: int,
+    replay_kind: str,
+    replacement_value: int,
 ) -> None:
     """Lying twin: even equal completion replay cannot republish testimony."""
     retained, body, original = _retained_source_call()
@@ -116,8 +117,9 @@ def test_retained_source_completion_refuses_every_second_reduction_door(
     assert projected.value is original
 
 
-def test_legacy_operation_projection_paths_consume_retained_value_without_reduction(
-) -> None:
+def test_legacy_operation_projection_paths_consume_retained_value_without_reduction() -> (
+    None
+):
     """Legacy callers read the seat; neither path may re-enter the source body."""
     retained, body, original = _retained_source_call()
 

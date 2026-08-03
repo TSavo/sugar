@@ -94,7 +94,13 @@ def _fabricated_decided_miss_sites(path: Path) -> list[tuple[Path, int, str]]:
     for node in ast.walk(tree):
         if _is_match_decided_false(node):
             line = getattr(node, "lineno", 0)
-            sites.append((path, line, ast.get_source_segment(source, node) or "MatchDecided(False)"))
+            sites.append(
+                (
+                    path,
+                    line,
+                    ast.get_source_segment(source, node) or "MatchDecided(False)",
+                )
+            )
     return sites
 
 
@@ -131,7 +137,9 @@ def test_one_matcher_is_the_sole_match_decided_false_owner() -> None:
     )
 
 
-def test_sourcefile_construction_door_auditor_is_blind_to_fabricated_match_decided() -> None:
+def test_sourcefile_construction_door_auditor_is_blind_to_fabricated_match_decided() -> (
+    None
+):
     """LOUD: repository SOURCEFILE_CONSTRUCTION_DOOR auditor does not cover this sin class.
 
     ``tests/sourcefile_construction_door_auditor.py`` closes SourceFile construction, privacy, and
@@ -164,9 +172,5 @@ def test_planted_fabricated_miss_is_detected() -> None:
         "        return MatchDecided(False)\n"
         "    return MatchDecided(True)\n"
     )
-    hits = [
-        node
-        for node in ast.walk(planted)
-        if _is_match_decided_false(node)
-    ]
+    hits = [node for node in ast.walk(planted) if _is_match_decided_false(node)]
     assert len(hits) == 1

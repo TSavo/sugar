@@ -58,7 +58,10 @@ def seal(prefix):
 
     offenders = _SCANNER.scan_python_root(root)
     kinds = {(o.kind, o.axis) for o in offenders}
-    assert ("construction-panic-soft-continue", "R_construction_panic_soft_continue") in kinds
+    assert (
+        "construction-panic-soft-continue",
+        "R_construction_panic_soft_continue",
+    ) in kinds
 
 
 def test_lying_exception_soft_continue_is_detected(tmp_path: Path) -> None:
@@ -227,9 +230,13 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
         _PYTHON_ROOT / "sugar-source-tree/src/sugar_source_tree/nodes.py"
     ).read_text(encoding="utf-8")
     assert "return SoftUnresolvedWithSugar" not in nodes
-    assert "from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import" not in nodes
+    assert (
+        "from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import" not in nodes
+    )
     assert "return SoftUnresolvedTrySugar" not in nodes
-    assert "from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import" not in nodes
+    assert (
+        "from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import" not in nodes
+    )
 
     parso = (
         _PYTHON_ROOT / "sugar-source-tree/src/sugar_source_tree/parso_adapter.py"
@@ -282,11 +289,7 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
         for o in offenders
     ), _SCANNER.format_report(offenders)
     # Permanent membrane residual: multi-file corpus census only.
-    residual = [
-        o
-        for o in offenders
-        if o.kind == "exception-soft-continue"
-    ]
+    residual = [o for o in offenders if o.kind == "exception-soft-continue"]
     assert all(o.path.endswith("census.py") for o in residual), _SCANNER.format_report(
         offenders
     )
@@ -303,9 +306,9 @@ def test_live_scan_reports_named_axes_and_residual_is_nonzero_until_drained() ->
     assert counts["R_construction_panic_soft_continue"] == 0
     # Permanent open-domain membrane: multi-file census defect enumeration.
     assert counts["R_exception_soft_continue"] == 1
-    assert all(
-        o.path.endswith("census.py") for o in offenders
-    ), _SCANNER.format_report(offenders)
+    assert all(o.path.endswith("census.py") for o in offenders), _SCANNER.format_report(
+        offenders
+    )
     report = _SCANNER.format_report(offenders)
     assert "R_construction_panic_soft_continue" in report
     assert "R_exception_soft_continue" in report

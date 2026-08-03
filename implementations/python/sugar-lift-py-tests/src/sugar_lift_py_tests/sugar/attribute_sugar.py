@@ -167,7 +167,5 @@ class AttributeSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.project_attribute(
-                receiver, self.name, self.site, ctx
-            )
+            lambda receiver: self.project_attribute(receiver, self.name, self.site, ctx)
         )

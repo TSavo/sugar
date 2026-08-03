@@ -94,13 +94,13 @@ def test_dynamic_isinstance_projects_the_value_through_its_owned_term_door() -> 
 
 def test_dynamic_isinstance_keeps_a_value_owned_term_refusal_loud() -> None:
     source = "subject\n"
-    tree = SourceFile((source, "dynamic-isinstance-lie.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "dynamic-isinstance-lie.py", blake3_512_of(source.encode()))
+    )
     site = next(node for node in tree.nodes() if isinstance(node, Name)).fragment
 
     with pytest.raises(ConstructionPanic):
-        SymbolicValue(make_var("RuntimeType")).test_python_type(
-            FloorValue(), site
-        )
+        SymbolicValue(make_var("RuntimeType")).test_python_type(FloorValue(), site)
 
 
 # -- sugar.for_sugar cap -> floor/sequence_repetition.py --------------------

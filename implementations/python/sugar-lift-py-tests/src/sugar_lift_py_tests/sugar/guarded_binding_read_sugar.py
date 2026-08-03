@@ -147,9 +147,8 @@ def _projection_term(state, *, owner: str):
             symbol_kind="coordinate",
         )
     if isinstance(state, LoopGuardedProjection):
-        if (
-            not isinstance(state.target_cid, str)
-            or not state.target_cid.startswith("blake3-512:")
+        if not isinstance(state.target_cid, str) or not state.target_cid.startswith(
+            "blake3-512:"
         ):
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 

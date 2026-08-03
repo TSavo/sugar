@@ -36,8 +36,7 @@ def test_nested_breaks_sugar_targets_nearest_loop_with_shared_field_cache():
     assert len(breaks) == 2
     targets = [br.sugar().target_cid for br in breaks]
     assert targets[0] != targets[1], (
-        "inner and outer break must not share a loop target "
-        f"(got {targets!r})"
+        "inner and outer break must not share a loop target " f"(got {targets!r})"
     )
     cache = function.unit.construction_cache
     assert cache is not None

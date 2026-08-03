@@ -61,7 +61,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterator, NamedTuple, Sequence
 
-
 # ---------------------------------------------------------------------------
 # Roots to scan (kit construction + consumers only)
 # ---------------------------------------------------------------------------
@@ -238,9 +237,11 @@ def index_module(path: Path) -> ModuleIndex | None:
             left = node.left
             if isinstance(left, ast.Attribute) and left.attr == "kind":
                 for op, comp in zip(node.ops, node.comparators):
-                    if isinstance(op, (ast.Eq, ast.NotEq)) and isinstance(
-                        comp, ast.Constant
-                    ) and isinstance(comp.value, str):
+                    if (
+                        isinstance(op, (ast.Eq, ast.NotEq))
+                        and isinstance(comp, ast.Constant)
+                        and isinstance(comp.value, str)
+                    ):
                         idx.kind_literals.add(comp.value)
                     if isinstance(op, (ast.In, ast.NotIn)):
                         if isinstance(comp, (ast.Tuple, ast.List, ast.Set)):
@@ -267,9 +268,7 @@ def transitive_bases(
     return acc
 
 
-def all_descendants(
-    classes: dict[str, set[str]], root: str
-) -> set[str]:
+def all_descendants(classes: dict[str, set[str]], root: str) -> set[str]:
     cache: dict[str, set[str]] = {}
     out: set[str] = set()
     for name in classes:
@@ -313,7 +312,9 @@ def _function_kind_sets(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
             if isinstance(op, ast.Eq) and isinstance(comp, ast.Constant):
                 if isinstance(comp.value, str):
                     kinds.add(comp.value)
-            if isinstance(op, ast.In) and isinstance(comp, (ast.Tuple, ast.List, ast.Set)):
+            if isinstance(op, ast.In) and isinstance(
+                comp, (ast.Tuple, ast.List, ast.Set)
+            ):
                 for elt in comp.elts:
                     if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                         kinds.add(elt.value)
@@ -444,9 +445,12 @@ def collect_produced(
             if name in _BINDING_STATE_FAMILY or any(
                 b in _BINDING_STATE_FAMILY for b in bases
             ):
-                if name.endswith("Binding") or name.endswith("State") or name.endswith(
-                    "StateV1"
-                ) or name in _BINDING_STATE_FAMILY:
+                if (
+                    name.endswith("Binding")
+                    or name.endswith("State")
+                    or name.endswith("StateV1")
+                    or name in _BINDING_STATE_FAMILY
+                ):
                     binding.add(name)
 
     # Explicit family always produced
@@ -627,9 +631,7 @@ def find_gaps(
 
     if indexes is not None:
         gaps.extend(
-            find_expression_mint_not_term_gaps(
-                indexes, classes, constructed, repo=repo
-            )
+            find_expression_mint_not_term_gaps(indexes, classes, constructed, repo=repo)
         )
 
     # Core binding-state currency (what binding_state_read_node must totalize).
@@ -656,7 +658,10 @@ def find_gaps(
                 accepted_sugars = {
                     a for a in door.accepted_types if a.endswith("Sugar")
                 }
-                if accepted_sugars and _CONSTRUCTED_TERM_ROOT not in door.accepted_types:
+                if (
+                    accepted_sugars
+                    and _CONSTRUCTED_TERM_ROOT not in door.accepted_types
+                ):
                     candidates |= {
                         c
                         for c in constructed
@@ -667,9 +672,7 @@ def find_gaps(
                     "binding_state_read_node",
                     "_construct_binding_projection",
                 }:
-                    candidates |= set(binding_core) | (
-                        binding & binding_core
-                    )
+                    candidates |= set(binding_core) | (binding & binding_core)
                     # Also any extra Binding* produced in the family that is
                     # clearly a state species construction can mint.
                     candidates |= {
@@ -718,9 +721,7 @@ def find_gaps(
             missing = sorted(
                 k
                 for k in kind_literals
-                if k not in door.kind_set
-                and k[:1].isupper()
-                and k in classes
+                if k not in door.kind_set and k[:1].isupper() and k in classes
             )
             for k in missing[:12]:
                 gaps.append(
@@ -784,7 +785,9 @@ def run(roots: Sequence[Path], repo: Path) -> tuple[list[Gap], dict[str, object]
     for g in gaps:
         key = (g.axis, g.door, g.produced, g.door_line)
         uniq[key] = g
-    ordered = sorted(uniq.values(), key=lambda g: (g.axis, g.door_path, g.door_line, g.produced))
+    ordered = sorted(
+        uniq.values(), key=lambda g: (g.axis, g.door_path, g.door_line, g.produced)
+    )
     summary = {
         "modules_indexed": len(indexes),
         "classes": len(classes),
@@ -836,7 +839,7 @@ def binding_state_read_node(state):
         f"write arm for LoopProjectedBinding"
     )
 '''
-    clean = '''
+    clean = """
 class GuardedBinding:
     pass
 
@@ -863,7 +866,7 @@ def binding_state_read_node(state):
         requested="Node|Unbound|Guarded|LoopProjected",
         fix="write arm",
     )
-'''
+"""
     # Dynamic-discharge proxy plant: Expression mints Sugar outside CTS.
     planted_expr = '''
 class Sugar:
@@ -917,18 +920,16 @@ class ObjectPlaceStateV1(Expression):
         expr_fixture.write_text(clean_expr, encoding="utf-8")
         green_expr_gaps, green_expr_summary = run((expr_root,), root)
 
-    red_ok = (
-        red_summary["R_total"] >= 1
-        and any(g.produced == "LoopProjectedBinding" for g in red_gaps)
+    red_ok = red_summary["R_total"] >= 1 and any(
+        g.produced == "LoopProjectedBinding" for g in red_gaps
     )
     green_ok = green_summary["R_total"] == 0
-    expr_red_ok = (
-        red_expr_summary.get("R_expression_construct_not_term", 0) >= 1
-        and any(
-            g.produced == "ConstructedObjectPlaceSugar"
-            and g.axis == "R_expression_construct_not_term"
-            for g in red_expr_gaps
-        )
+    expr_red_ok = red_expr_summary.get(
+        "R_expression_construct_not_term", 0
+    ) >= 1 and any(
+        g.produced == "ConstructedObjectPlaceSugar"
+        and g.axis == "R_expression_construct_not_term"
+        for g in red_expr_gaps
     )
     expr_green_ok = green_expr_summary["R_total"] == 0
     return red_ok and green_ok and expr_red_ok and expr_green_ok
@@ -959,10 +960,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.self_test:
         ok = discrimination_self_test()
-        print(
-            "CONSTRUCTION-CONSUMER-CODOMAIN SELF-TEST "
-            + ("GREEN" if ok else "RED")
-        )
+        print("CONSTRUCTION-CONSUMER-CODOMAIN SELF-TEST " + ("GREEN" if ok else "RED"))
         print(
             json.dumps(
                 {
@@ -1024,13 +1022,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"  ... {len(gaps) - 80} more")
         else:
             print()
-            print(
-                "  ZERO IS BANKABLE EVIDENCE, NOT ABSENCE OF AN INSTRUMENT."
-            )
+            print("  ZERO IS BANKABLE EVIDENCE, NOT ABSENCE OF AN INSTRUMENT.")
             print(
                 "  R_total=0 under THIS instrument reach (static AST on enrolled"
                 " doors + Expression._construct_sugar mint→term proxy)."
-                " Not \"the class is closed forever\" — remaining gaps may still"
+                ' Not "the class is closed forever" — remaining gaps may still'
                 " be dynamic-only (getattr factories, runtime type mutations)."
                 " Those are caught by require_constructed_term_sugar TypeError"
                 " at discharge and sealed-board twins, not by this scan."

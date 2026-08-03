@@ -22,7 +22,7 @@ if os.path.join(_ROOT, "tests") not in sys.path:
 
 from checkout_resolution import pin_checkout  # noqa: E402
 
-pin_checkout(__file__, siblings=('sugar-lift-python-source',))
+pin_checkout(__file__, siblings=("sugar-lift-python-source",))
 
 
 def oracle_source_file(source: str, backend=None, suffix: str = ".py"):

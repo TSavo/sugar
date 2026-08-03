@@ -27,7 +27,13 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     _NATIVE_OPERATION_PROJECTORS,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import ListValue, ReturnValue, SymbolicValue, TermValue, TupleValue
+from sugar_lift_py_tests.floor import (
+    ListValue,
+    ReturnValue,
+    SymbolicValue,
+    TermValue,
+    TupleValue,
+)
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -209,7 +215,10 @@ def test_variadic_store_halt_preserves_earlier_name_binding_state() -> None:
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )

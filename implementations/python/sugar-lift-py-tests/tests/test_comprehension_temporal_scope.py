@@ -232,10 +232,7 @@ def test_finite_comprehensions_transport_exact_constructed_objects_in_order():
 
 
 def test_finite_comprehension_refuses_swapped_tuple_target_coordinates():
-    source = (
-        "def build():\n"
-        "    return [(left, right) for left, right in [(1, 2)]]\n"
-    )
+    source = "def build():\n" "    return [(left, right) for left, right in [(1, 2)]]\n"
     source_file = _source_file(source)
     comprehension = next(
         node for node in source_file.nodes() if node.kind == "ListComp"

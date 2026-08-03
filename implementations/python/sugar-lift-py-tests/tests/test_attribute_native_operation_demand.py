@@ -108,7 +108,10 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
         [str_const("builtins"), str_const("AttributeError")],
     )
     assert halted.exits[0].effect.exception_type_coordinate == attribute_error
-    assert isinstance(halted.exits[0].effect.occurrence_id, str) and ":" in halted.exits[0].effect.occurrence_id, (
+    assert (
+        isinstance(halted.exits[0].effect.occurrence_id, str)
+        and ":" in halted.exits[0].effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.exits[0].effect.occurrence_id!r}"
     )

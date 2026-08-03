@@ -151,9 +151,7 @@ def test_guarded_stamps_the_face_it_is_given_and_nothing_else():
     plain = ExitSet.completed("v").guarded(condition)
     assert plain.exits[0].faces == frozenset()
 
-    joined = faced.union(
-        ExitSet.completed("w").guarded(not_(condition), else_face)
-    )
+    joined = faced.union(ExitSet.completed("w").guarded(not_(condition), else_face))
     # The join is factorable because the producer testified, not because the
     # guards happen to be spelled as negations of each other.
     factored = joined.factor_completed()

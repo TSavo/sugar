@@ -150,7 +150,10 @@ def test_guarded_loop_read_is_a_constructed_term_with_exact_coordinates():
     projection = LoopGuardedProjection(
         (
             LoopGuardedCompletedFace(
-                "BreakExit", atomic("break_guard", []), IntLiteralSugar(1, value_site), 2
+                "BreakExit",
+                atomic("break_guard", []),
+                IntLiteralSugar(1, value_site),
+                2,
             ),
             LoopGuardedCompletedFace(
                 "NormalExhaustion",
@@ -180,12 +183,18 @@ def test_guarded_loop_read_is_a_constructed_term_with_exact_coordinates():
         _TermSite("blake3-512:" + "44" * 32),
     )
 
-    assert _term_content_cid(
-        foreign_target.to_term(owner="guarded-loop-read-foreign-target")
-    ) != authentic_cid
-    assert _term_content_cid(
-        foreign_occurrence.to_term(owner="guarded-loop-read-foreign-occurrence")
-    ) != authentic_cid
+    assert (
+        _term_content_cid(
+            foreign_target.to_term(owner="guarded-loop-read-foreign-target")
+        )
+        != authentic_cid
+    )
+    assert (
+        _term_content_cid(
+            foreign_occurrence.to_term(owner="guarded-loop-read-foreign-occurrence")
+        )
+        != authentic_cid
+    )
 
     missing_target = GuardedBindingReadSugar(
         "value",
@@ -275,9 +284,7 @@ def test_delete_uses_the_same_authenticated_loop_exit_family():
     site = _Site()
     projection = _projection(
         [
-            LoopGuardedCompletedFace(
-                "BreakExit", atomic("b", []), _BoundState(), 2
-            ),
+            LoopGuardedCompletedFace("BreakExit", atomic("b", []), _BoundState(), 2),
             LoopGuardedCompletedFace(
                 "NormalExhaustion",
                 atomic("n", []),
@@ -603,9 +610,7 @@ def test_the_loop_family_stays_linear_as_factors_are_appended(tmp_path):
     family = ExitSet(
         (
             Completed(guard("broke"), "a", frozenset({faces["BreakExit"]})),
-            Completed(
-                guard("exhausted"), "b", frozenset({faces["NormalExhaustion"]})
-            ),
+            Completed(guard("exhausted"), "b", frozenset({faces["NormalExhaustion"]})),
         )
     ).factor_completed()
 
@@ -613,7 +618,9 @@ def test_the_loop_family_stays_linear_as_factors_are_appended(tmp_path):
     for step_count in (1, 2, 3, 4, 5, 6, 7, 8):
         exits = family
         for index in range(step_count):
-            exits = exits.sequence(lambda value, _i=index: ExitSet.completed((value, _i)))
+            exits = exits.sequence(
+                lambda value, _i=index: ExitSet.completed((value, _i))
+            )
         series.append(len([e for e in exits.exits if isinstance(e, Completed)]))
 
     assert series == [1] * 8, (

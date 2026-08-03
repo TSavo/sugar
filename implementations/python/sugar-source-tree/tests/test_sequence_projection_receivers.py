@@ -424,9 +424,7 @@ def test_each_conditional_face_owes_its_own_operand_not_a_shared_one() -> None:
     shared operand would look identical in arity and be wrong about what the
     caller must satisfy."""
     _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
-    operands = {
-        str(exit_.effect.runtime_operand.term.args[0]) for exit_ in out.exits
-    }
+    operands = {str(exit_.effect.runtime_operand.term.args[0]) for exit_ in out.exits}
     assert len(operands) == 2, operands
     assert any("p" in operand for operand in operands)
     assert any("q" in operand for operand in operands)

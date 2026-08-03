@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
 
-
 # Surface operator spelling (as ObjectValue / BinaryOperator.symbol) → Floor binary.
 _SURFACE_BINARY: dict[str, Callable] = {
     "+": lambda left, right, site: left.add(right, site),
@@ -121,6 +120,4 @@ def discharge_inplace(left, right, site, *, surface: str):
         ),
         None,
     )
-    return after_inplace_notimplemented(
-        projected, lambda: binary(left, right, site)
-    )
+    return after_inplace_notimplemented(projected, lambda: binary(left, right, site))

@@ -13,7 +13,9 @@ from sugar_source_tree.tree import SourceFile
 def _site(tmp_path):
     path = tmp_path / "attr_delete.py"
     path.write_text("def f(obj):\n    del obj.attr\n")
-    function = next(SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions())
+    function = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    )
     return function.body[0].fragment
 
 
@@ -32,9 +34,14 @@ class _Receiver(Sugar):
 
 @pytest.mark.parametrize(
     ("receiver", "owner"),
-    ((StringValue("abc"), "StringValue.delattr"), (BytesValue(b"abc"), "BytesValue.delattr")),
+    (
+        (StringValue("abc"), "StringValue.delattr"),
+        (BytesValue(b"abc"), "BytesValue.delattr"),
+    ),
 )
-def test_immutable_scalar_attribute_delete_has_exact_owner_occurrence(tmp_path, receiver, owner):
+def test_immutable_scalar_attribute_delete_has_exact_owner_occurrence(
+    tmp_path, receiver, owner
+):
     site = _site(tmp_path)
     outcome = AttributeDeleteEffectSugar(_Receiver(receiver), "attr", site).desugar()
     assert isinstance(outcome, Incomplete)
@@ -44,6 +51,10 @@ def test_immutable_scalar_attribute_delete_has_exact_owner_occurrence(tmp_path, 
 
 
 @pytest.mark.parametrize("receiver", (StringValue("abc"), BytesValue(b"abc")))
-def test_immutable_scalar_attribute_delete_cannot_fabricate_completion(tmp_path, receiver):
-    outcome = AttributeDeleteEffectSugar(_Receiver(receiver), "attr", _site(tmp_path)).desugar()
+def test_immutable_scalar_attribute_delete_cannot_fabricate_completion(
+    tmp_path, receiver
+):
+    outcome = AttributeDeleteEffectSugar(
+        _Receiver(receiver), "attr", _site(tmp_path)
+    ).desugar()
     assert not isinstance(outcome, Complete)

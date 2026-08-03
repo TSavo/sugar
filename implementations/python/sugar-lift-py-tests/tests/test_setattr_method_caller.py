@@ -53,9 +53,7 @@ from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 METHOD_BODY = (
-    "class Writer:\n"
-    "    def store(self, obj, value):\n"
-    "        obj.field = value\n"
+    "class Writer:\n" "    def store(self, obj, value):\n" "        obj.field = value\n"
 )
 
 METHOD_DEFAULTS = (
@@ -69,10 +67,7 @@ TARGET_CLASS = "class Target:\n    pass\n"
 
 # Property getter without setter — store path must AttributeError.
 PROPERTY_TARGET = (
-    "class Target:\n"
-    "    @property\n"
-    "    def field(self):\n"
-    "        return 1\n"
+    "class Target:\n" "    @property\n" "    def field(self):\n" "        return 1\n"
 )
 
 
@@ -155,8 +150,11 @@ def _assert_named_halt(outcome, *, require_pre_effect_state: bool = True) -> Hal
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity('AttributeError')
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -245,11 +243,7 @@ def _floor_target_arg(arg) -> ObjectValue:
 
 def test_bound_self_does_not_shift_obj_value_coordinates() -> None:
     """Positional method call binds self, then obj/value in declaration order."""
-    source = (
-        TARGET_CLASS
-        + METHOD_BODY
-        + "\nWriter().store(Target(), 7)\n"
-    )
+    source = TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
     callsite = _method_callsite(source)
     _assert_bound_self_first(callsite)
     target = _floor_target_arg(callsite.arg_values[1])
@@ -300,9 +294,7 @@ def test_positional_keyword_and_default_method_calls_discharge() -> None:
             TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
         ),
         _method_callsite(
-            TARGET_CLASS
-            + METHOD_BODY
-            + "\nWriter().store(obj=Target(), value=7)\n"
+            TARGET_CLASS + METHOD_BODY + "\nWriter().store(obj=Target(), value=7)\n"
         ),
         _method_callsite(
             TARGET_CLASS + METHOD_DEFAULTS + "\nWriter().store(Target())\n"
@@ -419,11 +411,7 @@ def test_getter_only_property_method_call_binds_and_floor_refuses_store() -> Non
     pre-effect state identity; producer_outcome over an undug constructor arg
     is not the discharge instrument.
     """
-    source = (
-        PROPERTY_TARGET
-        + METHOD_BODY
-        + "\nWriter().store(Target(), 7)\n"
-    )
+    source = PROPERTY_TARGET + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
     site = _method_callsite(source)
     _assert_bound_self_first(site)
     target = _floor_target_arg(site.arg_values[1])

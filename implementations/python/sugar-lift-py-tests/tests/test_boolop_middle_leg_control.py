@@ -30,7 +30,10 @@ def _expression(expression: str):
 def _raise_occurrence(outcome) -> str:
     if isinstance(outcome, Complete):
         assert isinstance(outcome.value, RaiseValue)
-        assert isinstance(outcome.value.effect.occurrence_id, str) and ":" in outcome.value.effect.occurrence_id, (
+        assert (
+            isinstance(outcome.value.effect.occurrence_id, str)
+            and ":" in outcome.value.effect.occurrence_id
+        ), (
             "authenticated raise locus must be a file:line:col occurrence id, "
             f"not presence-only; got {outcome.value.effect.occurrence_id!r}"
         )
@@ -38,7 +41,10 @@ def _raise_occurrence(outcome) -> str:
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
-    assert isinstance(halted[0].effect.occurrence_id, str) and ":" in halted[0].effect.occurrence_id, (
+    assert (
+        isinstance(halted[0].effect.occurrence_id, str)
+        and ":" in halted[0].effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted[0].effect.occurrence_id!r}"
     )
@@ -54,9 +60,7 @@ def _caller_outcomes(calls: str):
     tree = _tree(source)
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
     outcomes = tuple(
-        node.sugar().desugar(None)
-        for node in tree.nodes()
-        if isinstance(node, Call)
+        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
     )
     assert len(comparisons) == 3
     return outcomes, comparisons
@@ -105,8 +109,7 @@ def test_successful_three_leg_chain_returns_exact_last_operand() -> None:
 
 def test_middle_typeerror_blocks_toxic_and_safe_membership_with_exact_state() -> None:
     (toxic, safe), comparisons = _caller_outcomes(
-        "choose(1, 2, None, 1, None, 3)\n"
-        "choose(1, 2, None, 1, 1, [1])\n"
+        "choose(1, 2, None, 1, None, 3)\n" "choose(1, 2, None, 1, 1, [1])\n"
     )
     toxic_halt = _only_halted(toxic)
     safe_halt = _only_halted(safe)
@@ -122,8 +125,7 @@ def test_middle_typeerror_blocks_toxic_and_safe_membership_with_exact_state() ->
 
 def test_first_typeerror_blocks_distinct_middle_and_membership_twins() -> None:
     (toxic, safe), comparisons = _caller_outcomes(
-        "choose(None, 2, None, 1, None, 3)\n"
-        "choose(None, 2, 1, 2, 1, [1])\n"
+        "choose(None, 2, None, 1, None, 3)\n" "choose(None, 2, 1, 2, 1, [1])\n"
     )
     toxic_halt = _only_halted(toxic)
     safe_halt = _only_halted(safe)

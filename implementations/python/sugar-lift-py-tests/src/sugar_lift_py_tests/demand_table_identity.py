@@ -113,12 +113,20 @@ class DemandTableIdentityV1:
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object]) -> "DemandTableIdentityV1":
-        required = ("contentKey", "corpusManifestCid", "schemaVersion",
-                    "producerSourceCid", "resolutionConfigCid",
-                    "parserIdentity", "fileCount")
+        required = (
+            "contentKey",
+            "corpusManifestCid",
+            "schemaVersion",
+            "producerSourceCid",
+            "resolutionConfigCid",
+            "parserIdentity",
+            "fileCount",
+        )
         missing = [key for key in required if key not in raw]
         if missing:
-            raise ValueError(f"demand table semantic identity missing fields: {missing}")
+            raise ValueError(
+                f"demand table semantic identity missing fields: {missing}"
+            )
         return cls(
             content_key=str(raw["contentKey"]),
             corpus_manifest_cid=str(raw["corpusManifestCid"]),

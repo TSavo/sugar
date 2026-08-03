@@ -258,8 +258,7 @@ class ListValue(FloorValue):
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
             if all(
-                bound is None
-                or (type(bound) is TermValue and type(bound.value) is int)
+                bound is None or (type(bound) is TermValue and type(bound.value) is int)
                 for bound in bounds
             ):
                 lower, upper, step = (
@@ -279,9 +278,7 @@ class ListValue(FloorValue):
                 return Complete(
                     ListValue(tuple(self.elements[slice(lower, upper, step)]))
                 )
-            return self.undecided_subscript(
-                index, site, owner="ListValue.subscript"
-            )
+            return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
         if type(index) is TermValue and isinstance(index.value, int):
             i = index.value

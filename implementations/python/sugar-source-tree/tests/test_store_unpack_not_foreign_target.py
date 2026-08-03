@@ -54,9 +54,7 @@ def test_mixed_name_subscript_unpack_does_not_raise_foreign_target(
     sf = _open(
         tmp_path,
         "mixed_unpack.py",
-        "def f(out, codes, a, b):\n"
-        "    out, codes[-1] = a, b\n"
-        "    return out\n",
+        "def f(out, codes, a, b):\n" "    out, codes[-1] = a, b\n" "    return out\n",
     )
     assignment = next(n for n in sf.nodes() if isinstance(n, Assign))
     # May or may not enroll depending on _is_binding_target_pattern (mixed = no).
@@ -71,9 +69,7 @@ def test_pure_name_unpack_still_has_pattern_and_binds(tmp_path: Path) -> None:
     sf = _open(
         tmp_path,
         "name_unpack.py",
-        "def f(key):\n"
-        "    root, leaf = split(key)\n"
-        "    return root\n",
+        "def f(key):\n" "    root, leaf = split(key)\n" "    return root\n",
     )
     assignment = next(n for n in sf.nodes() if isinstance(n, Assign))
     assert len(assignment.target_patterns) == 1

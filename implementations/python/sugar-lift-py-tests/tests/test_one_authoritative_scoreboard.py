@@ -81,7 +81,8 @@ def test_every_module_that_emits_an_r_quantity_declares_its_authority() -> None:
     producers = _board_producers()
     assert producers, "recognizer found no R-emitting module — it walked the wrong tree"
     undeclared = sorted(
-        str(path.relative_to(KIT)) for path, declared in producers.items()
+        str(path.relative_to(KIT))
+        for path, declared in producers.items()
         if declared is None
     )
     assert not undeclared, (

@@ -105,9 +105,7 @@ def test_attribute_aug_assign_formal_get_is_attribute_named_carrier():
         NativeOperationExitCarrierV1,
     )
 
-    outcome = (
-        _fn("def A(obj, y):\n    obj.a += y\n    return y\n").sugar().desugar()
-    )
+    outcome = _fn("def A(obj, y):\n    obj.a += y\n    return y\n").sugar().desugar()
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "attribute_named"
 
@@ -118,9 +116,7 @@ def test_subscript_aug_assign_formal_get_is_subscript_carrier():
         NativeOperationExitCarrierV1,
     )
 
-    outcome = (
-        _fn("def A(d, k, y):\n    d[k] += y\n    return y\n").sugar().desugar()
-    )
+    outcome = _fn("def A(d, k, y):\n    d[k] += y\n    return y\n").sugar().desugar()
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "subscript"
 

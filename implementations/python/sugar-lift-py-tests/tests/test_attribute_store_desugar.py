@@ -221,7 +221,10 @@ def test_readable_immutable_receiver_raises_on_store(tmp_path):
 
 @pytest.mark.parametrize(
     ("receiver", "owner"),
-    ((StringValue("abc"), "StringValue.setattr"), (BytesValue(b"abc"), "BytesValue.setattr")),
+    (
+        (StringValue("abc"), "StringValue.setattr"),
+        (BytesValue(b"abc"), "BytesValue.setattr"),
+    ),
 )
 def test_immutable_scalar_attribute_store_has_exact_owner_occurrence(
     tmp_path, receiver, owner
@@ -518,7 +521,10 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     ):
         assert isinstance(halt, Halted)
         assert "AttributeError" in repr(halt.effect.exception_type_coordinate)
-        assert isinstance(halt.effect.occurrence_id, str) and ":" in halt.effect.occurrence_id, (
+        assert (
+            isinstance(halt.effect.occurrence_id, str)
+            and ":" in halt.effect.occurrence_id
+        ), (
             "authenticated raise locus must be a file:line:col occurrence id, "
             f"not presence-only; got {halt.effect.occurrence_id!r}"
         )

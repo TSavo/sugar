@@ -78,9 +78,7 @@ class EqualityOpSugar(ConstructedTermSugar):
 
     def apply_reduced(self, left, right, ctx: object = None) -> Outcome:
         """Apply equality/refinement to operands already evaluated once."""
-        return _equals_and_refine(
-            left, right, self.site, ctx, self.left_coordinate
-        )
+        return _equals_and_refine(left, right, self.site, ctx, self.left_coordinate)
 
 
 def _finite_equality_face(value, peer, *, matches: bool):
@@ -161,8 +159,7 @@ def _equals_with_derived_residue(left, right, site, ctx):
     if isinstance(left, CallSiteValue):
         residue = left.derived_equality_residue(ctx)
         if residue is not None and (
-            isinstance(outcome, Complete)
-            and isinstance(outcome.value, PredicateValue)
+            isinstance(outcome, Complete) and isinstance(outcome.value, PredicateValue)
         ):
             outcome = Complete(
                 replace(

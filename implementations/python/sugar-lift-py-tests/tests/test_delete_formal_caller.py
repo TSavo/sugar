@@ -180,7 +180,10 @@ def _assert_named_halt(outcome, expected: str) -> Halted:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity(expected)
-    assert isinstance(halted.effect.occurrence_id, str) and ":" in halted.effect.occurrence_id, (
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
@@ -213,17 +216,13 @@ def test_delitem_producer_method_is_enrolled_or_named_missing() -> None:
     """Pin the one-door mint method that store already has."""
     assert hasattr(SubscriptStoreEffectSugar, "mint_setitem_carrier")
     if not hasattr(SubscriptDeleteEffectSugar, "mint_delitem_carrier"):
-        raise AssertionError(
-            f"missing producer method {MISSING_DELITEM_PRODUCER}"
-        )
+        raise AssertionError(f"missing producer method {MISSING_DELITEM_PRODUCER}")
 
 
 def test_delattr_producer_method_is_enrolled_or_named_missing() -> None:
     assert hasattr(AttributeStoreEffectSugar, "mint_setattr_named_carrier")
     if not hasattr(AttributeDeleteEffectSugar, "mint_delattr_named_carrier"):
-        raise AssertionError(
-            f"missing producer method {MISSING_DELATTR_PRODUCER}"
-        )
+        raise AssertionError(f"missing producer method {MISSING_DELATTR_PRODUCER}")
 
 
 def test_delitem_projector_is_enrolled_or_named_missing() -> None:
@@ -294,9 +293,10 @@ def test_name_deletion_is_out_of_scope_for_delitem_and_delattr_named() -> None:
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     pending = function.sugar().desugar(None)
     if isinstance(pending, NativeOperationExitCarrierV1):
-        assert pending.demand.operator not in {"delitem", "delattr_named"}, (
-            "Name deletion must not mint delitem/delattr_named"
-        )
+        assert pending.demand.operator not in {
+            "delitem",
+            "delattr_named",
+        }, "Name deletion must not mint delitem/delattr_named"
     # Positive: attribute/subscript delete still own those operators.
     _, item = _delitem_helper()
     assert _require_delitem_carrier(item).demand.operator == "delitem"
@@ -490,9 +490,9 @@ def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> N
     _, pending = _delattr_helper()
     pending = _require_delattr_carrier(pending)
     testimony = pending.pre_effect_state
-    assert testimony is not None, (
-        "reducer did not enroll ReducerPreEffectStateV1 on formal delattr_named"
-    )
+    assert (
+        testimony is not None
+    ), "reducer did not enroll ReducerPreEffectStateV1 on formal delattr_named"
     obj_cid, _ = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(class_name="Widget", fields=(), methods=())
     exits = pending.discharge({obj_cid: receiver})
@@ -626,9 +626,9 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
     )
     exits = pending.discharge({obj_cid: receiver})
     halted = exits.exits[0]
-    assert isinstance(halted, Halted), (
-        "read-authorizes-delete twin: getter-only property must not complete delete"
-    )
+    assert isinstance(
+        halted, Halted
+    ), "read-authorizes-delete twin: getter-only property must not complete delete"
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
 
 
@@ -734,9 +734,7 @@ def test_floor_delete_is_not_the_formal_carrier_twin() -> None:
     assert isinstance(floor, Complete)
     _, pending = _delitem_helper()
     # Formal demand (when present) is a carrier, not a floor Complete.
-    assert not (
-        isinstance(pending, Complete) and isinstance(pending.value, ListValue)
-    )
+    assert not (isinstance(pending, Complete) and isinstance(pending.value, ListValue))
     if isinstance(pending, NativeOperationExitCarrierV1):
         assert pending.demand.operator == "delitem"
     else:

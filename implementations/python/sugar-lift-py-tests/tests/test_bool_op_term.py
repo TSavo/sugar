@@ -46,9 +46,9 @@ def test_identical_boolop_preimages_yield_identical_terms():
 
 def test_changed_boolop_occurrence_changes_term():
     first, second = _sites("left and right\nleft and right\n")
-    assert _boolop(site=first).to_term(owner="first") != _boolop(
-        site=second
-    ).to_term(owner="second")
+    assert _boolop(site=first).to_term(owner="first") != _boolop(site=second).to_term(
+        owner="second"
+    )
 
 
 @pytest.mark.parametrize(

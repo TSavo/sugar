@@ -148,7 +148,15 @@ def _raise(
         )
     return Halted(
         _Atomic(f"body-{marker}", ()),
-        RaiseEffect(exception_type_coordinate=_identity(name), occurrence=AuthenticatedRaiseLocus.of(occ), exception_name=name, blame=occ, exception_type_mro=(_identity(name),), raised_value=raised_value, producer_node_owner=producer_node_owner or 'NestedBody.desugar'),
+        RaiseEffect(
+            exception_type_coordinate=_identity(name),
+            occurrence=AuthenticatedRaiseLocus.of(occ),
+            exception_name=name,
+            blame=occ,
+            exception_type_mro=(_identity(name),),
+            raised_value=raised_value,
+            producer_node_owner=producer_node_owner or "NestedBody.desugar",
+        ),
         _state(marker),
     )
 
@@ -181,7 +189,11 @@ def _nested_body_faces(
         _Atomic("body-returned", ()),
         _state("returned-no-raise", ReturnValue(TermValue("early-return"))),
     )
-    return ExitSet((completed, returned, matching, mismatching)), matching.effect, mismatching.effect
+    return (
+        ExitSet((completed, returned, matching, mismatching)),
+        matching.effect,
+        mismatching.effect,
+    )
 
 
 def _observed_binding(face):
@@ -249,9 +261,7 @@ def _factored_boundary(
         manager=manager,
         body=(Fixed(body),),
         semantics=None,
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(parameters)
-        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
         context_manager_edge=None,
         boundary_faces=_factored_boundary_faces(),
         observation_slot_id=observation_slot_id,
@@ -340,7 +350,9 @@ def test_matching_raise_under_pattern_face_binds_held_not_complement():
     """Pattern face retains message obligation; bind only held; halt unbound."""
     # Symbolic pattern keeps the message predicate open → held + complement.
     pattern = SymbolicValue(make_var("open_msg_pattern"))
-    body, matching_effect, _ = _nested_body_faces(matching_message=StringValue("needle"))
+    body, matching_effect, _ = _nested_body_faces(
+        matching_message=StringValue("needle")
+    )
     sugar, _ = _factored_boundary(body, pattern=pattern)
     routed = sugar.desugar()
 
@@ -378,9 +390,7 @@ def test_mismatching_raise_remains_halted_and_unbound_under_both_faces():
     routed = sugar.desugar()
 
     mismatch_faces = [
-        face
-        for face in routed.exits
-        if "body-mismatch-raise" in str(face.guard)
+        face for face in routed.exits if "body-mismatch-raise" in str(face.guard)
     ]
     assert mismatch_faces, routed.exits
     assert all(isinstance(face, Halted) for face in mismatch_faces), mismatch_faces
@@ -403,7 +413,9 @@ def test_pattern_obligation_survives_only_on_pattern_face():
 
     face_ids = {guard.name for guard, _ in sugar._guarded_semantics()}
     assert face_ids == {"match-none-face", "match-pattern-face"}
-    operands = {semantics.message_pattern_operand for _, semantics in sugar._guarded_semantics()}
+    operands = {
+        semantics.message_pattern_operand for _, semantics in sugar._guarded_semantics()
+    }
     assert operands == {
         NoMessagePatternV1(),
         OptionalFormalArgumentProjectionV1(1),
@@ -460,7 +472,9 @@ def test_twin_none_vs_pattern_face_identities_never_recombine():
     guarded = sugar._guarded_semantics()
     assert len(guarded) == 2
     by_name = {guard.name: semantics for guard, semantics in guarded}
-    assert isinstance(by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1)
+    assert isinstance(
+        by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1
+    )
     assert isinstance(
         by_name["match-pattern-face"].message_pattern_operand,
         OptionalFormalArgumentProjectionV1,
@@ -480,11 +494,7 @@ def test_twin_return_vs_raise_under_factored_faces():
     sugar, _ = _factored_boundary(body)
     routed = sugar.desugar()
 
-    returned = [
-        face
-        for face in routed.exits
-        if "body-returned" in str(face.guard)
-    ]
+    returned = [face for face in routed.exits if "body-returned" in str(face.guard)]
     assert returned
     assert all(isinstance(face, Halted) for face in returned)
     assert all(isinstance(face.effect, ExpectationNotMetEffect) for face in returned)
@@ -521,15 +531,15 @@ def test_twin_consumed_vs_unmatched_binding():
     for face in routed.exits:
         if isinstance(face, Halted) and face.effect is mismatch_effect:
             assert _observed_binding(face) is None
-        if isinstance(face, Halted) and isinstance(face.effect, ExpectationNotMetEffect):
+        if isinstance(face, Halted) and isinstance(
+            face.effect, ExpectationNotMetEffect
+        ):
             assert _observed_binding(face) is None
 
 
 def test_ground_pattern_decides_matching_message_under_nested_body():
     """Ground pattern: matching message consumes under pattern face; miss stays halt."""
-    body_hit, hit_effect, _ = _nested_body_faces(
-        matching_message=StringValue("needle")
-    )
+    body_hit, hit_effect, _ = _nested_body_faces(matching_message=StringValue("needle"))
     # Rebuild body so matching raise message is "other" (miss) under same guards.
     miss_matching = _raise(
         "ValueError",
@@ -576,6 +586,4 @@ def test_ground_pattern_decides_matching_message_under_nested_body():
     # Ground miss: no consumption of the raise under the pattern face.
     assert all(isinstance(face, Halted) for face in miss_pattern_for_raise)
     assert all(_observed_binding(face) is None for face in miss_pattern_for_raise)
-    assert all(
-        face.effect is miss_matching.effect for face in miss_pattern_for_raise
-    )
+    assert all(face.effect is miss_matching.effect for face in miss_pattern_for_raise)

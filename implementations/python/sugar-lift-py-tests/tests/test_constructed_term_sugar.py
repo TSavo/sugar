@@ -130,7 +130,9 @@ def test_missing_constructed_term_obligation_refuses_at_instantiation():
 
 
 def test_generator_payload_admission_refuses_arbitrary_sugar():
-    with pytest.raises(TypeError, match="YieldStepV1.value requires ConstructedTermSugar"):
+    with pytest.raises(
+        TypeError, match="YieldStepV1.value requires ConstructedTermSugar"
+    ):
         YieldStepV1(_ArbitrarySugar())
 
 
@@ -239,9 +241,9 @@ def test_equivalent_call_reconstruction_has_the_same_term():
 
 
 def test_changed_resolved_contract_authority_changes_call_term():
-    assert _call(contract=_contract("a")).to_term(
-        owner="first-contract"
-    ) != _call(contract=_contract("b")).to_term(owner="second-contract")
+    assert _call(contract=_contract("a")).to_term(owner="first-contract") != _call(
+        contract=_contract("b")
+    ).to_term(owner="second-contract")
 
 
 def test_exception_definition_term_is_canonical_call_authority():
@@ -306,9 +308,7 @@ def test_collection_reconstruction_and_occurrence_discriminate(build):
     assert build(first).to_term(owner="first") == build(first).to_term(
         owner="reconstructed"
     )
-    assert build(first).to_term(owner="first") != build(second).to_term(
-        owner="second"
-    )
+    assert build(first).to_term(owner="first") != build(second).to_term(owner="second")
 
 
 @pytest.mark.parametrize(

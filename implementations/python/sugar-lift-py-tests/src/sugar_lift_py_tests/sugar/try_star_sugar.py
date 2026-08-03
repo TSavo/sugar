@@ -141,18 +141,14 @@ class TryStarSugar(Sugar):
                         continue
                     matched = regroup_except_star(face.residual, matched_parts)
                     base_ctx = (
-                        face.state.context
-                        if face.state.context is not None
-                        else ctx
+                        face.state.context if face.state.context is not None else ctx
                     )
                     handler_ctx = bind_in_flight_effect(
                         base_ctx, slot_id, matched, blame=self.site
                     )
                     if slot_id is not None:
                         # Shared typed ReduceContext surface.
-                        handler_ctx = handler_ctx.with_observed_effect(
-                            slot_id, matched
-                        )
+                        handler_ctx = handler_ctx.with_observed_effect(slot_id, matched)
                     seed = replace(face.state, context=handler_ctx)
                     handler_exits = promote_raise_halts(
                         _reduce_block_from_state(handler_body, seed)
@@ -359,9 +355,7 @@ def _reduce_block_from_state(statements, state):
 
     exits = ExitSet.completed(state)
     for statement in statements:
-        exits = exits.sequence(
-            lambda s, stmt=statement: _reduce_one_from(s, stmt)
-        )
+        exits = exits.sequence(lambda s, stmt=statement: _reduce_one_from(s, stmt))
     return exits
 
 

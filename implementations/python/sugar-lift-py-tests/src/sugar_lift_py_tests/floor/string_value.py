@@ -154,9 +154,7 @@ class StringValue(GuardStableValue):
         if self._unorderable_ground_peer(left):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
-            return ground_type_error(
-                site=site, owner="StringValue.less_than_from_left"
-            )
+            return ground_type_error(site=site, owner="StringValue.less_than_from_left")
         return super().less_than_from_left(left, site)
 
     def less_equal(self, other, site):

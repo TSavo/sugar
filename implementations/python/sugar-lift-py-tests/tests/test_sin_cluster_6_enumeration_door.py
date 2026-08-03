@@ -220,10 +220,7 @@ def test_resolve_function_for_call_by_coordinate() -> None:
 
 
 def test_resolve_function_for_call_miss_throws_named() -> None:
-    source = (
-        "def test_a():\n"
-        "    assert unknown_callee(1) == 1\n"
-    )
+    source = "def test_a():\n" "    assert unknown_callee(1) == 1\n"
     tree = _tree(source)
     list(tree.functions())
     call = next(

@@ -159,9 +159,7 @@ def test_outer_except_star_partitions_nested_group_preserving_topology():
     effect = _grouped_halt(
         _desugar(
             "def f():\n"
-            "    try:\n"
-            + raise_body
-            + "    except* TypeError:\n"
+            "    try:\n" + raise_body + "    except* TypeError:\n"
             "        pass\n",
             name=name,
         )
@@ -280,9 +278,7 @@ def test_occurrence_identities_survive_two_level_partition():
     residual = _grouped_halt(
         _desugar(
             "def f():\n"
-            "    try:\n"
-            + raise_body
-            + "    except* TypeError:\n"
+            "    try:\n" + raise_body + "    except* TypeError:\n"
             "        pass\n",
             name=name,
         )
@@ -387,9 +383,7 @@ def test_twin_wrong_type_preserves_original_nested_group():
     effect = _grouped_halt(
         _desugar(
             "def f():\n"
-            "    try:\n"
-            + raise_body
-            + "    except* OSError:\n"
+            "    try:\n" + raise_body + "    except* OSError:\n"
             "        raise RuntimeError('must-not-run')\n",
             name=name,
         )
@@ -432,9 +426,7 @@ def test_twin_never_selects_only_first_nested_leaf_of_repeated_type():
     effect = _grouped_halt(
         _desugar(
             "def f():\n"
-            "    try:\n"
-            + raise_body
-            + "    except* TypeError:\n"
+            "    try:\n" + raise_body + "    except* TypeError:\n"
             "        pass\n",
             name=name,
         )
@@ -495,9 +487,7 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
         name="nested_temporal_y.py",
     )
     assert isinstance(outcome, Complete), outcome
-    returns = [
-        s for s in outcome.value.record.statements if isinstance(s, ReturnValue)
-    ]
+    returns = [s for s in outcome.value.record.statements if isinstance(s, ReturnValue)]
     assert returns, outcome.value.record.statements
     assert returns[0].value.value == 1
 

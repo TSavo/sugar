@@ -168,11 +168,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     owner="LoopRecurrenceSugar",
                     blame=str(self.site),
                 )
-            return IteratorOperation(
-                owner="LoopRecurrenceSugar", blame=self.site
-            ).submit(iterable, runtime_ctx).and_then(
-                lambda iterator: self._advance_iterator(
-                    iterator, runtime, runtime_ctx, entries=()
+            return (
+                IteratorOperation(owner="LoopRecurrenceSugar", blame=self.site)
+                .submit(iterable, runtime_ctx)
+                .and_then(
+                    lambda iterator: self._advance_iterator(
+                        iterator, runtime, runtime_ctx, entries=()
+                    )
                 )
             )
 
@@ -243,9 +245,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     if isinstance(exit_, Halted):
                         exits.append(Halted(exit_.guard, exit_.effect, face.state))
                     else:
-                        entries = (exit_.value,) if pending is None else (
-                            pending,
-                            exit_.value,
+                        entries = (
+                            (exit_.value,)
+                            if pending is None
+                            else (
+                                pending,
+                                exit_.value,
+                            )
                         )
                         exits.append(
                             Completed(
@@ -261,7 +267,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.iterator_value import NextResult
         from sugar_lift_py_tests.operations.next_operation import NextOperation
-        from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+        from sugar_lift_py_tests.outcome import (
+            Complete,
+            Completed,
+            ExitSet,
+            Halted,
+            Incomplete,
+        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
@@ -277,8 +289,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             ):
                 return self._finish_iterator(runtime, ctx, entries=entries)
             return outcome
-        if not isinstance(outcome, Complete) or not isinstance(outcome.value, NextResult):
-            raise TypeError("NextOperation must produce NextResult or a named exception")
+        if not isinstance(outcome, Complete) or not isinstance(
+            outcome.value, NextResult
+        ):
+            raise TypeError(
+                "NextOperation must produce NextResult or a named exception"
+            )
 
         next_result = outcome.value
         projected = self._project_iteration_target(
@@ -384,13 +400,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             if not isinstance(unpacked, Complete) or not isinstance(
                 unpacked.value, UnpackMemberRoster
             ):
-                raise TypeError("positional target unpack omitted its authenticated roster")
+                raise TypeError(
+                    "positional target unpack omitted its authenticated roster"
+                )
             if (
                 unpacked.value.occurrence is not target.fragment
                 or unpacked.value.demand_cid != operation.demand_cid()
                 or len(unpacked.value.members) != len(target.elts)
             ):
-                raise TypeError("positional target unpack returned cross-wired testimony")
+                raise TypeError(
+                    "positional target unpack returned cross-wired testimony"
+                )
             bindings = []
             for index, (child, member) in enumerate(
                 zip(target.elts, unpacked.value.members, strict=True)
@@ -421,7 +441,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 state.temporal.value_if_bound(target_name) is not target_value
                 or state.temporal.value_if_bound(coordinate_cid) is not target_value
             ):
-                raise TypeError("loop control state lacks exact iteration target identity")
+                raise TypeError(
+                    "loop control state lacks exact iteration target identity"
+                )
         return state
 
     def _finish_iterator(self, runtime, ctx, *, entries):

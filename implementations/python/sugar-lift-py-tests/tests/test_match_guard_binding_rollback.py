@@ -107,9 +107,7 @@ def _block_entries(outcome):
     if isinstance(outcome, Complete):
         block = outcome.value
         return tuple(
-            getattr(block, "statements", None)
-            or getattr(block, "entries", None)
-            or ()
+            getattr(block, "statements", None) or getattr(block, "entries", None) or ()
         )
     if isinstance(outcome, ExitSet):
         entries = []
@@ -117,9 +115,7 @@ def _block_entries(outcome):
             if isinstance(face, Completed):
                 v = face.value
                 entries.extend(
-                    getattr(v, "statements", None)
-                    or getattr(v, "entries", None)
-                    or ()
+                    getattr(v, "statements", None) or getattr(v, "entries", None) or ()
                 )
         return tuple(entries)
     return ()
@@ -137,6 +133,7 @@ def _block_return_values(outcome) -> list:
         if isinstance(inner, ReturnValue):
             found.append(inner.value)
     return found
+
 
 # ===========================================================================
 # Subject evaluates once
@@ -230,9 +227,9 @@ def test_false_guard_rolls_back_before_next_case() -> None:
     outcome = sugar.desugar(ReduceContext.root(owner="guard-false-rollback"))
     values = _block_return_values(outcome)
     # Second case wins under ground truth; first body must not be the sole answer.
-    assert any(v == TermValue(2) or getattr(v, "value", None) == 2 for v in values), (
-        values
-    )
+    assert any(
+        v == TermValue(2) or getattr(v, "value", None) == 2 for v in values
+    ), values
     # First case body return 1 is not selected under sat selection for subject 5.
     # (May appear under unsat guard formula — if present must be guarded unsat.)
 
@@ -259,9 +256,9 @@ def test_false_guard_does_not_leave_capture_for_later_case_scope() -> None:
     )
     outcome = sugar.desugar(ReduceContext.root(owner="fresh-capture"))
     values = _block_return_values(outcome)
-    assert any(v == TermValue(3) or getattr(v, "value", None) == 3 for v in values), (
-        values
-    )
+    assert any(
+        v == TermValue(3) or getattr(v, "value", None) == 3 for v in values
+    ), values
 
 
 # ===========================================================================
@@ -281,8 +278,8 @@ class _HaltingGuard(Sugar):
 
     def desugar(self, ctx=None):
         return Incomplete(
-            RaiseEffect.for_builtin("ValueError",
-                
+            RaiseEffect.for_builtin(
+                "ValueError",
                 blame=str(self.site),
                 occurrence=str(self.site),
                 producer_node_owner="MatchGuard",
@@ -329,6 +326,7 @@ def test_guard_halt_bypasses_later_cases() -> None:
     assert incompletes, entries
     assert incompletes[0].effect.exception_name == "ValueError"
 
+
 # ===========================================================================
 # Case order and wildcard fall-through distinct
 # ===========================================================================
@@ -339,7 +337,9 @@ def test_case_order_first_match_wins() -> None:
     sugar = _match(
         _int(1),
         MatchCaseSpec(alternatives=(_int(1),), body=(_ret(_int(10)),)),
-        MatchCaseSpec(alternatives=(_int(1),), body=(_ret(_int(20)),)),  # same pattern later
+        MatchCaseSpec(
+            alternatives=(_int(1),), body=(_ret(_int(20)),)
+        ),  # same pattern later
         MatchCaseSpec(alternatives=(), body=(_ret(_int(0)),)),
     )
     outcome = sugar.desugar(ReduceContext.root(owner="order"))

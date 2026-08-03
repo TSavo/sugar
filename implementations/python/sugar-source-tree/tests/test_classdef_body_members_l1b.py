@@ -29,11 +29,7 @@ def _class(src: str, name: str = "C") -> ClassDef:
 
 
 def test_l1b_simple_fields_construct() -> None:
-    sugar = _class(
-        "class C:\n"
-        "    a = 1\n"
-        "    b: int = 2\n"
-    ).sugar()
+    sugar = _class("class C:\n" "    a = 1\n" "    b: int = 2\n").sugar()
     assert isinstance(sugar, ClassDefinitionSugar)
     assert sugar.methods == ()
     assert tuple(field.name for field in sugar.fields) == ("a", "b")
@@ -42,15 +38,16 @@ def test_l1b_simple_fields_construct() -> None:
 
 def test_l1b_nested_classdef_is_a_field() -> None:
     sugar = _class(
-        "class Outer:\n"
-        "    x = 1\n"
-        "    class Inner:\n"
-        "        y = 2\n",
+        "class Outer:\n" "    x = 1\n" "    class Inner:\n" "        y = 2\n",
         name="Outer",
     ).sugar()
     assert isinstance(sugar, ClassDefinitionSugar)
     names = tuple(
-        field.name if isinstance(field, ConstructedClassFieldV1) else type(field).__name__
+        (
+            field.name
+            if isinstance(field, ConstructedClassFieldV1)
+            else type(field).__name__
+        )
         for field in sugar.fields
     )
     assert names == ("x", "Inner")
@@ -65,11 +62,7 @@ def test_l1b_nested_classdef_is_a_field() -> None:
 
 def test_l1b_conditional_fields_construct() -> None:
     sugar = _class(
-        "class C:\n"
-        "    if True:\n"
-        "        a = 1\n"
-        "    else:\n"
-        "        a = 2\n"
+        "class C:\n" "    if True:\n" "        a = 1\n" "    else:\n" "        a = 2\n"
     ).sugar()
     assert len(sugar.fields) == 1
     cond = sugar.fields[0]
@@ -101,10 +94,7 @@ def test_l1b_elif_chain_is_nested_conditional() -> None:
 def test_l1b_fields_alongside_sync_method() -> None:
     """Fields construct; method body uses FunctionDef door (not ClassDef)."""
     sugar = _class(
-        "class C:\n"
-        "    a = 1\n"
-        "    def m(self):\n"
-        "        return self.a\n"
+        "class C:\n" "    a = 1\n" "    def m(self):\n" "        return self.a\n"
     ).sugar()
     assert tuple(f.name for f in sugar.fields) == ("a",)
     assert len(sugar.methods) == 1
@@ -118,10 +108,7 @@ def test_l1b_async_method_is_method_member_not_unsupported() -> None:
 
     with pytest.raises(SugarNotWritten) as ei:
         _class(
-            "class C:\n"
-            "    a = 1\n"
-            "    async def m(self):\n"
-            "        return 1\n"
+            "class C:\n" "    a = 1\n" "    async def m(self):\n" "        return 1\n"
         ).sugar()
     err = ei.value
     assert err.owner == "ClassDef._construct_class_method_member"

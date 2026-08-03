@@ -68,9 +68,9 @@ def test_conservation_identity_is_stated_on_partition_and_refusal():
     assert ok["unaccounted"] == 0
     assert ok["accounted"] == 5
     assert ok["unconstructed"] == 3
-    assert ok["edgeWitness"]["inputKeyManifest"] == ok["edgeWitness"][
-        "outputKeyManifest"
-    ]
+    assert (
+        ok["edgeWitness"]["inputKeyManifest"] == ok["edgeWitness"]["outputKeyManifest"]
+    )
     assert ok["edgeWitness"]["missingKeys"] == []
     assert ok["edgeWitness"]["extraKeys"] == []
     assert "typed_gaps" not in ok
@@ -167,9 +167,7 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
 
     path = tmp_path / "consumer.py"
     path.write_text(
-        "def consume(mgr):\n"
-        "    with mgr:\n"
-        "        pass\n",
+        "def consume(mgr):\n" "    with mgr:\n" "        pass\n",
         encoding="utf-8",
     )
     refs = provisional_contract_refs_from_demands(tmp_path)
@@ -198,9 +196,7 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
         import_signature=ImportSignatureV2(()),
         protocol=_Protocol(),
     )
-    rows = module._tally_cm_resolutions(
-        ctx, source_cid=source_file.unit.source_cid
-    )
+    rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     sites = module._ast_site_prevalence(path)
     assert sites.get("site:with-item", 0) == 1
     assert sum(row["outcome"] == "constructed" for row in rows) >= 1, rows
@@ -220,9 +216,7 @@ def test_unconstructed_with_item_is_counted_not_silently_dropped(tmp_path: Path)
 
     path = tmp_path / "opaque.py"
     path.write_text(
-        "def run():\n"
-        "    with mystery():\n"
-        "        pass\n",
+        "def run():\n" "    with mystery():\n" "        pass\n",
         encoding="utf-8",
     )
     refs = provisional_contract_refs_from_demands(tmp_path)
@@ -230,9 +224,7 @@ def test_unconstructed_with_item_is_counted_not_silently_dropped(tmp_path: Path)
     source_file = open_source_file_for_construction(
         path, root=tmp_path, construction_context=ctx, populate_derived=True
     )
-    rows = module._tally_cm_resolutions(
-        ctx, source_cid=source_file.unit.source_cid
-    )
+    rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     sites = module._ast_site_prevalence(path)
     assert sites.get("site:with-item", 0) == 1
     assert sum(row["outcome"] == "unconstructed" for row in rows) == 1, rows
@@ -256,9 +248,7 @@ def test_effective_tally_includes_contract_refs_not_only_source_derived(
 
     path = tmp_path / "opaque.py"
     path.write_text(
-        "def run():\n"
-        "    with mystery():\n"
-        "        pass\n",
+        "def run():\n" "    with mystery():\n" "        pass\n",
         encoding="utf-8",
     )
     refs = provisional_contract_refs_from_demands(tmp_path)
@@ -269,9 +259,7 @@ def test_effective_tally_includes_contract_refs_not_only_source_derived(
     # Old defect shape: derived empty, provisional has the gap.
     assert len(ctx.source_derived_contract_refs) == 0
     assert len(refs.by_use_site) == 1
-    rows = module._tally_cm_resolutions(
-        ctx, source_cid=source_file.unit.source_cid
-    )
+    rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     assert len(rows) == 1, rows
 
 
@@ -289,9 +277,7 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
 
     path = tmp_path / "opaque.py"
     path.write_text(
-        "def run():\n"
-        "    with mystery():\n"
-        "        pass\n",
+        "def run():\n" "    with mystery():\n" "        pass\n",
         encoding="utf-8",
     )
     refs = provisional_contract_refs_from_demands(tmp_path)

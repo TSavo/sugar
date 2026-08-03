@@ -148,6 +148,7 @@ class SymbolicValue(FloorValue):
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.outcome import Incomplete
+
         operation = ctor(
             "adt.is_python_type",
             [value.to_term(owner="isinstance value"), term],
@@ -491,9 +492,7 @@ class SymbolicValue(FloorValue):
         # Membership on an unknown container is a third value: neither
         # Complete(py.in) nor TypeError is honest without container-type
         # testimony. Named refusal, not fabrication.
-        return self.undecided_contains(
-            item, site, owner="SymbolicValue.contains"
-        )
+        return self.undecided_contains(item, site, owner="SymbolicValue.contains")
 
     def format_data_model(self, spec, site, ctx):
         """Construct ``format(symbolic, spec)`` as an exact data-model coordinate.
@@ -820,6 +819,7 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
         index_term = index.to_term(owner="SymbolicValue.setitem index")
         value_term = value.to_term(owner="SymbolicValue.setitem value")
         return Complete(
@@ -847,6 +847,7 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
         index_term = index.to_term(owner="SymbolicValue.delitem index")
         return Complete(
             CallSiteValue(

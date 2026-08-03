@@ -78,7 +78,10 @@ class PositionalUnpackOperation:
 
     def demand_cid(self) -> str:
         """Content address of this unpack demand (site + arity layout)."""
-        from sugar_lift_py_tests.caller_parameter_contract import _cid, source_coordinate
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            _cid,
+            source_coordinate,
+        )
 
         try:
             source_node = source_coordinate(self.blame)

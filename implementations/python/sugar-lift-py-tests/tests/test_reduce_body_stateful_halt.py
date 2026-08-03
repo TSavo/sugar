@@ -7,7 +7,10 @@ from sugar_lift_py_tests.sugar import function_universe_sugar
 
 
 def test_reduce_body_retains_one_unconditional_stateful_halt(monkeypatch):
-    effect = RaiseEffect.for_builtin('AttributeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_reduce_body_stateful_halt.py:26:0')
+    effect = RaiseEffect.for_builtin(
+        "AttributeError",
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_reduce_body_stateful_halt.py:26:0",
+    )
     pre_effect_state = object()
     exits = ExitSet((Halted(true_guard(), effect, pre_effect_state),))
     monkeypatch.setattr(
@@ -23,7 +26,10 @@ def test_reduce_body_retains_one_unconditional_stateful_halt(monkeypatch):
 
 
 def test_reduce_body_still_collapses_one_unconditional_stateless_halt(monkeypatch):
-    effect = RaiseEffect.for_builtin('AttributeError', occurrence='implementations/python/sugar-lift-py-tests/tests/test_reduce_body_stateful_halt.py:10:0')
+    effect = RaiseEffect.for_builtin(
+        "AttributeError",
+        occurrence="implementations/python/sugar-lift-py-tests/tests/test_reduce_body_stateful_halt.py:10:0",
+    )
     exits = ExitSet((Halted(true_guard(), effect),))
     monkeypatch.setattr(
         function_universe_sugar,
@@ -34,4 +40,3 @@ def test_reduce_body_still_collapses_one_unconditional_stateless_halt(monkeypatc
     reduced = function_universe_sugar.reduce_body(())
 
     assert reduced == Incomplete(effect)
-

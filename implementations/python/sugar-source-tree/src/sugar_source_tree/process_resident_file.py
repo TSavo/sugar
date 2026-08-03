@@ -206,9 +206,7 @@ def get_or_prepare_lexical_import_pass(
         _LEXICAL.move_to_end(key)
         return hit
 
-    _LEXICAL_PREPARE_COUNTS[source_cid] = (
-        _LEXICAL_PREPARE_COUNTS.get(source_cid, 0) + 1
-    )
+    _LEXICAL_PREPARE_COUNTS[source_cid] = _LEXICAL_PREPARE_COUNTS.get(source_cid, 0) + 1
     runner = _run_lexical_import_pass_on_module(
         module,
         root=root_p,

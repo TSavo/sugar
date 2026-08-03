@@ -133,9 +133,7 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     construction_panic_gap(
         owner="publish_undecided_ordering_edges",
         blame=site,
-        observed=(
-            f"residual Complete(PredicateValue) on ordering desugar ({op_kind})"
-        ),
+        observed=(f"residual Complete(PredicateValue) on ordering desugar ({op_kind})"),
         requested=(
             "named SugarNotWritten for undecided operands, or Sugar-owned "
             "TrueBool/FalseBool/RaiseValue for decided ground"
@@ -381,13 +379,9 @@ class ComparisonOpSugar(ConstructedTermSugar):
                 left.equals(right, self.site),
             ).and_then(lambda predicate: predicate.negate())
         if self.op_kind == "Is":
-            return construct_identity_comparison(
-                left, right, self.site, negated=False
-            )
+            return construct_identity_comparison(left, right, self.site, negated=False)
         if self.op_kind == "IsNot":
-            return construct_identity_comparison(
-                left, right, self.site, negated=True
-            )
+            return construct_identity_comparison(left, right, self.site, negated=True)
         if self.op_kind == "In":
             # a in b: the CONTAINER (right) owns membership -- b.contains(a).
             return self._membership(right, left)

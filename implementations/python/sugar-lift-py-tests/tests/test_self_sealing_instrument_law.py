@@ -23,8 +23,7 @@ def _classes(source: str) -> set[str]:
 
 def test_each_reject_class_has_a_structural_planted_twin() -> None:
     """Lying twin: each subclass is recognized when planted."""
-    assert _classes(
-        """
+    assert _classes("""
 def audit():
     projection_calls = []
     if not projection_calls:
@@ -32,29 +31,22 @@ def audit():
             EvidenceSite(Path(__file__).resolve(), 1, (), audit.__name__)
         ]
     assert projection_calls
-"""
-    ) == {"SYNTHESIZED-EVIDENCE"}
+""") == {"SYNTHESIZED-EVIDENCE"}
 
-    assert _classes(
-        """
+    assert _classes("""
 def test_conserves():
     enrolled = 1
     assert enrolled == enrolled
-"""
-    ) == {"TAUTOLOGICAL-ASSERT"}
+""") == {"TAUTOLOGICAL-ASSERT"}
 
-    assert _classes(
-        """
+    assert _classes("""
 def test_halt_identity():
     assert halted.effect.exception_type_coordinate is not None
-"""
-    ) == {"PRESENCE-ONLY-IDENTITY"}
+""") == {"PRESENCE-ONLY-IDENTITY"}
 
-    assert _classes(
-        """
+    assert _classes("""
 def test_occurrence():
-"""
-    ) == {"PRESENCE-ONLY-IDENTITY"}
+""") == {"PRESENCE-ONLY-IDENTITY"}
 
 
 def test_discrimination_negatives_do_not_false_positive() -> None:
@@ -115,7 +107,9 @@ def test_sourcefile_construction_door_live_self_seed_is_drained() -> None:
     auditor = repo / "tests" / "sourcefile_construction_door_auditor.py"
     assert auditor.is_file(), auditor
     source = auditor.read_text(encoding="utf-8")
-    findings = LAW.scan_python_source(source, "tests/sourcefile_construction_door_auditor.py")
+    findings = LAW.scan_python_source(
+        source, "tests/sourcefile_construction_door_auditor.py"
+    )
     synthesized = [f for f in findings if f.violation_class == "SYNTHESIZED-EVIDENCE"]
     assert synthesized == [], (
         "R_synthesized_evidence regression on sourcefile_construction_door_auditor: "

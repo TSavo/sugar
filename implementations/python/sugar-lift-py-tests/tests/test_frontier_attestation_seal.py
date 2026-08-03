@@ -14,7 +14,6 @@ import json
 import sys
 from pathlib import Path
 
-
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 _SCRIPT = _SCRIPTS / "compose_control_effect_board.py"
 
@@ -119,9 +118,10 @@ def _runtime_identity_object(*, suffix: str = "a"):
 
 
 def _require_runtime_parameter(module) -> None:
-    assert "runtime_attestation" in inspect.signature(
-        module.compose_k1_from_rows
-    ).parameters, "compose can still mint a width without runtimeIdentity/v1"
+    assert (
+        "runtime_attestation"
+        in inspect.signature(module.compose_k1_from_rows).parameters
+    ), "compose can still mint a width without runtimeIdentity/v1"
 
 
 def _compose(module, row, *, runtime_attestation=None):
@@ -308,9 +308,7 @@ def test_valid_but_disagreeing_shard_runtime_cids_refuse() -> None:
         module.mint_partial(
             plan=plan,
             shard_index=1,
-            terminal_rows=[
-                ("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))
-            ],
+            terminal_rows=[("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))],
             runtime_attestation=right,
         ),
     ]
@@ -352,9 +350,10 @@ def test_well_formed_shard_runtime_wrong_for_compose_authority_refuses() -> None
     )
     assert status == "unmeasured"
     _assert_only_unmeasured(body)
-    assert "runtimeCid mismatches authenticated compose runtime" in body[
-        "unmeasuredReasons"
-    ]["s00"]
+    assert (
+        "runtimeCid mismatches authenticated compose runtime"
+        in body["unmeasuredReasons"]["s00"]
+    )
 
 
 def test_shards_agree_with_each_other_but_not_required_runtime_refuse() -> None:
@@ -388,9 +387,7 @@ def test_shards_agree_with_each_other_but_not_required_runtime_refuse() -> None:
         module.mint_partial(
             plan=plan,
             shard_index=1,
-            terminal_rows=[
-                ("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))
-            ],
+            terminal_rows=[("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))],
             runtime_attestation=mutually_agreeing_wrong_runtime,
         ),
     ]
@@ -407,7 +404,9 @@ def test_shards_agree_with_each_other_but_not_required_runtime_refuse() -> None:
     )
 
 
-def test_runtime_identity_is_inside_body_cid_but_paths_are_outside_runtime_cid() -> None:
+def test_runtime_identity_is_inside_body_cid_but_paths_are_outside_runtime_cid() -> (
+    None
+):
     module = _load()
     _require_runtime_parameter(module)
     first = _runtime_attestation(invoked="/venv-a/bin/python")
@@ -415,18 +414,15 @@ def test_runtime_identity_is_inside_body_cid_but_paths_are_outside_runtime_cid()
     moved["runtimeIdentity"]["invokedExecutable"] = "/venv-b/bin/python"
     assert moved["runtimeCid"] == first["runtimeCid"]
 
-    left_status, left = _compose(
-        module, _row(module), runtime_attestation=first
-    )
-    right_status, right = _compose(
-        module, _row(module), runtime_attestation=moved
-    )
+    left_status, left = _compose(module, _row(module), runtime_attestation=first)
+    right_status, right = _compose(module, _row(module), runtime_attestation=moved)
 
     assert left_status == right_status == "sealed"
     assert left["runtimeCid"] == right["runtimeCid"]
-    assert left["runtimeIdentity"]["invokedExecutable"] != right["runtimeIdentity"][
-        "invokedExecutable"
-    ]
+    assert (
+        left["runtimeIdentity"]["invokedExecutable"]
+        != right["runtimeIdentity"]["invokedExecutable"]
+    )
     assert left["bodyCid"] != right["bodyCid"]
 
 
@@ -486,23 +482,20 @@ def test_missing_stage_testimony_refuses() -> None:
     status, body = _compose(module, row)
     assert status == "unmeasured"
     _assert_only_unmeasured(body)
-    assert any(
-        "stageId" in str(f.get("reason")) for f in body["instrumentFailures"]
-    )
+    assert any("stageId" in str(f.get("reason")) for f in body["instrumentFailures"])
 
 
 def test_claimed_key_cid_mismatch_refuses() -> None:
     module = _load()
     row = _row(module)
-    row["edgeWitnesses"][module.EDGE_ENUMERATE_FILE]["inputKeyCid"] = (
-        "sha256:" + ("0" * 64)
+    row["edgeWitnesses"][module.EDGE_ENUMERATE_FILE]["inputKeyCid"] = "sha256:" + (
+        "0" * 64
     )
     status, body = _compose(module, row)
     assert status == "unmeasured"
     _assert_only_unmeasured(body)
     assert any(
-        f.get("reason") == "inputKeyCid mismatch"
-        for f in body["instrumentFailures"]
+        f.get("reason") == "inputKeyCid mismatch" for f in body["instrumentFailures"]
     )
 
 
@@ -518,9 +511,7 @@ def test_duplicate_key_rows_refuse_even_when_both_sides_match() -> None:
     status, body = _compose(module, row)
     assert status == "unmeasured"
     _assert_only_unmeasured(body)
-    assert any(
-        f.get("duplicateKeys") for f in body["instrumentFailures"]
-    )
+    assert any(f.get("duplicateKeys") for f in body["instrumentFailures"])
 
 
 def test_explicit_instrument_exception_refuses() -> None:
@@ -576,9 +567,7 @@ def test_construction_panic_without_required_payload_refuses() -> None:
         {
             "category": "panic",
             "terminalKind": "construction-panic",
-            "observedEventType": (
-                "sugar_lift_py_tests.gap.panic.ConstructionPanic"
-            ),
+            "observedEventType": ("sugar_lift_py_tests.gap.panic.ConstructionPanic"),
             "blocking_terminal_count": 1,
             "final_terminal": "construction-panic",
             "panic": {"owner": "WithSugar", "coordinate": "pandas/a.py:1:0"},
@@ -625,9 +614,7 @@ def test_truthful_attested_row_seals_and_carries_recomputable_manifests() -> Non
     for edge in attestation["edges"].values():
         assert edge["inputKeyCount"] == len(edge["inputKeyManifest"])
         assert edge["outputKeyCount"] == len(edge["outputKeyManifest"])
-        assert edge["inputKeyCid"] == module.key_manifest_cid(
-            edge["inputKeyManifest"]
-        )
+        assert edge["inputKeyCid"] == module.key_manifest_cid(edge["inputKeyManifest"])
         assert edge["outputKeyCid"] == module.key_manifest_cid(
             edge["outputKeyManifest"]
         )
@@ -681,9 +668,7 @@ def test_aggregate_panic_magnitude_cannot_disagree_with_attested_keys() -> None:
     aggregate["construction_panics"].append(
         {"owner": "LyingAggregate", "coordinate": "pandas/a.py:99:0"}
     )
-    attestation, failures = module.attest_frontier_rows(
-        [("pandas/a.py", row)]
-    )
+    attestation, failures = module.attest_frontier_rows([("pandas/a.py", row)])
     assert failures == []
     body = module.seal_board_from_aggregate(
         aggregate,
