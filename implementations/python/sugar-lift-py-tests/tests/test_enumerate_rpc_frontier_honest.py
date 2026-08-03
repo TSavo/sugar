@@ -19,6 +19,9 @@ from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
     RecoveredAuditDto,
     RecoveredFrontierAuditDto,
 )
+from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.process_resident_file import clear_process_resident_files
+from sugar_source_tree.tree import SourceFile
 
 
 def _drive_frontier(source: str):
@@ -156,6 +159,50 @@ def test_shared_cid_at_distinct_loci_stays_distinct_and_located():
         len(panics)
         == leaf["auxiliaryRows"]["sourceAudit"]["totals"]["source_unresolved"]
     ), "panic count must equal R (source_unresolved)"
+
+
+def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
+    """The exposure detector must return both answers at the real D3 open.
+
+    It observes the existing open; it neither clears nor re-opens inside the
+    producer.  The miss arm seats the collector at construction.  The hit arm
+    exposes #7171: rebinding only SourceFile.reporter leaves resident nodes on
+    their constructor-bound NULL_REPORTER.
+    """
+    path = tmp_path / "t.py"
+    path.write_text("def f():\n    x\n", encoding="utf-8")
+    _source, _filename, source_cid = path_source(str(path))
+
+    clear_process_resident_files()
+    lift_rpc._roll_call_audit_leaf(
+        path,
+        "t.py",
+        expected_source_cid=source_cid,
+    )
+    miss = lift_rpc.take_d3_residency_observation(source_cid)
+    assert miss == {
+        "sourceCid": source_cid,
+        "presentAtAuditOpen": False,
+        "auditOpenReusedResident": False,
+        "rootReporterSeatedAtAuditOpen": True,
+        "collectorRegisteredAtAuditExit": True,
+    }
+
+    clear_process_resident_files()
+    SourceFile.from_path(path)  # D2/CM-shaped prior prepare with NULL_REPORTER.
+    lift_rpc._roll_call_audit_leaf(
+        path,
+        "t.py",
+        expected_source_cid=source_cid,
+    )
+    hit = lift_rpc.take_d3_residency_observation(source_cid)
+    assert hit == {
+        "sourceCid": source_cid,
+        "presentAtAuditOpen": True,
+        "auditOpenReusedResident": True,
+        "rootReporterSeatedAtAuditOpen": False,
+        "collectorRegisteredAtAuditExit": False,
+    }
 
 
 if __name__ == "__main__":
