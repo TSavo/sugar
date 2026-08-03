@@ -13,6 +13,8 @@ import json
 import sys
 from pathlib import Path
 
+from showcase_scope import ScopeRefusal, validate_shard_body
+
 DEFAULT_SHARD_COUNT = 4
 
 
@@ -39,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
 
     missing = [i for i in roster if i not in attended]
     crimes: list[str] = []
+    retired_total = 0
+    executed_total = 0
     for idx, path in attended.items():
         body = json.loads(path.read_text(encoding="utf-8"))
         if args.require_commit and body.get("measuredCommit") not in (
@@ -51,6 +55,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             if idx not in missing:
                 missing.append(idx)
+        try:
+            validate_shard_body(body)
+        except ScopeRefusal as exc:
+            crimes.append(f"shard-{idx:02d}: {exc}")
+            if idx not in missing:
+                missing.append(idx)
+        else:
+            counts = body["showcaseCounts"]
+            retired_total += counts["retired"]
+            executed_total += counts["executed"]
         if body.get("exitCode") not in (0, "0"):
             crimes.append(
                 f"shard-{idx:02d}: exitCode={body.get('exitCode')} (showcase red)"
@@ -59,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     print("### showcase shard enrollment")
     print(f"- roster: `{args.shard_count}` shards")
     print(f"- attended: `{len(attended)}`")
+    print(f"- executed showcases: `{executed_total}`")
+    print(f"- retired showcases: `{retired_total}`")
     print(f"**R_showcase_shard_attendance = {len(set(missing))}**")
     for i in roster:
         spoke = "yes" if i in attended and i not in missing else "NO — UNMEASURED"

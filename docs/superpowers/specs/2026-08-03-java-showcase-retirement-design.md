@@ -9,8 +9,9 @@ nor a failure and must never be confused with a showcase that was never enrolled
 ## Authority
 
 `.github/showcase-retirements.json` is the sole retirement authority. Every row
-contains an exact enrolled `path`, `language: "java"`, `outcome: "retired"`, and
-the reason `out of scope per scope ruling - Java`. Missing reasons, duplicate
+contains an exact enrolled `path`, `language: "java"`, `outcome: "retired"`, a
+short description of the assertion being retired, and the reason
+`out of scope per scope ruling - Java`. Missing reasons, duplicate
 paths, unknown paths, unsupported outcomes, or non-Java rows refuse.
 
 The enrolled roster remains `SHOWCASE_RUNS` in the Makefile. Retirement does not
@@ -34,7 +35,7 @@ the existing pass/fail path unchanged.
 The runner writes a per-shard scope receipt. The CI step incorporates it into
 `showcase-shard-body.json` as explicit `enrolled`, `executed`, and `retired`
 collections and counts. Each retired object retains its path, language, outcome,
-and reason. `exitCode` continues to represent executed in-scope work, so any
+assertion, and reason. `exitCode` continues to represent executed in-scope work, so any
 Python-path or Rust CLI failure keeps the shard and aggregate red.
 
 ## Exact Retirement Population

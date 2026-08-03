@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "retirements": [
+    {
+      "path": "examples/java-assertion-consistency/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Learns JUnit assertion vocabulary and distinguishes compatible claims from equality/inequality contradictions."
+    },
+    {
+      "path": "examples/java-forall-loop/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Lowers a bounded Java loop to a guarded universal and refutes an in-range contradictory point claim."
+    },
+    {
+      "path": "examples/java-testng-consistency/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Learns TestNG reversed actual/expected argument order and distinguishes compatible from contradictory assertions."
+    },
+    {
+      "path": "examples/java-codec-universe/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks Apache Base64 output alphabets, accepting the vendor vector and refuting URL-safe confusion."
+    },
+    {
+      "path": "examples/java-urlsafe-seam/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Distinguishes standard and URL-safe Base64 alphabets for an input absent from vendor tests."
+    },
+    {
+      "path": "examples/java-b64-strong/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks per-character Base64 block equations, accepting YmFy and refuting alphabet-valid ZmFy."
+    },
+    {
+      "path": "examples/java-b64-tails/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks Base64 tail and padding equations, accepting YmE= and refuting alphabet-valid YmX=."
+    },
+    {
+      "path": "examples/java-abs-universe/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks Math.abs bit-vector semantics, preserving abs(MIN)==MIN and refuting abs(MIN)==MAX."
+    },
+    {
+      "path": "examples/java-bound-federation/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Federates compatible comparison bounds on g(7) and refutes the contradictory greater-than bound."
+    },
+    {
+      "path": "examples/java-abs-bound/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Refutes abs(MIN_VALUE)>=0 from the walked Math.abs bit-vector body."
+    },
+    {
+      "path": "examples/java-callbind-consistency/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Resolves instance-call SSA binding and refutes contradictory claims about the same receiver call."
+    },
+    {
+      "path": "examples/java-instance-universe/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks constructor to final field to getter, accepting new Box(5).get()==5 and refuting 7."
+    },
+    {
+      "path": "examples/java-voltron/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Resolves Wrapper(Box(5)) through two constructor/getter layers, accepting 5 and refuting 7."
+    },
+    {
+      "path": "examples/java-abs-flagship/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Uses JDK AbsTests and Math.abs source to preserve the MIN_VALUE overflow result."
+    },
+    {
+      "path": "examples/java-panama-bridge/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Bridges a Java Panama call to the Rust decoded_len_estimate contract, accepting 3 and refuting 4."
+    },
+    {
+      "path": "examples/java-abs-model/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Derives abs(MIN_VALUE) from the lifted proof expression and refuses when the universe atom is absent."
+    },
+    {
+      "path": "examples/java-mt-reference/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Lifts Commons RNG MT19937 reference points and detects contradictory values for one draw."
+    },
+    {
+      "path": "examples/java-crc32-universe/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks OpenJDK CRC32C table generation and checks the vendor-sworn 0xE3069283 value."
+    },
+    {
+      "path": "examples/java-pattern-regex/run.sh",
+      "language": "java",
+      "outcome": "retired",
+      "reason": "out of scope per scope ruling - Java",
+      "assertion": "Walks JSR-380 Pattern into regex membership, accepting alice_01 and refuting Alice!."
+    }
+  ]
+}

@@ -519,28 +519,18 @@ jobs:
           exit_code=$?
           set -e
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          python3 - <<PY
-          import json, os
-          from pathlib import Path
-          body = {
-              "schemaVersion": 1,
-              "measurementClass": "test-showcases",
-              "shardIndex": int("${{ matrix.shard }}"),
-              "shardCount": 4,
-              "measuredCommit": os.environ.get("GITHUB_SHA"),
-              "status": "completed",
-              "exitCode": $exit_code,
-          }
-          Path("showcase-shard-body.json").write_text(
-              json.dumps(body, indent=2) + "\n", encoding="utf-8"
-          )
-          PY
+          python3 tools/showcase_scope.py seal-body \
+            --scope-receipt "$SHOWCASE_SCOPE_RECEIPT" \
+            --output showcase-shard-body.json \
+            --measured-commit "$GITHUB_SHA" \
+            --exit-code "$exit_code"
           exit "$exit_code"
         env:
           CI: '1'
           GH_TOKEN: ${{ github.token }}
           SHOWCASE_SHARD_COUNT: '4'
           SHOWCASE_SHARD_INDEX: ${{ matrix.shard }}
+          SHOWCASE_SCOPE_RECEIPT: showcase-scope-receipt.json
 
       - name: Upload shard measurement body
         if: always()

@@ -521,49 +521,36 @@ test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 	  bin/sugarbin --profile debug --bin "$$b" >/dev/null || exit $$?; \
 	done; \
 	bin/sugarbin --profile release >/dev/null || exit $$?; \
-	failed=""; \
-	showcase_ordinal=0; \
-	selected=0; \
 	attr_dir="$${SHOWCASE_ATTR_DIR:-$$(mktemp -d -t sugar-showcase-attr.XXXXXX)}"; \
 	mkdir -p "$$attr_dir"; \
-	for s in $(SHOWCASE_RUNS); do \
-		ordinal="$$showcase_ordinal"; showcase_ordinal=$$((showcase_ordinal + 1)); \
-		if [ $$((ordinal % shard_count)) -ne "$$shard_index" ]; then continue; fi; \
-		selected=$$((selected + 1)); \
-		echo ""; \
-		echo "==== [showcase shard $$shard_index/$$shard_count] $$s ===="; \
-		safe=$$(printf '%s' "$$s" | tr '/ ' '__'); \
-		log="$$attr_dir/$$safe.log"; \
-		# Capture per-showcase output so failure-level attribution is not path-list-only. \
-		# Write then cat (not process-substitution tee) so the showcase exit status is preserved. \
-		if "$$s" >"$$log" 2>&1; then \
-		  cat "$$log"; \
-		else \
-		  cat "$$log"; \
-		  failed="$$failed $$s"; \
-		  echo "==== $$s: FAIL ====" | tee -a "$$log"; \
-		fi; \
-	done; \
-	echo ""; \
-	echo "==== showcase shard $$shard_index/$$shard_count selected=$$selected ===="; \
-	if [ -n "$$failed" ]; then \
-	  echo "==== test-showcases FAIL:$$failed ===="; \
-	  echo "==== showcase failure attribution (shard $$shard_index/$$shard_count) ===="; \
-	  # Concatenate per-showcase logs under the sharded headers the scoreboard reads. \
-	  summary="$$attr_dir/shard-$$shard_index-summary.log"; \
-	  : > "$$summary"; \
-	  for s in $$failed; do \
-	    safe=$$(printf '%s' "$$s" | tr '/ ' '__'); \
-	    echo "==== [showcase shard $$shard_index/$$shard_count] $$s ====" >> "$$summary"; \
-	    if [ -f "$$attr_dir/$$safe.log" ]; then cat "$$attr_dir/$$safe.log" >> "$$summary"; fi; \
-	  done; \
-	  echo "==== test-showcases FAIL:$$failed ====" >> "$$summary"; \
-	  $(PYTHON) tools/showcase_verdict_scoreboard.py --from-log "$$summary" \
-	    --output "$$attr_dir/shard-$$shard_index-scoreboard.json" || true; \
-	  echo "showcase attribution dir: $$attr_dir"; \
-	  exit 1; \
+	scope_receipt="$${SHOWCASE_SCOPE_RECEIPT:-$$attr_dir/shard-$$shard_index-scope.json}"; \
+	failed_path="$$attr_dir/shard-$$shard_index-failed.txt"; \
+	summary="$$attr_dir/shard-$$shard_index-summary.log"; \
+	if $(PYTHON) tools/showcase_scope.py run \
+	    --repo-root . \
+	    --manifest .github/showcase-retirements.json \
+	    --shard-count "$$shard_count" \
+	    --shard-index "$$shard_index" \
+	    --attr-dir "$$attr_dir" \
+	    --receipt "$$scope_receipt" \
+	    --failed-path "$$failed_path" \
+	    --summary-path "$$summary" \
+	    -- $(SHOWCASE_RUNS); then \
+	  scope_rc=0; \
+	else \
+	  scope_rc=$$?; \
 	fi; \
-	echo "==== test-showcases: PASS ===="
+	if [ "$$scope_rc" -ne 0 ]; then \
+	  failed="$$(tr '\n' ' ' < "$$failed_path" 2>/dev/null || true)"; \
+	  if [ -n "$$failed" ]; then echo "==== test-showcases FAIL: $$failed ===="; fi; \
+	  echo "==== showcase failure attribution (shard $$shard_index/$$shard_count) ===="; \
+	  if [ -s "$$summary" ]; then $(PYTHON) tools/showcase_verdict_scoreboard.py --from-log "$$summary" \
+	    --output "$$attr_dir/shard-$$shard_index-scoreboard.json" || true; \
+	  fi; \
+	  echo "showcase attribution dir: $$attr_dir"; \
+	  exit "$$scope_rc"; \
+	fi; \
+	echo "==== showcase-scope active execution: PASS; RETIRED testified separately ===="
 
 # --- CI alias ----------------------------------------------------------------
 

@@ -17,6 +17,25 @@ CI = ROOT / ".github/workflows/ci.yml"
 ATTEND = ROOT / "tools/showcase_shard_attendance.py"
 
 
+def _green_showcase_body(shard_index: int, shard_count: int = 4) -> dict:
+    path = f"examples/python-green-{shard_index}/run.sh"
+    return {
+        "measurementClass": "test-showcases",
+        "shardIndex": shard_index,
+        "shardCount": shard_count,
+        "measuredCommit": "abc",
+        "exitCode": 0,
+        "showcaseCounts": {
+            "enrolled": 1,
+            "executed": 1,
+            "retired": 0,
+            "passed": 1,
+            "failed": 0,
+        },
+        "showcaseOutcomes": [{"path": path, "outcome": "passed", "exitCode": 0}],
+    }
+
+
 def _write_build_project(root: Path, name: str, requires: list[str]) -> Path:
     project = root / name
     project.mkdir(parents=True)
@@ -200,15 +219,7 @@ def test_missing_showcase_shard_is_unmeasured(tmp_path: Path) -> None:
         d = tmp_path / f"showcase-shard-{i}"
         d.mkdir()
         (d / "showcase-shard-body.json").write_text(
-            json.dumps(
-                {
-                    "measurementClass": "test-showcases",
-                    "shardIndex": i,
-                    "shardCount": 4,
-                    "measuredCommit": "abc",
-                    "exitCode": 0,
-                }
-            ),
+            json.dumps(_green_showcase_body(i)),
             encoding="utf-8",
         )
     proc = subprocess.run(
@@ -235,15 +246,7 @@ def test_full_showcase_roster_is_green(tmp_path: Path) -> None:
         d = tmp_path / f"showcase-shard-{i}"
         d.mkdir()
         (d / "body.json").write_text(
-            json.dumps(
-                {
-                    "measurementClass": "test-showcases",
-                    "shardIndex": i,
-                    "shardCount": 4,
-                    "measuredCommit": "abc",
-                    "exitCode": 0,
-                }
-            ),
+            json.dumps(_green_showcase_body(i)),
             encoding="utf-8",
         )
     proc = subprocess.run(
