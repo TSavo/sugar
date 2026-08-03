@@ -105,6 +105,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 # CI-visible narration: default print buffering makes a live process look dead.
 # Every RECENSUS line uses flush=True; prefer PYTHONUNBUFFERED=1 in the workflow.
 _PROGRESS_EVERY_N = max(1, int(os.environ.get("RECENSUS_PROGRESS_EVERY_N", "1")))
@@ -624,6 +626,8 @@ def terminal_after_measure_escape(
             workspace_root=workspace_root,
             file_rel=relative,
         )
+    except ConstructionPanic:
+        raise
     except BaseException as roster_err:
         if _is_process_control(roster_err):
             raise
@@ -1449,6 +1453,8 @@ def main() -> int:
                         row.setdefault("edgeWitnesses", {})[
                             EDGE_WITH_PARTITION
                         ] = with_partition["edgeWitness"]
+                except ConstructionPanic:
+                    raise
                 except BaseException as error:  # noqa: BLE001 -- per-file terminal
                     if _is_process_control(error):
                         raise

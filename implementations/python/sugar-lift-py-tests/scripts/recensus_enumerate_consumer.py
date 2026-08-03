@@ -18,6 +18,8 @@ import ast
 from pathlib import Path
 from typing import Any, Mapping
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 SCOREBOARD_AUTHORITY = False
 
 _FORBIDDEN_IMPORTS = frozenset(
@@ -713,6 +715,8 @@ def measure_file_via_enumerate(
         from sugar_lift_python_source.source_oracle import path_source
 
         _source, _filename, observed_source_cid = path_source(str(path))
+    except ConstructionPanic:
+        raise
     except BaseException as error:  # noqa: BLE001 — source identity is attendance
         if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
             raise
