@@ -39,6 +39,24 @@ def test_claim_mass_pins_are_independent_and_matrixed() -> None:
     assert "target: test-claim-mass-tripwires" not in text
 
 
+def test_claim_mass_matrix_uses_the_source_stamp_setup_entrance_once() -> None:
+    workflow = CI.read_text(encoding="utf-8")
+    job = workflow.split("  claim-mass-tripwires:\n", 1)[1].split(
+        "\n  claim-mass-attendance:", 1
+    )[0]
+
+    setup = "uses: ./.github/actions/setup-rust-cache"
+    preflight = "id: claim_mass_source_stamp_preconditions"
+    run_pin = "name: Run pin ${{ matrix.pin }}"
+    assert job.count(setup) == 1
+    assert job.count(preflight) == 1
+    assert job.count("tools/sugar_source_stamp.py") == 1
+    assert job.index(setup) < job.index(preflight) < job.index(run_pin)
+    assert (
+        "steps.claim_mass_source_stamp_preconditions.outcome == 'success'" in job
+    )
+
+
 def test_claim_mass_missing_pin_is_unmeasured(tmp_path: Path) -> None:
     names = subprocess.check_output(
         [sys.executable, str(CLAIM_SHARDS), "--list"],
