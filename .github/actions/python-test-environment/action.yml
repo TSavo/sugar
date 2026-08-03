@@ -189,16 +189,11 @@ runs:
           "${third_party[@]}"
         "$venv/bin/python" -m pip freeze --all > "$env_dir/resolved-distributions.txt"
 
-        # Refuse if a first-party package snuck into site-packages. Check each
-        # name alone: `pip show a b` exits non-zero if any is missing, which
-        # would mask a partial install.
-        for pkg in sugar-lift-py-tests sugar-lift-python-source sugar-source-tree; do
-          if "$venv/bin/python" -m pip show "$pkg" >/dev/null 2>&1; then
-            echo "::error::first-party package $pkg present in venv; must resolve from checkout only"
-            "$venv/bin/python" -m pip show "$pkg" || true
-            exit 1
-          fi
-        done
+        # Search only this interpreter's site-packages. `pip show` also searches
+        # ambient PYTHONPATH, which is the required checkout binding at job
+        # scope and is not evidence that a distribution entered this venv.
+        "$venv/bin/python" tools/refuse_first_party_venv_contamination.py \
+          sugar-lift-py-tests sugar-lift-python-source sugar-source-tree
 
         # Checkout roots BEFORE any subsequent import of sugar_lift_py_tests.
         # tools/managed_checkout_pythonpath.py is stdlib-only so it can run
