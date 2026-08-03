@@ -88,12 +88,8 @@ runs:
           "${wheels[@]}"
         "$venv/bin/python" -m pip freeze --all > "$env_dir/resolved-distributions.txt"
 
-        for pkg in sugar-lift-py-tests sugar-lift-python-source sugar-source-tree; do
-          if "$venv/bin/python" -m pip show "$pkg" >/dev/null 2>&1; then
-            echo "::error::first-party package $pkg present in venv; must resolve from checkout only"
-            exit 1
-          fi
-        done
+        "$venv/bin/python" tools/refuse_first_party_venv_contamination.py \
+          sugar-lift-py-tests sugar-lift-python-source sugar-source-tree
 
         checkout_pythonpath="$(
           python3 tools/managed_checkout_pythonpath.py --repo-root .
