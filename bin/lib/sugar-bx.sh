@@ -295,7 +295,7 @@ sugar_bx_run_ambient() {
   # measure. Do not exec-replace the shell that holds the flock fd.
   # Three gates, one law: quiet box, exclusive lease, correct corpus.
   local lock wait_s max_lit host_lit measured_cmd wrapper selector_def login_exec
-  local compact_wrapper
+  local compact_wrapper remote_wrapper
   local pin_path pin_py pin_skip
   lock="${SUGAR_BX_TIMING_LEASE:-}"
   selector_def="$(declare -f sugar_bx_select_timing_lease)"
@@ -465,7 +465,25 @@ exit \"\$st\""
   # clear_console, whose exit 1 replaced both remote success and remote 23.
   # The non-login wrapper's explicit exit is therefore the SSH verdict.
   login_exec='exec "$@"'
-  sugar_bx_ssh "bash -lc $(sugar_bx_quote "$login_exec") bash bash -c $(sugar_bx_quote "$compact_wrapper")"
+  # The OpenSSH ControlMaster mux has a bounded command packet. Passing the
+  # full wrapper through bash -c makes a large payload fail as rc=255 with no
+  # artifact. Stage the wrapper over stdin, then invoke it by reference so the
+  # transport payload stays small. A staging failure is named, never mistaken
+  # for a measurement result.
+  remote_wrapper="$SUGAR_BX_REPO/.sugar-bx-wrapper-$$"
+  if ! printf '%s\n' "$compact_wrapper" | sugar_bx_ssh "cat > $(sugar_bx_quote "$remote_wrapper")"; then
+    printf 'sugarbin: crime=controlmaster-command-payload-refused limit=unknown stage=%s replacement=retry with staged command reference\n' "$remote_wrapper" >&2
+    return 255
+  fi
+  set +e
+  sugar_bx_ssh "bash -lc $(sugar_bx_quote "$login_exec") bash "$remote_wrapper""
+  st=$?
+  set -e
+  if ((st != 0)); then
+    sugar_bx_ssh "rm -f $(sugar_bx_quote "$remote_wrapper")" >/dev/null 2>&1 || true
+    return "$st"
+  fi
+  sugar_bx_ssh "rm -f $(sugar_bx_quote "$remote_wrapper")" >/dev/null 2>&1 || true
 }
 
 sugar_bx_docker_bind_source() {
