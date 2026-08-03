@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import importlib.metadata
+import pickle
 import sys
 from pathlib import Path
 
@@ -423,7 +424,173 @@ def test_disk_memo_survives_a_cold_process_table(tmp_path):
     assert _observable(from_disk) == _observable(warm)
 
 
-# -- twin 6: the value is not mutable, so a writer cannot leak -----------------
+# -- twin 6: cache seats retain inputs; the constructor owns graph fields ------
+
+
+def test_graph_fields_cannot_directly_construct_an_incoherent_pair(tmp_path):
+    """No caller, including the cache, may allocate a graph from derived fields."""
+    distribution = _install(tmp_path / "project", implementation_source=_IMPL_A)
+    graph = DependencyArtifactGraph.authenticate(distribution)
+
+    with pytest.raises(da.DependencyArtifactAuthenticationError) as refused:
+        DependencyArtifactGraph(
+            artifact_kind="stdlib",
+            distribution_name="pandas",
+            distribution_version=graph.distribution_version,
+            distribution_artifact_cid=graph.distribution_artifact_cid,
+            files=graph.files,
+            modules=graph.modules,
+        )
+
+    assert type(refused.value).__name__ == "DependencyArtifactConstructionError"
+
+
+def test_disk_cache_persists_only_primitive_constructor_inputs(tmp_path):
+    """A cache seat has no authority to remember a graph's derived fields."""
+    distribution = _install(tmp_path / "project", implementation_source=_IMPL_A)
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    seat = da._artifact_disk_cache_path(graph.distribution_artifact_cid)
+
+    with seat.open("rb") as stream:
+        payload = pickle.load(stream)
+
+    assert set(payload) == {"schema", "files"}
+    assert payload["schema"] == "dep-graph-v4"
+    assert payload["files"]
+    assert all(
+        set(row) == {"source_seat", "content_cid", "content"}
+        and isinstance(row["source_seat"], str)
+        and isinstance(row["content_cid"], str)
+        and isinstance(row["content"], bytes)
+        for row in payload["files"]
+    )
+
+
+def test_coherent_disk_graph_is_served_without_refusal(tmp_path, monkeypatch, caplog):
+    """Primitive cached inputs rehydrate without consulting live installation."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    warm = DependencyArtifactGraph.authenticate(distribution)
+    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
+
+    da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
+
+    def forbidden_rebuild(_distribution):
+        raise AssertionError("coherent disk hit rebuilt")
+
+    monkeypatch.setattr(
+        DependencyArtifactGraph,
+        "_read_recorded_installation",
+        staticmethod(forbidden_rebuild),
+    )
+    served = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert _observable(served) == _observable(warm)
+    assert seat.is_file()
+    assert "dependency-artifact-cache-refused" not in caplog.text
+
+
+def test_unconstructible_cache_inputs_miss_and_execute_authenticated_rebuild(
+    tmp_path, monkeypatch, caplog
+):
+    """Constructor refusal means absent; intake executes and never returns empty."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    warm = DependencyArtifactGraph.authenticate(distribution)
+    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
+    primitive_files = [
+        {
+            "source_seat": item.source_seat,
+            "content_cid": item.content_cid,
+            "content": item.content,
+        }
+        for item in warm.files
+        if not item.source_seat.endswith(".dist-info/METADATA")
+    ]
+    with seat.open("wb") as stream:
+        pickle.dump(
+            {
+                "schema": "dep-graph-v4",
+                "files": primitive_files,
+            },
+            stream,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+
+    real_read = DependencyArtifactGraph._read_recorded_installation
+    reads = 0
+
+    def counted_real_read(selected_distribution):
+        nonlocal reads
+        reads += 1
+        return real_read(selected_distribution)
+
+    monkeypatch.setattr(
+        DependencyArtifactGraph,
+        "_read_recorded_installation",
+        staticmethod(counted_real_read),
+    )
+    da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
+
+    served = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert served.artifact_kind == "distribution"
+    assert served.distribution_name == warm.distribution_name
+    assert served.distribution_artifact_cid == warm.distribution_artifact_cid
+    assert served.files
+    assert served.modules
+    assert reads == 1
+    assert "dependency-artifact-cache-refused" in caplog.text
+    assert warm.distribution_artifact_cid in caplog.text
+    assert "DependencyArtifactAuthenticationError" in caplog.text
+    assert "distribution graph must retain one METADATA preimage" in caplog.text
+    assert "invalidated=True" in caplog.text
+    assert seat.is_file()
+    with seat.open("rb") as stream:
+        replacement = pickle.load(stream)
+    assert set(replacement) == {"schema", "files"}
+    assert replacement["schema"] == "dep-graph-v4"
+
+
+def test_previous_cache_schema_is_refused_invalidated_and_rebuilt(tmp_path, caplog):
+    """A byte-authentic v3 seat cannot answer the relationship-aware v4 reader."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    warm = DependencyArtifactGraph.authenticate(distribution)
+    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
+    with seat.open("rb") as stream:
+        payload = pickle.load(stream)
+    assert payload["schema"] == da._DEPENDENCY_ARTIFACT_CACHE_SCHEMA
+    payload["schema"] = "dep-graph-v3"
+    with seat.open("wb") as stream:
+        pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
+
+    da._AUTHENTICATE_GRAPH_CACHE.clear()
+    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
+    da._TOP_LEVEL_GRAPH_CACHE.clear()
+    rebuilt = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert _observable(rebuilt) == _observable(warm)
+    assert "dependency-artifact-cache-refused" in caplog.text
+    assert warm.distribution_artifact_cid in caplog.text
+    assert "disk cache schema mismatch" in caplog.text
+    assert seat.is_file()
+    with seat.open("rb") as stream:
+        replacement = pickle.load(stream)
+    assert replacement["schema"] == "dep-graph-v4"
+
+
+# -- twin 7: the value is not mutable, so a writer cannot leak -----------------
 
 
 def test_a_served_graph_cannot_be_written_into(tmp_path):
@@ -473,7 +640,6 @@ def test_bite_a_forged_graph_cannot_be_minted_or_served(tmp_path):
             distribution_artifact_cid="blake3-512:" + "0" * 128,
             files=graph.files,
             modules=graph.modules,
-            _intake_authority=da._ARTIFACT_INTAKE_AUTHORITY,
         )
     with pytest.raises(da.DependencyArtifactAuthenticationError):
         DependencyArtifactGraph(
@@ -483,5 +649,4 @@ def test_bite_a_forged_graph_cannot_be_minted_or_served(tmp_path):
             distribution_artifact_cid=graph.distribution_artifact_cid,
             files=graph.files,
             modules=graph.modules,
-            _intake_authority=object(),
         )
