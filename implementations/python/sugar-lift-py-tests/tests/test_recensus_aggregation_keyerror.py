@@ -7,6 +7,11 @@ Root causes:
 1. Lift loop rebound the board Counter named ``families`` to a plain row dict.
 2. File-level ConstructionPanic is BaseException and never entered reporter.gaps,
    so measure must enroll it into the row's families explicitly.
+
+The retired direct-measurement tooth is superseded by the enrolled current-door
+``test_recensus_projects_construction_panic_as_a_loud_counted_terminal``.  That
+tooth proves the panic terminal itself without recreating the deleted family
+taxonomy at a side door.
 """
 
 from __future__ import annotations
@@ -18,9 +23,6 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-
-from sugar_lift_py_tests.gap.info import ConstructionGap
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 SCRIPT = _SCRIPTS / "control_effect_recensus.py"
@@ -53,33 +55,6 @@ def _aggregate_rows(module, measured_rows: list[tuple[str, dict]]):
                     int(families.get("ConstructionPanic") or 0) + 1
                 )
     return families, construction_panics
-
-
-def test_measure_enrolls_construction_panic_in_families(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Upstream: family set comes from measure, not invented only at aggregate."""
-    module = _load()
-    path = tmp_path / "fixture.py"
-    path.write_text("def a():\n    return 1\n", encoding="utf-8")
-
-    def boom(*_a, **_k):
-        raise ConstructionPanic(
-            ConstructionGap(
-                owner="renamed-constructor",
-                blame="fixture.py:1:0",
-                observed="OpaqueValue",
-                requested="constructed value",
-                fix="implement the constructor",
-            )
-        )
-
-    import sugar_source_tree.tree as tree_mod
-
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
-    row = module._measure_file(path, relative="fixture.py", workspace_root=tmp_path)
-    assert row["category"] == "construction-panic"
-    assert row["families"].get("ConstructionPanic", 0) >= 1
 
 
 def test_aggregation_survives_legacy_panic_row_without_family_key() -> None:
