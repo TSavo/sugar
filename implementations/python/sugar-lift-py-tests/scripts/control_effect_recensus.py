@@ -1075,8 +1075,19 @@ def main() -> int:
         )
 
         def _derive_and_maybe_write():
+            from sugar_lift_py_tests.authenticated_pytest import (
+                AuthenticatedPandasCorpus,
+            )
+
+            authenticated_corpus = AuthenticatedPandasCorpus(
+                root=workspace_root,
+                distribution=observed_pin.distribution,
+                version=observed_pin.version,
+                manifest_cid=observed_pin.aggregate_hash,
+                file_count=observed_pin.file_count,
+            )
             table = mint_prebuilt_demand_table(
-                workspace_root, corpus_pin=pin_identity
+                authenticated_corpus,
             )
             write_path = args.write_demand_table
             if write_path is None and args.out_dir is not None:

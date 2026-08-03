@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from sugar_lift_python_source.canonical import cid_of_json
+from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
 
 SCHEMA = "python-provisional-demand-table/v1"
 
@@ -121,9 +122,7 @@ def content_cid_for_preimage(preimage: Mapping[str, Any]) -> str:
 
 
 def mint_prebuilt_demand_table(
-    root: Path,
-    *,
-    corpus_pin: Mapping[str, Any] | CorpusPinIdentityV1,
+    corpus: AuthenticatedPandasCorpus,
 ) -> PrebuiltDemandTableV1:
     """Derive the provisional demand table once and content-address it.
 
@@ -131,12 +130,13 @@ def mint_prebuilt_demand_table(
     """
     from sugar_lift_py_tests.lift_rpc import _preconstruction_demand_rows
 
-    pin = (
-        corpus_pin
-        if isinstance(corpus_pin, CorpusPinIdentityV1)
-        else CorpusPinIdentityV1.from_mapping(corpus_pin)
+    pin = CorpusPinIdentityV1(
+        distribution=corpus.distribution,
+        version=corpus.version,
+        file_count=corpus.file_count,
+        aggregate_hash=corpus.manifest_cid,
     )
-    rows = tuple(_preconstruction_demand_rows(Path(root)))
+    rows = tuple(_preconstruction_demand_rows(corpus.root))
     preimage = {
         "schema": SCHEMA,
         "corpusPin": pin.as_dict(),
