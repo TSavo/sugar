@@ -39,6 +39,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import With
 from sugar_source_tree.tree import SourceFile
 
@@ -140,6 +141,9 @@ def _populate(root: Path, consumer: str, *, dist):
         root=root,
         path=path,
         distribution_index={"arbitrary": dist},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     return tree, context, path
 

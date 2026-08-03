@@ -29,6 +29,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 
@@ -76,6 +77,9 @@ def _populate(tmp_path: Path, dist, package: str, consumer_source: str):
         root=tmp_path,
         path=consumer,
         distribution_index={package: dist},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     return context
 
@@ -92,7 +96,14 @@ def test_option_context_publishes_both_context_enter_and_exit_coordinates():
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
 
     receivers = [
         coordinate
@@ -127,7 +138,14 @@ def test_option_context_publishes_at_every_seated_generator_use_site():
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
 
     published = 0
     sample = None
@@ -164,7 +182,12 @@ def test_open_produces_no_source_definition(tmp_path: Path):
         path_source(str(path)),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
 
     assert context.source_manager_provider_calls == {}
     from sugar_source_tree.nodes import With
@@ -509,7 +532,12 @@ def test_lying_twin_spelling_without_binding_publishes_nothing(tmp_path: Path):
         path_source(str(path)),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert context.source_manager_provider_calls == {}
     assert not any(
         slot in (NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT)

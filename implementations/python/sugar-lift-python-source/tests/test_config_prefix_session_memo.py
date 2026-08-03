@@ -43,6 +43,8 @@ def test_json_open_config_sourcefile_at_most_once() -> None:
             root=install_root,
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
             populate_derived=True,
+            distribution="pandas",
+            source_workspace_root=install_root,
         )
         fns = len(tuple(sf.functions()))
     finally:

@@ -53,6 +53,7 @@ from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBound
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_python_source.manager_summary_derivation import (
     _projected_manager_call_uses,
     populate_source_derived_resource_refs,
@@ -143,6 +144,9 @@ def _tree(root: Path, consumer: str, *, dist, artifact_graph_cache=None):
         path=path,
         distribution_index={"arbitrary": dist},
         artifact_graph_cache=artifact_graph_cache,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     return tree, context, path
 
@@ -343,7 +347,14 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
     with_node = next(
         node
         for node in tree.nodes()
@@ -408,7 +419,14 @@ def test_real_pandas_option_context_runs_authenticated_enter_body_and_exit():
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
     with_node = next(
         node
         for node in tree.nodes()
@@ -464,7 +482,14 @@ def test_real_option_context_published_ref_selects_source_resource_at_constructi
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
     with_node = next(
         node
         for node in tree.nodes()
@@ -535,7 +560,14 @@ def test_real_option_context_executes_its_source_body_and_exit():
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
     with_node = next(
         node
         for node in tree.nodes()
@@ -988,7 +1020,12 @@ def test_fixture_supplied_formal_manager_stays_typed_loud_without_actual(
         (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert context.source_derived_contract_refs == {}
     assert _projected_manager_call_uses(tree) == {}
 

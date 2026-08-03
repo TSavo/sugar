@@ -35,6 +35,8 @@ def test_pandas_json_open_keeps_function_roster() -> None:
         root=install_root,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
         populate_derived=True,
+        distribution="pandas",
+        source_workspace_root=install_root,
     )
     functions = tuple(source_file.functions())
     assert len(functions) >= 40, (

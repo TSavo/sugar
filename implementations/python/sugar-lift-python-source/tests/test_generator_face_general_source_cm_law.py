@@ -31,6 +31,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     _project_generator_lifecycle_faces,
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 _HELPERS = """\
@@ -95,6 +96,9 @@ def _publish(tmp_path: Path, consumer: str) -> list:
         root=tmp_path,
         path=path,
         distribution_index={"unprivileged": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
     )
     return [
         value.protocol

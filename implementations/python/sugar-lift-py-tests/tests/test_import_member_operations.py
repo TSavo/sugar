@@ -50,7 +50,9 @@ def _import_member_and_site() -> tuple[ImportMemberValue, object]:
         source_file=source_file,
         module=module,
         target=regex_flag,
-        session=SourceResolutionSession(enabled=False),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(), enabled=False
+        ),
         context=context,
         dependency_graphs={"re": graph},
     )

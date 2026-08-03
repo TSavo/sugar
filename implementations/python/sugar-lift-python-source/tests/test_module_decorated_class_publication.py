@@ -289,7 +289,9 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
         blake3_512_of(source.encode("utf-8")),
         module_identities={},
     )
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
     resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
     assert isinstance(resolved, ResolvedPythonObjectV1)
 
@@ -341,7 +343,9 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
         blake3_512_of(body_source.encode("utf-8")),
         module_identities={},
     )
-    body_session = SourceResolutionSession()
+    body_session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
     body_resolved = resolve_import_binding(
         body_receipts[0], graph=graph, session=body_session
     )
@@ -464,7 +468,9 @@ def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
         module_identities={},
     )
     assert len(receipts) == 1
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
     resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
     assert isinstance(resolved, ResolvedPythonObjectV1)
 

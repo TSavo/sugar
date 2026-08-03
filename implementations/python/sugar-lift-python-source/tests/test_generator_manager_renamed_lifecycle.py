@@ -45,6 +45,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import With
 from sugar_source_tree.tree import SourceFile
 
@@ -181,6 +182,9 @@ def _populate(root: Path, *, shape: _ManagerShape, consumer_source: str, files=N
         root=root,
         path=consumer,
         distribution_index={shape.package: dist},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     return context, tree
 
@@ -671,6 +675,11 @@ def _populate_multi(root: Path, *, dists: dict, consumer_source: str):
         root=root,
         path=consumer,
         distribution_index=dists,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(
+                distribution.metadata["Name"] for distribution in dists.values()
+            )
+        ),
     )
     return context, tree
 

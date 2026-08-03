@@ -459,6 +459,7 @@ class ResolvedPythonObjectV1:
         *,
         graph: "DependencyArtifactGraph",
         authenticated_use: Any,
+        session: "SourceResolutionSession",
     ) -> "ResolvedPythonObjectV1":
         """Authenticate wire input by re-resolving every cited preimage.
 
@@ -485,7 +486,9 @@ class ResolvedPythonObjectV1:
         warrants = value["reexportWarrants"]
         if not isinstance(warrants, list):
             raise ValueError("reexportWarrants must be a list")
-        revalidated = resolve_import_binding(authenticated_use, graph=graph)
+        revalidated = resolve_import_binding(
+            authenticated_use, graph=graph, session=session
+        )
         if not isinstance(revalidated, cls) or revalidated.to_value() != value:
             raise DependencyArtifactAuthenticationError(
                 "resolved object is not byte-identical to artifact re-resolution"

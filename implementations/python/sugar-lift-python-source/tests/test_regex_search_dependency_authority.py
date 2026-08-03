@@ -18,11 +18,11 @@ from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactAuthenticationError,
     DependencyArtifactGraph,
     ResolvedPythonObjectV1,
-    resolve_import_binding,
+    resolve_import_binding as _resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
     _seat_import_value_use_receipts,
-    resolve_source_visible_frame,
+    resolve_source_visible_frame as _resolve_source_visible_frame,
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -35,6 +35,23 @@ SOURCE = (
     "def selected(subject):\n"
     '    return re.search("needle", subject, re.I)\n'
 )
+
+
+def _stdlib_session(*, enabled: bool = True) -> SourceResolutionSession:
+    """CPython is cited across an authoritative empty enrolled population."""
+    return SourceResolutionSession(enrolled_distributions=frozenset(), enabled=enabled)
+
+
+def resolve_import_binding(*args, session=None, **kwargs):
+    return _resolve_import_binding(
+        *args, session=_stdlib_session() if session is None else session, **kwargs
+    )
+
+
+def resolve_source_visible_frame(*args, session=None, **kwargs):
+    return _resolve_source_visible_frame(
+        *args, session=_stdlib_session() if session is None else session, **kwargs
+    )
 
 
 def _receipts(tmp_path: Path):
@@ -175,7 +192,7 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
         source_file=standalone,
         module=module,
         target=standalone_value,
-        session=SourceResolutionSession(enabled=False),
+        session=_stdlib_session(enabled=False),
         context=context,
         dependency_graphs={"re": graph},
     )
@@ -239,7 +256,7 @@ def test_duplicate_identical_call_receipt_is_loud_before_pairing(
         resolve_source_visible_frame(
             resolved,
             graph=graph,
-            session=SourceResolutionSession(enabled=False),
+            session=_stdlib_session(enabled=False),
         )
 
 
@@ -266,7 +283,7 @@ def test_reversed_receipt_iteration_preserves_relation_cid(
 
     ordinary = relation_cid(
         resolve_source_visible_frame(
-            resolved, graph=graph, session=SourceResolutionSession(enabled=False)
+            resolved, graph=graph, session=_stdlib_session(enabled=False)
         )
     )
     import sugar_lift_py_tests.import_binding as import_binding
@@ -292,7 +309,7 @@ def test_reversed_receipt_iteration_preserves_relation_cid(
     )
     reversed_cid = relation_cid(
         resolve_source_visible_frame(
-            resolved, graph=graph, session=SourceResolutionSession(enabled=False)
+            resolved, graph=graph, session=_stdlib_session(enabled=False)
         )
     )
     assert reversed_cid == ordinary
@@ -408,7 +425,7 @@ def test_re_i_value_receipt_cannot_substitute_re_search_call_span(
         source_file=source_file,
         module=module,
         target=function,
-        session=SourceResolutionSession(),
+        session=_stdlib_session(),
         context=context,
         dependency_graphs={"re": graph},
     )

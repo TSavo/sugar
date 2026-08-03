@@ -17,6 +17,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -188,6 +189,9 @@ def test_builtin_valueerror_formal_still_seals_with_class_value(tmp_path: Path):
         root=tmp_path,
         path=consumer,
         distribution_index={"arbitrary": dist},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     refs = list(context.source_derived_contract_refs.values())
     assert refs, "expected sealed source-derived CM ref for ValueError formal"

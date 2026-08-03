@@ -29,6 +29,7 @@ from sugar_lift_python_source.manager_protocol_construction import (
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 
@@ -44,7 +45,14 @@ def test_option_context_publishes_one_generator_backed_resource_ref():
     tree = open_source_file_for_construction(
         path, root=root, construction_context=context, populate_derived=False
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({corpus.distribution})
+        ),
+    )
 
     receivers = [
         coordinate
@@ -202,7 +210,12 @@ def test_open_still_publishes_neither_generator_ref_nor_native_defs(tmp_path: Pa
         path_source(str(path)),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert context.source_manager_provider_calls == {}
     assert not any(
         isinstance(value, SourceDerivedGeneratorResourceRefV1)

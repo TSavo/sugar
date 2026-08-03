@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source import manager_construction
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
 
 def _distribution(root: Path, source: str) -> importlib.metadata.Distribution:
@@ -143,7 +144,12 @@ def test_enum_dict_class_transport_retains_authenticated_builtin_dict_base(
         if statement.lineno > enum_dict.end_lineno
     )
 
-    exits = manager_construction._module_prefix_outcome(module, locus, graph=graph)
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
+    exits = manager_construction._module_prefix_outcome(
+        module, locus, graph=graph, session=session
+    )
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -175,7 +181,12 @@ def test_enum_dict_receiver_mutation_retains_identity_and_source_methods(
     parsed = ast.parse(module.source)
     enum_dict = parsed.body[0]
     exits = manager_construction._module_prefix_outcome(
-        module, parsed.body[1], graph=graph
+        module,
+        parsed.body[1],
+        graph=graph,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({graph.distribution_name})
+        ),
     )
     completed = exits.exits[0]
     value = completed.value.context.temporal.value_if_bound("_EnumDict")

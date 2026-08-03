@@ -61,7 +61,9 @@ def test_real_pandas_select_options_installs_authenticated_re_search_frame(
     )
     regex_graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
     receipt = _consumer_receipt(tmp_path, "truthful.py")
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({pandas_graph.distribution_name})
+    )
     resolved = resolve_import_binding(receipt, graph=pandas_graph, session=session)
     assert type(resolved) is ResolvedPythonObjectV1
 
@@ -113,8 +115,11 @@ def test_same_target_foreign_import_binding_cannot_reauthenticate_definition(
     foreign = _consumer_receipt(tmp_path, "foreign.py", "# foreign source occurrence\n")
     assert truthful.target_symbol == foreign.target_symbol
     assert truthful.import_binding.cid != foreign.import_binding.cid
-    resolved = resolve_import_binding(truthful, graph=graph)
-    foreign_resolved = resolve_import_binding(foreign, graph=graph)
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
+    resolved = resolve_import_binding(truthful, graph=graph, session=session)
+    foreign_resolved = resolve_import_binding(foreign, graph=graph, session=session)
     assert type(resolved) is ResolvedPythonObjectV1
     assert type(foreign_resolved) is ResolvedPythonObjectV1
     assert resolved.definition == foreign_resolved.definition
@@ -125,5 +130,8 @@ def test_same_target_foreign_import_binding_cannot_reauthenticate_definition(
         match="not byte-identical to artifact re-resolution",
     ):
         ResolvedPythonObjectV1.from_value(
-            resolved.to_value(), graph=graph, authenticated_use=foreign
+            resolved.to_value(),
+            graph=graph,
+            authenticated_use=foreign,
+            session=session,
         )

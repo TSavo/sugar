@@ -16,7 +16,8 @@ from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
 
 def test_dependency_graph_for_top_asks_auth_once(monkeypatch) -> None:
-    session = SourceResolutionSession()
+    # Cache-only unit test: no distribution graph is enrolled.
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
     local: dict = {}
     calls: list[str] = []
 
@@ -43,7 +44,7 @@ def test_dependency_graph_for_top_asks_auth_once(monkeypatch) -> None:
 
 
 def test_bind_dependency_graphs_seeds_from_session() -> None:
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
     session.dependency_graphs["re"] = object()
     bound = _bind_dependency_graphs(session, {})
     assert bound["re"] is session.dependency_graphs["re"]
@@ -54,7 +55,7 @@ def test_bind_dependency_graphs_seeds_from_session() -> None:
 
 def test_five_unique_tops_auth_once_each(monkeypatch) -> None:
     """Black cold profile shape: 5 tops, path-local re-ask → 1 auth each."""
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
     calls: list[str] = []
 
     class _FakeGraph:

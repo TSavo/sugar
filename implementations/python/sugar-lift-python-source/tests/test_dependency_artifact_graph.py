@@ -18,7 +18,7 @@ from sugar_lift_python_source.dependency_artifact import (
     AuthenticatedModuleSourceV1,
     PythonObjectResolutionGapV1,
     ResolvedPythonObjectV1,
-    resolve_import_binding,
+    resolve_import_binding as _resolve_import_binding,
     export_statement_coverage,
 )
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
@@ -26,6 +26,25 @@ from sugar_lift_python_source.external_exception_construction import (
     AuthenticatedProviderExceptionTypeV1,
     ExternalExceptionConstructionGap,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+
+def _session_enrolling_graph(graph, *, enabled: bool = True):
+    """The graph is this file's authenticated resolution subject."""
+    if graph.artifact_kind == "stdlib":
+        roster = frozenset()
+    else:
+        name = graph.distribution_name
+        if not name:
+            raise AssertionError("distribution graph test requires a distribution name")
+        roster = frozenset({name})
+    return SourceResolutionSession(enabled=enabled, enrolled_distributions=roster)
+
+
+def resolve_import_binding(*args, graph, session=None, **kwargs):
+    if session is None:
+        session = _session_enrolling_graph(graph)
+    return _resolve_import_binding(*args, graph=graph, session=session, **kwargs)
 
 
 def _install_distribution(
@@ -194,7 +213,11 @@ def _returned_module_testimony(tmp_path: Path, *, gate_source: str | None = None
         root=tmp_path,
         path=consumer,
         graph_cache={},
-        session=SourceResolutionSession(),
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset(
+                {gate.metadata["Name"], provider.metadata["Name"]}
+            )
+        ),
         distribution_index={"gate_pkg": gate, "provider_pkg": provider},
     )
 
@@ -427,7 +450,10 @@ def test_resolved_python_object_round_trips_with_identical_cid(tmp_path: Path) -
 
     encoded = json.loads(json.dumps(result.to_value(), sort_keys=True))
     decoded = ResolvedPythonObjectV1.from_value(
-        encoded, graph=graph, authenticated_use=demand
+        encoded,
+        graph=graph,
+        authenticated_use=demand,
+        session=_session_enrolling_graph(graph),
     )
 
     assert decoded == result
@@ -741,7 +767,12 @@ def test_recomputed_outer_cid_cannot_authenticate_invented_resolved_artifact(
         DependencyArtifactAuthenticationError,
         match="byte-identical",
     ):
-        ResolvedPythonObjectV1.from_value(forged, graph=graph, authenticated_use=demand)
+        ResolvedPythonObjectV1.from_value(
+            forged,
+            graph=graph,
+            authenticated_use=demand,
+            session=_session_enrolling_graph(graph),
+        )
 
 
 def test_final_reaching_definition_wins_without_decorator_name_recognition(
@@ -959,7 +990,7 @@ def test_resolve_export_amortizes_repeated_static_scans(tmp_path: Path) -> None:
     graph = DependencyArtifactGraph.authenticate(distribution)
     # One session, as a real population has: amortization is a property of the
     # session, not of the process.
-    session = SourceResolutionSession()
+    session = _session_enrolling_graph(graph)
 
     n_sites = 8
     lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
@@ -1018,7 +1049,7 @@ def test_resolve_export_reexport_hop_shares_structural_memo(tmp_path: Path) -> N
         implementation_source="def build(value):\n    return value\n",
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
-    session = SourceResolutionSession()
+    session = _session_enrolling_graph(graph)
 
     scans = {"count": 0, "names": []}
     # Production door uses _export_block_with_locus (not bare _export_block).
@@ -1102,7 +1133,7 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
         implementation_source="def build(value):\n    return value\n",
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
-    session = SourceResolutionSession()
+    session = _session_enrolling_graph(graph)
 
     n_sites = 6
     lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
@@ -1113,7 +1144,9 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
     receipts, _ = authenticated_import_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
     )
-    resolved = [resolve_import_binding(r, graph=graph) for r in receipts]
+    resolved = [
+        resolve_import_binding(r, graph=graph, session=session) for r in receipts
+    ]
     assert all(isinstance(item, ResolvedPythonObjectV1) for item in resolved)
 
     materializations = {"count": 0}
@@ -1179,7 +1212,7 @@ def test_session_module_materialize_amortizes_across_definitions(
         implementation_source=implementation,
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
-    session = SourceResolutionSession()
+    session = _session_enrolling_graph(graph)
 
     consumer = (
         "from example_pkg.implementation import alpha, beta, gamma, delta\n"
@@ -1238,7 +1271,7 @@ def test_session_module_materialize_amortizes_across_definitions(
     assert len(session.module_materializations) >= 1
 
     # Discrimination: a fresh session re-materializes (isolation, not process memo).
-    other = SourceResolutionSession()
+    other = _session_enrolling_graph(graph)
     materializations["count"] = 0
     materializations["paths"] = []
     mc.SourceFile = CountingSourceFile  # type: ignore[misc, assignment]

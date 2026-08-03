@@ -38,6 +38,7 @@ from sugar_lift_python_source.manager_protocol_construction import (
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.tree import SourceFile
 
 # ---------------------------------------------------------------------------
@@ -186,6 +187,9 @@ def _populate(root: Path, *, shape: _ManagerShape, consumer_source: str, files=N
         root=root,
         path=consumer,
         distribution_index={shape.package: dist},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({dist.metadata["Name"]})
+        ),
     )
     return context, tree
 
@@ -419,7 +423,12 @@ def test_builtin_open_still_enrolls_nothing(tmp_path: Path):
         path_source(str(path)),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     assert context.source_manager_provider_calls == {}
     assert not any(
         isinstance(value, SourceDerivedGeneratorResourceRefV1)

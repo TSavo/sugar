@@ -114,6 +114,8 @@ def _feather_tree():
         root=corpus.root.parent,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
         populate_derived=True,
+        source_workspace_root=corpus.root,
+        distribution=corpus.distribution,
     )
 
 
@@ -226,7 +228,9 @@ def _external_error_attributions():
         by_source[row["useSite"]["sourceCid"]].append(row)
 
     graph_cache = {}
-    session = SourceResolutionSession()
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({corpus.distribution})
+    )
     attributed = []
     for source_cid, selected_rows in sorted(by_source.items()):
         path = paths[source_cid]
