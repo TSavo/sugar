@@ -2,12 +2,12 @@
 
 ## Pins
 
-- Measured main: `4574d84beb1fd3edf3853b5233c55c9467e85045`
-- Exact tested source-law content: `83a6fedac0bc2a3e0aa5b0b16a35e4dd987702b5`
-- Rebased source-law commit: `b5cda92a0`
-- Canonical-vocabulary inversion commit: `c3c02f73b`
-- Producer-door migration commit: `3645c7e79`
-- Prior main: `274e3b21cb643f8a611a6c83a0a209f92461b465`
+- Measured main: `c3d46e6e91003c2f3ad4d14969798255e6729b04`
+- Exact tested source-law content: `6896275df91644aa076a50c1bb7ec4f864431da9`
+- Rebased source-law commit: `203dda108`
+- Canonical-vocabulary inversion commit: `260b888bb`
+- Producer-door migration commit: `90598137f`
+- Prior main: `4574d84beb1fd3edf3853b5233c55c9467e85045`
 - Test: `tests/test_deletion_silent_failure_discrimination.py`
 
 Content comparison, not line matching, shows that #7152 repaired four of the
@@ -29,9 +29,10 @@ The rename-collapsed `elif category == "panic"` arm was also removed by #7152.
 Therefore a seal refusal that names all five old coordinates would contradict
 the pinned source.  No corpus conclusion is drawn here; Keaton owns that run.
 
-The relevant production and test blobs are byte-identical between `274e3b21c`
-and `4574d84be`; #7167 changes only brun payload-status and failed-run artifact
-handling, not the control-effect recensus, compose seal, or discriminator inputs.
+The live source-discriminator inputs and both stale-taxonomy test blobs are
+byte-identical between `4574d84be` and `c3d46e6e9`.  #7170 changes
+`lift_rpc.py` and adds a stronger With conservation tooth proving provider gaps
+retain canonical rows; it does not restore the historical deleted-key reader.
 
 ## Runtime conservation relationship
 
@@ -92,7 +93,7 @@ reads an unrelated `valuesByUnit` container and was not changed.
 
 ### Exclusive read of an unproduced key
 
-- Exact repaired source content: `83a6fedac` on main `4574d84be`
+- Exact repaired source content: `6896275df` on main `c3d46e6e9`
 - Input and former coordinates: `_with_census_partition`'s exclusive
   `derived-contract` and `gap:*` reads, plus `main`'s exclusive
   `derived-contract` read
@@ -104,7 +105,7 @@ reads an unrelated `valuesByUnit` container and was not changed.
 
 ### Rename-collapsed predicate
 
-- Exact repaired source content: `83a6fedac` on main `4574d84be`
+- Exact repaired source content: `6896275df` on main `c3d46e6e9`
 - Input and former coordinate: `control_effect_recensus.main`, two arms with
   predicate `category == "panic"`
 - Entrance: physical `if` / `elif` chain predicate normalization
@@ -129,7 +130,7 @@ for name in (
 PY
 ```
 
-At exact source-law content `83a6fedac` over main `4574d84be`, direct local
+At exact source-law content `6896275df` over main `c3d46e6e9`, direct local
 execution returned exit `0` with both test functions reporting `PASS`.  Both
 tests execute their lying and truthful planted arms before asserting that the
 live offender set is empty.
