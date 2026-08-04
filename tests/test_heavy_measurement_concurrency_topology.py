@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 WORKFLOWS = ROOT / ".github" / "workflows"
 LEASE_WRAPPER = "tools/heavy_measurement_lease.py"
 GATE = "tools/heavy_measurement_lease_gate.py"

@@ -27,7 +27,6 @@ from sugar_lift_py_tests.repo_root import (
     sugar_lift_py_tests_package_root,
 )
 
-
 def _write_marker(repo: Path) -> Path:
     repo.mkdir(parents=True, exist_ok=True)
     marker = repo / MARKER

@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 

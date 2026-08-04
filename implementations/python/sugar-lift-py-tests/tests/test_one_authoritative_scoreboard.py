@@ -22,7 +22,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-KIT = Path(__file__).resolve().parents[1]
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+KIT = sugar_lift_py_tests_package_root()
 SEARCHED = (KIT / "scripts", KIT / "src" / "sugar_lift_py_tests")
 
 DECLARATION = "SCOREBOARD_AUTHORITY"

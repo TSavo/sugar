@@ -33,7 +33,10 @@ import ast
 import re
 from pathlib import Path
 
-_KIT_SRC = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_KIT_SRC = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 _LINTED_DIRS = ("sugar", "floor")
 _SIDE_DOOR_LIFTERS = ("array_map_lifter.py", "literal_call_lifter.py")
 _SIDE_DOOR_CALLS = {"lift_array_map_assertions", "lift_literal_call_assertions"}

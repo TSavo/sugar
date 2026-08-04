@@ -13,8 +13,9 @@ import sys
 import tempfile
 import unittest
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = resolve_repo_root()
 TOOL = REPO / "tools" / "migrate_legacy_binary_shelf.py"
 PLATFORM = "linux-x86_64"
 PROFILE = "release"

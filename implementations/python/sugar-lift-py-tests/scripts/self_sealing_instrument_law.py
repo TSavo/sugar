@@ -71,6 +71,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 SYNTHESIZED = "SYNTHESIZED-EVIDENCE"
 TAUTOLOGICAL = "TAUTOLOGICAL-ASSERT"
 PRESENCE_ONLY = "PRESENCE-ONLY-IDENTITY"
@@ -414,7 +416,7 @@ def _load_scan_scope():
         import importlib.util
 
         path = (
-            Path(__file__).resolve().parents[1]
+            sugar_lift_py_tests_package_root()
             / "src"
             / "sugar_lift_py_tests"
             / "idd"

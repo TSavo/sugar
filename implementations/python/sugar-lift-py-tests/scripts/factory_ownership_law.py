@@ -25,6 +25,9 @@ from __future__ import annotations
 # Not the board. This module measures its own named denominator; the sole
 # authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -329,7 +332,7 @@ def main() -> int:
         "--sugar-root",
         type=Path,
         default=(
-            Path(__file__).resolve().parents[1]
+            sugar_lift_py_tests_package_root()
             / "src"
             / "sugar_lift_py_tests"
             / "sugar"

@@ -13,13 +13,15 @@ present keys — then delete this file.
 
 from __future__ import annotations
 
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
 
-_KIT = Path(__file__).resolve().parents[1]
+_KIT = sugar_lift_py_tests_package_root()
 _SCANNER_PATH = _KIT / "scripts" / "source_audit_presence_identity_law.py"
 _SPEC = importlib.util.spec_from_file_location(
     "source_audit_presence_identity_law", _SCANNER_PATH

@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 SCRIPTS = ROOT / "implementations/python/sugar-lift-py-tests/scripts"
 
 

@@ -29,6 +29,9 @@ No baseline, no threshold, no allowlist. Exit 1 while R > 0.
 from __future__ import annotations
 
 # Not the board. This module measures its own named denominator.
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -351,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return self_test()
 
-    default_root = Path(__file__).resolve().parents[1]  # sugar-lift-py-tests
+    default_root = sugar_lift_py_tests_package_root()  # sugar-lift-py-tests
     roots = args.roots or [default_root]
     offenders, unreadable = scan_roots(roots)
     report = {

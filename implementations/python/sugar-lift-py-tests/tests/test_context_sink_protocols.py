@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from sugar_lift_py_tests.context import (
+
     AuditSink,
     ExternalBridgeSink,
     OperationRecorder,
@@ -14,7 +15,9 @@ from sugar_lift_py_tests.context import (
 )
 from sugar_lift_py_tests.context import ReduceContext
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+ROOT = sugar_lift_py_tests_package_root()
 
 
 def test_reduce_context_sink_fields_are_typed_protocols() -> None:

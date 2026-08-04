@@ -25,7 +25,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_KIT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_KIT = sugar_lift_py_tests_package_root()
 _PLACE = (
     _KIT / "src" / "sugar_lift_py_tests" / "sugar" / "constructed_object_place_sugar.py"
 )

@@ -3,7 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[4]
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 
 
 def test_black_format_check_is_installed_and_required_by_ci() -> None:

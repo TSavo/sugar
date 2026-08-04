@@ -7,6 +7,7 @@ import pytest
 
 from sugar_lift_py_tests.idd.command_result import CommandResult
 from sugar_lift_py_tests.idd.numpy_wall import (
+
     NumpyWallFloors,
     NumpyWallSummary,
     build_numpy_wall,
@@ -15,6 +16,8 @@ from sugar_lift_py_tests.idd.numpy_wall import (
     summarize_numpy_wall,
 )
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 def test_summarizes_wall_with_report_json_census_definitions() -> None:
     # Criterion 14 (#3706): the summary is built entirely from
@@ -318,7 +321,7 @@ def _frontier_summary(independent: int, suppressed: int) -> NumpyWallSummary:
 
 
 def test_frontier_ceilings_load_from_pinned_floors_json() -> None:
-    root = Path(__file__).resolve().parents[4]
+    root = resolve_repo_root()
     floors = NumpyWallFloors.from_json_dict(
         json.loads((root / "tools" / "numpy-wall-floors.json").read_text())
     )

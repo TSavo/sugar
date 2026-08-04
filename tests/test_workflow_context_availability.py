@@ -5,12 +5,17 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+_TOOLS = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(_TOOLS))
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_repo_root import resolve_repo_root  # noqa: E402
+
+ROOT = resolve_repo_root()
 WORKFLOWS = ROOT / ".github" / "workflows"
 ACTIONLINT = os.environ.get("ACTIONLINT", "actionlint")
 ACTIONLINT_VERSION = "v1.7.12"

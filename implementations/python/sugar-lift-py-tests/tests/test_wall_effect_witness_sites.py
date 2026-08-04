@@ -3,7 +3,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests" / "floor"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+ROOT = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests" / "floor"
 WALL_CARRIERS = ("dict_value.py", "call_site_value.py", "symbolic_value.py")
 
 

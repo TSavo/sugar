@@ -6,6 +6,9 @@ from __future__ import annotations
 # Not the board. This module measures its own named denominator; the sole
 # authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -67,7 +70,7 @@ def scan(repository: Path) -> tuple[int, list[GeneratorConstructionOffender]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repository", type=Path, default=Path(__file__).parents[4])
+    parser.add_argument("--repository", type=Path, default=resolve_repo_root())
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     discovered, offenders = scan(args.repository.resolve())

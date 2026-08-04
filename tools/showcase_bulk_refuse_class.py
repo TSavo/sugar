@@ -24,7 +24,14 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import sys
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 sys.path.insert(0, str(ROOT))
 
 from tools.showcase.durable_consistency import (  # noqa: E402

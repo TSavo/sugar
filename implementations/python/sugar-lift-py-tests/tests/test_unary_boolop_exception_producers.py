@@ -16,6 +16,7 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
+
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import RaiseValue, SymbolicValue, TermValue
@@ -29,6 +30,8 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_source_tree.panic import SugarNotWritten
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 CORPUS = authenticated_pandas_corpus().root
 UNARY_SITE = CORPUS / "tests/extension/base/ops.py"
@@ -80,7 +83,7 @@ def test_verified_pandas_303_reproducers_are_content_pinned() -> None:
 
 
 def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -> None:
-    root = Path(__file__).resolve().parents[4]
+    root = resolve_repo_root()
     output = tmp_path / "python-demand-table.json"
     pulled = subprocess.run(
         [

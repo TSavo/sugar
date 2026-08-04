@@ -24,13 +24,16 @@ import shutil
 import pytest
 
 from sugar_lift_py_tests.demand_table_identity import (
+
     CorpusManifestIdentityMismatch,
     corpus_manifest_digest_aliases,
     demand_table_identity,
     require_corpus_manifest_alias,
 )
 
-_SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src"
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SOURCE_ROOT = sugar_lift_py_tests_package_root() / "src"
 
 
 _PRODUCER_FUNCTIONS = (

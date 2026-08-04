@@ -8,6 +8,7 @@ import pytest
 
 from sugar_lift_py_tests.idd.command_result import CommandResult
 from sugar_lift_py_tests.idd.pandas_wall import (
+
     PandasWallFloors,
     PandasWallSummary,
     build_pandas_wall,
@@ -18,8 +19,10 @@ from sugar_lift_py_tests.idd.pandas_wall import (
 )
 
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 def test_wall_workflows_install_both_python_lift_packages() -> None:
-    root = Path(__file__).resolve().parents[4]
+    root = resolve_repo_root()
 
     for workflow_name in ("pandas-wall.yml", "numpy-wall.yml"):
         workflow = (root / ".github" / "workflows" / workflow_name).read_text(
@@ -816,7 +819,7 @@ def _pandas_frontier_floors() -> PandasWallFloors:
 
 
 def test_pandas_frontier_ceilings_load_from_pinned_floors_json() -> None:
-    root = Path(__file__).resolve().parents[4]
+    root = resolve_repo_root()
     floors = PandasWallFloors.from_json_dict(
         json.loads((root / "tools" / "pandas-wall-floors.json").read_text())
     )

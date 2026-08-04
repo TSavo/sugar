@@ -9,6 +9,7 @@ from textwrap import dedent
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs, jcs_hash
 from sugar_lift_py_tests.ir import (
+
     _Ctor,
     Term,
     TermTableBuilder,
@@ -17,6 +18,8 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.floor.call_site_value import _term_cycle_key
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 def _spine(depth: int, *, name: str = "ssa") -> Term:
     term: Term = make_var("leaf")
@@ -27,7 +30,7 @@ def _spine(depth: int, *, name: str = "ssa") -> Term:
 
 def _subprocess_env() -> dict[str, str]:
     env = dict(os.environ)
-    tests_pkg = Path(__file__).resolve().parents[1]
+    tests_pkg = sugar_lift_py_tests_package_root()
     source_root = tests_pkg / "src"
     # LiftReportPayloadDto imports pull sugar_lift_python_source transitively.
     python_source_root = tests_pkg.parent / "sugar-lift-python-source" / "src"

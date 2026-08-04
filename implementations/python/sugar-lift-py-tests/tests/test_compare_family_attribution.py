@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import (
+
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
@@ -17,6 +18,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, Compare, FunctionDef, Name
 from sugar_source_tree.tree import SourceFile
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 def _coordinate(node: Call) -> SourceFragmentCoordinateV1:
     span = node.line_col_span()
@@ -74,7 +77,7 @@ def test_call_operand_raise_is_owned_by_call_not_compare_root() -> None:
 
 
 def test_authenticated_compare_population_has_closed_three_outcome_split() -> None:
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     report = run_authenticated_attribution(
         repo_root, families=frozenset({ProducerFamily.COMPARE})
     )

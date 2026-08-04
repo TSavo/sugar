@@ -29,11 +29,12 @@ from sugar_lift_py_tests.sugar.spread_sugar import (
     SpreadCollectionSugar,
     SpreadDictSugar,
 )
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import BinOp, Call, Constant, List, Subscript
 from sugar_source_tree.tree import SourceFile
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
@@ -119,7 +120,6 @@ def test_multi_function_file_with_star_call_enumerates_full_roster() -> None:
     """
     from recensus_enumerate_consumer import measure_file_via_enumerate
 
-    root = Path(__file__).resolve().parents[0]  # unused; use tmp via SourceTree walk
     # Build a tiny workspace on disk for enumerate (path_source / SourceTree).
     import tempfile
 

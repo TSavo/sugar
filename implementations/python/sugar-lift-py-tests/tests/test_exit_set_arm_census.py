@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
+
     EffectBoundaryDisposition,
     EffectMatcher,
     NeverSuppresses,
@@ -34,7 +35,9 @@ from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+sys.path.insert(0, str(sugar_lift_py_tests_package_root() / "scripts"))
 
 from exit_set_arm_census import SITES, arm_census, totals  # noqa: E402
 

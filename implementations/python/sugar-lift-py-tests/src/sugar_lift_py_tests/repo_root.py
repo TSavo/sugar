@@ -122,3 +122,14 @@ def sugar_lift_py_tests_package_root(repo_root: Path | None = None) -> Path:
             f"under resolved monorepo root {root}"
         )
     return package
+
+
+def python_implementations_root(repo_root: Path | None = None) -> Path:
+    """``implementations/python`` under the monorepo — never parents[2] from tests."""
+    root = repo_root if repo_root is not None else resolve_repo_root()
+    path = (root / "implementations" / "python").resolve()
+    if not path.is_dir():
+        raise RepoRootUnresolved(
+            f"cannot locate implementations/python under monorepo root {root}"
+        )
+    return path

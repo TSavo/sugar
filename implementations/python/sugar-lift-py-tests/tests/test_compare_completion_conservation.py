@@ -9,6 +9,7 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.no_call_body_attribution import (
+
     AttributionInvariantError,
     AttributionOutcome,
     BodyProbe,
@@ -20,6 +21,8 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     require_expected_denominators,
 )
 from sugar_lift_py_tests.outcome import Complete
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 PREVIOUSLY_UNACCOUNTED = frozenset(
     {
@@ -89,7 +92,7 @@ def test_all_34_compare_completions_publish_authenticated_compare_exits(
     tmp_path: Path,
 ) -> None:
     corpus = authenticated_pandas_corpus()
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     payload = pull_shared_demand_table(repo_root, tmp_path / "demand-table.json")
     compare_inventory = require_expected_denominators(
         discover_no_call_body_probes(

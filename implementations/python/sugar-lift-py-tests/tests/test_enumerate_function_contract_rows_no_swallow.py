@@ -25,10 +25,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 from sugar_source_tree.panic import SugarNotWritten
 
 _LIFT_RPC = (
-    Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests" / "lift_rpc.py"
+    sugar_lift_py_tests_package_root()
+    / "src"
+    / "sugar_lift_py_tests"
+    / "lift_rpc.py"
 )
 
 _CONTRACT_ROWS_CALL = "function_contract_rows"

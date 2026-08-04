@@ -14,6 +14,7 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
+
     CallSiteValue,
     DictValue,
     ListValue,
@@ -44,6 +45,8 @@ from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
@@ -270,7 +273,7 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
     tmp_path,
 ) -> None:
     corpus = authenticated_pandas_corpus()
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     payload = pull_shared_demand_table(repo_root, tmp_path / "python-demand-table.json")
     inventory = require_expected_denominators(
         discover_no_call_body_probes(

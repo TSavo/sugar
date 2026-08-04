@@ -10,11 +10,14 @@ import numpy
 import pytest
 
 from sugar_lift_py_tests.idd import (
+
     CommandResult,
     collect_panic_audit,
     main,
     render_text,
 )
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 panic_audit_module = importlib.import_module(
     "sugar_lift_py_tests.idd.collect_panic_audit"
@@ -24,7 +27,7 @@ from sugar_lift_py_tests.idd.collect_panic_audit import (
     _prepare_audit_workspace,
 )
 
-ROOT = Path(__file__).resolve().parents[4]
+ROOT = resolve_repo_root()
 
 
 def _is_visual_lift(command: list[str]) -> bool:

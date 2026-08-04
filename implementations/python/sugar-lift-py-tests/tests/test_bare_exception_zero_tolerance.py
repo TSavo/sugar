@@ -10,7 +10,10 @@ import sys
 
 import pytest
 
-_KIT = Path(__file__).resolve().parents[1]
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_KIT = sugar_lift_py_tests_package_root()
 _SCANNER_PATH = _KIT / "scripts" / "bare_exception_zero_tolerance.py"
 _SPEC = importlib.util.spec_from_file_location(
     "bare_exception_zero_tolerance", _SCANNER_PATH

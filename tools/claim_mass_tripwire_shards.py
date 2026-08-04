@@ -17,9 +17,15 @@ import argparse
 import ast
 import json
 import re
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root  # noqa: E402
+
+ROOT = resolve_repo_root()
 # Single source of truth: pin names live in the tripwire test module's PINS
 # tuple. Parse the AST (do not import the test — it needs sugar packages).
 _TRIPWIRE = (

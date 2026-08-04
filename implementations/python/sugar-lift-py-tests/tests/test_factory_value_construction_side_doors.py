@@ -3,15 +3,18 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 FACTORY_CONSTRUCTORS = (
-    Path(__file__).parents[1]
+    sugar_lift_py_tests_package_root()
     / "src"
     / "sugar_lift_py_tests"
     / "factory"
     / "sugar_constructors.py"
 )
 STATEMENT_FUNCTION_DEF_SUGAR = (
-    Path(__file__).parents[1]
+    sugar_lift_py_tests_package_root()
     / "src"
     / "sugar_lift_py_tests"
     / "sugar"

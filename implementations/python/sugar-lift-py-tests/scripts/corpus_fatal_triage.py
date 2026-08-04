@@ -3,6 +3,9 @@ from __future__ import annotations
 # Not the board. This module measures its own named denominator; the sole
 # authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -247,7 +250,7 @@ def _run_parent(args: argparse.Namespace) -> int:
     workspace_root = Path(os.path.commonpath([str(root) for root in corpus_roots]))
     demand_scratch = tempfile.TemporaryDirectory(prefix="fatal-triage-demand-")
     demand_table_path = Path(demand_scratch.name) / "python-demand-table.json"
-    pull_shared_demand_table(Path(__file__).resolve().parents[4], demand_table_path)
+    pull_shared_demand_table(resolve_repo_root(), demand_table_path)
     supervisor = SupervisedEnumSupervisor(
         file_timeout=float(args.file_timeout),
         corpus_root=workspace_root,

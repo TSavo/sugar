@@ -25,10 +25,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-_PACKAGE_SRC = (
-    Path(__file__).resolve().parents[1]
-    / "implementations/python/sugar-lift-py-tests/src"
-)
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root  # noqa: E402
+
+_PACKAGE_SRC = resolve_repo_root() / "implementations/python/sugar-lift-py-tests/src"
 if str(_PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_SRC))
 

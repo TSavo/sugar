@@ -7,7 +7,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[4]
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 PYTHON_SOURCE_SRC = ROOT / "implementations/python/sugar-lift-python-source/src"
 PYTHON_COMPONENT_MANIFEST = ROOT / ".sugar/components/python/manifest.toml"
 KIT_DECLARATION_METHOD = "sugar.plugin.kit_declaration"

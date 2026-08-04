@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).parents[4]
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+_ROOT = resolve_repo_root()
 _DIFF_TOOL = _ROOT / "tools" / "wall_conservation_diff.py"
 _TEL_TOOL = _ROOT / "tools" / "wall_frontier_telemetry.py"
 

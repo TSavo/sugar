@@ -21,10 +21,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import sys
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root
+
 sys.path.insert(
     0,
     str(
-        Path(__file__).resolve().parents[1]
+        resolve_repo_root()
         / "implementations/python/sugar-lift-py-tests/src"
     ),
 )
@@ -40,7 +47,7 @@ def main(argv: list[str]) -> int:
         print("usage: vendor_source_ledger.py <package> <output-dir>", file=sys.stderr)
         return 2
     package, output_dir = argv[0], Path(argv[1])
-    root = Path(__file__).resolve().parents[1]
+    root = resolve_repo_root()
 
     sugar_bin = os.environ.get("SUGAR_BIN")
     if not sugar_bin:

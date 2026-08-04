@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
-_KIT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_KIT = sugar_lift_py_tests_package_root()
 _RUNTIME = _KIT / "scripts" / "_enum_floor_runtime.py"
 _SPEC = importlib.util.spec_from_file_location("enum_floor_runtime", _RUNTIME)
 assert _SPEC is not None and _SPEC.loader is not None

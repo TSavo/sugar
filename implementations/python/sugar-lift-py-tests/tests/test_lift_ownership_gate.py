@@ -23,7 +23,10 @@ import ast
 import warnings
 from pathlib import Path
 
-_KIT_SRC = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_KIT_SRC = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 # Solving belongs to verify. A lift module that imports any of these has crossed
 # the ownership line and is doing the verifier's job.
 _SOLVER_MODULES = frozenset({"z3", "z3solver", "cvc5", "pysmt", "pysat"})

@@ -34,6 +34,9 @@ from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.panic import SugarNotWritten
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
+
 SITE = "sin-cluster-2-ordering-site"
 
 _ORDERING_METHODS = frozenset(
@@ -64,7 +67,7 @@ def _callsite() -> CallSiteValue:
 
 def _floor_value_path() -> Path:
     return (
-        Path(__file__).resolve().parents[1]
+        sugar_lift_py_tests_package_root()
         / "src"
         / "sugar_lift_py_tests"
         / "floor"
@@ -82,11 +85,7 @@ def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_
     gains a floor-meaning denominator — do not pretend the shared auditor
     closed this sin.
     """
-    auditor = (
-        Path(__file__).resolve().parents[4]
-        / "tests"
-        / "sourcefile_construction_door_auditor.py"
-    )
+    auditor = resolve_repo_root() / "tests" / "sourcefile_construction_door_auditor.py"
     assert auditor.is_file(), "sourcefile_construction_door_auditor.py must exist"
     text = auditor.read_text(encoding="utf-8")
     assert "less_than_from_left" not in text

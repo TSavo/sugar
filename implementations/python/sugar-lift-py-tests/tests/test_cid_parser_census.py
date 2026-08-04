@@ -22,7 +22,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]  # implementations/python
+
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
+ROOT = python_implementations_root()  # implementations/python
 
 # Modules allowed to own CID/filename format knowledge. Everything else is a
 # consumer and must route through them.

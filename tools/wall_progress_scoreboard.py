@@ -23,7 +23,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+import sys
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 SCHEMA = "sugar.wall.progress.v1"
 
 DISCONNECT_RE = re.compile(

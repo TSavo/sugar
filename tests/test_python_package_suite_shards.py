@@ -7,7 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 SHARDS = ROOT / "tools" / "python_package_suite_shards.py"
 ATTENDANCE = ROOT / "tools" / "python_package_suite_shard_attendance.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "python-package-suite.yml"

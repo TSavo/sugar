@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
+
 """Regression guard: ambient sugar pool poison must not reach hermetic prove.
 
 Closes the class of bug tracked by #3902: without SUGAR_HOME isolation, the
@@ -10,6 +11,8 @@ one-door hermetic recipe.
 """
 
 from __future__ import annotations
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 import os
 from pathlib import Path
@@ -133,7 +136,7 @@ def test_conftest_refuses_bare_sugar_mint_without_sugar_home(
 
 def test_no_duplicate_mint_prove_doors_outside_witness_harness() -> None:
     """Static guard: suite sources must not re-implement bare sugar mint/prove."""
-    root = Path(__file__).resolve().parents[1]
+    root = sugar_lift_py_tests_package_root()
     offenders: list[str] = []
     for path in root.rglob("*.py"):
         if "__pycache__" in path.parts:

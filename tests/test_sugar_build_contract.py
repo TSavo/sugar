@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 
-ROOT = Path(__file__).parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 SPEC = importlib.util.spec_from_file_location(
     "sugar_build_contract", ROOT / "tools/sugar-build/contract.py"
 )

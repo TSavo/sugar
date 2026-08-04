@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 _SPEC = importlib.util.spec_from_file_location(
     "rerank_input", ROOT / "tools" / "rerank_input.py"
 )

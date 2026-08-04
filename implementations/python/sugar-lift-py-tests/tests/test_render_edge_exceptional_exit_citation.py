@@ -49,6 +49,7 @@ import pytest
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor.raise_value import (
+
     FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS,
     RaiseValue,
     _exceptional_exit_formula,
@@ -56,12 +57,15 @@ from sugar_lift_py_tests.floor.raise_value import (
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
-
+from sugar_lift_py_tests.repo_root import (
+    resolve_repo_root,
+    sugar_lift_py_tests_package_root,
+)
 _SHA = "a" * 64
 _LOCUS = "pkg/mod.py:12:4"
 
 _RAISE_VALUE_PATH = (
-    Path(__file__).resolve().parents[1]
+    sugar_lift_py_tests_package_root()
     / "src"
     / "sugar_lift_py_tests"
     / "floor"
@@ -162,16 +166,8 @@ def test_law_of_one_auditor_cannot_see_render_edge_fabrication() -> None:
     is the signal the stronger substrate arrived and this note can retire.
     There is no hard-coded R=1; the probe is the absence of those markers.
     """
-    auditor = (
-        Path(__file__).resolve().parents[4]
-        / "tests"
-        / "sourcefile_construction_door_auditor.py"
-    )
-    evidence = (
-        Path(__file__).resolve().parents[4]
-        / "tests"
-        / "sourcefile_construction_door_evidence.py"
-    )
+    auditor = resolve_repo_root() / "tests" / "sourcefile_construction_door_auditor.py"
+    evidence = resolve_repo_root() / "tests" / "sourcefile_construction_door_evidence.py"
     assert auditor.is_file(), auditor
     assert evidence.is_file(), evidence
 

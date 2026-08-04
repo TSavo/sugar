@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SRC = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 _FORBIDDEN_NAMES = (
     "build_function_call_sugar",
     "build_fcs_from_call_site",

@@ -26,6 +26,9 @@ from __future__ import annotations
 # Not the board. This module measures its own named denominator; the sole
 # authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
 # See tests/test_one_authoritative_scoreboard.py.
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -39,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 # Repo tools/ for job-log heartbeats (≤30s doctrine — run 30731778056: 88s silence).
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
@@ -445,7 +448,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 stream.reconfigure(encoding="utf-8", errors="backslashreplace")
             except (AttributeError, ValueError):
                 pass
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--from-json",

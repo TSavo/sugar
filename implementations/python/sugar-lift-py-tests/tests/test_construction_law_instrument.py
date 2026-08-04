@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.idd.proofir_vocab_instruments import (
+
     collect_naked_formula_boundary_crossings,
     collect_proofir_vocabulary_frontier,
     count_unknown_sort_equality_seats,
@@ -18,7 +19,9 @@ from sugar_lift_py_tests.proofir import (
     UnknownSort,
 )
 
-ROOT = Path(__file__).resolve().parents[4]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 
 
 def test_construction_law_scanner_reads_the_live_repo() -> None:

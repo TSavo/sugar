@@ -3,7 +3,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+ROOT = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 
 
 def test_datetime_dig_conditional_effects_have_explicit_witnesses() -> None:

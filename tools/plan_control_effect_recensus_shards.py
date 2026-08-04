@@ -17,11 +17,9 @@ SCOREBOARD_AUTHORITY = False
 _TOOLS = Path(__file__).resolve().parent
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root  # noqa: E402
 
-_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "implementations/python/sugar-lift-py-tests/scripts"
-)
+_SCRIPTS = resolve_repo_root() / "implementations/python/sugar-lift-py-tests/scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 

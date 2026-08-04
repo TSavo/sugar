@@ -7,7 +7,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+ROOT = sugar_lift_py_tests_package_root()
 SRC = ROOT / "src" / "sugar_lift_py_tests"
 
 

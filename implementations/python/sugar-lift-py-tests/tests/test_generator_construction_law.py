@@ -2,7 +2,10 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_REPOSITORY = Path(__file__).resolve().parents[4]
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+_REPOSITORY = resolve_repo_root()
 _SCANNER_PATH = (
     _REPOSITORY
     / "implementations/python/sugar-lift-py-tests/scripts/generator_construction_law.py"

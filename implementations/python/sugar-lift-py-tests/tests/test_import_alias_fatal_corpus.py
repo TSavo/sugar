@@ -13,6 +13,9 @@ import pytest
 
 from declared_corpus import HEAVY_OPT_IN, optional_law_skipif
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 REPRESENTATIVES = (
     ("numpy", "_core/tests/test_deprecations.py", "ImportAliasValue"),
     (
@@ -66,7 +69,7 @@ def test_import_alias_named_representative_advances_loudly_or_completes(
     retired_owner: str,
 ) -> None:
     path = _package_file(package, relative)
-    script = Path(__file__).resolve().parents[1] / "scripts" / "corpus_fatal_triage.py"
+    script = sugar_lift_py_tests_package_root() / "scripts" / "corpus_fatal_triage.py"
     rel = f"{package}/{relative}"
     result = subprocess.run(
         [

@@ -5,8 +5,15 @@ import sys
 from pathlib import Path
 
 
+import sys
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root
+
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return resolve_repo_root()
 
 
 def main() -> int:

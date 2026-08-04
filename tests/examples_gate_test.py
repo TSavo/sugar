@@ -6,7 +6,9 @@ import sys
 import tempfile
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 sys.path.insert(0, str(ROOT / "tools"))
 
 import examples_gate  # noqa: E402

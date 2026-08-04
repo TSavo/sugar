@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from sugar_repo_root import resolve_repo_root  # noqa: E402
+
+ROOT = resolve_repo_root()
 PYTHON_ROOT = ROOT / "implementations" / "python"
 SKIP = frozenset({"target", "bin", "__pycache__", ".venv", "conformance"})
 

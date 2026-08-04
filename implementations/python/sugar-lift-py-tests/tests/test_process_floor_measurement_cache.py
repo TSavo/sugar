@@ -11,7 +11,9 @@ import json
 import sys
 from pathlib import Path
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 _SPEC = importlib.util.spec_from_file_location(
     "process_floor_measurement_cache",
     _SCRIPTS / "process_floor_measurement_cache.py",

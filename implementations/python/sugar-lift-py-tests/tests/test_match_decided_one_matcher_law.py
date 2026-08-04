@@ -28,7 +28,10 @@ from pathlib import Path
 
 import pytest
 
-_PKG_SRC = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
+
+_PKG_SRC = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 
 # Sole owner of MatchDecided(False) meaning. Every other production mint is a
 # second mechanism.
@@ -147,7 +150,7 @@ def test_sourcefile_construction_door_auditor_is_blind_to_fabricated_match_decid
     that gap so nobody confuses a green SOURCEFILE_CONSTRUCTION_DOOR receipt with coverage of
     fabricated decided-miss.
     """
-    repo_tests = Path(__file__).resolve().parents[4] / "tests"
+    repo_tests = resolve_repo_root() / "tests"
     auditor = repo_tests / "sourcefile_construction_door_auditor.py"
     evidence = repo_tests / "sourcefile_construction_door_evidence.py"
     assert auditor.is_file(), auditor

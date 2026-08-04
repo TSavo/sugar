@@ -41,6 +41,9 @@ from __future__ import annotations
 
 # Not the board. Own denominator; scripts/control_effect_recensus.py is the
 # sole authoritative Python corpus scoreboard.
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 SCOREBOARD_AUTHORITY = False
 
 import argparse
@@ -266,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--kit-root",
         type=Path,
-        default=Path(__file__).resolve().parents[1],
+        default=sugar_lift_py_tests_package_root(),
         help="sugar-lift-py-tests package root",
     )
     args = parser.parse_args(argv)

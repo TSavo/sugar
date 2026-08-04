@@ -107,6 +107,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, TextIO
 
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 # CI-visible narration: default print buffering makes a live process look dead.
 # Every RECENSUS line uses flush=True; prefer PYTHONUNBUFFERED=1 in the workflow.
@@ -114,7 +115,7 @@ _PROGRESS_EVERY_N = max(1, int(os.environ.get("RECENSUS_PROGRESS_EVERY_N", "1"))
 # Doctrine: never more than 30s of job-log silence on a long path.
 _JOB_LOG_MAX_SILENCE_S = float(os.environ.get("JOB_LOG_MAX_SILENCE_S", "30"))
 
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
@@ -1128,7 +1129,7 @@ def main() -> int:
 
     def publish_demand_table(table, path: Path) -> None:
         """Publish the derived payload through the authenticated CAS door."""
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = resolve_repo_root()
         completed = subprocess.run(
             [
                 str(repo_root / "bin" / "sugarbin"),

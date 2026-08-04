@@ -33,6 +33,9 @@ from sugar_source_tree.tree import SourceFile
 
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
 # sha256:a223… is historical negative testimony only — never identity.
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
@@ -106,7 +109,7 @@ class _OperationReceiverProjectionProbe(FloorValue):
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    return resolve_repo_root()
 
 
 def _corpus_root() -> Path:

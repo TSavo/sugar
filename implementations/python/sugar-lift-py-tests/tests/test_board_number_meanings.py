@@ -5,8 +5,12 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 _SCRIPT = (
-    Path(__file__).resolve().parents[1] / "scripts" / "compose_control_effect_board.py"
+    sugar_lift_py_tests_package_root()
+    / "scripts"
+    / "compose_control_effect_board.py"
 )
 
 

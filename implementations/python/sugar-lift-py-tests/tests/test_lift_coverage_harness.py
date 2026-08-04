@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.idd.collect_panic_audit import (
+
     _hermetic_env_for_sugar_command,
     _prepare_audit_workspace,
     _resolve_audit_sugar_bin,
@@ -47,7 +48,9 @@ from declared_corpus import (
     require_declared_corpus,
 )
 
-ROOT = Path(__file__).resolve().parents[4]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 
 
 def _run_lift_report_json(workspace: Path, *, require_success: bool = True) -> dict:

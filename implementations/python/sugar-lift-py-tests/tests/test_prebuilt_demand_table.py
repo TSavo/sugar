@@ -25,8 +25,9 @@ from sugar_lift_py_tests.prebuilt_demand_table import (
 from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
 from sugar_lift_py_tests.authenticated_pytest import authenticate_corpus
 from sugar_lift_py_tests.corpus_pin import pin_corpus
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 

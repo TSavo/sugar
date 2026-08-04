@@ -17,10 +17,13 @@ import sys
 from pathlib import Path
 
 from sugar_lift_py_tests.no_call_body_attribution import (
+
     ProducerFamily,
     run_authenticated_attribution,
 )
 
+
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -36,7 +39,7 @@ def main() -> int:
         if args.family
         else None
     )
-    repo_root = Path(__file__).resolve().parents[4]
+    repo_root = resolve_repo_root()
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 
     import numpy

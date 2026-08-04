@@ -27,11 +27,14 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_python_source.source_oracle import (
+
     SourceUnavailable,
     recorded_seat_for,
     workspace_path_source,
 )
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 def _installed_file():
     """One file of an installed distribution, with the seat it recorded."""
@@ -220,7 +223,7 @@ def _driver():
     import sys
 
     path = (
-        Path(__file__).resolve().parents[1] / "scripts" / "control_effect_recensus.py"
+        sugar_lift_py_tests_package_root() / "scripts" / "control_effect_recensus.py"
     )
     spec = importlib.util.spec_from_file_location("_recensus_under_test", path)
     module = importlib.util.module_from_spec(spec)

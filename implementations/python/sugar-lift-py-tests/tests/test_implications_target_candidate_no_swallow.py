@@ -17,6 +17,9 @@ import pytest
 from sugar_source_tree.panic import SugarNotWritten
 
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
 def test_truthful_function_contract_rows_exception_propagates():
     """Truthful twin: a raise from function_contract_rows is not continue."""
 
@@ -66,7 +69,7 @@ def test_lying_continue_manufactures_absence():
 def test_production_implications_loop_has_no_exception_continue():
     """Static twin: lift_rpc implications arm has no try/except around the call."""
     source = (
-        Path(__file__).resolve().parents[1]
+        sugar_lift_py_tests_package_root()
         / "src"
         / "sugar_lift_py_tests"
         / "lift_rpc.py"

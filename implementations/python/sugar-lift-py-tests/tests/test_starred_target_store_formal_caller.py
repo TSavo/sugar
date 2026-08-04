@@ -26,6 +26,7 @@ from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_py_tests.sugar.assign_sugar import (
+
     DynamicUnpackStoreAssignSugar,
     UnpackStoreAssignSugar,
 )
@@ -45,6 +46,8 @@ from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
+
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 def _tree(source: str, name: str = "star_store.py") -> SourceFile:
     return SourceFile(
@@ -612,7 +615,7 @@ def test_no_fabricated_unpack_store_identity_in_module() -> None:
     """Zero fabricated __unpack_store_* string binding identities in source."""
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
+    root = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
     offenders = []
     for path in root.rglob("*.py"):
         text = path.read_text(encoding="utf-8")

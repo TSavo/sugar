@@ -10,8 +10,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+_TOOLS = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(_TOOLS))
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_repo_root import resolve_repo_root  # noqa: E402
+
+ROOT = resolve_repo_root()
 TOOL = ROOT / "tools" / "sugarbin_shell_tier.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 EXPECTED_BATCHES = {

@@ -34,10 +34,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence, TextIO, TypeVar
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 T = TypeVar("T")
 
 # Repo tools/ is not always on path when floors run as scripts/.
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
@@ -174,7 +176,7 @@ def apply_lpt_file_shard(
         raise ValueError(
             f"shard_index {shard_index} out of range for shard_count {shard_count}"
         )
-    tools = Path(__file__).resolve().parents[4] / "tools"
+    tools = resolve_repo_root() / "tools"
     if tools.is_dir() and str(tools) not in sys.path:
         sys.path.insert(0, str(tools))
     from lpt_file_shards import filter_paths_for_shard
