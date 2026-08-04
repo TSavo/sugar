@@ -5,11 +5,15 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
+_TOOLS = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(_TOOLS))
+
+from sugar_repo_root import resolve_repo_root  # noqa: E402
 
 ROOT = resolve_repo_root()
 WORKFLOWS = ROOT / ".github" / "workflows"

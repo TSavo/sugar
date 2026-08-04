@@ -10,7 +10,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
+_TOOLS = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(_TOOLS))
+
+from sugar_repo_root import resolve_repo_root  # noqa: E402
 
 ROOT = resolve_repo_root()
 TOOL = ROOT / "tools" / "sugarbin_shell_tier.py"
