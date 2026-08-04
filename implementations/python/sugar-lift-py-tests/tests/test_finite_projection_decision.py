@@ -99,8 +99,14 @@ _KIND_NODE = {
 }
 
 
-def _rewritten(kind: str):
-    source_file = _source_file(_REWRITE_SOURCES[kind])
+def _rewritten(kind: str, *, tag: str = ""):
+    # #7364: SourceUnits are memoized by (source_cid, filename), so two fixtures
+    # with byte-identical text SHARE ONE UNIT -- and a test that drops a row
+    # would corrupt its neighbours.  ``tag`` keeps each fixture's text distinct.
+    source = _REWRITE_SOURCES[kind]
+    if tag:
+        source += f"# unique fixture bytes: {tag}\n"
+    source_file = _source_file(source)
     node = next(
         candidate
         for candidate in source_file.nodes()
@@ -109,6 +115,25 @@ def _rewritten(kind: str):
     rewritten = node.substitute({"y": _symbolic_binding()})
     assert rewritten is not node, "fixture did not rewrite the comprehension"
     assert rewritten.kind == _KIND_NODE[kind], "fixture unrolled to a display"
+    return node, rewritten
+
+
+def _stranded(kind: str, tag: str):
+    """A rewritten consumer whose producer row is EXPLICITLY dropped.
+
+    A rewrite alone no longer strands anything: #7346-A keys the relation by
+    ``SourceOccurrenceIdentityV1``, and ``shadow.rewrite`` borrows the origin's
+    span, so the rewrite joins its own row.  The refusal these teeth pin is a
+    property of a FAILED AUTHENTICATED LOOKUP, not of the rewrite that used to
+    cause one -- so the row is now removed on purpose, and the teeth below bite
+    on exactly the same refusal as before.
+    """
+    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+    node, rewritten = _rewritten(kind, tag=f"stranded-{kind}-{tag}")
+    rewritten.unit._target_patterns_by_consumer.pop(
+        SourceOccurrenceIdentityV1.of(rewritten)
+    )
     return node, rewritten
 
 
@@ -211,15 +236,32 @@ def test_producer_publishes_enrollment_for_a_destructuring_comprehension():
     assert enrollment.covers(node.generators[0].target)
 
 
-def test_a_rewritten_consumer_stays_enrolled_although_its_row_is_gone():
-    """The two facts are separable: still OWED, no longer FOUND."""
-    _, rewritten = _rewritten("py.setcomp")
+def test_a_rewritten_consumer_keeps_both_its_enrollment_and_its_row():
+    """#7346-A: a rewrite is no longer a way to lose a row.
+
+    The relation is keyed by source occurrence and ``shadow.rewrite`` borrows
+    the origin's span, so the rewritten consumer is the SAME occurrence and
+    joins the producer's row -- with no per-consumer retention call.
+    """
+    origin, rewritten = _rewritten("py.setcomp")
 
     assert isinstance(
         rewritten.unit.target_pattern_enrollment(rewritten), TargetPatternEnrolledV1
     )
+    assert rewritten.unit.require_target_patterns(
+        rewritten
+    ) == origin.unit.require_target_patterns(origin)
+
+
+def test_an_enrolled_consumer_whose_row_is_gone_stays_owed_and_refuses():
+    """The two facts are still separable: still OWED, no longer FOUND."""
+    _, stranded = _stranded("py.setcomp", "owed-but-not-found")
+
+    assert isinstance(
+        stranded.unit.target_pattern_enrollment(stranded), TargetPatternEnrolledV1
+    )
     with pytest.raises(TargetPatternConstructionGapV1):
-        rewritten.unit.require_target_patterns(rewritten)
+        stranded.unit.require_target_patterns(stranded)
 
 
 # --------------------------------------------------------------------------
@@ -234,12 +276,12 @@ def test_a_rewritten_consumer_stays_enrolled_although_its_row_is_gone():
 
 @pytest.mark.parametrize("kind", sorted(_REWRITE_SOURCES))
 def test_stranded_target_pattern_never_reaches_a_complete_verdict(kind):
-    _, rewritten = _rewritten(kind)
+    _, stranded = _stranded(kind, "never-reaches-complete")
 
     with pytest.raises(
         (TargetPatternConstructionGapV1, FiniteProjectionRefusalV1)
     ) as refused:
-        rewritten.sugar().desugar(None)
+        stranded.sugar().desugar(None)
 
     # On the merged tree the producer-side door is the one that bites.
     assert isinstance(refused.value, TargetPatternConstructionGapV1)

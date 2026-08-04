@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_source_tree import nodes
+from sugar_source_tree import nodes, occurrence
 from sugar_source_tree.reporter import NULL_REPORTER
 from sugar_source_tree.tree import SourceFile
 
@@ -87,7 +87,9 @@ def _strand(unit, consumer) -> None:
     """
     seated = consumer.require_target_patterns()
     assert seated, "fixture must really own a producer row before stranding"
-    unit._target_patterns_by_consumer.pop(consumer.ref)
+    unit._target_patterns_by_consumer.pop(
+        occurrence.SourceOccurrenceIdentityV1.of(consumer)
+    )
     return seated
 
 
@@ -154,7 +156,10 @@ def test_the_defaulting_target_reader_is_deleted() -> None:
     assert not hasattr(nodes.Node, "target_patterns")
     # The loud readers stay.
     assert hasattr(nodes.SourceUnit, "require_target_pattern")
-    assert hasattr(nodes.SourceUnit, "retain_target_patterns")
+    # Per-consumer retention is gone: the relation is keyed by source
+    # occurrence, so a rewrite joins its row without anyone remembering to
+    # re-seat it.  A retention door would be a second way to seat a row.
+    assert not hasattr(nodes.SourceUnit, "retain_target_patterns")
 
 
 # --------------------------------------------------------------------------
@@ -284,9 +289,11 @@ def test_producer_walk_and_published_enrollment_are_one_answer(
         # Every enrolled shape has a seated row and vice versa: no shape is
         # enrolled-but-unseated at construction time, and no row exists for a
         # shape the published decision calls not-enrolled.
-        assert published == (node.ref in seated), (
+        # The relation is keyed by SOURCE OCCURRENCE, not by the node shell.
+        occurrence_key = occurrence.SourceOccurrenceIdentityV1.of(node)
+        assert published == (occurrence_key in seated), (
             f"{node.kind} disagrees: published={published} "
-            f"seated={node.ref in seated}"
+            f"seated={occurrence_key in seated}"
         )
         if published:
             assert len(unit.require_target_patterns(node)) == len(

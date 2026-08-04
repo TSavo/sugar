@@ -258,10 +258,10 @@ class TargetPatternEnrolledV1(TargetPatternEnrollmentV1):
 
     ``enrolled_targets`` are the exact target occurrences the producer minted a
     ``TargetPatternV1`` for.  The row itself is deliberately NOT carried here:
-    binding the product into the outcome requires the durable occurrence
-    identity ruled in #7346, which has not landed.  Until then the row is read
-    strictly and separately, so a stranded row refuses instead of degrading
-    into this value.
+    this value answers *"is this shape enrolled?"* and the relation read answers
+    *"did my lookup find the row?"*.  Merging them would let a stranded row
+    degrade into this value instead of refusing, so they stay separate even
+    though the relation is now keyed by durable source occurrence (#7346-A).
     """
 
     __slots__ = ("enrolled_targets", "_projection_sites")
@@ -1142,9 +1142,15 @@ class SourceUnit:
                 self._construct_target_pattern(consumer, target, prefix)
                 for target, prefix in enrollment._projection_sites
             )
-            patterns[consumer.ref] = owned
+            # Keyed by SourceOccurrenceIdentityV1, never by the producer's Node
+            # shell (#7346-A).  ``shadow.rewrite`` borrows the origin's span and
+            # keeps its kind and unit, so a rewritten consumer denotes the SAME
+            # occurrence and joins this row by construction -- for every enrolled
+            # consumer at once, with no per-consumer retention to remember.
+            patterns[SourceOccurrenceIdentityV1.of(consumer)] = owned
             patterns_by_target.update(
-                (pattern.target_occurrence.ref, pattern) for pattern in owned
+                (SourceOccurrenceIdentityV1.of(pattern.target_occurrence), pattern)
+                for pattern in owned
             )
             constructed_count += len(owned)
         object.__setattr__(self, "_target_patterns_by_consumer", patterns)
@@ -1306,7 +1312,7 @@ class SourceUnit:
                 consumer_occurrence=consumer,
                 target_occurrence=None,
             )
-        return patterns.get(consumer.ref)
+        return patterns.get(SourceOccurrenceIdentityV1.of(consumer))
 
     def require_target_patterns(
         self, consumer: "Node"
@@ -1337,34 +1343,18 @@ class SourceUnit:
             )
         return owned
 
-    def retain_target_patterns(self, source_consumer, rewritten_consumer) -> None:
-        """Seat one rewrite with its exact source consumer's immutable products."""
-        enrollment = self.target_pattern_enrollment(source_consumer)
-        owned = (
-            self._seated_target_patterns(source_consumer)
-            if isinstance(enrollment, TargetPatternEnrolledV1)
-            else None
-        )
-        if not owned or type(rewritten_consumer) is not type(source_consumer):
-            raise TargetPatternConstructionGapV1(
-                "foreign-target-consumer-rewrite",
-                consumer_occurrence=rewritten_consumer,
-                target_occurrence=source_consumer,
-            )
-        patterns = self._target_patterns_by_consumer
-        patterns[rewritten_consumer.ref] = owned
-
     def require_target_pattern(self, consumer, target) -> TargetPatternV1:
         enrollment = self.target_pattern_enrollment(consumer)
+        target_occurrence = SourceOccurrenceIdentityV1.of(target)
         if isinstance(enrollment, TargetPatternEnrolledV1):
             for pattern in self._seated_target_patterns(consumer) or ():
-                if pattern.target_occurrence.ref is target.ref:
+                if (
+                    SourceOccurrenceIdentityV1.of(pattern.target_occurrence)
+                    == target_occurrence
+                ):
                     return pattern
         # Not-enrolled and lookup-missed are both refusals HERE by design: this
-        # door promises one exact enrolled pair or nothing.  Telling a foreign
-        # consumer apart from a stranded same-unit one needs the durable
-        # occurrence identity ruled in #7346; the reason string is unchanged
-        # until then so no existing refusal is weakened.
+        # door promises one exact enrolled pair or nothing.
         raise TargetPatternConstructionGapV1(
             "foreign-target-occurrence",
             consumer_occurrence=consumer,
@@ -1373,7 +1363,11 @@ class SourceUnit:
 
     def require_target_pattern_for_target(self, target) -> TargetPatternV1:
         patterns = self._target_patterns_by_target
-        pattern = None if patterns is None else patterns.get(target.ref)
+        pattern = (
+            None
+            if patterns is None
+            else patterns.get(SourceOccurrenceIdentityV1.of(target))
+        )
         if pattern is None:
             raise TargetPatternConstructionGapV1(
                 "foreign-target-occurrence",
@@ -5690,13 +5684,8 @@ class Assign(Statement):
         if not changes:
             return self
         rewritten = rewrite(self, **changes)
-        # Ask the applicability question, not the relation.  An enrolled Assign
-        # whose row went missing now refuses inside ``retain_target_patterns``
-        # instead of being mistaken for an ordinary/store target.
-        if isinstance(
-            self.unit.target_pattern_enrollment(self), TargetPatternEnrolledV1
-        ):
-            self.unit.retain_target_patterns(self, rewritten)
+        # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
+        # rewrite denotes the same occurrence, so its row joins by construction.
         return rewritten
 
     def _receiver_field_store_state(self, scope, new_value):
@@ -6995,7 +6984,6 @@ class For(Statement):
                 if not changed:
                     return self
                 rewritten = rewrite(self, **changed)
-                self.unit.retain_target_patterns(self, rewritten)
                 return rewritten
 
     @staticmethod
@@ -10302,7 +10290,6 @@ class ListComp(Expression):
         if not changed:
             return self
         rewritten = rewrite(self, **changed)
-        self.unit.retain_target_patterns(self, rewritten)
         return rewritten
 
     def _try_unroll_to_display(self, scope):
