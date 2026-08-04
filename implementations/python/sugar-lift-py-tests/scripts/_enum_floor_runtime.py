@@ -130,6 +130,35 @@ def add_lpt_shard_args(parser) -> None:
     )
 
 
+def add_demand_table_arg(parser) -> None:
+    """Expose the authenticated shared demand-table entrance on process floors."""
+    parser.add_argument(
+        "--demand-table-path",
+        type=Path,
+        default=None,
+        help=(
+            "authenticated python-demand-table JSON; omission is an immediate "
+            "UNMEASURED refusal, never local demand derivation"
+        ),
+    )
+
+
+def require_demand_table(path: Path | None) -> Path:
+    """Refuse before scanning when the authenticated table was not supplied."""
+    if path is None:
+        raise ValueError(
+            "authenticated python-demand-table is required; refusing local "
+            "demand derivation (pass --demand-table-path)"
+        )
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise ValueError(
+            "authenticated python-demand-table is not a file: "
+            f"{resolved}; refusing local demand derivation"
+        )
+    return resolved
+
+
 def apply_lpt_file_shard(
     paths: Sequence[Path],
     *,
