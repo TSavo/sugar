@@ -36,6 +36,23 @@ done
 
 pyget() { python3 "$REPO/tools/showcase/json_get.py" "$1" "$2"; }
 
+require_substantive_statuses() {
+  python3 - "$REPO" "$1" "$2" <<'PY'
+import sys
+
+repo, path, suite = sys.argv[1:]
+sys.path.insert(0, repo)
+from tools.showcase.durable_consistency import require_substantive_discharge
+from tools.showcase.json_get import load_receipt
+
+statuses = require_substantive_discharge(
+    load_receipt(path).get("rows", []),
+    suite=suite,
+)
+print(",".join(statuses))
+PY
+}
+
 write_lying_discharge() {
   local script="$1"
   cat > "$script" <<'SH'
@@ -62,7 +79,7 @@ run_suite() {
   local prove_json="$dir/.prove.json"
   ( cd "$dir" && "$SUGAR" prove . --json ) > "$prove_json" 2>/dev/null || true
 
-  local consistency_status witness_status
+  local consistency_status substantive_status witness_status
   consistency_status="$(pyget "$prove_json" "
 ','.join([r.get('status') for r in d.get('rows', []) if (r.get('property', '') or '').startswith('consistency:') and 'witness-package' not in (r.get('property', '') or '')]) or 'MISSING'
 ")"
@@ -73,7 +90,8 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
   echo "   prove witness-package status: $witness_status"
 
   if [ "$expect_consistency" = "DISCHARGE" ]; then
-    echo "$consistency_status" | grep -qv 'unsatisfied' || { echo "FAIL[$suite]: expected consistency discharge, got $consistency_status"; exit 1; }
+    substantive_status="$(require_substantive_statuses "$prove_json" "$suite")"
+    echo "   prove substantive consistency statuses: $substantive_status"
   else
     echo "$consistency_status" | grep -q 'unsatisfied' || { echo "FAIL[$suite]: expected consistency refusal, got $consistency_status"; exit 1; }
   fi
@@ -112,6 +130,7 @@ sys.path.insert(0, repo)
 from tools.showcase.durable_consistency import (
     check_durable_consistency,
     is_witness_package_row,
+    require_substantive_discharge,
 )
 from tools.showcase.json_get import load_receipt
 
@@ -119,6 +138,11 @@ receipt = load_receipt(path)
 rows = receipt.get("rows", [])
 consistency = check_durable_consistency(
     rows, suite=suite, expect=expect_consistency
+)
+substantive = (
+    require_substantive_discharge(rows, suite=suite)
+    if expect_consistency == "DISCHARGE"
+    else []
 )
 witness = [
     r.get("status")
@@ -138,6 +162,8 @@ verified = any(
 if not verified:
     raise SystemExit(f"FAIL[{suite}]: witness dimension did not verify")
 print(f"   durable consistency statuses: {','.join(consistency)}")
+if substantive:
+    print(f"   durable substantive consistency statuses: {','.join(substantive)}")
 print(f"   durable witness statuses: {','.join(witness)}")
 print("   durable witness dimension: verified")
 PY

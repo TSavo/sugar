@@ -101,7 +101,21 @@ fn validate_term(term: &sugar_ir_types::IrTerm) -> Result<(), String> {
             Ok(())
         }
         sugar_ir_types::IrTerm::Const { .. } => Ok(()),
-        sugar_ir_types::IrTerm::Ctor { args, .. } => args.iter().try_for_each(validate_term),
+        sugar_ir_types::IrTerm::Ctor { name, args } => {
+            if name.starts_with("bv32.") {
+                // The BV renderer validates the complete typed subtree,
+                // including Bool-valued conditions nested inside bv32.ite.
+                // Do not separately walk those condition ctors as value terms.
+                if emitter::term_renders_as_bv32(term) {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "{name}: BV32 constructor could not render its operand shape; \
+                     refusing rather than weakening to a generic uninterpreted function"
+                ));
+            }
+            args.iter().try_for_each(validate_term)
+        }
         sugar_ir_types::IrTerm::Lambda { body, .. } => validate_term(body),
         sugar_ir_types::IrTerm::Let { body, .. } => validate_term(body),
     }
@@ -355,6 +369,68 @@ mod tests {
         assert!(
             !out.to_lowercase().contains("error"),
             "z3 must not error on a well-sorted script:\n{out}\n--- script ---\n{script}"
+        );
+    }
+
+    #[test]
+    fn nested_bv32_owner_preserves_associated_const_operand_sort() {
+        // bitflags showcase shape:
+        //   (Flags::A | Flags::B).bits() == 3
+        //
+        // BvBinOpSugar has already constructed the receiver as `bv32.or`.
+        // That constructor is the exact sort authority for both associated-
+        // const operands even though the BV tree is nested under method:bits.
+        let z3 = which_z3().expect("z3 required for nested BV32 sort check");
+        let inv = eq(
+            ctor(
+                "method:bits",
+                vec![ctor("bv32.or", vec![var("Flags::A"), var("Flags::B")])],
+            ),
+            serde_json::json!({
+                "kind": "const",
+                "value": 3,
+                "sort": {"kind": "primitive", "name": "Int"}
+            }),
+        );
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(declare-const |Flags::A| (_ BitVec 32))")
+                && script.contains("(declare-const |Flags::B| (_ BitVec 32))"),
+            "bv32.or must carry BV32 authority to its associated-const operands:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-fun |method:bits| ((_ BitVec 32)) Int)"),
+            "method:bits must consume the constructed BV32 receiver:\n{script}"
+        );
+        assert!(
+            script.contains("(bvor |Flags::A| |Flags::B|)"),
+            "BvBinOpSugar's bv32.or owner must remain native bvor:\n{script}"
+        );
+        let out = run_z3(&z3, &script);
+        assert!(
+            !out.to_lowercase().contains("error"),
+            "nested BV32 authority must produce a well-sorted solver script:\n{out}\n--- script ---\n{script}"
+        );
+    }
+
+    #[test]
+    fn unrenderable_bv32_ctor_refuses_instead_of_falling_back_to_euf() {
+        let inv = eq(
+            ctor("bv32.or", vec![string_const("not-a-bitvector"), var("rhs")]),
+            serde_json::json!({
+                "kind": "const",
+                "value": 3,
+                "sort": {"kind": "primitive", "name": "Int"}
+            }),
+        );
+        let err = fixture_compile_asserted_to_parts(&inv)
+            .expect_err("an unrenderable bv32 ctor must refuse, never become a generic EUF");
+        let msg = err.to_string();
+        assert!(msg.contains("bv32.or"), "refusal must name the ctor: {msg}");
+        assert!(
+            msg.contains("could not render") && msg.contains("refusing rather than weakening"),
+            "refusal must name the rendering failure and the no-EUF law: {msg}"
         );
     }
 

@@ -2175,6 +2175,16 @@ fn collect_free_vars_term_ctx_adt(
                     collect_free_vars_string_term(&args[0], out, bound);
                     return;
                 }
+                // A nested BV32 constructor is its operands' sort authority.
+                // In the bitflags shape the tree sits below `method:bits`, so
+                // the formula-level direct-equality shortcut never sees it.
+                // Re-enter the existing BV32 collector at the constructor
+                // boundary rather than defaulting its associated-const vars to
+                // Int in the generic recursion.
+                if is_bv32_ctor_name(name) && term_renders_as_bv32(term) {
+                    collect_free_vars_term_bv32_result(term, out, bound);
+                    return;
+                }
             }
             // A monadic tester/selector (`adt.is_some(r)`, `opt:some#0(r)`) in
             // TERM position (a guarded-split guard/branch, #3445 Part 1 slice 2)
@@ -2604,7 +2614,7 @@ fn is_bv32_ctor_name(name: &str) -> bool {
     name.starts_with("bv32.")
 }
 
-fn term_renders_as_bv32(term: &Term) -> bool {
+pub(crate) fn term_renders_as_bv32(term: &Term) -> bool {
     let subst = std::collections::HashMap::new();
     emit_bv32_term(term, &subst).is_some()
 }

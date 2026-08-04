@@ -13,7 +13,10 @@ Prove and durable verify must use the SAME consistency law for the good twin:
 
 Historically durable required *every* consistency row `discharged`, while prove
 only forbade `unsatisfied`. Under #2813 lone-EUF vacuity that made good twins
-pass prove and fail durable on the same receipt.
+pass prove and fail durable on the same receipt.  That transport-level parity
+law remains available through ``check_durable_consistency``.  A showcase that
+claims PASS has the stronger obligation enforced by
+``require_substantive_discharge``: nonempty product testimony, all discharged.
 """
 
 from __future__ import annotations
@@ -30,6 +33,37 @@ VACUOUS_MARKERS = (
 def is_consistency_row(row: Mapping[str, Any]) -> bool:
     prop = row.get("property") or ""
     return prop.startswith("consistency:") and "witness-package" not in prop
+
+
+def is_substantive_consistency_row(row: Mapping[str, Any]) -> bool:
+    """Return whether a consistency row asserts a product relation.
+
+    Panic-callsite rows are support testimony: they remain present and may
+    honestly refuse as vacuous, but they cannot sustain a showcase PASS.
+    """
+    prop = str(row.get("property") or "")
+    return is_consistency_row(row) and "#panic_callsite#" not in prop
+
+
+def require_substantive_discharge(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    suite: str,
+) -> list[str]:
+    """Require a nonempty substantive population whose every row discharged."""
+    substantive = [row for row in rows if is_substantive_consistency_row(row)]
+    statuses = [str(row.get("status") or "") for row in substantive]
+    if not substantive:
+        raise SystemExit(
+            f"FAIL[{suite}]: no substantive consistency rows; "
+            "PASS requires a nonempty substantive population"
+        )
+    if any(status != "discharged" for status in statuses):
+        raise SystemExit(
+            f"FAIL[{suite}]: expected substantive consistency rows all discharged, "
+            f"got {statuses}"
+        )
+    return statuses
 
 
 def is_witness_package_row(row: Mapping[str, Any]) -> bool:
