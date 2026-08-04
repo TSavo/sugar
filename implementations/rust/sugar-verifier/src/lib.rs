@@ -66,8 +66,8 @@ pub use domain_claim_shape_report::{
     StatedClaimOutcome, TrichotomyError,
 };
 pub use effects::{
-    VerifyEffect, VerifyEffectBoundary, WitnessDischargeGround, WitnessVerificationCheck,
-    WitnessVerificationOutcome,
+    VerifyEffect, VerifyEffectBoundary, VerifyEffectCarrier, WitnessDischargeGround,
+    WitnessVerificationCheck, WitnessVerificationOutcome,
 };
 pub use runner::{
     LegacyZ3Fallback, PlanArtifactInput, ProofRunArtifact, ProofRunArtifactError, Runner,

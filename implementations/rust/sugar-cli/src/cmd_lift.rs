@@ -11342,6 +11342,7 @@ mod tests {
                     "solverVendorMementoCid": "blake3-512:vendor"
                 }]
             })),
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
         report
     }

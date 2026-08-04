@@ -9193,15 +9193,7 @@ mod tests {
                 .iter()
                 .map(|cr| {
                     let mut report = crate::types::Report::default();
-                    crate::report::add_consistency_with_verification(
-                        &cr.contract_cid,
-                        &cr.property_name,
-                        cr.verdict,
-                        &cr.reason,
-                        cr.verification.as_ref().map(|v| v.to_json()),
-                        cr.locus.clone(),
-                        &mut report,
-                    );
+                    crate::report::add_consistency_result(cr, &mut report);
                     serde_json::to_string(&crate::report::row_to_json(&report.rows[0]))
                         .expect("row_to_json serialize")
                 })

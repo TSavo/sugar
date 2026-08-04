@@ -417,6 +417,7 @@ mod tests {
             discharge_method: Some("reflexive".into()),
             body_discharge_tier: Some("body-eq-same-callee".into()),
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
 
         let j = report_to_json(&r);
@@ -454,6 +455,7 @@ mod tests {
                     }
                 ]
             })),
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
 
         let j = report_to_json(&r);
@@ -527,6 +529,7 @@ mod tests {
                     ]
                 }],
             })),
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
 
         let j = report_to_json(&r);
@@ -551,6 +554,7 @@ mod tests {
             discharge_method: Some("reflexive".into()),
             body_discharge_tier: None,
             verification: Some(json!({ "kind": "body-eq" })),
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
         let j = report_to_json(&r);
         assert_eq!(j["rows"][0]["verification"]["kind"], "body-eq");
@@ -631,6 +635,7 @@ mod tests {
             discharge_method: Some("hash-tier".into()),
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
         r.toolchain_plans.push(ToolchainPlanReport {
             plan_memento_cid: "blake3-512:plan-member".into(),
@@ -661,6 +666,7 @@ mod tests {
             discharge_method: Some("consistency".into()),
             body_discharge_tier: None,
             verification: Some(json!({ "kind": "consistency" })),
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
 
         assert_eq!(report_exit_code(&r), crate::EXIT_OK);
@@ -684,6 +690,7 @@ mod tests {
             discharge_method: None,
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
 
         let j = report_to_json(&r);
@@ -705,6 +712,7 @@ mod tests {
             discharge_method: None,
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
 
         let j = report_to_json(&r);
