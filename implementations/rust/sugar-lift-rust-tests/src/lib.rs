@@ -1690,7 +1690,11 @@ fn walk_non_test_fns_inner(
                         if count == 0 {
                             continue;
                         }
-                        let item_name = scoped_test_name(source_path, modules, &method_name);
+                        let owner_name = self_ty
+                            .as_ref()
+                            .map(|ty| format!("{ty}::{method_name}"))
+                            .unwrap_or_else(|| method_name.clone());
+                        let item_name = scoped_test_name(source_path, modules, &owner_name);
                         let lifted = lift_source_assertion_contracts_in_stmts(
                             &method.block.stmts,
                             source_path,
@@ -1744,7 +1748,8 @@ fn walk_non_test_fns_inner(
                     if count == 0 {
                         continue;
                     }
-                    let item_name = scoped_test_name(source_path, modules, &method_name);
+                    let owner_name = format!("{}::{method_name}", trait_item.ident);
+                    let item_name = scoped_test_name(source_path, modules, &owner_name);
                     let lifted = lift_source_assertion_contracts_in_stmts(
                         &default.stmts,
                         source_path,
@@ -26992,7 +26997,7 @@ fn t() {
             out.assertion_facts
         );
         assert!(
-            contract_names(&out).contains(&"tests/test_src.rs::next"),
+            contract_names(&out).contains(&"tests/test_src.rs::W::next"),
             "the method contract should be named for the impl method: {:?}",
             contract_names(&out)
         );
@@ -27000,7 +27005,7 @@ fn t() {
             out.assertion_facts
                 .iter()
                 .any(|fact| fact.kind == AssertionFactKind::Warranted
-                    && fact.item_name == "tests/test_src.rs::next"),
+                    && fact.item_name == "tests/test_src.rs::W::next"),
             "the impl-method assertion should be emitted as a warranted source contract: {:?}",
             out.assertion_facts
         );

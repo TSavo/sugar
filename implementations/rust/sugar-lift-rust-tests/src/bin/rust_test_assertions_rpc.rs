@@ -10436,22 +10436,149 @@ mod tests {
     }
 
     #[test]
-    fn assertion_surface_audit_reports_emitted_fact_without_matching_fnref_owner() {
-        let root = unique_temp_dir(
-            "assertion_surface_audit_reports_emitted_fact_without_matching_fnref_owner",
-        );
+    fn impl_method_facts_bind_their_exact_self_type_owners() {
+        let root = unique_temp_dir("impl_method_facts_bind_their_exact_self_type_owners");
         std::fs::create_dir_all(root.join("src")).expect("mkdir src");
         std::fs::write(
             root.join("src/lib.rs"),
             r#"
-struct S;
+struct NonFused;
+struct Unfuse;
 
-impl S {
+impl NonFused {
+    fn next() {
+        assert_eq!(1 + 1, 2);
+    }
+
+    fn next_back() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+
+impl Unfuse {
+    fn next() {
+        assert_eq!(3 + 3, 6);
+    }
+
+    fn next_back() {
+        assert_eq!(4 + 4, 8);
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let mut owners = response["ir"]
+            .as_array()
+            .expect("ir array")
+            .iter()
+            .filter(|contract| contract["kind"] == "contract")
+            .filter_map(|contract| contract.get("sourceWarrants"))
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(|warrant| warrant.get("sourceFunctionName"))
+            .filter_map(Value::as_str)
+            .filter(|owner| {
+                matches!(
+                    *owner,
+                    "NonFused::next" | "NonFused::next_back" | "Unfuse::next" | "Unfuse::next_back"
+                )
+            })
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        owners.sort();
+        assert_eq!(
+            owners,
+            vec![
+                "NonFused::next",
+                "NonFused::next_back",
+                "Unfuse::next",
+                "Unfuse::next_back",
+            ],
+            "same-spelled impl methods must bind by exact SelfTy owner: {response}"
+        );
+        assert!(
+            response["assertionSurfaceAudits"]
+                .as_array()
+                .expect("assertionSurfaceAudits is an array")
+                .iter()
+                .all(|row| row["status"] != "provenance-unmatched"),
+            "all four exact impl owners exist; none may remain unmatched: {response}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn trait_default_facts_bind_their_exact_trait_owners() {
+        let root = unique_temp_dir("trait_default_facts_bind_their_exact_trait_owners");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+trait Alpha {
     fn check() {
         assert_eq!(1 + 1, 2);
     }
 }
+
+trait Beta {
+    fn check() {
+        assert_eq!(2 + 2, 4);
+    }
+}
 "#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let mut owners = response["ir"]
+            .as_array()
+            .expect("ir array")
+            .iter()
+            .filter(|contract| contract["kind"] == "contract")
+            .filter_map(|contract| contract.get("sourceWarrants"))
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(|warrant| warrant.get("sourceFunctionName"))
+            .filter_map(Value::as_str)
+            .filter(|owner| matches!(*owner, "Alpha::check" | "Beta::check"))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        owners.sort();
+        assert_eq!(
+            owners,
+            vec!["Alpha::check", "Beta::check"],
+            "same-spelled trait defaults must bind by exact Trait owner: {response}"
+        );
+        assert!(
+            response["assertionSurfaceAudits"]
+                .as_array()
+                .expect("assertionSurfaceAudits is an array")
+                .iter()
+                .all(|row| row["status"] != "provenance-unmatched"),
+            "both exact trait owners exist; neither may remain unmatched: {response}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn assertion_surface_audit_keeps_genuinely_ownerless_const_fact_unmatched() {
+        let root = unique_temp_dir(
+            "assertion_surface_audit_keeps_genuinely_ownerless_const_fact_unmatched",
+        );
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "const CHECK: () = assert!(1 + 1 == 2);\n",
         )
         .expect("write rust source");
 
@@ -10464,11 +10591,9 @@ impl S {
             .expect("assertionSurfaceAudits is an array");
         let unmatched = audits
             .iter()
-            .find(|row| row["assertionSource"] == "src/lib.rs::check")
+            .find(|row| row["assertionSource"] == "src/lib.rs::const-item")
             .unwrap_or_else(|| {
-                panic!(
-                    "an emitted fact whose FnRef owner is S::check must remain visible: {audits:#?}"
-                )
+                panic!("an emitted const-item fact has no FnRef owner and must stay visible: {audits:#?}")
             });
         assert_eq!(unmatched["status"], "provenance-unmatched", "{unmatched}");
         assert_eq!(unmatched["sourceStatus"], "unresolved", "{unmatched}");
@@ -10484,18 +10609,10 @@ impl S {
         assert_eq!(
             facts.len(),
             1,
-            "only the verifier-missing fact is audited: {unmatched}"
+            "the ownerless const fact is audited: {unmatched}"
         );
-        assert_eq!(
-            unmatched["supportFacts"],
-            json!([]),
-            "derived panic-callsite facts already carry ProofIR provenance and are not missing: {unmatched}"
-        );
-        let fact = facts
-            .first()
-            .unwrap_or_else(|| panic!("unmatched emitted fact must be named: {unmatched}"));
-        assert_eq!(fact["sourceMementos"], json!([]), "{fact}");
-        let contract_name = fact["contract"]
+        assert_eq!(facts[0]["sourceMementos"], json!([]), "{unmatched}");
+        let contract_name = facts[0]["contract"]
             .as_str()
             .expect("unmatched fact contract name");
         let contract = response["ir"]
@@ -10511,7 +10628,6 @@ impl S {
 
         let _ = std::fs::remove_dir_all(root);
     }
-
     /// Showcase shape: test calls a local helper that holds the assert_eq!.
     /// Statement spans resolve on the helper, not the test body — without a
     /// function-memento fallback the warranted fact sealed with zero provenance
