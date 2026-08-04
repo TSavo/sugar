@@ -22,6 +22,8 @@ from types import ModuleType
 
 import pytest
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
     activate_checkout_import_roots,
@@ -108,11 +110,7 @@ def _mini_repo_with_planted_site_packages(
         (repo / rel).mkdir(parents=True, exist_ok=True)
 
     # Prefer production managed tool when present (shared with #6997 action).
-    prod_tool = (
-        Path(__file__).resolve().parents[1]
-        / "tools"
-        / "managed_checkout_pythonpath.py"
-    )
+    prod_tool = resolve_repo_root() / "tools" / "managed_checkout_pythonpath.py"
     tool_dst = repo / "tools" / "managed_checkout_pythonpath.py"
     tool_dst.parent.mkdir(parents=True, exist_ok=True)
     if prod_tool.is_file():

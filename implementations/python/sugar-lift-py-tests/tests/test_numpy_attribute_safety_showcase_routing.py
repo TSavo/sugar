@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[4]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 PY_TESTS_SRC = ROOT / "implementations/python/sugar-lift-py-tests/src"
 PY_SOURCE_SRC = ROOT / "implementations/python/sugar-lift-python-source/src"
 SOURCE_TREE_SRC = ROOT / "implementations/python/sugar-source-tree/src"

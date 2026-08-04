@@ -10,8 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = resolve_repo_root()
 TOOL = ROOT / "tools" / "sugarbin_shell_tier.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 EXPECTED_BATCHES = {

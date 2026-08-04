@@ -51,7 +51,7 @@ try:
     )
 except ImportError:  # script-path invocation without package on PYTHONPATH
     _IDD = (
-        Path(__file__).resolve().parents[1]
+        sugar_lift_py_tests_package_root()
         / "src"
         / "sugar_lift_py_tests"
         / "idd"

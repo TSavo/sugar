@@ -15,9 +15,10 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 from sugar_source_tree.panic import SugarNotWritten
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 
 
 def _load(name: str):

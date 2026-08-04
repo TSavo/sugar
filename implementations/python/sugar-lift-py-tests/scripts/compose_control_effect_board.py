@@ -24,6 +24,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from sugar_lift_py_tests.repo_root import (
+    resolve_repo_root,
+    sugar_lift_py_tests_package_root,
+)
+
 # Sole True declaration for the kit (test_one_authoritative_scoreboard).
 SCOREBOARD_AUTHORITY = True
 
@@ -62,12 +67,12 @@ _PANDAS_3_0_3_MANIFEST_SHAPE_CID = (
     "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
 
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 # Package root for sealed board function facts (C4 Step 1).
-_PKG_SRC = Path(__file__).resolve().parents[1] / "src"
+_PKG_SRC = sugar_lift_py_tests_package_root() / "src"
 if _PKG_SRC.is_dir() and str(_PKG_SRC) not in sys.path:
     sys.path.insert(0, str(_PKG_SRC))
 

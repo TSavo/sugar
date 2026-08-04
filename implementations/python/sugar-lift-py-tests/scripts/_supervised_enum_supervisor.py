@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 _WORKER = Path(__file__).resolve().parent / "_supervised_enum_worker.py"
 
 # Context init walks the full corpus for provisional demand rows when no
@@ -45,7 +47,7 @@ _SMALL_POP_INIT_CAP_S = 60.0
 _DEFAULT_CONTEXT_INIT_TIMEOUT = _CORPUS_CONTEXT_INIT_TIMEOUT
 
 # tools/job_log_heartbeat.py — job log, not file, ≤30s silence.
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
@@ -703,7 +705,7 @@ class SupervisedEnumSupervisor:
                     # Content-addressed LPT prior write-through (next run packs
                     # by measured cost; cold equal-count seeds the shelf).
                     try:
-                        _tools = Path(__file__).resolve().parents[4] / "tools"
+                        _tools = resolve_repo_root() / "tools"
                         if _tools.is_dir() and str(_tools) not in sys.path:
                             sys.path.insert(0, str(_tools))
                         from lpt_file_shards import ContentAddressedCostPrior

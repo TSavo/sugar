@@ -26,7 +26,9 @@ import textwrap
 import venv
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 ACTION = ROOT / ".github/actions/python-test-environment/action.yml"
 MANAGED_TOOL = ROOT / "tools/managed_checkout_pythonpath.py"
 DOCKERFILE = ROOT / "tools/sugar-build/Dockerfile"

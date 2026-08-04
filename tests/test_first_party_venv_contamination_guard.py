@@ -7,8 +7,9 @@ import subprocess
 import venv
 from pathlib import Path
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = resolve_repo_root()
 GUARD = ROOT / "tools/refuse_first_party_venv_contamination.py"
 PACKAGE = "sugar-lift-py-tests"
 

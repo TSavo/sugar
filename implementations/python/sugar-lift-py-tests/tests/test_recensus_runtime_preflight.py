@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 
 import sugar_lift_py_tests.authenticated_pytest as runtime_authority
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 _SCRIPT = _SCRIPTS / "control_effect_recensus.py"
 
 

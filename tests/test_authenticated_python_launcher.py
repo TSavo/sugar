@@ -175,11 +175,7 @@ def test_checkout_import_roots_come_from_the_managed_closure_declaration(
     declared.mkdir(parents=True)
     # activate_checkout_import_roots loads tools/managed_checkout_pythonpath.py
     # from the checkout (shared with the CI action).
-    tool_src = (
-        Path(__file__).resolve().parents[1]
-        / "tools"
-        / "managed_checkout_pythonpath.py"
-    )
+    tool_src = resolve_repo_root() / "tools" / "managed_checkout_pythonpath.py"
     tool_dst = repo / "tools" / "managed_checkout_pythonpath.py"
     tool_dst.parent.mkdir(parents=True, exist_ok=True)
     tool_dst.write_text(tool_src.read_text(encoding="utf-8"), encoding="utf-8")

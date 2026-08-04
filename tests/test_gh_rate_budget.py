@@ -7,7 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+ROOT = resolve_repo_root()
 TOOL = ROOT / "tools" / "gh_rate_budget.py"
 
 

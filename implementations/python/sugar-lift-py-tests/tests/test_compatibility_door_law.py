@@ -9,7 +9,9 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-_KIT = Path(__file__).resolve().parents[1]
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_KIT = sugar_lift_py_tests_package_root()
 _SCANNER_PATH = _KIT / "scripts" / "compatibility_door_law.py"
 _SPEC = importlib.util.spec_from_file_location("compatibility_door_law", _SCANNER_PATH)
 assert _SPEC is not None and _SPEC.loader is not None

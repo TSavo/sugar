@@ -80,6 +80,8 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple, Sequence
 
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
 
 class CompatibilityDoorOffender(NamedTuple):
     path: str
@@ -522,8 +524,7 @@ def project_wire(row):
 
 
 def default_python_root() -> Path:
-    # scripts/ → sugar-lift-py-tests → python/
-    return Path(__file__).resolve().parents[2]
+    return python_implementations_root()
 
 
 def main(argv: list[str] | None = None) -> int:

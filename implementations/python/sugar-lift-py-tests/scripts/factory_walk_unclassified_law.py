@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 # Repo tools/ for job-log heartbeats (≤30s doctrine — run 30731778056: 88s silence).
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
