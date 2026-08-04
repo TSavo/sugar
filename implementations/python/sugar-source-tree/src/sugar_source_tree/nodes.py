@@ -1147,11 +1147,37 @@ class SourceUnit:
             # keeps its kind and unit, so a rewritten consumer denotes the SAME
             # occurrence and joins this row by construction -- for every enrolled
             # consumer at once, with no per-consumer retention to remember.
-            patterns[SourceOccurrenceIdentityV1.of(consumer)] = owned
-            patterns_by_target.update(
-                (SourceOccurrenceIdentityV1.of(pattern.target_occurrence), pattern)
-                for pattern in owned
-            )
+            #
+            # Both writes REFUSE a duplicate key rather than overwriting it.
+            # Ref-keying made a collision structurally impossible: two shells
+            # over one occurrence were two keys.  Occurrence-keying collapses
+            # them into one, so an overwrite becomes expressible -- and a
+            # silently dropped relation row is the exact defect class this
+            # repair exists to end.  The invariant is believed, not proven, so
+            # it is stated executably here instead of in a comment.
+            consumer_key = SourceOccurrenceIdentityV1.of(consumer)
+            if consumer_key in patterns:
+                raise TargetPatternConstructionGapV1(
+                    "duplicate-target-pattern-consumer-occurrence",
+                    consumer_occurrence=consumer,
+                    target_occurrence=None,
+                    target_pattern=(consumer_key, patterns[consumer_key], owned),
+                )
+            patterns[consumer_key] = owned
+            for pattern in owned:
+                target_key = SourceOccurrenceIdentityV1.of(pattern.target_occurrence)
+                if target_key in patterns_by_target:
+                    raise TargetPatternConstructionGapV1(
+                        "duplicate-target-pattern-target-occurrence",
+                        consumer_occurrence=consumer,
+                        target_occurrence=pattern.target_occurrence,
+                        target_pattern=(
+                            target_key,
+                            patterns_by_target[target_key],
+                            pattern,
+                        ),
+                    )
+                patterns_by_target[target_key] = pattern
             constructed_count += len(owned)
         object.__setattr__(self, "_target_patterns_by_consumer", patterns)
         object.__setattr__(self, "_target_patterns_by_target", patterns_by_target)

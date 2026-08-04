@@ -177,6 +177,84 @@ def test_the_rewritten_consumer_stays_enrolled_and_a_stranded_row_still_refuses(
     assert stranded.value.reason == "foreign-target-occurrence"
 
 
+_TWO_CONSUMERS = """\
+def fixture_collision(pairs_collision, more_collision):
+    first_collision = [head_collision for (head_collision, tail_collision) in pairs_collision]
+    second_collision = [lead_collision for (lead_collision, rest_collision) in more_collision]
+    return first_collision, second_collision
+"""
+
+
+def _open_text(tmp_path: Path, name: str, text: str) -> SourceFile:
+    path = tmp_path / name
+    path.write_text(text)
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+
+    return SourceFile(
+        workspace_path_source(str(path), root=str(tmp_path)), reporter=NULL_REPORTER
+    )
+
+
+def test_two_enrolled_consumers_seat_two_rows_when_their_occurrences_differ(
+    tmp_path: Path,
+) -> None:
+    """CONTROL for the collision tooth: the ordinary path is untouched.
+
+    Two distinct enrolled consumers in one unit are two distinct occurrences,
+    so both rows seat and neither refuses.  Without this arm the tooth below
+    would pass just as well against a relation that refused everything.
+    """
+    source_file = _open_text(tmp_path, "collision_control.py", _TWO_CONSUMERS)
+    consumers = [node for node in source_file.nodes() if node.kind == "ListComp"]
+    assert len(consumers) == 2
+
+    keys = {
+        occurrence.SourceOccurrenceIdentityV1.of(consumer) for consumer in consumers
+    }
+    assert len(keys) == 2, "fixture's two consumers must be two occurrences"
+    for consumer in consumers:
+        assert len(consumer.require_target_patterns()) == 1
+
+
+def test_a_duplicate_source_occurrence_key_refuses_instead_of_overwriting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TOOTH -- the cost of occurrence-keying, guarded.
+
+    Ref-keying made a collision structurally impossible; occurrence-keying
+    makes it expressible.  An unguarded ``dict`` write would silently DROP the
+    first consumer's producer-minted row -- absence and lookup-failure sharing
+    one representation again, by a different door.
+
+    The collision is planted at the identity function, so the real producer
+    walk runs and the real write path executes: the second enrolled consumer
+    genuinely mints the same key as the first.
+    """
+    collapsed = occurrence.SourceOccurrenceIdentityV1(
+        file="collision.py",
+        source_cid="blake3-512:collapsed",
+        start=0,
+        end=0,
+        node_kind="Collapsed",
+    )
+    monkeypatch.setattr(
+        occurrence.SourceOccurrenceIdentityV1,
+        "of",
+        classmethod(lambda cls, node: collapsed),
+    )
+
+    with pytest.raises(nodes.TargetPatternConstructionGapV1) as collision:
+        _open_text(tmp_path, "collision_planted.py", _TWO_CONSUMERS)
+
+    # The consumer-side write is reached first, so it is the one that names it.
+    assert collision.value.reason == "duplicate-target-pattern-consumer-occurrence"
+    # The refusal carries the colliding key and BOTH claimants, so the report
+    # says which rows collided rather than only that something did.
+    key, seated, proposed = collision.value.target_pattern
+    assert key is collapsed
+    assert seated != proposed
+
+
 @pytest.mark.parametrize("shape", sorted(_SHAPES))
 def test_a_foreign_units_occurrence_never_joins_this_units_relation(
     shape, tmp_path: Path
