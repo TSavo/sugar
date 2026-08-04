@@ -35,8 +35,8 @@
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{make_var, num, str_const, Term};
-use syn::{Expr, ExprLit, ImplItemFn, ItemFn, Lit, Stmt, UnOp};
+use sugar_ir_symbolic::{make_var, Term};
+use syn::{Expr, ImplItemFn, ItemFn, Stmt};
 
 // Child of crate root: sees crate-root-private items (the Sugar hierarchy, the
 // collector, the resolver, the substitution, the disposition classifier).
@@ -47,9 +47,9 @@ use crate::{
     count_asserts_in_stmts, expr_head_key, helper_body_runtime_terminal_reason,
     is_consuming_iterator_method, receiver_is_versioned_iterator, refusal_disposition,
     resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped,
-    stmts_have_runtime_terminal_body_shape, strip_refs_groups, substitute_stmts, AssertionEntry,
-    Disposition, ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, ReductionCtx,
-    SugarCtx, TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
+    stmts_have_runtime_terminal_body_shape, substitute_stmts, AssertionEntry, Disposition,
+    ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, SugarCtx,
+    TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
 };
 
 /// Build the opaque panic-freedom subject for a call/method expression.
@@ -57,9 +57,11 @@ use crate::{
 /// Panic-freedom is about the callsite reaching normal return, not the value the
 /// call returns. This callsite sugar therefore owns the `call:*#panic_callsite` /
 /// `method:*#panic_callsite` subject and only asks child term floors to reduce
-/// receiver/argument structure. If a child hits a named effect, the subject falls
-/// back to an opaque child identity rather than laundering that value effect into
-/// the panic predicate.
+/// receiver/argument structure. Only explicitly identity-owned shapes (nested calls,
+/// source-less `format_args!`, and intentionally opaque closure/block values) may use
+/// an opaque child identity. Every other child must construct through its shared
+/// `TermFloor` owner or refuse loudly; a guessed variable/source spelling cannot replace
+/// an available construction.
 pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Term>> {
     match expr {
         Expr::Call(_) | Expr::MethodCall(_) => Some(opaque_callsite_call_or_method_term(ctx, expr)),
@@ -92,10 +94,7 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
         if callsite_child_is_opaque_value(expr) {
             return callsite_child_identity_term(expr, ctx.scope);
         }
-        if let Some(term) = direct_callsite_child_term(expr, ctx, 0) {
-            return term;
-        }
-        callsite_child_identity_term(expr, ctx.scope)
+        constructed_callsite_child_term(expr, ctx)
     };
 
     match expr {
@@ -139,57 +138,23 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
     }
 }
 
-fn direct_callsite_child_term(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<Rc<Term>> {
-    if depth > 8 {
-        return None;
-    }
-    let expr = strip_refs_groups(expr);
-    if let Some(term) = literal_callsite_child_term(expr) {
-        return Some(term);
-    }
-    let Expr::Path(path) = expr else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
-    }
-    let name = path.path.get_ident()?.to_string();
-    if let Some(term) = ctx.scope.stable_term_binding_for_term(&name) {
-        return Some(term);
-    }
-    let bound = ctx.scope.stable_bound_var_for_term(&name)?;
-    match bound.projected_source() {
-        Expr::Call(_) | Expr::MethodCall(_) => Some(opaque_callsite_call_or_method_term(
-            ctx,
-            bound.projected_source(),
-        )),
-        other => direct_callsite_child_term(other, ctx, depth + 1),
-    }
-}
-
-fn literal_callsite_child_term(expr: &Expr) -> Option<Rc<Term>> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Int(int), ..
-        }) => int.base10_parse::<i128>().ok().map(num),
-        Expr::Lit(ExprLit {
-            lit: Lit::Bool(value),
-            ..
-        }) => Some(crate::bool_const(value.value)),
-        Expr::Lit(ExprLit {
-            lit: Lit::Str(value),
-            ..
-        }) => Some(str_const(value.value())),
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
-            let Expr::Lit(ExprLit {
-                lit: Lit::Int(int), ..
-            }) = strip_refs_groups(&unary.expr)
-            else {
-                return None;
-            };
-            int.base10_parse::<i128>().ok().map(|value| num(-value))
-        }
-        _ => None,
+fn constructed_callsite_child_term(expr: &Expr, ctx: &SugarCtx) -> Rc<Term> {
+    match crate::sugar::factory::SugarBody::synthesized_term(expr, ctx).reduce(ctx) {
+        Outcome::Complete(desugared) => desugared.into_term().unwrap_or_else(|| {
+            panic!(
+                "callsite child term construction refused: owner=CallsiteSugar; \
+                 observed={}; requested=TermFloor; cause=completed-as-non-term; \
+                 fix=route the child through its shared TermFloor owner",
+                expr_head_key(expr)
+            )
+        }),
+        Outcome::Incomplete(effect) => panic!(
+            "callsite child term construction refused: owner=CallsiteSugar; \
+             observed={}; requested=TermFloor; cause={}; \
+             fix=write or route the child through its shared TermFloor owner",
+            expr_head_key(expr),
+            effect.reason()
+        ),
     }
 }
 
@@ -684,6 +649,75 @@ mod tests {
             receiver_args.is_empty(),
             "opaque callsite child should not carry forged macro children"
         );
+    }
+
+    #[test]
+    fn callsite_child_bound_tuple_receiver_reaches_tuple_term_owner_in_panic_subject() {
+        let out = lift(
+            r#"
+            use core::ops::Bound;
+
+            #[test]
+            fn t() {
+                let r = (Bound::Excluded(1u32), Bound::Included(5u32));
+                assert!(r.contains(&3));
+            }
+            "#,
+        );
+        let expected = "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:3))::assertion";
+
+        assert!(
+            out.decls.iter().any(|decl| decl.name == expected),
+            "bound tuple receiver must retain TupleTerm construction in the panic subject; got {:?}",
+            out.decls.iter().map(|decl| &decl.name).collect::<Vec<_>>()
+        );
+        assert!(
+            out.factory_audits
+                .iter()
+                .any(|audit| audit.selected == Some("tuple_term")),
+            "the receiver must be built by tuple_term; audits={:?}",
+            out.factory_audits
+        );
+    }
+
+    #[test]
+    fn callsite_child_direct_range_receiver_reaches_range_term_owner_in_panic_subject() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                assert_eq!((0..100).size_hint(), (100, Some(100)));
+            }
+            "#,
+        );
+        let expected = "method:size_hint#panic_callsite#euf#c:callresult_method_size_hint_panic_callsite_a1(c:range(i:0,i:100))::assertion";
+
+        assert!(
+            out.decls.iter().any(|decl| decl.name == expected),
+            "direct range receiver must retain RangeTerm construction in the panic subject; got {:?}",
+            out.decls.iter().map(|decl| &decl.name).collect::<Vec<_>>()
+        );
+        assert!(
+            out.factory_audits
+                .iter()
+                .any(|audit| audit.selected == Some("range_term")),
+            "the receiver must be built by range_term; audits={:?}",
+            out.factory_audits
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "factory structural gap: no Sugar candidate for role Term")]
+    fn unsupported_callsite_child_refuses_instead_of_minting_opaque_identity() {
+        let expr: Expr = syn::parse_str("(loop { break }).contains(&1)").expect("parse expr");
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let _ = opaque_callsite_term(&ctx, &expr);
     }
 
     // ── DIG: a closed-arg call to a pure scalar helper INLINES and discharges. The
