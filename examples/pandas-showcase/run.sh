@@ -23,6 +23,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+source "$REPO/scripts/showcase-terminal-identity.sh"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
 
 # The witness lifter RUNS pandas's tests, so it needs pandas + the kit deps in a
@@ -54,7 +55,7 @@ rm -rf .sugar/runs .sugar/witnesses 2>/dev/null || true
 rm -f .verify.raw .verify.json 2>/dev/null || true
 
 echo "== mint (plain-pytest + pandas.testing + pytest-witness over the project) =="
-"$BIN" mint --out . --quiet
+showcase_run_with_terminal sugar.mint "$BIN" mint --out . --quiet
 
 echo "== prove (consistency AND witness) =="
 report="$(PATH="$VENV/bin:$PATH" "$BIN" prove --allow-failed-components . 2>/dev/null)"
