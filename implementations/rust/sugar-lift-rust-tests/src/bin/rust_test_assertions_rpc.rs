@@ -2,6 +2,7 @@
 //
 // RPC entrypoint for the Rust test-assertion consistency lifter.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -30,6 +31,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SURFACE: &str = "rust-test-assertions";
 const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
 const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
+const ENUMERATE_RPC_METHOD: &str = "sugar.enumerate";
 const RESOLVE_PROOF_BY_CID_RPC_METHOD: &str = "sugar.plugin.resolve_proof_by_cid";
 const RESOLVE_SOURCE_MEMENTO_RPC_METHOD: &str = "sugar.plugin.resolve_source_memento";
 const SHOULD_PANIC_OPAQUE_TERMINAL_REASON: &str =
@@ -163,7 +165,7 @@ fn kit_declaration_result() -> Value {
                 {"name": "initialize", "required": true},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": true},
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
-                {"name": "lift", "required": true},
+                {"name": ENUMERATE_RPC_METHOD, "required": true},
                 {"name": RESOLVE_PROOF_BY_CID_RPC_METHOD, "required": false},
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": false},
                 {"name": "shutdown", "required": false},
@@ -308,6 +310,13 @@ fn lift_reply_never_kills_transport(id: &Value, params: &Value) -> Value {
 }
 
 fn lift(params: &Value) -> Value {
+    lift_with_prepared_population(params, None)
+}
+
+fn lift_with_prepared_population(
+    params: &Value,
+    prepared: Option<&PreparedPopulationContext>,
+) -> Value {
     trace_lift_rpc_checkpoint("lift.start", &Value::Null);
     let workspace_root = params
         .get("workspace_root")
@@ -371,22 +380,33 @@ fn lift(params: &Value) -> Value {
     let mut factory_audits: Vec<Value> = Vec::new();
     let mut factory_audit_summary = FactoryAuditSummaryAccumulator::new();
     let mut assertion_surface_audits: Vec<Value> = Vec::new();
-    let options = match lift_options_from_rust_build_context(&workspace_root, params) {
-        Ok(options) => options,
-        Err(reason) => {
-            diagnostics.push(json!({
-                "kind": "lift-gap",
-                "path": params
-                    .get("config_path")
-                    .and_then(Value::as_str)
-                    .unwrap_or(".sugar/config.toml"),
-                "item": "rust-test-assertions.build_cfg",
-                "reason": reason,
-            }));
-            LiftOptions::default()
+    let options = if let Some(context) = prepared {
+        context.options.clone()
+    } else {
+        match lift_options_from_rust_build_context(&workspace_root, params) {
+            Ok(options) => options,
+            Err(reason) => {
+                diagnostics.push(json!({
+                    "kind": "lift-gap",
+                    "path": params
+                        .get("config_path")
+                        .and_then(Value::as_str)
+                        .unwrap_or(".sugar/config.toml"),
+                    "item": "rust-test-assertions.build_cfg",
+                    "reason": reason,
+                }));
+                LiftOptions::default()
+            }
         }
     };
-    let parsed_sources = read_parsed_sources(&workspace_root, &rel_paths, &mut diagnostics);
+    let owned_parsed_sources = if prepared.is_none() {
+        read_parsed_sources(&workspace_root, &rel_paths, &mut diagnostics)
+    } else {
+        Vec::new()
+    };
+    let parsed_sources = prepared
+        .map(|context| context.parsed_sources.as_slice())
+        .unwrap_or(owned_parsed_sources.as_slice());
     info!(
         parsed_sources = parsed_sources.len(),
         diagnostics = diagnostics.len(),
@@ -394,22 +414,41 @@ fn lift(params: &Value) -> Value {
         rss_available = current_rss_kib().is_some(),
         "rust-test-assertions parsed sources complete"
     );
-    let macro_imports = MacroRegistry::new();
-    let const_imports = build_const_source_registry(&parsed_sources);
+    let owned_macro_imports = MacroRegistry::new();
+    let macro_imports = prepared
+        .map(|context| &context.macro_imports)
+        .unwrap_or(&owned_macro_imports);
+    let owned_const_imports = prepared
+        .is_none()
+        .then(|| build_const_source_registry(parsed_sources));
+    let const_imports = prepared
+        .map(|context| &context.const_imports)
+        .or(owned_const_imports.as_ref())
+        .expect("legacy or prepared const source registry");
     info!(
         parsed_sources = parsed_sources.len(),
         rss_kib = current_rss_kib().unwrap_or_default(),
         rss_available = current_rss_kib().is_some(),
         "rust-test-assertions const registry complete"
     );
-    let fn_imports = build_function_source_registry(&parsed_sources);
+    let owned_fn_imports = prepared
+        .is_none()
+        .then(|| build_function_source_registry(parsed_sources));
+    let fn_imports = prepared
+        .map(|context| &context.fn_imports)
+        .or(owned_fn_imports.as_ref())
+        .expect("legacy or prepared function source registry");
     info!(
         parsed_sources = parsed_sources.len(),
         rss_kib = current_rss_kib().unwrap_or_default(),
         rss_available = current_rss_kib().is_some(),
         "rust-test-assertions function registry complete"
     );
-    for (file_index, source) in parsed_sources.iter().enumerate() {
+    for (file_index, source) in parsed_sources
+        .iter()
+        .filter(|source| rel_paths.binary_search(&source.rel).is_ok())
+        .enumerate()
+    {
         let rel = source.rel.as_str();
         info!(
             file = rel,
@@ -431,9 +470,9 @@ fn lift(params: &Value) -> Value {
                 file,
                 rel,
                 &options,
-                &macro_imports,
-                &const_imports,
-                &fn_imports,
+                macro_imports,
+                const_imports,
+                fn_imports,
             )
         })) {
             Ok(out) => out,
@@ -769,7 +808,10 @@ fn lift(params: &Value) -> Value {
         );
         return response;
     }
-    let call_edges = call_edges_for_report(&entries);
+    let call_edges = prepared.map_or_else(
+        || call_edges_for_report(&entries),
+        |context| call_edges_for_report_with_targets(&entries, &context.target_contracts),
+    );
     trace_lift_rpc_checkpoint("lift.after_call_edges", &Value::Null);
     let vendor_conjoins = vendor_conjoins_for_report(&workspace_root, &entries);
     trace_lift_rpc_checkpoint("lift.after_vendor_conjoins", &Value::Null);
@@ -1398,6 +1440,7 @@ fn audit_only_gap_key(gap: &Value) -> String {
 struct ParsedSource {
     rel: String,
     src: String,
+    source_cid: String,
     file: syn::File,
 }
 
@@ -1425,6 +1468,7 @@ fn read_parsed_sources(
                 continue;
             }
         };
+        let source_cid = blake3_512_of(&bytes);
         let src = match String::from_utf8(bytes) {
             Ok(src) => src,
             Err(_) => {
@@ -1459,6 +1503,7 @@ fn read_parsed_sources(
         parsed.push(ParsedSource {
             rel: rel.clone(),
             src,
+            source_cid,
             file,
         });
     }
@@ -1479,6 +1524,452 @@ fn build_function_source_registry(parsed_sources: &[ParsedSource]) -> FunctionSo
         registry.scan_file(&source.rel, &source.file);
     }
     registry
+}
+
+/// The sealed source-tree authority shared by every per-file `universe`
+/// demand.  The registries are built once from the entire parsed population;
+/// reducing one demanded file therefore retains the same cross-file import
+/// authority as the retired whole-population `lift` door.
+struct PreparedPopulationContext {
+    root: PathBuf,
+    parsed_sources: Vec<ParsedSource>,
+    sealed_cids: BTreeMap<String, String>,
+    options: LiftOptions,
+    macro_imports: MacroRegistry,
+    const_imports: ConstSourceRegistry,
+    fn_imports: FunctionSourceRegistry,
+    target_sources: BTreeMap<String, String>,
+    target_contracts: BTreeMap<String, (String, String)>,
+    target_contract_failures: BTreeMap<String, String>,
+}
+
+thread_local! {
+    // The RPC loop is single-threaded.  Thread-local ownership permits the
+    // source registries to retain their Rc-backed syntax without pretending
+    // they are Send/Sync process-global state.
+    static PREPARED_POPULATIONS: RefCell<BTreeMap<PathBuf, Rc<PreparedPopulationContext>>> =
+        RefCell::new(BTreeMap::new());
+}
+
+fn canonical_workspace_root(params: &Value) -> PathBuf {
+    let root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::fs::canonicalize(&root).unwrap_or(root)
+}
+
+fn file_memento(rel: &str, source_cid: Option<&str>) -> Value {
+    json!({
+        "kind": "source-memento",
+        "file": rel,
+        "function_name": "",
+        "span": Value::Null,
+        "param_names": [],
+        "source_cid": source_cid,
+        "template_cid": Value::Null,
+    })
+}
+
+fn enumerate_result(id: &Value, nodes: Vec<Value>, gaps: Vec<Value>) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "result": {"nodes": nodes, "gaps": gaps}})
+}
+
+fn enumerate_error(id: &Value, message: impl Into<String>) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {"code": -32602, "message": message.into()},
+    })
+}
+
+fn forget_prepared_population(root: &Path) {
+    PREPARED_POPULATIONS.with(|populations| {
+        populations.borrow_mut().remove(root);
+    });
+}
+
+fn prepare_population(params: &Value) -> Result<Rc<PreparedPopulationContext>, Vec<Value>> {
+    let root = canonical_workspace_root(params);
+    let rel_paths = enumerate_rs_files(&root);
+    let options = match lift_options_from_rust_build_context(&root, params) {
+        Ok(options) => options,
+        Err(reason) => {
+            forget_prepared_population(&root);
+            return Err(vec![json!({
+                "memento": file_memento(".sugar/config.toml", None),
+                "reason": format!(
+                    "rust-test-assertions cannot prepare source_files population: {reason}"
+                ),
+            })]);
+        }
+    };
+    let mut diagnostics = Vec::new();
+    let parsed_sources = read_parsed_sources(&root, &rel_paths, &mut diagnostics);
+    if !diagnostics.is_empty() || parsed_sources.len() != rel_paths.len() {
+        forget_prepared_population(&root);
+        let gaps = diagnostics
+            .into_iter()
+            .map(|diagnostic| {
+                let rel = diagnostic
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unknown-source>");
+                let reason = diagnostic
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("source did not parse into the sealed population");
+                json!({"memento": file_memento(rel, None), "reason": reason})
+            })
+            .collect();
+        return Err(gaps);
+    }
+    let sealed_cids = parsed_sources
+        .iter()
+        .map(|source| (source.rel.clone(), source.source_cid.clone()))
+        .collect();
+    let macro_imports = MacroRegistry::new();
+    let const_imports = build_const_source_registry(&parsed_sources);
+    let fn_imports = build_function_source_registry(&parsed_sources);
+    let mut target_sources = BTreeMap::new();
+    for source in &parsed_sources {
+        let mut functions = Vec::new();
+        collect_fns(&source.file.items, &mut functions);
+        for function in functions {
+            if fn_has_test_attr(function.attrs) {
+                continue;
+            }
+            target_sources
+                .entry(format!("call:{}", function.name))
+                .or_insert_with(|| source.rel.clone());
+        }
+    }
+    let mut context = PreparedPopulationContext {
+        root: root.clone(),
+        parsed_sources,
+        sealed_cids,
+        options,
+        macro_imports,
+        const_imports,
+        fn_imports,
+        target_sources,
+        target_contracts: BTreeMap::new(),
+        target_contract_failures: BTreeMap::new(),
+    };
+    // Population-level target identity is prepared beside the census but is
+    // not census testimony: these rows never enter source_files.  A failure is
+    // retained for the dependent universe demand instead of being rewritten
+    // as a source-population gap.
+    let population_files: Vec<String> = context.sealed_cids.keys().cloned().collect();
+    for rel in population_files {
+        let params = json!({"workspace_root": root, "source_paths": [rel]});
+        let document = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lift_with_prepared_population(&params, Some(&context))
+        }));
+        match document {
+            Ok(document) => {
+                if let Some(diagnostics) = document
+                    .get("diagnostics")
+                    .and_then(Value::as_array)
+                    .filter(|diagnostics| !diagnostics.is_empty())
+                {
+                    context.target_contract_failures.insert(
+                        rel.clone(),
+                        format!(
+                            "target-contract preparation for '{rel}' reported diagnostics: {}",
+                            serde_json::to_string(diagnostics)
+                                .unwrap_or_else(|_| "<unencodable diagnostics>".to_string())
+                        ),
+                    );
+                }
+                if let Some(entries) = document.get("ir").and_then(Value::as_array) {
+                    for (symbol, target) in target_contract_index(entries) {
+                        context.target_contracts.entry(symbol).or_insert(target);
+                    }
+                }
+            }
+            Err(payload) => {
+                context.target_contract_failures.insert(
+                    rel.clone(),
+                    format!(
+                        "target-contract preparation for '{rel}' failed: {}",
+                        panic_payload_message(payload)
+                    ),
+                );
+            }
+        }
+    }
+    let mut missing_by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (symbol, source_file) in &context.target_sources {
+        if !context.target_contracts.contains_key(symbol) {
+            missing_by_file
+                .entry(source_file.clone())
+                .or_default()
+                .push(symbol.clone());
+        }
+    }
+    for (source_file, symbols) in missing_by_file {
+        let reason = format!(
+            "target-contract preparation for '{source_file}' did not construct authenticated targets: {}",
+            symbols.join(", ")
+        );
+        context
+            .target_contract_failures
+            .entry(source_file)
+            .and_modify(|existing| {
+                existing.push_str("; ");
+                existing.push_str(&reason);
+            })
+            .or_insert(reason);
+    }
+    let context = Rc::new(context);
+    PREPARED_POPULATIONS.with(|populations| {
+        populations.borrow_mut().insert(root, context.clone());
+    });
+    Ok(context)
+}
+
+fn prepared_population(root: &Path) -> Option<Rc<PreparedPopulationContext>> {
+    PREPARED_POPULATIONS.with(|populations| populations.borrow().get(root).cloned())
+}
+
+fn population_drift(context: &PreparedPopulationContext) -> Option<String> {
+    let observed_paths = enumerate_rs_files(&context.root);
+    let sealed_paths: Vec<String> = context.sealed_cids.keys().cloned().collect();
+    if observed_paths != sealed_paths {
+        return Some(format!(
+            "rust-test-assertions source population changed since the sealed source_files census: sealed={sealed_paths:?} observed={observed_paths:?}"
+        ));
+    }
+    for (rel, sealed_cid) in &context.sealed_cids {
+        let bytes = match std::fs::read(context.root.join(rel)) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return Some(format!(
+                    "rust-test-assertions source '{rel}' cannot be authenticated against the sealed source_files census: {error}"
+                ))
+            }
+        };
+        let observed_cid = blake3_512_of(&bytes);
+        if &observed_cid != sealed_cid {
+            return Some(format!(
+                "rust-test-assertions source '{rel}' changed since the sealed source_files census: {sealed_cid} != {observed_cid}"
+            ));
+        }
+    }
+    None
+}
+
+fn target_preparation_gaps(
+    context: &PreparedPopulationContext,
+    document: &Value,
+    memento: &Value,
+) -> Vec<Value> {
+    let mut gaps = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in document
+        .get("ir")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for slot in ["pre", "post", "inv"] {
+            let Some(formula) = entry.get(slot).filter(|value| value.is_object()) else {
+                continue;
+            };
+            let mut callsites = Vec::new();
+            collect_ctor_terms(formula, &mut callsites);
+            for callsite in callsites {
+                let Some(observed_symbol) = callsite.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let target_symbol = observed_symbol
+                    .strip_suffix("#panic_callsite")
+                    .unwrap_or(observed_symbol);
+                if context.target_contracts.contains_key(target_symbol) {
+                    continue;
+                }
+                let Some(target_file) = context.target_sources.get(target_symbol) else {
+                    continue;
+                };
+                let Some(failure) = context.target_contract_failures.get(target_file) else {
+                    continue;
+                };
+                if !seen.insert((target_symbol.to_string(), target_file.clone())) {
+                    continue;
+                }
+                gaps.push(json!({
+                    "memento": memento,
+                    "reason": format!(
+                        "rust-test-assertions cannot authenticate cross-file target '{target_symbol}' from '{target_file}' against the sealed population: {failure}"
+                    ),
+                }));
+            }
+        }
+    }
+    gaps
+}
+
+fn memento_matches(memento: &Value, at: &Value) -> bool {
+    if memento.get("file") != at.get("file") {
+        return false;
+    }
+    let requested_cid = at
+        .get("source_cid")
+        .or_else(|| at.get("sourceCid"))
+        .and_then(Value::as_str);
+    requested_cid.is_none()
+        || requested_cid
+            == memento
+                .get("source_cid")
+                .or_else(|| memento.get("sourceCid"))
+                .and_then(Value::as_str)
+}
+
+fn handle_enumerate(id: &Value, params: &Value) -> Value {
+    let level = params.get("level").and_then(Value::as_str).unwrap_or("");
+    let root = canonical_workspace_root(params);
+    let at = params.get("at").filter(|value| value.is_object());
+
+    if level == "parameter-contract-link-units" {
+        return json!({"jsonrpc": "2.0", "id": id, "result": {"rows": []}});
+    }
+    if level == "source_files" {
+        let context = match prepare_population(params) {
+            Ok(context) => context,
+            Err(gaps) => return enumerate_result(id, Vec::new(), gaps),
+        };
+        let seek = params.get("seek").and_then(Value::as_bool).unwrap_or(false);
+        let nodes = context
+            .parsed_sources
+            .iter()
+            .map(|source| file_memento(&source.rel, Some(&source.source_cid)))
+            .filter(|memento| {
+                !seek || at.is_none_or(|requested| memento_matches(memento, requested))
+            })
+            .map(
+                |memento| json!({"memento": memento, "audit": Value::Null, "payload": Value::Null}),
+            )
+            .collect();
+        return enumerate_result(id, nodes, Vec::new());
+    }
+    if level == "universe" {
+        let Some(at) = at else {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({
+                    "memento": Value::Null,
+                    "reason": "sugar.enumerate level='universe' requires at.file",
+                })],
+            );
+        };
+        let Some(rel) = at
+            .get("file")
+            .and_then(Value::as_str)
+            .filter(|rel| !rel.is_empty())
+        else {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({
+                    "memento": at,
+                    "reason": "sugar.enumerate level='universe' requires at.file",
+                })],
+            );
+        };
+        let Some(context) = prepared_population(&root) else {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({
+                    "memento": at,
+                    "reason": "rust-test-assertions universe requires a prepared source_files census for this workspace",
+                })],
+            );
+        };
+        let Some(sealed_cid) = context.sealed_cids.get(rel) else {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({
+                    "memento": at,
+                    "reason": format!("rust-test-assertions source '{rel}' is not a member of the sealed source_files census"),
+                })],
+            );
+        };
+        let sealed_memento = file_memento(rel, Some(sealed_cid));
+        if !memento_matches(&sealed_memento, at) {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({
+                    "memento": at,
+                    "reason": format!("rust-test-assertions source '{rel}' does not match the sealed source_files identity"),
+                })],
+            );
+        }
+        if let Some(reason) = population_drift(&context) {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({"memento": at, "reason": reason})],
+            );
+        }
+        let document = lift_with_prepared_population(
+            &json!({"workspace_root": root, "source_paths": [rel]}),
+            Some(&context),
+        );
+        if let Some(reason) = population_drift(&context) {
+            return enumerate_result(
+                id,
+                Vec::new(),
+                vec![json!({"memento": at, "reason": reason})],
+            );
+        }
+        let rows = document
+            .get("ir")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .chain(
+                document
+                    .get("callEdges")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            );
+        let nodes = rows
+            .cloned()
+            .map(|audit| json!({"memento": sealed_memento, "audit": audit, "payload": Value::Null}))
+            .collect();
+        let mut gaps: Vec<Value> = document
+            .get("diagnostics")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|diagnostic| {
+                json!({
+                    "memento": sealed_memento,
+                    "reason": serde_json::to_string(diagnostic).unwrap_or_else(|_| "rust-test-assertions diagnostic".to_string()),
+                })
+            })
+            .collect();
+        gaps.extend(target_preparation_gaps(
+            &context,
+            &document,
+            &sealed_memento,
+        ));
+        return enumerate_result(id, nodes, gaps);
+    }
+
+    enumerate_error(
+        id,
+        format!(
+            "sugar.enumerate: level '{level}' is not served by surface '{SURFACE}'; answering an unowned level with an empty census would be a false zero"
+        ),
+    )
 }
 
 #[derive(Clone)]
@@ -5223,9 +5714,40 @@ fn string_array_field(value: &Value, key: &str) -> Option<Vec<String>> {
         .collect()
 }
 
+fn target_contract_index(entries: &[Value]) -> BTreeMap<String, (String, String)> {
+    let mut targets = BTreeMap::new();
+    for entry in entries {
+        if entry.get("kind").and_then(Value::as_str) != Some("function-contract") {
+            continue;
+        }
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(symbol) = entry
+            .get("bridgeSourceSymbol")
+            .and_then(Value::as_str)
+            .filter(|symbol| !symbol.is_empty())
+        else {
+            continue;
+        };
+        let cid = ir_entry_content_cid(entry);
+        targets
+            .entry(symbol.to_string())
+            .or_insert_with(|| (name.to_string(), cid));
+    }
+    targets
+}
+
 fn call_edges_for_report(entries: &[Value]) -> Vec<Value> {
+    let targets_by_symbol = target_contract_index(entries);
+    call_edges_for_report_with_targets(entries, &targets_by_symbol)
+}
+
+fn call_edges_for_report_with_targets(
+    entries: &[Value],
+    targets_by_symbol: &BTreeMap<String, (String, String)>,
+) -> Vec<Value> {
     let mut contract_cids_by_name: BTreeMap<String, String> = BTreeMap::new();
-    let mut targets_by_symbol: BTreeMap<String, (String, String)> = BTreeMap::new();
     for entry in entries {
         if !matches!(
             entry.get("kind").and_then(Value::as_str),
@@ -5237,20 +5759,7 @@ fn call_edges_for_report(entries: &[Value]) -> Vec<Value> {
             continue;
         };
         let cid = ir_entry_content_cid(entry);
-        contract_cids_by_name.insert(name.to_string(), cid.clone());
-        if entry.get("kind").and_then(Value::as_str) != Some("function-contract") {
-            continue;
-        }
-        let Some(symbol) = entry
-            .get("bridgeSourceSymbol")
-            .and_then(Value::as_str)
-            .filter(|symbol| !symbol.is_empty())
-        else {
-            continue;
-        };
-        targets_by_symbol
-            .entry(symbol.to_string())
-            .or_insert_with(|| (name.to_string(), cid));
+        contract_cids_by_name.insert(name.to_string(), cid);
     }
     if targets_by_symbol.is_empty() {
         return Vec::new();
@@ -5280,7 +5789,7 @@ fn call_edges_for_report(entries: &[Value]) -> Vec<Value> {
                     continue;
                 };
                 let Some(target_symbol) =
-                    call_edge_target_symbol(callsite_symbol, &targets_by_symbol)
+                    call_edge_target_symbol(callsite_symbol, targets_by_symbol)
                 else {
                     continue;
                 };
@@ -6028,6 +6537,7 @@ fn handle_with_mode(id: &Value, method: &str, params: &Value, mode: RpcMode) -> 
         COMPONENT_PLAN_RPC_METHOD => {
             json!({"jsonrpc": "2.0", "id": id, "result": component_plan_result(params)})
         }
+        ENUMERATE_RPC_METHOD => handle_enumerate(id, params),
         "lift" if mode == RpcMode::AuditOnlyConstructionGaps => audit_only_lift_reply(id, params),
         "lift" => lift_reply_never_kills_transport(id, params),
         RESOLVE_PROOF_BY_CID_RPC_METHOD => {
@@ -6133,6 +6643,326 @@ fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn enumerate_for_test(root: &Path, level: &str, at: Option<Value>) -> Value {
+        let mut params = json!({
+            "workspace_root": root,
+            "level": level,
+        });
+        if let Some(at) = at {
+            params["at"] = at;
+        }
+        handle_with_mode(&json!(1), "sugar.enumerate", &params, RpcMode::Production)
+    }
+
+    fn write_cross_file_population(root: &Path) {
+        std::fs::create_dir_all(root.join("src/node")).expect("mkdir source population");
+        std::fs::write(
+            root.join("src/node.rs"),
+            r#"
+const B: usize = 6;
+pub(super) const CAPACITY: usize = 2 * B - 1;
+
+fn imported_value() -> usize {
+    11
+}
+"#,
+        )
+        .expect("write parent source");
+        std::fs::write(
+            root.join("src/node/tests.rs"),
+            r#"
+use super::*;
+
+#[test]
+fn cross_file_const_authority() {
+    assert_eq!(CAPACITY, 11);
+    assert_eq!(imported_value(), 11);
+}
+"#,
+        )
+        .expect("write child source");
+    }
+
+    #[test]
+    fn rust_test_assertions_declaration_advertises_enumerate_and_retires_lift() {
+        let declaration = kit_declaration_result();
+        let methods = declaration["rpc"]["methods"]
+            .as_array()
+            .expect("rpc methods");
+        let names: BTreeSet<&str> = methods
+            .iter()
+            .filter_map(|row| row.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains("sugar.enumerate"));
+        assert!(!names.contains("lift"));
+    }
+
+    #[test]
+    fn rust_test_assertions_source_files_seals_prepared_population() {
+        let root = unique_temp_dir("rust_test_assertions_source_files_seals_population");
+        write_cross_file_population(&root);
+
+        let reply = enumerate_for_test(&root, "source_files", None);
+        let result = &reply["result"];
+        assert_eq!(result["gaps"], json!([]), "{reply}");
+        let nodes = result["nodes"].as_array().expect("source file nodes");
+        assert_eq!(nodes.len(), 2, "{reply}");
+        assert_eq!(nodes[0]["memento"]["file"], "src/node.rs");
+        assert_eq!(nodes[1]["memento"]["file"], "src/node/tests.rs");
+        assert!(nodes.iter().all(|node| node["memento"]["source_cid"]
+            .as_str()
+            .is_some_and(|cid| cid.starts_with("blake3-512:"))));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rust_test_assertions_universe_requires_prepared_population() {
+        let root = unique_temp_dir("rust_test_assertions_universe_requires_population");
+        write_cross_file_population(&root);
+
+        let reply = enumerate_for_test(
+            &root,
+            "universe",
+            Some(json!({"file": "src/node/tests.rs"})),
+        );
+        assert_eq!(reply["result"]["nodes"], json!([]), "{reply}");
+        let gaps = reply["result"]["gaps"].as_array().expect("named gap");
+        assert_eq!(gaps.len(), 1, "{reply}");
+        assert!(gaps[0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("prepared source_files census")));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rust_test_assertions_universe_refuses_population_drift() {
+        let root = unique_temp_dir("rust_test_assertions_universe_refuses_drift");
+        write_cross_file_population(&root);
+
+        let census = enumerate_for_test(&root, "source_files", None);
+        let child = census["result"]["nodes"]
+            .as_array()
+            .expect("source file nodes")
+            .iter()
+            .find(|node| node["memento"]["file"] == "src/node/tests.rs")
+            .expect("child memento")["memento"]
+            .clone();
+        std::fs::write(
+            root.join("src/node.rs"),
+            "const B: usize = 7;\npub(super) const CAPACITY: usize = 2 * B - 1;\n",
+        )
+        .expect("mutate sealed parent");
+
+        let reply = enumerate_for_test(&root, "universe", Some(child));
+        assert_eq!(reply["result"]["nodes"], json!([]), "{reply}");
+        let gaps = reply["result"]["gaps"].as_array().expect("named gap");
+        assert_eq!(gaps.len(), 1, "{reply}");
+        let reason = gaps[0]["reason"].as_str().expect("gap reason");
+        assert!(reason.contains("src/node.rs"), "{reason}");
+        assert!(reason.contains("sealed source_files census"), "{reason}");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rust_test_assertions_sibling_target_failure_does_not_contaminate_census() {
+        let root = unique_temp_dir("rust_test_assertions_target_failure_is_dependent_gap");
+        std::fs::create_dir_all(root.join("src/node")).expect("mkdir source population");
+        std::fs::write(
+            root.join("src/node.rs"),
+            r#"
+macro_rules! local_gap {
+    () => {{ match std::env::args().len() { 0 => true, _ => false } }};
+}
+
+fn imported_value() -> usize {
+    11
+}
+
+#[test]
+fn target_contract_cannot_construct() {
+    assert!(local_gap!());
+}
+"#,
+        )
+        .expect("write target source");
+        std::fs::write(
+            root.join("src/node/tests.rs"),
+            r#"
+use super::*;
+
+#[test]
+fn dependent_call() {
+    assert_eq!(imported_value(), 11);
+}
+"#,
+        )
+        .expect("write dependent source");
+
+        let census = enumerate_for_test(&root, "source_files", None);
+        assert_eq!(census["result"]["gaps"], json!([]), "{census}");
+        assert_eq!(
+            census["result"]["nodes"]
+                .as_array()
+                .expect("source census nodes")
+                .len(),
+            2,
+            "target construction must not alter source population testimony"
+        );
+        let canonical_root = std::fs::canonicalize(&root).expect("canonical temp root");
+        let context = prepared_population(&canonical_root).expect("prepared population context");
+        assert!(
+            context.target_contract_failures.contains_key("src/node.rs"),
+            "fixture must carry the sibling construction failure"
+        );
+        assert!(
+            context.target_contracts.contains_key("call:imported_value"),
+            "a sibling failure must not erase independently constructed target authority"
+        );
+        let child = census["result"]["nodes"]
+            .as_array()
+            .expect("source census nodes")
+            .iter()
+            .find(|node| node["memento"]["file"] == "src/node/tests.rs")
+            .expect("dependent source")["memento"]
+            .clone();
+        let universe = enumerate_for_test(&root, "universe", Some(child));
+        let gaps = universe["result"]["gaps"]
+            .as_array()
+            .expect("dependent universe gaps");
+        assert_eq!(gaps, &Vec::<Value>::new(), "{universe}");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rust_test_assertions_dependent_target_failure_is_named_at_universe() {
+        let context = PreparedPopulationContext {
+            root: PathBuf::from("."),
+            parsed_sources: Vec::new(),
+            sealed_cids: BTreeMap::new(),
+            options: LiftOptions::default(),
+            macro_imports: MacroRegistry::new(),
+            const_imports: ConstSourceRegistry::new(),
+            fn_imports: FunctionSourceRegistry::new(),
+            target_sources: BTreeMap::from([(
+                "call:missing_target".to_string(),
+                "src/target.rs".to_string(),
+            )]),
+            target_contracts: BTreeMap::new(),
+            target_contract_failures: BTreeMap::from([(
+                "src/target.rs".to_string(),
+                "target-contract preparation refused observed shape".to_string(),
+            )]),
+        };
+        let document = json!({
+            "ir": [{
+                "kind": "contract",
+                "name": "src/caller.rs::caller",
+                "inv": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "ctor", "name": "call:missing_target", "args": []},
+                        {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}},
+                    ],
+                },
+            }],
+        });
+        let memento = file_memento("src/caller.rs", Some("blake3-512:caller"));
+
+        let gaps = target_preparation_gaps(&context, &document, &memento);
+
+        assert_eq!(gaps.len(), 1);
+        let reason = gaps[0]["reason"].as_str().expect("named reason");
+        assert!(reason.contains("call:missing_target"), "{reason}");
+        assert!(reason.contains("src/target.rs"), "{reason}");
+        assert!(
+            reason.contains("target-contract preparation refused"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn rust_test_assertions_enumeration_refuses_false_empty_levels() {
+        let root = unique_temp_dir("rust_test_assertions_refuses_false_empty_levels");
+        write_cross_file_population(&root);
+
+        let link_units = enumerate_for_test(&root, "parameter-contract-link-units", None);
+        assert_eq!(link_units["result"], json!({"rows": []}), "{link_units}");
+
+        let unknown = enumerate_for_test(&root, "facts", None);
+        assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
+        assert!(unknown["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("false zero")));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rust_test_assertions_population_fold_equals_whole_population_legacy() {
+        let root = unique_temp_dir("rust_test_assertions_population_fold_equals_legacy");
+        write_cross_file_population(&root);
+
+        let legacy = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src"],
+        }));
+        let mut legacy_rows = legacy["ir"].as_array().expect("legacy IR").clone();
+        legacy_rows.extend(
+            legacy["callEdges"]
+                .as_array()
+                .expect("legacy call edges")
+                .iter()
+                .cloned(),
+        );
+        assert!(
+            !legacy_rows.is_empty(),
+            "promotion control must carry claim mass"
+        );
+
+        let naive = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/node/tests.rs"],
+        }));
+        let mut naive_rows = naive["ir"].as_array().expect("naive IR").clone();
+        naive_rows.extend(
+            naive["callEdges"]
+                .as_array()
+                .expect("naive call edges")
+                .iter()
+                .cloned(),
+        );
+        assert_ne!(
+            naive_rows, legacy_rows,
+            "fixture must prove that per-file legacy drops cross-file import authority"
+        );
+
+        let census = enumerate_for_test(&root, "source_files", None);
+        let mut folded = Vec::new();
+        for file_node in census["result"]["nodes"]
+            .as_array()
+            .expect("source file nodes")
+        {
+            let universe =
+                enumerate_for_test(&root, "universe", Some(file_node["memento"].clone()));
+            assert_eq!(universe["result"]["gaps"], json!([]), "{universe}");
+            folded.extend(
+                universe["result"]["nodes"]
+                    .as_array()
+                    .expect("universe nodes")
+                    .iter()
+                    .map(|node| node["audit"].clone()),
+            );
+        }
+        assert_eq!(folded, legacy_rows, "exact row identity must be conserved");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
         if let Some(message) = payload.downcast_ref::<String>() {
