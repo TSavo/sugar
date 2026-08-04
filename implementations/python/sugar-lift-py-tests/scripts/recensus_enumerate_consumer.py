@@ -893,7 +893,7 @@ def measure_file_via_enumerate(
     from sugar_source_tree.process_resident_file import get_resident
 
     _clear_d3_audit_open_observation(source_cid)
-    d3_present_before_demand = get_resident(source_cid, str(full_path)) is not None
+    d3_present_before_demand = get_resident(source_cid, str(path)) is not None
     try:
         audit, construction_gaps = demand_construction_residual(
             workspace_root=workspace_root,
