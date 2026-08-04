@@ -5354,24 +5354,28 @@ impl TemporalScope {
     }
 
     pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
-        if self.alias_deref_mutation_needs_refusal(name) {
+        if self.temporal_rewrite_needs_refusal(name) {
             return None;
         }
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
     pub(crate) fn temporal_rewrite_term_for(&self, name: &str) -> Option<Rc<Term>> {
-        if self.alias_deref_mutation_needs_refusal(name) {
+        if self.temporal_rewrite_needs_refusal(name) {
             return None;
         }
         self.temporal_rewrite.borrow().term_for(name)
     }
 
     pub(crate) fn temporal_rewrite_index_expr_for(&self, name: &str, index: usize) -> Option<Expr> {
-        if self.alias_deref_mutation_needs_refusal(name) {
+        if self.temporal_rewrite_needs_refusal(name) {
             return None;
         }
         self.temporal_rewrite.borrow().expr_for_index(name, index)
+    }
+
+    fn temporal_rewrite_needs_refusal(&self, name: &str) -> bool {
+        self.alias_deref_mutation_needs_refusal(name) || self.is_temporally_unstable_read(name)
     }
 
     pub(crate) fn unknown_iterator_consumption_reason(&self, name: &str) -> Option<String> {
@@ -22032,6 +22036,50 @@ mod lifter_key_tests {
             plan.alias_deref_mutated.contains("x"),
             "inline deref mutation must poison the base local, got {:?}",
             plan.alias_deref_mutated
+        );
+    }
+
+    #[test]
+    fn temporal_plan_seats_sorted_by_cached_key_captured_mutation_at_shared_owner() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+            fn sorted_by_cached_key_ncalls() {
+                let mut ncalls = 0;
+                let sorted = [3, 4, 1, 2]
+                    .iter()
+                    .cloned()
+                    .sorted_by_cached_key(|&x| {
+                        ncalls += 1;
+                        x.to_string()
+                    });
+                let collected: Vec<_> = sorted.collect();
+                assert_eq!(collected, vec![1, 2, 3, 4]);
+                assert_eq!(ncalls, 4);
+            }
+            "#,
+        )
+        .expect("test function parses");
+
+        let plan = temporal_plan_for_stmts(&f.block.stmts, &BTreeSet::new());
+
+        assert!(
+            plan.temporally_unstable.contains("ncalls"),
+            "sorted_by_cached_key captured mutation must be seated at the shared temporal owner: {:?}",
+            plan.temporally_unstable
+        );
+
+        let mut scope = TemporalScope::new("itertools::sorted_by_cached_key_ncalls", plan);
+        for stmt in f.block.stmts.iter().take(3) {
+            if let Stmt::Local(local) = stmt {
+                record_simple_value_binding(&mut scope, local);
+                scope.dispatch_temporal_rewrite_local(local);
+            }
+            advance_temporal_scope_for_stmt(stmt, &mut scope);
+        }
+        assert!(scope.is_temporally_unstable_read("ncalls"));
+        assert!(
+            scope.temporal_rewrite_expr_for("ncalls").is_none(),
+            "the shared temporal projection door must not serve the stale initializer for an unstable capture"
         );
     }
 
