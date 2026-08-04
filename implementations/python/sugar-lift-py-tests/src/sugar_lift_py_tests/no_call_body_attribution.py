@@ -10,6 +10,7 @@ producer-owned and propagates loud.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
