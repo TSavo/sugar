@@ -32204,7 +32204,6 @@ fn while_loop_counter_read_replays_exact_bound() {
 // the call -- a post-call read lifts the initial literal, refuting a true assertion. The
 // read must REFUSE (temporally unstable). Refuse-only.
 #[test]
-#[ignore = "assertion_lift frontier: mutable-alias-state (#3026)"]
 fn closure_capture_mut_local_post_closure_read_refuses_not_false_refutation() {
     let src = r#"
         #[test]
@@ -32225,6 +32224,71 @@ fn closure_capture_mut_local_post_closure_read_refuses_not_false_refutation() {
             .iter()
             .any(|r| r.contains("temporally unstable post-loop read")),
         "a closure-captured mutated local read after the call must REFUSE: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn sorted_by_cached_key_captured_mutation_reaches_temporal_refusal() {
+    let src = r#"
+        #[test]
+        fn sorted_by_cached_key_ncalls_4_exact_row() {
+            let mut ncalls = 0;
+            let sorted = [3, 4, 1, 2].iter().cloned().sorted_by_cached_key(|&x| {
+                ncalls += 1;
+                x.to_string()
+            });
+            let collected: Vec<_> = sorted.collect();
+            assert_eq!(collected, vec![1, 2, 3, 4]);
+            assert_eq!(ncalls, 4);
+        }
+    "#;
+    let out = lift_file(&parse(src), "examples/itertools-showcase/good/src/lib.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !(dump.contains("Int(0)") && dump.contains("Int(4)")),
+        "captured callback mutation must not seal the stale `0 == 4`: {dump}"
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("temporally unstable post-loop read of `ncalls`")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(reason),
+                    sugar_lift_rust_tests::Disposition::TerminalEffect
+                )
+        }),
+        "sorted_by_cached_key must reach the shared temporal captured-mutation refusal with exact owner `ncalls`: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn sorted_by_cached_key_read_only_capture_does_not_over_refuse() {
+    let src = r#"
+        #[test]
+        fn sorted_by_cached_key_read_only() {
+            let offset = 1;
+            let sorted = [3, 4, 1, 2]
+                .iter()
+                .cloned()
+                .sorted_by_cached_key(|&x| x + offset);
+            let _: Vec<_> = sorted.collect();
+            assert_eq!(offset, 1);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/closure_readonly.rs");
+    assert!(
+        out.skip_reasons.iter().all(|reason| {
+            !(reason.contains("temporally unstable post-loop read") && reason.contains("offset"))
+        }),
+        "a read-only callback capture must stay outside the mutation refusal: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.assertions_lifted >= 1,
+        "the read-only capture remains a constructed literal assertion: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
         out.skip_reasons
     );
 }
