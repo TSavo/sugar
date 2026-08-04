@@ -172,7 +172,7 @@ Run the lock contract twice and `bash -n bin/sugarbin`. Commit `Terminate unrecl
 
 **Files:**
 - Modify: `tools/sugar-build/preflight.py`
-- Modify: `tools/sugar-build/entrypoint.sh`
+- Modify: `bin/lib/sugar-bx.sh`
 - Modify: `tests/sugarbin_docker_exec.sh`
 
 **Interfaces:**
@@ -181,7 +181,7 @@ Run the lock contract twice and `bash -n bin/sugarbin`. Commit `Terminate unrecl
 
 - [ ] **Step 1: Add ABI twins**
 
-Extend the relocated entrypoint fixture. A fake `ldd` returning a normal libc mapping must allow the subject. A second fake returns nonzero with `version 'GLIBC_2.39' not found`; require exit 70, named ABI crime, artifact path, retained loader text, and no subject marker.
+Extend the managed pre-subject wrapper fixture. A fake `ldd` returning a normal libc mapping must allow the subject. A second fake returns nonzero with `version 'GLIBC_2.39' not found`; require exit 70, named ABI crime, artifact path, retained loader text, and no subject marker.
 
 - [ ] **Step 2: Run RED**
 
@@ -189,7 +189,7 @@ Run `tests/sugarbin_docker_exec.sh`; expected: the incompatible twin reaches the
 
 - [ ] **Step 3: Implement ABI authentication once**
 
-Put the ABI routine in `preflight.py` and invoke it from both the plan runner and checked-in entrypoint. Accept a non-ELF/static `ldd` result only when output says `not a dynamic executable`; refuse missing libraries and versioned loader failures. Never execute the artifact as a probe.
+Put the ABI routine in `preflight.py` and invoke it from the transport-owned plan runner before `os.execvp`. Accept a non-ELF/static `ldd` result only when output says `not a dynamic executable`; refuse missing libraries and versioned loader failures. Never execute the artifact as a probe. Do not edit the checked-in image entrypoint in stage one: that source cannot affect already-published immutable images.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -206,7 +206,7 @@ Run Docker, managed-precondition, and shell-tier wrapper contracts. Commit `Refu
 - [ ] **Step 1: Run focused verification**
 
 ```bash
-bash -n bin/sugarbin bin/lib/sugar-bx.sh tools/sugar-build/entrypoint.sh \
+bash -n bin/sugarbin bin/lib/sugar-bx.sh \
   tests/sugarbin_managed_preconditions.sh tests/sugarbin_docker_exec.sh \
   tests/sugarbin_rebuild_single_flight.sh
 bash tests/sugarbin_managed_preconditions.sh "$PWD"
