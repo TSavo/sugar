@@ -650,6 +650,128 @@ SCRIPT
   printf '\n'
 }
 
+# Detached Docker jobs have a different lifetime owner from foreground brun:
+# the battleaxe user systemd manager owns the complete `docker run --rm`
+# process, while the invoking SSH session only submits it. Durable testimony
+# lives below the remote root, never in the container PID or /tmp namespaces.
+sugar_bx_validate_detached_job_id() {
+  local job_id="$1"
+  if [[ ! "$job_id" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
+    printf 'sugarbin: crime=invalid-detached-job-id jobId=%s replacement=use 1-64 lowercase letters, digits, underscore, or hyphen, beginning with a letter or digit\n' \
+      "$job_id" >&2
+    return 70
+  fi
+}
+
+sugar_bx_detached_job_dir() {
+  printf '%s/.sugar-bx-jobs/%s\n' "$SUGAR_BX_ROOT" "$1"
+}
+
+sugar_bx_detached_unit_name() {
+  local job_id="$1" identity
+  identity="$(printf '%s' "$SUGAR_BX_ROOT:$job_id" | shasum -a 256 | cut -c1-20)"
+  printf 'sugar-bx-%s-%s.service\n' "$job_id" "$identity"
+}
+
+sugar_bx_require_detached_supervisor() {
+  if ! sugar_bx_ssh \
+    'command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1'; then
+    printf 'sugarbin: crime=detached-supervisor-unavailable host=%s owner=bin/lib/sugar-bx.sh replacement=enable the battleaxe user systemd manager; never fall back to container-local nohup\n' \
+      "$SUGAR_BX_HOST" >&2
+    return 70
+  fi
+  local linger
+  linger="$(sugar_bx_ssh 'loginctl show-user "$USER" -p Linger --value' 2>/dev/null || true)"
+  linger="$(printf '%s' "$linger" | tr -d '\r[:space:]')"
+  if [[ "$linger" != yes ]]; then
+    printf 'sugarbin: crime=detached-linger-disabled host=%s observed=%s owner=bin/lib/sugar-bx.sh replacement=enable Linger=yes for the battleaxe execution user before submitting detached jobs\n' \
+      "$SUGAR_BX_HOST" "${linger:-unknown}" >&2
+    return 70
+  fi
+}
+
+sugar_bx_validate_detached_request() {
+  local job_id="$1"
+  sugar_bx_validate_detached_job_id "$job_id" || return $?
+  if [[ "${SUGAR_BX_CLEAN:-never}" != never ]]; then
+    printf 'sugarbin: crime=detached-cleanup-policy-conflict jobId=%s policy=%s owner=bin/lib/sugar-bx.sh replacement=use BCARGO_CLEAN_REMOTE_ROOT=never; collect evidence before an explicit later cleanup\n' \
+      "$job_id" "$SUGAR_BX_CLEAN" >&2
+    return 70
+  fi
+  sugar_bx_require_detached_supervisor
+}
+
+sugar_bx_start_detached_host_command() {
+  local job_id="$1" host_command="$2"
+  sugar_bx_validate_detached_request "$job_id" || return $?
+  local job_dir unit runner output exit_code launch setup_status=0
+  job_dir="$(sugar_bx_detached_job_dir "$job_id")"
+  unit="$(sugar_bx_detached_unit_name "$job_id")"
+  runner="$job_dir/run.sh"
+  output="$job_dir/output.log"
+  exit_code="$job_dir/exit-code"
+  launch="$job_dir/launch"
+
+  sugar_bx_ssh "umask 022; mkdir -p $(sugar_bx_quote "$(dirname "$job_dir")"); if ! mkdir $(sugar_bx_quote "$job_dir") 2>/dev/null; then printf 'sugarbin: crime=duplicate-detached-job-id jobId=%s path=%s replacement=choose a new job id or query/collect the existing job\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$job_dir") >&2; exit 70; fi; chmod 0755 $(sugar_bx_quote "$job_dir"); : > $(sugar_bx_quote "$output"); chmod 0644 $(sugar_bx_quote "$output"); printf 'schema=sugar-bx-detached-job/v1\\njobId=%s\\nunit=%s\\nroot=%s\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$unit") $(sugar_bx_quote "$SUGAR_BX_ROOT") > $(sugar_bx_quote "$launch"); chmod 0644 $(sugar_bx_quote "$launch")" \
+    || setup_status=$?
+  [[ "$setup_status" == 0 ]] || return "$setup_status"
+
+  local runner_body
+  runner_body="#!/usr/bin/env bash
+set +e
+umask 022
+bash -lc $(sugar_bx_quote "$host_command") >>$(sugar_bx_quote "$output") 2>&1
+status=\$?
+tmp=$(sugar_bx_quote "$job_dir/.exit-code.")\$\$
+printf '%s\\n' \"\$status\" >\"\$tmp\"
+chmod 0644 \"\$tmp\"
+mv -f \"\$tmp\" $(sugar_bx_quote "$exit_code")
+exit \"\$status\""
+  if ! printf '%s\n' "$runner_body" | \
+    sugar_bx_ssh "cat > $(sugar_bx_quote "$runner") && chmod 0755 $(sugar_bx_quote "$runner")"; then
+    printf 'sugarbin: crime=detached-runner-publication-failed jobId=%s path=%s owner=bin/lib/sugar-bx.sh\n' \
+      "$job_id" "$runner" >&2
+    return 70
+  fi
+
+  if ! sugar_bx_ssh \
+    "systemd-run --user --collect --quiet --unit=$(sugar_bx_quote "$unit") --property=Type=exec -- bash $(sugar_bx_quote "$runner")"; then
+    printf 'sugarbin: crime=detached-supervisor-submit-failed jobId=%s unit=%s owner=bin/lib/sugar-bx.sh replacement=inspect the user-systemd journal and retain the host job directory\n' \
+      "$job_id" "$unit" >&2
+    return 70
+  fi
+  if ! sugar_bx_ssh \
+    "test -r $(sugar_bx_quote "$exit_code") || systemctl --user is-active $(sugar_bx_quote "$unit") >/dev/null 2>&1"; then
+    printf 'sugarbin: crime=detached-job-testimony-missing jobId=%s unit=%s path=%s owner=bin/lib/sugar-bx.sh replacement=inspect the retained runner and user-systemd journal; do not claim launch success\n' \
+      "$job_id" "$unit" "$job_dir" >&2
+    return 70
+  fi
+  printf 'jobId=%s state=accepted unit=%s root=%s log=%s\n' \
+    "$job_id" "$unit" "$job_dir" "$output"
+}
+
+sugar_bx_detached_job_status() {
+  local job_id="$1" job_dir unit output exit_code launch
+  sugar_bx_validate_detached_job_id "$job_id" || return $?
+  job_dir="$(sugar_bx_detached_job_dir "$job_id")"
+  unit="$(sugar_bx_detached_unit_name "$job_id")"
+  output="$job_dir/output.log"
+  exit_code="$job_dir/exit-code"
+  launch="$job_dir/launch"
+  sugar_bx_ssh "if ! test -r $(sugar_bx_quote "$launch") || ! test -r $(sugar_bx_quote "$output"); then printf 'sugarbin: crime=unknown-detached-job-id jobId=%s path=%s replacement=use the exact BCARGO_REMOTE_ROOT and job id returned by launch\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$job_dir") >&2; exit 70; fi; if test -r $(sugar_bx_quote "$exit_code"); then status=\$(tr -d '[:space:]' < $(sugar_bx_quote "$exit_code")); case \"\$status\" in ''|*[!0-9]*) printf 'sugarbin: crime=detached-exit-testimony-malformed jobId=%s path=%s observed=%s\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$exit_code") \"\$status\" >&2; exit 70;; esac; printf 'jobId=%s state=completed exitCode=%s unit=%s root=%s log=%s\\n' $(sugar_bx_quote "$job_id") \"\$status\" $(sugar_bx_quote "$unit") $(sugar_bx_quote "$job_dir") $(sugar_bx_quote "$output"); elif systemctl --user is-active $(sugar_bx_quote "$unit") >/dev/null 2>&1; then printf 'jobId=%s state=running unit=%s root=%s log=%s\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$unit") $(sugar_bx_quote "$job_dir") $(sugar_bx_quote "$output"); else printf 'sugarbin: crime=detached-job-testimony-missing jobId=%s unit=%s path=%s replacement=inspect the retained runner and user-systemd journal; no result is measured\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$unit") $(sugar_bx_quote "$job_dir") >&2; exit 70; fi"
+}
+
+sugar_bx_collect_detached_job() {
+  local job_id="$1" local_path="$2" status
+  status="$(sugar_bx_detached_job_status "$job_id")" || return $?
+  if [[ "$status" != *"state=completed"* ]]; then
+    printf 'sugarbin: crime=detached-job-still-running jobId=%s owner=bin/lib/sugar-bx.sh replacement=wait for a completed status before collecting final testimony\n' \
+      "$job_id" >&2
+    return 70
+  fi
+  sugar_bx_sync_back "$(sugar_bx_detached_job_dir "$job_id")/" "$local_path/"
+}
+
 sugar_bx_build_artifacts_docker() {
   local image="$1" needs="$2" profile="$3" provision_artifacts="${4:-0}"
   local artifact_format="${5:-uniform}"
@@ -726,7 +848,7 @@ sugar_bx_run_docker() {
   shift 4
   local remote_cwd="/workspace/sugar"
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$remote_cwd/$SUGAR_BX_REL_CWD"
-  local workspace_source artifacts_source manifest_source shelf_source
+  local workspace_source artifacts_source manifest_source shelf_source job_source job_dir
   workspace_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_REPO")" || return $?
   sugar_bx_ssh "mkdir -p $(sugar_bx_quote "$SUGAR_BX_BINARY_SHELF")" || return $?
   shelf_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_SHELF")" || return $?
@@ -736,6 +858,12 @@ sugar_bx_run_docker() {
     --env "SUGAR_BX_MOUNT_PROOF=$SUGAR_BX_MOUNT_PROOF"
     --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
     --mount "type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly")
+  if [[ -n "${SUGAR_BX_DETACH_JOB_ID:-}" ]]; then
+    job_dir="$(sugar_bx_detached_job_dir "$SUGAR_BX_DETACH_JOB_ID")"
+    job_source="$(sugar_bx_docker_bind_source "$job_dir")" || return $?
+    docker_args+=(--mount "type=bind,src=$job_source,dst=/run/sugar-bx-job")
+    docker_args+=(--env SUGAR_BX_JOB_DIR=/run/sugar-bx-job)
+  fi
   [[ "$network" != none ]] || docker_args+=(--network none)
   if [[ "$has_artifacts" == 1 ]]; then
     artifacts_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/artifacts")" || return $?
@@ -778,7 +906,11 @@ sugar_bx_run_docker() {
   fi
   docker_args+=("$@")
   for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
-  sugar_bx_ssh "exec${command}"
+  if [[ -n "${SUGAR_BX_DETACH_JOB_ID:-}" ]]; then
+    sugar_bx_start_detached_host_command "$SUGAR_BX_DETACH_JOB_ID" "exec${command}"
+  else
+    sugar_bx_ssh "exec${command}"
+  fi
 }
 
 sugar_bx_is_foreign() { [[ "$(uname -s 2>/dev/null)" != Linux ]] && [[ "$(file -b "$1" 2>/dev/null || true)" == *ELF* ]]; }

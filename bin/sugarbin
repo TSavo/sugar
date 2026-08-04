@@ -26,6 +26,7 @@ dispatch_execution_subcommand() {
   local profile="release"
   local needs=""
   local task=""
+  local detach_job_id=""
   local saw_boundary=0
   local -a command=()
   local -a path_prefixes=() env_names=() sync_backs=()
@@ -86,6 +87,12 @@ dispatch_execution_subcommand() {
         [[ "$subcommand" == run || "$subcommand" == explain ]] || { echo "sugarbin: --task is only valid for run and explain" >&2; return 2; }
         [[ $# -ge 2 ]] || { echo "sugarbin: --task requires a value" >&2; return 2; }
         task="$2"
+        shift 2
+        ;;
+      --detach)
+        [[ "$subcommand" == run ]] || { echo "sugarbin: --detach is only valid for run" >&2; return 2; }
+        [[ $# -ge 2 ]] || { echo "sugarbin: --detach requires a job id" >&2; return 2; }
+        detach_job_id="$2"
         shift 2
         ;;
       --)
@@ -280,6 +287,7 @@ dispatch_execution_subcommand() {
   SUGAR_BX_ENV_NAMES=()
   SUGAR_BX_SYNC_BACKS=()
   SUGAR_BX_MANAGED_PRECONDITION_PLAN="$task_preconditions_json"
+  SUGAR_BX_DETACH_JOB_ID="$detach_job_id"
   ((${#path_prefixes[@]} == 0)) || SUGAR_BX_PATH_PREFIXES=("${path_prefixes[@]}")
   ((${#env_names[@]} == 0)) || SUGAR_BX_ENV_NAMES=("${env_names[@]}")
   ((${#sync_backs[@]} == 0)) || SUGAR_BX_SYNC_BACKS=("${sync_backs[@]}")
@@ -289,6 +297,19 @@ dispatch_execution_subcommand() {
   [[ -n "$repo_root" ]] || { echo "sugarbin: must be run from inside a git checkout" >&2; return 2; }
   local_cwd="$(pwd -P)"
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
+  if [[ -n "$detach_job_id" ]]; then
+    if [[ "$route_env" != docker ]]; then
+      printf 'sugarbin: crime=unsupported-detached-execution-route host=%s env=%s jobId=%s replacement=detached jobs currently require a managed Docker environment\n' \
+        "$host" "$execution_env" "$detach_job_id" >&2
+      return 70
+    fi
+    if ((${#SUGAR_BX_SYNC_BACKS[@]} != 0)); then
+      printf 'sugarbin: crime=detached-sync-back-requires-collect jobId=%s owner=bin/sugarbin replacement=write subject receipts under SUGAR_BX_JOB_DIR and use sugarbin job collect after completion\n' \
+        "$detach_job_id" >&2
+      return 70
+    fi
+    sugar_bx_validate_detached_request "$detach_job_id" || return $?
+  fi
   [[ "$route_env" != docker ]] || sugar_bx_require_docker_ready || return $?
   sugar_bx_sync_workspace || return $?
   # Quiet gate is opt-in (SUGAR_BX_REQUIRE_QUIET / SUGAR_BX_MAX_LOADAVG).
@@ -464,12 +485,64 @@ sugarbin_bx_cargo() {
   sugar_bx_finish "$status"
 }
 
+dispatch_job_subcommand() {
+  local action="${1:-}"
+  [[ "$action" == status || "$action" == collect ]] || {
+    echo "sugarbin: job requires status or collect" >&2
+    return 2
+  }
+  shift
+  local host="bx" job_id="" output=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host)
+        [[ $# -ge 2 ]] || { echo "sugarbin: job --host requires a value" >&2; return 2; }
+        host="$2"; shift 2 ;;
+      --id)
+        [[ $# -ge 2 ]] || { echo "sugarbin: job --id requires a value" >&2; return 2; }
+        job_id="$2"; shift 2 ;;
+      --output)
+        [[ "$action" == collect && $# -ge 2 ]] || { echo "sugarbin: job collect --output requires a value" >&2; return 2; }
+        output="$2"; shift 2 ;;
+      *)
+        echo "sugarbin: unknown job $action argument: $1" >&2
+        return 2 ;;
+    esac
+  done
+  [[ "$host" == bx ]] || {
+    printf 'sugarbin: crime=unsupported-detached-execution-route host=%s replacement=detached jobs are owned by the battleaxe user systemd manager\n' "$host" >&2
+    return 70
+  }
+  [[ -n "$job_id" ]] || { echo "sugarbin: job $action requires --id" >&2; return 2; }
+  [[ "$action" != collect || -n "$output" ]] || { echo "sugarbin: job collect requires --output" >&2; return 2; }
+
+  local repo_root local_cwd
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$repo_root" ]] || { echo "sugarbin: must be run from inside a git checkout" >&2; return 2; }
+  local_cwd="$(pwd -P)"
+  # shellcheck source=bin/lib/sugar-bx.sh
+  source "$script_dir/lib/sugar-bx.sh"
+  BCARGO_REAP_DAYS=0 sugar_bx_init "$repo_root" "$local_cwd" || return $?
+  if [[ "$action" == status ]]; then
+    sugar_bx_detached_job_status "$job_id"
+    return $?
+  fi
+  [[ "$output" == /* ]] || output="$local_cwd/$output"
+  sugar_bx_collect_detached_job "$job_id" "$output"
+}
+
 lock_preflight=0
 case "${1:-}" in
   run|cargo|build|explain)
     subcommand="$1"
     shift
     dispatch_execution_subcommand "$subcommand" "$@"
+    exit $?
+    ;;
+  job)
+    [[ $# -ge 2 ]] || { echo "sugarbin: job requires status or collect" >&2; exit 2; }
+    shift
+    dispatch_job_subcommand "$@"
     exit $?
     ;;
   artifact)
@@ -486,6 +559,9 @@ esac
 usage() {
   cat <<'EOF'
 usage: bin/sugarbin [--bin <name>] [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
+       bin/sugarbin run --host bx --env docker:<closure> --detach <job-id> -- <command> [args...]
+       bin/sugarbin job status --host bx --id <job-id>
+       bin/sugarbin job collect --host bx --id <job-id> --output <local-dir>
        bin/sugarbin preflight-lock --bin <name> --profile <profile> --platform <key>
        bin/sugarbin artifact publish --kind python-demand-table --content-key <key> --input <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
        bin/sugarbin artifact pull --kind python-demand-table --content-key <key> --output <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
