@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
 if TYPE_CHECKING:  # pragma: no cover
     from .fragment import SourceFragment
 
+from .occurrence import SourceOccurrenceIdentityV1
 from .operators import (
     BinaryOperator,
     BooleanOperator,
@@ -650,11 +651,21 @@ class SourceUnit:
         typed module.  Re-walking class bodies here would create a second answer
         to the same ownership question, so consumers use that producer-owned
         relation directly.
+
+        The join is on the SOURCE OCCURRENCE (#7346-A), not on the Python shell
+        that views it: ``shadow.rewrite`` mints a fresh shell over the borrowed
+        origin span, and a rewritten function denotes the same occurrence the
+        producer walked.  Foreign occurrences still miss, and a miss is still
+        the loud zero-row ``BackendDefect`` -- there is no span-only fallback
+        and no second walk.  Exactly one row per occurrence remains the
+        producer's contract: ``None`` as the owner is authenticated no-owner,
+        zero rows is a failed join, more than one row is a malformed relation.
         """
+        occurrence = SourceOccurrenceIdentityV1.of(function)
         matches = tuple(
             owner
             for candidate, owner in self.constructed_module.function_class_owners
-            if candidate is function
+            if candidate == occurrence
         )
         if len(matches) != 1:
             raise BackendDefect(
@@ -4107,6 +4118,14 @@ class FunctionDef(Statement):
         last same-name initializer is Python's live class binding; overwritten
         definitions and genuinely free functions keep the ordinary formal
         entrance.
+
+        Active membership is decided on the SOURCE OCCURRENCE (#7346-B), not on
+        the shell.  ``owner.body`` holds the producer's shells; a reconstructed
+        ``__init__`` is a different shell denoting the same occurrence, and the
+        shell comparison silently reclassified the live initializer as
+        overwritten -- degrading its receiver entrance to an ordinary formal.
+        A genuinely overwritten initializer denotes a DIFFERENT occurrence and
+        stays inactive.
         """
         if self.name != "__init__":
             return None
@@ -4121,7 +4140,10 @@ class FunctionDef(Statement):
             ),
             None,
         )
-        return owner if active is self else None
+        if active is None:
+            return None
+        occurrence = SourceOccurrenceIdentityV1.of(self)
+        return owner if SourceOccurrenceIdentityV1.of(active) == occurrence else None
 
     def _constructed_receiver_coordinate(self, owner: "ClassDef", parameter: Param):
         """Mint the same receiver coordinate as the class-construction door."""
@@ -4512,8 +4534,16 @@ class ClassDef(Statement):
             or allocation.value.args[0].id != class_param.name
         ):
             return None
+        # Admission is decided on the SOURCE OCCURRENCE (#7346-C).  The name is
+        # bound exactly once at module level AND that one binding must be THIS
+        # occurrence -- a reconstructed shell of the same class is admitted, a
+        # foreign or shadowed class is not.
         bindings = (self.unit.module_direct_bindings or {}).get(self.name, ())
-        if len(bindings) != 1 or bindings[0] is not self:
+        if len(bindings) != 1 or not isinstance(bindings[0], Node):
+            return None
+        if SourceOccurrenceIdentityV1.of(bindings[0]) != (
+            SourceOccurrenceIdentityV1.of(self)
+        ):
             return None
         if (self.unit.module_direct_bindings or {}).get("super"):
             return None

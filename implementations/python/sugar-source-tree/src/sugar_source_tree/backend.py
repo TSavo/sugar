@@ -50,6 +50,7 @@ from .nodes import (
     Typeable,
     resolve_kind,
 )
+from .occurrence import SourceOccurrenceIdentityV1
 from .operators import Operator
 from .panic import BackendDefect, backend_defect
 from .reporter import NULL_REPORTER, AuditReporter
@@ -507,6 +508,8 @@ class _ConstructedModuleV1(_SealedBackendRelation):
     root: object
     closed_roll_call: object
     function_nodes: tuple[object, ...]
+    # Keyed by SourceOccurrenceIdentityV1, never by the producer's Node shell:
+    # a rewritten shell over the same occurrence must join this row (#7346-A).
     function_class_owners: tuple[tuple[object, object | None], ...]
     lexical_call_rows: tuple[object, ...]
     provider_member_rows: tuple[object, ...]
@@ -741,7 +744,9 @@ class Backend:
         positions = {
             id(node): position for position, node in enumerate(constructed_nodes)
         }
-        function_class_owners_list: list[tuple[Node, ClassDef | None]] = []
+        function_class_owners_list: list[
+            tuple[SourceOccurrenceIdentityV1, ClassDef | None]
+        ] = []
         for function in function_nodes:
             position = positions[id(function)]
             ancestor_position = parent_positions[position]
@@ -754,7 +759,9 @@ class Backend:
                     class_owner = ancestor
                     break
                 ancestor_position = parent_positions[ancestor_position]
-            function_class_owners_list.append((function, class_owner))
+            function_class_owners_list.append(
+                (SourceOccurrenceIdentityV1.of(function), class_owner)
+            )
         function_class_owners = tuple(function_class_owners_list)
         unit.bind_typed_module(
             root,
