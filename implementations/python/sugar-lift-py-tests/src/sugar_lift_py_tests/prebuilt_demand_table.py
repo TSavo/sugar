@@ -21,7 +21,7 @@ table must perform ZERO corpus walks (count them; do not time them).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -118,6 +118,7 @@ class PrebuiltDemandTableV1:
             "schema": self.schema,
             "corpusPin": self.corpus_pin.as_dict(),
             "rows": list(self.rows),
+            "semanticIdentity": self.semantic_identity.as_dict(),
         }
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -186,17 +187,15 @@ def mint_prebuilt_demand_table(
         sorted(corpus.root.rglob("*.py")),
         source_root=Path(__file__).resolve().parents[1],
     )
-    preimage = {
-        "schema": SCHEMA,
-        "corpusPin": pin.as_dict(),
-        "rows": list(rows),
-    }
-    return PrebuiltDemandTableV1(
-        content_cid=content_cid_for_preimage(preimage),
+    table = PrebuiltDemandTableV1(
+        content_cid="",
         corpus_pin=pin,
         rows=rows,
         semantic_identity=semantic_identity,
     )
+    # There is one preimage door: the validator authenticates table.preimage(),
+    # so minting must hash that exact method rather than a parallel dict.
+    return replace(table, content_cid=content_cid_for_preimage(table.preimage()))
 
 
 def write_prebuilt_demand_table(table: PrebuiltDemandTableV1, path: Path) -> Path:

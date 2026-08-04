@@ -1213,7 +1213,16 @@ def main() -> int:
                 f"RECENSUS DEMAND_TABLE wrote path={write_path} "
                 f"contentCid={table.content_cid}"
             )
-            publish_demand_table(table, write_path)
+            try:
+                publish_demand_table(table, write_path)
+            except DemandTableArtifactRefusal as refuse:
+                # Derivation is authenticated product input; CAS publication
+                # is only a sharing optimisation. Keep the local table, but
+                # never claim it was published or install it as a cache hit.
+                _narrate(
+                    "RECENSUS DEMAND_TABLE CAS publication refused after "
+                    f"successful derivation; continuing locally: {refuse}"
+                )
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
             refs = install_prebuilt_demand_table(table, root=workspace_root)
