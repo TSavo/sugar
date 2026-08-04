@@ -45,6 +45,7 @@ from .operators import (
     UnaryOperator,
 )
 from .panic import (
+    BackendDefect,
     backend_defect,
     RuntimeSelectedContextManager,
     SourceTreePanic,
