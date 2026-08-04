@@ -294,6 +294,60 @@ def function_def_memento(fn, file_rel: str):
     )
 
 
+def function_universe_outcome(fn):
+    """Construct one function universe through its authenticated entrance.
+
+    Ordinary functions reduce with symbolic formals.  The active ``__init__``
+    of a source class is different: its first parameter is the receiver that
+    the class constructor itself creates.  The backend's exact lexical-owner
+    relation selects that existing class door, and this seam seats the same
+    receiver coordinate before reducing the universe.  No spelling or inferred
+    parent walk is used.
+    """
+    sugar = fn.sugar()
+    owner = fn._active_initializer_owner()
+    if owner is None:
+        return sugar.desugar(None)
+
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if not fn.params:
+        raise SugarNotWritten(
+            owner="function_universe_outcome",
+            blame=fn.fragment,
+            observed="class initializer has no receiver parameter",
+            requested="the active initializer receiver coordinate",
+            fix="preserve the parsed receiver parameter on __init__",
+        )
+    receiver_coordinate = fn._constructed_receiver_coordinate(owner, fn.params[0])
+    definition_outcome = owner.sugar().desugar(None)
+    if not isinstance(definition_outcome, Complete) or not isinstance(
+        definition_outcome.value, ClassDefinitionValue
+    ):
+        raise SugarNotWritten(
+            owner="function_universe_outcome",
+            blame=owner.fragment,
+            observed=type(definition_outcome).__name__,
+            requested="the authenticated source class definition",
+            fix="construct the initializer through its lexical class owner",
+        )
+    receiver = definition_outcome.value.construct_receiver_state_from_block(
+        None, receiver_coordinate.cid
+    )
+    root = ReduceContext.root(owner="function_universe_outcome")
+    context = root.with_temporal(
+        root.temporal.bind_value(
+            receiver_coordinate.cid,
+            receiver,
+            blame=fn.fragment,
+        )
+    )
+    return sugar.desugar(context)
+
+
 def function_contract_rows(fn, file_rel: str):
     """A function's contract DTO rows, produced from its TREE universe.
 
@@ -308,7 +362,7 @@ def function_contract_rows(fn, file_rel: str):
     from sugar_lift_py_tests.outcome import Complete
 
     def_memento = function_def_memento(fn, file_rel)
-    outcome = fn.sugar().desugar(None)
+    outcome = function_universe_outcome(fn)
     if not isinstance(outcome, Complete):
         return def_memento, None  # an effect; not a contract
     return def_memento, outcome.value.payload_rows(def_memento)

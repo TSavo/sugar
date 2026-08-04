@@ -661,12 +661,14 @@ class FunctionUniverseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # No temporal name map and no ambient effect auth. The body was already
-        # SUBSTITUTED (FunctionDef.sugar): formals stay free Vars; as-bindings
-        # are EffectRef/ObservationRef coordinates. Routing deposits
-        # EffectBinding facts into the same record as other testimony.
-        del ctx
-        return reduce_body(self.statements).and_then(
+        # The body was already SUBSTITUTED (FunctionDef.sugar): ordinary
+        # formals stay free Vars; as-bindings are EffectRef/ObservationRef
+        # coordinates.  A class-owned initializer additionally carries one
+        # ConstructedReceiverRef coordinate, and its enumeration entrance seats
+        # that exact receiver in ``ctx``.  Threading the producer-owned context
+        # here lets the existing block reducer resolve it; callers without such
+        # authority continue to pass ``None`` and retain the ordinary behavior.
+        return reduce_body(self.statements, ctx).and_then(
             lambda record: Complete(
                 UniverseValue(
                     name=self.name,
