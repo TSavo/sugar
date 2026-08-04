@@ -203,6 +203,130 @@ class TargetPatternConstructionGapV1(TypeError):
         self.actual_coordinates = actual_coordinates
 
 
+_TARGET_PATTERN_ENROLLMENT_AUTHORITY = object()
+
+
+class TargetPatternEnrollmentV1:
+    """Closed producer-owned applicability outcome for the target relation.
+
+    ``SourceUnit.bind_typed_module`` already decides, during its one structural
+    walk, whether a constructed node is a target-pattern consumer.  Before this
+    type existed the walk published only positive rows, so a consumer that
+    wanted the applicability answer had to read the relation and treat an empty
+    tuple as "not enrolled" -- which also swallowed "the table was never built"
+    and "the enrolled row was stranded by a rewrite".
+
+    Exactly two variants exist and only the producer may mint them.  This type
+    answers *"is this shape enrolled?"* and nothing else; *"did my lookup find
+    the row?"* is answered separately and loudly by ``require_target_pattern``
+    / ``require_target_patterns``.  The two questions never share a value.
+    """
+
+    __slots__ = ("consumer_occurrence",)
+
+    _variants_closed = False
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        if TargetPatternEnrollmentV1._variants_closed:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-enrollment-variant-not-closed",
+                consumer_occurrence=cls,
+                target_occurrence=None,
+            )
+
+    def __init__(self, *, consumer_occurrence, _authority=None) -> None:
+        if _authority is not _TARGET_PATTERN_ENROLLMENT_AUTHORITY:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-enrollment-not-producer-minted",
+                consumer_occurrence=consumer_occurrence,
+                target_occurrence=None,
+            )
+        object.__setattr__(self, "consumer_occurrence", consumer_occurrence)
+
+    def __setattr__(self, name, value):  # pragma: no cover - immutability guard
+        raise TargetPatternConstructionGapV1(
+            "target-pattern-enrollment-is-immutable",
+            consumer_occurrence=self.consumer_occurrence,
+            target_occurrence=None,
+        )
+
+
+class TargetPatternEnrolledV1(TargetPatternEnrollmentV1):
+    """This occurrence is an enrolled target-pattern consumer.
+
+    ``enrolled_targets`` are the exact target occurrences the producer minted a
+    ``TargetPatternV1`` for.  The row itself is deliberately NOT carried here:
+    binding the product into the outcome requires the durable occurrence
+    identity ruled in #7346, which has not landed.  Until then the row is read
+    strictly and separately, so a stranded row refuses instead of degrading
+    into this value.
+    """
+
+    __slots__ = ("enrolled_targets", "_projection_sites")
+
+    def __init__(self, *, consumer_occurrence, projection_sites, _authority=None):
+        super().__init__(
+            consumer_occurrence=consumer_occurrence, _authority=_authority
+        )
+        sites = tuple(projection_sites)
+        object.__setattr__(self, "_projection_sites", sites)
+        object.__setattr__(
+            self, "enrolled_targets", tuple(target for target, _ in sites)
+        )
+        if not self.enrolled_targets:
+            raise TargetPatternConstructionGapV1(
+                "enrolled-target-pattern-consumer-without-targets",
+                consumer_occurrence=consumer_occurrence,
+                target_occurrence=None,
+            )
+
+    def covers(self, target) -> bool:
+        return any(
+            candidate is target or candidate.ref is target.ref
+            for candidate in self.enrolled_targets
+        )
+
+    def __repr__(self) -> str:
+        return f"TargetPatternEnrolledV1(targets={len(self.enrolled_targets)})"
+
+
+_TARGET_PATTERN_NON_ENROLLMENT_REASONS = frozenset(
+    {
+        # The node kind (or, for ``Assign``, every one of its targets) carries
+        # no lexical binding pattern at all.
+        "consumer-shape-not-enrolled",
+        # Candidate targets exist for this shape, but none of them introduces a
+        # lexical binding leaf (e.g. ``self.a, self.b = ...``: pure store).
+        "no-binding-leaf-target",
+    }
+)
+
+
+class TargetPatternNotEnrolledV1(TargetPatternEnrollmentV1):
+    """This occurrence is lawfully outside the target-pattern relation."""
+
+    __slots__ = ("reason",)
+
+    def __init__(self, *, consumer_occurrence, reason, _authority=None):
+        super().__init__(
+            consumer_occurrence=consumer_occurrence, _authority=_authority
+        )
+        if reason not in _TARGET_PATTERN_NON_ENROLLMENT_REASONS:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-non-enrollment-reason-not-declared",
+                consumer_occurrence=consumer_occurrence,
+                target_occurrence=None,
+            )
+        object.__setattr__(self, "reason", reason)
+
+    def __repr__(self) -> str:
+        return f"TargetPatternNotEnrolledV1({self.reason!r})"
+
+
+TargetPatternEnrollmentV1._variants_closed = True
+
+
 _TARGET_PATTERN_RECEIPT_AUTHORITY = object()
 
 
@@ -763,31 +887,17 @@ class SourceUnit:
         patterns_by_target = {}
         constructed_count = 0
         for consumer in constructed_nodes:
-            targets = ()
-            if isinstance(consumer, Assign):
-                targets = tuple(
-                    (target, ("targets", target_index))
-                    for target_index, target in enumerate(consumer.targets)
-                    if isinstance(target, (Tuple_, List))
-                    and self._is_binding_target_pattern(target)
-                )
-            elif isinstance(consumer, For):
-                targets = ((consumer.target, ("target",)),)
-            elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
-                targets = tuple(
-                    (generator.target, ("generators", index, "target"))
-                    for index, generator in enumerate(consumer.generators)
-                )
-            if not targets:
+            # ONE decision, published.  The walk and every consumer of the
+            # applicability question call the same function; nobody re-derives
+            # enrollment from node kinds or from an empty relation read.
+            enrollment = self.target_pattern_enrollment(consumer)
+            if not isinstance(enrollment, TargetPatternEnrolledV1):
                 continue
             owned = tuple(
-                pattern
-                for target, prefix in targets
-                if (pattern := self._construct_target_pattern(consumer, target, prefix))
-                is not None
+                self._construct_target_pattern(consumer, target, prefix)
+                for target, prefix in enrollment._projection_sites
             )
-            if owned:
-                patterns[consumer.ref] = owned
+            patterns[consumer.ref] = owned
             patterns_by_target.update(
                 (pattern.target_occurrence.ref, pattern) for pattern in owned
             )
@@ -810,6 +920,71 @@ class SourceUnit:
                 SourceUnit._is_binding_target_pattern(child) for child in target.elts
             )
         return False
+
+    @staticmethod
+    def _owns_binding_leaf(target) -> bool:
+        """True when this target introduces at least one lexical binding leaf.
+
+        ``_construct_target_pattern`` mints a product exactly when this holds.
+        One predicate serves both the producer walk and the published
+        enrollment outcome, so there is no second answer to enrollment.
+        """
+        if isinstance(target, Name):
+            return True
+        if isinstance(target, Starred):
+            return SourceUnit._owns_binding_leaf(target.value)
+        if isinstance(target, (Tuple_, List)):
+            return any(
+                SourceUnit._owns_binding_leaf(child) for child in target.elts
+            )
+        return False
+
+    def target_pattern_enrollment(self, consumer) -> TargetPatternEnrollmentV1:
+        """The producer's ONE closed applicability decision for a consumer.
+
+        Total and lookup-free: it answers "is this shape enrolled?" without
+        touching the relation table, so it cannot be confused with "did my
+        lookup find the row?".  ``bind_typed_module`` calls this same function
+        while walking, which is what makes it authoritative rather than a
+        reconstruction.
+        """
+        sites = ()
+        if isinstance(consumer, Assign):
+            sites = tuple(
+                (target, ("targets", target_index))
+                for target_index, target in enumerate(consumer.targets)
+                if isinstance(target, (Tuple_, List))
+                and self._is_binding_target_pattern(target)
+            )
+        elif isinstance(consumer, For):
+            sites = ((consumer.target, ("target",)),)
+        elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
+            sites = tuple(
+                (generator.target, ("generators", index, "target"))
+                for index, generator in enumerate(consumer.generators)
+            )
+        if not sites:
+            return TargetPatternNotEnrolledV1(
+                consumer_occurrence=consumer,
+                reason="consumer-shape-not-enrolled",
+                _authority=_TARGET_PATTERN_ENROLLMENT_AUTHORITY,
+            )
+        binding_sites = tuple(
+            (target, prefix)
+            for target, prefix in sites
+            if self._owns_binding_leaf(target)
+        )
+        if not binding_sites:
+            return TargetPatternNotEnrolledV1(
+                consumer_occurrence=consumer,
+                reason="no-binding-leaf-target",
+                _authority=_TARGET_PATTERN_ENROLLMENT_AUTHORITY,
+            )
+        return TargetPatternEnrolledV1(
+            consumer_occurrence=consumer,
+            projection_sites=binding_sites,
+            _authority=_TARGET_PATTERN_ENROLLMENT_AUTHORITY,
+        )
 
     def _construct_target_pattern(
         self, consumer, target, prefix
@@ -842,7 +1017,14 @@ class SourceUnit:
 
         visit(target, prefix)
         if not ordered:
-            return None
+            # Unreachable: the producer only mints for sites the published
+            # enrollment decision named.  Loud rather than ``None`` so the two
+            # can never silently diverge.
+            raise TargetPatternConstructionGapV1(
+                "enrolled-target-without-binding-leaf",
+                consumer_occurrence=consumer,
+                target_occurrence=target,
+            )
         owner_cid = (
             consumer.owned_loop_target.target_cid
             if isinstance(consumer, For) and consumer.owned_loop_target is not None
@@ -865,15 +1047,59 @@ class SourceUnit:
             coordinates=coordinates,
         )
 
-    def target_patterns_for(self, consumer: "Node") -> tuple[TargetPatternV1, ...]:
+    def _seated_target_patterns(self, consumer):
+        """Raw relation read.  ``None`` means exactly one thing: lookup missed.
+
+        Callers never see this; every public reader turns a miss into a typed
+        refusal.  Non-enrollment is not expressible here -- that question is
+        answered by ``target_pattern_enrollment`` and by nothing else.
+        """
         patterns = self._target_patterns_by_consumer
         if patterns is None:
-            return ()
-        return patterns.get(consumer.ref, ())
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-table-not-built",
+                consumer_occurrence=consumer,
+                target_occurrence=None,
+            )
+        return patterns.get(consumer.ref)
+
+    def require_target_patterns(
+        self, consumer: "Node"
+    ) -> tuple[TargetPatternV1, ...]:
+        """Strict read of an ENROLLED consumer's producer-owned products.
+
+        Three facts that used to collapse into one empty tuple now have three
+        distinct representations:
+
+        * table never built  -> ``target-pattern-table-not-built`` refusal;
+        * lawfully not enrolled -> ``TargetPatternNotEnrolledV1`` (a value,
+          obtained from ``target_pattern_enrollment``, never from here);
+        * enrolled but stranded -> ``foreign-target-occurrence`` refusal.
+        """
+        enrollment = self.target_pattern_enrollment(consumer)
+        if not isinstance(enrollment, TargetPatternEnrolledV1):
+            raise TargetPatternConstructionGapV1(
+                "not-an-enrolled-target-pattern-consumer",
+                consumer_occurrence=consumer,
+                target_occurrence=None,
+            )
+        owned = self._seated_target_patterns(consumer)
+        if not owned:
+            raise TargetPatternConstructionGapV1(
+                "foreign-target-occurrence",
+                consumer_occurrence=consumer,
+                target_occurrence=None,
+            )
+        return owned
 
     def retain_target_patterns(self, source_consumer, rewritten_consumer) -> None:
         """Seat one rewrite with its exact source consumer's immutable products."""
-        owned = self.target_patterns_for(source_consumer)
+        enrollment = self.target_pattern_enrollment(source_consumer)
+        owned = (
+            self._seated_target_patterns(source_consumer)
+            if isinstance(enrollment, TargetPatternEnrolledV1)
+            else None
+        )
         if not owned or type(rewritten_consumer) is not type(source_consumer):
             raise TargetPatternConstructionGapV1(
                 "foreign-target-consumer-rewrite",
@@ -884,9 +1110,16 @@ class SourceUnit:
         patterns[rewritten_consumer.ref] = owned
 
     def require_target_pattern(self, consumer, target) -> TargetPatternV1:
-        for pattern in self.target_patterns_for(consumer):
-            if pattern.target_occurrence.ref is target.ref:
-                return pattern
+        enrollment = self.target_pattern_enrollment(consumer)
+        if isinstance(enrollment, TargetPatternEnrolledV1):
+            for pattern in self._seated_target_patterns(consumer) or ():
+                if pattern.target_occurrence.ref is target.ref:
+                    return pattern
+        # Not-enrolled and lookup-missed are both refusals HERE by design: this
+        # door promises one exact enrolled pair or nothing.  Telling a foreign
+        # consumer apart from a stranded same-unit one needs the durable
+        # occurrence identity ruled in #7346; the reason string is unchanged
+        # until then so no existing refusal is weakened.
         raise TargetPatternConstructionGapV1(
             "foreign-target-occurrence",
             consumer_occurrence=consumer,
@@ -1969,9 +2202,17 @@ class Node(Typed):
         return cache
 
     @property
-    def target_patterns(self) -> tuple[TargetPatternV1, ...]:
-        """The eager occurrence-owned target products for this consumer."""
-        return self.unit.target_patterns_for(self)
+    def target_pattern_enrollment(self) -> TargetPatternEnrollmentV1:
+        """Is this shape an enrolled target-pattern consumer? (closed answer)"""
+        return self.unit.target_pattern_enrollment(self)
+
+    def require_target_patterns(self) -> tuple[TargetPatternV1, ...]:
+        """The eager occurrence-owned target products for an ENROLLED consumer.
+
+        Refuses rather than returning an empty tuple: absence of enrollment is
+        ``target_pattern_enrollment``, not a smaller product.
+        """
+        return self.unit.require_target_patterns(self)
 
     def __getattr__(self, name: str):
         # Field data is memoized on the unit once per site; this shell exposes it.
@@ -5184,7 +5425,12 @@ class Assign(Statement):
         if not changes:
             return self
         rewritten = rewrite(self, **changes)
-        if self.unit.target_patterns_for(self):
+        # Ask the applicability question, not the relation.  An enrolled Assign
+        # whose row went missing now refuses inside ``retain_target_patterns``
+        # instead of being mistaken for an ordinary/store target.
+        if isinstance(
+            self.unit.target_pattern_enrollment(self), TargetPatternEnrolledV1
+        ):
             self.unit.retain_target_patterns(self, rewritten)
         return rewritten
 
@@ -5310,7 +5556,13 @@ class Assign(Statement):
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)):
             return None
-        if not self.unit.target_patterns_for(self):
+        enrollment = self.unit.target_pattern_enrollment(self)
+        if not isinstance(
+            enrollment, TargetPatternEnrolledV1
+        ) or not enrollment.covers(target):
+            # Lawful fall-through: mixed / pure-store unpack owns no binding
+            # pattern.  This arm is now reached ONLY for authentic
+            # non-enrollment; a stranded enrolled row goes loud below.
             return None
         pattern = self.unit.require_target_pattern(self, target)
         return pattern.bindings_for(self.value)
@@ -9986,17 +10238,15 @@ class ListComp(Expression):
             target_pattern = None
             target_coordinates = ()
             if target.coordinates is not None:
-                matching_patterns = tuple(
-                    pattern
-                    for pattern in self.unit.target_patterns_for(self)
-                    if pattern.target_occurrence.ref is gen.target.ref
+                # A destructuring generator target IS an enrolled consumer
+                # site.  Zero rows here is a stranded relation, never "this
+                # comprehension is symbolic" -- so read strictly and let the
+                # refusal out instead of degrading to ``target_pattern=None``.
+                target_pattern = self.unit.require_target_pattern(self, gen.target)
+                target_coordinates = target_pattern.target_coordinates
+                self.unit.require_target_pattern_coordinates(
+                    target_pattern, target_coordinates
                 )
-                if len(matching_patterns) == 1:
-                    target_pattern = matching_patterns[0]
-                    target_coordinates = target_pattern.target_coordinates
-                    self.unit.require_target_pattern_coordinates(
-                        target_pattern, target_coordinates
-                    )
             specs.append(
                 ComprehensionGeneratorSugar(
                     target=target,

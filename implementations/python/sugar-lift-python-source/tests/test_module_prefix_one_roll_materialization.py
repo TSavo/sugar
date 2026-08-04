@@ -80,7 +80,7 @@ def test_module_prefix_tables_are_from_one_reporter_roll(monkeypatch, name) -> N
             assert binding.unit is unit
 
     assign = source_file.root.body[1]
-    patterns = unit.target_patterns_for(assign)
+    patterns = unit.require_target_patterns(assign)
     assert len(patterns) == 1
     assert patterns[0].consumer_occurrence is assign
     assert patterns[0].source_unit is unit
