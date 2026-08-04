@@ -43,11 +43,10 @@ class Holder:
 """
 
 LEXICAL_SOURCE = """\
-def helper(value):
-    return value
-
-
 def caller(value):
+    def helper(item):
+        return item
+
     return helper(value)
 """
 
@@ -300,21 +299,24 @@ def test_producer_walk_and_published_enrollment_are_one_answer(
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#7348 lexical arm is prerequisite-blocked on #7346. The lexical "
-        "enrollment decision is not a function of the call node -- it needs "
-        "the backend's scope/binding classification -- so publishing it "
-        "requires a keyed negative table, and a shell/ref-keyed one would "
-        "preserve the same defect under a second carrier. Inventing the key "
-        "here would be a second answer. This tooth XPASSes loudly the moment "
-        "the closed lexical outcome lands."
-    ),
-)
 def test_stranded_enrolled_lexical_call_refuses_instead_of_shrugging(
     tmp_path: Path,
 ) -> None:
+    """HARD RED, deliberately. Do not xfail, skip, or delete this.
+
+    The #7348 lexical arm is prerequisite-blocked on #7346: the lexical
+    enrollment decision is not a function of the call node -- it needs the
+    backend's scope/binding classification -- so publishing it requires a
+    keyed negative table, and a shell/ref-keyed one would preserve the same
+    defect under a second carrier. Inventing the key here would be a second
+    answer.
+
+    So the hole is real and unfixed today. A strict-xfail would render this
+    board green over a known hole, which is the exact failure this project
+    treats as fatal. Merges here are not gated on CI, so a standing red
+    blocks nothing -- it only stays visible. It turns green when, and only
+    when, the closed lexical outcome lands.
+    """
     source_file = _open(tmp_path, "lexical.py", LEXICAL_SOURCE)
     call = next(node for node in source_file.nodes() if node.kind == "Call")
     unit = source_file.unit
