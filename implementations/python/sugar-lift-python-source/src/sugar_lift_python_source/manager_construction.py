@@ -676,9 +676,9 @@ def _session_lexical_import_runner(session: SourceResolutionSession, module):
     )
     from sugar_source_tree.tree import SourceFile
 
-    source_file = session.prefix_file_hit(module.source_cid)
+    source_file = session.prefix_file_hit(module.source_cid, module.source_seat)
     if source_file is None:
-        resident = get_resident(module.source_cid)
+        resident = get_resident(module.source_cid, module.source_seat)
         if resident is not None:
             source_file = resident.source_file
     if source_file is not None:
@@ -890,7 +890,7 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     # used to rebuild config.py once per export locus (measured 33× SourceFile
     # on one _json open after the frame-door memo). Value is context-bound to
     # this session — never process-global.
-    source_file = session.prefix_file_hit(module.source_cid)
+    source_file = session.prefix_file_hit(module.source_cid, module.source_seat)
     if source_file is None:
         construction_context = TreeConstructionContextV1.for_source_call_construction()
         producer_reporter = ConstructionTestimonyReporterV1(
@@ -901,7 +901,7 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
             reporter=producer_reporter,
             construction_context=construction_context,
         )
-        session.remember_prefix_file(module.source_cid, source_file)
+        session.remember_prefix_file(module.source_cid, module.source_seat, source_file)
     construction_context = source_file.unit.construction_context
     locus_key = (locus.lineno, locus.col_offset)
     prefix = tuple(

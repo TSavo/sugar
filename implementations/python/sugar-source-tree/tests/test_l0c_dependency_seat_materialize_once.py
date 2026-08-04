@@ -31,17 +31,21 @@ def _install_root() -> Path:
     return Path(metadata.distribution("pandas").locate_file("")).resolve()
 
 
-def test_same_content_many_seats_one_prepare() -> None:
+def test_same_content_same_seat_hits_alternate_seat_misses() -> None:
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
 
     clear_process_resident_files()
     body = "def f():\n    return 1\n"
     cid = blake3_512_of(body.encode("utf-8"))
-    for i in range(35):
-        SourceFile((body, f"seat_{i}/enum.py", cid))
-    assert prepare_count_for(cid) == 1, prepare_count_for(cid)
-    assert resident_size() == 1
+    first = SourceFile((body, "seat_0/enum.py", cid))
+    repeat = SourceFile((body, "seat_0/enum.py", cid))
+    alternate = SourceFile((body, "seat_1/enum.py", cid))
+    assert repeat is first
+    assert alternate is not first
+    assert prepare_count_for(cid, "seat_0/enum.py") == 1
+    assert prepare_count_for(cid, "seat_1/enum.py") == 1
+    assert resident_size() == 2
 
 
 def test_sourcefile_constructor_returns_resident_identity() -> None:
@@ -53,8 +57,9 @@ def test_sourcefile_constructor_returns_resident_identity() -> None:
     cid = blake3_512_of(body.encode("utf-8"))
     a = SourceFile((body, "pkg/a.py", cid))
     b = SourceFile((body, "other/a.py", cid))
-    assert a is b
-    assert prepare_count_for(cid) == 1
+    assert a is not b
+    assert prepare_count_for(cid, "pkg/a.py") == 1
+    assert prepare_count_for(cid, "other/a.py") == 1
 
 
 def test_json_open_enum_and_config_at_most_once() -> None:
@@ -73,6 +78,7 @@ def test_json_open_enum_and_config_at_most_once() -> None:
         sf = open_source_file_for_construction(
             path,
             root=install_root,
+            distribution="pandas",
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
             populate_derived=True,
         )

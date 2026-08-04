@@ -1853,7 +1853,7 @@ def _roll_call_audit_leaf(
 
     reporter = CollectingReporter()
     resident_before_open = (
-        get_resident(expected_source_cid) if expected_source_cid is not None else None
+        get_resident(expected_source_cid, str(full_path)) if expected_source_cid is not None else None
     )
     source_file = None
     try:

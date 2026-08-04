@@ -1,8 +1,7 @@
 """Enumeration protocol §4 — process-resident file context under content CID.
 
-Law: prepare once per whole-file content CID; descendants reuse; changing
-bytes changes the CID and misses. The tooth that made the violation
-unrepresentable: two consumers of the same module content prepare ONCE.
+Law: prepare once per whole-file content CID and source seat; descendants
+reuse; changing bytes or seat changes the identity and misses.
 """
 
 from __future__ import annotations
@@ -24,17 +23,19 @@ def setup_function() -> None:
     clear_process_resident_files()
 
 
-def test_same_content_cid_prepares_once_from_two_consumer_seats() -> None:
-    """§4 tooth: two different seats, same content CID → MaterializeModule once."""
+def test_same_content_cid_binds_source_seat() -> None:
+    """Same seat hits; alternate seat misses; repeat remains a hit."""
     body = "def shared(value):\n    return value\n"
     cid = blake3_512_of(body.encode("utf-8"))
     a = SourceFile(_identity(body, "consumer_a/dep.py"))
     b = SourceFile(_identity(body, "consumer_b/dep.py"))
     assert a.unit.source_cid == b.unit.source_cid == cid
-    assert a.unit is b.unit  # same preparation
-    assert a.root is b.root
-    assert prepare_count_for(cid) == 1
-    assert resident_size() == 1
+    assert a.unit is not b.unit
+    repeat = SourceFile(_identity(body, "consumer_a/dep.py"))
+    assert repeat is a
+    assert prepare_count_for(cid, "consumer_a/dep.py") == 1
+    assert prepare_count_for(cid, "consumer_b/dep.py") == 1
+    assert resident_size() == 2
 
 
 def test_changed_bytes_change_cid_and_miss() -> None:

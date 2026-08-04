@@ -294,12 +294,14 @@ class SourceResolutionSession:
 
     # -- prefix-door SourceFile + fallthrough (export path) --------------
 
-    def prefix_file_hit(self, source_cid: str) -> Any | None:
-        return self.prefix_files.get(source_cid) if self.enabled else None
+    def prefix_file_hit(self, source_cid: str, source_seat: str) -> Any | None:
+        return self.prefix_files.get((source_cid, source_seat)) if self.enabled else None
 
-    def remember_prefix_file(self, source_cid: str, source_file: Any) -> None:
+    def remember_prefix_file(
+        self, source_cid: str, source_seat: str, source_file: Any
+    ) -> None:
         if self.enabled:
-            self.prefix_files[source_cid] = source_file
+            self.prefix_files[(source_cid, source_seat)] = source_file
 
     def fallthrough_hit(self, key: tuple) -> bool | None:
         if not self.enabled:

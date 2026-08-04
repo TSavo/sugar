@@ -1,11 +1,11 @@
-"""Enumeration protocol §4 — process-resident file context under content CID.
+"""Enumeration protocol §4 — process-resident file context under content CID + seat.
 
 Law (``protocol/specs/2026-07-08-enumeration-protocol.md`` §4):
 
     Inside the Python kit, demanded file context is process-resident under the
-    whole-file content CID. A file request parses and prepares module temporal
-    context once for that CID; distinct demanded descendants reuse it. Changing
-    the file changes the CID and therefore misses without a staleness check.
+    whole-file content CID and source seat. A file request parses and prepares
+    module temporal context once for that identity; a different seat is a
+    different typed object and therefore misses.
 
 This is not a new invention and not an optional cache. The protocol makes
 re-deriving the same content for every consumer **unrepresentable**: same CID
@@ -42,7 +42,7 @@ def _resident_limit() -> int:
 class ProcessResidentFileContext:
     """One whole-file content CID's prepared body, process-resident.
 
-    ``prepare_count`` is the number of times this CID paid MaterializeModule
+    ``prepare_count`` is the number of times this CID/seat paid MaterializeModule
     in this process (protocol: must be 1 after first demand).
     """
 
@@ -53,12 +53,12 @@ class ProcessResidentFileContext:
     prepare_count: int
 
 
-# content CID -> resident context (LRU by access)
-_RESIDENT: collections.OrderedDict[str, ProcessResidentFileContext] = (
+# (content CID, source seat) -> resident context (LRU by access)
+_RESIDENT: collections.OrderedDict[tuple[str, str], ProcessResidentFileContext] = (
     collections.OrderedDict()
 )
 # Teeth: prepare counts even after eviction from the LRU window
-_PREPARE_COUNTS: dict[str, int] = {}
+_PREPARE_COUNTS: dict[tuple[str, str], int] = {}
 
 # §4 module temporal context: lexical import preparation (call + value rows).
 # Content-derived; not a consumer projection shell. Keyed by content CID plus
@@ -67,9 +67,11 @@ _LEXICAL: collections.OrderedDict[tuple, Any] = collections.OrderedDict()
 _LEXICAL_PREPARE_COUNTS: dict[str, int] = {}
 
 
-def prepare_count_for(source_cid: str) -> int:
-    """How many times this content CID has paid full SourceFile prepare."""
-    return int(_PREPARE_COUNTS.get(source_cid, 0))
+def prepare_count_for(source_cid: str, source_seat: str | None = None) -> int:
+    """How many times this CID (optionally seat) paid full SourceFile prepare."""
+    if source_seat is not None:
+        return int(_PREPARE_COUNTS.get((source_cid, source_seat), 0))
+    return sum(n for (cid, _seat), n in _PREPARE_COUNTS.items() if cid == source_cid)
 
 
 def lexical_prepare_count_for(source_cid: str) -> int:
@@ -89,17 +91,18 @@ def clear_process_resident_files() -> None:
     _LEXICAL_PREPARE_COUNTS.clear()
 
 
-def _remember(source_cid: str, ctx: ProcessResidentFileContext) -> None:
-    _RESIDENT[source_cid] = ctx
-    _RESIDENT.move_to_end(source_cid)
+def _remember(source_cid: str, source_seat: str, ctx: ProcessResidentFileContext) -> None:
+    key = (source_cid, source_seat)
+    _RESIDENT[key] = ctx
+    _RESIDENT.move_to_end(key)
     while len(_RESIDENT) > _resident_limit():
         _RESIDENT.popitem(last=False)
 
 
-def get_resident(source_cid: str) -> ProcessResidentFileContext | None:
-    hit = _RESIDENT.get(source_cid)
+def get_resident(source_cid: str, source_seat: str) -> ProcessResidentFileContext | None:
+    hit = _RESIDENT.get((source_cid, source_seat))
     if hit is not None:
-        _RESIDENT.move_to_end(source_cid)
+        _RESIDENT.move_to_end((source_cid, source_seat))
     return hit
 
 
@@ -110,7 +113,7 @@ def source_file_from_identity(
     reporter: Any = None,
     construction_context: object | None = None,
 ) -> Any:
-    """Return SourceFile for identity, preparing at most once per content CID.
+    """Return SourceFile for identity, preparing at most once per CID and seat.
 
     Implements §4 at the construction door every demand already walks.
     """
@@ -127,7 +130,7 @@ def source_file_from_identity(
             construction_context=construction_context,
         )
 
-    hit = get_resident(source_cid)
+    hit = get_resident(source_cid, filename)
     if hit is not None:
         # Protocol: distinct demanded descendants reuse preparation.
         # Rebind consumer construction_context when provided so seating writes
@@ -140,8 +143,9 @@ def source_file_from_identity(
             sf.reporter = reporter
         return sf
 
-    # Miss: content CID not prepared. Pay once; changing bytes → new CID → miss.
-    _PREPARE_COUNTS[source_cid] = _PREPARE_COUNTS.get(source_cid, 0) + 1
+    # Miss: this CID/seat not prepared. Pay once; changing bytes or seat misses.
+    count_key = (source_cid, filename)
+    _PREPARE_COUNTS[count_key] = _PREPARE_COUNTS.get(count_key, 0) + 1
     sf = SourceFile._prepare_uncached(
         identity,
         backend=backend if backend is not None else _default_backend(),
@@ -150,12 +154,13 @@ def source_file_from_identity(
     )
     _remember(
         source_cid,
+        filename,
         ProcessResidentFileContext(
             source_cid=source_cid,
             source=source,
             filename=filename,
             source_file=sf,
-            prepare_count=_PREPARE_COUNTS[source_cid],
+            prepare_count=_PREPARE_COUNTS[count_key],
         ),
     )
     return sf
