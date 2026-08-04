@@ -211,7 +211,7 @@ run_suite() {
 
   echo "== prove $suite =="
   set +e
-  (cd "$dir" && "$SUGAR" prove . --json) > "$dir/.prove.json" 2>&1
+  (cd "$dir" && "$SUGAR" prove . --json) > "$dir/.prove.json"
   set -e
 
   local got_consistency got_witness
@@ -255,7 +255,7 @@ run_suite() {
     # We still capture the exit code for the diagnostic message so a genuine
     # crash (nonzero rc AND no parseable witness verdict) is named, not silent.
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
     local verify_rc=$?
     set -e
     local verify_verdict
@@ -268,7 +268,7 @@ run_suite() {
 
     rm -rf "$dir/.sugar/witnesses"
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json"
     local recompute_rc=$?
     set -e
     local recompute_strategy

@@ -811,7 +811,7 @@ fi
 echo "proof: $(basename "$proof_path")"
 
 echo "== verify std/core selected source slice =="
-(cd "$PROJECT" && "$SUGAR" verify --project . --json) > "$PROJECT/.verify.json" 2>&1 || true
+(cd "$PROJECT" && "$SUGAR" verify --project . --json) > "$PROJECT/.verify.json" || true
 
 python3 - "$PROJECT/.verify.json" "$TARGET_POINTER_WIDTH" "$TARGET_POINTER_BYTES" <<'PY'
 import json

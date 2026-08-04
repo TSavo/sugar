@@ -279,7 +279,7 @@ run_suite() {
 
   echo "== prove $suite =="
   set +e
-  (cd "$dir" && "$SUGAR" prove . --json) > "$dir/.prove.json" 2>&1
+  (cd "$dir" && "$SUGAR" prove . --json) > "$dir/.prove.json"
   local prove_rc=$?
   set -e
   : "$prove_rc"
@@ -289,7 +289,7 @@ run_suite() {
   if [ "$expect_witness" = "discharged" ]; then
     echo "== verify $suite witness =="
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
     local verify_rc=$?
     set -e
     : "$verify_rc"
