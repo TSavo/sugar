@@ -1155,6 +1155,16 @@ class SourceUnit:
             # silently dropped relation row is the exact defect class this
             # repair exists to end.  The invariant is believed, not proven, so
             # it is stated executably here instead of in a comment.
+            #
+            # The two writes are INDEPENDENTLY reachable and neither is the
+            # other's shadow, which is why both are guarded and both have a
+            # tooth.  A blanket collapse of every occurrence only ever reaches
+            # the consumer write -- it raises before the target loop runs -- so
+            # the target write needs its own lever: collapse ONE grammar kind
+            # (``Tuple``) and the two consumers stay distinct while their
+            # targets claim one key.  Both levers are exercised, and each guard
+            # dies alone under mutation (see
+            # test_the_two_duplicate_key_guards_are_independently_reachable).
             consumer_key = SourceOccurrenceIdentityV1.of(consumer)
             if consumer_key in patterns:
                 raise TargetPatternConstructionGapV1(

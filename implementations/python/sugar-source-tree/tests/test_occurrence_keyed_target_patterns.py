@@ -255,6 +255,108 @@ def test_a_duplicate_source_occurrence_key_refuses_instead_of_overwriting(
     assert seated != proposed
 
 
+_TWO_TARGETS = """\
+def fixture_target_collision(value_first, value_second):
+    head_first, tail_first = split_first(value_first)
+    head_second, tail_second = split_second(value_second)
+    return head_first, tail_first, head_second, tail_second
+"""
+
+
+def _collide_only(monkeypatch: pytest.MonkeyPatch, node_kind: str):
+    """Collapse the occurrence of ONE grammar kind, leaving every other real.
+
+    The lever the target-side guard needs.  Collapsing every occurrence makes
+    the CONSUMER keys collide first, and the consumer guard raises before the
+    target loop is ever reached -- which is why a blanket collapse cannot
+    exercise the target write.  Collapsing only ``Tuple`` leaves the two
+    ``Assign`` consumers genuinely distinct and drives two different consumers
+    into one target key.
+    """
+    real = occurrence.SourceOccurrenceIdentityV1.of.__func__
+    collapsed = occurrence.SourceOccurrenceIdentityV1(
+        file="collision.py",
+        source_cid="blake3-512:collapsed-target",
+        start=0,
+        end=0,
+        node_kind=node_kind,
+    )
+
+    def selective(cls, node):
+        # ``node.kind`` is the grammar kind on the NODE; the occurrence spells
+        # the same fact as ``node_kind``.  Reading ``.kind`` off the occurrence
+        # returns nothing -- that attribute does not exist there.
+        return collapsed if node.kind == node_kind else real(cls, node)
+
+    monkeypatch.setattr(
+        occurrence.SourceOccurrenceIdentityV1, "of", classmethod(selective)
+    )
+    return collapsed
+
+
+def test_two_target_patterns_claiming_one_occurrence_refuse_on_the_target_side(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TOOTH -- the target-side write, exercised on its own.
+
+    Two DISTINCT enrolled consumers whose targets collapse to one occurrence.
+    The consumer keys stay distinct, so the consumer guard cannot fire and the
+    target guard is the only thing standing between this and a silently
+    dropped pattern row.
+    """
+    collapsed = _collide_only(monkeypatch, "Tuple")
+
+    with pytest.raises(nodes.TargetPatternConstructionGapV1) as collision:
+        _open_text(tmp_path, "target_collision.py", _TWO_TARGETS)
+
+    # The TARGET refusal by name -- not the consumer one, which never ran.
+    assert collision.value.reason == "duplicate-target-pattern-target-occurrence"
+    key, seated, proposed = collision.value.target_pattern
+    assert key is collapsed
+    # Two different patterns, from two different consumers, one target key.
+    assert seated is not proposed
+    assert seated.consumer_occurrence is not proposed.consumer_occurrence
+
+
+def test_the_two_duplicate_key_guards_are_independently_reachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither guard is the other's shadow.
+
+    Collapsing ``Tuple`` reaches the TARGET write with distinct consumer keys;
+    collapsing ``Assign`` collides the CONSUMER keys first.  Two different
+    levers, two different refusals, so deleting either one loses a door that
+    the other does not cover.
+    """
+    _collide_only(monkeypatch, "Tuple")
+    with pytest.raises(nodes.TargetPatternConstructionGapV1) as target_side:
+        _open_text(tmp_path, "reach_target.py", _TWO_TARGETS)
+    assert target_side.value.reason == "duplicate-target-pattern-target-occurrence"
+
+    monkeypatch.undo()
+
+    _collide_only(monkeypatch, "Assign")
+    with pytest.raises(nodes.TargetPatternConstructionGapV1) as consumer_side:
+        _open_text(tmp_path, "reach_consumer.py", _TWO_TARGETS)
+    assert consumer_side.value.reason == "duplicate-target-pattern-consumer-occurrence"
+
+
+def test_two_destructuring_assigns_seat_two_rows_when_nothing_is_collapsed(
+    tmp_path: Path,
+) -> None:
+    """CONTROL for both collision teeth: the unpatched fixture is lawful."""
+    source_file = _open_text(tmp_path, "target_collision_control.py", _TWO_TARGETS)
+    assigns = [node for node in source_file.nodes() if node.kind == "Assign"]
+    assert len(assigns) == 2
+    targets = {
+        occurrence.SourceOccurrenceIdentityV1.of(assign.targets[0])
+        for assign in assigns
+    }
+    assert len(targets) == 2, "fixture's two targets must be two occurrences"
+    for assign in assigns:
+        assert len(assign.require_target_patterns()) == 1
+
+
 @pytest.mark.parametrize("shape", sorted(_SHAPES))
 def test_a_foreign_units_occurrence_never_joins_this_units_relation(
     shape, tmp_path: Path
