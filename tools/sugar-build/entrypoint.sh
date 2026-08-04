@@ -76,4 +76,15 @@ PY
   fi
 fi
 
+if [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]]; then
+  managed_preflight=/usr/local/lib/sugar/managed-preflight.py
+  if [[ ! -x "$managed_preflight" ]]; then
+    echo "sugarbin: crime=missing-managed-preflight path=$managed_preflight replacement=publish the task capability image with its declared preflight protocol" >&2
+    exit 70
+  fi
+  exec python "$managed_preflight" run \
+    --plan-json "$SUGAR_BX_MANAGED_PRECONDITION_PLAN" \
+    --artifact-root /opt/sugar -- "$@"
+fi
+
 exec "$@"

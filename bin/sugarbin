@@ -107,6 +107,7 @@ dispatch_execution_subcommand() {
   # networking available unless a named task explicitly proves it can run
   # offline in sugar-build.toml.
   local task_json="" task_capabilities="" task_needs="" task_network="required"
+  local task_profiled_artifacts=""
   local task_preconditions_json=""
   local -a task_command=()
   if [[ -n "$task" ]]; then
@@ -116,6 +117,7 @@ dispatch_execution_subcommand() {
     task_capabilities="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<<"$task_json")"
     task_needs="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["binaries"]))' <<<"$task_json")"
     task_network="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["network"])' <<<"$task_json")"
+    task_profiled_artifacts="$("$contract_python" -c 'import json,sys; task=json.load(sys.stdin); print(",".join("{profile}:{name}".format(**row) for row in task.get("closure", {}).get("artifacts", [])))' <<<"$task_json")"
     while IFS= read -r -d '' arg; do task_command+=("$arg"); done < <("$contract_python" -c 'import json,sys; [sys.stdout.write(x+"\0") for x in json.load(sys.stdin)["command"]]' <<<"$task_json")
     if [[ -n "$needs" ]]; then
       local normalized_needs
@@ -166,11 +168,17 @@ dispatch_execution_subcommand() {
   fi
 
   local route_env="${execution_env%%:*}" docker_image="" core_image=""
+  local task_preflight_protocol="workspace-wrapper/v1"
   if [[ "$route_env" == docker ]]; then
     local contract_python
     contract_python="$(sugarbin_contract_python)" || return $?
     local environment_json
-    environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env")" || return $?
+    if [[ -n "$task" && "$host" == bx && "$execution_env_explicit" == 0 ]]; then
+      environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-task-environment "$task")" || return $?
+      task_preflight_protocol="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["preflight"])' <<<"$environment_json")"
+    else
+      environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env")" || return $?
+    fi
     docker_image="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$environment_json")"
     if [[ -n "$task" ]]; then
       local missing_capabilities
@@ -216,6 +224,7 @@ dispatch_execution_subcommand() {
     printf 'needs=%s\n' "$needs"
     printf 'network=%s\n' "$task_network"
     printf 'docker_image=%s\n' "$docker_image"
+    printf 'preflight=%s\n' "$task_preflight_protocol"
     return 0
   fi
 
@@ -288,7 +297,15 @@ dispatch_execution_subcommand() {
   if [[ "$route_env" == docker ]]; then
     sugar_bx_write_mount_proof || return $?
     local remote_needs="$needs" has_artifacts=0
-    if [[ -n "$remote_needs" ]]; then
+    if [[ -n "$task_profiled_artifacts" ]]; then
+      [[ -z "$remote_needs" ]] || {
+        echo "sugarbin: task mixes profiled closure artifacts with legacy binaries" >&2
+        return 2
+      }
+      sugar_bx_build_profiled_artifacts_docker \
+        "$core_image" "$task_profiled_artifacts" || return $?
+      has_artifacts=1
+    elif [[ -n "$remote_needs" ]]; then
       local provision_artifacts=0
       [[ "$subcommand" != build ]] || provision_artifacts=1
       sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" "$provision_artifacts" || return $?
@@ -300,7 +317,8 @@ dispatch_execution_subcommand() {
       return $?
     fi
     set +e
-    sugar_bx_run_docker "$docker_image" "$task_network" "$has_artifacts" "${command[@]}"
+    sugar_bx_run_docker "$docker_image" "$task_network" "$has_artifacts" \
+      "$task_preflight_protocol" "${command[@]}"
     status=$?
     set -e
     sugar_bx_report_load_after
@@ -1593,6 +1611,16 @@ acquire_rebuild_single_flight() {
         log "phase=resolve-lock-acquired bin=$bin_name stamp=${stamp_short}… pid=$$ (no peer wait)"
       fi
       return 0
+    fi
+    # A failed mkdir is contention only when a holder record exists. Give a
+    # peer that just won mkdir one bounded chance to publish its PID; absence
+    # after that is not an unknown holder to wait on forever.
+    if [[ ! -f "$lockdir/pid" ]]; then
+      sleep 0.5
+      if [[ ! -f "$lockdir/pid" ]]; then
+        log "crime=missing-rebuild-lock-pid owner=bin/sugarbin path=$lockdir/pid lock=$lockdir holder_pid=unknown replacement=repair the declared lock root; an absent holder record is not peer contention"
+        return 70
+      fi
     fi
     # First contention: announce wait immediately (not after 30s of silence).
     if (( ! announced )); then

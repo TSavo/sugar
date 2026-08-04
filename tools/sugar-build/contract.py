@@ -18,6 +18,7 @@ ROOT = resolve_repo_root()
 DEFAULT_CONTRACT = ROOT / "sugar-build.toml"
 PUBLISHED_BINARIES = frozenset({"sugar", "sugar-ir-smt-lib"})
 TASK_KEYS = frozenset({"capabilities", "binaries", "command", "network"})
+TASK_IMAGE_KEYS = frozenset({"preflight", "reference"})
 CLOSURE_KEYS = frozenset(
     {
         "adjacent_manifests",
@@ -30,7 +31,9 @@ CLOSURE_KEYS = frozenset(
     }
 )
 PROFILED_ARTIFACT = re.compile(r"^(debug|release):([A-Za-z0-9._-]+)$")
+PACKAGE_TOKEN = re.compile(r"^[a-z0-9][a-z0-9+.-]*$")
 IMMUTABLE_IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+TASK_IMAGE_PREFLIGHTS = frozenset({"managed-entrypoint/v1"})
 EXACT_TOOL_VERSION = {
     "rust": re.compile(r"\d+\.\d+\.\d+"),
     "cargo": re.compile(r"\d+\.\d+\.\d+"),
@@ -74,7 +77,15 @@ def load_contract(path=DEFAULT_CONTRACT):
         if "overwrite" in message.lower():
             message = f"duplicate definition: {message}"
         raise ContractError(message) from exc
-    if set(data) - {"schema", "tools", "packages", "capabilities", "tasks", "images"}:
+    if set(data) - {
+        "schema",
+        "tools",
+        "packages",
+        "capabilities",
+        "tasks",
+        "images",
+        "task-images",
+    }:
         raise ContractError("unknown top-level contract key")
     if data.get("schema") != 1:
         raise ContractError("unsupported contract schema")
@@ -90,6 +101,20 @@ def load_contract(path=DEFAULT_CONTRACT):
             raise ContractError(f"non-exact tool version: {name}")
     if "packages" in data and not isinstance(data["packages"], dict):
         raise ContractError("invalid packages table")
+    task_images = data.get("task-images", {})
+    if not isinstance(task_images, dict):
+        raise ContractError("invalid task-images table")
+    for name, task_image in task_images.items():
+        if name not in data["tasks"]:
+            raise ContractError(f"task image has no task owner: {name}")
+        if not isinstance(task_image, dict) or set(task_image) != TASK_IMAGE_KEYS:
+            raise ContractError(f"invalid task image definition: {name}")
+        reference = task_image.get("reference")
+        if not isinstance(reference, str) or IMMUTABLE_IMAGE.fullmatch(reference) is None:
+            raise ContractError(f"task image reference is not immutable: {name}")
+        preflight = task_image.get("preflight")
+        if preflight not in TASK_IMAGE_PREFLIGHTS:
+            raise ContractError(f"unknown task image preflight protocol: {name}")
     declared_capabilities = set(data["capabilities"])
     owner_capabilities = set(CAPABILITY_TOOL_OWNERS)
     if not declared_capabilities <= owner_capabilities:
@@ -174,6 +199,29 @@ def resolve_task(name, path=DEFAULT_CONTRACT):
     if "closure" in task:
         result["closure"] = _validate_task_closure(name, task["closure"])
     return result
+
+
+def resolve_task_environment(name, path=DEFAULT_CONTRACT):
+    data = load_contract(path)
+    task = resolve_task(name, path)
+    environment = resolve_environment(
+        "docker:" + ",".join(task["capabilities"]), path
+    )
+    task_image = data.get("task-images", {}).get(name)
+    if task_image is None:
+        return {
+            **environment,
+            "preflight": "workspace-wrapper/v1",
+            "task": name,
+        }
+    if "closure" not in task:
+        raise ContractError(f"task image has no declared command closure: {name}")
+    return {
+        **environment,
+        "image": task_image["reference"],
+        "preflight": task_image["preflight"],
+        "task": name,
+    }
 
 
 def _string_list(value, label):
@@ -327,6 +375,48 @@ def resolve_task_preconditions(name, host, repo_root, path=DEFAULT_CONTRACT):
     }
 
 
+def resolve_task_image_build(name, repo_root, path=DEFAULT_CONTRACT):
+    plan = resolve_task_preconditions(name, "bx", repo_root, path)
+    packages = sorted(
+        {
+            check["name"]
+            for check in plan["checks"]
+            if check["kind"] == "command"
+        }
+    )
+    invalid_package = next(
+        (package for package in packages if PACKAGE_TOKEN.fullmatch(package) is None),
+        None,
+    )
+    if invalid_package is not None:
+        raise ContractError(f"managed command has no Debian package identity: {invalid_package}")
+    component_checks = [
+        check
+        for check in plan["checks"]
+        if check["kind"] == "toolchain-component"
+    ]
+    channels = sorted({check["channel"] for check in component_checks})
+    if len(channels) != 1:
+        raise ContractError(
+            "task image requires exactly one Rust toolchain: " + ",".join(channels)
+        )
+    rust_version = load_contract(path)["tools"]["rust"]
+    if channels[0] != rust_version:
+        raise ContractError(
+            f"task image Rust toolchain {channels[0]} differs from core {rust_version}"
+        )
+    if PACKAGE_TOKEN.fullmatch(name) is None:
+        raise ContractError(f"task image has invalid target identity: {name}")
+    return {
+        "aptPackages": packages,
+        "rustComponents": sorted({check["name"] for check in component_checks}),
+        "rustToolchain": channels[0],
+        "schemaVersion": 1,
+        "target": f"{name}-closure",
+        "task": name,
+    }
+
+
 def match_task_command(argv, path=DEFAULT_CONTRACT):
     data = load_contract(path)
     matches = []
@@ -360,10 +450,15 @@ def main(argv=None):
     environment.add_argument("environment")
     task = subparsers.add_parser("resolve-task")
     task.add_argument("task")
+    task_environment = subparsers.add_parser("resolve-task-environment")
+    task_environment.add_argument("task")
     preconditions = subparsers.add_parser("resolve-preconditions")
     preconditions.add_argument("task")
     preconditions.add_argument("--host", required=True)
     preconditions.add_argument("--repo-root", required=True)
+    image_build = subparsers.add_parser("resolve-task-image-build")
+    image_build.add_argument("task")
+    image_build.add_argument("--repo-root", required=True)
     matcher = subparsers.add_parser("match-command")
     matcher.add_argument("argv", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -371,7 +466,9 @@ def main(argv=None):
         if args.command == "tool-versions": result = tool_versions()
         elif args.command == "resolve-environment": result = resolve_environment(args.environment)
         elif args.command == "resolve-task": result = resolve_task(args.task)
+        elif args.command == "resolve-task-environment": result = resolve_task_environment(args.task)
         elif args.command == "resolve-preconditions": result = resolve_task_preconditions(args.task, args.host, args.repo_root)
+        elif args.command == "resolve-task-image-build": result = resolve_task_image_build(args.task, args.repo_root)
         else:
             argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             result = {"task": match_task_command(argv)}

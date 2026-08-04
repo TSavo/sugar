@@ -205,9 +205,34 @@ examples="$(run explain --host bx --task examples-gate)"
 
 : >"$tmp/docker.log"
 run run --host bx --task showcases >/dev/null
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] \
+  || fail "showcase task did not resolve its declared artifact closure exactly once"
+showcase_build_line="$(head -1 "$tmp/docker.log")"
+[[ "$showcase_build_line" == *"release:sugar"* ]] \
+  || fail "showcase artifact resolver lost release:sugar"
+for artifact in sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude \
+  sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do
+  [[ "$showcase_build_line" == *"debug:$artifact"* ]] \
+    || fail "showcase artifact resolver lost debug:$artifact"
+done
+[[ "$showcase_build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=0'"* ]] \
+  || fail "showcase artifact resolver gained implicit build authority"
+[[ "$showcase_build_line" == *"'--env' 'SUGAR_BINARY_PUBLISH=0'"* ]] \
+  || fail "showcase artifact resolver gained implicit publish authority"
+[[ "$showcase_build_line" == *"binary-shelf-v2,readonly"* ]] \
+  || fail "showcase artifact resolver gained writable shelf authority"
 showcase_line="$(tail -1 "$tmp/docker.log")"
-[[ "$showcase_line" == *"tools/sugar-build/preflight.py"* ]] \
-  || fail "managed showcase task omitted pre-subject preflight"
+showcase_ref="$(python3 "$repo/tools/sugar-build/contract.py" \
+  resolve-task-environment showcases | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])')"
+[[ "$showcase_line" == *"'$showcase_ref'"* ]] \
+  || fail "managed showcase task did not select its task image"
+[[ "$showcase_line" == *"SUGAR_BX_MANAGED_PRECONDITION_PLAN="* ]] \
+  || fail "managed showcase task did not pass its plan to the image entrypoint"
+[[ "$showcase_line" != *"/workspace/sugar/tools/sugar-build/preflight.py"* ]] \
+  || fail "managed showcase task retained the transport-owned preflight"
+[[ "$showcase_line" == *"required-artifacts.json,readonly"* ]] \
+  || fail "managed showcase task omitted its declared artifact manifest"
 [[ "$showcase_line" == *"make"*"test-showcases"* ]] \
   || fail "managed showcase task lost its declared command"
 
@@ -272,12 +297,17 @@ entrypoint_bin="$tmp/entrypoint-bin"
 mkdir -p "$entrypoint_root/opt/sugar/bin" \
   "$entrypoint_root/opt/pyright/nodeenv/bin" "$entrypoint_bin"
 python3 - "$repo/tools/sugar-build/entrypoint.sh" \
-  "$entrypoint_under_test" "$entrypoint_root" <<'PY'
+  "$entrypoint_under_test" "$entrypoint_root" \
+  "$repo/tools/sugar-build/preflight.py" <<'PY'
 from pathlib import Path
 import sys
 
-source, target, root = map(Path, sys.argv[1:])
-target.write_text(source.read_text().replace("/opt/", f"{root}/opt/"))
+source, target, root, preflight = map(Path, sys.argv[1:])
+text = source.read_text().replace("/opt/", f"{root}/opt/")
+text = text.replace(
+    "/usr/local/lib/sugar/managed-preflight.py", str(preflight)
+)
+target.write_text(text)
 PY
 cat >"$entrypoint_bin/rustc" <<'SH'
 #!/usr/bin/env bash
@@ -294,6 +324,14 @@ SH
 cat >"$entrypoint_bin/b3sum" <<'SH'
 #!/usr/bin/env bash
 printf 'b3sum 1.8.1\n'
+SH
+cat >"$entrypoint_bin/ldd" <<'SH'
+#!/usr/bin/env bash
+if [[ "${FAKE_LDD_MODE:-good}" == bad ]]; then
+  printf "%s: /lib/libc.so.6: version 'GLIBC_2.39' not found (required by %s)\n" "$1" "$1" >&2
+  exit 1
+fi
+printf 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0001)\n'
 SH
 cat >"$entrypoint_bin/python" <<'SH'
 #!/usr/bin/env bash
@@ -356,10 +394,71 @@ grep -Fq "observed=$observed" "$tmp/manifest-checksum.err" \
 ! grep -Fq 'crime=artifact-manifest-parse-failed' "$tmp/manifest-checksum.err" \
   || fail "checksum mismatch was misreported as a parse failure"
 
+# The republished task image must run the same plan inside its sealed
+# entrypoint. A compatible artifact reaches the subject; an ABI bad twin
+# refuses before it, retaining the loader testimony.
+printf '{"artifacts":[{"name":"sugar","sha256":"%s"}]}\n' \
+  "$observed" >"$manifest"
+entrypoint_plan='{"checks":[{"kind":"artifact-abi","name":"sugar","profile":"release","source":"task.closure.artifacts"}],"schemaVersion":1}'
+entrypoint_good_marker="$tmp/entrypoint-good-subject"
+PATH="$entrypoint_bin:$PATH" REAL_PYTHON="$(command -v python3)" \
+  SUGAR_BX_MANAGED_PRECONDITION_PLAN="$entrypoint_plan" \
+  "$entrypoint_under_test" sh -c ': >"$1"' sh "$entrypoint_good_marker" \
+  >"$tmp/entrypoint-good.out" 2>"$tmp/entrypoint-good.err" \
+  || fail "sealed entrypoint compatible ABI arm refused"
+[[ -e "$entrypoint_good_marker" ]] \
+  || fail "sealed entrypoint compatible ABI arm did not reach subject"
+
+entrypoint_bad_marker="$tmp/entrypoint-bad-subject"
+status=0
+FAKE_LDD_MODE=bad PATH="$entrypoint_bin:$PATH" \
+  REAL_PYTHON="$(command -v python3)" \
+  SUGAR_BX_MANAGED_PRECONDITION_PLAN="$entrypoint_plan" \
+  "$entrypoint_under_test" sh -c ': >"$1"' sh "$entrypoint_bad_marker" \
+  >"$tmp/entrypoint-bad.out" 2>"$tmp/entrypoint-bad.err" || status=$?
+[[ "$status" == 70 ]] \
+  || fail "sealed entrypoint incompatible ABI status=$status, want 70"
+[[ ! -e "$entrypoint_bad_marker" ]] \
+  || fail "sealed entrypoint incompatible ABI reached subject"
+grep -Fq 'crime=artifact-abi-incompatible' "$tmp/entrypoint-bad.err" \
+  || fail "sealed entrypoint incompatible ABI did not name its crime"
+grep -Fq 'GLIBC_2.39' "$tmp/entrypoint-bad.err" \
+  || fail "sealed entrypoint incompatible ABI discarded loader output"
+
 # Exercise the exact writer script used by the Docker artifact builder. A
 # signal after the first artifact has been appended must leave the prior final
 # manifest byte-identical; existence alone would admit a truncated replacement.
 source "$repo/bin/lib/sugar-bx.sh"
+
+# The workspace wrapper remains executable for every image that has not yet
+# published the managed entrypoint protocol. This is a real transport arm,
+# not a source-shape assertion.
+fallback_log="$tmp/fallback-preflight.log"
+sugar_bx_ssh() { printf '%s\n' "$1" >>"$fallback_log"; }
+sugar_bx_docker_bind_source() { printf '%s\n' "$1"; }
+SUGAR_BX_REL_CWD=""
+SUGAR_BX_REPO="$tmp/fallback-workspace"
+SUGAR_BX_BINARY_SHELF="$tmp/fallback-shelf"
+SUGAR_BX_ROOT="$tmp/fallback-root"
+SUGAR_BX_MOUNT_PROOF=proof
+SUGAR_BX_ENV_NAMES=()
+SUGAR_BX_MANAGED_PRECONDITION_PLAN="$entrypoint_plan"
+mkdir -p "$SUGAR_BX_REPO" "$SUGAR_BX_BINARY_SHELF" "$SUGAR_BX_ROOT"
+sugar_bx_run_docker fallback-image required 0 workspace-wrapper/v1 true
+fallback_line="$(tail -1 "$fallback_log")"
+[[ "$fallback_line" == *"/workspace/sugar/tools/sugar-build/preflight.py"* ]] \
+  || fail "workspace-wrapper fallback no longer executes its preflight"
+
+managed_log="$tmp/managed-entrypoint.log"
+: >"$managed_log"
+sugar_bx_ssh() { printf '%s\n' "$1" >>"$managed_log"; }
+sugar_bx_run_docker managed-image required 0 managed-entrypoint/v1 true
+managed_line="$(tail -1 "$managed_log")"
+[[ "$managed_line" == *"SUGAR_BX_MANAGED_PRECONDITION_PLAN="* ]] \
+  || fail "managed entrypoint did not receive its plan"
+[[ "$managed_line" != *"/workspace/sugar/tools/sugar-build/preflight.py"* ]] \
+  || fail "managed entrypoint duplicated the workspace preflight"
+
 writer_workspace="$tmp/writer-workspace"
 writer_out="$tmp/writer-out"
 mkdir -p "$writer_workspace/bin" "$writer_out" "$tmp/writer-payloads"
@@ -367,10 +466,17 @@ cat >"$writer_workspace/bin/sugarbin" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 binary=""
+profile=""
 while (($#)); do
-  if [[ "$1" == --bin ]]; then binary="$2"; shift 2; else shift; fi
+  case "$1" in
+    --bin) binary="$2"; shift 2 ;;
+    --profile) profile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
 done
 [[ -n "$binary" ]]
+[[ -z "${WRITER_INVOCATION_LOG:-}" ]] \
+  || printf '%s:%s\n' "$profile" "$binary" >>"$WRITER_INVOCATION_LOG"
 if [[ "$binary" == second && -n "${WRITER_BLOCK_MARKER:-}" ]]; then
   : >"$WRITER_BLOCK_MARKER"
   kill -TERM "$PPID"
@@ -424,6 +530,42 @@ assert item["name"] == "first", item
 assert item["sha256"] == hashlib.sha256((root / "first").read_bytes()).hexdigest(), item
 assert not list(root.glob(".required-artifacts.json.*"))
 PY
+
+profiled_out="$tmp/profiled-writer-out"
+mkdir -p "$profiled_out"
+profiled_script="$(sugar_bx_profiled_artifact_build_script \
+  release:first,debug:second "$writer_workspace" "$profiled_out")"
+WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" \
+WRITER_INVOCATION_LOG="$tmp/profiled-writer-invocations" \
+  bash -c "$profiled_script"
+python3 - "$profiled_out" "$tmp/profiled-writer-invocations" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+invocations = pathlib.Path(sys.argv[2]).read_text().splitlines()
+assert invocations == ["release:first", "debug:second"], invocations
+manifest = json.loads(root.joinpath("required-artifacts.json").read_text())
+assert [row["name"] for row in manifest["artifacts"]] == ["first", "second"]
+for row in manifest["artifacts"]:
+    assert row["sha256"] == hashlib.sha256(
+        root.joinpath(row["name"]).read_bytes()
+    ).hexdigest(), row
+PY
+
+status=0
+duplicate_script="$(sugar_bx_profiled_artifact_build_script \
+  release:first,debug:first "$writer_workspace" "$tmp/profiled-duplicate")"
+mkdir -p "$tmp/profiled-duplicate"
+WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" \
+  bash -c "$duplicate_script" >"$tmp/profiled-duplicate.out" \
+  2>"$tmp/profiled-duplicate.err" || status=$?
+[[ "$status" == 70 ]] || fail "duplicate profiled artifact status=$status, want 70"
+grep -Fq 'crime=duplicate-profiled-artifact name=first' \
+  "$tmp/profiled-duplicate.err" \
+  || fail "duplicate profiled artifact did not refuse by name"
 
 # Malformed prior manifests are evidence. Quarantine them by content before the
 # full artifact reset, collapse repeats, and make bounded eviction loud.

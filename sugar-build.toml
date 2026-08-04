@@ -64,6 +64,10 @@ reference = "ghcr.io/tsavo/sugar-env@sha256:f96731de7b4eb9a5660a6f8a14fc37f23ead
 [images."core,java,node,python-scientific,python-test,solver-coq,solver-z3,vampire"]
 reference = "ghcr.io/tsavo/sugar-env@sha256:f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e"
 
+[task-images.showcases]
+reference = "ghcr.io/tsavo/sugar-env@sha256:c8f9964d2a9d57fd36433d2e3bfe5d6a9c5a4367ff76e8aa5e3f53c0c28a2e2f"
+preflight = "managed-entrypoint/v1"
+
 [tasks.python-unit]
 capabilities = ["python-test"]
 binaries = ["sugar"]

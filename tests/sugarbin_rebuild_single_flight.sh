@@ -189,6 +189,7 @@ SUGAR_BINARY_SOURCE_STAMP="$production_stamp" \
 [[ ! -e "$production_lock" ]] || fail 'production acquire/release arm left lock residue'
 
 mkdir -p "$production_lock"
+printf 'dead\n' >"$production_lock/pid"
 mkdir -p "$tmp/refuse-rm-bin"
 cat >"$tmp/refuse-rm-bin/rm" <<'EOF'
 #!/usr/bin/env bash
@@ -258,12 +259,85 @@ terminal = "crime=unreclaimable-rebuild-lock"
 if result.stderr.count(terminal) != 1:
     print(result.stderr, file=sys.stderr)
     raise SystemExit("expected exactly one named unreclaimable-lock terminal")
-for testimony in (lock, "holder_pid=unknown", "heartbeat_age_s=999999"):
+for testimony in (lock, "holder_pid=dead", "heartbeat_age_s=999999"):
     if testimony not in result.stderr:
         print(result.stderr, file=sys.stderr)
         raise SystemExit(f"missing terminal testimony: {testimony}")
 PY
 
-echo 'PASS: production rebuild lock completes normally and unreclaimable lock terminates'
+rm -rf "$production_lock"
+mkdir -p "$tmp/refuse-lock-mkdir-bin"
+cat >"$tmp/refuse-lock-mkdir-bin/mkdir" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$#" == 1 && "$1" == "${LOCK_TO_REFUSE:?}" ]]; then
+  exit 77
+fi
+exec /bin/mkdir "$@"
+EOF
+chmod +x "$tmp/refuse-lock-mkdir-bin/mkdir"
+
+python3 - "$sugarbin" "$production_cache" "$production_stamp" \
+  "$production_lock" "$tmp/refuse-lock-mkdir-bin" \
+  "$tmp/production-missing-pid.json" <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+sugarbin, cache, stamp, lock, refuse_bin, receipt = sys.argv[1:]
+env = os.environ.copy()
+env.update(
+    {
+        "LOCK_TO_REFUSE": lock,
+        "PATH": refuse_bin + os.pathsep + env["PATH"],
+        "SUGAR_BINARY_CACHE_DIR": cache,
+        "SUGAR_BINARY_SOURCE_STAMP": stamp,
+    }
+)
+try:
+    result = subprocess.run(
+        [
+            sugarbin,
+            "preflight-lock",
+            "--bin",
+            "sugar",
+            "--profile",
+            "debug",
+            "--platform",
+            "fixture",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+except subprocess.TimeoutExpired as error:
+    stderr = error.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    print("production missing-pid arm did not terminate within 5s", file=sys.stderr)
+    print(stderr, file=sys.stderr)
+    raise SystemExit(1)
+json.dump(
+    {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr},
+    open(receipt, "w", encoding="utf-8"),
+    sort_keys=True,
+)
+if result.returncode != 70:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit(f"expected exit 70, observed {result.returncode}")
+terminal = "crime=missing-rebuild-lock-pid"
+if result.stderr.count(terminal) != 1:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit("expected exactly one named missing-pid terminal")
+for testimony in (lock + "/pid", "holder_pid=unknown"):
+    if testimony not in result.stderr:
+        print(result.stderr, file=sys.stderr)
+        raise SystemExit(f"missing terminal testimony: {testimony}")
+PY
+
+echo 'PASS: production rebuild lock completes and both failure terminals terminate'
 
 echo 'PASS: R_shelf_rebuild_single_flight — one build, waiter cell, dead-winner reclaim'

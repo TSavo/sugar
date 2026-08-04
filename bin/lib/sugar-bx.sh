@@ -603,8 +603,56 @@ SCRIPT
   printf '\n'
 }
 
+sugar_bx_profiled_artifact_build_script() {
+  local spec="$1"
+  local workspace="${2:-/workspace/sugar}" out="${3:-/out}"
+  {
+    printf 'workspace=%q; out=%q; spec=%q; ' "$workspace" "$out" "$spec"
+    cat <<'SCRIPT'
+set -euo pipefail;
+cd "$workspace";
+manifest="$out/required-artifacts.json";
+manifest_tmp="$(mktemp "$out/.required-artifacts.json.XXXXXX")";
+cleanup_manifest_tmp() { [[ -z "${manifest_tmp:-}" ]] || rm -f -- "$manifest_tmp"; };
+trap cleanup_manifest_tmp EXIT;
+trap 'exit 129' HUP;
+trap 'exit 130' INT;
+trap 'exit 143' TERM;
+printf '{"artifacts":[' >"$manifest_tmp";
+first=1;
+names=,;
+IFS=,;
+for item in $spec; do
+  [[ "$item" == *:* ]] || { echo "sugarbin: crime=invalid-profiled-artifact item=$item" >&2; exit 70; };
+  profile="${item%%:*}";
+  b="${item#*:}";
+  [[ "$profile" == debug || "$profile" == release ]] || { echo "sugarbin: crime=invalid-profiled-artifact item=$item" >&2; exit 70; };
+  [[ -n "$b" ]] || { echo "sugarbin: crime=invalid-profiled-artifact item=$item" >&2; exit 70; };
+  case "$names" in
+    *",$b,"*) echo "sugarbin: crime=duplicate-profiled-artifact name=$b" >&2; exit 70 ;;
+  esac;
+  names="$names$b,";
+  r="$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR bin/sugarbin --profile "$profile" --platform linux-x86_64 --bin "$b")";
+  cp "$r" "$out/$b";
+  cp "$r.sugarbin.json" "$out/$b.sugarbin.json";
+  sum="$(sha256sum "$out/$b" | cut -d' ' -f1)";
+  [[ "$first" == 1 ]] || printf ',' >>"$manifest_tmp";
+  first=0;
+  printf '{"name":"%s","sha256":"%s"}' "$b" "$sum" >>"$manifest_tmp";
+done;
+printf ']}' >>"$manifest_tmp";
+chmod 0644 "$manifest_tmp";
+mv -f -- "$manifest_tmp" "$manifest";
+manifest_tmp="";
+trap - EXIT HUP INT TERM;
+SCRIPT
+  } | tr '\n' ' '
+  printf '\n'
+}
+
 sugar_bx_build_artifacts_docker() {
   local image="$1" needs="$2" profile="$3" provision_artifacts="${4:-0}"
+  local artifact_format="${5:-uniform}"
   local image_digest="${image##*@sha256:}"
   local managed_target="${BCARGO_REMOTE_MANAGED_TARGET:-/home/tsavo/.cache/sugar/managed-targets/$image_digest}"
   local quarantine_def reset_command
@@ -622,7 +670,11 @@ mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_B
   shelf_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_SHELF")" || return $?
   target_source="$(sugar_bx_docker_bind_source "$managed_target")" || return $?
   local build_script
-  build_script="$(sugar_bx_artifact_build_script "$needs" "$profile")"
+  if [[ "$artifact_format" == profiled ]]; then
+    build_script="$(sugar_bx_profiled_artifact_build_script "$needs")"
+  else
+    build_script="$(sugar_bx_artifact_build_script "$needs" "$profile")"
+  fi
   local shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly"
   local shelf_read_only=1
   local name
@@ -664,8 +716,14 @@ mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_B
   sugar_bx_ssh "exec${command}"
 }
 
+sugar_bx_build_profiled_artifacts_docker() {
+  local image="$1" spec="$2"
+  sugar_bx_build_artifacts_docker "$image" "$spec" "" 0 profiled
+}
+
 sugar_bx_run_docker() {
-  local image="$1" network="$2" has_artifacts="$3"; shift 3
+  local image="$1" network="$2" has_artifacts="$3" preflight_protocol="$4"
+  shift 4
   local remote_cwd="/workspace/sugar"
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$remote_cwd/$SUGAR_BX_REL_CWD"
   local workspace_source artifacts_source manifest_source shelf_source
@@ -697,8 +755,23 @@ sugar_bx_run_docker() {
   done
   docker_args+=(--env SUGAR_BINARY_SHELF_READ_ONLY=1)
   docker_args+=(--env SUGAR_BINARY_PUBLISH=0)
+  case "$preflight_protocol" in
+    managed-entrypoint/v1)
+      [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]] || {
+        echo "sugarbin: crime=missing-managed-precondition-plan owner=bin/lib/sugar-bx.sh protocol=$preflight_protocol" >&2
+        return 70
+      }
+      docker_args+=(--env "SUGAR_BX_MANAGED_PRECONDITION_PLAN=$SUGAR_BX_MANAGED_PRECONDITION_PLAN")
+      ;;
+    workspace-wrapper/v1) ;;
+    *)
+      echo "sugarbin: crime=unknown-managed-preflight-protocol owner=bin/lib/sugar-bx.sh protocol=$preflight_protocol" >&2
+      return 70
+      ;;
+  esac
   docker_args+=("$image")
-  if [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]]; then
+  if [[ "$preflight_protocol" == workspace-wrapper/v1 \
+    && -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]]; then
     docker_args+=(python /workspace/sugar/tools/sugar-build/preflight.py run
       --plan-json "$SUGAR_BX_MANAGED_PRECONDITION_PLAN"
       --artifact-root /opt/sugar --)
