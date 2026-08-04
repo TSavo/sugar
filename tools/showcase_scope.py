@@ -11,7 +11,11 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from showcase_terminal_identity import TERMINAL_WITNESS_ENV
+from showcase_terminal_identity import (
+    TERMINAL_WITNESS_ENV,
+    TerminalIdentityRefusal,
+    validate_showcase_terminal_state,
+)
 
 SCHEMA_VERSION = 1
 RETIREMENT_REASON = "out of scope per scope ruling - Java"
@@ -137,6 +141,151 @@ def _write_json_atomic(path: Path, payload: object) -> None:
     temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+_TERMINAL_STATE_COUNT_KEYS = (
+    "terminalWitnessed",
+    "noOwnerPossible",
+    "terminalConstructMissing",
+)
+_TERMINAL_STATE_COUNT_BY_STATE = {
+    "witnessed": "terminalWitnessed",
+    "no-owner-possible": "noOwnerPossible",
+    "terminal-construct-missing": "terminalConstructMissing",
+}
+
+
+def _canonical_terminal_state(raw: object, *, path: str) -> dict[str, object]:
+    if not isinstance(raw, Mapping):
+        raise ScopeRefusal(f"terminal state malformed for {path}: expected object")
+    try:
+        return validate_showcase_terminal_state(raw)
+    except TerminalIdentityRefusal as exc:
+        raise ScopeRefusal(f"terminal state malformed for {path}: {exc}") from exc
+
+
+def validate_terminal_state_conservation(
+    outcomes: object,
+    counts: object,
+) -> dict[str, int]:
+    """Validate the dormant three-state partition over nonzero executed rows."""
+
+    if not isinstance(outcomes, list) or not isinstance(counts, Mapping):
+        raise ScopeRefusal("terminal state conservation requires outcomes and counts")
+    if frozenset(counts) != frozenset(_TERMINAL_STATE_COUNT_KEYS):
+        raise ScopeRefusal(
+            "terminal state conservation count fields do not close: "
+            f"observed={sorted(counts)}"
+        )
+    derived = {key: 0 for key in _TERMINAL_STATE_COUNT_KEYS}
+    nonzero_executed = 0
+    for ordinal, raw in enumerate(outcomes):
+        if not isinstance(raw, Mapping):
+            raise ScopeRefusal(f"terminal state outcome {ordinal} must be an object")
+        path = raw.get("path")
+        if not isinstance(path, str) or not path:
+            raise ScopeRefusal(f"terminal state outcome {ordinal} has missing path")
+        outcome = raw.get("outcome")
+        exit_code = raw.get("exitCode")
+        state_raw = raw.get("terminalState")
+        if outcome == "retired":
+            if state_raw is not None:
+                raise ScopeRefusal(f"retired showcase claims terminal state: {path}")
+            continue
+        if not isinstance(exit_code, int):
+            raise ScopeRefusal(f"executed showcase lacks integer exitCode: {path}")
+        if exit_code == 0:
+            if state_raw is not None:
+                raise ScopeRefusal(f"zero-exit showcase claims terminal state: {path}")
+            continue
+        nonzero_executed += 1
+        if state_raw is None:
+            raise ScopeRefusal(
+                f"nonzero executed showcase lacks terminal state: {path}"
+            )
+        state = _canonical_terminal_state(state_raw, path=path)
+        state_name = state["state"]
+        assert isinstance(state_name, str)
+        count_key = _TERMINAL_STATE_COUNT_BY_STATE[state_name]
+        derived[count_key] += 1
+        if state_name == "witnessed" and outcome != "failed":
+            raise ScopeRefusal(f"witnessed terminal must be failed outcome: {path}")
+        if state_name != "witnessed" and outcome != "unmeasured":
+            raise ScopeRefusal(
+                f"nonwitness terminal state must be unmeasured outcome: {path}"
+            )
+    if sum(derived.values()) != nonzero_executed:
+        raise ScopeRefusal(
+            "terminal state conservation failed: "
+            f"classified={sum(derived.values())} nonzero={nonzero_executed}"
+        )
+    for key, value in derived.items():
+        if counts.get(key) != value:
+            raise ScopeRefusal(
+                f"terminal state conservation mismatch for {key}: "
+                f"claimed={counts.get(key)!r} observed={value}"
+            )
+    return derived
+
+
+def classify_terminal_transition(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Classify one dormant cross-run transition without inferring identity."""
+
+    before_path = before.get("path")
+    after_path = after.get("path")
+    if not isinstance(before_path, str) or before_path != after_path:
+        raise ScopeRefusal(
+            "terminal transition requires the same nonempty showcase path"
+        )
+    before_state = _canonical_terminal_state(
+        before.get("terminalState"),
+        path=before_path,
+    )
+    if after.get("outcome") == "passed":
+        if after.get("terminalState") is not None:
+            raise ScopeRefusal(
+                f"cleared showcase retains terminal state: {before_path}"
+            )
+        if before_state["state"] != "witnessed":
+            return {
+                "path": before_path,
+                "transition": "unmeasured",
+                "beforeTerminalState": before_state,
+            }
+        return {
+            "path": before_path,
+            "transition": "cleared",
+            "beforeTerminalIdentity": before_state["terminalIdentity"],
+        }
+    after_state = _canonical_terminal_state(
+        after.get("terminalState"),
+        path=before_path,
+    )
+    if (
+        before_state["state"] != "witnessed"
+        or after_state["state"] != "witnessed"
+    ):
+        return {
+            "path": before_path,
+            "transition": "unmeasured",
+            "beforeTerminalState": before_state,
+            "afterTerminalState": after_state,
+        }
+    before_identity = before_state["terminalIdentity"]
+    after_identity = after_state["terminalIdentity"]
+    return {
+        "path": before_path,
+        "transition": (
+            "still-failing-same-terminal"
+            if before_identity == after_identity
+            else "moved-to-named-terminal"
+        ),
+        "beforeTerminalIdentity": before_identity,
+        "afterTerminalIdentity": after_identity,
+    }
 
 
 def _validate_outcomes(outcomes: object, counts: object) -> None:

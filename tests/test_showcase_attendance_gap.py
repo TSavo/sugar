@@ -79,11 +79,15 @@ class VerificationPropertyAttendanceTests(unittest.TestCase):
                 json.loads(witness.read_text(encoding="utf-8")),
                 {
                     "schemaVersion": 1,
-                    "kind": "verification-property-attendance-gap",
-                    "owner": "VerificationPropertyAttendanceGap",
-                    "coordinate": "claim:b",
-                    "entrance": "sugar.verify",
-                    "missingIdentities": ["claim:b", "claim:d"],
+                    "state": "witnessed",
+                    "terminalIdentity": {
+                        "schemaVersion": 1,
+                        "kind": "verification-property-attendance-gap",
+                        "owner": "VerificationPropertyAttendanceGap",
+                        "coordinate": "claim:b",
+                        "entrance": "sugar.verify",
+                        "missingIdentities": ["claim:b", "claim:d"],
+                    },
                 },
             )
 
