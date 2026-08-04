@@ -1298,10 +1298,15 @@ def main() -> int:
     if not args.aggregate_only:
         try:
             from tqdm import tqdm
-        except ImportError as error:  # pragma: no cover
-            raise SystemExit(
-                "tqdm is required: python3 -m pip install 'tqdm>=4.66'"
-            ) from error
+        except ImportError:  # pragma: no cover
+            print(
+                "RECENSUS: tqdm unavailable; proceeding without progress display",
+                file=sys.stderr,
+                flush=True,
+            )
+
+            def tqdm(iterable, **_kwargs):
+                return iterable
 
         live_done = 0
         live_panic = 0  # ConstructionPanic only (file-level kit panic)
