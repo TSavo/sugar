@@ -682,7 +682,7 @@ def test_recorded_source_seat_cannot_be_relabelled_as_invented_module(
 
     with pytest.raises(
         DependencyArtifactAuthenticationError,
-        match="module source is not projected",
+        match="cannot be allocated from graph fields",
     ):
         replace(graph, modules=MappingProxyType({"invented.module": invented}))
 

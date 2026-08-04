@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from email.parser import BytesParser
 import importlib.machinery
 import importlib.metadata
+import logging
 import os
 from pathlib import Path, PurePosixPath
 import sys
@@ -27,7 +28,16 @@ class DependencyArtifactAuthenticationError(Exception):
     """The selected installed artifact cannot be authenticated exactly."""
 
 
-_ARTIFACT_INTAKE_AUTHORITY = object()
+class DependencyArtifactConstructionError(DependencyArtifactAuthenticationError):
+    """A graph allocation bypassed its authenticated input constructor."""
+
+
+class DependencyArtifactCacheInputError(DependencyArtifactAuthenticationError):
+    """A disk seat does not encode dependency graph constructor inputs."""
+
+
+_LOG = logging.getLogger(__name__)
+_DEPENDENCY_ARTIFACT_CACHE_SCHEMA = "dep-graph-v4"
 
 # The authenticated-graph memo is CONTENT-ADDRESSED, and that is the whole
 # reason it may be process-global (#6266's distinction, applied here).
@@ -57,16 +67,6 @@ _AUTHENTICATE_GRAPH_CACHE: dict[str, "DependencyArtifactGraph"] = {}
 # Memoization switch. Flipping it must change SPEED ONLY: never a CID, never a
 # verdict, never a graph. Paying full price is always a legal answer.
 _AUTHENTICATE_CACHE_ENABLED = True
-
-# Warm re-auth front door: install seat → (mtime fingerprint, graph).
-# NOT a path-keyed graph cache. Returns a content-addressed graph only when
-# every recorded file's (mtime_ns, size) still matches the fingerprint taken
-# at authentication. An edit that moves mtime is a miss → full re-hash → new
-# artifact CID. Identity remains content-addressed; this only avoids re-reading
-# ~67MB of pandas bytes to recompute h(p) when p did not move.
-_AUTHENTICATE_BY_INSTALLATION_FINGERPRINT: dict[
-    str, tuple[str, "DependencyArtifactGraph"]
-] = {}
 
 
 def _require_parseable_module_source(
@@ -103,60 +103,6 @@ def _artifact_disk_cache_path(artifact_cid: str) -> Path:
     return _cache_root() / "dependency-artifact-graphs" / f"{digest}.pkl"
 
 
-def _fingerprint_disk_cache_path(seat_key: str, fingerprint: str) -> Path:
-    """On-disk seat for install-fingerprint → artifact CID."""
-    digest = blake3_512_of(f"{seat_key}\n{fingerprint}".encode("utf-8")).removeprefix(
-        "blake3-512:"
-    )[:32]
-    return _cache_root() / "dependency-artifact-fingerprints" / f"{digest}.json"
-
-
-def _load_artifact_cid_for_fingerprint(seat_key: str, fingerprint: str) -> str | None:
-    path = _fingerprint_disk_cache_path(seat_key, fingerprint)
-    if not path.is_file():
-        return None
-    try:
-        import json
-
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("schema") != "dep-fp-v1":
-            return None
-        cid = payload.get("distribution_artifact_cid")
-        return cid if isinstance(cid, str) and cid.startswith("blake3-512:") else None
-    except Exception:
-        return None
-
-
-def _store_fingerprint_disk_cache(
-    seat_key: str, fingerprint: str, artifact_cid: str
-) -> None:
-    path = _fingerprint_disk_cache_path(seat_key, fingerprint)
-    try:
-        import json
-        import tempfile
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema": "dep-fp-v1",
-            "distribution_artifact_cid": artifact_cid,
-        }
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(path.parent), prefix=".fp-", suffix=".json"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream, separators=(",", ":"))
-            Path(tmp_name).replace(path)
-        except Exception:
-            try:
-                Path(tmp_name).unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-    except Exception:
-        return
-
-
 def _load_authenticate_disk_cache(
     artifact_cid: str,
 ) -> "DependencyArtifactGraph | None":
@@ -168,25 +114,109 @@ def _load_authenticate_disk_cache(
 
         with path.open("rb") as stream:
             payload = pickle.load(stream)
-        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v3":
-            return None
-        graph = DependencyArtifactGraph(
-            artifact_kind=payload["artifact_kind"],
-            distribution_name=payload["distribution_name"],
-            distribution_version=payload["distribution_version"],
-            distribution_artifact_cid=payload["distribution_artifact_cid"],
-            files=tuple(payload["files"]),
-            modules=MappingProxyType(dict(payload["modules"])),
-            _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
+        inputs = _decode_dependency_artifact_cache_inputs(payload)
+        graph = DependencyArtifactGraph._construct_from_authenticated_inputs(inputs)
+    except Exception as exc:
+        _refuse_authenticate_disk_cache(
+            artifact_cid=artifact_cid,
+            path=path,
+            reason=f"{type(exc).__name__}: {exc}",
         )
-    except Exception:
         return None
-    # ``__post_init__`` already recomputed the CID from the retained bytes; this
-    # pins that the recomputed CID is the one that was ASKED for, so a payload
-    # parked at the wrong seat cannot answer a question it does not address.
+    # Construction re-derived the CID from the retained inputs. Pin that it is
+    # the CID that was ASKED for, so a payload parked at a wrong seat cannot
+    # answer a question it does not address.
     if graph.distribution_artifact_cid != artifact_cid:
+        _refuse_authenticate_disk_cache(
+            artifact_cid=artifact_cid,
+            path=path,
+            reason=(
+                "parked artifact CID mismatch: "
+                f"payload={graph.distribution_artifact_cid}"
+            ),
+        )
         return None
     return graph
+
+
+def _decode_dependency_artifact_cache_inputs(
+    payload: object,
+) -> "_DistributionGraphInputs":
+    """Construct distribution inputs from the cache's primitive wire form."""
+    if not isinstance(payload, dict) or set(payload) != {"schema", "files"}:
+        raise DependencyArtifactCacheInputError(
+            "dependency artifact cache input has an invalid key set"
+        )
+    if payload["schema"] != _DEPENDENCY_ARTIFACT_CACHE_SCHEMA:
+        raise DependencyArtifactCacheInputError(
+            "disk cache schema mismatch: "
+            f"expected={_DEPENDENCY_ARTIFACT_CACHE_SCHEMA} "
+            f"actual={payload['schema']}"
+        )
+    rows = payload["files"]
+    if not isinstance(rows, list):
+        raise DependencyArtifactCacheInputError(
+            "dependency artifact cache files must be a list"
+        )
+    located: list[tuple[AuthenticatedArtifactFileV1, str]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or set(row) != {
+            "source_seat",
+            "content_cid",
+            "content",
+        }:
+            raise DependencyArtifactCacheInputError(
+                f"dependency artifact cache file {index} has an invalid key set"
+            )
+        source_seat = row["source_seat"]
+        content_cid = row["content_cid"]
+        content = row["content"]
+        if not isinstance(source_seat, str) or not source_seat:
+            raise DependencyArtifactCacheInputError(
+                f"dependency artifact cache file {index} has an invalid source seat"
+            )
+        if not isinstance(content_cid, str) or not content_cid.startswith(
+            "blake3-512:"
+        ):
+            raise DependencyArtifactCacheInputError(
+                f"dependency artifact cache file {index} has an invalid content CID"
+            )
+        if not isinstance(content, bytes):
+            raise DependencyArtifactCacheInputError(
+                f"dependency artifact cache file {index} has non-byte content"
+            )
+        located.append(
+            (
+                AuthenticatedArtifactFileV1(
+                    source_seat=source_seat,
+                    content_cid=content_cid,
+                    content=content,
+                ),
+                source_seat,
+            )
+        )
+    return _DistributionGraphInputs(tuple(located))
+
+
+def _refuse_authenticate_disk_cache(
+    *,
+    artifact_cid: str,
+    path: Path,
+    reason: str,
+) -> None:
+    """Make one rejected cache seat visible, then make it absent."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        invalidated = False
+    else:
+        invalidated = not path.exists()
+    _LOG.warning(
+        "dependency-artifact-cache-refused " "artifact_cid=%s reason=%s invalidated=%s",
+        artifact_cid,
+        reason,
+        invalidated,
+    )
 
 
 def _store_authenticate_disk_cache(
@@ -197,18 +227,18 @@ def _store_authenticate_disk_cache(
         import pickle
         import tempfile
 
-        # MappingProxyType is not pickleable; store plain dict modules.
         payload = {
-            # v3 projects recorded .pyi defining source as modules.  A v2 seat
-            # for the same artifact CID is byte-authentic but semantically
-            # incomplete, so it must never answer this reader.
-            "schema": "dep-graph-v3",
-            "artifact_kind": graph.artifact_kind,
-            "distribution_name": graph.distribution_name,
-            "distribution_version": graph.distribution_version,
-            "distribution_artifact_cid": graph.distribution_artifact_cid,
-            "files": graph.files,
-            "modules": dict(graph.modules),
+            # v4 persists constructor INPUTS only. Identity, kind, CID, and
+            # module projection are re-derived through graph construction.
+            "schema": _DEPENDENCY_ARTIFACT_CACHE_SCHEMA,
+            "files": [
+                {
+                    "source_seat": item.source_seat,
+                    "content_cid": item.content_cid,
+                    "content": item.content,
+                }
+                for item in graph.files
+            ],
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
@@ -536,6 +566,20 @@ PythonObjectResolutionV1 = ResolvedPythonObjectV1 | PythonObjectResolutionGapV1
 
 
 @dataclass(frozen=True)
+class _DistributionGraphInputs:
+    located: tuple[tuple[AuthenticatedArtifactFileV1, str], ...]
+
+
+@dataclass(frozen=True)
+class _StdlibGraphInputs:
+    located: tuple[tuple[AuthenticatedArtifactFileV1, str], ...]
+    requested_module_name: str
+
+
+_DependencyArtifactGraphInputs = _DistributionGraphInputs | _StdlibGraphInputs
+
+
+@dataclass(frozen=True, init=False)
 class DependencyArtifactGraph:
     artifact_kind: Literal["distribution", "stdlib"]
     distribution_name: str
@@ -543,17 +587,63 @@ class DependencyArtifactGraph:
     distribution_artifact_cid: str
     files: tuple[AuthenticatedArtifactFileV1, ...]
     modules: Mapping[str, AuthenticatedModuleSourceV1]
-    _intake_authority: object = field(repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        if self._intake_authority is not _ARTIFACT_INTAKE_AUTHORITY:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise DependencyArtifactConstructionError(
+            "DependencyArtifactGraph cannot be allocated from graph fields; "
+            "construct it from authenticated artifact inputs"
+        )
+
+    @classmethod
+    def _construct_from_authenticated_inputs(
+        cls, inputs: _DependencyArtifactGraphInputs
+    ) -> "DependencyArtifactGraph":
+        """The only allocation path from authenticated artifact testimony."""
+        located = inputs.located
+        files = tuple(item for item, _ in located)
+        records = [
+            {"path": item.source_seat, "contentCid": item.content_cid} for item in files
+        ]
+        if records != sorted(records, key=lambda item: item["path"]):
             raise DependencyArtifactAuthenticationError(
-                "dependency artifact graph was not minted by SourceOracle intake"
+                "artifact files must be canonically ordered"
             )
-        if self.artifact_kind == "distribution":
+        files_by_seat = {item.source_seat: item for item in files}
+        if len(files_by_seat) != len(files):
+            raise DependencyArtifactAuthenticationError(
+                "distribution artifact contains duplicate file seats"
+            )
+
+        modules: dict[str, AuthenticatedModuleSourceV1] = {}
+        for item, diagnostic_path in located:
+            relative = PurePosixPath(item.source_seat)
+            module_name = _module_name(relative)
+            if module_name is None:
+                continue
+            try:
+                source = item.content.decode("utf-8")
+            except UnicodeError as exc:
+                raise DependencyArtifactAuthenticationError(
+                    f"recorded Python module {module_name} is not parseable UTF-8 source"
+                ) from exc
+            _require_parseable_module_source(
+                source, path=diagnostic_path, module_name=module_name
+            )
+            if module_name in modules:
+                raise DependencyArtifactAuthenticationError(
+                    f"distribution contains duplicate module seat {module_name}"
+                )
+            modules[module_name] = AuthenticatedModuleSourceV1(
+                module_name=module_name,
+                source_seat=relative.as_posix(),
+                source_cid=item.content_cid,
+                source=source,
+            )
+
+        if isinstance(inputs, _DistributionGraphInputs):
             metadata_files = [
                 item
-                for item in self.files
+                for item in files
                 if item.source_seat.endswith(".dist-info/METADATA")
             ]
             if len(metadata_files) != 1:
@@ -561,120 +651,60 @@ class DependencyArtifactGraph:
                     "distribution graph must retain one METADATA preimage"
                 )
             metadata = BytesParser().parsebytes(metadata_files[0].content)
-            if (
-                metadata.get("Name") != self.distribution_name
-                or metadata.get("Version") != self.distribution_version
-            ):
+            name = metadata.get("Name")
+            version = metadata.get("Version")
+            if not isinstance(name, str) or not name or not version:
                 raise DependencyArtifactAuthenticationError(
-                    "distribution identity does not match its METADATA preimage"
+                    "installed distribution lacks name or version metadata"
                 )
-        elif self.artifact_kind != "stdlib":
-            raise DependencyArtifactAuthenticationError(
-                "dependency artifact graph has an unknown intake kind"
+            artifact_kind: Literal["distribution", "stdlib"] = "distribution"
+            distribution_name = name
+            distribution_version = str(version)
+            artifact_preimage_kind = "python-dependency-artifact"
+        elif isinstance(inputs, _StdlibGraphInputs):
+            if inputs.requested_module_name not in modules:
+                raise DependencyArtifactAuthenticationError(
+                    "requested stdlib module is not projected from authenticated source"
+                )
+            artifact_kind = "stdlib"
+            distribution_name = f"{sys.implementation.name}-stdlib"
+            distribution_version = (
+                sys.implementation.cache_tag or sys.version.split()[0]
             )
-        records = [
-            {"path": item.source_seat, "contentCid": item.content_cid}
-            for item in self.files
-        ]
-        if records != sorted(records, key=lambda item: item["path"]):
-            raise DependencyArtifactAuthenticationError(
-                "artifact files must be canonically ordered"
+            artifact_preimage_kind = "python-stdlib-artifact"
+        else:
+            raise DependencyArtifactConstructionError(
+                "dependency artifact graph inputs have an unknown variant"
             )
-        expected = cid_of_json(
+
+        artifact_cid = cid_of_json(
             {
-                "kind": (
-                    "python-dependency-artifact"
-                    if self.artifact_kind == "distribution"
-                    else "python-stdlib-artifact"
-                ),
+                "kind": artifact_preimage_kind,
                 "schemaVersion": "1",
-                "distributionName": self.distribution_name,
-                "distributionVersion": self.distribution_version,
+                "distributionName": distribution_name,
+                "distributionVersion": distribution_version,
                 "files": records,
             }
         )
-        if expected != self.distribution_artifact_cid:
-            raise DependencyArtifactAuthenticationError(
-                "distribution artifact CID does not match its file preimage"
-            )
-        files_by_seat = {item.source_seat: item for item in self.files}
-        if len(files_by_seat) != len(self.files):
-            raise DependencyArtifactAuthenticationError(
-                "distribution artifact contains duplicate file seats"
-            )
-        for module_name, module in self.modules.items():
-            recorded = files_by_seat.get(module.source_seat)
-            if (
-                module_name != module.module_name
-                or module_name != _module_name(PurePosixPath(module.source_seat))
-                or recorded is None
-                or recorded.content_cid != module.source_cid
-            ):
-                raise DependencyArtifactAuthenticationError(
-                    "module source is not projected from the artifact file manifest"
-                )
-        expected_modules = {
-            name
-            for item in self.files
-            for name in [_module_name(PurePosixPath(item.source_seat))]
-            if name is not None
-        }
-        if set(self.modules) != expected_modules:
-            raise DependencyArtifactAuthenticationError(
-                "artifact module projection is incomplete or contains invented modules"
-            )
 
-    @staticmethod
-    def _distribution_seat_key(
-        distribution: importlib.metadata.Distribution,
-    ) -> str:
-        path = getattr(distribution, "_path", None)
-        if path is not None:
-            return str(Path(path).resolve())
-        return str(Path(distribution.locate_file("")).resolve())
-
-    @staticmethod
-    def _installation_fingerprint(
-        distribution: importlib.metadata.Distribution,
-    ) -> str:
-        """Cheap install identity: every recorded file's (seat, mtime, size).
-
-        Not a content hash — a change detector. Editing an installed module
-        moves mtime/size; the fingerprint moves; the warm front door misses.
-        """
-        files = distribution.files
-        if files is None:
-            raise DependencyArtifactAuthenticationError(
-                "installed distribution has no recorded file manifest"
-            )
-        parts: list[str] = []
-        for recorded in sorted(files, key=lambda item: str(item)):
-            relative = PurePosixPath(str(recorded))
-            if relative.is_absolute():
-                raise DependencyArtifactAuthenticationError(
-                    "distribution manifest contains an absolute file seat"
-                )
-            path = Path(distribution.locate_file(recorded))
-            try:
-                stat = path.stat()
-            except OSError as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"cannot stat recorded distribution file {relative}"
-                ) from exc
-            parts.append(
-                f"{relative.as_posix()}:{int(stat.st_mtime_ns)}:{int(stat.st_size)}"
-            )
-        return blake3_512_of("\n".join(parts).encode("utf-8"))
+        graph = object.__new__(cls)
+        object.__setattr__(graph, "artifact_kind", artifact_kind)
+        object.__setattr__(graph, "distribution_name", distribution_name)
+        object.__setattr__(graph, "distribution_version", distribution_version)
+        object.__setattr__(graph, "distribution_artifact_cid", artifact_cid)
+        object.__setattr__(graph, "files", files)
+        object.__setattr__(graph, "modules", MappingProxyType(modules))
+        return graph
 
     @staticmethod
     def _read_recorded_installation(
         distribution: importlib.metadata.Distribution,
-    ) -> tuple[list[tuple[AuthenticatedArtifactFileV1, str]], str, str, str]:
-        """Read and content-address the installation; mint its artifact CID.
+    ) -> list[tuple[AuthenticatedArtifactFileV1, str]]:
+        """Read and content-address the graph constructor's file inputs.
 
         This is the half that CANNOT be memoized across content change: it is
-        what establishes which bytes are on disk right now. Unchanged-install
-        warm path skips this via ``_installation_fingerprint`` first.
+        what establishes which bytes are on disk right now. Every authentication
+        reads it before consulting a memo keyed by the resulting content CID.
         """
         files = distribution.files
         if files is None:
@@ -705,121 +735,30 @@ class DependencyArtifactGraph:
                     str(path),
                 )
             )
-        metadata_files = [
-            item
-            for item, _ in located
-            if item.source_seat.endswith(".dist-info/METADATA")
-        ]
-        if len(metadata_files) != 1:
-            raise DependencyArtifactAuthenticationError(
-                "installed distribution must contain one recorded METADATA file"
-            )
-        metadata = BytesParser().parsebytes(metadata_files[0].content)
-        name = metadata.get("Name")
-        version = metadata.get("Version")
-        if not isinstance(name, str) or not name or not version:
-            raise DependencyArtifactAuthenticationError(
-                "installed distribution lacks name or version metadata"
-            )
-        preimage = {
-            "kind": "python-dependency-artifact",
-            "schemaVersion": "1",
-            "distributionName": name,
-            "distributionVersion": version,
-            "files": [
-                {"path": item.source_seat, "contentCid": item.content_cid}
-                for item, _ in located
-            ],
-        }
-        return located, name, str(version), cid_of_json(preimage)
-
-    @classmethod
-    def _remember_fingerprint(
-        cls,
-        seat_key: str | None,
-        fingerprint: str | None,
-        graph: "DependencyArtifactGraph",
-    ) -> None:
-        if seat_key is None or fingerprint is None or not _AUTHENTICATE_CACHE_ENABLED:
-            return
-        _AUTHENTICATE_BY_INSTALLATION_FINGERPRINT[seat_key] = (fingerprint, graph)
-        _store_fingerprint_disk_cache(
-            seat_key, fingerprint, graph.distribution_artifact_cid
-        )
+        return located
 
     @classmethod
     def authenticate(
         cls, distribution: importlib.metadata.Distribution
     ) -> "DependencyArtifactGraph":
         """Hash every recorded installed file and publish authenticated modules."""
-        seat_key: str | None = None
-        fingerprint: str | None = None
-        if _AUTHENTICATE_CACHE_ENABLED:
-            # Warm front door (process then disk): if no recorded file moved
-            # (mtime/size), return the content-addressed graph already proven
-            # for this install seat. Mutation that moves mtime is a miss.
-            seat_key = cls._distribution_seat_key(distribution)
-            fingerprint = cls._installation_fingerprint(distribution)
-            prior = _AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.get(seat_key)
-            if prior is not None and prior[0] == fingerprint:
-                return prior[1]
-            parked_cid = _load_artifact_cid_for_fingerprint(seat_key, fingerprint)
-            if parked_cid is not None:
-                disk = _load_authenticate_disk_cache(parked_cid)
-                if disk is not None:
-                    _AUTHENTICATE_GRAPH_CACHE[parked_cid] = disk
-                    cls._remember_fingerprint(seat_key, fingerprint, disk)
-                    return disk
-        located, name, version, artifact_cid = cls._read_recorded_installation(
-            distribution
+        located = cls._read_recorded_installation(distribution)
+        constructed = cls._construct_from_authenticated_inputs(
+            _DistributionGraphInputs(tuple(located))
         )
+        artifact_cid = constructed.distribution_artifact_cid
         if _AUTHENTICATE_CACHE_ENABLED:
             cached = _AUTHENTICATE_GRAPH_CACHE.get(artifact_cid)
             if cached is not None:
-                cls._remember_fingerprint(seat_key, fingerprint, cached)
                 return cached
             disk = _load_authenticate_disk_cache(artifact_cid)
             if disk is not None:
                 _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = disk
-                cls._remember_fingerprint(seat_key, fingerprint, disk)
                 return disk
-        authenticated_files = [item for item, _ in located]
-        modules: dict[str, AuthenticatedModuleSourceV1] = {}
-        for item, path in located:
-            relative = PurePosixPath(item.source_seat)
-            module_name = _module_name(relative)
-            if module_name is None:
-                continue
-            try:
-                source = item.content.decode("utf-8")
-            except UnicodeError as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"recorded Python module {module_name} is not parseable UTF-8 source"
-                ) from exc
-            _require_parseable_module_source(source, path=path, module_name=module_name)
-            if module_name in modules:
-                raise DependencyArtifactAuthenticationError(
-                    f"distribution contains duplicate module seat {module_name}"
-                )
-            modules[module_name] = AuthenticatedModuleSourceV1(
-                module_name=module_name,
-                source_seat=relative.as_posix(),
-                source_cid=item.content_cid,
-                source=source,
-            )
-        graph = cls(
-            artifact_kind="distribution",
-            distribution_name=name,
-            distribution_version=version,
-            distribution_artifact_cid=artifact_cid,
-            files=tuple(authenticated_files),
-            modules=MappingProxyType(modules),
-            _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
-        )
+        graph = constructed
         if _AUTHENTICATE_CACHE_ENABLED:
             _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = graph
             _store_authenticate_disk_cache(graph)
-            cls._remember_fingerprint(seat_key, fingerprint, graph)
         return graph
 
     @classmethod
@@ -862,59 +801,28 @@ class DependencyArtifactGraph:
             if source_path.name == "__init__.py"
             else [source_path]
         )
-        authenticated_files: list[AuthenticatedArtifactFileV1] = []
-        modules: dict[str, AuthenticatedModuleSourceV1] = {}
+        located: list[tuple[AuthenticatedArtifactFileV1, str]] = []
         for candidate in paths:
             relative = PurePosixPath(candidate.relative_to(root).as_posix())
             try:
                 content, _seat, content_cid = dependency_artifact_file(str(candidate))
-                source = content.decode("utf-8")
-                projected = _module_name(relative) or module_name
-                _require_parseable_module_source(
-                    source, path=str(candidate), module_name=projected
-                )
             except (
                 SourceUnavailable,
-                UnicodeError,
-                DependencyArtifactAuthenticationError,
                 ValueError,
             ) as exc:
                 raise DependencyArtifactAuthenticationError(
                     f"cannot authenticate stdlib source {relative}"
                 ) from exc
-            authenticated_files.append(
-                AuthenticatedArtifactFileV1(relative.as_posix(), content_cid, content)
-            )
-            projected_name = _module_name(relative)
-            if projected_name is not None:
-                modules[projected_name] = AuthenticatedModuleSourceV1(
-                    projected_name, relative.as_posix(), content_cid, source
+            located.append(
+                (
+                    AuthenticatedArtifactFileV1(
+                        relative.as_posix(), content_cid, content
+                    ),
+                    str(candidate),
                 )
-        if module_name not in modules:
-            raise DependencyArtifactAuthenticationError(
-                "requested stdlib module is not projected from authenticated source"
             )
-        runtime_version = sys.implementation.cache_tag or sys.version.split()[0]
-        name = f"{sys.implementation.name}-stdlib"
-        records = [
-            {"path": item.source_seat, "contentCid": item.content_cid}
-            for item in authenticated_files
-        ]
-        preimage = {
-            "kind": "python-stdlib-artifact",
-            "schemaVersion": "1",
-            "distributionName": name,
-            "distributionVersion": runtime_version,
-            "files": records,
-        }
-        return cls(
-            artifact_kind="stdlib",
-            distribution_name=name,
-            distribution_version=runtime_version,
-            distribution_artifact_cid=cid_of_json(preimage),
-            files=tuple(authenticated_files),
-            modules=MappingProxyType(modules),
-            _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
+        return cls._construct_from_authenticated_inputs(
+            _StdlibGraphInputs(tuple(located), module_name)
         )
 
 
@@ -930,7 +838,6 @@ def clear_top_level_authentication_caches() -> None:
     global _PACKAGES_DISTRIBUTIONS_CACHE
     _PACKAGES_DISTRIBUTIONS_CACHE = None
     _TOP_LEVEL_GRAPH_CACHE.clear()
-    _AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
 
 
 def _packages_distributions() -> Mapping[str, list[str]]:
