@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      shardCount:
+        description: "Process-floor shard count"
+        required: false
+        default: "8"
+        type: string
 
 permissions:
   contents: read
@@ -65,6 +71,7 @@ jobs:
 
   process-floor:
     name: process-floor ${{ matrix.axisSeat }}
+    if: ${{ github.event_name != 'workflow_dispatch' || matrix.shard < fromJSON(inputs.shardCount || '8') }}
     needs: [python-test-env-prepare]
     runs-on: [self-hosted, Linux, X64]
     # silent is the long pole (~11min today); others ~30s once cache warm.
@@ -80,193 +87,193 @@ jobs:
             script: silent_zero_tolerance.py
             display: R_silent[s00]
             shard: 0
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s01
             script: silent_zero_tolerance.py
             display: R_silent[s01]
             shard: 1
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s02
             script: silent_zero_tolerance.py
             display: R_silent[s02]
             shard: 2
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s03
             script: silent_zero_tolerance.py
             display: R_silent[s03]
             shard: 3
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s04
             script: silent_zero_tolerance.py
             display: R_silent[s04]
             shard: 4
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s05
             script: silent_zero_tolerance.py
             display: R_silent[s05]
             shard: 5
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s06
             script: silent_zero_tolerance.py
             display: R_silent[s06]
             shard: 6
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: silent
             axisSeat: silent-s07
             script: silent_zero_tolerance.py
             display: R_silent[s07]
             shard: 7
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s00
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s00]
             shard: 0
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s01
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s01]
             shard: 1
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s02
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s02]
             shard: 2
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s03
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s03]
             shard: 3
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s04
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s04]
             shard: 4
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s05
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s05]
             shard: 5
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s06
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s06]
             shard: 6
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: native-crash
             axisSeat: native-crash-s07
             script: native_crash_zero_tolerance.py
             display: R_native_crashes[s07]
             shard: 7
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s00
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s00]
             shard: 0
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s01
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s01]
             shard: 1
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s02
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s02]
             shard: 2
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s03
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s03]
             shard: 3
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s04
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s04]
             shard: 4
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s05
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s05]
             shard: 5
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s06
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s06]
             shard: 6
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: bare-exception
             axisSeat: bare-exception-s07
             script: bare_exception_zero_tolerance.py
             display: R_bare_exceptions[s07]
             shard: 7
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s00
             script: timeout_zero_tolerance.py
             display: R_timeouts[s00]
             shard: 0
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s01
             script: timeout_zero_tolerance.py
             display: R_timeouts[s01]
             shard: 1
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s02
             script: timeout_zero_tolerance.py
             display: R_timeouts[s02]
             shard: 2
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s03
             script: timeout_zero_tolerance.py
             display: R_timeouts[s03]
             shard: 3
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s04
             script: timeout_zero_tolerance.py
             display: R_timeouts[s04]
             shard: 4
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s05
             script: timeout_zero_tolerance.py
             display: R_timeouts[s05]
             shard: 5
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s06
             script: timeout_zero_tolerance.py
             display: R_timeouts[s06]
             shard: 6
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
           - axis: timeout
             axisSeat: timeout-s07
             script: timeout_zero_tolerance.py
             display: R_timeouts[s07]
             shard: 7
-            shardCount: 8
+            shardCount: ${{ fromJSON(inputs.shardCount || '8') }}
     steps:
       - uses: actions/checkout@v4
       - name: Download shared third-party wheelhouse
