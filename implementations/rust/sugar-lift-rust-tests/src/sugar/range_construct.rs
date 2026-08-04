@@ -26,54 +26,93 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match frag.observed().as_str() {
-        "Struct" => {
-            // Gate: no `..rest` spread.
-            if frag.struct_has_rest() {
-                return None;
+    AuthenticatedRangeFields::recognize(frag, fcx).map(RangeConstructSugar::new)
+}
+
+/// The source-authenticated field bodies shared by the construction-fact owner
+/// and the sequence projection. Each consumer chooses its own codomain only
+/// after these same TERM owners have reduced the written `start`/`end` fields.
+pub(crate) struct AuthenticatedRangeFields {
+    kind: RangeConstructKind,
+    fields: Vec<(String, SugarBody<TermFloor>)>,
+}
+
+impl AuthenticatedRangeFields {
+    pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Self> {
+        match frag.observed().as_str() {
+            "Struct" => {
+                // Gate: no `..rest` spread.
+                if frag.struct_has_rest() {
+                    return None;
+                }
+                // Determine which range kind from the struct path's last segment.
+                let path_str = frag.struct_path_variant_string()?;
+                let last_seg = path_str.split("::").last()?;
+                let kind = RangeConstructKind::from_struct_name(last_seg)?;
+                // Collect accepted fields from the struct literal.
+                let all_fields = frag.struct_named_fields_frags();
+                let raw_fields: Vec<(String, SourceFragment<'_>)> = all_fields
+                    .into_iter()
+                    .filter(|(name, _)| kind.accepts_field(name))
+                    .collect();
+                let field_names: Vec<String> = raw_fields.iter().map(|(n, _)| n.clone()).collect();
+                if !kind.has_required_field_names(&field_names) {
+                    return None;
+                }
+                let fields = raw_fields
+                    .into_iter()
+                    .map(|(name, child_frag)| (name, SugarBody::term_frag(&child_frag, fcx)))
+                    .collect();
+                Some(Self { kind, fields })
             }
-            // Determine which range kind from the struct path's last segment.
-            let path_str = frag.struct_path_variant_string()?;
-            let last_seg = path_str.split("::").last()?;
-            let kind = RangeConstructKind::from_struct_name(last_seg)?;
-            // Collect accepted fields from the struct literal.
-            let all_fields = frag.struct_named_fields_frags();
-            let raw_fields: Vec<(String, SourceFragment<'_>)> = all_fields
-                .into_iter()
-                .filter(|(name, _)| kind.accepts_field(name))
-                .collect();
-            let field_names: Vec<String> = raw_fields.iter().map(|(n, _)| n.clone()).collect();
-            if !kind.has_required_field_names(&field_names) {
-                return None;
+            "Call" => {
+                // Gate: func path must end in `RangeInclusive::new`.
+                let func = frag.call_func()?;
+                if func.path_last_segment_ident().as_deref() != Some("new") {
+                    return None;
+                }
+                if func.path_penultimate_ident().as_deref() != Some("RangeInclusive") {
+                    return None;
+                }
+                if frag.call_arg_count() != 2 {
+                    return None;
+                }
+                let args = frag.call_args();
+                Some(Self {
+                    kind: RangeConstructKind::RangeInclusive,
+                    fields: vec![
+                        ("start".to_string(), SugarBody::term_frag(&args[0], fcx)),
+                        ("end".to_string(), SugarBody::term_frag(&args[1], fcx)),
+                    ],
+                })
             }
-            let fields = raw_fields
-                .into_iter()
-                .map(|(name, child_frag)| (name, SugarBody::term_frag(&child_frag, fcx)))
-                .collect();
-            Some(RangeConstructSugar::new(kind, fields))
+            _ => None,
         }
-        "Call" => {
-            // Gate: func path must end in `RangeInclusive::new`.
-            let func = frag.call_func()?;
-            if func.path_last_segment_ident().as_deref() != Some("new") {
-                return None;
-            }
-            if func.path_penultimate_ident().as_deref() != Some("RangeInclusive") {
-                return None;
-            }
-            if frag.call_arg_count() != 2 {
-                return None;
-            }
-            let args = frag.call_args();
-            Some(RangeConstructSugar::new(
-                RangeConstructKind::RangeInclusive,
-                vec![
-                    ("start".to_string(), SugarBody::term_frag(&args[0], fcx)),
-                    ("end".to_string(), SugarBody::term_frag(&args[1], fcx)),
-                ],
-            ))
+    }
+
+    pub(crate) fn inclusive(&self) -> Option<bool> {
+        match self.kind {
+            RangeConstructKind::Range => Some(false),
+            RangeConstructKind::RangeInclusive => Some(true),
+            RangeConstructKind::RangeFrom
+            | RangeConstructKind::RangeTo
+            | RangeConstructKind::RangeToInclusive => None,
         }
-        _ => None,
+    }
+
+    pub(crate) fn reduce(&self, ctx: &SugarCtx) -> Result<Vec<(String, Rc<Term>)>, crate::Effect> {
+        let mut fields = Vec::new();
+        for (name, body) in &self.fields {
+            let term = match body.reduce(ctx) {
+                Outcome::Complete(d) => d.accept_desugared_floor(RequiredTermVisitor {
+                    owner: "range construct field",
+                }),
+                Outcome::Incomplete(effect) => return Err(effect),
+            };
+            fields.push((name.clone(), term));
+        }
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(fields)
     }
 }
 
@@ -143,23 +182,15 @@ fn has_field_name(fields: &[String], want: &str) -> bool {
 }
 
 struct RangeConstructSugar {
-    kind: RangeConstructKind,
-    fields: Vec<(String, SugarBody<TermFloor>)>,
+    range: AuthenticatedRangeFields,
 }
 
 impl Sugar for RangeConstructSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let mut fields = Vec::new();
-        for (name, body) in &self.fields {
-            let term = match body.reduce(ctx) {
-                Outcome::Complete(d) => d.accept_desugared_floor(RequiredTermVisitor {
-                    owner: "range construct field",
-                }),
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-            };
-            fields.push((name.clone(), term));
-        }
-        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        let fields = match self.range.reduce(ctx) {
+            Ok(fields) => fields,
+            Err(effect) => return Outcome::Incomplete(effect),
+        };
         let subject = self.subject_term(&fields);
         let atoms = fields
             .iter()
@@ -182,7 +213,7 @@ impl Sugar for RangeConstructSugar {
             n,
             kind: AssertionFactKind::Warranted,
             warrant: Warrant {
-                name: Some(self.kind.warrant_name().to_string()),
+                name: Some(self.range.kind.warrant_name().to_string()),
             },
         })
     }
@@ -190,7 +221,7 @@ impl Sugar for RangeConstructSugar {
 
 impl RangeConstructSugar {
     fn subject_term(&self, fields: &[(String, Rc<Term>)]) -> Rc<Term> {
-        match self.kind {
+        match self.range.kind {
             RangeConstructKind::RangeInclusive => {
                 let args = ["start", "end"]
                     .iter()
@@ -217,7 +248,7 @@ impl RangeConstructSugar {
                     })
                     .collect();
                 Rc::new(Term::Ctor {
-                    name: self.kind.ctor_name().to_string(),
+                    name: self.range.kind.ctor_name().to_string(),
                     args,
                 })
             }
@@ -226,11 +257,8 @@ impl RangeConstructSugar {
 }
 
 impl RangeConstructSugar {
-    fn new(
-        kind: RangeConstructKind,
-        fields: Vec<(String, SugarBody<TermFloor>)>,
-    ) -> Box<dyn Sugar> {
-        Box::new(Self { kind, fields })
+    fn new(range: AuthenticatedRangeFields) -> Box<dyn Sugar> {
+        Box::new(Self { range })
     }
 }
 

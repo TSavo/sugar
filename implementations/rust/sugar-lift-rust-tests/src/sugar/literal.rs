@@ -7,7 +7,9 @@
 // `strip_refs_groups`, `SUGAR_SEQ_CAP`) stays in `crate::` and is imported below.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
+use sugar_ir_symbolic::Term;
 use syn::{Expr, Lit, UnOp};
 
 use crate::sugar::factory::SugarBuildCtx;
@@ -159,55 +161,7 @@ impl LiteralSugar {
                     start,
                     end,
                     inclusive,
-                } => {
-                    if let (Some(s), Some(e)) =
-                        (const_fold_u128_term(&start), const_fold_u128_term(&end))
-                    {
-                        if e < s {
-                            return None;
-                        }
-                        let len = e
-                            .checked_sub(s)?
-                            .checked_add(if inclusive { 1 } else { 0 })?;
-                        if len == 0 || len > SUGAR_SEQ_CAP as u128 {
-                            return None;
-                        }
-                        return Some(Desugared::Seq(
-                            (0..len)
-                                .map(|offset| {
-                                    let n = s.checked_add(offset)?;
-                                    Some(DesugaredElem {
-                                        expr: u128_expr(n)?,
-                                        value: Some(ConstVal::UInt128(n)),
-                                    })
-                                })
-                                .collect::<Option<Vec<_>>>()?,
-                        ));
-                    }
-                    let (Some(s), Some(e)) = (
-                        term_as_int(&start).or_else(|| const_fold_int_term(&start)),
-                        term_as_int(&end).or_else(|| const_fold_int_term(&end)),
-                    ) else {
-                        return None;
-                    };
-                    if e < s {
-                        return None;
-                    }
-                    let span = e.checked_sub(s)?;
-                    let len = span.checked_add(if inclusive { 1 } else { 0 })?;
-                    if len == 0 || len > i128::from(SUGAR_SEQ_CAP) {
-                        return None;
-                    }
-                    (0..len)
-                        .map(|offset| {
-                            let n = s.checked_add(offset)?;
-                            Some(DesugaredElem {
-                                expr: syn::parse_str::<Expr>(&n.to_string()).ok()?,
-                                value: Some(ConstVal::Int(n)),
-                            })
-                        })
-                        .collect::<Option<Vec<_>>>()?
-                }
+                } => finite_integer_range_sequence(&start, &end, inclusive).ok()?,
             };
             if seq.is_empty() {
                 return None;
@@ -215,6 +169,72 @@ impl LiteralSugar {
             Some(Desugared::Seq(seq))
         })()
     }
+}
+
+/// Materialize the one authenticated finite-integer-range sequence shared by
+/// written range syntax and the `Range { start, end }` sequence projection.
+///
+/// This is the sequence owner: callers must first authenticate the two bound
+/// terms. A failure stays a named source boundary; no caller may reinterpret a
+/// construction-constraint codomain as this sequence.
+pub(crate) fn finite_integer_range_sequence(
+    start: &Rc<Term>,
+    end: &Rc<Term>,
+    inclusive: bool,
+) -> Result<Vec<DesugaredElem>, &'static str> {
+    if let (Some(s), Some(e)) = (const_fold_u128_term(start), const_fold_u128_term(end)) {
+        if e < s {
+            return Err(EMPTY_DOMAIN_REASON);
+        }
+        let len = e
+            .checked_sub(s)
+            .and_then(|span| span.checked_add(if inclusive { 1 } else { 0 }))
+            .ok_or(OVERSIZE_DOMAIN_REASON)?;
+        if len == 0 {
+            return Err(EMPTY_DOMAIN_REASON);
+        }
+        if len > SUGAR_SEQ_CAP as u128 {
+            return Err(OVERSIZE_DOMAIN_REASON);
+        }
+        return (0..len)
+            .map(|offset| {
+                let n = s.checked_add(offset).ok_or(OVERSIZE_DOMAIN_REASON)?;
+                Ok(DesugaredElem {
+                    expr: u128_expr(n).ok_or(RUNTIME_BOUND_REASON)?,
+                    value: Some(ConstVal::UInt128(n)),
+                })
+            })
+            .collect();
+    }
+
+    let (Some(s), Some(e)) = (
+        term_as_int(start).or_else(|| const_fold_int_term(start)),
+        term_as_int(end).or_else(|| const_fold_int_term(end)),
+    ) else {
+        return Err(RUNTIME_BOUND_REASON);
+    };
+    if e < s {
+        return Err(EMPTY_DOMAIN_REASON);
+    }
+    let len = e
+        .checked_sub(s)
+        .and_then(|span| span.checked_add(if inclusive { 1 } else { 0 }))
+        .ok_or(OVERSIZE_DOMAIN_REASON)?;
+    if len == 0 {
+        return Err(EMPTY_DOMAIN_REASON);
+    }
+    if len > i128::from(SUGAR_SEQ_CAP) {
+        return Err(OVERSIZE_DOMAIN_REASON);
+    }
+    (0..len)
+        .map(|offset| {
+            let n = s.checked_add(offset).ok_or(OVERSIZE_DOMAIN_REASON)?;
+            Ok(DesugaredElem {
+                expr: syn::parse_str::<Expr>(&n.to_string()).map_err(|_| RUNTIME_BOUND_REASON)?,
+                value: Some(ConstVal::Int(n)),
+            })
+        })
+        .collect()
 }
 
 fn array_primitive_element_kind(arr: &syn::ExprArray) -> Option<PrimitiveIntKind> {
