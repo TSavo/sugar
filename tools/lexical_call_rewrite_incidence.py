@@ -129,10 +129,9 @@ def main() -> None:
         rewritten: set[int] = set()
         row_invoked: set[int] = set()
         row_rewritten: set[int] = set()
-        stranded_rows = 0
+        stranded_row_ids: set[int] = set()
 
         def active(self: Call, scope: dict[str, object]) -> object:
-            nonlocal stranded_rows
             before = tuple(self.unit.lexical_call_rows_for(self))
             result = original(self, scope)
             occurrence = id(self)
@@ -144,7 +143,7 @@ def main() -> None:
                 if before:
                     row_rewritten.add(occurrence)
                     if not tuple(self.unit.lexical_call_rows_for(result)):
-                        stranded_rows += len(before)
+                        stranded_row_ids.update(id(row) for row in before)
             return result
 
         Call.substitute = active
@@ -162,7 +161,7 @@ def main() -> None:
             "rewrote": len(rewritten),
             "rowBearingReached": len(row_invoked),
             "rowBearingRewrote": len(row_rewritten),
-            "strandedRows": stranded_rows,
+            "strandedRows": len(stranded_row_ids),
         }
         results.append(row)
         _emit(row)
