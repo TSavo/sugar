@@ -338,6 +338,80 @@ for testimony in (lock + "/pid", "holder_pid=unknown"):
         raise SystemExit(f"missing terminal testimony: {testimony}")
 PY
 
-echo 'PASS: production rebuild lock completes and both failure terminals terminate'
+# A failed mkdir only proves contention at that instant. The peer can publish
+# and release the whole lock before this waiter reads pid. That lawful absence
+# is not malformed lock state: the waiter must retry, then acquire normally.
+rm -rf "$production_lock"
+mkdir -p "$tmp/released-peer-mkdir-bin"
+cat >"$tmp/released-peer-mkdir-bin/mkdir" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$#" == 1 && "$1" == "${LOCK_TO_RELEASE:?}" \
+      && ! -e "${RELEASED_PEER_STATE:?}" ]]; then
+  : >"$RELEASED_PEER_STATE"
+  /bin/mkdir "$LOCK_TO_RELEASE"
+  printf 'peer\n' >"$LOCK_TO_RELEASE/pid"
+  : >"$LOCK_TO_RELEASE/heartbeat"
+  /bin/rm -rf "$LOCK_TO_RELEASE"
+  exit 1
+fi
+exec /bin/mkdir "$@"
+EOF
+chmod +x "$tmp/released-peer-mkdir-bin/mkdir"
+
+python3 - "$sugarbin" "$production_cache" "$production_stamp" \
+  "$production_lock" "$tmp/released-peer-mkdir-bin" \
+  "$tmp/released-peer-state" <<'PY'
+import os
+import subprocess
+import sys
+
+sugarbin, cache, stamp, lock, fake_bin, state = sys.argv[1:]
+env = os.environ.copy()
+env.update(
+    {
+        "LOCK_TO_RELEASE": lock,
+        "PATH": fake_bin + os.pathsep + env["PATH"],
+        "RELEASED_PEER_STATE": state,
+        "SUGAR_BINARY_CACHE_DIR": cache,
+        "SUGAR_BINARY_SOURCE_STAMP": stamp,
+    }
+)
+try:
+    result = subprocess.run(
+        [
+            sugarbin,
+            "preflight-lock",
+            "--bin",
+            "sugar",
+            "--profile",
+            "debug",
+            "--platform",
+            "fixture",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=8,
+        check=False,
+    )
+except subprocess.TimeoutExpired as error:
+    stderr = error.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    print("released-peer retry arm did not terminate within 8s", file=sys.stderr)
+    print(stderr, file=sys.stderr)
+    raise SystemExit(1)
+if result.returncode != 0:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit(
+        f"released peer was misclassified as malformed lock: {result.returncode}"
+    )
+if "crime=missing-rebuild-lock-pid" in result.stderr:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit("released peer emitted missing-pid crime")
+PY
+
+echo 'PASS: production rebuild lock completes, released peer retries, and both failure terminals terminate'
 
 echo 'PASS: R_shelf_rebuild_single_flight — one build, waiter cell, dead-winner reclaim'
