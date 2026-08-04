@@ -5130,6 +5130,16 @@ class Assign(Statement):
         receiver = target.value.substitute(scope)
         if not isinstance(receiver, Node):
             return None
+        # A formal is authority for an arbitrary caller-supplied value, not
+        # testimony that the value is this source class's constructed receiver.
+        # Sending it through ReceiverFieldStoreStateSugar makes reduction ask
+        # a SymbolicValue to behave as an ObjectValue.  The ordinary valued
+        # store ladder below already owns that formal-only case.  Class-owned
+        # ``self`` reaches this door as ConstructedReceiverRef, and subsequent
+        # stores carry ReceiverFieldStoreState, so both authenticated state
+        # paths remain here.
+        if isinstance(receiver, (FormalRef, BindingCoordinateRef)):
+            return None
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of
 

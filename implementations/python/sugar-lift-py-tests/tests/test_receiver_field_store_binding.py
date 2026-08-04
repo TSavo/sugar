@@ -21,6 +21,7 @@ from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
     ConstructedReceiverRefSugar,
 )
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
+from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
 from sugar_source_tree.nodes import (
     ClassDef,
     FunctionDef,
@@ -82,22 +83,22 @@ class _FixedSugar(ConstructedTermSugar):
 
 
 def test_free_method_receiver_uses_the_formal_store_entrance() -> None:
-    """A standalone method universe has no constructed receiver authority."""
+    """A standalone formal carries no constructed receiver authority."""
     source = (
-        "class Box:\n"
-        "    def __init__(self):\n"
-        "        self.value = 1\n"
+        "def mutate(target):\n"
+        "    target.value = 1\n"
     )
     tree = SourceFile((source, "formal_receiver.py", blake3_512_of(source.encode())))
-    initializer = next(
+    function = next(
         node
         for node in tree.nodes()
-        if isinstance(node, FunctionDef) and node.name == "__init__"
+        if isinstance(node, FunctionDef) and node.name == "mutate"
     )
 
-    universe = initializer.sugar()
+    universe = function.sugar()
 
     assert isinstance(universe.statements[0], AttributeStoreEffectSugar)
+    assert isinstance(universe.statements[0].receiver, FormalRefSugar)
 
 
 def test_class_constructor_receiver_reaches_the_authenticated_state_owner() -> None:
