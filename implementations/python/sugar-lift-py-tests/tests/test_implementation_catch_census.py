@@ -155,7 +155,8 @@ def typed_raise():
 """,
     )
 
-    rows = _candidate_rows(_measure(root), "sugarNotWritten")
+    receipt = _measure(root)
+    rows = _candidate_rows(receipt, "sugarNotWritten")
 
     assert [
         (row["qualname"], row["classification"], row["typedConversionKind"])
@@ -195,7 +196,8 @@ def enumerate_calls():
 """,
     )
 
-    rows = _candidate_rows(_measure(root), "sugarNotWritten")
+    receipt = _measure(root)
+    rows = _candidate_rows(receipt, "sugarNotWritten")
 
     assert [
         (row["qualname"], row["classification"], row["typedConversionKind"])
@@ -204,6 +206,35 @@ def enumerate_calls():
         ("serve_forever", "lawful", "typed-loud-refusal"),
         ("enumerate_calls", "lawful", "attested-gap-obligation"),
     ]
+
+
+def test_isinstance_guarded_typed_gap_variable_is_lawful(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "src"
+    _write(
+        root,
+        "projection.py",
+        """
+def gap():
+    raise ConstructionPanic(None)
+
+def recover():
+    try:
+        gap()
+    except ConstructionPanic:
+        projected = project_alternate_construction()
+        if isinstance(projected, ManagerConstructionGapV1):
+            return projected
+        result = projected
+    return result
+""",
+    )
+
+    row = _candidate_rows(_measure(root), "constructionPanic")[0]
+
+    assert row["classification"] == "lawful"
+    assert row["typedConversionKind"] == "typed-gap-or-construction-recovery"
 
 
 def test_inner_bare_reraise_does_not_invent_construction_reachability(
@@ -226,7 +257,8 @@ def best_effort_cache():
 """,
     )
 
-    rows = _candidate_rows(_measure(root), "sugarNotWritten")
+    receipt = _measure(root)
+    rows = _candidate_rows(receipt, "sugarNotWritten")
 
     assert [
         (row["coordinate"]["startLine"], row["reachability"], row["classification"])
@@ -237,6 +269,8 @@ def best_effort_cache():
         (6, "unresolved", "lawful"),
         (9, "unresolved", None),
     ]
+    assert receipt["result"]["reachabilityUnresolvedCount"] == 2
+    assert receipt["result"]["unresolvedCount"] == 1
 
 
 def test_sibling_exact_reraise_intercepts_later_broad_catch(tmp_path: Path) -> None:

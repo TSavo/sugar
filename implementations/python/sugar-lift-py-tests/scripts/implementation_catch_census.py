@@ -341,6 +341,34 @@ def _explicit_reraise(handler: ast.ExceptHandler) -> bool:
     )
 
 
+def _typed_guarded_return_names(handler: ast.ExceptHandler) -> dict[str, str]:
+    guarded: dict[str, str] = {}
+    for branch in ast.walk(handler):
+        if not isinstance(branch, ast.If):
+            continue
+        test = branch.test
+        if (
+            not isinstance(test, ast.Call)
+            or _call_leaf(test) != "isinstance"
+            or len(test.args) != 2
+            or not isinstance(test.args[0], ast.Name)
+        ):
+            continue
+        type_leaf = _expression_leaf(test.args[1])
+        if type_leaf is None or not _is_typed_testimony_leaf(type_leaf):
+            continue
+        name = test.args[0].id
+        if any(
+            isinstance(item, ast.Return)
+            and isinstance(item.value, ast.Name)
+            and item.value.id == name
+            for statement in branch.body
+            for item in ast.walk(statement)
+        ):
+            guarded[name] = type_leaf
+    return guarded
+
+
 def _typed_conversion_kind(handler: ast.ExceptHandler) -> tuple[str | None, list[str]]:
     """Authenticate named testimony produced by one handler.
 
@@ -387,15 +415,19 @@ def _typed_conversion_kind(handler: ast.ExceptHandler) -> tuple[str | None, list
     ):
         return "attested-gap-obligation", ["installs a named opaque-call obligation"]
 
+    guarded_names = _typed_guarded_return_names(handler)
     returns = [item for item in ast.walk(handler) if isinstance(item, ast.Return)]
     typed_returns = [
-        item for item in returns if _is_typed_testimony_expression(item.value)
+        item
+        for item in returns
+        if _is_typed_testimony_expression(item.value)
+        or (isinstance(item.value, ast.Name) and item.value.id in guarded_names)
     ]
     untyped_returns = [item for item in returns if item not in typed_returns]
     if typed_returns and not untyped_returns:
         leaves = sorted(
             {
-                leaf
+                guarded_names.get(leaf, leaf)
                 for item in typed_returns
                 if (leaf := _expression_leaf(item.value)) is not None
             }
@@ -843,10 +875,16 @@ def measure_declared_roots(
         for row in (*cp_rows, *snw_rows)
         if row["classification"] == "suppression"
     }
+    reachability_unresolved_sites = {
+        row["siteId"]
+        for row in (*cp_rows, *snw_rows)
+        if row["reachability"] == "unresolved"
+    }
     unresolved_sites = {
         row["siteId"]
         for row in (*cp_rows, *snw_rows)
         if row["reachability"] == "unresolved"
+        and row["classification"] is None
     }
     body: dict[str, Any] = {
         "schema": SCHEMA,
@@ -868,6 +906,7 @@ def measure_declared_roots(
         "result": {
             "suppressionCount": len(suppression_sites),
             "unresolvedCount": len(unresolved_sites),
+            "reachabilityUnresolvedCount": len(reachability_unresolved_sites),
             "constructionPanicCandidateCount": len(cp_rows),
             "sugarNotWrittenCandidateCount": len(snw_rows),
         },
