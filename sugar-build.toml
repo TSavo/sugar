@@ -106,6 +106,31 @@ binaries = ["sugar", "sugar-ir-smt-lib"]
 command = ["make", "examples-gate"]
 network = "required"
 
+[tasks.showcases]
+capabilities = ["python-test", "python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
+binaries = []
+command = ["make", "test-showcases"]
+network = "required"
+
+[tasks.showcases.closure]
+kind = "make-roster"
+path = "Makefile"
+variable = "SHOWCASE_RUNS"
+retirements = ".github/showcase-retirements.json"
+adjacent_manifests = ["rust-toolchain.toml"]
+required_commands = ["git"]
+artifacts = [
+  "release:sugar",
+  "debug:sugar-ir-smt-lib",
+  "debug:sugar-ir-lean",
+  "debug:sugar-ir-coq",
+  "debug:sugar-ir-maude",
+  "debug:sugar-walk-rpc",
+  "debug:rust_test_assertions_rpc",
+  "debug:witness_rpc",
+  "debug:discharge_cli",
+]
+
 [tasks.pandas-wall]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
