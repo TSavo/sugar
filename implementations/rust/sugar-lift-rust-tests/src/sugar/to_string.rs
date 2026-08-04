@@ -6,7 +6,9 @@
 use sugar_ir_symbolic::str_const;
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::factory::{FormatValueFloor, SugarBody};
+use crate::sugar::factory::{
+    has_source_determined_display_value_frag, FormatValueFloor, SugarBody,
+};
 use crate::sugar::format::display_format_value_floor;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
@@ -41,6 +43,9 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     let receiver = srg.call_receiver()?;
+    if !has_source_determined_display_value_frag(&receiver, fcx) {
+        return None;
+    }
     Some(Box::new(ToStringTermSugar {
         receiver: SugarBody::format_value_frag(&receiver, fcx),
     }))
@@ -82,17 +87,23 @@ mod tests {
 
     #[test]
     fn from_src_recognizes_to_string_method() {
-        let expr: Expr = syn::parse_str("x.to_string()").expect("parses");
+        let expr: Expr = syn::parse_str("42.to_string()").expect("parses");
         let frag = SourceFragment::expr(&expr, "<test>");
         assert_eq!(frag.observed(), "MethodCall");
         let scope = TemporalScope::new("from-src-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        // positive: bare to_string() with no args must recognize
+        // positive: source-determined to_string() with no args must recognize
         assert!(
             recognize(&frag, &fcx).is_some(),
-            "to_string() with no args must recognize"
+            "literal to_string() with no args must recognize"
+        );
+        // negative: an unknown runtime receiver belongs to generic MethodSugar.
+        let runtime_receiver: Expr = syn::parse_str("x.to_string()").expect("parses");
+        assert!(
+            recognize(&SourceFragment::expr(&runtime_receiver, "<test>"), &fcx).is_none(),
+            "unknown to_string receiver must decline to generic method construction"
         );
         // negative: different method must not recognize
         let clone_expr: Expr = syn::parse_str("x.clone()").expect("parses");

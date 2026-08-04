@@ -1615,7 +1615,7 @@ fn constraint_gap(reason: impl Into<String>) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FloatWidthScope, TemporalPlan, TemporalScope};
+    use crate::{FactoryAuditLog, FloatWidthScope, TemporalPlan, TemporalScope};
 
     #[test]
     fn raw_if_let_guard_constraint_is_typed_effect_not_factory_gap() {
@@ -1870,6 +1870,90 @@ mod tests {
                 "scan terminal assertion should ground both sides to 10, got {arg:?}"
             );
         }
+    }
+
+    #[test]
+    fn runtime_to_string_method_result_reaches_relation_through_method_owner() {
+        let expr: Expr = syn::parse_str(
+            r#"assert_eq!("a1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8", my_uuid.to_string())"#,
+        )
+        .expect("parse UUID to_string assertion");
+        let mut scope = TemporalScope::new("uuid-to-string-relation", TemporalPlan::default());
+        scope.record_let_binding(
+            "my_uuid",
+            syn::parse_str(r#"Uuid::parse_str("a1a2a3a4b1b2c1c2d1d2d3d4d5d6d7d8").unwrap()"#)
+                .expect("parse UUID binding"),
+        );
+        let audits = FactoryAuditLog::default();
+        let float_widths = FloatWidthScope::new();
+
+        let entry = assertion_entry_with_audits(&expr, &scope, &float_widths, Some(&audits))
+            .expect("runtime to_string must reach the generic method-result relation");
+
+        let Formula::Atomic { name, args } = entry.atom.as_ref() else {
+            panic!("expected UUID to_string equality, got {:?}", entry.atom);
+        };
+        assert_eq!(name, "=");
+        assert_eq!(args.len(), 2);
+        let Term::Ctor {
+            name: method,
+            args: method_args,
+        } = args[1].as_ref()
+        else {
+            panic!(
+                "expected generic to_string method result, got {:?}",
+                args[1]
+            );
+        };
+        assert_eq!(method, "method:to_string");
+        assert_eq!(method_args.len(), 1);
+        assert!(
+            audits.borrow().iter().any(|audit| {
+                audit.requested_role == "Term"
+                    && audit.selected == Some("method")
+                    && audit.site.contains("to_string")
+            }),
+            "runtime to_string must be constructed by the generic method owner; audits={:?}",
+            audits.borrow()
+        );
+    }
+
+    #[test]
+    fn panic_freedom_relation_gate_still_refuses_unreplayed_iterator_consumption() {
+        let mut plan = TemporalPlan::default();
+        plan.mut_locals.insert("iter".to_string());
+        plan.iterators.insert("iter".to_string());
+        plan.versioned.insert("iter".to_string());
+        let scope = TemporalScope::new("panic-freedom-relation-gate", plan);
+        let lhs: Expr = syn::parse_str("iter.next()").expect("parse iterator terminal");
+        let direct_effect = crate::panic_freedom_expr_callsite_effect(&lhs, &scope)
+            .expect("unreplayed iterator consumption must carry a panic-freedom effect");
+        let expr: Expr =
+            syn::parse_str("assert_eq!(iter.next(), Some(1))").expect("parse relation");
+        let audits = FactoryAuditLog::default();
+        let float_widths = FloatWidthScope::new();
+
+        let effect = match assertion_entry_with_audits(&expr, &scope, &float_widths, Some(&audits))
+        {
+            Err(effect) => effect,
+            Ok(_) => panic!("panic-freedom relation gate must refuse before constructing a term"),
+        };
+
+        assert_eq!(effect.reason(), direct_effect.reason());
+        assert!(
+            effect.reason().contains("unknown iterator consumption"),
+            "gate must retain the named iterator-consumption refusal: {}",
+            effect.reason()
+        );
+        assert!(
+            !audits.borrow().iter().any(|audit| {
+                audit.requested_role == "Term"
+                    && audit.selected == Some("method")
+                    && audit.site.contains("next")
+            }),
+            "a gated iterator terminal must not reach the generic method owner; audits={:?}",
+            audits.borrow()
+        );
     }
 
     #[test]

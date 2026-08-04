@@ -238,6 +238,53 @@ fn stable_binding_init<'a>(name: &str, fcx: &'a SugarBuildCtx) -> Option<&'a Exp
     fcx.scope().stable_let_binding_for_term(name)
 }
 
+/// Whether Display formatting is owned by the source-determined format-value floor.
+///
+/// This is the recognizer-side boundary for `.to_string()`: closed literal/format
+/// shapes stay with `ToStringTermSugar`; runtime call/method receivers decline so the
+/// already-registered generic method term can preserve their result identity. Returning
+/// `false` never fabricates a value and never converts a format effect into success.
+pub(crate) fn has_source_determined_display_value(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit { lit, .. }) => reconstruct_lit(lit)
+            .ok()
+            .flatten()
+            .and_then(|value| value.render(&Spec::display()).ok().flatten())
+            .is_some(),
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => {
+            has_source_determined_display_value(&unary.expr, fcx)
+        }
+        Expr::Binary(binary) if is_fmt_arith_op(&binary.op) => {
+            has_source_determined_display_value(&binary.left, fcx)
+                && has_source_determined_display_value(&binary.right, fcx)
+        }
+        Expr::Macro(mac)
+            if macro_is(mac, "format_args")
+                || macro_is(mac, "format")
+                || macro_is(mac, "concat") =>
+        {
+            true
+        }
+        Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => {
+            has_source_determined_display_value(&call.receiver, fcx)
+        }
+        Expr::Path(path) if path.qself.is_none() => path
+            .path
+            .get_ident()
+            .and_then(|ident| {
+                let name = ident.to_string();
+                if fcx.resolving_bound_path(&name) {
+                    return None;
+                }
+                let child_fcx = fcx.with_bound_path(&name);
+                stable_binding_init(&name, fcx)
+                    .map(|init| has_source_determined_display_value(init, &child_fcx))
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 enum FormatTemplateBody {
     Literal(String),
     LiteralString(SugarBody<LiteralStringFloor>),

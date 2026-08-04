@@ -7714,7 +7714,7 @@ fn t() {
 }
 
 #[test]
-fn direct_method_call_result_string_assertion_uses_euf_callsite_key() {
+fn direct_method_call_result_string_assertion_uses_method_owner_and_euf_callsite_key() {
     let src = r#"
 struct Name;
 
@@ -7731,9 +7731,42 @@ fn string_call_result() {
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    // #2813: a single opaque string callsite only proves panic-freedom support.
-    // It has no substantive sibling constraint, so it must not be counted as a claim.
-    assert_support_only_warranted(&out, &["method:to_string#panic_callsite"]);
+    assert_warranted_decl_count(&out, 1);
+    let relation = warranted_decl_with_name(&out, "method:to_string#euf");
+    let operands = inv_operands(relation);
+    assert_eq!(operands.len(), 1);
+    let Formula::Atomic { name, args } = operands[0].as_ref() else {
+        panic!("expected method-result equality, got {:?}", operands[0]);
+    };
+    assert_eq!(name, "=");
+    assert_eq!(args.len(), 2);
+    assert!(
+        matches!(args[0].as_ref(), Term::Ctor { name, .. } if name == "method:to_string"),
+        "runtime to_string must retain its generic method owner: {:?}",
+        args[0]
+    );
+    assert!(
+        matches!(
+            args[1].as_ref(),
+            Term::Const {
+                value: ConstValue::String(value),
+                sort,
+            } if value == "hello" && sort.name == "String"
+        ),
+        "runtime to_string equality must retain its asserted string result: {:?}",
+        args[1]
+    );
+    assert!(
+        out.assertion_facts.iter().any(|fact| {
+            fact.kind == AssertionFactKind::Warranted
+                && fact.claim_count == 0
+                && fact
+                    .contract_name
+                    .contains("method:to_string#panic_callsite")
+        }),
+        "runtime to_string must retain its panic-support fact: {:?}",
+        out.assertion_facts
+    );
 }
 
 #[test]
