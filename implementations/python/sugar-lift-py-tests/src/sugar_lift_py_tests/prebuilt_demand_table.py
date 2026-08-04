@@ -118,6 +118,7 @@ class PrebuiltDemandTableV1:
             "schema": self.schema,
             "corpusPin": self.corpus_pin.as_dict(),
             "rows": list(self.rows),
+            "semanticIdentity": self.semantic_identity.as_dict(),
         }
 
     def to_json_dict(self) -> dict[str, Any]:

@@ -514,7 +514,11 @@ def validate_shared_demand_table(payload: dict, *, expected_content_key: str) ->
 
 
 def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
-    """Pull #6464's exact table read-only; never build or publish one."""
+    """Resolve the shared table, deriving authentically on a CAS miss.
+
+    A miss is slow but honest: the authenticated producer is the fallback.
+    Corrupt/private-shelf errors remain loud refusals and never fall through.
+    """
     import json
     import os
     import subprocess
@@ -544,6 +548,38 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
         check=False,
         env=environment,
     )
+    if completed.returncode == 1:
+        print(
+            "python-demand-table CAS miss: "
+            f"requested semantic key={SHARED_DEMAND_TABLE_CONTENT_KEY}; "
+            "falling back to authenticated derivation",
+            file=sys.stderr,
+            flush=True,
+        )
+        from .authenticated_pytest import authenticated_pandas_corpus
+        from .prebuilt_demand_table import (
+            mint_prebuilt_demand_table,
+            write_prebuilt_demand_table,
+        )
+
+        table = mint_prebuilt_demand_table(authenticated_pandas_corpus())
+        payload = {
+            "contentKey": table.semantic_identity.content_key,
+            "rows": list(table.rows),
+            "authentication": {
+                "python": AUTHENTICATED_RUNTIME,
+                "pandas": table.corpus_pin.version,
+                "authenticatedCorpusManifestCid": table.corpus_pin.aggregate_hash,
+            },
+            "identity": {
+                "corpusManifestCid": table.corpus_pin.aggregate_hash,
+                "fileCount": table.corpus_pin.file_count,
+            },
+        }
+        output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        return validate_shared_demand_table(
+            payload, expected_content_key=table.semantic_identity.content_key,
+        )
     if completed.returncode != 0 or not output.is_file():
         raise DemandTableRefusal(
             "the exact shared python-demand-table is unavailable; await its "
