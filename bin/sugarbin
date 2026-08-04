@@ -1646,7 +1646,7 @@ _stamp_short() {
 # log()) within 30s and every 30s after. CI is not a TTY — never gate these.
 acquire_rebuild_single_flight() {
   local stamp="$1" name="$2" lock_parent lockdir waited=0 stale_s age
-  local wait_start holder stamp_short now elapsed announced=0
+  local wait_start holder stamp_short now elapsed announced=0 missing_dir_retries=0
   _rebuild_lock_dir=""
   _rebuild_heartbeat_pid=""
   lock_parent="$(cache_dir)/.rebuild-locks"
@@ -1688,11 +1688,25 @@ acquire_rebuild_single_flight() {
       fi
       return 0
     fi
-    # A failed mkdir is contention only when a holder record exists. Give a
-    # peer that just won mkdir one bounded chance to publish its PID; absence
-    # after that is not an unknown holder to wait on forever.
+    # A failed mkdir proves contention only at that instant. The winner may
+    # publish and release before this waiter observes the lock; retry that
+    # lawful disappearance instead of misclassifying it as missing testimony.
+    if [[ ! -d "$lockdir" ]]; then
+      missing_dir_retries=$((missing_dir_retries + 1))
+      if (( missing_dir_retries >= 40 )); then
+        log "crime=missing-rebuild-lock-pid owner=bin/sugarbin path=$lockdir/pid lock=$lockdir holder_pid=unknown reason=lock-absent-after-bounded-retry replacement=repair the declared lock root; an absent holder record is not peer contention"
+        return 70
+      fi
+      continue
+    fi
+    missing_dir_retries=0
+    # A lock directory that still exists gets one bounded chance to publish
+    # its PID. Absence after that is not an unknown holder to wait on forever.
     if [[ ! -f "$lockdir/pid" ]]; then
       sleep 0.5
+      if [[ ! -d "$lockdir" ]]; then
+        continue
+      fi
       if [[ ! -f "$lockdir/pid" ]]; then
         log "crime=missing-rebuild-lock-pid owner=bin/sugarbin path=$lockdir/pid lock=$lockdir holder_pid=unknown replacement=repair the declared lock root; an absent holder record is not peer contention"
         return 70
