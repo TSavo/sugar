@@ -31,6 +31,7 @@ from tools.showcase.durable_consistency import (  # noqa: E402
     check_durable_consistency,
     classify_refuse_reasons,
     is_consistency_row,
+    require_substantive_discharge,
 )
 from tools.showcase.json_get import load_receipt  # noqa: E402
 
@@ -77,6 +78,43 @@ def analyze_receipt(path: Path) -> dict[str, object]:
 
 
 def self_test() -> None:
+    # A real num-integer-shaped good wall is not a discharge: substantive
+    # rows reached the verifier, but every one refused as vacuous.
+    num_integer_vacuous = [
+        {
+            "property": f"consistency:method:gcd#euf#row-{index}::assertion",
+            "status": "refused",
+            "reason": "consistency check vacuous: single constraint has no sibling",
+        }
+        for index in range(20)
+    ]
+    try:
+        require_substantive_discharge(
+            num_integer_vacuous,
+            suite="num-integer-good",
+        )
+        raise AssertionError("20/20 vacuous substantive rows must not pass")
+    except SystemExit as e:
+        assert "substantive consistency rows all discharged" in str(e)
+
+    # A nonempty substantive population whose every member discharged passes.
+    substantive_discharge = [
+        {
+            "property": "consistency:method:all_equal#euf#row::assertion",
+            "status": "discharged",
+            "reason": "solver returned sat",
+        },
+        {
+            "property": "consistency:method:all_equal#panic_callsite#euf#row::assertion",
+            "status": "refused",
+            "reason": "consistency check vacuous: support-only panic row",
+        },
+    ]
+    assert require_substantive_discharge(
+        substantive_discharge,
+        suite="itertools-good",
+    ) == ["discharged"]
+
     # Good: substantive + honest vacuous refuse → aligned OK, old law fails.
     mixed = [
         {
