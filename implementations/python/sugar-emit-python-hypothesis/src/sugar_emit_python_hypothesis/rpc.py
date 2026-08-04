@@ -19,6 +19,7 @@ def run_rpc() -> None:
         if not line:
             continue
         method = ""
+        request: Any = None
         try:
             request = json.loads(line)
             method = str(request.get("method", ""))
@@ -26,7 +27,7 @@ def run_rpc() -> None:
         except json.JSONDecodeError as exc:
             response = _error(None, -32700, f"PARSE_ERROR: {exc}")
         except Exception as exc:  # noqa: BLE001 - plugin errors must surface to host
-            response = _error(None, -32603, f"{exc}\n{traceback.format_exc()}")
+            response = _dispatch_error(request, exc)
         _send(response)
         if method in {"sugar.plugin.shutdown", "shutdown"}:
             break
@@ -141,3 +142,18 @@ def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
         "id": msg_id,
         "error": {"code": code, "message": message},
     }
+
+
+def _dispatch_error(request: object, exc: Exception) -> dict[str, Any]:
+    exception_type = type(exc).__name__
+    msg_id = request.get("id") if isinstance(request, dict) else None
+    response = _error(
+        msg_id,
+        -32603,
+        f"{exception_type}: {exc}\n{traceback.format_exc()}",
+    )
+    response["error"]["data"] = {
+        "exception_type": exception_type,
+        "stage": "dispatch",
+    }
+    return response

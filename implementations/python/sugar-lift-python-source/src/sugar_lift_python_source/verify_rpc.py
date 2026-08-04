@@ -299,6 +299,7 @@ def run_rpc() -> None:
         line = line.strip()
         if not line:
             continue
+        request: Any = None
         try:
             request = json.loads(line)
             response = dispatch(request)
@@ -311,18 +312,28 @@ def run_rpc() -> None:
         except (
             Exception
         ) as exc:  # noqa: BLE001 -- surface as RPC error, never crash the loop
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32603,
-                    "message": f"{exc}\n{traceback.format_exc()}",
-                },
-            }
+            response = _dispatch_error(request, exc)
         sys.stdout.write(
             json.dumps(response, separators=(",", ":"), ensure_ascii=False) + "\n"
         )
         sys.stdout.flush()
+
+
+def _dispatch_error(request: object, exc: Exception) -> dict[str, Any]:
+    exception_type = type(exc).__name__
+    msg_id = request.get("id") if isinstance(request, dict) else None
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "error": {
+            "code": -32603,
+            "message": f"{exception_type}: {exc}\n{traceback.format_exc()}",
+            "data": {
+                "exception_type": exception_type,
+                "stage": "dispatch",
+            },
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
