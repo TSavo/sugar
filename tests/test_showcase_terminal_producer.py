@@ -30,6 +30,23 @@ IDENTITY = {
 }
 
 
+EQ_PRODUCERS = (
+    "examples/zlib-crc32/run-logo-receipt.sh",
+    "examples/struct-calcsize/run-logo-receipt.sh",
+    "examples/itsdangerous-token-padding/run.sh",
+    "examples/python-urlsafe-seam/run.sh",
+    "examples/itsdangerous-token-padding/run-logo-receipt.sh",
+    "examples/binascii-hexlify/run-logo-receipt.sh",
+    "examples/sklearn-showcase/run.sh",
+    "examples/stdlib-base64-padding/run-logo-receipt.sh",
+    "examples/hmac-compare-digest/run-logo-receipt.sh",
+    "examples/hashlib-sha256-hexdigest/run-logo-receipt.sh",
+    "examples/stdlib-base32-padding/run-logo-receipt.sh",
+    "examples/hashlib-sha256-digest-length/run-logo-receipt.sh",
+    "examples/pandas-showcase/run.sh",
+)
+
+
 def test_writer_is_additive_noop_before_consumer_supplies_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,3 +252,14 @@ def test_shell_wrapper_publishes_selected_rpc_terminal_and_preserves_exit(
     assert json.loads(output.read_text(encoding="utf-8"))["coordinate"] == (
         "examples/demo/test_logo.py:4:11"
     )
+
+
+@pytest.mark.parametrize("relative_path", EQ_PRODUCERS)
+def test_eq_producer_routes_its_selected_mint_through_raw_terminal_writer(
+    relative_path: str,
+) -> None:
+    script = (ROOT / relative_path).read_text(encoding="utf-8")
+
+    assert script.count('source "$REPO/scripts/showcase-terminal-identity.sh"') == 1
+    assert script.count("showcase_run_with_terminal sugar.mint ") == 1
+    assert "ComparisonOpSugar.Eq" not in script
