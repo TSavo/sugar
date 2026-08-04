@@ -518,6 +518,29 @@ class SourceUnit:
             if row.call_occurrence_identity is call.ref
         )
 
+    def lexical_class_owner_for(self, function: "Node") -> "ClassDef | None":
+        """Project the exact class owner from the backend's one structural walk.
+
+        The backend already records parent positions while materializing the
+        typed module.  Re-walking class bodies here would create a second answer
+        to the same ownership question, so consumers use that producer-owned
+        relation directly.
+        """
+        matches = tuple(
+            owner
+            for candidate, owner in self.constructed_module.function_class_owners
+            if candidate is function
+        )
+        if len(matches) != 1:
+            raise BackendDefect(
+                blame=function.fragment,
+                owner="SourceUnit.lexical_class_owner_for",
+                observed=f"{len(matches)} backend owner rows",
+                requested="one owner row for this exact function occurrence",
+                fix="preserve the backend parent relation through module construction",
+            )
+        return matches[0]
+
     def retain_lexical_call_row(self, source: "Call", rewritten: "Call") -> None:
         rows = self.lexical_call_rows_for(source)
         if not rows or type(source) is not type(rewritten):
@@ -3820,7 +3843,12 @@ class FunctionDef(Statement):
         return rewrite(self, **changed)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
-        ref = self._make_parameter_ref(parameter, ordinal)
+        owner = self._active_initializer_owner()
+        if owner is not None and ordinal == 0:
+            coordinate = self._constructed_receiver_coordinate(owner, parameter)
+            ref = owner._make_constructed_receiver_ref(coordinate.cid)
+        else:
+            ref = self._make_parameter_ref(parameter, ordinal)
         factory = scope.get(_BINDING_ENTRY_FACTORY)
         if not isinstance(factory, RuntimeBindingEntryFactoryV1):
             return ref
@@ -3828,6 +3856,39 @@ class FunctionDef(Statement):
             binding_site=parameter.fragment,
             projection_path=("formal", ordinal),
             state=ref,
+        )
+
+    def _active_initializer_owner(self) -> "ClassDef | None":
+        """The exact class whose active ``__init__`` this occurrence is.
+
+        Class ownership is projected from the backend's parent relation.  The
+        last same-name initializer is Python's live class binding; overwritten
+        definitions and genuinely free functions keep the ordinary formal
+        entrance.
+        """
+        if self.name != "__init__":
+            return None
+        owner = self.unit.lexical_class_owner_for(self)
+        if owner is None:
+            return None
+        active = next(
+            (
+                item
+                for item in reversed(owner.body)
+                if isinstance(item, FunctionDef) and item.name == "__init__"
+            ),
+            None,
+        )
+        return owner if active is self else None
+
+    def _constructed_receiver_coordinate(self, owner: "ClassDef", parameter: Param):
+        """Mint the same receiver coordinate as the class-construction door."""
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        return BindingCoordinateV1.mint(
+            owner.fragment.seal().cid,
+            parameter.fragment,
+            ("receiver", 0),
         )
 
     def _formal_coordinate(self, parameter: Param, ordinal: int):
@@ -4084,6 +4145,12 @@ class AsyncFunctionDef(Statement):
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
+
+    def _active_initializer_owner(self) -> "ClassDef | None":
+        return FunctionDef._active_initializer_owner(self)
+
+    def _constructed_receiver_coordinate(self, owner: "ClassDef", parameter: Param):
+        return FunctionDef._constructed_receiver_coordinate(self, owner, parameter)
 
     def _formal_coordinate(self, parameter: Param, ordinal: int):
         return FunctionDef._formal_coordinate(self, parameter, ordinal)
@@ -5129,6 +5196,13 @@ class Assign(Statement):
             return None
         receiver = target.value.substitute(scope)
         if not isinstance(receiver, Node):
+            return None
+        # An ordinary formal is not a constructed receiver.  Active class
+        # initializers have already projected their first parameter through the
+        # backend-authenticated class-owner relation, so they reach this point
+        # as ConstructedReceiverRef instead.  Only the genuinely formal arm
+        # falls through to AttributeStoreEffectSugar below.
+        if isinstance(receiver, (FormalRef, BindingCoordinateRef)):
             return None
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of

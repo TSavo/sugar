@@ -16,7 +16,19 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
     ReceiverFieldStoreStateSugar,
 )
-from sugar_source_tree.nodes import FunctionDef, ReceiverFieldStoreState, Return
+from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
+    ConstructedReceiverRefSugar,
+)
+from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
+from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+from sugar_source_tree.nodes import (
+    ClassDef,
+    FunctionDef,
+    ReceiverFieldStoreState,
+    Return,
+)
 from sugar_source_tree.tree import SourceFile
 
 
@@ -69,6 +81,66 @@ class _FixedSugar(ConstructedTermSugar):
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
+
+
+def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -> None:
+    """The active class initializer must not enter as an arbitrary formal."""
+    source = "class Box:\n" "    def __init__(self):\n" "        self.value = 1\n"
+    tree = SourceFile((source, "class_receiver.py", blake3_512_of(source.encode())))
+    definition = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "Box"
+    )
+    initializer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "__init__"
+    )
+
+    universe = initializer.sugar()
+    statement = universe.statements[0]
+    frame = definition.source_visible_constructor_frame()
+
+    assert isinstance(statement, ExprStatementSugar)
+    assert isinstance(statement.value, ReceiverFieldStoreStateSugar)
+    assert isinstance(statement.value.receiver, ConstructedReceiverRefSugar)
+    assert (
+        statement.value.receiver.binding_coordinate_cid
+        == frame.body.receiver_coordinate_cid
+    )
+
+
+def test_genuine_formal_receiver_keeps_the_formal_store_entrance() -> None:
+    """A module-level formal carries no constructed receiver authority."""
+    source = "def mutate(target):\n" "    target.value = 1\n"
+    tree = SourceFile((source, "formal_receiver.py", blake3_512_of(source.encode())))
+    function = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "mutate"
+    )
+
+    universe = function.sugar()
+    statement = universe.statements[0]
+
+    assert isinstance(statement, AttributeStoreEffectSugar)
+    assert isinstance(statement.receiver, FormalRefSugar)
+
+
+def test_class_initializer_universe_seats_its_constructed_receiver() -> None:
+    """Enumeration binds the exact class receiver before body reduction."""
+    source = "class Box:\n" "    def __init__(self):\n" "        self.value = 1\n"
+    tree = SourceFile((source, "class_receiver.py", blake3_512_of(source.encode())))
+    initializer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "__init__"
+    )
+
+    outcome = function_universe_outcome(initializer)
+
+    assert isinstance(outcome, Complete)
 
 
 def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():

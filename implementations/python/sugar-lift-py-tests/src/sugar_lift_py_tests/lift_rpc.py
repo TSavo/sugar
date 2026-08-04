@@ -601,7 +601,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         sf = _tree.source_file(source_path)
         for fn in sf.functions():
             try:
-                outcome = fn.sugar().desugar(None)
+                outcome = _tree.function_universe_outcome(fn)
             except SugarNotWritten:
                 # Typed tree frontier: no link unit to enroll. Gap remains
                 # visible on the universe/audit scan; never catch

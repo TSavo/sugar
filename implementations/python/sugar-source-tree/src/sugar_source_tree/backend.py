@@ -507,6 +507,7 @@ class _ConstructedModuleV1(_SealedBackendRelation):
     root: object
     closed_roll_call: object
     function_nodes: tuple[object, ...]
+    function_class_owners: tuple[tuple[object, object | None], ...]
     lexical_call_rows: tuple[object, ...]
     provider_member_rows: tuple[object, ...]
     leaf_assertion_rows: tuple[object, ...]
@@ -693,6 +694,7 @@ class Backend:
             Assign,
             AsyncFunctionDef,
             Call,
+            ClassDef,
             Constant,
             Delete,
             FunctionDef,
@@ -739,6 +741,21 @@ class Backend:
         positions = {
             id(node): position for position, node in enumerate(constructed_nodes)
         }
+        function_class_owners_list: list[tuple[Node, ClassDef | None]] = []
+        for function in function_nodes:
+            position = positions[id(function)]
+            ancestor_position = parent_positions[position]
+            class_owner = None
+            while ancestor_position is not None:
+                ancestor = constructed_nodes[ancestor_position]
+                if isinstance(ancestor, (FunctionDef, AsyncFunctionDef)):
+                    break
+                if isinstance(ancestor, ClassDef):
+                    class_owner = ancestor
+                    break
+                ancestor_position = parent_positions[ancestor_position]
+            function_class_owners_list.append((function, class_owner))
+        function_class_owners = tuple(function_class_owners_list)
         unit.bind_typed_module(
             root,
             constructed_nodes=constructed_nodes,
@@ -996,6 +1013,7 @@ class Backend:
             root=root,
             closed_roll_call=closed_roll_call,
             function_nodes=function_nodes,
+            function_class_owners=function_class_owners,
             lexical_call_rows=lexical_call_rows,
             provider_member_rows=provider_member_rows,
             leaf_assertion_rows=leaf_assertion_rows,
