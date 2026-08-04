@@ -11,7 +11,9 @@ set -euo pipefail
 
 repo="${1:?usage: sugarbin_rebuild_single_flight.sh REPO_ROOT}"
 sugarbin="$repo/bin/sugarbin"
+lock_state="$repo/tools/rebuild_lock_state.py"
 [[ -x "$sugarbin" ]] || { echo "missing $sugarbin" >&2; exit 1; }
+[[ -f "$lock_state" ]] || { echo "missing $lock_state" >&2; exit 1; }
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -29,7 +31,12 @@ acquire_body="$(sed -n '/^acquire_rebuild_single_flight()/,/^release_rebuild_sin
 grep -Fq 'stamp_for_filename "$stamp"' <<<"$acquire_body" || fail 'lock key does not include stamp'
 grep -Fq 'bin_name' <<<"$acquire_body" || fail 'lock key does not include bin_name'
 grep -Fq 'platform_key' <<<"$acquire_body" || fail 'lock key does not include platform'
-grep -Fq 'mkdir "$lockdir"' <<<"$acquire_body" || fail 'lock must use atomic mkdir'
+grep -Fq 'rebuild_lock_state.py' <<<"$acquire_body" \
+  || fail 'lock acquisition must use the errno-preserving atomic-create door'
+grep -Fq 'crime=rebuild-lock-create-refused' <<<"$acquire_body" \
+  || fail 'create refusal must not collapse into EEXIST contention'
+grep -Fq 'crime=unshareable-rebuild-lock-path' <<<"$acquire_body" \
+  || fail 'foreign-mode lock parent must refuse before contention'
 # kill -0 alone is forbidden as reclaim (PID namespace lie / wedge).
 if grep -E 'kill -0' <<<"$acquire_body" | grep -vq 'heartbeat'; then
   # allow only if not the reclaim path — reclaim must use heartbeat age
@@ -187,6 +194,115 @@ SUGAR_BINARY_SOURCE_STAMP="$production_stamp" \
   >"$tmp/production-good.out" 2>"$tmp/production-good.err" \
   || fail 'production acquire/release arm refused'
 [[ ! -e "$production_lock" ]] || fail 'production acquire/release arm left lock residue'
+production_parent="$production_cache/.rebuild-locks"
+parent_mode="$(stat -c %a "$production_parent" 2>/dev/null || stat -f %Lp "$production_parent")"
+[[ "${parent_mode: -3}" == 777 ]] \
+  || fail "production lock parent is not shared-writable: mode=$parent_mode"
+
+# Never-created and create-refused are distinct states. A fresh path above
+# acquired and released normally. This planted EACCES arm exercises the same
+# errno-preserving door without relying on the test runner's uid (battleaxe
+# may execute the surrounding shell as root).
+python3 - "$lock_state" <<'PY'
+import errno
+import importlib.util
+import pathlib
+import stat
+import tempfile
+from unittest import mock
+import sys
+
+path = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("rebuild_lock_state", path)
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load rebuild-lock state helper")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+with mock.patch.object(
+    module.os,
+    "mkdir",
+    side_effect=PermissionError(errno.EACCES, "Permission denied"),
+):
+    result = module.create_lock_directory(pathlib.Path("/fixture/lock"))
+if result.state != "create-refused":
+    raise SystemExit(f"EACCES collapsed into {result.state}")
+if result.errno_name != "EACCES" or result.errno_number != errno.EACCES:
+    raise SystemExit(f"EACCES testimony lost: {result}")
+if "Permission denied" not in result.detail:
+    raise SystemExit(f"EACCES detail lost: {result}")
+with tempfile.TemporaryDirectory() as directory:
+    parent = pathlib.Path(directory) / "shared-parent"
+    result = module.publish_lock_parent(parent)
+    if result.state != "ready" or stat.S_IMODE(parent.stat().st_mode) != 0o777:
+        raise SystemExit(f"shared parent was not published as 0777: {result}")
+    lock = parent / "one.lock"
+    result = module.create_lock_directory(lock)
+    if result.state != "acquired" or stat.S_IMODE(lock.stat().st_mode) != 0o777:
+        raise SystemExit(f"shared lock was not published as 0777: {result}")
+    if module.create_lock_directory(lock).state != "contended":
+        raise SystemExit("existing lock directory did not classify as contended")
+with tempfile.TemporaryDirectory() as directory:
+    parent = pathlib.Path(directory) / "foreign-parent"
+    parent.mkdir(mode=0o755)
+    if module.publish_lock_parent(parent).state != "unshareable":
+        raise SystemExit("0755 parent did not refuse as unshareable")
+with mock.patch.object(module.os, "mkdir", side_effect=FileExistsError(errno.EEXIST, "exists")):
+    if module.create_lock_directory(pathlib.Path("/fixture/released")).state != "released":
+        raise SystemExit("released EEXIST winner did not classify as released")
+PY
+
+# Created-unpublished: EEXIST is real contention, but its winner never wrote a
+# holder record. This must terminate once after the bounded publication grace.
+mkdir -m 0777 "$production_lock"
+python3 - "$sugarbin" "$production_cache" "$production_stamp" \
+  "$production_lock" <<'PY'
+import os
+import subprocess
+import sys
+
+sugarbin, cache, stamp, lock = sys.argv[1:]
+env = os.environ.copy()
+env.update(
+    {
+        "SUGAR_BINARY_CACHE_DIR": cache,
+        "SUGAR_BINARY_SOURCE_STAMP": stamp,
+    }
+)
+try:
+    result = subprocess.run(
+        [
+            sugarbin,
+            "preflight-lock",
+            "--bin",
+            "sugar",
+            "--profile",
+            "debug",
+            "--platform",
+            "fixture",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+except subprocess.TimeoutExpired as error:
+    raise SystemExit(f"created-unpublished arm did not terminate: {error.stderr}")
+if result.returncode != 70:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit(f"expected exit 70, observed {result.returncode}")
+terminal = "crime=missing-rebuild-lock-pid"
+if result.stderr.count(terminal) != 1:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit("expected exactly one created-unpublished terminal")
+for testimony in (lock + "/pid", "holder_pid=unknown"):
+    if testimony not in result.stderr:
+        print(result.stderr, file=sys.stderr)
+        raise SystemExit(f"missing created-unpublished testimony: {testimony}")
+PY
+rm -rf "$production_lock"
 
 mkdir -p "$production_lock"
 printf 'dead\n' >"$production_lock/pid"
@@ -266,30 +382,21 @@ for testimony in (lock, "holder_pid=dead", "heartbeat_age_s=999999"):
 PY
 
 rm -rf "$production_lock"
-mkdir -p "$tmp/refuse-lock-mkdir-bin"
-cat >"$tmp/refuse-lock-mkdir-bin/mkdir" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$#" == 1 && "$1" == "${LOCK_TO_REFUSE:?}" ]]; then
-  exit 77
-fi
-exec /bin/mkdir "$@"
-EOF
-chmod +x "$tmp/refuse-lock-mkdir-bin/mkdir"
+create_refused_cache="$tmp/create-refused-cache"
+mkdir -p "$create_refused_cache"
+printf 'not-a-directory\n' >"$create_refused_cache/.rebuild-locks"
 
-python3 - "$sugarbin" "$production_cache" "$production_stamp" \
-  "$production_lock" "$tmp/refuse-lock-mkdir-bin" \
-  "$tmp/production-missing-pid.json" <<'PY'
+python3 - "$sugarbin" "$create_refused_cache" "$production_stamp" \
+  "$tmp/production-create-refused.json" <<'PY'
 import json
 import os
 import subprocess
 import sys
 
-sugarbin, cache, stamp, lock, refuse_bin, receipt = sys.argv[1:]
+sugarbin, cache, stamp, receipt = sys.argv[1:]
 env = os.environ.copy()
 env.update(
     {
-        "LOCK_TO_REFUSE": lock,
-        "PATH": refuse_bin + os.pathsep + env["PATH"],
         "SUGAR_BINARY_CACHE_DIR": cache,
         "SUGAR_BINARY_SOURCE_STAMP": stamp,
     }
@@ -317,7 +424,7 @@ except subprocess.TimeoutExpired as error:
     stderr = error.stderr or ""
     if isinstance(stderr, bytes):
         stderr = stderr.decode(errors="replace")
-    print("production missing-pid arm did not terminate within 5s", file=sys.stderr)
+    print("production create-refused arm did not terminate within 5s", file=sys.stderr)
     print(stderr, file=sys.stderr)
     raise SystemExit(1)
 json.dump(
@@ -328,90 +435,53 @@ json.dump(
 if result.returncode != 70:
     print(result.stderr, file=sys.stderr)
     raise SystemExit(f"expected exit 70, observed {result.returncode}")
-terminal = "crime=missing-rebuild-lock-pid"
+terminal = "crime=rebuild-lock-create-refused"
 if result.stderr.count(terminal) != 1:
     print(result.stderr, file=sys.stderr)
-    raise SystemExit("expected exactly one named missing-pid terminal")
-for testimony in (lock + "/pid", "holder_pid=unknown"):
+    raise SystemExit("expected exactly one named create-refused terminal")
+for testimony in ("state=create-refused", '"errno_name":"ENOTDIR"'):
     if testimony not in result.stderr:
         print(result.stderr, file=sys.stderr)
         raise SystemExit(f"missing terminal testimony: {testimony}")
 PY
 
-# A failed mkdir only proves contention at that instant. The peer can publish
-# and release the whole lock before this waiter reads pid. That lawful absence
-# is not malformed lock state: the waiter must retry, then acquire normally.
+# A real peer can publish and release the whole lock while this waiter is
+# observing it. Drive the production door until it narrates contention, then
+# release; the waiter must retry and acquire rather than invent a missing PID.
 rm -rf "$production_lock"
-mkdir -p "$tmp/released-peer-mkdir-bin"
-cat >"$tmp/released-peer-mkdir-bin/mkdir" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$#" == 1 && "$1" == "${LOCK_TO_RELEASE:?}" \
-      && ! -e "${RELEASED_PEER_STATE:?}" ]]; then
-  : >"$RELEASED_PEER_STATE"
-  /bin/mkdir "$LOCK_TO_RELEASE"
-  printf 'peer\n' >"$LOCK_TO_RELEASE/pid"
-  : >"$LOCK_TO_RELEASE/heartbeat"
-  /bin/rm -rf "$LOCK_TO_RELEASE"
-  exit 1
+mkdir -m 0777 "$production_lock"
+printf 'peer\n' >"$production_lock/pid"
+: >"$production_lock/heartbeat"
+SUGAR_BINARY_CACHE_DIR="$production_cache" \
+SUGAR_BINARY_SOURCE_STAMP="$production_stamp" \
+  "$sugarbin" preflight-lock --bin sugar --profile debug --platform fixture \
+  >"$tmp/released-peer.out" 2>"$tmp/released-peer.err" &
+released_waiter=$!
+observed_wait=0
+for _ in $(seq 1 100); do
+  if grep -Fq 'phase=resolve-wait ' "$tmp/released-peer.err" 2>/dev/null; then
+    observed_wait=1
+    break
+  fi
+  sleep 0.02
+done
+[[ "$observed_wait" == 1 ]] || {
+  kill "$released_waiter" 2>/dev/null || true
+  wait "$released_waiter" 2>/dev/null || true
+  fail 'released-peer arm never observed authenticated contention'
+}
+rm -rf "$production_lock"
+wait "$released_waiter" || {
+  cat "$tmp/released-peer.err" >&2
+  fail 'released peer was misclassified as malformed lock'
+}
+grep -Fq 'phase=resolve-wait-acquired' "$tmp/released-peer.err" \
+  || fail 'released-peer waiter did not reacquire after lawful release'
+if grep -Fq 'crime=missing-rebuild-lock-pid' "$tmp/released-peer.err"; then
+  cat "$tmp/released-peer.err" >&2
+  fail 'released peer emitted missing-pid crime'
 fi
-exec /bin/mkdir "$@"
-EOF
-chmod +x "$tmp/released-peer-mkdir-bin/mkdir"
 
-python3 - "$sugarbin" "$production_cache" "$production_stamp" \
-  "$production_lock" "$tmp/released-peer-mkdir-bin" \
-  "$tmp/released-peer-state" <<'PY'
-import os
-import subprocess
-import sys
-
-sugarbin, cache, stamp, lock, fake_bin, state = sys.argv[1:]
-env = os.environ.copy()
-env.update(
-    {
-        "LOCK_TO_RELEASE": lock,
-        "PATH": fake_bin + os.pathsep + env["PATH"],
-        "RELEASED_PEER_STATE": state,
-        "SUGAR_BINARY_CACHE_DIR": cache,
-        "SUGAR_BINARY_SOURCE_STAMP": stamp,
-    }
-)
-try:
-    result = subprocess.run(
-        [
-            sugarbin,
-            "preflight-lock",
-            "--bin",
-            "sugar",
-            "--profile",
-            "debug",
-            "--platform",
-            "fixture",
-        ],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=8,
-        check=False,
-    )
-except subprocess.TimeoutExpired as error:
-    stderr = error.stderr or ""
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode(errors="replace")
-    print("released-peer retry arm did not terminate within 8s", file=sys.stderr)
-    print(stderr, file=sys.stderr)
-    raise SystemExit(1)
-if result.returncode != 0:
-    print(result.stderr, file=sys.stderr)
-    raise SystemExit(
-        f"released peer was misclassified as malformed lock: {result.returncode}"
-    )
-if "crime=missing-rebuild-lock-pid" in result.stderr:
-    print(result.stderr, file=sys.stderr)
-    raise SystemExit("released peer emitted missing-pid crime")
-PY
-
-echo 'PASS: production rebuild lock completes, released peer retries, and both failure terminals terminate'
+echo 'PASS: lock lifecycle covers never-created, create-refused, created-unpublished, published-live, published-dead, released, and unreclaimable states'
 
 echo 'PASS: R_shelf_rebuild_single_flight — one build, waiter cell, dead-winner reclaim'
