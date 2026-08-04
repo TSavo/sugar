@@ -225,6 +225,8 @@ jobs:
           python -u tools/plan_control_effect_recensus_shards.py \
             --enrolled-files "$OUT/enrolled-files.json" \
             --corpus-root "$LOCUS" \
+            --demand-table-corpus-root "$PANDAS_CORPUS" \
+            --demand-table-out "$OUT/demand-table.json" \
             --shard-count "$RECENSUS_SHARD_COUNT" \
             --measured-commit "$GITHUB_SHA" \
             --aggregate-hash "$AGG" \
@@ -243,6 +245,7 @@ jobs:
           name: control-effect-recensus-plan
           path: |
             .sugar/pandas-control-effect/plan.json
+            .sugar/pandas-control-effect/demand-table.json
             .sugar/pandas-control-effect/enrolled-files.json
             .sugar/pandas-control-effect/pin-meta.json
           if-no-files-found: error
@@ -322,6 +325,8 @@ jobs:
           OUT="$GITHUB_WORKSPACE/.sugar/pandas-control-effect"
           PLAN="$OUT/plan.json"
           test -f "$PLAN" || { echo "::error::plan.json missing"; exit 1; }
+          DEMAND_TABLE="$OUT/demand-table.json"
+          test -f "$DEMAND_TABLE" || { echo "::error::demand-table.json missing"; exit 78; }
           K="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["shardCount"])' "$PLAN")"
           if [[ "$K" != "$RECENSUS_SHARD_COUNT" ]]; then
             echo "::error::plan shardCount=$K != RECENSUS_SHARD_COUNT=$RECENSUS_SHARD_COUNT"
@@ -341,6 +346,7 @@ jobs:
               --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
               --out-dir "$OUT" \
               --plan-json "$PLAN" \
+              --demand-table-path "$DEMAND_TABLE" \
               --shard-index "$SHARD" \
               --partial-out "$OUT/partial-s$(printf '%02d' "$SHARD").json"
           echo "recensus phase=measure-shard status=done shard=$SHARD"

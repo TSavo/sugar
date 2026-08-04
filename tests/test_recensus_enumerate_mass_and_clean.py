@@ -44,6 +44,31 @@ COMPOSE = _load(
 )
 
 
+def _demand_table_kwargs() -> dict[str, object]:
+    identity = COMPOSE.DemandTableIdentityV1(
+        content_key="",
+        corpus_manifest_cid="blake3-512:test-corpus",
+        schema_version="python-demand-table/v1",
+        producer_source_cid="blake3-512:test-producer",
+        resolution_config_cid="blake3-512:test-config",
+        parser_identity="cpython-3.12",
+        file_count=2,
+    )
+    identity = COMPOSE.DemandTableIdentityV1(
+        content_key=COMPOSE.cid_of_json(dict(identity.preimage())),
+        corpus_manifest_cid=identity.corpus_manifest_cid,
+        schema_version=identity.schema_version,
+        producer_source_cid=identity.producer_source_cid,
+        resolution_config_cid=identity.resolution_config_cid,
+        parser_identity=identity.parser_identity,
+        file_count=identity.file_count,
+    )
+    return {
+        "demand_table_cid": "blake3-512:test-table",
+        "demand_table_identity": identity.as_dict(),
+    }
+
+
 def test_residual_failure_preserves_roster_functions_total(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -422,6 +447,7 @@ def test_compose_refuses_unattested_clean_board() -> None:
         measured_commit="deadbeef",
         aggregate_hash="agg",
         manifest_shape_cid="cid",
+        **_demand_table_kwargs(),
     )
     assert status == "unmeasured"
     assert body["status"] == "unmeasured"

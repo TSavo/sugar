@@ -28,6 +28,8 @@ from sugar_lift_py_tests.repo_root import (
     resolve_repo_root,
     sugar_lift_py_tests_package_root,
 )
+from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
+from sugar_lift_python_source.canonical import cid_of_json
 
 # Sole True declaration for the kit (test_one_authoritative_scoreboard).
 SCOREBOARD_AUTHORITY = True
@@ -99,6 +101,34 @@ def canonical_cid(obj: Mapping[str, Any]) -> str:
     """Content id of a JSON-stable object (sort_keys, no host noise)."""
     rendered = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
     return _blake3_512(rendered.encode("utf-8"))
+
+
+def _demand_table_claim(
+    testimony: Mapping[str, Any], *, owner: str
+) -> tuple[str, dict[str, object]]:
+    """Authenticate one payload CID plus its recomputable meaning preimage."""
+    content_cid = testimony.get("demandTableCid")
+    identity_raw = testimony.get("demandTableIdentity")
+    if not isinstance(content_cid, str) or not content_cid or not isinstance(
+        identity_raw, Mapping
+    ):
+        raise ValueError(
+            "demand-table-testimony-absent: "
+            f"{owner} must carry demandTableCid and demandTableIdentity"
+        )
+    try:
+        identity = DemandTableIdentityV1.from_mapping(identity_raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"demand-table-testimony-malformed: {owner} semantic identity: {error}"
+        ) from error
+    recomputed = cid_of_json(dict(identity.preimage()))
+    if identity.content_key != recomputed:
+        raise ValueError(
+            "demand-table-identity-content-key-mismatch: "
+            f"{owner} presented={identity.content_key!r} recomputed={recomputed!r}"
+        )
+    return content_cid, identity.as_dict()
 
 
 def _runtime_attestation_fields(
@@ -789,6 +819,7 @@ def build_plan(
     prior_misses: int,
     estimated_loads: Sequence[float],
     demand_table_cid: str | None = None,
+    demand_table_identity: Mapping[str, Any] | None = None,
     demand_table_path: str | None = None,
 ) -> dict[str, Any]:
     enrolled = sorted(enrolled_files)
@@ -820,10 +851,18 @@ def build_plan(
         "bins": bin_lists,
         "estimatedLoadS": [float(x) for x in estimated_loads],
     }
-    # Prebuilt provisional demand table: content-addressed once at plan time;
-    # every shard LOADS it so cold processes never re-walk the corpus (k=8).
-    if demand_table_cid is not None:
-        plan["demandTableCid"] = demand_table_cid
+    # One plan-time demand-table authority.  The payload CID and the complete
+    # meaning preimage are both inside planCid; a path is transport only.
+    if demand_table_cid is not None or demand_table_identity is not None:
+        claimed_cid, claimed_identity = _demand_table_claim(
+            {
+                "demandTableCid": demand_table_cid,
+                "demandTableIdentity": demand_table_identity,
+            },
+            owner="plan",
+        )
+        plan["demandTableCid"] = claimed_cid
+        plan["demandTableIdentity"] = claimed_identity
     if demand_table_path is not None:
         plan["demandTablePath"] = demand_table_path
     plan["planCid"] = canonical_cid({k: v for k, v in plan.items() if k != "planCid"})
@@ -838,6 +877,8 @@ def mint_partial(
     measured_commit: str | None = None,
     status: str = "completed",
     unmeasured_reason: str | None = None,
+    demand_table_cid: str | None = None,
+    demand_table_identity: Mapping[str, Any] | None = None,
     runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> dict[str, Any]:
     """Mint a shard partial. Never includes R_construction_panics top-level."""
@@ -905,6 +946,26 @@ def mint_partial(
                 else {"file": file, "type": cat, "message": cat}
             )
 
+    demand_reason: str | None = None
+    demand_claim: tuple[str, dict[str, object]] | None = None
+    try:
+        demand_claim = _demand_table_claim(
+            {
+                "demandTableCid": demand_table_cid,
+                "demandTableIdentity": demand_table_identity,
+            },
+            owner=f"partial s{shard_index:02d}",
+        )
+        plan_claim = _demand_table_claim(plan, owner="plan")
+        if demand_claim != plan_claim:
+            demand_reason = (
+                "demand-table-testimony-mismatch: "
+                f"partial s{shard_index:02d} claim={demand_claim!r} "
+                f"plan={plan_claim!r}"
+            )
+    except ValueError as error:
+        demand_reason = str(error)
+
     if runtime is None:
         status = "unmeasured"
         unmeasured_reason = str(
@@ -912,6 +973,9 @@ def mint_partial(
             or runtime_failure.get("runtimeIdentityMismatch")
             or "runtimeIdentity/v1 refused"
         )
+    if demand_reason is not None and unmeasured_reason is None:
+        status = "unmeasured"
+        unmeasured_reason = demand_reason
     measured = status == "completed" and files_complete and unmeasured_reason is None
     if not measured and unmeasured_reason is None:
         unmeasured_reason = (
@@ -971,6 +1035,9 @@ def mint_partial(
         "measured": measured,
         "unmeasuredReason": unmeasured_reason,
     }
+    if demand_claim is not None:
+        body["demandTableCid"] = demand_claim[0]
+        body["demandTableIdentity"] = demand_claim[1]
     if runtime is not None:
         body.update(runtime)
     else:
@@ -1240,6 +1307,7 @@ def seal_board_from_aggregate(
     source_stamp: Mapping[str, Any] | None = None,
     with_census: Mapping[str, Any] | None = None,
     frontier_attestation: Mapping[str, Any] | None = None,
+    demand_table_agreement: Mapping[str, Any] | None = None,
     runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> dict[str, Any]:
     """Mint the sealed authoritative board body. Sole mint of the class."""
@@ -1426,6 +1494,12 @@ def seal_board_from_aggregate(
         "composeSchema": COMPOSE_SCHEMA,
         **runtime,
     }
+    if demand_table_agreement is not None:
+        agreement = dict(demand_table_agreement)
+        plan_claim = agreement.get("plan") or {}
+        body["demandTableCid"] = plan_claim.get("demandTableCid")
+        body["demandTableIdentity"] = plan_claim.get("demandTableIdentity")
+        body["demandTableAgreement"] = agreement
     if frontier_attestation is not None:
         body["frontierAttestation"] = dict(frontier_attestation)
         body["frontierWidth"] = len(
@@ -1546,6 +1620,17 @@ def compose_from_partials(
     missing: list[str] = []
     reasons: dict[str, str] = {}
 
+    try:
+        plan_demand_claim = _demand_table_claim(plan, owner="plan")
+    except ValueError as error:
+        return "unmeasured", unmeasured_envelope(
+            plan=plan,
+            missing_shards=["plan"],
+            unmeasured_reasons={"plan": str(error)},
+            measured_commit=str(plan.get("measuredCommit") or ""),
+            runtime_attestation=runtime,
+        )
+
     for p in partials:
         try:
             idx = int(p["shardIndex"])
@@ -1554,6 +1639,7 @@ def compose_from_partials(
         by_index[idx] = p
 
     first_partial_runtime_cid: str | None = None
+    shard_demand_claims: dict[str, dict[str, object]] = {}
     for i in range(k):
         seat = f"s{i:02d}"
         p = by_index.get(i)
@@ -1572,6 +1658,24 @@ def compose_from_partials(
                 f"(want {MEASUREMENT_CLASS_SHARD})"
             )
             continue
+        try:
+            partial_demand_claim = _demand_table_claim(p, owner=f"partial {seat}")
+        except ValueError as error:
+            missing.append(seat)
+            reasons[seat] = str(error)
+            continue
+        if partial_demand_claim != plan_demand_claim:
+            missing.append(seat)
+            reasons[seat] = (
+                "demand-table-testimony-mismatch: "
+                f"partial {seat} claim={partial_demand_claim!r} "
+                f"plan={plan_demand_claim!r}"
+            )
+            continue
+        shard_demand_claims[seat] = {
+            "demandTableCid": partial_demand_claim[0],
+            "demandTableIdentity": partial_demand_claim[1],
+        }
         if p.get("status") == "unmeasured" or not p.get("measured"):
             missing.append(seat)
             reasons[seat] = str(
@@ -1705,6 +1809,17 @@ def compose_from_partials(
             Counter(agg["unrecognized_cm_kinds"]),
         )
 
+    demand_table_agreement = {
+        "schema": "demand-table-shard-agreement/v1",
+        "plan": {
+            "demandTableCid": plan_demand_claim[0],
+            "demandTableIdentity": plan_demand_claim[1],
+        },
+        "shards": dict(sorted(shard_demand_claims.items())),
+        "authenticatedShardCount": len(shard_demand_claims),
+        "expectedShardCount": k,
+        "allAgree": len(shard_demand_claims) == k,
+    }
     board = seal_board_from_aggregate(
         agg,
         plan=plan,
@@ -1721,6 +1836,7 @@ def compose_from_partials(
         source_stamp=source_stamp,
         with_census=with_census,
         frontier_attestation=frontier_attestation,
+        demand_table_agreement=demand_table_agreement,
         runtime_attestation=runtime,
     )
     if board.get("measurement") != "measured":
@@ -1758,6 +1874,8 @@ def compose_k1_from_rows(
     source_stamp: Mapping[str, Any] | None = None,
     with_census_fn=None,
     manifest_cid: str | None = None,
+    demand_table_cid: str | None = None,
+    demand_table_identity: Mapping[str, Any] | None = None,
     runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> tuple[str, dict[str, Any]]:
     """k=1 path: one full-bin partial + compose (serial observation, one seal door)."""
@@ -1788,12 +1906,16 @@ def compose_k1_from_rows(
         prior_hits=0,
         prior_misses=0,
         estimated_loads=[0.0],
+        demand_table_cid=demand_table_cid,
+        demand_table_identity=demand_table_identity,
     )
     partial = mint_partial(
         plan=plan,
         shard_index=0,
         terminal_rows=list(measured_rows),
         measured_commit=measured_commit,
+        demand_table_cid=demand_table_cid,
+        demand_table_identity=demand_table_identity,
         runtime_attestation=runtime,
     )
     return compose_from_partials(

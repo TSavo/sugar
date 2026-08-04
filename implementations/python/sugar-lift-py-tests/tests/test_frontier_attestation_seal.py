@@ -14,6 +14,8 @@ import json
 import sys
 from pathlib import Path
 
+from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
+from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 _SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
@@ -119,6 +121,31 @@ def _runtime_identity_object(*, suffix: str = "a"):
     )
 
 
+def _demand_table_kwargs() -> dict[str, object]:
+    identity = DemandTableIdentityV1(
+        content_key="",
+        corpus_manifest_cid="blake3-512:test-corpus",
+        schema_version="python-demand-table/v1",
+        producer_source_cid="blake3-512:test-producer",
+        resolution_config_cid="blake3-512:test-config",
+        parser_identity="cpython-3.12",
+        file_count=2,
+    )
+    identity = DemandTableIdentityV1(
+        content_key=cid_of_json(dict(identity.preimage())),
+        corpus_manifest_cid=identity.corpus_manifest_cid,
+        schema_version=identity.schema_version,
+        producer_source_cid=identity.producer_source_cid,
+        resolution_config_cid=identity.resolution_config_cid,
+        parser_identity=identity.parser_identity,
+        file_count=identity.file_count,
+    )
+    return {
+        "demand_table_cid": "blake3-512:test-table",
+        "demand_table_identity": identity.as_dict(),
+    }
+
+
 def _require_runtime_parameter(module) -> None:
     assert (
         "runtime_attestation"
@@ -134,6 +161,7 @@ def _compose(module, row, *, runtime_attestation=None):
         measured_commit="4accd543",
         aggregate_hash="agg",
         manifest_shape_cid="manifest",
+        **_demand_table_kwargs(),
         runtime_attestation=(
             _runtime_attestation()
             if runtime_attestation is None
@@ -159,6 +187,7 @@ def test_compose_without_runtime_identity_refuses_before_width() -> None:
         measured_commit="4accd543",
         aggregate_hash="agg",
         manifest_shape_cid="manifest",
+        **_demand_table_kwargs(),
         runtime_attestation=None,
     )
     assert status == "unmeasured"
@@ -227,11 +256,13 @@ def test_partial_without_runtime_identity_refuses_at_compose() -> None:
         prior_hits=0,
         prior_misses=1,
         estimated_loads=[0.0],
+        **_demand_table_kwargs(),
     )
     partial = module.mint_partial(
         plan=plan,
         shard_index=0,
         terminal_rows=[("pandas/a.py", _row(module))],
+        **_demand_table_kwargs(),
         runtime_attestation=attestation,
     )
     for field in ("requiredRuntime", "runtimeIdentity", "runtimeCid"):
@@ -263,11 +294,13 @@ def test_non_recomputable_partial_runtime_cid_refuses() -> None:
         prior_hits=0,
         prior_misses=1,
         estimated_loads=[0.0],
+        **_demand_table_kwargs(),
     )
     partial = module.mint_partial(
         plan=plan,
         shard_index=0,
         terminal_rows=[("pandas/a.py", _row(module))],
+        **_demand_table_kwargs(),
         runtime_attestation=attestation,
     )
     partial["runtimeCid"] = "blake3-512:" + ("0" * 128)
@@ -299,18 +332,21 @@ def test_valid_but_disagreeing_shard_runtime_cids_refuse() -> None:
         prior_hits=0,
         prior_misses=2,
         estimated_loads=[0.0, 0.0],
+        **_demand_table_kwargs(),
     )
     partials = [
         module.mint_partial(
             plan=plan,
             shard_index=0,
             terminal_rows=[("pandas/a.py", _row(module))],
+            **_demand_table_kwargs(),
             runtime_attestation=left,
         ),
         module.mint_partial(
             plan=plan,
             shard_index=1,
             terminal_rows=[("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))],
+            **_demand_table_kwargs(),
             runtime_attestation=right,
         ),
     ]
@@ -339,11 +375,13 @@ def test_well_formed_shard_runtime_wrong_for_compose_authority_refuses() -> None
         prior_hits=0,
         prior_misses=1,
         estimated_loads=[0.0],
+        **_demand_table_kwargs(),
     )
     partial = module.mint_partial(
         plan=plan,
         shard_index=0,
         terminal_rows=[("pandas/a.py", _row(module))],
+        **_demand_table_kwargs(),
         runtime_attestation=forged,
     )
 
@@ -378,18 +416,21 @@ def test_shards_agree_with_each_other_but_not_required_runtime_refuse() -> None:
         prior_hits=0,
         prior_misses=2,
         estimated_loads=[0.0, 0.0],
+        **_demand_table_kwargs(),
     )
     partials = [
         module.mint_partial(
             plan=plan,
             shard_index=0,
             terminal_rows=[("pandas/a.py", _row(module))],
+            **_demand_table_kwargs(),
             runtime_attestation=mutually_agreeing_wrong_runtime,
         ),
         module.mint_partial(
             plan=plan,
             shard_index=1,
             terminal_rows=[("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))],
+            **_demand_table_kwargs(),
             runtime_attestation=mutually_agreeing_wrong_runtime,
         ),
     ]

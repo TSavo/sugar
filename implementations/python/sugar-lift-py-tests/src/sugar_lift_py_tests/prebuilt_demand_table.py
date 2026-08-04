@@ -21,6 +21,7 @@ table must perform ZERO corpus walks (count them; do not time them).
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -31,6 +32,7 @@ from sugar_lift_py_tests.demand_table_identity import (
     DemandTableIdentityV1,
     demand_table_identity,
 )
+from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 SCHEMA = "python-provisional-demand-table/v1"
 
@@ -45,6 +47,28 @@ class DemandTableArtifactRefusal(ValueError):
 
 class DemandTableSemanticIdentityMismatch(DemandTableArtifactRefusal):
     """Table meaning does not describe the authenticated current corpus."""
+
+
+class PlanDemandTableRefusal(DemandTableArtifactRefusal):
+    """A shard could not authenticate the exact table assigned by its plan."""
+
+    def __init__(
+        self,
+        reason_name: str,
+        detail: str,
+        *,
+        observed_table: "PrebuiltDemandTableV1 | None" = None,
+    ) -> None:
+        super().__init__(f"{reason_name}: {detail}")
+        self.reason_name = reason_name
+        self.observed_content_cid = (
+            observed_table.content_cid if observed_table is not None else None
+        )
+        self.observed_semantic_identity = (
+            observed_table.semantic_identity.as_dict()
+            if observed_table is not None
+            else None
+        )
 
 
 @dataclass(frozen=True)
@@ -208,6 +232,42 @@ def write_prebuilt_demand_table(table: PrebuiltDemandTableV1, path: Path) -> Pat
     return path
 
 
+def publish_prebuilt_demand_table(
+    table: PrebuiltDemandTableV1,
+    path: Path,
+    *,
+    runtime: str = "cpython-3.12.13",
+) -> None:
+    """Publish one already-written table through the authenticated CAS door."""
+    repo_root = resolve_repo_root()
+    completed = subprocess.run(
+        [
+            str(repo_root / "bin" / "sugarbin"),
+            "artifact",
+            "publish",
+            "--kind",
+            "python-demand-table",
+            "--content-key",
+            table.content_cid,
+            "--input",
+            str(path),
+            "--runtime",
+            runtime,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[:800]
+        raise DemandTableArtifactRefusal(
+            "python-demand-table CAS publication refused: "
+            f"contentCid={table.content_cid} exit={completed.returncode} "
+            f"detail={detail}"
+        )
+
+
 def load_prebuilt_demand_table(
     path: Path,
     *,
@@ -284,6 +344,77 @@ def load_prebuilt_demand_table(
             f"prebuilt demand table contentCid != plan demandTableCid: "
             f"artifact={presented!r} plan={expected_content_cid!r}"
         )
+    return table
+
+
+def load_plan_bound_demand_table(
+    path: Path,
+    *,
+    corpus: AuthenticatedPandasCorpus,
+    expected_content_cid: str,
+    expected_semantic_identity: Mapping[str, Any],
+) -> PrebuiltDemandTableV1:
+    """Load exactly the plan-assigned table; never derive a replacement.
+
+    Storage identity and semantic meaning are independent agreement axes.  A
+    missing artifact is absence testimony; a different CID or meaning is a
+    mismatch.  Neither condition has a minting arm.
+    """
+    try:
+        table = load_prebuilt_demand_table(
+            path,
+            expected_corpus_pin={
+                "distribution": corpus.distribution,
+                "version": corpus.version,
+                "fileCount": corpus.file_count,
+                "aggregateHash": corpus.manifest_cid,
+            },
+        )
+    except DemandTableArtifactRefusal as error:
+        reason = str(error)
+        if "missing path=" in reason or "unreadable path=" in reason:
+            name = "plan-demand-table-artifact-unavailable"
+        else:
+            name = "plan-demand-table-artifact-refusal"
+        raise PlanDemandTableRefusal(name, reason) from error
+
+    if table.content_cid != expected_content_cid:
+        raise PlanDemandTableRefusal(
+            "plan-demand-table-cid-mismatch",
+            f"artifact={table.content_cid!r} plan={expected_content_cid!r}",
+            observed_table=table,
+        )
+
+    try:
+        expected_identity = DemandTableIdentityV1.from_mapping(
+            expected_semantic_identity
+        )
+    except (TypeError, ValueError) as error:
+        raise PlanDemandTableRefusal(
+            "plan-demand-table-semantic-identity-malformed", str(error)
+        ) from error
+    expected_key = cid_of_json(dict(expected_identity.preimage()))
+    if expected_identity.content_key != expected_key:
+        raise PlanDemandTableRefusal(
+            "plan-demand-table-semantic-identity-malformed",
+            f"presented contentKey={expected_identity.content_key!r} "
+            f"recomputed={expected_key!r}",
+        )
+    if table.semantic_identity != expected_identity:
+        raise PlanDemandTableRefusal(
+            "plan-demand-table-semantic-mismatch",
+            f"artifact={table.semantic_identity.as_dict()!r} "
+            f"plan={expected_identity.as_dict()!r}",
+            observed_table=table,
+        )
+    try:
+        validate_prebuilt_demand_table(table, corpus)
+    except DemandTableSemanticIdentityMismatch as error:
+        raise PlanDemandTableRefusal(
+            "plan-demand-table-semantic-mismatch",
+            str(error),
+            observed_table=table,
+        ) from error
     return table
 
 

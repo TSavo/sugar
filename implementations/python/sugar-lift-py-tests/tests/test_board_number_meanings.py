@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
+from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 _SCRIPT = (
@@ -22,6 +24,31 @@ def _load_compose():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _demand_table_kwargs() -> dict[str, object]:
+    identity = DemandTableIdentityV1(
+        content_key="",
+        corpus_manifest_cid="blake3-512:test-corpus",
+        schema_version="python-demand-table/v1",
+        producer_source_cid="blake3-512:test-producer",
+        resolution_config_cid="blake3-512:test-config",
+        parser_identity="cpython-3.12",
+        file_count=4,
+    )
+    identity = DemandTableIdentityV1(
+        content_key=cid_of_json(dict(identity.preimage())),
+        corpus_manifest_cid=identity.corpus_manifest_cid,
+        schema_version=identity.schema_version,
+        producer_source_cid=identity.producer_source_cid,
+        resolution_config_cid=identity.resolution_config_cid,
+        parser_identity=identity.parser_identity,
+        file_count=identity.file_count,
+    )
+    return {
+        "demand_table_cid": "blake3-512:test-table",
+        "demand_table_identity": identity.as_dict(),
+    }
 
 
 def test_functions_three_meanings_not_one_figure() -> None:
@@ -171,6 +198,7 @@ def test_seal_board_splits_file_and_residual_meanings() -> None:
         measured_commit="abc123",
         aggregate_hash="pin-hash",
         manifest_shape_cid="manifest",
+        **_demand_table_kwargs(),
     )
     assert status == "sealed", body.get("instrumentFailures")
     assert body["filesEnrolled"] == 4
