@@ -51,6 +51,35 @@ def _demand_table_kwargs() -> dict[str, object]:
     }
 
 
+def _direct_plan_and_agreement(mod, files: list[str]):
+    demand = _demand_table_kwargs()
+    plan = mod.build_plan(
+        enrolled_files=files,
+        shard_count=1,
+        measured_commit="abc123",
+        aggregate_hash="pin-hash",
+        manifest_shape_cid="manifest",
+        bins=[files],
+        split_mode="test",
+        prior_hits=0,
+        prior_misses=len(files),
+        estimated_loads=[0.0],
+        **demand,
+    )
+    claim = {
+        "demandTableCid": demand["demand_table_cid"],
+        "demandTableIdentity": demand["demand_table_identity"],
+    }
+    return plan, {
+        "schema": "demand-table-shard-agreement/v1",
+        "plan": claim,
+        "shards": {"s00": claim},
+        "authenticatedShardCount": 1,
+        "expectedShardCount": 1,
+        "allAgree": True,
+    }
+
+
 def test_functions_three_meanings_not_one_figure() -> None:
     """Population / enumerated / clean are three sealed facts, not one int."""
     from sugar_lift_py_tests.c4.board_function_facts import (
@@ -261,13 +290,18 @@ def test_direct_board_mint_without_frontier_witness_is_unmeasured() -> None:
         "terminal_count": 3,
         "manifest_cid": None,
     }
+    agg["d3_residency_exposure"] = mod.aggregate_d3_residency_exposure(
+        [], enrolled_files=agg["enrolled_files"]
+    )
+    plan, agreement = _direct_plan_and_agreement(mod, agg["enrolled_files"])
     body = mod.seal_board_from_aggregate(
         agg,
-        plan=None,
-        per_shard_cids=None,
-        compose_cid=None,
+        plan=plan,
+        per_shard_cids={"s00": "partial-0"},
+        compose_cid="blake3-512:compose",
         measured_commit="abc123",
         aggregate_hash="pin-hash",
+        demand_table_agreement=agreement,
     )
     assert body["measurement"] == "unmeasured"
     assert body["kind"] == "measurement-conservation-failure-v1"
