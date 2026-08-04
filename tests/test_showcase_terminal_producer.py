@@ -72,7 +72,11 @@ def test_writer_emits_exact_validated_identity_atomically(
     monkeypatch.setenv("SHOWCASE_TERMINAL_WITNESS", str(output))
 
     assert showcase_terminal_identity.write_from_environment(IDENTITY) is True
-    assert json.loads(output.read_text(encoding="utf-8")) == IDENTITY
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "schemaVersion": 1,
+        "state": "witnessed",
+        "terminalIdentity": IDENTITY,
+    }
 
 
 def test_writer_refuses_empty_or_unknown_identity_fields(
@@ -211,9 +215,13 @@ def test_scope_runner_supplies_additive_channel_without_consuming_it(
     assert len(terminal_files) == 1
     assert json.loads(terminal_files[0].read_text(encoding="utf-8")) == {
         "schemaVersion": 1,
-        "kind": "construction-panic",
-        "owner": "PlantedOwner",
-        "coordinate": "fixture.py:1:0",
+        "state": "witnessed",
+        "terminalIdentity": {
+            "schemaVersion": 1,
+            "kind": "construction-panic",
+            "owner": "PlantedOwner",
+            "coordinate": "fixture.py:1:0",
+        },
     }
 
 
@@ -255,10 +263,14 @@ def test_shell_wrapper_publishes_selected_rpc_terminal_and_preserves_exit(
     )
 
     assert completed.returncode == 7
-    assert json.loads(output.read_text(encoding="utf-8"))["owner"] == (
+    assert json.loads(output.read_text(encoding="utf-8"))["terminalIdentity"][
+        "owner"
+    ] == (
         "ComparisonOpSugar.Eq"
     )
-    assert json.loads(output.read_text(encoding="utf-8"))["coordinate"] == (
+    assert json.loads(output.read_text(encoding="utf-8"))["terminalIdentity"][
+        "coordinate"
+    ] == (
         "examples/demo/test_logo.py:4:11"
     )
 
@@ -316,7 +328,9 @@ def test_shell_wrapper_reads_structured_stdout_and_replays_both_streams(
     assert "stdout-before\n" in completed.stdout
     assert json.dumps(diagnostic) in completed.stdout
     assert "stderr-before\n" in completed.stderr
-    assert json.loads(output.read_text(encoding="utf-8"))["owner"] == (
+    assert json.loads(output.read_text(encoding="utf-8"))["terminalIdentity"][
+        "owner"
+    ] == (
         "binary_operation_exception_floor"
     )
 

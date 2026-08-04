@@ -21,11 +21,28 @@ from typing import NoReturn
 
 TERMINAL_WITNESS_ENV = "SHOWCASE_TERMINAL_WITNESS"
 TERMINAL_IDENTITY_SCHEMA_VERSION = 1
+TERMINAL_STATE_SCHEMA_VERSION = 1
 _REQUIRED_FIELDS = ("schemaVersion", "kind", "owner")
 _OPTIONAL_FIELDS = ("coordinate", "observed", "requested", "entrance")
 _STRUCTURED_FIELDS = ("missingIdentities",)
 _ALLOWED_FIELDS = frozenset(
     (*_REQUIRED_FIELDS, *_OPTIONAL_FIELDS, *_STRUCTURED_FIELDS)
+)
+_WITNESSED_STATE_FIELDS = frozenset(
+    ("schemaVersion", "state", "terminalIdentity")
+)
+_NO_OWNER_POSSIBLE_STATE_FIELDS = frozenset(
+    (
+        "schemaVersion",
+        "state",
+        "producerContract",
+        "entrance",
+        "reason",
+        "disposition",
+    )
+)
+_TERMINAL_CONSTRUCT_MISSING_STATE_FIELDS = frozenset(
+    ("schemaVersion", "state", "expectedContract", "reason")
 )
 
 
@@ -127,6 +144,169 @@ def validate_terminal_identity(raw: Mapping[str, object]) -> dict[str, object]:
     if missing_identities is not None:
         canonical["missingIdentities"] = list(missing_identities)
     return canonical
+
+
+def _require_terminal_state_fields(
+    raw: Mapping[str, object],
+    expected: frozenset[str],
+    *,
+    label: str,
+) -> None:
+    observed = frozenset(raw)
+    if observed != expected:
+        missing = sorted(expected - observed)
+        unsupported = sorted(observed - expected)
+        _refuse(
+            f"{label} terminal state fields do not close: "
+            f"missing={missing} unsupported={unsupported}"
+        )
+
+
+def _require_nonempty_state_string(
+    raw: Mapping[str, object],
+    field: str,
+    *,
+    label: str,
+) -> str:
+    value = raw[field]
+    if not isinstance(value, str) or not value.strip():
+        _refuse(f"{label} terminal state requires nonempty {field}")
+    return value
+
+
+def validate_showcase_terminal_state(
+    raw: Mapping[str, object],
+) -> dict[str, object]:
+    """Return one canonical closed terminal state or refuse mixed testimony."""
+
+    if raw.get("schemaVersion") != TERMINAL_STATE_SCHEMA_VERSION:
+        _refuse(
+            "terminal state schemaVersion must be "
+            f"{TERMINAL_STATE_SCHEMA_VERSION}"
+        )
+    state = raw.get("state")
+    if state == "witnessed":
+        _require_terminal_state_fields(
+            raw,
+            _WITNESSED_STATE_FIELDS,
+            label="witnessed",
+        )
+        identity = raw["terminalIdentity"]
+        if not isinstance(identity, Mapping):
+            _refuse("witnessed terminal state requires terminalIdentity object")
+        return {
+            "schemaVersion": TERMINAL_STATE_SCHEMA_VERSION,
+            "state": "witnessed",
+            "terminalIdentity": validate_terminal_identity(identity),
+        }
+    if state == "no-owner-possible":
+        _require_terminal_state_fields(
+            raw,
+            _NO_OWNER_POSSIBLE_STATE_FIELDS,
+            label="no-owner-possible",
+        )
+        producer_contract = _require_nonempty_state_string(
+            raw,
+            "producerContract",
+            label="no-owner-possible",
+        )
+        entrance = _require_nonempty_state_string(
+            raw,
+            "entrance",
+            label="no-owner-possible",
+        )
+        reason = _require_nonempty_state_string(
+            raw,
+            "reason",
+            label="no-owner-possible",
+        )
+        if raw["disposition"] != "pending-ruling":
+            _refuse(
+                "no-owner-possible terminal state disposition must be "
+                "pending-ruling"
+            )
+        return {
+            "schemaVersion": TERMINAL_STATE_SCHEMA_VERSION,
+            "state": "no-owner-possible",
+            "producerContract": producer_contract,
+            "entrance": entrance,
+            "reason": reason,
+            "disposition": "pending-ruling",
+        }
+    if state == "terminal-construct-missing":
+        _require_terminal_state_fields(
+            raw,
+            _TERMINAL_CONSTRUCT_MISSING_STATE_FIELDS,
+            label="terminal-construct-missing",
+        )
+        expected_contract = _require_nonempty_state_string(
+            raw,
+            "expectedContract",
+            label="terminal-construct-missing",
+        )
+        reason = _require_nonempty_state_string(
+            raw,
+            "reason",
+            label="terminal-construct-missing",
+        )
+        return {
+            "schemaVersion": TERMINAL_STATE_SCHEMA_VERSION,
+            "state": "terminal-construct-missing",
+            "expectedContract": expected_contract,
+            "reason": reason,
+        }
+    _refuse(f"unsupported showcase terminal state: {state!r}")
+
+
+def witnessed_terminal_state(
+    identity: Mapping[str, object],
+) -> dict[str, object]:
+    """Wrap one producer-owned terminal identity without reconstructing it."""
+
+    return validate_showcase_terminal_state(
+        {
+            "schemaVersion": TERMINAL_STATE_SCHEMA_VERSION,
+            "state": "witnessed",
+            "terminalIdentity": identity,
+        }
+    )
+
+
+def no_owner_possible_terminal_state(
+    *,
+    producer_contract: str,
+    entrance: str,
+    reason: str,
+) -> dict[str, object]:
+    """Construct the pending shape for explicit producer-owned negative testimony."""
+
+    return validate_showcase_terminal_state(
+        {
+            "schemaVersion": TERMINAL_STATE_SCHEMA_VERSION,
+            "state": "no-owner-possible",
+            "producerContract": producer_contract,
+            "entrance": entrance,
+            "reason": reason,
+            "disposition": "pending-ruling",
+        }
+    )
+
+
+def terminal_construct_missing_state(
+    *,
+    expected_contract: str,
+    reason: str,
+) -> dict[str, object]:
+    """Construct measured terminal debt; this type has no exemption arm."""
+
+    return validate_showcase_terminal_state(
+        {
+            "schemaVersion": TERMINAL_STATE_SCHEMA_VERSION,
+            "state": "terminal-construct-missing",
+            "expectedContract": expected_contract,
+            "reason": reason,
+        }
+    )
 
 
 def construct_verification_property_attendance(
@@ -263,13 +443,13 @@ def identity_from_rpc_text(
     return validate_terminal_identity(identity)
 
 
-def _publish_once(output: Path, identity: Mapping[str, object]) -> None:
+def _publish_once(output: Path, state: Mapping[str, object]) -> None:
     if not output.is_absolute():
         _refuse(f"{TERMINAL_WITNESS_ENV} must be an absolute path: {output}")
     if not output.parent.is_dir():
         _refuse(f"terminal witness parent does not exist: {output.parent}")
 
-    payload = json.dumps(identity, sort_keys=False, separators=(",", ":")) + "\n"
+    payload = json.dumps(state, sort_keys=False, separators=(",", ":")) + "\n"
     temporary_path: Path | None = None
     try:
         descriptor, temporary_name = tempfile.mkstemp(
@@ -300,13 +480,13 @@ def write_from_environment(raw: Mapping[str, object]) -> bool:
     invalid producer identity refuses even in that additive/no-consumer mode.
     """
 
-    identity = validate_terminal_identity(raw)
+    state = witnessed_terminal_state(validate_terminal_identity(raw))
     output_value = os.environ.get(TERMINAL_WITNESS_ENV)
     if output_value is None:
         return False
     if not output_value:
         _refuse(f"{TERMINAL_WITNESS_ENV} must not be empty")
-    _publish_once(Path(output_value), identity)
+    _publish_once(Path(output_value), state)
     return True
 
 
