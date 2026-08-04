@@ -56,6 +56,24 @@ def _raise(error: BaseException):
     return boom
 
 
+def test_instrument_failure_renderer_names_its_testimony() -> None:
+    row = {
+        "instrumentFailure": {
+            "stageId": "recensus-enumerate-file-terminal/v1",
+            "phase": "roster",
+            "message": "typed module seat mismatch",
+        }
+    }
+    rendered = RECENSUS._render_terminal_category(row)
+    assert "stageId=recensus-enumerate-file-terminal/v1" in rendered
+    assert "phase=roster" in rendered
+    assert "message=typed module seat mismatch" in rendered
+
+
+def test_missing_category_without_instrument_failure_stays_explicit() -> None:
+    assert RECENSUS._render_terminal_category({}) == "?"
+
+
 def _fixture_file(tmp_path: Path) -> Path:
     path = tmp_path / "fixture.py"
     path.write_text("def fixture():\n    return 1\n", encoding="utf-8")
