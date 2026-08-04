@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
+from repo_root_test_support import resolve_repo_root
 
 REPO = resolve_repo_root()
 TOOL = REPO / "tools" / "migrate_legacy_binary_shelf.py"

@@ -22,7 +22,7 @@ from types import ModuleType
 
 import pytest
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
+from repo_root_test_support import resolve_repo_root
 
 from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
