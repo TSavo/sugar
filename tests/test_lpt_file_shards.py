@@ -20,6 +20,30 @@ from lpt_file_shards import (  # noqa: E402
 )
 
 
+def test_process_floor_partition_is_exact_and_disjoint(tmp_path: Path) -> None:
+    """Process floors use one deterministic partition, never per-axis LPT plans."""
+    scripts = ROOT / "implementations/python/sugar-lift-py-tests/scripts"
+    sys.path.insert(0, str(scripts))
+    from _enum_floor_runtime import apply_lpt_file_shard  # noqa: PLC0415
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    paths = []
+    for i in range(65):
+        p = root / f"f{i:03d}.py"
+        p.write_text(f"# {i}\n", encoding="utf-8")
+        paths.append(p)
+    shards = [
+        set(apply_lpt_file_shard(paths, root=root, shard_index=i, shard_count=4, population="process"))
+        for i in range(4)
+    ]
+    assert set.union(*shards) == set(paths)
+    assert sum(map(len, shards)) == len(paths)
+    for i, left in enumerate(shards):
+        for right in shards[i + 1 :]:
+            assert left.isdisjoint(right)
+
+
 def test_lpt_assigns_heaviest_first_to_lightest_bin() -> None:
     files = ["a", "b", "c", "d"]
     costs = {"a": 100.0, "b": 90.0, "c": 10.0, "d": 5.0}

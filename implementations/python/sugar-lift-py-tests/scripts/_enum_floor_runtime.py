@@ -34,12 +34,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence, TextIO, TypeVar
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
-
 T = TypeVar("T")
 
 # Repo tools/ is not always on path when floors run as scripts/.
-_TOOLS = resolve_repo_root() / "tools"
+_TOOLS = Path(__file__).resolve().parents[4] / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
@@ -132,35 +130,6 @@ def add_lpt_shard_args(parser) -> None:
     )
 
 
-def add_demand_table_arg(parser) -> None:
-    """Expose the authenticated shared demand-table entrance on process floors."""
-    parser.add_argument(
-        "--demand-table-path",
-        type=Path,
-        default=None,
-        help=(
-            "authenticated python-demand-table JSON; omission is an immediate "
-            "UNMEASURED refusal, never local demand derivation"
-        ),
-    )
-
-
-def require_demand_table(path: Path | None) -> Path:
-    """Refuse before scanning when the authenticated table was not supplied."""
-    if path is None:
-        raise ValueError(
-            "authenticated python-demand-table is required; refusing local "
-            "demand derivation (pass --demand-table-path)"
-        )
-    resolved = path.expanduser().resolve()
-    if not resolved.is_file():
-        raise ValueError(
-            "authenticated python-demand-table is not a file: "
-            f"{resolved}; refusing local demand derivation"
-        )
-    return resolved
-
-
 def apply_lpt_file_shard(
     paths: Sequence[Path],
     *,
@@ -176,19 +145,14 @@ def apply_lpt_file_shard(
         raise ValueError(
             f"shard_index {shard_index} out of range for shard_count {shard_count}"
         )
-    tools = resolve_repo_root() / "tools"
-    if tools.is_dir() and str(tools) not in sys.path:
-        sys.path.insert(0, str(tools))
-    from lpt_file_shards import filter_paths_for_shard
-
-    return filter_paths_for_shard(
-        paths,
-        root=root,
-        shard_index=shard_index,
-        shard_count=shard_count,
-        population=population,
-        narrate=True,
-    )
+    # Process-floor coverage is a measurement invariant, not a scheduling
+    # optimisation.  A per-axis LPT prior can produce different assignments
+    # when shards receive different prior shelves, leaving omissions and
+    # duplicates across the matrix.  Use the showcase law: one canonical
+    # lexical roster, ordinal modulo k.  LPT remains available to package
+    # suite callers where balance is the objective.
+    ordered = sorted({p.resolve() for p in paths}, key=lambda p: p.relative_to(root).as_posix())
+    return [p for ordinal, p in enumerate(ordered) if ordinal % shard_count == shard_index]
 
 
 def require_explicit_scan_roots(roots: Sequence[Path]) -> list[Path]:
@@ -443,7 +407,6 @@ def format_unmeasured_axis(axis: str, *, reason: str) -> str:
         f"(status=completed-with-error; reason={reason!r}; value=no-value). "
         f"Measurement did not complete; residual is not a completed zero."
     )
-
 
 def timed_enum_file(
     path: Path,
