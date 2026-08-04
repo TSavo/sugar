@@ -264,13 +264,16 @@ def load_prebuilt_demand_table(
             f"replacement=rebuild the table against the authenticated pin "
             f"(blonde law: wrong corpus is not a measurement)"
         )
-    preimage = {
-        "schema": SCHEMA,
-        "corpusPin": pin.as_dict(),
-        "rows": list(raw["rows"]),
-    }
-    recomputed = content_cid_for_preimage(preimage)
     presented = raw.get("contentCid")
+    # Reconstruct the authenticated value first; its preimage() is the only
+    # serialization door shared with minting and validation.
+    table = PrebuiltDemandTableV1(
+        content_cid=str(presented),
+        corpus_pin=pin,
+        rows=tuple(raw["rows"]),
+        semantic_identity=semantic_identity,
+    )
+    recomputed = content_cid_for_preimage(table.preimage())
     if presented != recomputed:
         raise DemandTableArtifactRefusal(
             f"prebuilt demand table contentCid mismatch: "
@@ -281,12 +284,7 @@ def load_prebuilt_demand_table(
             f"prebuilt demand table contentCid != plan demandTableCid: "
             f"artifact={presented!r} plan={expected_content_cid!r}"
         )
-    return PrebuiltDemandTableV1(
-        content_cid=str(presented),
-        corpus_pin=pin,
-        rows=tuple(raw["rows"]),
-        semantic_identity=semantic_identity,
-    )
+    return table
 
 
 def refs_from_prebuilt_table(table: PrebuiltDemandTableV1):
