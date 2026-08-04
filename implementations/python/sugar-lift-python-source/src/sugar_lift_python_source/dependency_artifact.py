@@ -68,16 +68,6 @@ _AUTHENTICATE_GRAPH_CACHE: dict[str, "DependencyArtifactGraph"] = {}
 # verdict, never a graph. Paying full price is always a legal answer.
 _AUTHENTICATE_CACHE_ENABLED = True
 
-# Warm re-auth front door: install seat → (mtime fingerprint, graph).
-# NOT a path-keyed graph cache. Returns a content-addressed graph only when
-# every recorded file's (mtime_ns, size) still matches the fingerprint taken
-# at authentication. An edit that moves mtime is a miss → full re-hash → new
-# artifact CID. Identity remains content-addressed; this only avoids re-reading
-# ~67MB of pandas bytes to recompute h(p) when p did not move.
-_AUTHENTICATE_BY_INSTALLATION_FINGERPRINT: dict[
-    str, tuple[str, "DependencyArtifactGraph"]
-] = {}
-
 
 def _require_parseable_module_source(
     source: str, *, path: str, module_name: str
@@ -111,60 +101,6 @@ def _artifact_disk_cache_path(artifact_cid: str) -> Path:
     """
     digest = artifact_cid.removeprefix("blake3-512:")[:32]
     return _cache_root() / "dependency-artifact-graphs" / f"{digest}.pkl"
-
-
-def _fingerprint_disk_cache_path(seat_key: str, fingerprint: str) -> Path:
-    """On-disk seat for install-fingerprint → artifact CID."""
-    digest = blake3_512_of(f"{seat_key}\n{fingerprint}".encode("utf-8")).removeprefix(
-        "blake3-512:"
-    )[:32]
-    return _cache_root() / "dependency-artifact-fingerprints" / f"{digest}.json"
-
-
-def _load_artifact_cid_for_fingerprint(seat_key: str, fingerprint: str) -> str | None:
-    path = _fingerprint_disk_cache_path(seat_key, fingerprint)
-    if not path.is_file():
-        return None
-    try:
-        import json
-
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("schema") != "dep-fp-v1":
-            return None
-        cid = payload.get("distribution_artifact_cid")
-        return cid if isinstance(cid, str) and cid.startswith("blake3-512:") else None
-    except Exception:
-        return None
-
-
-def _store_fingerprint_disk_cache(
-    seat_key: str, fingerprint: str, artifact_cid: str
-) -> None:
-    path = _fingerprint_disk_cache_path(seat_key, fingerprint)
-    try:
-        import json
-        import tempfile
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema": "dep-fp-v1",
-            "distribution_artifact_cid": artifact_cid,
-        }
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(path.parent), prefix=".fp-", suffix=".json"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream, separators=(",", ":"))
-            Path(tmp_name).replace(path)
-        except Exception:
-            try:
-                Path(tmp_name).unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-    except Exception:
-        return
 
 
 def _load_authenticate_disk_cache(
@@ -761,56 +697,14 @@ class DependencyArtifactGraph:
         return graph
 
     @staticmethod
-    def _distribution_seat_key(
-        distribution: importlib.metadata.Distribution,
-    ) -> str:
-        path = getattr(distribution, "_path", None)
-        if path is not None:
-            return str(Path(path).resolve())
-        return str(Path(distribution.locate_file("")).resolve())
-
-    @staticmethod
-    def _installation_fingerprint(
-        distribution: importlib.metadata.Distribution,
-    ) -> str:
-        """Cheap install identity: every recorded file's (seat, mtime, size).
-
-        Not a content hash — a change detector. Editing an installed module
-        moves mtime/size; the fingerprint moves; the warm front door misses.
-        """
-        files = distribution.files
-        if files is None:
-            raise DependencyArtifactAuthenticationError(
-                "installed distribution has no recorded file manifest"
-            )
-        parts: list[str] = []
-        for recorded in sorted(files, key=lambda item: str(item)):
-            relative = PurePosixPath(str(recorded))
-            if relative.is_absolute():
-                raise DependencyArtifactAuthenticationError(
-                    "distribution manifest contains an absolute file seat"
-                )
-            path = Path(distribution.locate_file(recorded))
-            try:
-                stat = path.stat()
-            except OSError as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"cannot stat recorded distribution file {relative}"
-                ) from exc
-            parts.append(
-                f"{relative.as_posix()}:{int(stat.st_mtime_ns)}:{int(stat.st_size)}"
-            )
-        return blake3_512_of("\n".join(parts).encode("utf-8"))
-
-    @staticmethod
     def _read_recorded_installation(
         distribution: importlib.metadata.Distribution,
     ) -> list[tuple[AuthenticatedArtifactFileV1, str]]:
         """Read and content-address the graph constructor's file inputs.
 
         This is the half that CANNOT be memoized across content change: it is
-        what establishes which bytes are on disk right now. Unchanged-install
-        warm path skips this via ``_installation_fingerprint`` first.
+        what establishes which bytes are on disk right now. Every authentication
+        reads it before consulting a memo keyed by the resulting content CID.
         """
         files = distribution.files
         if files is None:
@@ -844,42 +738,10 @@ class DependencyArtifactGraph:
         return located
 
     @classmethod
-    def _remember_fingerprint(
-        cls,
-        seat_key: str | None,
-        fingerprint: str | None,
-        graph: "DependencyArtifactGraph",
-    ) -> None:
-        if seat_key is None or fingerprint is None or not _AUTHENTICATE_CACHE_ENABLED:
-            return
-        _AUTHENTICATE_BY_INSTALLATION_FINGERPRINT[seat_key] = (fingerprint, graph)
-        _store_fingerprint_disk_cache(
-            seat_key, fingerprint, graph.distribution_artifact_cid
-        )
-
-    @classmethod
     def authenticate(
         cls, distribution: importlib.metadata.Distribution
     ) -> "DependencyArtifactGraph":
         """Hash every recorded installed file and publish authenticated modules."""
-        seat_key: str | None = None
-        fingerprint: str | None = None
-        if _AUTHENTICATE_CACHE_ENABLED:
-            # Warm front door (process then disk): if no recorded file moved
-            # (mtime/size), return the content-addressed graph already proven
-            # for this install seat. Mutation that moves mtime is a miss.
-            seat_key = cls._distribution_seat_key(distribution)
-            fingerprint = cls._installation_fingerprint(distribution)
-            prior = _AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.get(seat_key)
-            if prior is not None and prior[0] == fingerprint:
-                return prior[1]
-            parked_cid = _load_artifact_cid_for_fingerprint(seat_key, fingerprint)
-            if parked_cid is not None:
-                disk = _load_authenticate_disk_cache(parked_cid)
-                if disk is not None:
-                    _AUTHENTICATE_GRAPH_CACHE[parked_cid] = disk
-                    cls._remember_fingerprint(seat_key, fingerprint, disk)
-                    return disk
         located = cls._read_recorded_installation(distribution)
         constructed = cls._construct_from_authenticated_inputs(
             _DistributionGraphInputs(tuple(located))
@@ -888,18 +750,15 @@ class DependencyArtifactGraph:
         if _AUTHENTICATE_CACHE_ENABLED:
             cached = _AUTHENTICATE_GRAPH_CACHE.get(artifact_cid)
             if cached is not None:
-                cls._remember_fingerprint(seat_key, fingerprint, cached)
                 return cached
             disk = _load_authenticate_disk_cache(artifact_cid)
             if disk is not None:
                 _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = disk
-                cls._remember_fingerprint(seat_key, fingerprint, disk)
                 return disk
         graph = constructed
         if _AUTHENTICATE_CACHE_ENABLED:
             _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = graph
             _store_authenticate_disk_cache(graph)
-            cls._remember_fingerprint(seat_key, fingerprint, graph)
         return graph
 
     @classmethod
@@ -979,7 +838,6 @@ def clear_top_level_authentication_caches() -> None:
     global _PACKAGES_DISTRIBUTIONS_CACHE
     _PACKAGES_DISTRIBUTIONS_CACHE = None
     _TOP_LEVEL_GRAPH_CACHE.clear()
-    _AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
 
 
 def _packages_distributions() -> Mapping[str, list[str]]:

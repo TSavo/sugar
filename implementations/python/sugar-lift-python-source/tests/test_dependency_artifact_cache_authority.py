@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import importlib.metadata
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -153,7 +154,6 @@ def _isolated_memos(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(da, "_AUTHENTICATE_GRAPH_CACHE", {})
     monkeypatch.setattr(da, "_AUTHENTICATE_CACHE_ENABLED", True)
-    monkeypatch.setattr(da, "_AUTHENTICATE_BY_INSTALLATION_FINGERPRINT", {})
     monkeypatch.setattr(da, "_PACKAGES_DISTRIBUTIONS_CACHE", None)
     monkeypatch.setattr(da, "_TOP_LEVEL_GRAPH_CACHE", {})
     yield
@@ -177,6 +177,30 @@ def test_mutating_the_installation_invalidates_the_cached_graph(tmp_path):
 
     assert second.modules["example_pkg.implementation"].source == _IMPL_B
     assert second.distribution_artifact_cid != first.distribution_artifact_cid
+
+
+def test_equal_stat_metadata_cannot_hide_changed_installation_bytes(tmp_path):
+    """A stat-identical mutation must not satisfy content authentication."""
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_B)
+    implementation_path = root / "example_pkg" / "implementation.py"
+    fixed_mtime_ns = 1_700_000_000_000_000_000
+    os.utime(implementation_path, ns=(fixed_mtime_ns, fixed_mtime_ns))
+
+    first = DependencyArtifactGraph.authenticate(distribution)
+
+    replacement = "def build(value):\n    return value + 2\n"
+    assert len(replacement) == len(_IMPL_B)
+    _mutate(root, replacement)
+    os.utime(implementation_path, ns=(fixed_mtime_ns, fixed_mtime_ns))
+    second = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+    truth = _uncached(importlib.metadata.Distribution.at(distribution._path))
+
+    assert second.distribution_artifact_cid == truth.distribution_artifact_cid
+    assert second.distribution_artifact_cid != first.distribution_artifact_cid
+    assert second.modules["example_pkg.implementation"].source == replacement
 
 
 def test_bite_the_path_keyed_memo_serves_the_stale_graph(tmp_path):
@@ -412,9 +436,8 @@ def test_disk_memo_survives_a_cold_process_table(tmp_path):
     warm = DependencyArtifactGraph.authenticate(distribution)
 
     # Simulate a new process: every process-local table is empty; only the
-    # content-addressed (and fingerprint→CID) disk seats remain.
+    # content-addressed disk seat remains.
     da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
     da._TOP_LEVEL_GRAPH_CACHE.clear()
     from_disk = DependencyArtifactGraph.authenticate(
         importlib.metadata.Distribution.at(distribution._path)
@@ -467,29 +490,34 @@ def test_disk_cache_persists_only_primitive_constructor_inputs(tmp_path):
 
 
 def test_coherent_disk_graph_is_served_without_refusal(tmp_path, monkeypatch, caplog):
-    """Primitive cached inputs rehydrate without consulting live installation."""
+    """Authenticated content identity selects and rehydrates primitive inputs."""
     root = tmp_path / "project"
     distribution = _install(root, implementation_source=_IMPL_A)
     warm = DependencyArtifactGraph.authenticate(distribution)
     seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
 
     da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
     da._TOP_LEVEL_GRAPH_CACHE.clear()
 
-    def forbidden_rebuild(_distribution):
-        raise AssertionError("coherent disk hit rebuilt")
+    real_read = DependencyArtifactGraph._read_recorded_installation
+    reads = 0
+
+    def counted_real_read(selected_distribution):
+        nonlocal reads
+        reads += 1
+        return real_read(selected_distribution)
 
     monkeypatch.setattr(
         DependencyArtifactGraph,
         "_read_recorded_installation",
-        staticmethod(forbidden_rebuild),
+        staticmethod(counted_real_read),
     )
     served = DependencyArtifactGraph.authenticate(
         importlib.metadata.Distribution.at(distribution._path)
     )
 
     assert _observable(served) == _observable(warm)
+    assert reads == 1
     assert seat.is_file()
     assert "dependency-artifact-cache-refused" not in caplog.text
 
@@ -535,7 +563,6 @@ def test_unconstructible_cache_inputs_miss_and_execute_authenticated_rebuild(
         staticmethod(counted_real_read),
     )
     da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
     da._TOP_LEVEL_GRAPH_CACHE.clear()
 
     served = DependencyArtifactGraph.authenticate(
@@ -574,7 +601,6 @@ def test_previous_cache_schema_is_refused_invalidated_and_rebuilt(tmp_path, capl
         pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
 
     da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._AUTHENTICATE_BY_INSTALLATION_FINGERPRINT.clear()
     da._TOP_LEVEL_GRAPH_CACHE.clear()
     rebuilt = DependencyArtifactGraph.authenticate(
         importlib.metadata.Distribution.at(distribution._path)

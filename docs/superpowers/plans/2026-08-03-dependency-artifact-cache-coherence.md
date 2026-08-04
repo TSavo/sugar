@@ -12,6 +12,8 @@
 
 - No separate coherence predicate over `artifact_kind` and `distribution_name`.
 - Cache v4 stores exactly schema and primitive recorded-file inputs.
+- A cache candidate is selected only after live bytes derive its artifact CID;
+  filesystem stat metadata is not an authentication key.
 - The miss path must perform real authenticated reconstruction; never return an empty or default graph.
 - Lawful graph fields and artifact CID remain unchanged.
 - The 94 off-population rows are not attributed to this defect.
@@ -60,6 +62,8 @@
 - [x] Write v4 seats with only `schema` and primitive `files` rows.
 - [x] Require exact payload and file-row keys; construct every `AuthenticatedArtifactFileV1` before graph construction.
 - [x] Preserve visible refusal, exact-seat invalidation, and requested-vs-derived CID authentication.
+- [x] Remove the stat-fingerprint front door and prove an equal-stat byte
+      mutation cannot serve a stale graph.
 - [x] Run constructor, coherent-hit, poisoned-seat, and v3-successor teeth unpiped and require green.
 
 ### Task 4: Verify, publish, and open the PR

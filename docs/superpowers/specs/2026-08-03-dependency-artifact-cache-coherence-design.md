@@ -49,6 +49,13 @@ this constructor. Cache diagnostic paths are retained relative seats; live
 paths remain their installed coordinates. Diagnostic paths do not contribute
 to graph identity.
 
+The cache may only be selected after live intake has content-addressed the
+recorded bytes. A path plus `(mtime_ns, size)` fingerprint is not authenticated
+content identity: two different equal-size byte strings can carry the same
+stat metadata and select a stale graph without reading either one. That warm
+front door is removed rather than widened with another metadata field. The
+artifact CID derived from constructor inputs is the only cache key.
+
 ## Cache schema v4
 
 A v4 payload has exactly two keys:
@@ -87,9 +94,9 @@ authenticated intake remains fatal.
    `distribution_name="pandas"`. It must raise
    `DependencyArtifactConstructionError` by name. Current main accepts the
    pair when given the module-private authority token.
-2. **Coherent cache tooth:** a production-written v4 seat survives a cold
-   process table and is served without invoking live installation intake or
-   recording a refusal.
+2. **Coherent cache tooth:** after live intake derives the content identity, a
+   production-written v4 seat survives a cold process table and is served
+   without recording a refusal.
 3. **Poisoned cache tooth:** remove the retained METADATA input from an otherwise
    exact v4 seat. The shared graph constructor refuses it by its existing
    METADATA rule; the loader records and invalidates the exact seat, then
@@ -98,6 +105,9 @@ authenticated intake remains fatal.
    This proves constructor refusal and miss execution, not merely skip behavior.
 4. **Schema successor tooth:** a v3 seat is visibly invalidated and rebuilt as
    v4.
+5. **Stat-collision tooth:** two equal-size source preimages are forced to the
+   same mtime. The second authentication must address the second bytes rather
+   than serving the first graph through metadata coincidence.
 
 ## Identity and scope
 
