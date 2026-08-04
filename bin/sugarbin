@@ -1646,21 +1646,43 @@ _stamp_short() {
 # log()) within 30s and every 30s after. CI is not a TTY — never gate these.
 acquire_rebuild_single_flight() {
   local stamp="$1" name="$2" lock_parent lockdir waited=0 stale_s age
-  local wait_start holder stamp_short now elapsed announced=0 missing_dir_retries=0
+  local wait_start holder stamp_short now elapsed announced=0
+  local state_observation state state_detail
   _rebuild_lock_dir=""
   _rebuild_heartbeat_pid=""
   lock_parent="$(cache_dir)/.rebuild-locks"
-  if ! mkdir -p "$lock_parent" 2>/dev/null; then
-    log "crime=uncreatable-rebuild-lock-path owner=bin/sugarbin path=$lock_parent replacement=provide a writable declared cache root before binary resolution"
+  if ! state_observation="$(python3 "$script_dir/../tools/rebuild_lock_state.py" publish-parent "$lock_parent" 2>&1)"; then
+    log "crime=rebuild-lock-state-helper-failed owner=tools/rebuild_lock_state.py path=$lock_parent detail=$state_observation replacement=restore the declared lock-state classifier before binary resolution"
     return 70
   fi
+  IFS=$'\t' read -r state state_detail <<<"$state_observation"
+  case "$state" in
+    ready) ;;
+    create-refused)
+      log "crime=rebuild-lock-create-refused owner=bin/sugarbin path=$lock_parent state=$state observation=$state_detail replacement=provide a creatable declared rebuild-lock root before binary resolution"
+      return 70
+      ;;
+    unshareable)
+      log "crime=unshareable-rebuild-lock-path owner=bin/sugarbin path=$lock_parent state=$state observation=$state_detail replacement=regenerate only the derived rebuild-lock parent as shared-writable; do not mutate the binary cache"
+      return 70
+      ;;
+    *)
+      log "crime=unknown-rebuild-lock-parent-state owner=tools/rebuild_lock_state.py path=$lock_parent state=${state:-absent} observation=$state_detail replacement=restore the closed rebuild-lock parent protocol"
+      return 70
+      ;;
+  esac
   # Directory name IS the lock: mkdir succeeds for exactly one contender.
   lockdir="$lock_parent/$(platform_key)-${profile}-$(stamp_for_filename "$stamp")-${bin_name}.lock"
   stale_s="$(_rebuild_lock_stale_seconds)"
   stamp_short="$(_stamp_short "$stamp")"
   wait_start="$(date +%s)"
   while true; do
-    if mkdir "$lockdir" 2>/dev/null; then
+    if ! state_observation="$(python3 "$script_dir/../tools/rebuild_lock_state.py" create "$lockdir" 2>&1)"; then
+      log "crime=rebuild-lock-state-helper-failed owner=tools/rebuild_lock_state.py path=$lockdir detail=$state_observation replacement=restore the declared lock-state classifier before binary resolution"
+      return 70
+    fi
+    IFS=$'\t' read -r state state_detail <<<"$state_observation"
+    if [[ "$state" == acquired ]]; then
       if ! printf '%s\n' "$$" >"$lockdir/pid" 2>/dev/null \
         || ! : >"$lockdir/heartbeat" 2>/dev/null; then
         rm -rf "$lockdir" 2>/dev/null || true
@@ -1688,18 +1710,22 @@ acquire_rebuild_single_flight() {
       fi
       return 0
     fi
-    # A failed mkdir proves contention only at that instant. The winner may
-    # publish and release before this waiter observes the lock; retry that
-    # lawful disappearance instead of misclassifying it as missing testimony.
-    if [[ ! -d "$lockdir" ]]; then
-      missing_dir_retries=$((missing_dir_retries + 1))
-      if (( missing_dir_retries >= 40 )); then
-        log "crime=missing-rebuild-lock-pid owner=bin/sugarbin path=$lockdir/pid lock=$lockdir holder_pid=unknown reason=lock-absent-after-bounded-retry replacement=repair the declared lock root; an absent holder record is not peer contention"
-        return 70
-      fi
+    if [[ "$state" == released ]]; then
       continue
     fi
-    missing_dir_retries=0
+    if [[ "$state" == create-refused ]]; then
+      log "crime=rebuild-lock-create-refused owner=bin/sugarbin path=$lockdir state=$state observation=$state_detail replacement=repair the declared shared-writable lock root; create refusal is not peer contention"
+      return 70
+    fi
+    if [[ "$state" != contended ]]; then
+      log "crime=unknown-rebuild-lock-state owner=tools/rebuild_lock_state.py path=$lockdir state=${state:-absent} observation=$state_detail replacement=restore the closed rebuild-lock lifecycle protocol"
+      return 70
+    fi
+    # Contention is authenticated EEXIST. The winner may release between that
+    # observation and the holder read; retry the lawful released state.
+    if [[ ! -d "$lockdir" ]]; then
+      continue
+    fi
     # A lock directory that still exists gets one bounded chance to publish
     # its PID. Absence after that is not an unknown holder to wait on forever.
     if [[ ! -f "$lockdir/pid" ]]; then
