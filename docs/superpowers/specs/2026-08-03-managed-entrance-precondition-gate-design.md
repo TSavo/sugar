@@ -209,4 +209,7 @@ referenced test.
 This change does not make detached remote processes durable, repair old remote
 roots or shelf cells, infer arbitrary shell dependencies, or claim showcase
 semantics. It moves declared preconditions to the entrance and makes missing
-authority refuse before expensive work.
+authority refuse before expensive work. Detached remote execution remains
+unsolved: stage one authenticates foreground SSH ownership and deliberately
+declines to mint any managed success claim for a child detached from that
+session.
