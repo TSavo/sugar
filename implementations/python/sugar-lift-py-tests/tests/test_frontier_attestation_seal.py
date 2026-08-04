@@ -146,6 +146,36 @@ def _demand_table_kwargs() -> dict[str, object]:
     }
 
 
+def _direct_plan_and_agreement(module, files: list[str]):
+    demand = _demand_table_kwargs()
+    plan = module.build_plan(
+        enrolled_files=files,
+        shard_count=1,
+        measured_commit="4accd543",
+        aggregate_hash="agg",
+        manifest_shape_cid="manifest",
+        bins=[files],
+        split_mode="test",
+        prior_hits=0,
+        prior_misses=len(files),
+        estimated_loads=[0.0],
+        **demand,
+    )
+    claim = {
+        "demandTableCid": demand["demand_table_cid"],
+        "demandTableIdentity": demand["demand_table_identity"],
+    }
+    agreement = {
+        "schema": "demand-table-shard-agreement/v1",
+        "plan": claim,
+        "shards": {"s00": claim},
+        "authenticatedShardCount": 1,
+        "expectedShardCount": 1,
+        "allAgree": True,
+    }
+    return plan, agreement
+
+
 def _require_runtime_parameter(module) -> None:
     assert (
         "runtime_attestation"
@@ -713,15 +743,17 @@ def test_aggregate_panic_magnitude_cannot_disagree_with_attested_keys() -> None:
     )
     attestation, failures = module.attest_frontier_rows([("pandas/a.py", row)])
     assert failures == []
+    plan, agreement = _direct_plan_and_agreement(module, ["pandas/a.py"])
     body = module.seal_board_from_aggregate(
         aggregate,
-        plan=None,
-        per_shard_cids=None,
-        compose_cid=None,
+        plan=plan,
+        per_shard_cids={"s00": "partial-0"},
+        compose_cid="blake3-512:compose",
         measured_commit="4accd543",
         aggregate_hash="agg",
         manifest_shape_cid="manifest",
         frontier_attestation=attestation,
+        demand_table_agreement=agreement,
         runtime_attestation=_runtime_attestation(),
     )
     assert body["measurement"] == "unmeasured"

@@ -167,6 +167,82 @@ def _assert_unmeasured_without_width(body: dict[str, object]) -> None:
     assert "bodyCid" not in body
 
 
+def _direct_seal(
+    module,
+    *,
+    demand_table_agreement,
+) -> dict[str, object]:
+    cid = "blake3-512:table-a"
+    identity = _demand_identity()
+    plan = _plan(module, cid=cid, identity=identity)
+    measured_rows = [
+        (file, _row(module, file)) for file in plan["enrolledFiles"]
+    ]
+    aggregate = module.aggregate_terminal_rows(
+        measured_rows,
+        enrolled_files=plan["enrolledFiles"],
+        manifest_cid="manifest",
+    )
+    frontier, failures = module.attest_frontier_rows(measured_rows)
+    assert failures == []
+    return module.seal_board_from_aggregate(
+        aggregate,
+        plan=plan,
+        per_shard_cids={f"s{i:02d}": f"partial-{i}" for i in range(8)},
+        compose_cid="blake3-512:compose",
+        measured_commit="dc41472e64",
+        frontier_attestation=frontier,
+        demand_table_agreement=demand_table_agreement,
+        runtime_attestation=_runtime_attestation(),
+    )
+
+
+def test_direct_seal_refuses_absent_demand_table_agreement() -> None:
+    module = _load()
+
+    body = _direct_seal(module, demand_table_agreement=None)
+
+    _assert_unmeasured_without_width(body)
+    assert "demand-table-agreement-absent" in body["unmeasuredReasons"]["plan"]
+
+
+def test_direct_seal_refuses_malformed_demand_table_agreement() -> None:
+    module = _load()
+
+    body = _direct_seal(
+        module,
+        demand_table_agreement={
+            "schema": "demand-table-shard-agreement/v1",
+            "allAgree": True,
+        },
+    )
+
+    _assert_unmeasured_without_width(body)
+    assert "demand-table-agreement-malformed" in body["unmeasuredReasons"]["plan"]
+
+
+def test_direct_seal_refuses_seven_of_eight_demand_table_agreement() -> None:
+    module = _load()
+    cid = "blake3-512:table-a"
+    identity = _demand_identity()
+    claim = {"demandTableCid": cid, "demandTableIdentity": identity}
+
+    body = _direct_seal(
+        module,
+        demand_table_agreement={
+            "schema": "demand-table-shard-agreement/v1",
+            "plan": claim,
+            "shards": {f"s{i:02d}": claim for i in range(7)},
+            "authenticatedShardCount": 7,
+            "expectedShardCount": 8,
+            "allAgree": False,
+        },
+    )
+
+    _assert_unmeasured_without_width(body)
+    assert "demand-table-agreement-incomplete" in body["unmeasuredReasons"]["plan"]
+
+
 def test_eight_authenticated_shards_seal_one_demand_table_meaning() -> None:
     module = _load()
     cid = "blake3-512:table-a"

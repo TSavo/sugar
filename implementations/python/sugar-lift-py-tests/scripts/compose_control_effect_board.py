@@ -131,6 +131,115 @@ def _demand_table_claim(
     return content_cid, identity.as_dict()
 
 
+_DEMAND_TABLE_AGREEMENT_FIELDS = frozenset(
+    {
+        "schema",
+        "plan",
+        "shards",
+        "authenticatedShardCount",
+        "expectedShardCount",
+        "allAgree",
+    }
+)
+
+
+def _validate_demand_table_agreement(
+    agreement: Mapping[str, Any] | None,
+    *,
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Close the mint boundary over one plan claim and every shard claim."""
+    if not isinstance(agreement, Mapping):
+        raise ValueError(
+            "demand-table-agreement-absent: sealed mint requires the shard "
+            "agreement testimony produced by compose"
+        )
+    fields = set(agreement)
+    if fields != _DEMAND_TABLE_AGREEMENT_FIELDS:
+        raise ValueError(
+            "demand-table-agreement-malformed: closed fields differ "
+            f"missing={sorted(_DEMAND_TABLE_AGREEMENT_FIELDS - fields)} "
+            f"extra={sorted(fields - _DEMAND_TABLE_AGREEMENT_FIELDS)}"
+        )
+    if agreement.get("schema") != "demand-table-shard-agreement/v1":
+        raise ValueError(
+            "demand-table-agreement-malformed: schema must be "
+            "demand-table-shard-agreement/v1"
+        )
+    agreement_plan = agreement.get("plan")
+    shards = agreement.get("shards")
+    if not isinstance(agreement_plan, Mapping) or not isinstance(shards, Mapping):
+        raise ValueError(
+            "demand-table-agreement-malformed: plan and shards must be objects"
+        )
+    try:
+        plan_claim = _demand_table_claim(plan, owner="plan")
+        agreement_plan_claim = _demand_table_claim(
+            agreement_plan, owner="demand-table agreement plan"
+        )
+    except ValueError as error:
+        raise ValueError(f"demand-table-agreement-malformed: {error}") from error
+    if agreement_plan_claim != plan_claim:
+        raise ValueError(
+            "demand-table-testimony-mismatch: agreement plan claim differs "
+            f"agreement={agreement_plan_claim!r} plan={plan_claim!r}"
+        )
+
+    expected = int(plan["shardCount"])
+    expected_seats = {f"s{i:02d}" for i in range(expected)}
+    presented_seats = set(shards)
+    authenticated_count = agreement.get("authenticatedShardCount")
+    expected_count = agreement.get("expectedShardCount")
+    if (
+        type(authenticated_count) is not int
+        or type(expected_count) is not int
+        or authenticated_count != expected
+        or expected_count != expected
+        or presented_seats != expected_seats
+        or agreement.get("allAgree") is not True
+    ):
+        raise ValueError(
+            "demand-table-agreement-incomplete: "
+            f"authenticated={authenticated_count!r} expected={expected_count!r} "
+            f"planExpected={expected} missing={sorted(expected_seats - presented_seats)} "
+            f"extra={sorted(presented_seats - expected_seats)} "
+            f"allAgree={agreement.get('allAgree')!r}"
+        )
+
+    normalized_shards: dict[str, dict[str, object]] = {}
+    for seat in sorted(expected_seats):
+        raw_claim = shards[seat]
+        if not isinstance(raw_claim, Mapping):
+            raise ValueError(
+                f"demand-table-agreement-malformed: shard {seat} claim is not an object"
+            )
+        try:
+            shard_claim = _demand_table_claim(raw_claim, owner=f"agreement {seat}")
+        except ValueError as error:
+            raise ValueError(f"demand-table-agreement-malformed: {error}") from error
+        if shard_claim != plan_claim:
+            raise ValueError(
+                "demand-table-testimony-mismatch: "
+                f"agreement {seat} claim={shard_claim!r} plan={plan_claim!r}"
+            )
+        normalized_shards[seat] = {
+            "demandTableCid": shard_claim[0],
+            "demandTableIdentity": shard_claim[1],
+        }
+
+    return {
+        "schema": "demand-table-shard-agreement/v1",
+        "plan": {
+            "demandTableCid": plan_claim[0],
+            "demandTableIdentity": plan_claim[1],
+        },
+        "shards": normalized_shards,
+        "authenticatedShardCount": expected,
+        "expectedShardCount": expected,
+        "allAgree": True,
+    }
+
+
 def _runtime_attestation_fields(
     runtime_attestation: Mapping[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -1326,6 +1435,32 @@ def seal_board_from_aggregate(
             measured_commit=measured_commit,
             runtime_failure=runtime_failure,
         )
+    if plan is None:
+        return unmeasured_envelope(
+            plan=plan,
+            missing_shards=["plan"],
+            unmeasured_reasons={
+                "plan": (
+                    "demand-table-agreement-absent: sealed mint requires a "
+                    "plan carrying the authoritative demand-table claim"
+                )
+            },
+            measured_commit=measured_commit,
+            runtime_attestation=runtime,
+        )
+    try:
+        authenticated_demand_table_agreement = _validate_demand_table_agreement(
+            demand_table_agreement,
+            plan=plan,
+        )
+    except ValueError as error:
+        return unmeasured_envelope(
+            plan=plan,
+            missing_shards=["plan"],
+            unmeasured_reasons={"plan": str(error)},
+            measured_commit=measured_commit,
+            runtime_attestation=runtime,
+        )
     file_names = list(agg["enrolled_files"])
     families = Counter(agg["families"])
     backend_defects = Counter(agg["backend_defects"])
@@ -1494,12 +1629,10 @@ def seal_board_from_aggregate(
         "composeSchema": COMPOSE_SCHEMA,
         **runtime,
     }
-    if demand_table_agreement is not None:
-        agreement = dict(demand_table_agreement)
-        plan_claim = agreement.get("plan") or {}
-        body["demandTableCid"] = plan_claim.get("demandTableCid")
-        body["demandTableIdentity"] = plan_claim.get("demandTableIdentity")
-        body["demandTableAgreement"] = agreement
+    plan_claim = authenticated_demand_table_agreement["plan"]
+    body["demandTableCid"] = plan_claim["demandTableCid"]
+    body["demandTableIdentity"] = plan_claim["demandTableIdentity"]
+    body["demandTableAgreement"] = authenticated_demand_table_agreement
     if frontier_attestation is not None:
         body["frontierAttestation"] = dict(frontier_attestation)
         body["frontierWidth"] = len(
