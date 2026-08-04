@@ -594,6 +594,7 @@ for b in $needs; do
   printf '{"name":"%s","sha256":"%s"}' "$b" "$sum" >>"$manifest_tmp";
 done;
 printf ']}' >>"$manifest_tmp";
+chmod 0644 "$manifest_tmp";
 mv -f -- "$manifest_tmp" "$manifest";
 manifest_tmp="";
 trap - EXIT HUP INT TERM;

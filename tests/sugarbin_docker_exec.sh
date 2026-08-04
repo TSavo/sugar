@@ -344,11 +344,19 @@ unset WRITER_BLOCK_MARKER
 rm -f "$writer_out/required-artifacts.json"
 writer_script="$(sugar_bx_artifact_build_script \
   first release "$writer_workspace" "$writer_out")"
+case "$writer_script" in
+  *'chmod 0644 "$manifest_tmp";'*'mv -f -- "$manifest_tmp" "$manifest";'*) ;;
+  *) fail "manifest publication does not set host-readable mode before atomic rename" ;;
+esac
 WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" bash -c "$writer_script"
 python3 - "$writer_out" <<'PY'
-import hashlib, json, pathlib, sys
+import hashlib, json, pathlib, stat, sys
 root = pathlib.Path(sys.argv[1])
-manifest = json.loads((root / "required-artifacts.json").read_text())
+manifest_path = root / "required-artifacts.json"
+assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o644, oct(
+    stat.S_IMODE(manifest_path.stat().st_mode)
+)
+manifest = json.loads(manifest_path.read_text())
 assert len(manifest["artifacts"]) == 1, manifest
 item = manifest["artifacts"][0]
 assert item["name"] == "first", item
