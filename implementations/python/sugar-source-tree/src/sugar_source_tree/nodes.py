@@ -10259,6 +10259,9 @@ class ListComp(Expression):
                     filters=tuple(guard.sugar() for guard in gen.ifs),
                     target_coordinates=target_coordinates,
                     target_pattern=target_pattern,
+                    target_pattern_enrollment=self.unit.target_pattern_enrollment(
+                        self
+                    ),
                 )
             )
         return tuple(specs)

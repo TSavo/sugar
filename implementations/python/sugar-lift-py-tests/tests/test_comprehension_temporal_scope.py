@@ -28,6 +28,7 @@ from sugar_lift_py_tests.sugar.comprehension_sugar import (
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.nodes import TargetPatternConstructionGapV1
+from producer_minted_enrollment import producer_not_enrolled
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ def _comprehension(element_outcome):
                     site="synthetic-comprehension-iterable",
                 ),
                 filters=(),
+                target_pattern_enrollment=producer_not_enrolled(),
             ),
         ),
         element=_ConstructedOutcomeSugar(
