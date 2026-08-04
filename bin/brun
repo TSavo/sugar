@@ -15,6 +15,12 @@ Options:
                        the remote command's environment (repeatable).
   --sync-back R:L      After success, rsync remote path R back to local path L
                        (both absolute; repeatable).
+  --detach JOB_ID      Submit the complete managed Docker run to battleaxe user
+                       systemd. Host-owned log/status live under
+                       BCARGO_REMOTE_ROOT/.sugar-bx-jobs/JOB_ID. Detached runs
+                       reject --sync-back; write receipts under SUGAR_BX_JOB_DIR
+                       and collect them after completion with:
+                         bin/sugarbin job collect --host bx --id JOB_ID --output DIR
 
 Environment (shared with bcargo so roots, caps and test harnesses apply):
   BCARGO_REMOTE_HOST   SSH host alias (default: battleaxe)

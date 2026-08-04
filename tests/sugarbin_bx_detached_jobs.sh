@@ -26,8 +26,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$unit" && $# -gt 0 ]]
-nohup "$@" </dev/null >/dev/null 2>&1 &
-printf '%s\n' "$!" >"$FAKE_SYSTEMD_STATE/$unit.pid"
+python3 - "$FAKE_SYSTEMD_STATE/$unit.pid" "$@" <<'PY'
+import subprocess
+import sys
+
+pid_path, *command = sys.argv[1:]
+with open("/dev/null", "rb") as stdin, open("/dev/null", "ab") as output:
+    child = subprocess.Popen(
+        command,
+        stdin=stdin,
+        stdout=output,
+        stderr=output,
+        start_new_session=True,
+    )
+with open(pid_path, "w", encoding="utf-8") as receipt:
+    receipt.write(f"{child.pid}\n")
+PY
 SH
 
 cat >"$tmp/bin/systemctl" <<'SH'
@@ -73,14 +87,17 @@ SUGAR_BX_HOST=fake-battleaxe
 SUGAR_BX_LOCAL=0
 SUGAR_BX_ROOT="$tmp/remote-root"
 SUGAR_BX_CLEAN=never
+SUGAR_BX_RSYNC="$(command -v rsync)"
 
 start_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 sugar_bx_start_detached_host_command axis8-ok \
-  "sleep 0.5; printf 'subject-complete\\n'"
+  "sleep 3; printf 'subject-complete\\n'"
 end_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
-[[ "$elapsed_ms" -lt 400 ]] \
+[[ "$elapsed_ms" -lt 2500 ]] \
   || fail "launch waited for the subject instead of returning ownership: ${elapsed_ms}ms"
+[[ ! -e "$SUGAR_BX_ROOT/.sugar-bx-jobs/axis8-ok/exit-code" ]] \
+  || fail "subject completed before the detached launch returned"
 
 # The launching session has returned. A distinct shell must see the job active
 # and its host-owned log readable while the subject is still running.
@@ -90,14 +107,14 @@ running="$(sugar_bx_detached_job_status axis8-ok)"
 [[ -r "$SUGAR_BX_ROOT/.sugar-bx-jobs/axis8-ok/output.log" ]] \
   || fail "host-owned log was not readable after launch session returned"
 
-sleep 0.6
+sleep 3.1
 completed="$(sugar_bx_detached_job_status axis8-ok)"
 [[ "$completed" == *'state=completed'* && "$completed" == *'exitCode=0'* ]] \
   || fail "successful final status was not durable: $completed"
 grep -Fq 'subject-complete' "$SUGAR_BX_ROOT/.sugar-bx-jobs/axis8-ok/output.log" \
   || fail "successful subject output was not durable"
 
-sugar_bx_collect_detached_job axis8-ok "$tmp/collected-ok"
+SUGAR_BX_LOCAL=1 sugar_bx_collect_detached_job axis8-ok "$tmp/collected-ok"
 cmp "$SUGAR_BX_ROOT/.sugar-bx-jobs/axis8-ok/output.log" "$tmp/collected-ok/output.log" \
   || fail "collect changed durable output bytes"
 cmp "$SUGAR_BX_ROOT/.sugar-bx-jobs/axis8-ok/exit-code" "$tmp/collected-ok/exit-code" \
@@ -148,4 +165,3 @@ grep -Fq 'crime=detached-cleanup-policy-conflict' "$tmp/clean.err" \
   || fail "cleanup conflict refusal was unnamed"
 
 echo "PASS: sugarbin battleaxe detached-job contract"
-
