@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,6 +50,44 @@ SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
 # sha256:a223… is historical negative testimony only — never identity.
 MANIFEST_CID = CANONICAL_CORPUS_MANIFEST_CID
 MANIFEST_SHA256 = CANONICAL_CORPUS_MANIFEST_SHA256
+
+
+def test_pull_shared_demand_table_executes_authenticated_miss_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CAS-miss arm must execute, not merely compile."""
+    import subprocess
+    import sugar_lift_py_tests.authenticated_pytest as auth
+    import sugar_lift_py_tests.no_call_body_attribution as module
+    import sugar_lift_py_tests.prebuilt_demand_table as prebuilt
+
+    class FakeCorpus:
+        pass
+
+    table = SimpleNamespace(
+        semantic_identity=SimpleNamespace(content_key=module.SHARED_DEMAND_TABLE_CONTENT_KEY),
+        rows=({"kind": "test-row"},),
+        corpus_pin=SimpleNamespace(
+            version=module.AUTHENTICATED_PANDAS,
+            aggregate_hash=module.CANONICAL_CORPUS_MANIFEST_CID,
+            file_count=module.AUTHENTICATED_FILE_COUNT,
+        ),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "miss"),
+    )
+    monkeypatch.setattr(auth, "authenticated_pandas_corpus", lambda: FakeCorpus())
+    monkeypatch.setattr(prebuilt, "mint_prebuilt_demand_table", lambda _: table)
+
+    output = tmp_path / "demand.json"
+    result = module.pull_shared_demand_table(Path("/repo"), output)
+
+    assert result["contentKey"] == module.SHARED_DEMAND_TABLE_CONTENT_KEY
+    assert json.loads(output.read_text(encoding="utf-8"))["rows"] == [
+        {"kind": "test-row"}
+    ]
 
 REJECTED_VENDOR_FILTER_SEEDS = (
     (
