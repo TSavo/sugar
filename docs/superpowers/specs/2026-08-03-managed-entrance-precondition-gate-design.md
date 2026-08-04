@@ -74,7 +74,7 @@ artifacts = [
 ]
 ```
 
-The closure describes where authority lives; it does not copy the 64 paths or
+The closure describes where authority lives; it does not copy the enrolled paths or
 the `rust-src` component. The resolver reads `SHOWCASE_RUNS`, subtracts only
 the source-controlled retirements, and discovers `rust-toolchain.toml` beside
 each active script. A raw battleaxe command whose argv matches a registered
