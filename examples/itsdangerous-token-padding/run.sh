@@ -24,6 +24,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+source "$REPO/scripts/showcase-terminal-identity.sh"
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/implementations/rust/target}"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
 
@@ -1422,7 +1423,7 @@ run_twin() {
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/__pycache__" 2>/dev/null
   rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null
 
-  ( cd "$dir" && "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
+  ( cd "$dir" && showcase_run_with_terminal sugar.mint "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
   ( cd "$dir" && "$BIN" verify --allow-failed-components --project . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
