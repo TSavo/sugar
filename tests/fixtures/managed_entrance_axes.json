@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "measurementClass": "managed-entrance-precondition-falsification",
+  "axes": [
+    {
+      "axis": "git-absent-in-managed-image",
+      "expectedKind": "command",
+      "expectedSourcePrefix": "task.closure.required_commands"
+    },
+    {
+      "axis": "cas-cell-missing-shelf-manifest",
+      "expectedKind": "artifact-manifest",
+      "expectedSourcePrefix": "task.closure.artifacts"
+    },
+    {
+      "axis": "artifact-glibc-incompatible-with-image",
+      "expectedKind": "artifact-abi",
+      "expectedSourcePrefix": "task.closure.artifacts"
+    },
+    {
+      "axis": "foreign-cargo-resolution-lock",
+      "expectedKind": "cache-access",
+      "expectedSourcePrefix": "route:bx"
+    },
+    {
+      "axis": "read-only-shelf-staging",
+      "expectedKind": "shelf-access",
+      "expectedSourcePrefix": "route:bx"
+    },
+    {
+      "axis": "pinned-toolchain-missing-rust-src",
+      "expectedKind": "toolchain-component",
+      "expectedSourcePrefix": "examples/std-core-showcase/rust-toolchain.toml"
+    },
+    {
+      "axis": "uncreatable-rebuild-lock-phantom-holder",
+      "expectedKind": "rebuild-lock",
+      "expectedSourcePrefix": "route:bx"
+    },
+    {
+      "axis": "detached-remote-process-does-not-survive",
+      "expectedKind": "process-lifetime",
+      "expectedSourcePrefix": "route:bx"
+    },
+    {
+      "axis": "bare-python-misses-declared-package",
+      "expectedKind": "declared-interpreter",
+      "expectedSourcePrefix": "task.command"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 """Strict resolver for the checked-in Sugar build contract."""
 
 import argparse
+import importlib
 import json
 import re
 import sys
@@ -11,6 +12,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONTRACT = ROOT / "sugar-build.toml"
 PUBLISHED_BINARIES = frozenset({"sugar", "sugar-ir-smt-lib"})
+TASK_KEYS = frozenset({"capabilities", "binaries", "command", "network"})
+CLOSURE_KEYS = frozenset(
+    {
+        "adjacent_manifests",
+        "artifacts",
+        "kind",
+        "path",
+        "required_commands",
+        "retirements",
+        "variable",
+    }
+)
+PROFILED_ARTIFACT = re.compile(r"^(debug|release):([A-Za-z0-9._-]+)$")
 IMMUTABLE_IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 EXACT_TOOL_VERSION = {
     "rust": re.compile(r"\d+\.\d+\.\d+"),
@@ -139,7 +153,7 @@ def resolve_task(name, path=DEFAULT_CONTRACT):
     task = data["tasks"].get(name)
     if task is None:
         raise ContractError(f"unknown task: {name}")
-    if set(task) != {"capabilities", "binaries", "command", "network"}:
+    if set(task) not in (TASK_KEYS, TASK_KEYS | {"closure"}):
         raise ContractError(f"invalid task definition: {name}")
     for key in ("capabilities", "binaries", "command"):
         if not isinstance(task[key], list) or any(not isinstance(item, str) for item in task[key]):
@@ -151,7 +165,161 @@ def resolve_task(name, path=DEFAULT_CONTRACT):
     unknown = sorted(set(task["binaries"]) - PUBLISHED_BINARIES)
     if unknown:
         raise ContractError(f"unknown task binary: {unknown[0]}")
-    return {"binaries": sorted(set(task["binaries"])), "capabilities": _closure(task["capabilities"], data), "command": task["command"], "network": task["network"], "task": name}
+    result = {"binaries": sorted(set(task["binaries"])), "capabilities": _closure(task["capabilities"], data), "command": task["command"], "network": task["network"], "task": name}
+    if "closure" in task:
+        result["closure"] = _validate_task_closure(name, task["closure"])
+    return result
+
+
+def _string_list(value, label):
+    if not isinstance(value, list) or not value or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise ContractError(f"invalid task closure {label}")
+    if len(value) != len(set(value)):
+        raise ContractError(f"duplicate task closure {label}")
+    return list(value)
+
+
+def _validate_task_closure(name, closure):
+    if not isinstance(closure, dict) or set(closure) != CLOSURE_KEYS:
+        raise ContractError(f"invalid task closure: {name}")
+    if closure.get("kind") != "make-roster":
+        raise ContractError(f"unsupported task closure kind: {name}")
+    for key in ("path", "variable", "retirements"):
+        if not isinstance(closure.get(key), str) or not closure[key]:
+            raise ContractError(f"invalid task closure {key}: {name}")
+    adjacent = _string_list(closure.get("adjacent_manifests"), "adjacent_manifests")
+    commands = _string_list(closure.get("required_commands"), "required_commands")
+    artifacts = _string_list(closure.get("artifacts"), "artifacts")
+    parsed_artifacts = []
+    for artifact in artifacts:
+        match = PROFILED_ARTIFACT.fullmatch(artifact)
+        if match is None:
+            raise ContractError(f"invalid profiled task artifact: {artifact}")
+        parsed_artifacts.append({"profile": match.group(1), "name": match.group(2)})
+    return {
+        "adjacent_manifests": adjacent,
+        "artifacts": parsed_artifacts,
+        "kind": "make-roster",
+        "path": closure["path"],
+        "required_commands": commands,
+        "retirements": closure["retirements"],
+        "variable": closure["variable"],
+    }
+
+
+def _showcase_authority_module():
+    tools = ROOT / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    return importlib.import_module("showcase_scope")
+
+
+def _toolchain_checks(repo_root, active, manifest_names):
+    checks = []
+    discovered = {name: [] for name in manifest_names}
+    for enrolled_path in active:
+        parent = (repo_root / enrolled_path).parent
+        for manifest_name in manifest_names:
+            manifest_path = parent / manifest_name
+            if manifest_path.is_file():
+                discovered[manifest_name].append(manifest_path)
+    for manifest_name, paths in discovered.items():
+        if not paths:
+            raise ContractError(f"task closure adjacent manifest absent: {manifest_name}")
+        for manifest_path in sorted(set(paths)):
+            try:
+                data = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+                raise ContractError(f"task closure manifest unreadable: {manifest_path}") from exc
+            toolchain = data.get("toolchain")
+            if not isinstance(toolchain, dict):
+                raise ContractError(f"task closure manifest lacks toolchain: {manifest_path}")
+            channel = toolchain.get("channel")
+            components = toolchain.get("components")
+            if not isinstance(channel, str) or not channel:
+                raise ContractError(f"task closure manifest lacks channel: {manifest_path}")
+            components = _string_list(components, "toolchain components")
+            source = manifest_path.relative_to(repo_root).as_posix()
+            for component in components:
+                checks.append(
+                    {
+                        "channel": channel,
+                        "kind": "toolchain-component",
+                        "name": component,
+                        "source": source,
+                    }
+                )
+    return checks
+
+
+def _route_checks(host, task):
+    if host != "bx":
+        raise ContractError(f"unsupported precondition host: {host}")
+    return [
+        {"kind": "cache-access", "mode": "read-write", "name": "binary-cache", "source": "route:bx-cache"},
+        {"kind": "shelf-access", "mode": "declared", "name": "binary-shelf", "source": "route:bx-shelf"},
+        {"kind": "rebuild-lock", "mode": "finite", "name": "binary-rebuild", "source": "route:bx-cache"},
+        {"kind": "process-lifetime", "mode": "foreground", "name": "ssh-child", "source": "route:bx-foreground"},
+        {"command": task["command"], "kind": "declared-interpreter", "name": task["command"][0], "source": "task.command"},
+    ]
+
+
+def resolve_task_preconditions(name, host, repo_root, path=DEFAULT_CONTRACT):
+    task = resolve_task(name, path)
+    closure = task.get("closure")
+    if closure is None:
+        raise ContractError(f"task has no declared command closure: {name}")
+    repo_root = Path(repo_root).resolve()
+    roster_path = repo_root / closure["path"]
+    retirement_path = repo_root / closure["retirements"]
+    authority = _showcase_authority_module()
+    try:
+        enrolled = authority.makefile_showcase_roster(roster_path)
+        retirements = authority.load_manifest(retirement_path, enrolled)
+    except authority.ScopeRefusal as exc:
+        raise ContractError(f"task closure authority refused: {exc}") from exc
+    active = [item for item in enrolled if item not in retirements]
+    checks = [
+        *(
+            {
+                "kind": "command",
+                "name": command,
+                "source": "task.closure.required_commands",
+            }
+            for command in closure["required_commands"]
+        ),
+        *_toolchain_checks(repo_root, active, closure["adjacent_manifests"]),
+    ]
+    for artifact in closure["artifacts"]:
+        for kind in ("artifact-manifest", "artifact-abi"):
+            checks.append(
+                {
+                    "kind": kind,
+                    "name": artifact["name"],
+                    "profile": artifact["profile"],
+                    "source": "task.closure.artifacts",
+                }
+            )
+    checks.extend(_route_checks(host, task))
+    checks.sort(
+        key=lambda row: (
+            row["kind"], row["source"], row.get("profile", ""), row["name"]
+        )
+    )
+    return {
+        "checks": checks,
+        "host": host,
+        "roster": {
+            "active": len(active),
+            "enrolled": len(enrolled),
+            "retired": len(retirements),
+            "source": closure["path"],
+        },
+        "schemaVersion": 1,
+        "task": name,
+    }
 
 
 def tool_versions(path=DEFAULT_CONTRACT):
@@ -174,11 +342,16 @@ def main(argv=None):
     environment.add_argument("environment")
     task = subparsers.add_parser("resolve-task")
     task.add_argument("task")
+    preconditions = subparsers.add_parser("resolve-preconditions")
+    preconditions.add_argument("task")
+    preconditions.add_argument("--host", required=True)
+    preconditions.add_argument("--repo-root", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "tool-versions": result = tool_versions()
         elif args.command == "resolve-environment": result = resolve_environment(args.environment)
-        else: result = resolve_task(args.task)
+        elif args.command == "resolve-task": result = resolve_task(args.task)
+        else: result = resolve_task_preconditions(args.task, args.host, args.repo_root)
     except ContractError as exc:
         print(f"sugar-build: {exc}", file=sys.stderr)
         return 2

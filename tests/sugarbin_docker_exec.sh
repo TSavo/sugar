@@ -433,3 +433,5 @@ assert quarantine < reset, "malformed-manifest evidence is destroyed before quar
 PY
 
 echo "PASS: sugarbin Docker execution contract"
+
+"$repo/tests/sugarbin_managed_preconditions.sh" "$repo"
