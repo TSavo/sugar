@@ -80,11 +80,24 @@ def test_pull_shared_demand_table_executes_authenticated_miss_fallback(
     )
     monkeypatch.setattr(auth, "authenticated_pandas_corpus", lambda: FakeCorpus())
     monkeypatch.setattr(prebuilt, "mint_prebuilt_demand_table", lambda _: table)
+    monkeypatch.setattr(
+        prebuilt,
+        "write_prebuilt_demand_table",
+        lambda value, path: path.write_text(
+            json.dumps({"schema": "python-provisional-demand-table/v1", "rows": list(value.rows)})
+            + "\n",
+            encoding="utf-8",
+        ),
+    )
+    monkeypatch.setattr(prebuilt, "load_prebuilt_demand_table", lambda *args, **kwargs: table)
 
     output = tmp_path / "demand.json"
     result = module.pull_shared_demand_table(Path("/repo"), output)
 
     assert result["contentKey"] == module.SHARED_DEMAND_TABLE_CONTENT_KEY
+    assert json.loads(output.read_text(encoding="utf-8"))["schema"] == (
+        "python-provisional-demand-table/v1"
+    )
     assert json.loads(output.read_text(encoding="utf-8"))["rows"] == [
         {"kind": "test-row"}
     ]

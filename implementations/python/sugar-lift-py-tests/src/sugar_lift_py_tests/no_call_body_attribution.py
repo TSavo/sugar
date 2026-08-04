@@ -559,11 +559,25 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
         )
         from .authenticated_pytest import authenticated_pandas_corpus
         from .prebuilt_demand_table import (
+            load_prebuilt_demand_table,
             mint_prebuilt_demand_table,
             write_prebuilt_demand_table,
         )
 
         table = mint_prebuilt_demand_table(authenticated_pandas_corpus())
+        # The artifact consumed by process floors is the canonical prebuilt
+        # table, not the legacy attribution wrapper.  One wire shape keeps
+        # derive -> write -> load honest.
+        write_prebuilt_demand_table(table, output)
+        loaded = load_prebuilt_demand_table(
+            output,
+            expected_corpus_pin=table.corpus_pin,
+            expected_content_cid=table.content_cid,
+        )
+        if loaded != table:
+            raise DemandTableRefusal(
+                "authenticated demand-table fallback round-trip changed table"
+            )
         payload = {
             "contentKey": table.semantic_identity.content_key,
             "rows": list(table.rows),
@@ -577,7 +591,6 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
                 "fileCount": table.corpus_pin.file_count,
             },
         }
-        output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
         return validate_shared_demand_table(
             payload, expected_content_key=table.semantic_identity.content_key,
         )
