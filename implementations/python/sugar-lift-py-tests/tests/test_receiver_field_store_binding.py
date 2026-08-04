@@ -16,7 +16,17 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
     ReceiverFieldStoreStateSugar,
 )
-from sugar_source_tree.nodes import FunctionDef, ReceiverFieldStoreState, Return
+from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
+    ConstructedReceiverRefSugar,
+)
+from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
+from sugar_source_tree.nodes import (
+    ClassDef,
+    FunctionDef,
+    ReceiverFieldStoreState,
+    Return,
+)
 from sugar_source_tree.tree import SourceFile
 
 
@@ -69,6 +79,54 @@ class _FixedSugar(ConstructedTermSugar):
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
+
+
+def test_free_method_receiver_uses_the_formal_store_entrance() -> None:
+    """A standalone method universe has no constructed receiver authority."""
+    source = (
+        "class Box:\n"
+        "    def __init__(self):\n"
+        "        self.value = 1\n"
+    )
+    tree = SourceFile((source, "formal_receiver.py", blake3_512_of(source.encode())))
+    initializer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "__init__"
+    )
+
+    universe = initializer.sugar()
+
+    assert isinstance(universe.statements[0], AttributeStoreEffectSugar)
+
+
+def test_class_constructor_receiver_reaches_the_authenticated_state_owner() -> None:
+    """The class-owned entrance retains its exact constructed receiver."""
+    source = (
+        "class Box:\n"
+        "    def __init__(self):\n"
+        "        self.value = 1\n"
+    )
+    tree = SourceFile(
+        (source, "constructed_receiver.py", blake3_512_of(source.encode()))
+    )
+    definition = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "Box"
+    )
+
+    frame = definition.source_visible_constructor_frame()
+    initializer_body = frame.body.initializer_body
+    statement = initializer_body.statements[0]
+
+    assert isinstance(statement, ExprStatementSugar)
+    assert isinstance(statement.value, ReceiverFieldStoreStateSugar)
+    assert isinstance(statement.value.receiver, ConstructedReceiverRefSugar)
+    assert (
+        statement.value.receiver.binding_coordinate_cid
+        == frame.body.receiver_coordinate_cid
+    )
 
 
 def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
