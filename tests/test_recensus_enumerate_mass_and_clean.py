@@ -112,12 +112,26 @@ def test_residual_failure_preserves_roster_functions_total(
 def test_consumer_carries_pre_demand_and_real_audit_open_observations(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """D3 exposure is carried per file without another SourceFile open."""
+    """D3 observes the real CID-and-seat resident without another prepare."""
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.process_resident_file import (
+        clear_process_resident_files,
+        get_resident,
+        prepare_count_for,
+    )
+    from sugar_source_tree.tree import SourceFile
+
     src = tmp_path / "pkg/mod.py"
     src.parent.mkdir()
     src.write_text("def a(): pass\n", encoding="utf-8")
     nodes = [{"memento": {"function_name": "a"}}]
-    sentinel = object()
+
+    measured_path = src.resolve()
+    _source, source_seat, source_cid = path_source(str(measured_path))
+    clear_process_resident_files()
+    SourceFile.from_path(measured_path)
+    assert get_resident(source_cid, source_seat) is not None
+    assert prepare_count_for(source_cid, source_seat) == 1
 
     monkeypatch.setattr(CONSUMER, "demand_function_roster", lambda **_k: (nodes, []))
     monkeypatch.setattr(
@@ -130,10 +144,6 @@ def test_consumer_carries_pre_demand_and_real_audit_open_observations(
     )
     monkeypatch.setattr(CONSUMER, "count_ast_function_defs", lambda _p: 1)
     monkeypatch.setattr(
-        "sugar_source_tree.process_resident_file.get_resident",
-        lambda _cid: sentinel,
-    )
-    monkeypatch.setattr(
         CONSUMER,
         "_take_d3_audit_open_observation",
         lambda source_cid: {
@@ -145,21 +155,28 @@ def test_consumer_carries_pre_demand_and_real_audit_open_observations(
         },
     )
 
-    row = CONSUMER.measure_file_via_enumerate(
-        workspace_root=tmp_path,
-        file_rel="pkg/mod.py",
-    )
+    try:
+        row = CONSUMER.measure_file_via_enumerate(
+            workspace_root=tmp_path,
+            file_rel="pkg/mod.py",
+            contract_refs=[],
+        )
 
-    assert row["d3Residency"] == {
-        "sourceCid": row["inputKey"]["sourceCid"],
-        "reached": True,
-        "presentBeforeDemand": True,
-        "presentAtAuditOpen": True,
-        "auditOpenReusedResident": True,
-        "rootReporterSeatedAtAuditOpen": False,
-        "collectorRegisteredAtAuditExit": False,
-        "presenceConfirmed": True,
-    }
+        assert row["inputKey"]["sourceCid"] == source_cid
+        assert row["d3Residency"] == {
+            "sourceCid": source_cid,
+            "reached": True,
+            "presentBeforeDemand": True,
+            "presentAtAuditOpen": True,
+            "auditOpenReusedResident": True,
+            "rootReporterSeatedAtAuditOpen": False,
+            "collectorRegisteredAtAuditExit": False,
+            "presenceConfirmed": True,
+        }
+        assert get_resident(source_cid, source_seat) is not None
+        assert prepare_count_for(source_cid, source_seat) == 1
+    finally:
+        clear_process_resident_files()
 
 
 def test_d3_residency_aggregate_keeps_counts_and_file_coordinates() -> None:
