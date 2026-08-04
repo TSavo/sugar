@@ -164,6 +164,8 @@ def test_cold_process_with_prebuilt_table_performs_zero_corpus_walks(
         workspace_root=corpus,
         file_rel="b.py",
         contract_refs=refs,
+        distribution="tiny-corpus",
+        source_workspace_root=corpus,
     )
     assert isinstance(row, dict)
     assert "category" in row
