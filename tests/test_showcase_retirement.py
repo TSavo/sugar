@@ -22,6 +22,15 @@ ATTEND = ROOT / "tools/showcase_shard_attendance.py"
 CI = ROOT / ".github/workflows/ci.yml"
 MAKEFILE = ROOT / "Makefile"
 REASON = "out of scope per scope ruling - Java"
+FIXTURE_TERMINAL = {
+    "schemaVersion": 1,
+    "kind": "fixture-refusal",
+    "owner": "showcase-retirement-fixture",
+    "coordinate": "fixture.py:1:0",
+    "observed": "FixtureFailure",
+    "requested": "PassingShowcase",
+    "entrance": "test-showcases",
+}
 
 EXPECTED_BY_SHARD = {
     0: {
@@ -69,11 +78,19 @@ def _write_script(
         if testify_subject
         else ""
     )
+    terminal_testimony = (
+        "printf '%s\\n' "
+        + json.dumps(json.dumps(FIXTURE_TERMINAL, separators=(",", ":")))
+        + ' > "${SHOWCASE_TERMINAL_WITNESS:?}"\n'
+        if exit_code != 0
+        else ""
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "#!/usr/bin/env sh\n"
         f"printf '%s\\n' {json.dumps(marker)} >> \"$SHOWCASE_TRACE\"\n"
         f"{testimony}"
+        f"{terminal_testimony}"
         f"exit {exit_code}\n",
         encoding="utf-8",
     )
@@ -301,6 +318,7 @@ def test_exit_zero_without_subject_witness_is_unmeasured_not_passed(
 
 def test_consumer_refuses_exit_zero_pass_without_subject_witness() -> None:
     body = {
+        "schemaVersion": 2,
         "measurementClass": "test-showcases",
         "shardIndex": 0,
         "shardCount": 1,
@@ -332,6 +350,7 @@ def test_consumer_refuses_exit_zero_pass_without_subject_witness() -> None:
 
 def test_conservation_refuses_missing_showcase() -> None:
     body = {
+        "schemaVersion": 2,
         "measurementClass": "test-showcases",
         "shardIndex": 0,
         "shardCount": 1,
@@ -400,7 +419,7 @@ def test_every_active_showcase_testifies_subject_completion() -> None:
     retirements = showcase_scope.load_manifest(MANIFEST, roster)
     marker = (
         "printf '%s\\n' \"${SHOWCASE_SUBJECT_ID:?}\" > "
-        "\"${SHOWCASE_SUBJECT_WITNESS:?}\""
+        '"${SHOWCASE_SUBJECT_WITNESS:?}"'
     )
     active = [path for path in roster if path not in retirements]
 
@@ -416,7 +435,7 @@ def test_python_urlsafe_real_skip_cannot_testify_subject_completion() -> None:
     bad = "run_twin bad refused"
     witness = (
         "printf '%s\\n' \"${SHOWCASE_SUBJECT_ID:?}\" > "
-        "\"${SHOWCASE_SUBJECT_WITNESS:?}\""
+        '"${SHOWCASE_SUBJECT_WITNESS:?}"'
     )
 
     assert text.index(skip) < text.index(good) < text.index(bad) < text.index(witness)
@@ -435,6 +454,7 @@ def test_ci_seals_scope_receipt_into_shard_body() -> None:
 
 def test_attendance_refuses_unconserved_body_as_unmeasured(tmp_path: Path) -> None:
     body = {
+        "schemaVersion": 2,
         "measurementClass": "test-showcases",
         "shardIndex": 0,
         "shardCount": 1,
@@ -503,7 +523,7 @@ def test_attendance_stays_red_for_attended_active_failure(tmp_path: Path) -> Non
                         }
                     }
                     if shard != 2
-                    else {}
+                    else {"terminalIdentity": FIXTURE_TERMINAL}
                 ),
             },
         ]
@@ -512,6 +532,7 @@ def test_attendance_stays_red_for_attended_active_failure(tmp_path: Path) -> Non
         (directory / "body.json").write_text(
             json.dumps(
                 {
+                    "schemaVersion": 2,
                     "measurementClass": "test-showcases",
                     "shardIndex": shard,
                     "shardCount": 4,

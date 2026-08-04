@@ -22,6 +22,7 @@ ATTEND = ROOT / "tools/showcase_shard_attendance.py"
 def _green_showcase_body(shard_index: int, shard_count: int = 4) -> dict:
     path = f"examples/python-green-{shard_index}/run.sh"
     return {
+        "schemaVersion": 2,
         "measurementClass": "test-showcases",
         "shardIndex": shard_index,
         "shardCount": shard_count,
