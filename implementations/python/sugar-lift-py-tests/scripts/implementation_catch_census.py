@@ -53,6 +53,13 @@ _CP_DIRECT_CALLS = frozenset(
     {"ConstructionPanic", "construction_panic", "construction_panic_gap", "dig_boundary_panic"}
 )
 _SNW_DIRECT_CALLS = frozenset({"SugarNotWritten", "SourceTreePanic"})
+_TYPED_TESTIMONY_SUFFIXES = (
+    "Gap",
+    "GapV1",
+    "Failure",
+    "Refusal",
+    "Row",
+)
 _KNOWN_NONCONSTRUCTION_CALLS = frozenset(
     {
         "abs",
@@ -273,8 +280,10 @@ def _direct_hierarchies(signals: _BodySignals) -> set[str]:
             direct.add("constructionPanic")
         if leaf in _SNW_DIRECT_CALLS:
             direct.add("sugarNotWritten")
-        if leaf is None:
-            direct.update(("constructionPanic", "sugarNotWritten"))
+        # A bare raise preserves an exception already caught by its enclosing
+        # handler; it does not originate either construction hierarchy.  Treating
+        # it as a provider made an inner I/O cleanup re-raise authenticate an
+        # unrelated outer best-effort cache catch as construction-reachable.
     for call in signals.calls:
         leaf = _call_leaf(call)
         if leaf in _CP_DIRECT_CALLS:
@@ -282,6 +291,140 @@ def _direct_hierarchies(signals: _BodySignals) -> set[str]:
         if leaf in _SNW_DIRECT_CALLS:
             direct.add("sugarNotWritten")
     return direct
+
+
+def _expression_leaf(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Call):
+        return _call_leaf(node)
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _is_typed_testimony_expression(node: ast.AST | None) -> bool:
+    leaf = _expression_leaf(node)
+    if leaf is None:
+        return False
+    return _is_typed_testimony_leaf(leaf)
+
+
+def _is_typed_testimony_leaf(leaf: str) -> bool:
+    if leaf in {
+        "terminal_from_enumerate",
+        "_attest_terminal_row",
+        "_construction_panic_row",
+        "_instrument_failure_row",
+    }:
+        return True
+    return leaf.endswith(_TYPED_TESTIMONY_SUFFIXES)
+
+
+def _contains_string(node: ast.AST, value: str) -> bool:
+    return any(
+        isinstance(item, ast.Constant) and item.value == value
+        for item in ast.walk(node)
+    )
+
+
+def _explicit_reraise(handler: ast.ExceptHandler) -> bool:
+    if not handler.body:
+        return False
+    final = handler.body[-1]
+    if not isinstance(final, ast.Raise) or final.exc is not None:
+        return False
+    return not any(
+        isinstance(item, (ast.Return, ast.Continue, ast.Break))
+        for statement in handler.body[:-1]
+        for item in ast.walk(statement)
+    )
+
+
+def _typed_conversion_kind(handler: ast.ExceptHandler) -> tuple[str | None, list[str]]:
+    """Authenticate named testimony produced by one handler.
+
+    This is the primary lawfulness classifier.  The legacy CP scanner's exact
+    sanctioned-site result remains carried as independent testimony, but does
+    not mint lawfulness here: a handler must visibly re-raise, emit typed-loud
+    transport, return/raise named typed testimony, install an attested gap
+    obligation, or complete an authenticated alternate construction.
+    """
+    if _explicit_reraise(handler):
+        return "explicit-reraise", ["handler is a pure re-raise"]
+
+    raises = [item for item in ast.walk(handler) if isinstance(item, ast.Raise)]
+    typed_raises = [
+        item for item in raises if _is_typed_testimony_expression(item.exc)
+    ]
+    if typed_raises:
+        leaves = sorted(
+            {
+                leaf
+                for item in typed_raises
+                if (leaf := _expression_leaf(item.exc)) is not None
+            }
+        )
+        return "typed-refusal-raise", [f"raises named typed testimony: {', '.join(leaves)}"]
+
+    calls = [item for item in ast.walk(handler) if isinstance(item, ast.Call)]
+    call_leaves = {_call_leaf(item) for item in calls}
+    if "_send" in call_leaves and _contains_string(handler, "typed-loud"):
+        return "typed-loud-refusal", ["emits transport testimony kind=typed-loud"]
+    if (
+        "_send" in call_leaves
+        and _contains_string(handler, "diagnostic")
+        and _contains_string(handler, "exception_type")
+        and any(_expression_leaf(item.exc) == "SystemExit" for item in raises)
+    ):
+        return "typed-rpc-refusal", [
+            "emits exception_type plus diagnostic transport and exits loud"
+        ]
+
+    if (
+        "_install_opaque_call_obligation" in call_leaves
+        and "obligation" in call_leaves
+    ):
+        return "attested-gap-obligation", ["installs a named opaque-call obligation"]
+
+    returns = [item for item in ast.walk(handler) if isinstance(item, ast.Return)]
+    typed_returns = [
+        item for item in returns if _is_typed_testimony_expression(item.value)
+    ]
+    untyped_returns = [item for item in returns if item not in typed_returns]
+    if typed_returns and not untyped_returns:
+        leaves = sorted(
+            {
+                leaf
+                for item in typed_returns
+                if (leaf := _expression_leaf(item.value)) is not None
+            }
+        )
+        control_transfers = [
+            item
+            for item in ast.walk(handler)
+            if isinstance(item, (ast.Continue, ast.Break))
+        ]
+        if not control_transfers:
+            recovery_calls = sorted(
+                leaf
+                for leaf in call_leaves
+                if leaf is not None
+                and not _is_typed_testimony_leaf(leaf)
+                and (
+                    "construct" in leaf.lower()
+                    or "project" in leaf.lower()
+                    or leaf == "reduce_source_outcome"
+                )
+            )
+            if recovery_calls:
+                return "typed-gap-or-construction-recovery", [
+                    f"returns typed testimony: {', '.join(leaves)}",
+                    f"otherwise continues authenticated construction: {', '.join(recovery_calls)}",
+                ]
+            return "typed-gap-return", [f"returns named typed testimony: {', '.join(leaves)}"]
+
+    return None, []
 
 
 def _build_function_index(parsed: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -559,16 +702,24 @@ def _candidate_row(
         file_info=file_info,
         function_index=function_index,
     )
-    pure_reraise = bool(_CP_AUTHORITY._pure_reraise(handler))
+    pure_reraise = _explicit_reraise(handler)
+    legacy_classifier_reraise = bool(_CP_AUTHORITY._pure_reraise(handler))
     authority_rel = file_info["relative"].as_posix()
     sanctioned = bool(
         _CP_AUTHORITY._is_sanctioned_handler(
             authority_rel, handler, file_info["parents"]
         )
     )
+    typed_conversion, conversion_evidence = _typed_conversion_kind(handler)
     classification: str | None = None
-    if reachability in {"direct", "transitive"}:
-        classification = "lawful" if pure_reraise or sanctioned else "suppression"
+    if typed_conversion is not None and reachability != "outside-construction":
+        # Handler semantics, not a site allowlist, are the primary authority.
+        # This can be decided even when the guarded call graph is unresolved:
+        # if the hierarchy ever arrives, the handler still emits or re-raises
+        # named typed testimony.
+        classification = "lawful"
+    elif reachability in {"direct", "transitive"}:
+        classification = "suppression"
     row = dict(site)
     row.update(
         {
@@ -577,6 +728,9 @@ def _candidate_row(
             "reachabilityEvidence": evidence,
             "classification": classification,
             "pureReraise": pure_reraise,
+            "legacyClassifierPureReraise": legacy_classifier_reraise,
+            "typedConversionKind": typed_conversion,
+            "typedConversionEvidence": conversion_evidence,
             "sanctionedMembrane": sanctioned,
             "classifierAuthority": _CLASSIFIER_PATH.as_posix(),
             "proximity": _proximity(str(site["file"]), reachability),

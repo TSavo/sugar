@@ -130,6 +130,115 @@ def snw():
     ]
 
 
+def test_named_typed_conversions_are_lawful_primary_testimony(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "src"
+    _write(
+        root,
+        "typed.py",
+        """
+def gap():
+    raise SugarNotWritten(blame="x", owner="o", observed="v", requested="s", fix="f")
+
+def typed_return():
+    try:
+        gap()
+    except SugarNotWritten:
+        return ManagerConstructionGapV1("source-body-gap")
+
+def typed_raise():
+    try:
+        gap()
+    except SourceTreePanic as cause:
+        raise BindingStateWireGap("construction refused") from cause
+""",
+    )
+
+    rows = _candidate_rows(_measure(root), "sugarNotWritten")
+
+    assert [
+        (row["qualname"], row["classification"], row["typedConversionKind"])
+        for row in rows
+    ] == [
+        ("typed_return", "lawful", "typed-gap-return"),
+        ("typed_raise", "lawful", "typed-refusal-raise"),
+    ]
+
+
+def test_typed_loud_transport_and_attested_obligation_are_lawful(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "src"
+    _write(
+        root,
+        "transport.py",
+        """
+def gap():
+    raise SugarNotWritten(blame="x", owner="o", observed="v", requested="s", fix="f")
+
+def serve_forever():
+    while True:
+        try:
+            gap()
+        except SourceTreePanic as panic:
+            _send({"error": {"data": {"kind": "typed-loud", "diagnostic": panic.info}}})
+            continue
+
+def enumerate_calls():
+    for call in calls:
+        try:
+            gap()
+        except (SugarNotWritten, TypeError):
+            _install_opaque_call_obligation(context, call, obligation("typed-gap"))
+            continue
+""",
+    )
+
+    rows = _candidate_rows(_measure(root), "sugarNotWritten")
+
+    assert [
+        (row["qualname"], row["classification"], row["typedConversionKind"])
+        for row in rows
+    ] == [
+        ("serve_forever", "lawful", "typed-loud-refusal"),
+        ("enumerate_calls", "lawful", "attested-gap-obligation"),
+    ]
+
+
+def test_inner_bare_reraise_does_not_invent_construction_reachability(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "src"
+    _write(
+        root,
+        "cache.py",
+        """
+def best_effort_cache():
+    try:
+        try:
+            write_bytes()
+        except Exception:
+            cleanup()
+            raise
+    except Exception:
+        return None
+""",
+    )
+
+    rows = _candidate_rows(_measure(root), "sugarNotWritten")
+
+    assert [
+        (row["coordinate"]["startLine"], row["reachability"], row["classification"])
+        for row in rows
+    ] == [
+        # The inner handler is lawful if SNW ever reaches it; its bare re-raise
+        # still must not mint SNW reachability for the outer handler.
+        (6, "unresolved", "lawful"),
+        (9, "unresolved", None),
+    ]
+
+
 def test_sibling_exact_reraise_intercepts_later_broad_catch(tmp_path: Path) -> None:
     root = tmp_path / "src"
     _write(
