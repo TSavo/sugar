@@ -46,6 +46,15 @@ EQ_PRODUCERS = (
     "examples/pandas-showcase/run.sh",
 )
 
+RAW_STRUCTURED_NON_EQ_PRODUCERS = (
+    "examples/hashlib-md5-digest-size/run-logo-receipt.sh",
+    "examples/uuid-bytes-length/run-logo-receipt.sh",
+    "examples/python-base64-federation/run.sh",
+    "examples/python-literal-base20/run.sh",
+    "examples/python-literal-base64/run.sh",
+    "examples/numpy-attribute-safety-showcase/run.sh",
+)
+
 
 def test_writer_is_additive_noop_before_consumer_supplies_path(
     monkeypatch: pytest.MonkeyPatch,
@@ -342,3 +351,13 @@ def test_shell_wrapper_publication_refusal_preserves_selected_exit(
         completed.stderr
     )
     assert not output.exists()
+
+
+@pytest.mark.parametrize("relative_path", RAW_STRUCTURED_NON_EQ_PRODUCERS)
+def test_raw_structured_non_eq_producer_walks_shared_terminal_door(
+    relative_path: str,
+) -> None:
+    source = (ROOT / relative_path).read_text(encoding="utf-8")
+
+    assert 'source "$REPO/scripts/showcase-terminal-identity.sh"' in source
+    assert "showcase_run_with_terminal sugar.mint" in source

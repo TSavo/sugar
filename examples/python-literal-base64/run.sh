@@ -16,6 +16,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+source "$REPO/scripts/showcase-terminal-identity.sh"
 RUST="$REPO/implementations/rust"
 TARGET_DIR="${CARGO_TARGET_DIR:-$RUST/target}"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
@@ -184,7 +185,7 @@ run_twin() {
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/__pycache__" "$dir/.pytest_cache"
   rm -f "$dir"/.prove*.json "$dir"/.prove*.raw "$dir"/.verify*.json "$dir"/.verify*.raw
 
-  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
+  (cd "$dir" && showcase_run_with_terminal sugar.mint env PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
     echo "FAIL($twin): mint"
     return 1
   }
