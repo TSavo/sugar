@@ -2,9 +2,68 @@
 
 from __future__ import annotations
 
+import io
 import json
 
+import pytest
+
+from sugar_emit_python_pytest import rpc
 from sugar_emit_python_pytest.rpc import dispatch
+
+
+class _CapturedStdout:
+    def __init__(self) -> None:
+        self.buffer = io.BytesIO()
+
+    def write(self, value: str) -> int:
+        return self.buffer.write(value.encode("utf-8"))
+
+    def flush(self) -> None:
+        return None
+
+
+def _run_one(monkeypatch: pytest.MonkeyPatch, request: str) -> dict[str, object]:
+    stdout = _CapturedStdout()
+    monkeypatch.setattr(rpc.sys, "stdin", io.StringIO(request + "\n"))
+    monkeypatch.setattr(rpc.sys, "stdout", stdout)
+    rpc.run_rpc()
+    return json.loads(stdout.buffer.getvalue())
+
+
+def test_dispatch_exception_keeps_request_id_and_named_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(_request: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("planted emitter failure")
+
+    monkeypatch.setattr(rpc, "dispatch", refuse)
+    response = _run_one(
+        monkeypatch,
+        '{"jsonrpc":"2.0","id":37,"method":"sugar.plugin.invoke","params":{}}',
+    )
+
+    assert response["id"] == 37
+    assert response["error"]["data"] == {  # type: ignore[index]
+        "exception_type": "RuntimeError",
+        "stage": "dispatch",
+    }
+    assert str(response["error"]["message"]).startswith(  # type: ignore[index]
+        "RuntimeError: planted emitter failure"
+    )
+
+
+def test_run_rpc_normal_and_parse_error_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normal = _run_one(
+        monkeypatch,
+        '{"jsonrpc":"2.0","id":41,"method":"sugar.plugin.shutdown","params":{}}',
+    )
+    assert normal == {"jsonrpc": "2.0", "id": 41, "result": None}
+
+    malformed = _run_one(monkeypatch, "{")
+    assert malformed["id"] is None
+    assert malformed["error"]["code"] == -32700  # type: ignore[index]
 
 
 def _op(name: str, *args: dict) -> dict:
