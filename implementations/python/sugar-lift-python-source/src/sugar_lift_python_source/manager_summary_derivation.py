@@ -1778,6 +1778,9 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         SourceDerivedContextManagerRefV1,
     )
     from sugar_lift_py_tests.floor import ObjectValue
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal import builtin_name_temporal
     from sugar_source_tree.nodes import Call, ClassDef, Name
     from sugar_source_tree.panic import SugarNotWritten
@@ -1790,6 +1793,39 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
     )
 
     reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
+
+    def collect_application(call_sugar):
+        """Collect authenticated call actuals without re-entering Call.sugar()."""
+        def positional(index, values):
+            if index == len(call_sugar.args):
+                return keywords(0, values, ())
+            return call_sugar.args[index].desugar(reduce_ctx).and_then(
+                lambda value: value.project_operation_receiver_outcome(
+                    reduce_ctx, owner="same-module ClassDef positional actual"
+                ).and_then(
+                    lambda actual: positional(index + 1, values + (actual,))
+                )
+            )
+
+        def keywords(index, values, names):
+            if index == len(call_sugar.keywords):
+                return Complete(
+                    CallableApplication(values, names, call_sugar.site,
+                                        call_occurrence=call_sugar.call_occurrence)
+                )
+            name, argument = call_sugar.keywords[index]
+            return argument.desugar(reduce_ctx).and_then(
+                lambda value: value.project_operation_receiver_outcome(
+                    reduce_ctx, owner="same-module ClassDef keyword actual"
+                ).and_then(
+                    lambda actual: keywords(
+                        index + 1, values + (actual,), names + (name,)
+                    )
+                )
+            )
+
+        return positional(0, ())
+
     for _key, (coordinate, call, exit_face_id) in uses.items():
         if coordinate in context.source_derived_contract_refs:
             continue
@@ -1801,22 +1837,38 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         class_def = binds[0]
         target_symbol = f"python:local:{class_def.name}"
         try:
-            call_outcome = call.sugar().desugar(reduce_ctx)
-            call_value = getattr(call_outcome, "value", None)
-            if call_value is None or not hasattr(call_value, "force_floor"):
+            class_outcome = class_def.sugar().desugar(reduce_ctx)
+            class_value = getattr(class_outcome, "value", None)
+            if type(class_value) is not ClassDefinitionValue:
                 _install_local_derivation_gap(
                     context,
                     coordinate,
                     target_symbol,
-                    "non-manager-result",
-                    type(call_outcome).__name__,
+                    "class-definition-not-constructed",
+                    type(class_outcome).__name__,
                 )
                 continue
-            result = call_value.force_floor(
-                reduce_ctx,
-                owner="populate_same_module_class_manager",
-                project_callsite=False,
+            application = collect_application(call.sugar())
+            application_value = getattr(application, "value", None)
+            if application_value is None:
+                _install_local_derivation_gap(
+                    context, coordinate, target_symbol,
+                    "call-arguments-not-constructed", type(application).__name__
+                )
+                continue
+            result_outcome = class_value.callable_application_with(
+                application_value, reduce_ctx
             )
+            result = getattr(result_outcome, "value", None)
+            if result is not None and getattr(result, "defining_class", None) is not class_value:
+                _install_local_derivation_gap(
+                    context,
+                    coordinate,
+                    target_symbol,
+                    "class-definition-provenance-mismatch",
+                    "constructed receiver is not owned by authenticated class_def",
+                )
+                continue
         except (SugarNotWritten, TypeError) as exc:
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_local_derivation_gap(
