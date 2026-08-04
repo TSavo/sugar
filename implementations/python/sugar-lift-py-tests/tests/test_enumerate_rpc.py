@@ -815,6 +815,65 @@ def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
     assert result["gaps"] == []
 
 
+def test_full_tree_universe_carries_source_constructed_attribute_sidecars(
+    tmp_path: Path,
+) -> None:
+    """An incomplete body must keep its testimony without becoming complete."""
+    source = (
+        Path(__file__).parents[4]
+        / "examples/numpy-attribute-safety-showcase/good/src/numpy_box.py"
+    ).read_text(encoding="utf-8")
+    subject = tmp_path / "numpy_box.py"
+    subject.write_text(source, encoding="utf-8")
+
+    from sugar_lift_python_source import lift_source
+
+    source_rows = lift_source(source, subject.name).ir
+    source_shapes = next(
+        row["classShapes"] for row in source_rows if "classShapes" in row
+    )
+    source_loci = next(
+        row["panicLoci"]
+        for row in source_rows
+        if str(row.get("fnName") or "").endswith(".scaled_total")
+    )
+    assert len(source_shapes) == 1
+    assert sum("attributeSafety" in locus for locus in source_loci) == 2
+
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    result = _enumerate("universe", tmp_path, at=file_memento, seek=False)
+    audits = [node["audit"] for node in result["nodes"]]
+    transported = next(
+        row
+        for row in audits
+        if any("attributeSafety" in locus for locus in row.get("panicLoci", []))
+    )
+
+    assert transported["panicLoci"] == source_loci
+    assert transported["classShapes"] == source_shapes
+    assert "post" not in transported, (
+        "transporting source testimony must not invent completion for the "
+        "temporally incomplete scaled_total body"
+    )
+    init = next(row for row in audits if row.get("name") == "__init__")
+    assert "post" in init
+
+
+def test_full_tree_universe_omits_empty_source_sidecars(tmp_path: Path) -> None:
+    """A class-free completed function must not acquire fabricated testimony."""
+    (tmp_path / "identity.py").write_text(
+        "def identity(value):\n    return value\n", encoding="utf-8"
+    )
+
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    result = _enumerate("universe", tmp_path, at=file_memento, seek=False)
+
+    assert len(result["nodes"]) == 1
+    audit = result["nodes"][0]["audit"]
+    assert "panicLoci" not in audit
+    assert "classShapes" not in audit
+
+
 def test_callable_universe_identity_uses_content_and_qualified_spelling(
     tmp_path: Path,
 ) -> None:
