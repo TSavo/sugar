@@ -722,7 +722,8 @@ sugar_bx_build_profiled_artifacts_docker() {
 }
 
 sugar_bx_run_docker() {
-  local image="$1" network="$2" has_artifacts="$3"; shift 3
+  local image="$1" network="$2" has_artifacts="$3" preflight_protocol="$4"
+  shift 4
   local remote_cwd="/workspace/sugar"
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$remote_cwd/$SUGAR_BX_REL_CWD"
   local workspace_source artifacts_source manifest_source shelf_source
@@ -754,8 +755,23 @@ sugar_bx_run_docker() {
   done
   docker_args+=(--env SUGAR_BINARY_SHELF_READ_ONLY=1)
   docker_args+=(--env SUGAR_BINARY_PUBLISH=0)
+  case "$preflight_protocol" in
+    managed-entrypoint/v1)
+      [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]] || {
+        echo "sugarbin: crime=missing-managed-precondition-plan owner=bin/lib/sugar-bx.sh protocol=$preflight_protocol" >&2
+        return 70
+      }
+      docker_args+=(--env "SUGAR_BX_MANAGED_PRECONDITION_PLAN=$SUGAR_BX_MANAGED_PRECONDITION_PLAN")
+      ;;
+    workspace-wrapper/v1) ;;
+    *)
+      echo "sugarbin: crime=unknown-managed-preflight-protocol owner=bin/lib/sugar-bx.sh protocol=$preflight_protocol" >&2
+      return 70
+      ;;
+  esac
   docker_args+=("$image")
-  if [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]]; then
+  if [[ "$preflight_protocol" == workspace-wrapper/v1 \
+    && -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]]; then
     docker_args+=(python /workspace/sugar/tools/sugar-build/preflight.py run
       --plan-json "$SUGAR_BX_MANAGED_PRECONDITION_PLAN"
       --artifact-root /opt/sugar --)

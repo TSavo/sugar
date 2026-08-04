@@ -11,6 +11,68 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/managed-preconditions.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
+task_environment="$(python3 "$contract" resolve-task-environment showcases)"
+python3 - "$task_environment" <<'PY'
+import json
+import sys
+
+environment = json.loads(sys.argv[1])
+assert environment["image"] == (
+    "ghcr.io/tsavo/sugar-env@sha256:"
+    "c8f9964d2a9d57fd36433d2e3bfe5d6a9c5a4367ff76e8aa5e3f53c0c28a2e2f"
+), environment
+assert environment["preflight"] == "managed-entrypoint/v1", environment
+PY
+
+python3 - "$repo" "$tmp/task-image-fixtures" <<'PY'
+import importlib.util
+import pathlib
+import shutil
+import sys
+
+repo = pathlib.Path(sys.argv[1])
+fixture_root = pathlib.Path(sys.argv[2])
+fixture_root.mkdir()
+contract_path = fixture_root / "sugar-build.toml"
+shutil.copy2(repo / "sugar-build.toml", contract_path)
+
+spec = importlib.util.spec_from_file_location(
+    "task_image_contract", repo / "tools/sugar-build/contract.py"
+)
+contract = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(contract)
+
+fallback = contract.resolve_task_environment("examples-gate", contract_path)
+assert fallback["preflight"] == "workspace-wrapper/v1", fallback
+assert fallback["image"] != contract.resolve_task_environment(
+    "showcases", contract_path
+)["image"], fallback
+
+original = contract_path.read_text()
+task_image_digest = (
+    "c8f9964d2a9d57fd36433d2e3bfe5d6a9c5a4367ff76e8aa5e3f53c0c28a2e2f"
+)
+contract_path.write_text(
+    original.replace("@sha256:" + task_image_digest, ":latest")
+)
+try:
+    contract.resolve_task_environment("showcases", contract_path)
+except contract.ContractError as error:
+    assert "immutable" in str(error), error
+else:
+    raise AssertionError("mutable task image reference did not refuse")
+
+contract_path.write_text(
+    original.replace("managed-entrypoint/v1", "unknown-entrypoint/v9")
+)
+try:
+    contract.resolve_task_environment("showcases", contract_path)
+except contract.ContractError as error:
+    assert "preflight protocol" in str(error), error
+else:
+    raise AssertionError("unknown task image preflight did not refuse")
+PY
+
 plan="$(python3 "$contract" resolve-preconditions showcases \
   --host bx --repo-root "$repo")"
 
@@ -129,6 +191,8 @@ assert "ARG MANAGED_RUST_TOOLCHAIN" in stage
 assert "ARG MANAGED_RUST_COMPONENTS" in stage
 assert 'apt-get install -y --no-install-recommends ${MANAGED_APT_PACKAGES}' in stage
 assert 'rustup component add --toolchain "${MANAGED_RUST_TOOLCHAIN}" "${component}"' in stage
+assert "COPY tools/sugar-build/preflight.py /usr/local/lib/sugar/managed-preflight.py" in stage
+assert "chmod 0555 /usr/local/lib/sugar/managed-preflight.py" in stage
 PY
 
 python3 - "$plan" "$repo" <<'PY'

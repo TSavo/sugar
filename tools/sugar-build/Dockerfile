@@ -169,6 +169,8 @@ FROM examples-closure AS showcases-closure
 ARG MANAGED_APT_PACKAGES
 ARG MANAGED_RUST_TOOLCHAIN
 ARG MANAGED_RUST_COMPONENTS
+COPY tools/sugar-build/preflight.py /usr/local/lib/sugar/managed-preflight.py
+RUN chmod 0555 /usr/local/lib/sugar/managed-preflight.py
 RUN test -n "${MANAGED_APT_PACKAGES}" \
  && test -n "${MANAGED_RUST_TOOLCHAIN}" \
  && test -n "${MANAGED_RUST_COMPONENTS}" \
