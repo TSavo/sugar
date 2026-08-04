@@ -617,6 +617,18 @@ def test_producer_never_ran_is_loud(constructed_module_door) -> None:
         unit.constructed_module
 
 
+def test_lexical_class_owner_refuses_foreign_function_occurrence(
+    constructed_module_door,
+) -> None:
+    source = "class Box:\n    def __init__(self):\n        self.value = 1\n"
+    authentic = _file(source, "authentic-owner.py")
+    foreign = _file(source, "foreign-owner.py")
+    (foreign_initializer,) = foreign.constructed_module.function_nodes
+
+    with pytest.raises(BackendDefect, match="0 backend owner rows"):
+        authentic.unit.lexical_class_owner_for(foreign_initializer)
+
+
 def test_nested_rows_are_in_producer_order_and_module_calls_are_absent(
     constructed_module_door,
 ) -> None:
