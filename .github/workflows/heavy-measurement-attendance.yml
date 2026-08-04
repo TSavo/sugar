@@ -60,6 +60,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare declared Python environment
+        id: roll-call-env
+        uses: ./.github/actions/python-test-environment
+
       - name: "Phase: resolve roll-call subject commit"
         id: subject
         env:
@@ -112,7 +116,7 @@ jobs:
           # PER-COMMIT cadence only. Nightlies are a different obligation.
           # CRITICAL: attendance exit 1 must NOT skip compose/gate.
           set +e
-          python3 -u tools/heavy_measurement_attendance.py \
+          "${{ steps.roll-call-env.outputs.python }}" -u tools/heavy_measurement_attendance.py \
             --commit "$SHA" \
             --cadence per-commit \
             --receipts-dir receipts \
@@ -136,7 +140,7 @@ jobs:
           att_exit="${{ steps.attendance.outputs.attendance_exit }}"
           # Compose even when receipts/ are empty: that is PartialVector, not silence.
           echo "attendance phase=compose status=start"
-          python3 -u - <<'PY'
+          "${{ steps.roll-call-env.outputs.python }}" -u - <<'PY'
           from pathlib import Path
           import json
           import importlib.util
@@ -159,7 +163,7 @@ jobs:
 
           set +e
           echo "attendance phase=gate status=start"
-          python3 -u tools/commit_measurement_gate.py \
+          "${{ steps.roll-call-env.outputs.python }}" -u tools/commit_measurement_gate.py \
             --composition commit-measurement.json \
             --require-complete \
             | tee -a "$GITHUB_STEP_SUMMARY"

@@ -197,6 +197,19 @@ def test_floor_workflow_is_parallel_matrix_with_enrollment():
     assert LEASE_WRAPPER not in text
 
 
+def test_roll_call_composes_under_the_declared_python_environment():
+    """CommitMeasurement imports package code and must not use ambient python3."""
+    text = _text("heavy-measurement-attendance.yml")
+    assert "uses: ./.github/actions/python-test-environment" in text
+    assert "id: roll-call-env" in text
+    managed_python = '"${{ steps.roll-call-env.outputs.python }}"'
+    assert f"{managed_python} -u tools/heavy_measurement_attendance.py" in text
+    assert f"{managed_python} -u - <<'PY'" in text
+    assert f"{managed_python} -u tools/commit_measurement_gate.py" in text
+    assert "python3 -u tools/heavy_measurement_attendance.py" not in text
+    assert "python3 -u tools/commit_measurement_gate.py" not in text
+
+
 def test_process_floor_matrix_restores_and_saves_ca_terminal_shelf():
     """Parallel jobs must not each cold-lift: fleet-wide actions/cache over the CA shelf.
 
