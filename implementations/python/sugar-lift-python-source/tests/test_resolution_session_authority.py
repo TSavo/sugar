@@ -655,3 +655,15 @@ def test_file_open_door_threads_resolution_session(tmp_path: Path, monkeypatch) 
     seen.clear()
     open_source_file_for_construction(path, root=root, resolution_session=shared)
     assert seen == [shared], "explicit package session must reach populate unchanged"
+
+
+def test_prefix_file_memo_binds_source_seat() -> None:
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({"session-authority-fixture"})
+    )
+    first = object()
+    session.remember_prefix_file("cid-1", "pkg/one.py", first)
+    assert session.prefix_file_hit("cid-1", "pkg/one.py") is first
+    assert session.prefix_file_hit("cid-1", "pkg/two.py") is None
+    session.remember_prefix_file("cid-1", "pkg/one.py", first)
+    assert session.prefix_file_hit("cid-1", "pkg/one.py") is first
