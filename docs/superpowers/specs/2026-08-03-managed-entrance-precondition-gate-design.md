@@ -116,10 +116,12 @@ The plan is checked in two stages:
   toolchain components, remote-root/path creation, and a disposable lock
   create/write/heartbeat/remove cycle. Each check emits its name, elapsed time,
   and pass/refusal outcome.
-- The existing managed entrypoint checks the mounted required-artifact manifest
-  before the subject starts. It additionally proves each ELF artifact is
-  loadable by the managed image, distinguishing ABI incompatibility from a
-  product exit.
+- The transport-owned pre-subject wrapper runs inside the selected managed
+  image after the existing entrypoint authenticates the mounted artifact
+  manifest. It proves each ELF artifact is loadable by that exact image,
+  distinguishing ABI incompatibility from a product exit. Stage two bakes the
+  same verifier into the newly published image entrypoint; stage one cannot
+  change an entrypoint already sealed into an immutable image.
 
 The preflight never repairs state. A failed write probe, missing component,
 missing manifest, or ABI mismatch exits before the subject with a named
