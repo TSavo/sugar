@@ -107,6 +107,7 @@ dispatch_execution_subcommand() {
   # networking available unless a named task explicitly proves it can run
   # offline in sugar-build.toml.
   local task_json="" task_capabilities="" task_needs="" task_network="required"
+  local task_profiled_artifacts=""
   local task_preconditions_json=""
   local -a task_command=()
   if [[ -n "$task" ]]; then
@@ -116,6 +117,7 @@ dispatch_execution_subcommand() {
     task_capabilities="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<<"$task_json")"
     task_needs="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["binaries"]))' <<<"$task_json")"
     task_network="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["network"])' <<<"$task_json")"
+    task_profiled_artifacts="$("$contract_python" -c 'import json,sys; task=json.load(sys.stdin); print(",".join("{profile}:{name}".format(**row) for row in task.get("closure", {}).get("artifacts", [])))' <<<"$task_json")"
     while IFS= read -r -d '' arg; do task_command+=("$arg"); done < <("$contract_python" -c 'import json,sys; [sys.stdout.write(x+"\0") for x in json.load(sys.stdin)["command"]]' <<<"$task_json")
     if [[ -n "$needs" ]]; then
       local normalized_needs
@@ -288,7 +290,15 @@ dispatch_execution_subcommand() {
   if [[ "$route_env" == docker ]]; then
     sugar_bx_write_mount_proof || return $?
     local remote_needs="$needs" has_artifacts=0
-    if [[ -n "$remote_needs" ]]; then
+    if [[ -n "$task_profiled_artifacts" ]]; then
+      [[ -z "$remote_needs" ]] || {
+        echo "sugarbin: task mixes profiled closure artifacts with legacy binaries" >&2
+        return 2
+      }
+      sugar_bx_build_profiled_artifacts_docker \
+        "$core_image" "$task_profiled_artifacts" || return $?
+      has_artifacts=1
+    elif [[ -n "$remote_needs" ]]; then
       local provision_artifacts=0
       [[ "$subcommand" != build ]] || provision_artifacts=1
       sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" "$provision_artifacts" || return $?

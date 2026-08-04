@@ -205,9 +205,27 @@ examples="$(run explain --host bx --task examples-gate)"
 
 : >"$tmp/docker.log"
 run run --host bx --task showcases >/dev/null
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] \
+  || fail "showcase task did not resolve its declared artifact closure exactly once"
+showcase_build_line="$(head -1 "$tmp/docker.log")"
+[[ "$showcase_build_line" == *"release:sugar"* ]] \
+  || fail "showcase artifact resolver lost release:sugar"
+for artifact in sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude \
+  sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do
+  [[ "$showcase_build_line" == *"debug:$artifact"* ]] \
+    || fail "showcase artifact resolver lost debug:$artifact"
+done
+[[ "$showcase_build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=0'"* ]] \
+  || fail "showcase artifact resolver gained implicit build authority"
+[[ "$showcase_build_line" == *"'--env' 'SUGAR_BINARY_PUBLISH=0'"* ]] \
+  || fail "showcase artifact resolver gained implicit publish authority"
+[[ "$showcase_build_line" == *"binary-shelf-v2,readonly"* ]] \
+  || fail "showcase artifact resolver gained writable shelf authority"
 showcase_line="$(tail -1 "$tmp/docker.log")"
 [[ "$showcase_line" == *"tools/sugar-build/preflight.py"* ]] \
   || fail "managed showcase task omitted pre-subject preflight"
+[[ "$showcase_line" == *"required-artifacts.json,readonly"* ]] \
+  || fail "managed showcase task omitted its declared artifact manifest"
 [[ "$showcase_line" == *"make"*"test-showcases"* ]] \
   || fail "managed showcase task lost its declared command"
 
@@ -367,10 +385,17 @@ cat >"$writer_workspace/bin/sugarbin" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 binary=""
+profile=""
 while (($#)); do
-  if [[ "$1" == --bin ]]; then binary="$2"; shift 2; else shift; fi
+  case "$1" in
+    --bin) binary="$2"; shift 2 ;;
+    --profile) profile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
 done
 [[ -n "$binary" ]]
+[[ -z "${WRITER_INVOCATION_LOG:-}" ]] \
+  || printf '%s:%s\n' "$profile" "$binary" >>"$WRITER_INVOCATION_LOG"
 if [[ "$binary" == second && -n "${WRITER_BLOCK_MARKER:-}" ]]; then
   : >"$WRITER_BLOCK_MARKER"
   kill -TERM "$PPID"
@@ -424,6 +449,42 @@ assert item["name"] == "first", item
 assert item["sha256"] == hashlib.sha256((root / "first").read_bytes()).hexdigest(), item
 assert not list(root.glob(".required-artifacts.json.*"))
 PY
+
+profiled_out="$tmp/profiled-writer-out"
+mkdir -p "$profiled_out"
+profiled_script="$(sugar_bx_profiled_artifact_build_script \
+  release:first,debug:second "$writer_workspace" "$profiled_out")"
+WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" \
+WRITER_INVOCATION_LOG="$tmp/profiled-writer-invocations" \
+  bash -c "$profiled_script"
+python3 - "$profiled_out" "$tmp/profiled-writer-invocations" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+invocations = pathlib.Path(sys.argv[2]).read_text().splitlines()
+assert invocations == ["release:first", "debug:second"], invocations
+manifest = json.loads(root.joinpath("required-artifacts.json").read_text())
+assert [row["name"] for row in manifest["artifacts"]] == ["first", "second"]
+for row in manifest["artifacts"]:
+    assert row["sha256"] == hashlib.sha256(
+        root.joinpath(row["name"]).read_bytes()
+    ).hexdigest(), row
+PY
+
+status=0
+duplicate_script="$(sugar_bx_profiled_artifact_build_script \
+  release:first,debug:first "$writer_workspace" "$tmp/profiled-duplicate")"
+mkdir -p "$tmp/profiled-duplicate"
+WRITER_PAYLOAD_ROOT="$tmp/writer-payloads" \
+  bash -c "$duplicate_script" >"$tmp/profiled-duplicate.out" \
+  2>"$tmp/profiled-duplicate.err" || status=$?
+[[ "$status" == 70 ]] || fail "duplicate profiled artifact status=$status, want 70"
+grep -Fq 'crime=duplicate-profiled-artifact name=first' \
+  "$tmp/profiled-duplicate.err" \
+  || fail "duplicate profiled artifact did not refuse by name"
 
 # Malformed prior manifests are evidence. Quarantine them by content before the
 # full artifact reset, collapse repeats, and make bounded eviction loud.
