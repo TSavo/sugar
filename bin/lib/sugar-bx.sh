@@ -712,10 +712,8 @@ sugar_bx_start_detached_host_command() {
   exit_code="$job_dir/exit-code"
   launch="$job_dir/launch"
 
-  set +e
-  sugar_bx_ssh "umask 022; mkdir -p $(sugar_bx_quote "$(dirname "$job_dir")"); if ! mkdir $(sugar_bx_quote "$job_dir") 2>/dev/null; then printf 'sugarbin: crime=duplicate-detached-job-id jobId=%s path=%s replacement=choose a new job id or query/collect the existing job\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$job_dir") >&2; exit 70; fi; chmod 0755 $(sugar_bx_quote "$job_dir"); : > $(sugar_bx_quote "$output"); chmod 0644 $(sugar_bx_quote "$output"); printf 'schema=sugar-bx-detached-job/v1\\njobId=%s\\nunit=%s\\nroot=%s\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$unit") $(sugar_bx_quote "$SUGAR_BX_ROOT") > $(sugar_bx_quote "$launch"); chmod 0644 $(sugar_bx_quote "$launch")"
-  setup_status=$?
-  set -e
+  sugar_bx_ssh "umask 022; mkdir -p $(sugar_bx_quote "$(dirname "$job_dir")"); if ! mkdir $(sugar_bx_quote "$job_dir") 2>/dev/null; then printf 'sugarbin: crime=duplicate-detached-job-id jobId=%s path=%s replacement=choose a new job id or query/collect the existing job\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$job_dir") >&2; exit 70; fi; chmod 0755 $(sugar_bx_quote "$job_dir"); : > $(sugar_bx_quote "$output"); chmod 0644 $(sugar_bx_quote "$output"); printf 'schema=sugar-bx-detached-job/v1\\njobId=%s\\nunit=%s\\nroot=%s\\n' $(sugar_bx_quote "$job_id") $(sugar_bx_quote "$unit") $(sugar_bx_quote "$SUGAR_BX_ROOT") > $(sugar_bx_quote "$launch"); chmod 0644 $(sugar_bx_quote "$launch")" \
+    || setup_status=$?
   [[ "$setup_status" == 0 ]] || return "$setup_status"
 
   local runner_body
