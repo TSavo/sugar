@@ -6420,6 +6420,12 @@ fn kit_declaration_result() -> Value {
 
 fn enumerate_result(params: &Value) -> Result<Value, String> {
     let level = params.get("level").and_then(Value::as_str).unwrap_or("");
+    if level == "parameter-contract-link-units" {
+        // rust-fn-contracts has no parameter-link obligations; advertise the
+        // level explicitly so consumers receive a measured empty population
+        // rather than a false "level not served" refusal.
+        return Ok(json!({"rows": []}));
+    }
     let root = PathBuf::from(
         params
             .get("workspace_root")
