@@ -81,6 +81,20 @@ class VerificationPropertyAttendanceGap:
         )
 
 
+@dataclass(frozen=True)
+class SelectedVerificationTerminal:
+    """The first producer-constructed verification effect in receipt order."""
+
+    identity: dict[str, object]
+
+
+@dataclass(frozen=True)
+class NoVerificationTerminal:
+    """Positive testimony that every inspected row carried no effect."""
+
+    row_count: int
+
+
 def _refuse(reason: str) -> NoReturn:
     raise TerminalIdentityRefusal(reason)
 
@@ -441,6 +455,76 @@ def identity_from_rpc_text(
         if isinstance(value, str) and value.strip():
             identity[field] = value
     return validate_terminal_identity(identity)
+
+
+def select_verification_receipt_terminal(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    entrance: str,
+) -> SelectedVerificationTerminal | NoVerificationTerminal:
+    """Select the first exact verifier effect, or prove there was none.
+
+    ``verifyEffect`` is a total carrier on current receipts.  A non-discharged
+    row without it is proof that a projection dropped producer testimony, not
+    evidence that no effect occurred.  This selector never reconstructs an
+    effect from legacy ``reason`` prose.
+    """
+
+    for row in rows:
+        status = row.get("status")
+        if not isinstance(status, str) or not status:
+            _refuse("verification row requires nonempty status")
+
+        carrier = row.get("verifyEffect")
+        if not isinstance(carrier, Mapping):
+            _refuse(f"{status} verification row has no verifyEffect carrier")
+        state = carrier.get("state")
+        if state == "no-effect":
+            if status != "discharged":
+                _refuse(
+                    f"{status} verification row carries positive no-effect testimony"
+                )
+            continue
+        if state != "effect":
+            _refuse(f"verification row has unknown verifyEffect state {state!r}")
+
+        if status == "discharged":
+            _refuse("discharged verification row unexpectedly carries a VerifyEffect")
+        effect = carrier.get("effect")
+        if not isinstance(effect, Mapping):
+            _refuse("verifyEffect state=effect requires a structured effect")
+        variant = effect.get("kind")
+        if not isinstance(variant, str) or not variant:
+            _refuse("structured VerifyEffect requires nonempty kind")
+
+        effect_owner = effect.get("propertyName")
+        row_owner = row.get("property")
+        owner = effect_owner if isinstance(effect_owner, str) else row_owner
+        identity: dict[str, object] = {
+            "schemaVersion": TERMINAL_IDENTITY_SCHEMA_VERSION,
+            "kind": f"verify-effect:{variant}",
+            "owner": owner,
+            "entrance": entrance,
+        }
+        property_cid = row.get("propertyCid")
+        if isinstance(property_cid, str) and property_cid:
+            identity["coordinate"] = property_cid
+        return SelectedVerificationTerminal(validate_terminal_identity(identity))
+
+    return NoVerificationTerminal(row_count=len(rows))
+
+
+def publish_verification_receipt_terminal(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    entrance: str,
+) -> SelectedVerificationTerminal | NoVerificationTerminal:
+    """Publish the selected verifier effect when a consumer supplied a path."""
+
+    selected = select_verification_receipt_terminal(rows, entrance=entrance)
+    if isinstance(selected, SelectedVerificationTerminal):
+        write_from_environment(selected.identity)
+    return selected
 
 
 def _publish_once(output: Path, state: Mapping[str, object]) -> None:

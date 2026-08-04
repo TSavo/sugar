@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
+from ..showcase_terminal_identity import publish_verification_receipt_terminal
+
 VACUOUS_MARKERS = (
     "vacuous",
     "no sibling to contradict",
@@ -49,6 +51,7 @@ def require_substantive_discharge(
     rows: Sequence[Mapping[str, Any]],
     *,
     suite: str,
+    entrance: str = "verification-receipt",
 ) -> list[str]:
     """Require a nonempty substantive population whose every row discharged."""
     substantive = [row for row in rows if is_substantive_consistency_row(row)]
@@ -59,6 +62,7 @@ def require_substantive_discharge(
             "PASS requires a nonempty substantive population"
         )
     if any(status != "discharged" for status in statuses):
+        publish_verification_receipt_terminal(substantive, entrance=entrance)
         raise SystemExit(
             f"FAIL[{suite}]: expected substantive consistency rows all discharged, "
             f"got {statuses}"

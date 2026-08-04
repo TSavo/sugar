@@ -199,10 +199,13 @@ PY
 run_mint_verify "$GOOD" GOOD
 run_mint_verify "$BAD" BAD
 
-python3 - "$GOOD/.verify.json" "$BAD/.verify.json" <<'PY'
+python3 - "$GOOD/.verify.json" "$BAD/.verify.json" "$REPO" <<'PY'
 import json
 import re
 import sys
+
+sys.path.insert(0, sys.argv[3])
+from tools.showcase_terminal_identity import publish_verification_receipt_terminal
 
 def receipt(path):
     text = open(path, encoding="utf-8").read()
@@ -264,6 +267,7 @@ if missing:
     print("GOOD missing required rows:", ", ".join(missing), file=sys.stderr)
     raise SystemExit(1)
 if failed_good:
+    publish_verification_receipt_terminal(failed_good, entrance="sugar.verify")
     print("GOOD has non-discharged #euf# rows:", file=sys.stderr)
     for row in failed_good:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)

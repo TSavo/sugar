@@ -48,6 +48,7 @@ from tools.showcase.json_get import load_receipt
 statuses = require_substantive_discharge(
     load_receipt(path).get("rows", []),
     suite=suite,
+    entrance="sugar.prove",
 )
 print(",".join(statuses))
 PY
@@ -140,7 +141,7 @@ consistency = check_durable_consistency(
     rows, suite=suite, expect=expect_consistency
 )
 substantive = (
-    require_substantive_discharge(rows, suite=suite)
+    require_substantive_discharge(rows, suite=suite, entrance="sugar.verify")
     if expect_consistency == "DISCHARGE"
     else []
 )
