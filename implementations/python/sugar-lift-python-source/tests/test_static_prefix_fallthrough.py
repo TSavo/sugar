@@ -19,6 +19,7 @@ import pytest
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_construction import (
+    PrefixFallthroughOutcomeV1,
     _module_prefix_outcome,
     _static_prefix_always_fallthrough,
     prefix_has_completed_fallthrough,
@@ -77,7 +78,9 @@ def test_static_pure_binding_prefix_admits_without_outcome(monkeypatch) -> None:
     )
     # This tooth has no dependency graph: its authoritative population is empty.
     session = SourceResolutionSession(enrolled_distributions=frozenset())
-    assert prefix_has_completed_fallthrough(module, locus, session=session) is True
+    assert prefix_has_completed_fallthrough(module, locus, session=session) == (
+        PrefixFallthroughOutcomeV1("completed")
+    )
     assert (
         calls["n"] == 0
     ), f"pure-binding prefix must not run _module_prefix_outcome; n={calls['n']}"
@@ -124,6 +127,117 @@ def test_stdlib_graph_still_short_circuits(monkeypatch) -> None:
             graph=graph,
             session=SourceResolutionSession(enrolled_distributions=frozenset()),
         )
-        is True
+        == PrefixFallthroughOutcomeV1("completed")
     )
     assert calls["n"] == 0
+
+
+def test_prefix_construction_refusal_is_typed_and_memoized(monkeypatch) -> None:
+    """Construction refusal is testimony, never cached ordinary False."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    source = (
+        "try:\n"
+        "    setup()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "def export():\n"
+        "    return 1\n"
+    )
+    module = _module(source)
+    locus = _locus_of(source, "export")
+    calls = {"n": 0}
+
+    def refuses(*_args, **_kwargs):
+        calls["n"] += 1
+        raise SugarNotWritten(
+            owner="prefix-refusal-tooth",
+            blame="mod.py:2:4",
+            observed="opaque setup call",
+            requested="one completed module-prefix outcome",
+            fix="construct the setup call before export admission",
+        )
+
+    monkeypatch.setattr(
+        "sugar_lift_python_source.manager_construction._module_prefix_outcome",
+        refuses,
+    )
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
+
+    first = prefix_has_completed_fallthrough(module, locus, session=session)
+    second = prefix_has_completed_fallthrough(module, locus, session=session)
+
+    assert first == PrefixFallthroughOutcomeV1(
+        kind="construction-refusal",
+        refusal_kind="sugar-not-written",
+        observed_event_type="sugar_source_tree.panic.SugarNotWritten",
+        detail="prefix-refusal-tooth: opaque setup call",
+    )
+    assert second == first
+    assert calls["n"] == 1, "typed refusal must survive the session memo"
+
+
+def test_prefix_ordinary_non_fallthrough_remains_clean_outcome(monkeypatch) -> None:
+    """An ordinary completed face that cannot fall through is not a refusal."""
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    source = (
+        "try:\n"
+        "    setup()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "def export():\n"
+        "    return 1\n"
+    )
+    module = _module(source)
+    locus = _locus_of(source, "export")
+    calls = {"n": 0}
+
+    def declines(*_args, **_kwargs):
+        calls["n"] += 1
+        return ExitSet.completed(SimpleNamespace(can_fall_through=False))
+
+    monkeypatch.setattr(
+        "sugar_lift_python_source.manager_construction._module_prefix_outcome",
+        declines,
+    )
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
+
+    expected = PrefixFallthroughOutcomeV1("ordinary-non-fallthrough")
+    assert prefix_has_completed_fallthrough(module, locus, session=session) == expected
+    assert prefix_has_completed_fallthrough(module, locus, session=session) == expected
+    assert calls["n"] == 1, "ordinary non-fallthrough remains a clean memo hit"
+
+
+def test_prefix_construction_typeerror_is_named(monkeypatch) -> None:
+    """The handler's TypeError arm is refusal testimony, not control flow."""
+    source = (
+        "try:\n"
+        "    setup()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "def export():\n"
+        "    return 1\n"
+    )
+    module = _module(source)
+    locus = _locus_of(source, "export")
+
+    def refuses(*_args, **_kwargs):
+        raise TypeError("prefix construction shape mismatch")
+
+    monkeypatch.setattr(
+        "sugar_lift_python_source.manager_construction._module_prefix_outcome",
+        refuses,
+    )
+    outcome = prefix_has_completed_fallthrough(
+        module,
+        locus,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
+
+    assert outcome == PrefixFallthroughOutcomeV1(
+        kind="construction-refusal",
+        refusal_kind="construction-type-error",
+        observed_event_type="builtins.TypeError",
+        detail="prefix construction shape mismatch",
+    )

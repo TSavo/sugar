@@ -1136,8 +1136,11 @@ def test_prefix_adapter_routes_exact_graph_and_session_to_module_execution(
         manager_construction, "_module_prefix_outcome", completed_prefix
     )
 
-    assert dependency_export_adapter._prefix_has_completed_fallthrough(
-        module, locus, graph=graph, session=session
+    assert (
+        dependency_export_adapter._prefix_has_completed_fallthrough(
+            module, locus, graph=graph, session=session
+        ).kind
+        == "completed"
     )
     assert observed == [(module, locus, graph, session)]
 

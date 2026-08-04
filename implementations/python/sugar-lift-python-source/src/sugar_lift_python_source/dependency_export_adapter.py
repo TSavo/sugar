@@ -188,10 +188,17 @@ def _resolve_export_uncached(
     )
     # Normal-completion authority for the prefix (statements strictly before
     # the unique export-binding locus): producer-owned Completed faces only.
-    if locus is not None and not _prefix_has_completed_fallthrough(
-        module, locus, graph=graph, session=session
-    ):
-        return _gap("dynamic-export", binding_cid, graph, module_name, exported_name)
+    if locus is not None:
+        fallthrough = _prefix_has_completed_fallthrough(
+            module, locus, graph=graph, session=session
+        )
+        # Ordinary non-fallthrough and named construction refusal both cite
+        # through the existing typed dynamic-export membrane.  Their distinct
+        # producer testimony remains recoverable from the session memo.
+        if fallthrough.kind != "completed":
+            return _gap(
+                "dynamic-export", binding_cid, graph, module_name, exported_name
+            )
     return _resolve_export_binding(
         graph,
         binding_cid,

@@ -1091,9 +1091,53 @@ def _static_prefix_always_fallthrough(module, locus) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class PrefixFallthroughOutcomeV1:
+    """Closed testimony for one authenticated module-prefix fallthrough ask.
+
+    The key already identifies the source locus completely.  The former bool
+    value did not identify which fact it cached: ordinary non-fallthrough or a
+    construction refusal.  One closed outcome keeps those facts distinct.
+    """
+
+    kind: Literal[
+        "completed", "ordinary-non-fallthrough", "construction-refusal"
+    ]
+    refusal_kind: Literal["sugar-not-written", "construction-type-error"] | None = (
+        None
+    )
+    observed_event_type: str | None = None
+    detail: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in {
+            "completed",
+            "ordinary-non-fallthrough",
+            "construction-refusal",
+        }:
+            raise ValueError(f"unknown prefix fallthrough outcome {self.kind!r}")
+        refusal_fields = (
+            self.refusal_kind,
+            self.observed_event_type,
+            self.detail,
+        )
+        if self.kind == "construction-refusal":
+            if any(value is None for value in refusal_fields):
+                raise ValueError("construction refusal requires named testimony")
+            if self.refusal_kind not in {
+                "sugar-not-written",
+                "construction-type-error",
+            }:
+                raise ValueError(
+                    f"unknown prefix construction refusal {self.refusal_kind!r}"
+                )
+        elif any(value is not None for value in refusal_fields):
+            raise ValueError("control-flow outcome cannot carry refusal testimony")
+
+
 def prefix_has_completed_fallthrough(
     module, locus, *, graph=None, session=None
-) -> bool:
+) -> PrefixFallthroughOutcomeV1:
     """Admit an export when the module prefix normally completes.
 
     POPULATION MEMBRANE: when ``graph`` is stdlib (off enrolled population),
@@ -1113,7 +1157,7 @@ def prefix_has_completed_fallthrough(
     session = session_or_new(session)
     if graph is not None and _graph_is_off_population(graph, session=session):
         # Cite path: admit static export without off-population construction.
-        return True
+        return PrefixFallthroughOutcomeV1("completed")
 
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -1128,29 +1172,48 @@ def prefix_has_completed_fallthrough(
 
     # Cheap door: pure-binding AST prefix always falls through — no sugar.
     if _static_prefix_always_fallthrough(module, locus):
-        session.remember_fallthrough(fallthrough_key, True)
-        return True
+        outcome = PrefixFallthroughOutcomeV1("completed")
+        session.remember_fallthrough(fallthrough_key, outcome)
+        return outcome
 
     # Prefix sugar can SNW (e.g. decorated FunctionDef without publication) or
     # TypeError on construction (IfExp/spread require_* costume). Neither is
-    # "fallthrough completed"; both cite as dynamic-export at the export door
-    # and must never abort the open's population. Named classes only.
+    # ordinary non-fallthrough: retain named testimony in the session memo so a
+    # later caller cannot replay construction refusal as a clean ``False``.
     try:
         exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
-    except (SugarNotWritten, TypeError):
-        session.remember_fallthrough(fallthrough_key, False)
-        return False
+    except (SugarNotWritten, TypeError) as exc:
+        if isinstance(exc, SugarNotWritten):
+            refusal = PrefixFallthroughOutcomeV1(
+                kind="construction-refusal",
+                refusal_kind="sugar-not-written",
+                observed_event_type=f"{type(exc).__module__}.{type(exc).__qualname__}",
+                detail=f"{exc.owner}: {exc.observed}",
+            )
+        else:
+            refusal = PrefixFallthroughOutcomeV1(
+                kind="construction-refusal",
+                refusal_kind="construction-type-error",
+                observed_event_type=f"{type(exc).__module__}.{type(exc).__qualname__}",
+                detail=str(exc),
+            )
+        session.remember_fallthrough(fallthrough_key, refusal)
+        return refusal
     if len(exits.exits) != 1:
-        session.remember_fallthrough(fallthrough_key, False)
-        return False
+        outcome = PrefixFallthroughOutcomeV1("ordinary-non-fallthrough")
+        session.remember_fallthrough(fallthrough_key, outcome)
+        return outcome
     face = exits.exits[0]
     ok = (
         isinstance(face, Completed)
         and face.guard == true_guard()
         and bool(getattr(face.value, "can_fall_through", False))
     )
-    session.remember_fallthrough(fallthrough_key, ok)
-    return ok
+    outcome = PrefixFallthroughOutcomeV1(
+        "completed" if ok else "ordinary-non-fallthrough"
+    )
+    session.remember_fallthrough(fallthrough_key, outcome)
+    return outcome
 
 
 @dataclass(frozen=True)

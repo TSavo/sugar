@@ -95,7 +95,10 @@ from __future__ import annotations
 import collections
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .manager_construction import PrefixFallthroughOutcomeV1
 
 # (resolved workspace root, authenticated population) -> walk-owned session.
 # Not content-keyed; not a substitute for §4 residency. Cleared only by tests.
@@ -204,8 +207,10 @@ class SourceResolutionSession:
         # _module_prefix_outcome once per export locus and rebuilt config N times.
         # Separate from module_materializations: different context settings.
         self.prefix_files: dict[str, Any] = {}
-        # (source_cid, lineno, col_offset) -> bool fallthrough answer
-        self.prefix_fallthrough: dict[tuple, bool] = {}
+        # (source_cid, lineno, col_offset) -> PrefixFallthroughOutcomeV1.  The
+        # locus key is complete authority; the closed value prevents refusal
+        # from becoming a memoized ordinary non-fallthrough.
+        self.prefix_fallthrough: dict[tuple, Any] = {}
         # source_cid -> import-use / value-use receipt tuples (lexical pass once)
         self.import_use_rosters: dict[str, Any] = {}
         self.import_value_rosters: dict[str, Any] = {}
@@ -303,12 +308,18 @@ class SourceResolutionSession:
         if self.enabled:
             self.prefix_files[(source_cid, source_seat)] = source_file
 
-    def fallthrough_hit(self, key: tuple) -> bool | None:
+    def fallthrough_hit(self, key: tuple) -> PrefixFallthroughOutcomeV1 | None:
         if not self.enabled:
             return None
         return self.prefix_fallthrough.get(key)
 
-    def remember_fallthrough(self, key: tuple, value: bool) -> None:
+    def remember_fallthrough(
+        self, key: tuple, value: PrefixFallthroughOutcomeV1
+    ) -> None:
+        from .manager_construction import PrefixFallthroughOutcomeV1
+
+        if type(value) is not PrefixFallthroughOutcomeV1:
+            raise TypeError("prefix fallthrough memo requires its closed outcome")
         if self.enabled:
             self.prefix_fallthrough[key] = value
 
