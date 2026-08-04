@@ -2782,6 +2782,47 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 sf = _tree.source_file(full_path)
 
                 if level in ("call_sites", "assertions"):
+                    if seek:
+                        source_assert = _tree.find_assert(
+                            sf,
+                            at.get("span") if isinstance(at, dict) else None,
+                        )
+                        if source_assert is not None:
+                            memento = _tree.assert_memento(source_assert, file_rel)
+                            if at is not None and _memento_matches(memento, at):
+                                _send_enumerate_result(
+                                    msg_id,
+                                    [
+                                        {
+                                            "memento": memento,
+                                            "audit": None,
+                                            "payload": None,
+                                        }
+                                    ],
+                                    [],
+                                )
+                                _log_enumeration_demand(
+                                    str(level),
+                                    at,
+                                    cache="miss",
+                                    started=demand_started,
+                                )
+                                return
+                        _send_enumerate_result(
+                            msg_id,
+                            [],
+                            [
+                                {
+                                    "memento": at,
+                                    "reason": "no call site for exact memento",
+                                }
+                            ],
+                        )
+                        _log_enumeration_demand(
+                            str(level), at, cache="miss", started=demand_started
+                        )
+                        return
+
                     # at is the parent function (scan) — enumerate its assertions.
                     fn = _tree.find_function(
                         sf,

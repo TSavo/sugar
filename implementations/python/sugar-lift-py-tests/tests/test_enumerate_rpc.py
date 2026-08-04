@@ -1041,6 +1041,54 @@ def test_exact_seek_for_unknown_callsite_is_a_loud_gap_not_substitution(
         assert result["gaps"][0]["memento"] == forged
 
 
+def test_assertion_exact_seek_returns_the_identical_observed_locus(
+    project: Path,
+) -> None:
+    """An exact assertion seek is identity, never a second parent scan."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    function = next(
+        node["memento"]
+        for node in _enumerate("functions", project, at=file_memento)["nodes"]
+        if node["memento"]["function_name"] == "test_add"
+    )
+    observed = _enumerate("call_sites", project, at=function)["nodes"][0]
+
+    result = _enumerate(
+        "assertions", project, at=observed["memento"], seek=True
+    )
+
+    assert result["gaps"] == []
+    assert result["nodes"] == [observed]
+
+
+def test_unknown_exact_callsite_seek_is_a_named_miss(project: Path) -> None:
+    """Silence is not a valid answer for an exact locus the tree cannot find."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    function = next(
+        node["memento"]
+        for node in _enumerate("functions", project, at=file_memento)["nodes"]
+        if node["memento"]["function_name"] == "test_add"
+    )
+    observed = _enumerate("call_sites", project, at=function)["nodes"][0]["memento"]
+    unknown = {
+        **observed,
+        "span": {
+            "start_line": 999,
+            "start_col": 0,
+            "end_line": 999,
+            "end_col": 1,
+        },
+        "source_cid": "blake3-512:not-an-observed-callsite",
+    }
+
+    result = _enumerate("call_sites", project, at=unknown, seek=True)
+
+    assert result["nodes"] == []
+    assert result["gaps"] == [
+        {"memento": unknown, "reason": "no call site for exact memento"}
+    ]
+
+
 def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     """CallSite-style seek: call:add → qualified mathy.add universe."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
