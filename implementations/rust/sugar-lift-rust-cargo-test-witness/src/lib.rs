@@ -289,6 +289,55 @@ fn witnesses_from_parsed(
     out
 }
 
+fn stdout_testifies_zero_tests(stdout: &str) -> bool {
+    let counts: Vec<usize> = stdout
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("running ")?
+                .strip_suffix(" tests")?
+                .parse()
+                .ok()
+        })
+        .collect();
+    !counts.is_empty() && counts.iter().all(|count| *count == 0)
+}
+
+fn witnesses_from_cargo_run(
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    cc: &str,
+    rc: &str,
+    code_files: &[String],
+) -> Result<Vec<Witness>, String> {
+    let parsed = parse_cargo_test_output(stdout);
+    if !parsed.is_empty() {
+        // A failing test makes cargo exit nonzero while still producing honest
+        // per-test testimony. Preserve those rows; only a child failure with no
+        // test testimony is an execution failure.
+        return Ok(witnesses_from_parsed(&parsed, cc, rc, code_files));
+    }
+    if !success {
+        return Err(format!(
+            "cargo test failed before producing test testimony: exitCode={} stdout={stdout:?} stderr={stderr:?}",
+            exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string())
+        ));
+    }
+    if stdout_testifies_zero_tests(stdout) {
+        return Ok(Vec::new());
+    }
+    Err(format!(
+        "cargo test produced no test-population testimony: exitCode={} stdout={stdout:?} stderr={stderr:?}",
+        exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "signal".to_string())
+    ))
+}
+
 /// Run the project's tests ONCE and content-address EACH test as its own witness.
 /// `--no-fail-fast` so a failing test does not suppress later test binaries (which
 /// would change the test SET and break bundle reproduction). stdout is parsed for
@@ -306,8 +355,16 @@ pub fn run_suite_witnesses(
         .output()
         .map_err(|e| format!("spawn `cargo test`: {e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed = parse_cargo_test_output(&stdout);
-    Ok(witnesses_from_parsed(&parsed, &cc, &rc, code_files))
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    witnesses_from_cargo_run(
+        output.status.success(),
+        output.status.code(),
+        &stdout,
+        &stderr,
+        &cc,
+        &rc,
+        code_files,
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -65,6 +65,56 @@ fn parser_ignores_non_test_lines() {
     assert!(parsed.is_empty());
 }
 
+#[test]
+fn failed_child_without_test_rows_refuses_with_exit_and_stderr() {
+    let error = witnesses_from_cargo_run(
+        false,
+        Some(101),
+        "",
+        "error[E0308]: mismatched types",
+        CC,
+        RC,
+        &["src/lib.rs".to_string()],
+    )
+    .unwrap_err();
+
+    assert!(error.contains("cargo test failed before producing test testimony"));
+    assert!(error.contains("exitCode=101"));
+    assert!(error.contains("error[E0308]: mismatched types"));
+}
+
+#[test]
+fn successful_zero_test_run_remains_an_honest_empty_suite() {
+    let witnesses = witnesses_from_cargo_run(
+        true,
+        Some(0),
+        "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "",
+        CC,
+        RC,
+        &["src/lib.rs".to_string()],
+    )
+    .unwrap();
+
+    assert!(witnesses.is_empty());
+}
+
+#[test]
+fn successful_output_without_test_population_testimony_refuses() {
+    let error = witnesses_from_cargo_run(
+        true,
+        Some(0),
+        "Finished test profile target(s)",
+        "",
+        CC,
+        RC,
+        &["src/lib.rs".to_string()],
+    )
+    .unwrap_err();
+
+    assert!(error.contains("cargo test produced no test-population testimony"));
+}
+
 // ------- PER-TEST BODY SHAPE -------
 
 #[test]
