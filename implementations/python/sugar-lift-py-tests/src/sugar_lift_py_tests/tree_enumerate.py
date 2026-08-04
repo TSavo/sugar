@@ -14,6 +14,7 @@ assertion carries no call site — call_sites and assertions are the same locus,
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Any, Optional
 
@@ -348,6 +349,92 @@ def function_universe_outcome(fn):
     return sugar.desugar(context)
 
 
+@functools.lru_cache(maxsize=128)
+def _source_sidecars_by_line(source_cid: str, source: str, file_rel: str) -> tuple[
+    tuple[dict[str, Any], ...],
+    tuple[tuple[int, tuple[dict[str, Any], ...]], ...],
+]:
+    """Construct source testimony once through its authoritative door."""
+    del source_cid  # cache identity; source remains the construction input
+    from sugar_lift_python_source import lift_source
+
+    rows = lift_source(source, file_rel).ir
+    class_shapes = tuple(
+        shape
+        for row in rows
+        for shape in row.get("classShapes", [])
+        if isinstance(shape, dict)
+    )
+    by_line = []
+    for row in rows:
+        locus = row.get("locus")
+        line = locus.get("line") if isinstance(locus, dict) else None
+        if not isinstance(line, int):
+            continue
+        panic_loci = tuple(
+            item for item in row.get("panicLoci", []) if isinstance(item, dict)
+        )
+        if panic_loci:
+            by_line.append((line, panic_loci))
+    return class_shapes, tuple(by_line)
+
+
+def _source_sidecars_for_function(fn, file_rel: str):
+    class_shapes, by_line = _source_sidecars_by_line(
+        fn.unit.source_cid, fn.unit.source, file_rel
+    )
+    line = fn.line_col_span().start_line
+    panic_loci = tuple(
+        locus
+        for row_line, row_loci in by_line
+        if row_line == line
+        for locus in row_loci
+    )
+    receiver_classes = {
+        safety.get("receiverClass")
+        for locus in panic_loci
+        if isinstance((safety := locus.get("attributeSafety")), dict)
+        and isinstance(safety.get("receiverClass"), str)
+    }
+    relevant_shapes = tuple(
+        shape for shape in class_shapes if shape.get("className") in receiver_classes
+    )
+    return panic_loci, relevant_shapes
+
+
+def _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes):
+    """Carry source testimony without claiming an incomplete body reduced."""
+    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
+    from sugar_lift_py_tests.proofir.nodes import ConstructionSite, Derived, Provenance
+
+    span = def_memento.span
+    provenance = Provenance(
+        node_class="SourceSidecarCarrier",
+        construction_site=ConstructionSite(
+            path=def_memento.file,
+            line=span.start_line,
+            column=span.start_col,
+        ),
+        warrant=Derived(floor_chain=("sugar_lift_python_source.lift_source",)),
+    )
+    return BodyUniverseDto(
+        name=fn.name,
+        pre=claim_formula(
+            atomic("true", []),
+            formals=(),
+            provenance=provenance,
+            role="pre",
+        ),
+        source_warrants=[def_memento],
+        proofir_provenance=provenance.to_rpc(),
+        kind="contract",
+        panic_loci=list(panic_loci),
+        class_shapes=list(class_shapes),
+    )
+
+
 def function_contract_rows(fn, file_rel: str):
     """A function's contract DTO rows, produced from its TREE universe.
 
@@ -359,13 +446,26 @@ def function_contract_rows(fn, file_rel: str):
     a contract. A SugarNotWritten from an unported body statement propagates
     (the whole function is a frontier gap).
     """
+    import dataclasses
+
     from sugar_lift_py_tests.outcome import Complete
 
     def_memento = function_def_memento(fn, file_rel)
+    panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
     outcome = function_universe_outcome(fn)
     if not isinstance(outcome, Complete):
-        return def_memento, None  # an effect; not a contract
-    return def_memento, outcome.value.payload_rows(def_memento)
+        if not panic_loci and not class_shapes:
+            return def_memento, None  # an effect with no source testimony
+        return def_memento, [
+            _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes)
+        ]
+    rows = outcome.value.payload_rows(def_memento)
+    rows[0] = dataclasses.replace(
+        rows[0],
+        panic_loci=list(panic_loci),
+        class_shapes=list(class_shapes),
+    )
+    return def_memento, rows
 
 
 def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
