@@ -94,8 +94,16 @@ FLOOR_SUMMARY="${FLOOR_SCRATCH}/floor-summary.json"
 mkdir -p "$FLOOR_SCRATCH"
 
 set +e
-python -u "$SCRIPT" "$PANDAS_CORPUS" \
-  --demand-table-path "$demand_table_path" \
+script_args=(
+  "$PANDAS_CORPUS"
+)
+# Silent is the one floor that audits disk-vs-roll-call membership and does
+# not attribute construction through the demand table.  The other three
+# matrix consumers declare and require this authority.
+if [ "$script_name" != "silent_zero_tolerance.py" ]; then
+  script_args+=(--demand-table-path "$demand_table_path")
+fi
+python -u "$SCRIPT" "${script_args[@]}" \
   --repo-root "$PANDAS_CORPUS" \
   --out-dir "$FLOOR_SCRATCH" \
   --json "$FLOOR_SUMMARY" \

@@ -78,6 +78,15 @@ def test_all_process_floor_doors_forward_the_supplied_table() -> None:
         assert "scan_paths" in source
 
 
+def test_floor_caller_withholds_table_only_from_silent() -> None:
+    wrapper = (ROOT / "tools" / "run_one_process_floor_axis.sh").read_text()
+    assert 'script_name != "silent_zero_tolerance.py"' in wrapper
+    for script in FLOOR_SCRIPTS:
+        assert "add_demand_table_arg" in (SCRIPTS / script).read_text()
+    silent = (SCRIPTS / "silent_zero_tolerance.py").read_text()
+    assert "add_demand_table_arg" not in silent
+
+
 def test_factory_workflow_enrolls_the_authenticated_table_artifact() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "Pull authenticated shared Python demand table" in workflow
