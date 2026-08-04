@@ -1263,12 +1263,38 @@ def test_session_module_materialize_amortizes_across_definitions(
     impl_hits = sum(
         1 for p in materializations["paths"] if str(p).endswith("implementation.py")
     )
-    assert impl_hits == 1, (
-        f"implementation module SourceFile count={impl_hits} (total "
-        f"{materializations['count']}, paths={materializations['paths']}); "
-        f"expected 1 under one session for {len(resolved)} definitions"
-    )
+    implementation_keys = [
+        key
+        for key in session.module_materializations
+        if key[-2] == "example_pkg.implementation"
+    ]
+    assert len(implementation_keys) == 1, implementation_keys
+    assert implementation_keys[0][-1] == "example_pkg/implementation.py"
     assert len(session.module_materializations) >= 1
+
+    # Seat identity is part of the materialized object.  A truthful repeat
+    # hits, while the same module under a different seat must miss rather
+    # than reuse a typed SourceFile carrying the wrong filename.
+    from sugar_lift_python_source.manager_construction import _module_materialize_key
+
+    module = graph.modules["example_pkg.implementation"]
+    same_seat = replace(module, source_seat=module.source_seat)
+    other_seat = replace(module, source_seat="alternate/implementation.py")
+    same_key = _module_materialize_key(
+        graph=graph, module=same_seat, dependency_graphs={}
+    )
+    repeat_key = _module_materialize_key(
+        graph=graph, module=module, dependency_graphs={}
+    )
+    other_key = _module_materialize_key(
+        graph=graph, module=other_seat, dependency_graphs={}
+    )
+    assert same_key == repeat_key
+    assert other_key != same_key
+    marker = object()
+    session.remember_module_materialize(same_key, marker)
+    assert session.module_materialize_hit(repeat_key) is marker
+    assert session.module_materialize_hit(other_key) is None
 
     # Discrimination: a fresh session re-materializes (isolation, not process memo).
     other = _session_enrolling_graph(graph)
@@ -1279,6 +1305,41 @@ def test_session_module_materialize_amortizes_across_definitions(
         resolve_source_visible_frame(resolved[0], graph=graph, session=other)
     finally:
         mc.SourceFile = original_sf  # type: ignore[misc, assignment]
-    assert (
-        materializations["count"] >= 1
-    ), "fresh session paid zero materialize; process-global memo returned"
+    other_implementation_keys = [
+        key
+        for key in other.module_materializations
+        if key[-2] == "example_pkg.implementation"
+    ]
+    assert len(other_implementation_keys) == 1, other_implementation_keys
+    assert other_implementation_keys[0][-1] == "example_pkg/implementation.py"
+
+
+def test_module_materialize_identity_binds_source_seat(tmp_path: Path) -> None:
+    """A same-seat repeat hits; a different seat cannot reuse the object."""
+    from sugar_lift_python_source.manager_construction import _module_materialize_key
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import alpha\n",
+        implementation_source="def alpha(value):\n    return value\n",
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    module = graph.modules["example_pkg.implementation"]
+    session = _session_enrolling_graph(graph)
+
+    same_key = _module_materialize_key(graph=graph, module=module, dependency_graphs={})
+    repeat_key = _module_materialize_key(
+        graph=graph, module=replace(module, source_seat=module.source_seat), dependency_graphs={}
+    )
+    other_key = _module_materialize_key(
+        graph=graph,
+        module=replace(module, source_seat="alternate/implementation.py"),
+        dependency_graphs={},
+    )
+    assert same_key == repeat_key
+    assert same_key != other_key
+
+    marker = object()
+    session.remember_module_materialize(same_key, marker)
+    assert session.module_materialize_hit(repeat_key) is marker
+    assert session.module_materialize_hit(other_key) is None

@@ -2139,7 +2139,7 @@ def _module_materialize_key(
     Per-definition frame projection still keys on the definition coordinate.
     Materializing the whole module per definition is what multiplied
     in-population megamodules (``pandas/_config/config.py`` ×18). Key is
-    artifact + dependency seats + source CID + module name — never process
+    artifact + dependency seats + source CID + module name + source seat — never process
     state; the session is the authority boundary.
     """
     return (
@@ -2152,6 +2152,7 @@ def _module_materialize_key(
         ),
         module.source_cid,
         module.module_name,
+        module.source_seat,
     )
 
 
