@@ -1074,8 +1074,7 @@ impl MintKit {
             };
 
             let response = session
-                .response_projection()
-                .clone_response_for_compatibility()
+                .clone_response_for_receipt()
                 .map_err(|error| KitError::Transformation(error.to_string()))?;
             assert_oracle_ready_if_requested(&step.surface, &response)
                 .map_err(KitError::Transformation)?;
@@ -1177,8 +1176,7 @@ impl MintKit {
                 }
             };
             let response = session
-                .response_projection()
-                .clone_response_for_compatibility()
+                .clone_response_for_receipt()
                 .map_err(|error| KitError::Transformation(error.to_string()))?;
             assert_oracle_ready_if_requested(&step.surface, &response)
                 .map_err(KitError::Transformation)?;
@@ -1260,8 +1258,7 @@ impl MintKit {
             };
 
             let response = session
-                .response_projection()
-                .clone_response_for_compatibility()
+                .clone_response_for_receipt()
                 .map_err(|error| KitError::Transformation(error.to_string()))?;
             assert_oracle_ready_if_requested(&step.surface, &response)
                 .map_err(KitError::Transformation)?;
@@ -1437,10 +1434,14 @@ fn finalize_toolchain_plan_memento(
                 elapsed_ms = cid_started.elapsed().as_millis(),
                 "lift-report graph progress"
             );
-            json!({
+            let mut receipt = json!({
                 "surface": output.surface,
                 "actualOutputCid": output_cid,
-            })
+            });
+            if let Some(identity) = output.response.get("loadedSourceIdentity") {
+                receipt["loadedSourceIdentity"] = identity.clone();
+            }
+            receipt
         })
         .collect();
     let expected_output_cids: Vec<Value> = tool_outputs
@@ -8301,6 +8302,19 @@ mod tests {
 
     #[test]
     fn finalize_toolchain_plan_adds_output_cids_to_the_letter_not_self_cids() {
+        let loaded_source_identity = json!({
+            "schema": "loaded-source-identity/v1",
+            "declared": [{
+                "subject": "python-source-kit",
+                "origin": "/checkout/sugar_lift_py_tests/__init__.py",
+                "contentCid": format!("blake3-512:{}", "a".repeat(128))
+            }],
+            "loaded": [{
+                "subject": "python-source-kit",
+                "origin": "/venv/sugar_lift_py_tests/__init__.py",
+                "contentCid": format!("blake3-512:{}", "a".repeat(128))
+            }]
+        });
         let base = json!({
             "kind": "component-plan",
             "schemaVersion": "1",
@@ -8316,7 +8330,8 @@ mod tests {
             response: json!({
                 "kind": "ir-document",
                 "ir": [],
-                "diagnostics": []
+                "diagnostics": [],
+                "loadedSourceIdentity": loaded_source_identity
             }),
         }];
 
@@ -8335,6 +8350,11 @@ mod tests {
                 .pointer("/toolOutputs/0/actualOutputCid")
                 .and_then(Value::as_str),
             Some(response_cid.as_str())
+        );
+        assert_eq!(
+            finalized.pointer("/toolOutputs/0/loadedSourceIdentity"),
+            Some(&loaded_source_identity),
+            "the durable plan receipt must carry what the Python plugin actually loaded"
         );
         assert!(
             finalized.get("planCid").is_none(),

@@ -4,7 +4,22 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
+
+_PYTHON_PACKAGE_PATHS: tuple[tuple[str, str], ...] = (
+    (
+        "sugar_lift_py_tests",
+        "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+    ),
+    (
+        "sugar_lift_python_source",
+        "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source",
+    ),
+    (
+        "sugar_source_tree",
+        "implementations/python/sugar-source-tree/src/sugar_source_tree",
+    ),
+)
 
 
 def _git(root: Path, *args: str) -> str | None:
@@ -82,6 +97,108 @@ def kit_package_roots() -> list[Path]:
         Path(sugar_lift_python_source.__file__).resolve().parent,
         Path(sugar_source_tree.__file__).resolve().parent,
     ]
+
+
+def _canonical_content_cid(root: Path) -> str:
+    """Content identity in the in-memory CID spelling, never path spelling."""
+    return _content_identity([root]).replace("blake3-512_", "blake3-512:", 1)
+
+
+def _loaded_package_origins() -> dict[str, Path]:
+    import sugar_lift_py_tests
+    import sugar_lift_python_source
+    import sugar_source_tree
+
+    modules = {
+        "sugar_lift_py_tests": sugar_lift_py_tests,
+        "sugar_lift_python_source": sugar_lift_python_source,
+        "sugar_source_tree": sugar_source_tree,
+    }
+    origins: dict[str, Path] = {}
+    for package, module in modules.items():
+        raw_origin = getattr(module, "__file__", None)
+        if not raw_origin:
+            raise RuntimeError(
+                "LoadedPythonSourceIdentityConstructionGapV1: "
+                f"loaded package {package!r} has no module origin"
+            )
+        origins[package] = Path(raw_origin).resolve()
+    return origins
+
+
+def _declared_package_roots(repo_root: Path | None = None) -> dict[str, Path]:
+    from sugar_lift_py_tests.repo_root import resolve_repo_root
+
+    root = Path(repo_root).resolve() if repo_root is not None else resolve_repo_root()
+    return {
+        package: (root / relative).resolve()
+        for package, relative in _PYTHON_PACKAGE_PATHS
+    }
+
+
+def _package_identity_rows(
+    roots: Mapping[str, Path], *, origins: Mapping[str, Path] | None = None
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for package in sorted(roots):
+        root = Path(roots[package]).resolve()
+        origin = (
+            Path(origins[package]).resolve()
+            if origins is not None
+            else (root / "__init__.py").resolve()
+        )
+        rows.append(
+            {
+                "subject": package,
+                "origin": str(origin),
+                "root": str(root),
+                "contentCid": _canonical_content_cid(root),
+            }
+        )
+    return rows
+
+
+def loaded_python_source_identity(
+    *,
+    declared_package_roots: Mapping[str, Path] | None = None,
+    loaded_package_origins: Mapping[str, Path] | None = None,
+) -> dict[str, object]:
+    """Describe the checkout declared by the run and packages actually loaded.
+
+    Origins are testimony, not identity: an installed copy may live at a
+    different path while carrying the same bytes. The consumer authenticates
+    the package roster and per-package content CIDs and retains both origin
+    inventories in the receipt.
+    """
+    declared = (
+        _declared_package_roots()
+        if declared_package_roots is None
+        else {
+            name: Path(root).resolve() for name, root in declared_package_roots.items()
+        }
+    )
+    loaded_origins = (
+        _loaded_package_origins()
+        if loaded_package_origins is None
+        else {
+            name: Path(origin).resolve()
+            for name, origin in loaded_package_origins.items()
+        }
+    )
+    if set(declared) != set(loaded_origins):
+        raise RuntimeError(
+            "LoadedPythonSourceIdentityConstructionGapV1: declared and loaded "
+            f"package rosters differ: declared={sorted(declared)!r} "
+            f"loaded={sorted(loaded_origins)!r}"
+        )
+    loaded_roots = {
+        package: origin.parent for package, origin in loaded_origins.items()
+    }
+    return {
+        "schema": "loaded-source-identity/v1",
+        "declared": _package_identity_rows(declared),
+        "loaded": _package_identity_rows(loaded_roots, origins=loaded_origins),
+    }
 
 
 def source_stamp_for_sugar_cli(repo_root: Path | None = None) -> str | None:
