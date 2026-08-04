@@ -26,32 +26,43 @@ showcase_run_with_terminal() {
   local entrance="$1"
   shift
   local diagnostic
+  local stdout_capture
+  local stderr_capture
   local command_status
   local had_errexit=0
-  diagnostic="$(mktemp -t sugar-showcase-terminal.XXXXXX)" || return 2
+  stdout_capture="$(mktemp -t sugar-showcase-stdout.XXXXXX)" || return 2
+  stderr_capture="$(mktemp -t sugar-showcase-stderr.XXXXXX)" || {
+    rm -f -- "${stdout_capture}"
+    return 2
+  }
+  diagnostic="$(mktemp -t sugar-showcase-terminal.XXXXXX)" || {
+    rm -f -- "${stdout_capture}" "${stderr_capture}"
+    return 2
+  }
 
   case "$-" in
     *e*) had_errexit=1 ;;
   esac
   set +e
-  "$@" 2>"${diagnostic}"
+  "$@" >"${stdout_capture}" 2>"${stderr_capture}"
   command_status=$?
   if [[ "${had_errexit}" -eq 1 ]]; then
     set -e
   fi
 
-  cat "${diagnostic}" >&2
+  cat "${stdout_capture}"
+  cat "${stderr_capture}" >&2
   if [[ "${command_status}" -ne 0 ]]; then
+    {
+      cat "${stdout_capture}"
+      cat "${stderr_capture}"
+    } >"${diagnostic}"
     showcase_terminal_identity \
       --rpc-diagnostic "${diagnostic}" \
       --repo-root "${_showcase_terminal_repo_root}" \
-      --entrance "${entrance}" || {
-        local identity_status=$?
-        rm -f -- "${diagnostic}"
-        return "${identity_status}"
-      }
+      --entrance "${entrance}" || true
   fi
 
-  rm -f -- "${diagnostic}"
+  rm -f -- "${stdout_capture}" "${stderr_capture}" "${diagnostic}"
   return "${command_status}"
 }
