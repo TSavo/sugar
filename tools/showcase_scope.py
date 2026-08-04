@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from showcase_terminal_identity import TERMINAL_WITNESS_ENV
+
 SCHEMA_VERSION = 1
 RETIREMENT_REASON = "out of scope per scope ruling - Java"
 SUBJECT_WITNESS_ENV = "SHOWCASE_SUBJECT_WITNESS"
@@ -295,14 +297,24 @@ def run_shard(
 
         log_path = attr_dir / _safe_log_name(path)
         witness_path = attr_dir / (_safe_log_name(path) + ".subject-witness")
+        terminal_witness_path = attr_dir / (
+            _safe_log_name(path) + ".terminal-witness"
+        )
         try:
             witness_path.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            terminal_witness_path.unlink()
         except FileNotFoundError:
             pass
         subject_id = path
         process_env = os.environ.copy()
         process_env[SUBJECT_WITNESS_ENV] = str(witness_path.resolve())
         process_env[SUBJECT_ID_ENV] = subject_id
+        # Producer rollout is deliberately additive.  The consumer does not
+        # interpret this file until the producer population has landed.
+        process_env[TERMINAL_WITNESS_ENV] = str(terminal_witness_path.resolve())
         try:
             proc = subprocess.run(
                 [str(repo_root / path)],
