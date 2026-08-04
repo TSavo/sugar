@@ -82,4 +82,3 @@ leave every long corpus measurement structurally tied to an agent turn.
 
 User systemd is already present, has `Linger=yes`, exposes structured cgroup
 ownership, and preserved both exit `0` and exit `23` in the measured prototype.
-
