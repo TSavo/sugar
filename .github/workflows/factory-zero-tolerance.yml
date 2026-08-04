@@ -435,7 +435,7 @@ jobs:
 
   floor-enrollment:
     name: floor-enrollment
-    needs: [process-floor, static-floors]
+    needs: [python-test-env-prepare, process-floor, static-floors]
     if: always()
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
@@ -443,6 +443,16 @@ jobs:
       PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: Download shared third-party wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-wheelhouse
+          path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Install declared environment from shared wheelhouse
+        id: floor-enrollment-env
+        uses: ./.github/actions/python-test-environment-from-wheelhouse
+        with:
+          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
       - name: "Phase: download axis reports"
         uses: actions/download-artifact@v4
         with:
@@ -456,7 +466,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "floor_enrollment phase=job status=start commit=$GITHUB_SHA"
-          python3 -u tools/sole_construction_floor_enrollment.py \
+          "${{ steps.floor-enrollment-env.outputs.python }}" -u tools/sole_construction_floor_enrollment.py \
             --check-attendance floor-axis-artifacts \
             --require-commit "${GITHUB_SHA}" \
             --write-campaign-body floor-measurement.json \
@@ -464,7 +474,7 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           # Fail attendance if incomplete (tool exit already).
           # Also fail if any residual-red axis attended: residual red is campaign red.
-          python3 -u - <<'PY'
+          "${{ steps.floor-enrollment-env.outputs.python }}" -u - <<'PY'
           import json, sys
           from pathlib import Path
           body = json.loads(Path("floor-measurement.json").read_text())

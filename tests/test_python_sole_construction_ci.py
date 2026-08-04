@@ -91,6 +91,26 @@ def test_workflow_is_parallel_matrix_not_serial_monolith() -> None:
     assert "uses: ./.github/actions/python-test-environment\n" not in process_job
 
 
+def test_floor_enrollment_uses_the_declared_shared_python_environment() -> None:
+    """The roll call must not inherit packages from an unrelated job's system Python."""
+    workflow = WORKFLOW.read_text()
+    enrollment_job = workflow.split("floor-enrollment:", 1)[1]
+
+    assert "python-test-env-prepare" in enrollment_job.split("steps:", 1)[0]
+    assert "name: python-test-wheelhouse" in enrollment_job
+    assert "uses: ./.github/actions/python-test-environment-from-wheelhouse" in (
+        enrollment_job
+    )
+    assert "id: floor-enrollment-env" in enrollment_job
+    assert (
+        '"${{ steps.floor-enrollment-env.outputs.python }}" -u '
+        "tools/sole_construction_floor_enrollment.py"
+    ) in enrollment_job
+    assert "python3 -u tools/sole_construction_floor_enrollment.py" not in (
+        enrollment_job
+    )
+
+
 def test_static_job_binds_every_static_axis() -> None:
     static = STATIC.read_text()
     for axis, command in STATIC_SCRIPTS.items():
