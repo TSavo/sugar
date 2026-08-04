@@ -15,7 +15,9 @@ from sugar_lift_py_tests import lift_rpc as lr
 from sugar_lift_py_tests.prebuilt_demand_table import (
     DemandTableArtifactRefusal,
     DemandTablePinMismatch,
+    PlanDemandTableRefusal,
     install_prebuilt_demand_table,
+    load_plan_bound_demand_table,
     load_prebuilt_demand_table,
     mint_prebuilt_demand_table,
     validate_prebuilt_demand_table,
@@ -126,6 +128,50 @@ def test_validator_refuses_table_for_different_corpus(tmp_path: Path) -> None:
         DemandTableSemanticIdentityMismatch, match="semantic identity mismatch"
     ):
         validate_prebuilt_demand_table(table, _authenticated(other))
+
+
+def test_plan_bound_load_missing_artifact_never_derives_locally(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    handle = _authenticated(corpus)
+    identity = mint_prebuilt_demand_table(handle).semantic_identity.as_dict()
+    lr.reset_preconstruction_walk_count()
+
+    with pytest.raises(
+        DemandTableArtifactRefusal, match="plan-demand-table-artifact-unavailable"
+    ):
+        load_plan_bound_demand_table(
+            tmp_path / "missing.json",
+            corpus=handle,
+            expected_content_cid="blake3-512:plan-table",
+            expected_semantic_identity=identity,
+        )
+
+    assert lr.preconstruction_walk_count() == 0
+
+
+def test_plan_bound_load_cid_mismatch_never_derives_replacement(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    handle = _authenticated(corpus)
+    table = mint_prebuilt_demand_table(handle)
+    path = write_prebuilt_demand_table(table, tmp_path / "table.json")
+    walks_before = lr.preconstruction_walk_count()
+
+    with pytest.raises(
+        PlanDemandTableRefusal, match="plan-demand-table-cid-mismatch"
+    ) as caught:
+        load_plan_bound_demand_table(
+            path,
+            corpus=handle,
+            expected_content_cid="blake3-512:different-table",
+            expected_semantic_identity=table.semantic_identity.as_dict(),
+        )
+
+    assert caught.value.observed_content_cid == table.content_cid
+    assert (
+        caught.value.observed_semantic_identity
+        == table.semantic_identity.as_dict()
+    )
+    assert lr.preconstruction_walk_count() == walks_before
 
 
 def test_cold_process_with_prebuilt_table_performs_zero_corpus_walks(

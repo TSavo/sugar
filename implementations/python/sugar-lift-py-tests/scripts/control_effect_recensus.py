@@ -1121,35 +1121,15 @@ def main() -> int:
     from sugar_lift_py_tests.prebuilt_demand_table import (
         DemandTableArtifactRefusal,
         DemandTablePinMismatch,
+        PlanDemandTableRefusal,
         install_prebuilt_demand_table,
+        load_plan_bound_demand_table,
         load_prebuilt_demand_table,
         mint_prebuilt_demand_table,
+        publish_prebuilt_demand_table,
+        validate_prebuilt_demand_table,
         write_prebuilt_demand_table,
     )
-
-    def publish_demand_table(table, path: Path) -> None:
-        """Publish the derived payload through the authenticated CAS door."""
-        repo_root = resolve_repo_root()
-        completed = subprocess.run(
-            [
-                str(repo_root / "bin" / "sugarbin"),
-                "artifact", "publish", "--kind", "python-demand-table",
-                "--content-key", table.content_cid, "--input", str(path),
-                "--runtime", "cpython-3.12.13",
-            ],
-            cwd=repo_root, capture_output=True, text=True, check=False,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout).strip()[:800]
-            raise DemandTableArtifactRefusal(
-                "python-demand-table CAS publication refused: "
-                f"contentCid={table.content_cid} exit={completed.returncode} "
-                f"detail={detail}"
-            )
-        _narrate(
-            "RECENSUS DEMAND_TABLE published CAS "
-            f"contentCid={table.content_cid} runtime=cpython-3.12.13"
-        )
 
     pin_identity = {
         "distribution": observed_pin.distribution,
@@ -1158,13 +1138,30 @@ def main() -> int:
         "aggregateHash": observed_pin.aggregate_hash,
     }
     demand_table_cid: str | None = None
+    demand_table_identity: Mapping[str, object] | None = None
     # Plan may carry demandTableCid / demandTablePath for shard workers.
     plan_demand_path = args.demand_table_path
     plan_demand_cid = None
     if shard_plan is not None:
         plan_demand_cid = shard_plan.get("demandTableCid")
+        plan_demand_identity = shard_plan.get("demandTableIdentity")
         if plan_demand_path is None and shard_plan.get("demandTablePath"):
             plan_demand_path = Path(str(shard_plan["demandTablePath"]))
+        if (
+            plan_demand_path is None
+            or not isinstance(plan_demand_cid, str)
+            or not isinstance(plan_demand_identity, Mapping)
+        ):
+            print(
+                "plan-demand-table-testimony-absent: shard plan must carry "
+                "demandTableCid and demandTableIdentity and workflow must supply "
+                "the exact demand-table artifact path",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 78
+    else:
+        plan_demand_identity = None
 
     if plan_demand_path is not None:
         _narrate(
@@ -1172,19 +1169,83 @@ def main() -> int:
             f"planCid={plan_demand_cid or 'none'}"
         )
         try:
-            prebuilt = load_prebuilt_demand_table(
-                plan_demand_path,
-                expected_corpus_pin=pin_identity,
-                expected_content_cid=plan_demand_cid,
+            from sugar_lift_py_tests.authenticated_pytest import (
+                authenticated_pandas_corpus,
             )
+
+            authenticated_corpus = authenticated_pandas_corpus()
+            if authenticated_corpus.root.resolve() != workspace_root.resolve():
+                raise DemandTableArtifactRefusal(
+                    "plan-demand-table-corpus-root-mismatch: "
+                    f"authenticated={authenticated_corpus.root} "
+                    f"worker={workspace_root}"
+                )
+            if shard_plan is not None:
+                prebuilt = load_plan_bound_demand_table(
+                    plan_demand_path,
+                    corpus=authenticated_corpus,
+                    expected_content_cid=str(plan_demand_cid),
+                    expected_semantic_identity=dict(plan_demand_identity),
+                )
+            else:
+                prebuilt = load_prebuilt_demand_table(
+                    plan_demand_path,
+                    expected_corpus_pin=pin_identity,
+                    expected_content_cid=plan_demand_cid,
+                )
+                validate_prebuilt_demand_table(prebuilt, authenticated_corpus)
         except (DemandTablePinMismatch, DemandTableArtifactRefusal) as refuse:
             print(str(refuse), file=sys.stderr, flush=True)
+            if shard_plan is not None:
+                # A shard that reached the plan but could not authenticate its
+                # assigned table still owes compose a receipt.  Preserve an
+                # observed lying claim when the artifact itself was readable;
+                # absence stays absent.  Compose can then distinguish mismatch
+                # from missing testimony instead of seeing a generic lost seat.
+                from compose_control_effect_board import mint_partial
+
+                observed_cid = (
+                    refuse.observed_content_cid
+                    if isinstance(refuse, PlanDemandTableRefusal)
+                    else None
+                )
+                observed_identity = (
+                    refuse.observed_semantic_identity
+                    if isinstance(refuse, PlanDemandTableRefusal)
+                    else None
+                )
+                assert args.shard_index is not None
+                partial = mint_partial(
+                    plan=shard_plan,
+                    shard_index=args.shard_index,
+                    terminal_rows=[],
+                    measured_commit=tip,
+                    status="unmeasured",
+                    unmeasured_reason=str(refuse),
+                    demand_table_cid=observed_cid,
+                    demand_table_identity=observed_identity,
+                    runtime_attestation=runtime_attestation,
+                )
+                partial_path = args.partial_out or (
+                    out / f"partial-s{args.shard_index:02d}.json"
+                )
+                partial_path.parent.mkdir(parents=True, exist_ok=True)
+                partial_path.write_text(
+                    json.dumps(partial, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                _narrate(
+                    "RECENSUS PARTIAL UNMEASURED demand-table authentication "
+                    f"shard={args.shard_index} reason={refuse} path={partial_path}"
+                )
+                return 2
             return 78
         contract_refs = _phase_call(
             "demand_table_load",
             lambda: install_prebuilt_demand_table(prebuilt, root=workspace_root),
         )
         demand_table_cid = prebuilt.content_cid
+        demand_table_identity = prebuilt.semantic_identity.as_dict()
         _narrate(
             "RECENSUS DEMAND_TABLE loaded "
             f"contentCid={demand_table_cid} rows={len(prebuilt.rows)} "
@@ -1231,7 +1292,11 @@ def main() -> int:
                 f"contentCid={table.content_cid}"
             )
             try:
-                publish_demand_table(table, write_path)
+                publish_prebuilt_demand_table(table, write_path)
+                _narrate(
+                    "RECENSUS DEMAND_TABLE published CAS "
+                    f"contentCid={table.content_cid} runtime=cpython-3.12.13"
+                )
             except DemandTableArtifactRefusal as refuse:
                 # Derivation is authenticated product input; CAS publication
                 # is only a sharing optimisation. Keep the local table, but
@@ -1243,9 +1308,9 @@ def main() -> int:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
             refs = install_prebuilt_demand_table(table, root=workspace_root)
-            return refs, table.content_cid
+            return refs, table.content_cid, table.semantic_identity.as_dict()
 
-        contract_refs, demand_table_cid = _phase_call(
+        contract_refs, demand_table_cid, demand_table_identity = _phase_call(
             "demand_table_derivation",
             _derive_and_maybe_write,
         )
@@ -1907,6 +1972,8 @@ def main() -> int:
             shard_index=args.shard_index,
             terminal_rows=measured_rows,
             measured_commit=tip_commit,
+            demand_table_cid=demand_table_cid,
+            demand_table_identity=demand_table_identity,
             runtime_attestation=runtime_attestation,
         )
         partial_path = args.partial_out or (
@@ -1955,6 +2022,8 @@ def main() -> int:
         },
         with_census_fn=_with_census_partition,
         manifest_cid=checkpoint.manifest_cid,
+        demand_table_cid=demand_table_cid,
+        demand_table_identity=demand_table_identity,
         runtime_attestation=runtime_attestation,
     )
     if seal_status != "sealed":

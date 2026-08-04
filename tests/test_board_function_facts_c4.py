@@ -32,6 +32,10 @@ if str(PKG_SRC) not in sys.path:
     sys.path.insert(0, str(PKG_SRC))
 
 from sugar_lift_py_tests.c4 import board_function_facts as BFF  # noqa: E402
+from sugar_lift_py_tests.demand_table_identity import (  # noqa: E402
+    DemandTableIdentityV1,
+)
+from sugar_lift_python_source.canonical import cid_of_json  # noqa: E402
 
 SCRIPTS = ROOT / "implementations/python/sugar-lift-py-tests/scripts"
 
@@ -47,6 +51,31 @@ def _load(name: str, path: Path):
 
 TIP = "deadbeef"
 PIN = "pin-agg-hash-test"
+
+
+def _demand_table_kwargs() -> dict[str, object]:
+    identity = DemandTableIdentityV1(
+        content_key="",
+        corpus_manifest_cid="blake3-512:test-corpus",
+        schema_version="python-demand-table/v1",
+        producer_source_cid="blake3-512:test-producer",
+        resolution_config_cid="blake3-512:test-config",
+        parser_identity="cpython-3.12",
+        file_count=2,
+    )
+    identity = DemandTableIdentityV1(
+        content_key=cid_of_json(dict(identity.preimage())),
+        corpus_manifest_cid=identity.corpus_manifest_cid,
+        schema_version=identity.schema_version,
+        producer_source_cid=identity.producer_source_cid,
+        resolution_config_cid=identity.resolution_config_cid,
+        parser_identity=identity.parser_identity,
+        file_count=identity.file_count,
+    )
+    return {
+        "demand_table_cid": "blake3-512:test-table",
+        "demand_table_identity": identity.as_dict(),
+    }
 
 
 def _mint_triple(
@@ -324,6 +353,7 @@ def test_compose_seal_uses_three_sealed_meanings() -> None:
         measured_commit="deadbeef",
         aggregate_hash="agg",
         manifest_shape_cid="cid",
+        **_demand_table_kwargs(),
     )
     assert status == "sealed"
     assert body["functionsTotal"] == 5
