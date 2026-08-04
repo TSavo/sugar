@@ -41,3 +41,4 @@ if "unsatisfied" not in statuses and not (statuses & {"unsat", "contradictory", 
     sys.exit(1)
 print("==== uuid-bytes-length logo: PASS (dual unsatisfied) ====")
 INNER
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

@@ -191,3 +191,4 @@ echo
 echo "==================== SELF-CHECK PASSED ===================="
 echo "good/ : passing suite -> witness package DISCHARGES + CID reproduces."
 echo "bad/  : failing test  -> witness package REFUSED (cannot witness wrong-running code)."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

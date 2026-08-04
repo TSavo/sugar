@@ -104,3 +104,4 @@ echo
 echo "==================== SELF-CHECK PASSED ===================="
 echo "good/ : SAT assertion invariant -> discharged consistency row."
 echo "bad/  : UNSAT assertion invariant -> refused consistency row."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

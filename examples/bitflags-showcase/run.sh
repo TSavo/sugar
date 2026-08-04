@@ -148,3 +148,4 @@ run_suite bad REFUSE REFUSE
 
 echo
 echo "== bitflags 2.6.0 showcase: PASS =="
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

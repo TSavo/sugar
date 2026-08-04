@@ -203,3 +203,4 @@ run_suite good discharged discharged
 run_suite bad refused refused
 
 echo "tokio mutex implication edge showcase self-check passed"
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

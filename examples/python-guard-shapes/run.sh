@@ -118,3 +118,4 @@ if status == "discharged" or status == "MISSING":
     print("FAIL: lying discharge stdout flipped guard-shapes to discharged")
     sys.exit(1)
 PY
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

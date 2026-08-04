@@ -189,3 +189,4 @@ if [ "$fail" -ne 0 ]; then
 fi
 echo "==== itsdangerous logo receipt: PASS ===="
 echo "GOOD discharged; BAD unsatisfied (padding); WRONG-UNPADDED discharged (out of scope)."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

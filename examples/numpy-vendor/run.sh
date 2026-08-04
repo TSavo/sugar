@@ -157,3 +157,4 @@ PY
 
 echo "== VERIFY (consumer): rust recomputes; the kit oracle is untrusted =="
 PATH="$VENV/bin:$PATH" "$BIN" verify --project .
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

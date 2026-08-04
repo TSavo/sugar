@@ -31,8 +31,16 @@ def _green_showcase_body(shard_index: int, shard_count: int = 4) -> dict:
             "retired": 0,
             "passed": 1,
             "failed": 0,
+            "unmeasured": 0,
         },
-        "showcaseOutcomes": [{"path": path, "outcome": "passed", "exitCode": 0}],
+        "showcaseOutcomes": [
+            {
+                "path": path,
+                "outcome": "passed",
+                "exitCode": 0,
+                "subjectWitness": {"schemaVersion": 1, "subjectId": path},
+            }
+        ],
     }
 
 

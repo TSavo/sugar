@@ -178,3 +178,4 @@ echo "good/       : matching subjects are members of the walked regex language -
 echo "              (incl. const-string and concat! patterns — the pattern composes through a child desugar)."
 echo "bad/        : a non-matching subject is refuted by z3 str.in_re membership -> the teeth."
 echo "nonregular/ : a non-regular feature (backref/lookahead) is refused BY NAME -> no row, the floor stands."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

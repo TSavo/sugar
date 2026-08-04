@@ -172,3 +172,4 @@ run_suite bad REFUSE REFUSE
 
 echo
 echo "== itertools 0.14.0 showcase: PASS =="
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

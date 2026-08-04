@@ -227,3 +227,4 @@ if [ "$fail" -ne 0 ]; then
 fi
 echo "==== python-literal-base64: PASS ===="
 echo "encodeBase64(\"abc\") is proved through sugar mint/prove/verify with SMT, witness package verification, and lying-discharge guard."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

@@ -118,3 +118,4 @@ if [ "$fail" -ne 0 ]; then echo "==== python-base64-federation: FAIL ===="; exit
 echo "==== python-base64-federation: PASS ===="
 echo "A consumer's claim about base64 is decided SAT/UNSAT by conjoining the vendor's"
 echo "fact + universe (from the staged .proof) with the consumer's fact -- no re-derivation."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

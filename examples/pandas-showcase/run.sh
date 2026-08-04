@@ -185,3 +185,4 @@ if [ "$fail" -eq 0 ]; then
 else
   echo "FAIL: sugar did not produce the expected verdict."; exit 1
 fi
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"
