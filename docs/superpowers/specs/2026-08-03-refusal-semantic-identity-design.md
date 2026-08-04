@@ -43,6 +43,13 @@ Hockney measured three distinct sensitivity classes before this design:
 | identifier or call-shape change | rekeys surviving meaning | `self.site` to `site`; direct `RaiseEffect(...)` to `RaiseEffect.for_builtin(...)` |
 | line joining or splitting | rekeys surviving meaning | a 366-file sweep joined a two-line `CacheRefuse` into one line, producing net `-1` |
 
+The 47-file result was true of that Black sweep and false as a general claim of
+source-rewrite invariance. It happened to change whitespace only within lines. The
+roughly eight-times-larger 366-file sweep also joined lines and exposed the third
+sensitivity class. Thus zero movement in the first sweep authenticates only the
+within-line-whitespace boundary; it is not evidence that normalized-text identity
+survives arbitrary formatting or source-layout changes.
+
 The pinned comparison contained 105 new and 11 stale rows. Exhaustive history
 authenticated three new rows and three stale rows as the two sides of spelling-only
 churn. Thus 3/105 new rows (2.9%) and 3/11 stale rows (27.3%) are confirmed identity
