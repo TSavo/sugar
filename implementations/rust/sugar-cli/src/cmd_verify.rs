@@ -1975,6 +1975,7 @@ mod tests {
             discharge_method: None,
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         });
         report
     }

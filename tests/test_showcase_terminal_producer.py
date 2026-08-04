@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import showcase_terminal_identity  # noqa: E402
 import showcase_scope  # noqa: E402
+from tools.showcase import durable_consistency  # noqa: E402
 
 
 IDENTITY = {
@@ -53,6 +54,14 @@ RAW_STRUCTURED_NON_EQ_PRODUCERS = (
     "examples/python-literal-base20/run.sh",
     "examples/python-literal-base64/run.sh",
     "examples/numpy-attribute-safety-showcase/run.sh",
+)
+
+
+VERIFY_EFFECT_PRODUCERS = (
+    "examples/url-showcase/run.sh",
+    "examples/semver-showcase/run.sh",
+    "examples/num-integer-showcase/run.sh",
+    "examples/bitflags-showcase/run.sh",
 )
 
 
@@ -171,6 +180,164 @@ def test_rpc_terminal_projection_refuses_generic_error_without_owner(
             repo_root=tmp_path,
             entrance="sugar.mint",
         )
+
+
+def _verification_row(
+    *,
+    status: str,
+    verify_effect: object = ...,
+    property_name: str = "consistency:fixture::claim",
+    property_cid: str = "blake3-512_fixture",
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "status": status,
+        "property": property_name,
+        "propertyCid": property_cid,
+    }
+    if verify_effect is not ...:
+        row["verifyEffect"] = verify_effect
+    return row
+
+
+def test_verification_receipt_selector_preserves_exact_effect_variant() -> None:
+    no_sibling = _verification_row(
+        status="refused",
+        verify_effect={
+            "state": "effect",
+            "effect": {
+                "kind": "no-sibling-to-contradict",
+                "contractCid": "blake3-512_contract",
+                "propertyName": "consistency:fixture::claim",
+                "constraintCount": 1,
+            },
+        },
+    )
+    missing_kind = _verification_row(
+        status="refused",
+        verify_effect={
+            "state": "effect",
+            "effect": {
+                "kind": "missing-independent-kind-witness",
+                "contractCid": "blake3-512_contract",
+                "propertyName": "consistency:fixture::claim",
+            },
+        },
+    )
+
+    first = showcase_terminal_identity.select_verification_receipt_terminal(
+        [no_sibling], entrance="sugar.verify"
+    )
+    second = showcase_terminal_identity.select_verification_receipt_terminal(
+        [missing_kind], entrance="sugar.verify"
+    )
+
+    assert first.identity == {
+        "schemaVersion": 1,
+        "kind": "verify-effect:no-sibling-to-contradict",
+        "owner": "consistency:fixture::claim",
+        "coordinate": "blake3-512_fixture",
+        "entrance": "sugar.verify",
+    }
+    assert second.identity["kind"] == (
+        "verify-effect:missing-independent-kind-witness"
+    )
+    assert first.identity["kind"] != second.identity["kind"]
+
+
+def test_verification_receipt_selector_names_dropped_refused_effect() -> None:
+    with pytest.raises(
+        showcase_terminal_identity.TerminalIdentityRefusal,
+        match="refused verification row has no verifyEffect carrier",
+    ):
+        showcase_terminal_identity.select_verification_receipt_terminal(
+            [_verification_row(status="refused")],
+            entrance="sugar.verify",
+        )
+
+
+def test_verification_receipt_selector_constructs_positive_no_terminal() -> None:
+    result = showcase_terminal_identity.select_verification_receipt_terminal(
+        [
+            _verification_row(
+                status="discharged",
+                verify_effect={"state": "no-effect"},
+            )
+        ],
+        entrance="sugar.verify",
+    )
+
+    assert result.row_count == 1
+    assert not hasattr(result, "identity")
+
+
+def test_substantive_refusal_publishes_effect_before_existing_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "terminal.json"
+    monkeypatch.setenv("SHOWCASE_TERMINAL_WITNESS", str(output))
+    row = _verification_row(
+        status="refused",
+        verify_effect={
+            "state": "effect",
+            "effect": {
+                "kind": "no-sibling-to-contradict",
+                "propertyName": "consistency:fixture::claim",
+                "constraintCount": 1,
+            },
+        },
+    )
+
+    with pytest.raises(SystemExit, match="expected substantive"):
+        durable_consistency.require_substantive_discharge(
+            [row], suite="fixture", entrance="sugar.verify"
+        )
+
+    terminal_state = json.loads(output.read_text(encoding="utf-8"))
+    assert terminal_state["schemaVersion"] == 1
+    assert terminal_state["state"] == "witnessed"
+    assert terminal_state["terminalIdentity"]["kind"] == (
+        "verify-effect:no-sibling-to-contradict"
+    )
+
+
+def test_substantive_discharge_does_not_publish_a_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "terminal.json"
+    monkeypatch.setenv("SHOWCASE_TERMINAL_WITNESS", str(output))
+    row = _verification_row(
+        status="discharged",
+        verify_effect={"state": "no-effect"},
+    )
+
+    assert durable_consistency.require_substantive_discharge(
+        [row], suite="fixture", entrance="sugar.verify"
+    ) == ["discharged"]
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("relative_path", VERIFY_EFFECT_PRODUCERS)
+def test_bulk_verify_effect_producer_binds_both_receipt_entrances(
+    relative_path: str,
+) -> None:
+    script = (ROOT / relative_path).read_text(encoding="utf-8")
+
+    assert script.count('entrance="sugar.prove"') == 1
+    assert script.count('entrance="sugar.verify"') == 1
+
+
+def test_std_core_string_effect_producer_binds_selected_failed_rows() -> None:
+    script = (
+        ROOT / "examples/std-core-string-predicates/run.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "from tools.showcase_terminal_identity import " in script
+    assert (
+        'publish_verification_receipt_terminal(failed_good, entrance="sugar.verify")'
+        in script
+    )
 
 
 def test_scope_runner_supplies_additive_channel_without_consuming_it(

@@ -516,15 +516,7 @@ impl Runner {
                     n_residue.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            report_stage::add_consistency_with_verification(
-                &cr.contract_cid,
-                &cr.property_name,
-                cr.verdict,
-                &cr.reason,
-                cr.verification.as_ref().map(|v| v.to_json()),
-                cr.locus.clone(),
-                &mut report,
-            );
+            report_stage::add_consistency_result(cr, &mut report);
         }
         report_stage::add_toolchain_plans(&pool, &mut report);
 
@@ -809,15 +801,7 @@ impl Runner {
                     n_residue.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            report_stage::add_consistency_with_verification(
-                &cr.contract_cid,
-                &cr.property_name,
-                cr.verdict,
-                &cr.reason,
-                cr.verification.as_ref().map(|v| v.to_json()),
-                cr.locus.clone(),
-                &mut report,
-            );
+            report_stage::add_consistency_result(cr, &mut report);
         }
         report_stage::add_toolchain_plans(&pool, &mut report);
 

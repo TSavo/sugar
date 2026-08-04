@@ -5,6 +5,8 @@
 
 use serde_json::{json, Value as Json};
 
+use crate::consistency::ConsistencyResult;
+use crate::effects::VerifyEffectCarrier;
 use crate::types::{
     CallSite, LoadError, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
     SourceLocus, ToolchainPlanReport,
@@ -34,6 +36,7 @@ pub fn row_to_json(row: &ReportRow) -> Json {
         "dischargeMethod": row.discharge_method,
         "bodyDischargeTier": row.body_discharge_tier,
         "verification": verification_with_fol(row.verification.as_ref()),
+        "verifyEffect": row.verify_effect,
         "file": row.callsite.file,
         "line": row.callsite.line,
         "column": row.callsite.source_column,
@@ -73,6 +76,7 @@ pub fn add_callsite_with_discharge(
         discharge_method,
         body_discharge_tier,
         verification: None,
+        verify_effect: VerifyEffectCarrier::NoEffect,
     });
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
@@ -124,6 +128,7 @@ pub fn add_self_post_with_method(
         discharge_method,
         body_discharge_tier: None,
         verification: None,
+        verify_effect: VerifyEffectCarrier::NoEffect,
     });
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
@@ -153,7 +158,31 @@ pub fn add_consistency(
     reason: &str,
     r: &mut Report,
 ) {
-    add_consistency_with_verification(contract_cid, property_name, verdict, reason, None, None, r);
+    add_consistency_with_verification(
+        contract_cid,
+        property_name,
+        verdict,
+        reason,
+        VerifyEffectCarrier::from_producer(verdict, None),
+        None,
+        None,
+        r,
+    );
+}
+
+/// Project one constructed consistency result through the sole report door.
+/// Taking the whole producer value prevents callers from omitting its effect.
+pub fn add_consistency_result(result: &ConsistencyResult, r: &mut Report) {
+    add_consistency_with_verification(
+        &result.contract_cid,
+        &result.property_name,
+        result.verdict,
+        &result.reason,
+        VerifyEffectCarrier::from_producer(result.verdict, result.effect.as_ref()),
+        result.verification.as_ref().map(|value| value.to_json()),
+        result.locus.clone(),
+        r,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -162,6 +191,7 @@ pub fn add_consistency_with_verification(
     property_name: &str,
     verdict: ObligationVerdict,
     reason: &str,
+    verify_effect: VerifyEffectCarrier,
     verification: Option<Json>,
     locus: Option<SourceLocus>,
     r: &mut Report,
@@ -189,6 +219,7 @@ pub fn add_consistency_with_verification(
         discharge_method: Some("consistency".to_string()),
         body_discharge_tier: None,
         verification,
+        verify_effect,
     });
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
@@ -729,6 +760,8 @@ fn fol_line(rendered: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consistency::ConsistencyResult;
+    use crate::effects::VerifyEffect;
     use serde_json::json;
 
     fn cid(seed: &str) -> MementoCid {
@@ -738,6 +771,85 @@ mod tests {
 
     fn cid_string(seed: &str) -> String {
         cid(seed).to_string()
+    }
+
+    fn consistency_result(
+        verdict: ObligationVerdict,
+        effect: Option<VerifyEffect>,
+    ) -> ConsistencyResult {
+        ConsistencyResult {
+            contract_cid: cid_string("effect-carrier"),
+            property_name: "method:contains#euf#fixture::assertion".to_string(),
+            verdict,
+            reason: "fixture refusal".to_string(),
+            effect,
+            witnessed: false,
+            verification: None,
+            locus: None,
+            dropped_ambient_posts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn verify_effect_carrier_preserves_the_exact_variant() {
+        let no_sibling = consistency_result(
+            ObligationVerdict::Refused,
+            Some(VerifyEffect::NoSiblingToContradict {
+                contract_cid: cid_string("effect-carrier"),
+                property_name: "method:contains#euf#fixture::assertion".to_string(),
+                constraint_count: 1,
+            }),
+        );
+        let independent_kind = consistency_result(
+            ObligationVerdict::Refused,
+            Some(VerifyEffect::MissingIndependentKindWitness {
+                contract_cid: cid_string("effect-carrier"),
+                property_name: "method:contains#euf#fixture::assertion".to_string(),
+            }),
+        );
+
+        let wire = |result: &ConsistencyResult| {
+            let mut report = Report::default();
+            add_consistency_result(result, &mut report);
+            row_to_json(&report.rows[0])
+        };
+        let no_sibling_wire = wire(&no_sibling);
+        let independent_kind_wire = wire(&independent_kind);
+
+        assert_eq!(no_sibling_wire["verifyEffect"]["state"], "effect");
+        assert_eq!(
+            no_sibling_wire["verifyEffect"]["effect"]["kind"],
+            "no-sibling-to-contradict"
+        );
+        assert_eq!(
+            independent_kind_wire["verifyEffect"]["effect"]["kind"],
+            "missing-independent-kind-witness"
+        );
+        assert_ne!(
+            no_sibling_wire["verifyEffect"], independent_kind_wire["verifyEffect"],
+            "the carrier must not flatten distinct VerifyEffect variants"
+        );
+    }
+
+    #[test]
+    fn verify_effect_carrier_states_no_effect_positively() {
+        let result = consistency_result(ObligationVerdict::Discharged, None);
+        let mut report = Report::default();
+        add_consistency_result(&result, &mut report);
+
+        assert_eq!(
+            row_to_json(&report.rows[0])["verifyEffect"],
+            json!({"state": "no-effect"})
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "refused ConsistencyResult lost its VerifyEffect")]
+    fn verify_effect_carrier_refuses_a_dropped_refused_effect() {
+        let dropped = consistency_result(ObligationVerdict::Refused, None);
+        let mut report = Report::default();
+
+        add_consistency_result(&dropped, &mut report);
     }
 
     #[test]
@@ -752,6 +864,7 @@ mod tests {
             "encodeBase64#euf#c:call:encodeBase64(s:'xyz')::assertion",
             ObligationVerdict::Unsatisfied,
             "test assertions contradictory about callsite",
+            VerifyEffectCarrier::NoEffect,
             None,
             Some(SourceLocus {
                 file: "test_consumer.py".to_string(),
@@ -800,6 +913,7 @@ mod tests {
             "tests/consumer_test.rs::consumer_asserts_block_width_at_3::block_width#euf#c:callresult_block_width_a1(i:3)::assertion",
             ObligationVerdict::Unsatisfied,
             "contradictory",
+            VerifyEffectCarrier::NoEffect,
             Some(json!({
                 "kind": "consistency",
                 "linkedPosts": [{
@@ -874,6 +988,7 @@ mod tests {
             "some::assertion",
             ObligationVerdict::Unsatisfied,
             "contradictory",
+            VerifyEffectCarrier::NoEffect,
             Some(json!({
                 "kind": "consistency",
                 "linkedPosts": [{

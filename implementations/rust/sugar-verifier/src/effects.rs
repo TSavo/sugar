@@ -8,6 +8,7 @@
 
 use std::fmt;
 
+use serde::Serialize;
 use serde_json::{json, Value as Json};
 
 use crate::types::ObligationVerdict;
@@ -24,7 +25,12 @@ pub struct VerifyEffectBoundary {
     pub verification: Option<Json>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum VerifyEffect {
     MissingProvenanceKind {
         contract_cid: String,
@@ -66,7 +72,12 @@ pub enum VerifyEffect {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum WitnessDischargeGround {
     PackageRecompute {
         error: String,
@@ -80,7 +91,12 @@ pub enum WitnessDischargeGround {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum WitnessVerificationCheck {
     ComponentPlanFailed { reason: String },
     EnvelopeIntegrityMismatch,
@@ -95,6 +111,39 @@ pub enum WitnessVerificationOutcome {
     Verified { resolved_by: String },
     Refused(VerifyEffect),
     BrokenOracle { reason: String },
+}
+
+/// Total report-wire seat for verifier effects.
+///
+/// `Option<VerifyEffect>` is authoritative inside `ConsistencyResult`: `None`
+/// there means the producer constructed a result with no effect.  It is not a
+/// lawful transport, because omitting the field at a projection boundary also
+/// looks like `None`.  Every report row therefore states either the exact
+/// variant or positive no-effect testimony.  There is no not-carried arm.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", content = "effect", rename_all = "kebab-case")]
+pub enum VerifyEffectCarrier {
+    Effect(VerifyEffect),
+    NoEffect,
+}
+
+impl VerifyEffectCarrier {
+    pub fn from_producer(verdict: ObligationVerdict, effect: Option<&VerifyEffect>) -> Self {
+        match effect {
+            Some(effect) => {
+                assert_eq!(
+                    effect.to_legacy_boundary().verdict,
+                    verdict,
+                    "ConsistencyResult verdict disagrees with its VerifyEffect"
+                );
+                Self::Effect(effect.clone())
+            }
+            None if verdict == ObligationVerdict::Refused => {
+                panic!("refused ConsistencyResult lost its VerifyEffect")
+            }
+            None => Self::NoEffect,
+        }
+    }
 }
 
 impl VerifyEffect {

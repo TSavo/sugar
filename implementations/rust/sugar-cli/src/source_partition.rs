@@ -716,6 +716,7 @@ mod tests {
             discharge_method: None,
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         }];
         let entries = row_line_accounting(&rows);
         assert_eq!(entries.len(), 1);
@@ -736,6 +737,7 @@ mod tests {
             discharge_method: None,
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         }];
         assert!(row_line_accounting(&rows).is_empty());
     }
@@ -754,6 +756,7 @@ mod tests {
             discharge_method: None,
             body_discharge_tier: None,
             verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
         }];
         let entries = row_line_accounting(&rows);
         assert_eq!(entries.len(), 1);

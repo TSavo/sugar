@@ -7,6 +7,8 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as Json;
 
+use crate::effects::VerifyEffectCarrier;
+
 pub use sugar_proof_envelope::{
     compute_formula_cid, AnchoredMember, AtomCid, BundleScopedCallsiteKey, ContractBodyCid,
     EffectSiteAnnotation, ImplicationKey, ImplicationResult, LoadError, MemberKind, MementoCid,
@@ -292,6 +294,7 @@ pub struct ReportRow {
     pub discharge_method: Option<String>,
     pub body_discharge_tier: Option<String>,
     pub verification: Option<Json>,
+    pub verify_effect: VerifyEffectCarrier,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
