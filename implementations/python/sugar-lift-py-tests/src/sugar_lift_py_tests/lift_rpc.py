@@ -43,7 +43,10 @@ from sugar_lift_py_tests.kit_rpc import (
     SuppressedAuditLocusDto,
 )
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
-from sugar_lift_py_tests.source_provenance import kit_source_provenance
+from sugar_lift_py_tests.source_provenance import (
+    kit_source_provenance,
+    loaded_python_source_identity,
+)
 from sugar_source_tree.panic import SourceTreePanic
 
 KIT_ID = "python"
@@ -2948,6 +2951,7 @@ def _handle_initialize(msg_id: Any) -> None:
                 "kit_id": KIT_ID,
                 "component_protocol_version": COMPONENT_PROTOCOL_VERSION,
                 "kit_source": kit_source_provenance(),
+                "loaded_source_identity": loaded_python_source_identity(),
             },
         }
     )

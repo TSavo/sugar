@@ -34,6 +34,7 @@ pub(crate) struct LiftPluginSession {
     pub claim: DomainClaim,
     #[allow(dead_code)] // consumed by the binary-only cmd_lift report provenance gate
     pub initialize_response: Option<Value>,
+    pub loaded_source_identity: Option<Value>,
 }
 
 impl LiftPluginSession {
@@ -42,7 +43,26 @@ impl LiftPluginSession {
         Ok(Self {
             claim,
             initialize_response: None,
+            loaded_source_identity: None,
         })
+    }
+
+    pub(crate) fn clone_response_for_receipt(&self) -> Result<Value, LiftPluginError> {
+        let mut response = self
+            .response_projection()
+            .clone_response_for_compatibility()?;
+        if let Some(identity) = self.loaded_source_identity.as_ref() {
+            let object = response.as_object_mut().ok_or_else(|| {
+                LiftPluginError::diagnostic(
+                    LiftPluginDiagnosticKind::InvalidResponsePayload,
+                    "DomainClaim.payload",
+                    "accepted loaded-source identity cannot be attached to a non-object response",
+                    "Emit an object-shaped lift response so authenticated loaded-source testimony can enter the durable receipt.",
+                )
+            })?;
+            object.insert("loadedSourceIdentity".to_string(), identity.clone());
+        }
+        Ok(response)
     }
 
     pub(crate) fn response_projection(&self) -> LiftResponseProjection<'_> {
@@ -272,7 +292,7 @@ pub(crate) fn dispatch_lift(
         );
     }
 
-    let initialize_response = if surface == "python" {
+    let (initialize_response, loaded_source_identity) = if surface == "python" {
         let rendezvous = Kit::rendezvous(LiftManifest::resolved(
             surface.to_string(),
             manifest.name.clone(),
@@ -282,10 +302,14 @@ pub(crate) fn dispatch_lift(
             manifest.method.clone(),
         ))
         .map_err(lift_error_from_rendezvous)?;
-        enforce_python_kit_source(surface, rendezvous.initialize_response())?;
-        Some(rendezvous.initialize_response().clone())
+        let loaded_source_identity =
+            enforce_python_kit_source(surface, rendezvous.initialize_response())?;
+        (
+            Some(rendezvous.initialize_response().clone()),
+            loaded_source_identity,
+        )
     } else {
-        None
+        (None, None)
     };
 
     let lift_params = build_lift_params(project_root, surface, options);
@@ -330,6 +354,7 @@ pub(crate) fn dispatch_lift(
 
     let mut session = LiftPluginSession::from_claim(core_session.claim)?;
     session.initialize_response = initialize_response.or(Some(core_session.initialize_response));
+    session.loaded_source_identity = loaded_source_identity;
     Ok(session)
 }
 
@@ -397,7 +422,7 @@ pub(crate) fn dispatch_lift_path(
     ));
 
     let initialize_response = kit.initialize_response().clone();
-    enforce_python_kit_source(surface, &initialize_response)?;
+    let loaded_source_identity = enforce_python_kit_source(surface, &initialize_response)?;
     let before = current_rss_kib();
 
     // There is no lift RPC. Full-tree "lift" is enumerate(SourceTree) via
@@ -439,6 +464,7 @@ pub(crate) fn dispatch_lift_path(
     trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", &claim);
     let mut session = LiftPluginSession::from_claim(claim)?;
     session.initialize_response = Some(initialize_response);
+    session.loaded_source_identity = loaded_source_identity;
     Ok(session)
 }
 
@@ -520,12 +546,144 @@ fn binary_source_stamp() -> &'static str {
     option_env!("SUGAR_BUILD_STAMP").unwrap_or("unknown")
 }
 
+#[derive(Debug, Deserialize)]
+struct LoadedSourceIdentityV1 {
+    schema: String,
+    declared: Vec<LoadedSourceIdentityEntryV1>,
+    loaded: Vec<LoadedSourceIdentityEntryV1>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoadedSourceIdentityEntryV1 {
+    subject: String,
+    origin: String,
+    content_cid: String,
+}
+
+fn loaded_source_identity_refusal(name: &str, detail: impl std::fmt::Display) -> LiftPluginError {
+    LiftPluginError::SplitPipeline(format!("{name}: {detail}"))
+}
+
+fn content_cid_is_well_formed(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("blake3-512:") else {
+        return false;
+    };
+    hex.len() == 128 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Authenticate a source kit's generic declared/loaded identity relation.
+///
+/// The producer owns language-specific origin discovery. This boundary knows
+/// only opaque subjects, their observed origins, and their content CIDs, so a
+/// source kit for any language can satisfy the same contract.
+fn authenticate_loaded_source_identity(
+    initialize_response: &Value,
+) -> Result<Option<Value>, LiftPluginError> {
+    if initialize_response.get("kit_source").is_none() {
+        return Ok(None);
+    }
+    let testimony = initialize_response
+        .get("loaded_source_identity")
+        .ok_or_else(|| {
+            loaded_source_identity_refusal(
+                "LoadedSourceIdentityAbsentV1",
+                "source-authenticated kit initialize response carried no loaded-source identity",
+            )
+        })?;
+    let parsed: LoadedSourceIdentityV1 =
+        serde_json::from_value(testimony.clone()).map_err(|error| {
+            loaded_source_identity_refusal(
+                "LoadedSourceIdentityMismatchV1",
+                format!("loaded-source testimony is malformed: {error}"),
+            )
+        })?;
+    if parsed.schema != "loaded-source-identity/v1" {
+        return Err(loaded_source_identity_refusal(
+            "LoadedSourceIdentityMismatchV1",
+            format!(
+                "unsupported loaded-source schema {:?}; expected loaded-source-identity/v1",
+                parsed.schema
+            ),
+        ));
+    }
+
+    fn indexed<'a>(
+        side: &str,
+        entries: &'a [LoadedSourceIdentityEntryV1],
+    ) -> Result<std::collections::BTreeMap<&'a str, &'a LoadedSourceIdentityEntryV1>, LiftPluginError>
+    {
+        if entries.is_empty() {
+            return Err(loaded_source_identity_refusal(
+                "LoadedSourceIdentityMismatchV1",
+                format!("{side} loaded-source inventory is empty"),
+            ));
+        }
+        let mut indexed = std::collections::BTreeMap::new();
+        for entry in entries {
+            if entry.subject.is_empty()
+                || entry.origin.is_empty()
+                || !content_cid_is_well_formed(&entry.content_cid)
+            {
+                return Err(loaded_source_identity_refusal(
+                    "LoadedSourceIdentityMismatchV1",
+                    format!(
+                        "{side} loaded-source entry is invalid: subject={:?} origin={:?} contentCid={:?}",
+                        entry.subject, entry.origin, entry.content_cid
+                    ),
+                ));
+            }
+            if indexed.insert(entry.subject.as_str(), entry).is_some() {
+                return Err(loaded_source_identity_refusal(
+                    "LoadedSourceIdentityMismatchV1",
+                    format!(
+                        "{side} loaded-source inventory repeats subject {:?}",
+                        entry.subject
+                    ),
+                ));
+            }
+        }
+        Ok(indexed)
+    }
+
+    let declared = indexed("declared", &parsed.declared)?;
+    let loaded = indexed("loaded", &parsed.loaded)?;
+    if declared.keys().ne(loaded.keys()) {
+        return Err(loaded_source_identity_refusal(
+            "LoadedSourceIdentityMismatchV1",
+            format!(
+                "declared and loaded source rosters differ: declared={:?} loaded={:?}",
+                declared.keys().collect::<Vec<_>>(),
+                loaded.keys().collect::<Vec<_>>()
+            ),
+        ));
+    }
+    for (subject, declared_entry) in declared {
+        let loaded_entry = loaded
+            .get(subject)
+            .expect("equal subject rosters established above");
+        if declared_entry.content_cid != loaded_entry.content_cid {
+            return Err(loaded_source_identity_refusal(
+                "LoadedSourceIdentityMismatchV1",
+                format!(
+                    "subject={subject:?} declaredContentCid={} loadedContentCid={} declaredOrigin={:?} loadedOrigin={:?}",
+                    declared_entry.content_cid,
+                    loaded_entry.content_cid,
+                    declared_entry.origin,
+                    loaded_entry.origin
+                ),
+            ));
+        }
+    }
+    Ok(Some(testimony.clone()))
+}
+
 fn enforce_python_kit_source(
     surface: &str,
     initialize_response: &Value,
-) -> Result<(), LiftPluginError> {
+) -> Result<Option<Value>, LiftPluginError> {
     if surface != "python" {
-        return Ok(());
+        return Ok(None);
     }
     let identity = initialize_response
         .pointer("/kit_source/identity")
@@ -547,13 +705,14 @@ fn enforce_python_kit_source(
         if let Ok(mut slot) = last_python_kit_source_slot().lock() {
             *slot = initialize_response.get("kit_source").cloned();
         }
-        return Ok(());
+        return authenticate_loaded_source_identity(initialize_response);
     }
     refuse_split_pipeline(identity, binary).map_err(LiftPluginError::SplitPipeline)?;
+    let loaded_source_identity = authenticate_loaded_source_identity(initialize_response)?;
     if let Ok(mut slot) = last_python_kit_source_slot().lock() {
         *slot = initialize_response.get("kit_source").cloned();
     }
-    Ok(())
+    Ok(loaded_source_identity)
 }
 
 fn last_python_kit_source_slot() -> &'static Mutex<Option<Value>> {
@@ -1252,6 +1411,135 @@ mod tests {
             }
             other => panic!("expected typed diagnostic, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn accepted_loaded_source_identity_enters_the_response_receipt_only_when_carried() {
+        let response = json!({
+            "kind": "ir-document",
+            "ir": [],
+            "diagnostics": []
+        });
+        let request =
+            build_lift_params(Path::new("."), "new-language", LiftPluginOptions::default())
+                .to_wire_value()
+                .expect("LiftRequest serializes");
+        let term = Term::Const {
+            value: response,
+            sort: Sort::Primitive {
+                name: "LiftPluginResponse".to_string(),
+            },
+        };
+        let kit = LiftPluginKit::new("new-language", Vec::new(), None);
+        let input = Input::Spec(request);
+        let claim = kit
+            .claim_from_response_term(&input, term)
+            .expect("lift response becomes a primitive claim");
+        let mut session = LiftPluginSession::from_claim(claim)
+            .expect("claim payload becomes a lift response projection");
+
+        assert!(
+            session
+                .clone_response_for_receipt()
+                .expect("response without testimony still projects")
+                .get("loadedSourceIdentity")
+                .is_none(),
+            "not-carried must remain distinct from carried-and-matched"
+        );
+
+        let cid = format!("blake3-512:{}", "a".repeat(128));
+        let accepted =
+            loaded_source_initialize(&cid, &cid, "/installed/new_language/__init__.source")
+                ["loaded_source_identity"]
+                .clone();
+        session.loaded_source_identity = Some(accepted.clone());
+        assert_eq!(
+            session
+                .clone_response_for_receipt()
+                .expect("accepted testimony enters the response")
+                .get("loadedSourceIdentity"),
+            Some(&accepted)
+        );
+    }
+
+    fn loaded_source_initialize(
+        declared_cid: &str,
+        loaded_cid: &str,
+        loaded_origin: &str,
+    ) -> Value {
+        json!({
+            "kit_source": {
+                "identity": "fixture-source-stamp",
+                "kind": "sourceStamp",
+                "dirty": false
+            },
+            "loaded_source_identity": {
+                "schema": "loaded-source-identity/v1",
+                "declared": [{
+                    "subject": "new-language-kit",
+                    "origin": "/declared/sugar_lift_py_tests/__init__.py",
+                    "contentCid": declared_cid
+                }],
+                "loaded": [{
+                    "subject": "new-language-kit",
+                    "origin": loaded_origin,
+                    "contentCid": loaded_cid
+                }]
+            }
+        })
+    }
+
+    #[test]
+    fn loaded_source_identity_distinguishes_absent_mismatched_and_matched() {
+        let absent = authenticate_loaded_source_identity(&json!({
+            "kit_source": {"identity": "declared-source", "kind": "sourceStamp"}
+        }))
+        .expect_err("missing loaded-source testimony must refuse");
+        assert!(
+            absent.to_string().contains("LoadedSourceIdentityAbsentV1"),
+            "absence must have its own refusal name: {absent}"
+        );
+
+        let current = format!("blake3-512:{}", "a".repeat(128));
+        let stale = format!("blake3-512:{}", "b".repeat(128));
+        let mismatch = authenticate_loaded_source_identity(&loaded_source_initialize(
+            &current,
+            &stale,
+            "/stale/sugar_lift_py_tests/__init__.py",
+        ))
+        .expect_err("declared-current/loaded-stale testimony must refuse");
+        let mismatch_text = mismatch.to_string();
+        assert!(
+            mismatch_text.contains("LoadedSourceIdentityMismatchV1"),
+            "mismatch must have its own refusal name: {mismatch_text}"
+        );
+        assert!(mismatch_text.contains("new-language-kit"));
+        assert!(mismatch_text.contains("/stale/sugar_lift_py_tests/__init__.py"));
+
+        let matched = authenticate_loaded_source_identity(&loaded_source_initialize(
+            &current,
+            &current,
+            "/venv/site-packages/sugar_lift_py_tests/__init__.py",
+        ))
+        .expect("matching content identity must be accepted")
+        .expect("python carries accepted loaded-source testimony");
+        assert_eq!(
+            matched["schema"], "loaded-source-identity/v1",
+            "the accepted testimony, including the actual origin, is the receipt payload"
+        );
+        assert_eq!(
+            matched["loaded"][0]["origin"],
+            "/venv/site-packages/sugar_lift_py_tests/__init__.py"
+        );
+    }
+
+    #[test]
+    fn unrelated_surface_has_no_loaded_source_obligation() {
+        assert_eq!(
+            authenticate_loaded_source_identity(&json!({}))
+                .expect("unrelated surface is outside this membrane"),
+            None
+        );
     }
 
     #[test]
