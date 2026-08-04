@@ -20,6 +20,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+source "$REPO/scripts/showcase-terminal-identity.sh"
 RUST="$REPO/implementations/rust"
 TARGET_DIR="${CARGO_TARGET_DIR:-$RUST/target}"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
@@ -52,7 +53,7 @@ clean() { local d="$1"; find "$d" -maxdepth 1 -name 'blake3-512_*.proof' -delete
 echo
 echo "==================== VENDOR mints its .proof ===================="
 clean "$VENDOR"
-(cd "$VENDOR" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$VENDOR:$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
+(cd "$VENDOR" && showcase_run_with_terminal sugar.mint env PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$VENDOR:$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
   echo "FAIL: vendor mint"; exit 1; }
 VENDOR_PROOF="$(ls "$VENDOR"/blake3-512_*.proof 2>/dev/null | head -1)"
 [ -f "$VENDOR_PROOF" ] || { echo "FAIL: vendor produced no .proof"; exit 1; }
@@ -67,7 +68,7 @@ check_consumer() {
   mkdir -p "$dir/.sugar/imports"
   rm -f "$dir/.sugar/imports/"*.proof
   cp "$VENDOR_PROOF" "$dir/.sugar/imports/"
-  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$dir:$VENDOR:$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
+  (cd "$dir" && showcase_run_with_terminal sugar.mint env PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$dir:$VENDOR:$PYTHON_SRC" "$BIN" mint --out . --quiet) >/dev/null || {
     echo "FAIL($twin): consumer mint"; return 1; }
   (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$dir:$VENDOR:$PYTHON_SRC" \
     "$BIN" prove --allow-failed-components . --json) >"$dir/.prove.raw" 2>&1
