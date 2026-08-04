@@ -104,7 +104,7 @@ import tempfile
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Mapping, TextIO
 
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
@@ -629,6 +629,22 @@ def _measure_file(
 def _is_process_control(error: BaseException) -> bool:
     """Never swallow process death as a per-file terminal."""
     return isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit))
+
+
+def _render_terminal_category(row: Mapping[str, Any]) -> str:
+    """Render a terminal without discarding instrument-failure testimony."""
+    category = row.get("category")
+    if category:
+        return str(category)
+    failure = row.get("instrumentFailure")
+    if isinstance(failure, Mapping):
+        return (
+            "instrument-failure "
+            f"stageId={failure.get('stageId', '?')} "
+            f"phase={failure.get('phase', '?')} "
+            f"message={failure.get('message', '?')}"
+        )
+    return "?"
 
 
 def terminal_after_measure_escape(
@@ -1619,7 +1635,7 @@ def main() -> int:
                 checkpoint.append(file, row)
                 measured_now.append((file, row))
 
-                cat = str(row.get("category") or "?")
+                cat = _render_terminal_category(row)
                 fn = int(row.get("functionsTotal") or 0)
                 # functionsClean may be null when clean ratio is refused.
                 # Law: never treat null clean as 0-of-N and mint clean%=100.
