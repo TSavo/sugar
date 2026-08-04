@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
@@ -22,11 +23,45 @@ TERMINAL_WITNESS_ENV = "SHOWCASE_TERMINAL_WITNESS"
 TERMINAL_IDENTITY_SCHEMA_VERSION = 1
 _REQUIRED_FIELDS = ("schemaVersion", "kind", "owner")
 _OPTIONAL_FIELDS = ("coordinate", "observed", "requested", "entrance")
-_ALLOWED_FIELDS = frozenset((*_REQUIRED_FIELDS, *_OPTIONAL_FIELDS))
+_STRUCTURED_FIELDS = ("missingIdentities",)
+_ALLOWED_FIELDS = frozenset(
+    (*_REQUIRED_FIELDS, *_OPTIONAL_FIELDS, *_STRUCTURED_FIELDS)
+)
 
 
 class TerminalIdentityRefusal(ValueError):
     """The producer could not publish an exact terminal identity."""
+
+
+@dataclass(frozen=True)
+class VerificationPropertyAttendanceComplete:
+    """Positive testimony that every declared property identity was observed."""
+
+    required_identities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VerificationPropertyAttendanceGap:
+    """A measured absence with a structurally required first identity."""
+
+    first_missing: str
+    remaining_missing: tuple[str, ...]
+
+    @property
+    def missing_identities(self) -> tuple[str, ...]:
+        return (self.first_missing, *self.remaining_missing)
+
+    def terminal_identity(self, *, entrance: str) -> dict[str, object]:
+        return validate_terminal_identity(
+            {
+                "schemaVersion": TERMINAL_IDENTITY_SCHEMA_VERSION,
+                "kind": "verification-property-attendance-gap",
+                "owner": "VerificationPropertyAttendanceGap",
+                "coordinate": self.first_missing,
+                "entrance": entrance,
+                "missingIdentities": list(self.missing_identities),
+            }
+        )
 
 
 def _refuse(reason: str) -> NoReturn:
@@ -62,13 +97,84 @@ def validate_terminal_identity(raw: Mapping[str, object]) -> dict[str, object]:
         if not isinstance(value, str) or not value.strip():
             _refuse(f"terminal identity requires nonempty {field} when present")
 
+    missing_identities = raw.get("missingIdentities")
+    if raw["kind"] == "verification-property-attendance-gap":
+        if (
+            not isinstance(missing_identities, Sequence)
+            or isinstance(missing_identities, (str, bytes))
+            or not missing_identities
+            or any(
+                not isinstance(identity, str) or not identity
+                for identity in missing_identities
+            )
+        ):
+            _refuse(
+                "verification-property-attendance-gap requires nonempty "
+                "missingIdentities"
+            )
+        if raw.get("coordinate") != missing_identities[0]:
+            _refuse("attendance-gap coordinate must be its first missing identity")
+    elif missing_identities is not None:
+        _refuse("missingIdentities belong only to an attendance-gap terminal")
+
     # Preserve raw producer testimony.  Fixed field order makes the bytes
     # deterministic without normalizing any identity-bearing string.
-    return {
+    canonical = {
         field: raw[field]
         for field in (*_REQUIRED_FIELDS, *_OPTIONAL_FIELDS)
         if field in raw
     }
+    if missing_identities is not None:
+        canonical["missingIdentities"] = list(missing_identities)
+    return canonical
+
+
+def construct_verification_property_attendance(
+    *,
+    required: Sequence[str],
+    observed: Sequence[str],
+) -> VerificationPropertyAttendanceComplete | VerificationPropertyAttendanceGap:
+    """Construct exact complete attendance or a nonempty measured absence."""
+
+    for label, identities in (("required", required), ("observed", observed)):
+        if any(not isinstance(identity, str) or not identity for identity in identities):
+            _refuse(f"{label} property identities must be nonempty strings")
+    if len(set(required)) != len(required):
+        _refuse("required property identities must be unique")
+
+    required_identities = tuple(required)
+    observed_identities = set(observed)
+    missing = tuple(
+        identity
+        for identity in required_identities
+        if identity not in observed_identities
+    )
+    if not missing:
+        return VerificationPropertyAttendanceComplete(
+            required_identities=required_identities
+        )
+    first_missing, *remaining_missing = missing
+    return VerificationPropertyAttendanceGap(
+        first_missing=first_missing,
+        remaining_missing=tuple(remaining_missing),
+    )
+
+
+def publish_verification_property_attendance(
+    *,
+    required: Sequence[str],
+    observed: Sequence[str],
+    entrance: str,
+) -> VerificationPropertyAttendanceComplete | VerificationPropertyAttendanceGap:
+    """Publish only the successfully measured nonempty-absence arm."""
+
+    attendance = construct_verification_property_attendance(
+        required=required,
+        observed=observed,
+    )
+    if isinstance(attendance, VerificationPropertyAttendanceGap):
+        write_from_environment(attendance.terminal_identity(entrance=entrance))
+    return attendance
 
 
 def _json_objects(text: str) -> Sequence[object]:
