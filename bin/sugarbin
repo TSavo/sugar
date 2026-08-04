@@ -1612,6 +1612,16 @@ acquire_rebuild_single_flight() {
       fi
       return 0
     fi
+    # A failed mkdir is contention only when a holder record exists. Give a
+    # peer that just won mkdir one bounded chance to publish its PID; absence
+    # after that is not an unknown holder to wait on forever.
+    if [[ ! -f "$lockdir/pid" ]]; then
+      sleep 0.5
+      if [[ ! -f "$lockdir/pid" ]]; then
+        log "crime=missing-rebuild-lock-pid owner=bin/sugarbin path=$lockdir/pid lock=$lockdir holder_pid=unknown replacement=repair the declared lock root; an absent holder record is not peer contention"
+        return 70
+      fi
+    fi
     # First contention: announce wait immediately (not after 30s of silence).
     if (( ! announced )); then
       holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
