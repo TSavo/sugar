@@ -82,16 +82,20 @@ pub(crate) fn build_literal_sequence_composite(
         return build_literal_sequence_composite(&inlined, fcx);
     }
     let (base, adaptors) = peel_fold_adaptors_in_scope(expr, fcx.let_inits(), fcx.scope(), 0)?;
+    let range_sequence = crate::sugar::range_sequence::build(&base, fcx);
     // Scope-aware base gate: a const-length repeat (`[7; SIZE]`) resolves to a finite literal
     // sequence here so the constructive floor (and its element-wise teeth) is reached.
     if !is_literal_sequence_base_in_scope(&base, fcx.scope())
         && !literal_slice::is_literal_slice_base_in_scope(&base, fcx.let_inits(), fcx.scope())
         && !literal_iter_call_base(&base)
+        && range_sequence.is_none()
         && !has_composite(&base, fcx)
     {
         return None;
     }
-    let mut node = if literal_iter_call_base(&base) {
+    let mut node = if let Some(range) = range_sequence {
+        range
+    } else if literal_iter_call_base(&base) {
         Box::new(LiteralIterCallSugar {
             seq: literal_iter_call_sequence(&base)?,
         }) as Box<dyn Sugar>

@@ -4281,6 +4281,76 @@ fn for_enumerate_tuple_wrong_expected_is_unsat() {
     }
 }
 
+// A written `Range { start, end }` is a finite sequence only through the
+// range-sequence projection. The generic range construction owner emits field
+// constraints, which are not a sequence codomain and must never be reinterpreted
+// as one. This tooth pins both the exact projection owner and the authenticated
+// eight-element output consumed by `EnumerateSugar`.
+#[test]
+fn for_enumerate_range_struct_reaches_authenticated_sequence_projection() {
+    let src = r#"
+        use core::ops::Range;
+
+        #[test]
+        fn test_range() {
+            let r = Range { start: 2, end: 10 };
+            let mut count = 0;
+            for (i, ri) in r.enumerate() {
+                assert_eq!(ri, i + 2);
+                assert!(ri >= 2 && ri < 10);
+                count += 1;
+            }
+            assert_eq!(count, 8);
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/ops.rs");
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.requested_role == "Composite"
+                && audit.selected == Some("range_sequence_projection")
+                && audit.site.contains("Range { start : 2 , end : 10 }")
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+                && audit.output == "sequence"
+        }),
+        "the Range struct must reach the exact sequence projection owner: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.selected == Some("enumerate")
+                && audit.site == "enumerate adapter floor over 8 output tick(s)"
+        }),
+        "enumerate must consume the authenticated finite 2..10 projection: {:?}",
+        out.factory_audits
+    );
+    let sat = fast_smt_smoke_check(&inv_json(&out.decls[0]), "test_range");
+    assert!(sat, "ri == i + 2 over Range {{ 2, 10 }} must be SAT");
+}
+
+// Lying twin: a projection that emits an arbitrary eight-element sequence would
+// satisfy the count tooth above. The exact authenticated values are 2..10, so
+// claiming `ri == i + 3` must refute.
+#[test]
+fn for_enumerate_range_struct_wrong_values_are_unsat() {
+    let src = r#"
+        use core::ops::Range;
+
+        #[test]
+        fn t_range_struct_enumerate_bad() {
+            let r = Range { start: 2, end: 10 };
+            for (i, ri) in r.enumerate() {
+                assert_eq!(ri, i + 3);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/ops/range_struct_enumerate_bad.rs");
+    let sat = fast_smt_smoke_check(&inv_json(&out.decls[0]), "t_range_struct_enumerate_bad");
+    assert!(
+        !sat,
+        "Range {{ 2, 10 }} starts at 2, not 3 -- must be UNSAT"
+    );
+}
+
 // MECHANISM-2 gap (b): `.zip(rhs)` over two inline literal iterators. `ZipSugar` pairs the
 // two finite domains element-wise (`(a_i, b_i)`) and the TUPLE loop pattern `for (&a, &b)`
 // decomposes each pair per step -- exactly like `enumerate`'s `(i, e)`. The body asserts

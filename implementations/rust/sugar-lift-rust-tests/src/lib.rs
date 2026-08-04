@@ -178,6 +178,7 @@ pub mod sugar {
     pub mod range_bounds_contains;
     pub mod range_construct;
     pub mod range_contains;
+    pub mod range_sequence;
     pub mod range_term;
     pub mod raw_addr_term;
     pub mod raw_pointer_arithmetic;
