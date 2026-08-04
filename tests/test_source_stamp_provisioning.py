@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
+from repo_root_test_support import resolve_repo_root
 
 ROOT = resolve_repo_root()
 STAMP = ROOT / "tools" / "sugar_source_stamp.py"

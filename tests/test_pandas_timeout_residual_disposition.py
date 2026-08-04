@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root
+from repo_root_test_support import resolve_repo_root
 
 REPO_ROOT = resolve_repo_root()
 SOURCE_LEDGER = (

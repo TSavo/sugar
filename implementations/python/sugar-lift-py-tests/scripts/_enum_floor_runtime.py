@@ -34,10 +34,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence, TextIO, TypeVar
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 T = TypeVar("T")
 
 # Repo tools/ is not always on path when floors run as scripts/.
-_TOOLS = Path(__file__).resolve().parents[4] / "tools"
+_TOOLS = resolve_repo_root() / "tools"
 if _TOOLS.is_dir() and str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 

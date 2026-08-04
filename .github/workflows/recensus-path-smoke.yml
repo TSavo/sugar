@@ -43,6 +43,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Both root-resolution axes are zero-only laws.  #6989 drained fixed
+      # parents[N] walks to zero, yet an unrelated landing restored one within
+      # hours; its removal census could not judge whether the replacement door
+      # was lawful.  Enforce both the old shape and its repo-test replacement
+      # boundary before any package environment exists.
+      - name: Enforce repository root construction doors
+        run: |
+          python3 tools/repo_root_parents_n_census.py
+          python3 tools/repo_test_package_root_import_census.py
+
       # This must run in a workflow independent of ci.yml: a workflow rejected
       # before dispatch cannot execute its own context-availability tooth.
       - name: Set up Go for version-pinned actionlint
