@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -129,6 +130,94 @@ def check_declared_prerequisites(plan: object) -> int:
     return 0
 
 
+def check_artifact_abi(plan: object, artifact_root: Path) -> int:
+    if not isinstance(plan, dict) or not isinstance(plan.get("checks"), list):
+        raise ValueError("precondition plan lacks checks")
+    checks = [
+        check
+        for check in plan["checks"]
+        if isinstance(check, dict) and check.get("kind") == "artifact-abi"
+    ]
+    if not checks:
+        return 0
+    manifest_path = artifact_root / "required-artifacts.json"
+    if not manifest_path.is_file():
+        return _named_refusal(
+            "artifact-manifest-absent",
+            checks[0],
+            manifest=manifest_path,
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = manifest.get("artifacts") if isinstance(manifest, dict) else None
+    if not isinstance(rows, list):
+        return _named_refusal(
+            "artifact-manifest-invalid",
+            checks[0],
+            manifest=manifest_path,
+        )
+    names = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            return _named_refusal(
+                "artifact-manifest-invalid",
+                checks[0],
+                manifest=manifest_path,
+            )
+        names.append(row["name"])
+    if len(names) != len(set(names)):
+        return _named_refusal(
+            "artifact-manifest-invalid",
+            checks[0],
+            manifest=manifest_path,
+            reason="duplicate-artifact-name",
+        )
+    enrolled = set(names)
+    ldd = shutil.which("ldd")
+    if ldd is None:
+        return _named_refusal(
+            "artifact-abi-instrument-absent", checks[0], name="ldd"
+        )
+    for check in checks:
+        name = check.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("artifact ABI precondition lacks name")
+        path = artifact_root / "bin" / name
+        if name not in enrolled or not path.is_file():
+            return _named_refusal(
+                "artifact-manifest-incomplete",
+                check,
+                artifact=path,
+                manifest=manifest_path,
+            )
+        started = time.monotonic_ns()
+        result = subprocess.run(
+            [ldd, str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        loader_output = "\n".join(
+            part.rstrip("\n") for part in (result.stdout, result.stderr) if part
+        )
+        normalized = loader_output.lower()
+        explicitly_not_dynamic = "not a dynamic executable" in normalized
+        missing_library = re.search(r"\bnot found\b", normalized) is not None
+        if not explicitly_not_dynamic and (result.returncode != 0 or missing_library):
+            return _named_refusal(
+                "artifact-abi-incompatible",
+                check,
+                artifact=path,
+                loaderExit=result.returncode,
+                loaderOutput=json.dumps(loader_output),
+            )
+        print(
+            f"sugarbin: precondition=artifact-abi name={name} "
+            f"source={check.get('source')} elapsed_ms={_elapsed_ms(started)} outcome=pass",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -149,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
         if not subject:
             raise ValueError("precondition runner lacks subject command")
         status = check_declared_prerequisites(plan)
+        if status != 0:
+            return status
+        status = check_artifact_abi(plan, args.artifact_root)
         if status != 0:
             return status
         os.execvp(subject[0], subject)

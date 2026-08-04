@@ -446,6 +446,7 @@ sugarbin_bx_cargo() {
   sugar_bx_finish "$status"
 }
 
+lock_preflight=0
 case "${1:-}" in
   run|cargo|build|explain)
     subcommand="$1"
@@ -458,11 +459,16 @@ case "${1:-}" in
     artifact_subcommand="$2"
     shift 2
     ;;
+  preflight-lock)
+    lock_preflight=1
+    shift
+    ;;
 esac
 
 usage() {
   cat <<'EOF'
 usage: bin/sugarbin [--bin <name>] [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
+       bin/sugarbin preflight-lock --bin <name> --profile <profile> --platform <key>
        bin/sugarbin artifact publish --kind python-demand-table --content-key <key> --input <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
        bin/sugarbin artifact pull --kind python-demand-table --content-key <key> --output <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
 
@@ -1551,8 +1557,8 @@ acquire_rebuild_single_flight() {
   _rebuild_heartbeat_pid=""
   lock_parent="$(cache_dir)/.rebuild-locks"
   if ! mkdir -p "$lock_parent" 2>/dev/null; then
-    log "phase=resolve-wait-degraded bin=$bin_name reason=lock-parent-uncreatable path=$lock_parent"
-    return 0
+    log "crime=uncreatable-rebuild-lock-path owner=bin/sugarbin path=$lock_parent replacement=provide a writable declared cache root before binary resolution"
+    return 70
   fi
   # Directory name IS the lock: mkdir succeeds for exactly one contender.
   lockdir="$lock_parent/$(platform_key)-${profile}-$(stamp_for_filename "$stamp")-${bin_name}.lock"
@@ -1561,8 +1567,12 @@ acquire_rebuild_single_flight() {
   wait_start="$(date +%s)"
   while true; do
     if mkdir "$lockdir" 2>/dev/null; then
-      printf '%s\n' "$$" >"$lockdir/pid"
-      : >"$lockdir/heartbeat"
+      if ! printf '%s\n' "$$" >"$lockdir/pid" 2>/dev/null \
+        || ! : >"$lockdir/heartbeat" 2>/dev/null; then
+        rm -rf "$lockdir" 2>/dev/null || true
+        log "crime=unwriteable-rebuild-lock-state owner=bin/sugarbin path=$lockdir replacement=provide a writable lock directory before binary resolution"
+        return 70
+      fi
       _rebuild_lock_dir="$lockdir"
       # Heartbeat while we hold: keeps waiters from reclaiming a live cargo.
       (
@@ -1595,7 +1605,11 @@ acquire_rebuild_single_flight() {
     age="$(_rebuild_heartbeat_age_seconds "$lockdir")"
     if [[ "$age" -ge "$stale_s" ]]; then
       log "phase=resolve-wait-reclaim bin=$bin_name stamp=${stamp_short}… heartbeat_age_s=$age stale_s=$stale_s"
-      rm -rf "$lockdir" 2>/dev/null || true
+      holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
+      if ! rm -rf "$lockdir" 2>/dev/null || [[ -e "$lockdir" ]]; then
+        log "crime=unreclaimable-rebuild-lock owner=bin/sugarbin path=$lockdir holder_pid=${holder:-unknown} heartbeat_age_s=$age replacement=repair the declared lock root; do not wait on an owner that cannot be authenticated or reclaimed"
+        return 70
+      fi
       continue
     fi
     # Also reclaim empty/new locks that never wrote a heartbeat (crashed mid-mkdir).
@@ -1604,7 +1618,11 @@ acquire_rebuild_single_flight() {
       sleep 0.5
       if [[ ! -f "$lockdir/heartbeat" ]]; then
         log "phase=resolve-wait-reclaim bin=$bin_name stamp=${stamp_short}… reason=no-heartbeat"
-        rm -rf "$lockdir" 2>/dev/null || true
+        holder="$(tr -d '[:space:]' <"$lockdir/pid" 2>/dev/null || true)"
+        if ! rm -rf "$lockdir" 2>/dev/null || [[ -e "$lockdir" ]]; then
+          log "crime=unreclaimable-rebuild-lock owner=bin/sugarbin path=$lockdir holder_pid=${holder:-unknown} heartbeat_age_s=999999 replacement=repair the declared lock root; do not wait on an owner that cannot be authenticated or reclaimed"
+          return 70
+        fi
         continue
       fi
     fi
@@ -1953,7 +1971,7 @@ main() {
   # waste. Key is stamp+bin+platform+profile — not a machine-wide lease.
   # Double-check pull after the lock: the winner's publish is visible to waiters.
   # Wait narration: phase=resolve-wait every 30s (job log / stderr, not TTY-gated).
-  acquire_rebuild_single_flight "$stamp" "$name"
+  acquire_rebuild_single_flight "$stamp" "$name" || return $?
   if candidate="$(pull_from_filesystem_shelf "$stamp" "$identity" "$name")"; then
     log "phase=resolve-hit source=peer-publish-after-wait bin=$bin_name stamp=$(_stamp_short "$stamp")…"
     release_rebuild_single_flight
@@ -1978,6 +1996,16 @@ main() {
 if [[ -n "$artifact_subcommand" ]]; then
   dispatch_artifact_subcommand
   exit $?
+fi
+
+if [[ "$lock_preflight" == "1" ]]; then
+  [[ -n "${SUGAR_BINARY_SOURCE_STAMP:-}" ]] || {
+    log "crime=missing-rebuild-lock-preflight-stamp owner=bin/sugarbin replacement=set SUGAR_BINARY_SOURCE_STAMP to the authenticated source stamp"
+    exit 70
+  }
+  acquire_rebuild_single_flight "$SUGAR_BINARY_SOURCE_STAMP" "preflight" || exit $?
+  release_rebuild_single_flight
+  exit 0
 fi
 
 main "$@"
