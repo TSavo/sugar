@@ -211,6 +211,58 @@ showcase_line="$(tail -1 "$tmp/docker.log")"
 [[ "$showcase_line" == *"make"*"test-showcases"* ]] \
   || fail "managed showcase task lost its declared command"
 
+# The transport-owned wrapper executes from the workspace mounted into today's
+# immutable image.  Prove its artifact ABI arm with a compatible loader and a
+# versioned-loader bad twin; the latter must refuse before the subject marker.
+abi_root="$tmp/abi-root"
+abi_bin="$tmp/abi-bin"
+mkdir -p "$abi_root/bin" "$abi_bin"
+printf 'ELF fixture\n' >"$abi_root/bin/sugar"
+chmod +x "$abi_root/bin/sugar"
+abi_sha="$(python3 - "$abi_root/bin/sugar" <<'PY'
+import hashlib
+import pathlib
+import sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+printf '{"artifacts":[{"name":"sugar","sha256":"%s"}]}\n' \
+  "$abi_sha" >"$abi_root/required-artifacts.json"
+abi_plan='{"checks":[{"kind":"artifact-abi","name":"sugar","profile":"release","source":"task.closure.artifacts"}],"schemaVersion":1}'
+cat >"$abi_bin/ldd" <<'SH'
+#!/usr/bin/env bash
+if [[ "${FAKE_LDD_MODE:-good}" == bad ]]; then
+  printf "%s: /lib/libc.so.6: version 'GLIBC_2.39' not found (required by %s)\n" "$1" "$1" >&2
+  exit 1
+fi
+printf 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0001)\n'
+SH
+chmod +x "$abi_bin/ldd"
+
+abi_good_marker="$tmp/abi-good-subject"
+PATH="$abi_bin:$PATH" python3 "$repo/tools/sugar-build/preflight.py" run \
+  --plan-json "$abi_plan" --artifact-root "$abi_root" -- \
+  sh -c ': >"$1"' sh "$abi_good_marker" \
+  >"$tmp/abi-good.out" 2>"$tmp/abi-good.err" \
+  || fail 'compatible artifact ABI arm refused'
+[[ -e "$abi_good_marker" ]] || fail 'compatible artifact ABI arm did not reach subject'
+
+abi_bad_marker="$tmp/abi-bad-subject"
+status=0
+FAKE_LDD_MODE=bad PATH="$abi_bin:$PATH" \
+  python3 "$repo/tools/sugar-build/preflight.py" run \
+    --plan-json "$abi_plan" --artifact-root "$abi_root" -- \
+    sh -c ': >"$1"' sh "$abi_bad_marker" \
+    >"$tmp/abi-bad.out" 2>"$tmp/abi-bad.err" || status=$?
+[[ "$status" == 70 ]] || fail "incompatible artifact ABI status=$status, want 70"
+[[ ! -e "$abi_bad_marker" ]] || fail 'incompatible artifact ABI reached subject'
+grep -Fq 'crime=artifact-abi-incompatible' "$tmp/abi-bad.err" \
+  || fail 'incompatible artifact ABI did not name its crime'
+grep -Fq "$abi_root/bin/sugar" "$tmp/abi-bad.err" \
+  || fail 'incompatible artifact ABI did not name its artifact'
+grep -Fq 'GLIBC_2.39' "$tmp/abi-bad.err" \
+  || fail 'incompatible artifact ABI discarded loader output'
+
 # Artifact-manifest refusal belongs to the managed entrypoint, after the
 # toolchain has authenticated. Exercise that real shell boundary with /opt
 # relocated into this test's private root; only absolute fixture paths change.
