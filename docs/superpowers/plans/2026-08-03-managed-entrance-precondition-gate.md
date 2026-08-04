@@ -47,7 +47,7 @@ python3 "$repo/tools/sugar-build/preflight.py" falsify \
   --axes "$repo/tests/fixtures/managed_entrance_axes.json"
 ```
 
-Assert the live 64-row roster, the retirement-derived active count, `rust-src` sourced from `examples/std-core-showcase/rust-toolchain.toml`, `git` sourced from task closure, profile-qualified artifacts, route facts, and `R_unpredicted_precondition_axes=0`. Change one copied fixture row to `expectedKind=not-derived`; require exit 70 and `crime=unpredicted-precondition-axis`.
+Assert the plan counts equal the live roster and retirement authorities, `rust-src` is sourced from `examples/std-core-showcase/rust-toolchain.toml`, `git` is sourced from task closure, profile-qualified artifacts and route facts are present, and `R_unpredicted_precondition_axes=0`. Change one copied fixture row to `expectedKind=not-derived`; require exit 70 and `crime=unpredicted-precondition-axis`.
 
 - [ ] **Step 2: Run RED**
 
