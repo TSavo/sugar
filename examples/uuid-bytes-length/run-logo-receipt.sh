@@ -3,6 +3,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+source "$REPO/scripts/showcase-terminal-identity.sh"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
 export PYTHONPATH="$REPO/implementations/python/sugar-lift-py-tests/src:$REPO/implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$(dirname "$BIN"):${PATH:-}"
@@ -10,7 +11,7 @@ export PATH="$(dirname "$BIN"):${PATH:-}"
 dir="$HERE/dual"
 find "$dir" -maxdepth 1 -name 'blake3-512_*.proof' -delete 2>/dev/null || true
 rm -rf "$dir/.sugar/runs" 2>/dev/null || true
-(cd "$dir" && "$BIN" mint --out .) >/dev/null || { echo "FAIL: mint"; exit 1; }
+(cd "$dir" && showcase_run_with_terminal sugar.mint "$BIN" mint --out .) >/dev/null || { echo "FAIL: mint"; exit 1; }
 (cd "$dir" && "$BIN" prove --allow-failed-components --json .) >"$dir/.prove.raw" 2>"$dir/.prove.err" || true
 python3 - "$dir/.prove.raw" <<'INNER' || exit 1
 import json, re, sys

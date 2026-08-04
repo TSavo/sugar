@@ -3,6 +3,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+source "$REPO/scripts/showcase-terminal-identity.sh"
 RUST="$REPO/implementations/rust"
 SUGAR=""
 VENV="${NUMPY_ATTR_SHOWCASE_VENV:-/tmp/sugar-numpy-attribute-safety-venv}"
@@ -268,7 +269,7 @@ run_suite() {
   run_pytest_axis "$suite" "$expect_pytest"
 
   echo "== mint $suite =="
-  (cd "$dir" && "$SUGAR" mint --out .) >/dev/null
+  (cd "$dir" && showcase_run_with_terminal sugar.mint "$SUGAR" mint --out .) >/dev/null
 
   local proof
   proof="$(find "$dir" -maxdepth 1 -name 'blake3-512_*.proof' -print -quit)"
