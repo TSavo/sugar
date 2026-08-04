@@ -1305,8 +1305,24 @@ def main() -> int:
                 flush=True,
             )
 
-            def tqdm(iterable, **_kwargs):
-                return iterable
+            class _NoProgress:
+                def __init__(self, iterable, **_kwargs):
+                    self._iterable = iterable
+
+                def __iter__(self):
+                    return iter(self._iterable)
+
+                def update(self, _count=1):
+                    del _count
+
+                def set_postfix(self, _postfix, **_kwargs):
+                    del _postfix, _kwargs
+
+                def close(self):
+                    pass
+
+            def tqdm(iterable, **kwargs):
+                return _NoProgress(iterable, **kwargs)
 
         live_done = 0
         live_panic = 0  # ConstructionPanic only (file-level kit panic)
