@@ -18,14 +18,29 @@ import functools
 from pathlib import Path
 from typing import Any, Optional
 
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.nodes import Assert, AsyncFunctionDef, FunctionDef
 
 
-def source_file(full_path: Path) -> SourceFile:
-    """The file's tree, over oracle-pinned source."""
-    return SourceFile(path_source(str(full_path)))
+def source_file(
+    full_path: Path,
+    *,
+    root: Path,
+    construction_context=None,
+) -> SourceFile:
+    """The file's tree over workspace-relative oracle-pinned source.
+
+    Enumeration levels that only walk syntax must not implicitly add a
+    construction context: doing so changes which call occurrences are
+    authenticated and can turn a completed function into a deeper native
+    operation demand.  The functions entrance, which does construct, owns the
+    separate ``open_source_file_for_construction`` call.
+    """
+    return SourceFile(
+        workspace_path_source(str(full_path), root=str(root)),
+        construction_context=construction_context,
+    )
 
 
 def functions_of(sf: SourceFile):

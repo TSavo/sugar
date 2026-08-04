@@ -360,6 +360,57 @@ def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
     assert names == ["mathy.add", "test_add"]
 
 
+def test_tree_enumerate_source_file_uses_the_workspace_relative_door(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Syntax enumeration opens through the root-relative source oracle."""
+    from sugar_lift_py_tests import tree_enumerate
+
+    source = tmp_path / "relative_owner.py"
+    source.write_text("def identity(value):\n    return value\n", encoding="utf-8")
+    opened = []
+    real_workspace_path_source = tree_enumerate.workspace_path_source
+
+    def observe_workspace_path_source(path, *, root):
+        opened.append((path, root))
+        return real_workspace_path_source(path, root=root)
+
+    monkeypatch.setattr(
+        tree_enumerate, "workspace_path_source", observe_workspace_path_source
+    )
+
+    source_file = tree_enumerate.source_file(source, root=tmp_path)
+
+    assert opened == [(str(source), str(tmp_path))]
+    assert source_file.unit.filename == "relative_owner.py"
+
+
+def test_functions_level_uses_the_canonical_construction_open(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The RPC functions entrance must not mint a second bare SourceFile."""
+    opened = []
+    real_open = lift_rpc.open_source_file_for_construction
+
+    def observe_open(path, **kwargs):
+        source_file = real_open(path, **kwargs)
+        opened.append((path, kwargs, source_file.unit.filename))
+        return source_file
+
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", observe_open)
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+
+    result = _enumerate("functions", project, at=file_memento)
+
+    assert len(result["nodes"]) == 2
+    assert len(opened) == 1
+    path, kwargs, filename = opened[0]
+    assert path == project / "mathy.py"
+    assert kwargs["root"] == project
+    assert kwargs["populate_derived"] is False
+    assert filename == "mathy.py"
+
+
 def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
