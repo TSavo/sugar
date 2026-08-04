@@ -646,6 +646,20 @@ pub(crate) fn build_term_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box
     )
 }
 
+/// Fragment-facing query for the source-determined Display-value territory owned by
+/// `ToStringTermSugar`. The raw `Expr` projection stays at the factory boundary so the
+/// recognizer does not grow a second AST entrance.
+pub(crate) fn has_source_determined_display_value_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    crate::sugar::format::has_source_determined_display_value(
+        frag.as_expr()
+            .expect("has_source_determined_display_value_frag: non-expr fragment"),
+        fcx,
+    )
+}
+
 /// Fragment-based variant of `build_composite`. The `as_expr()` escape lives HERE
 /// (inside `factory.rs`, ratchet-excluded) so recognize bodies that call this stay clean.
 /// Used by transparent-passthrough recognizers that return a child Sugar directly.
