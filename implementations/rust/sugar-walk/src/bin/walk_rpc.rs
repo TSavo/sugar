@@ -19,6 +19,7 @@
 // and pull back proof.ir bytes ready for the substrate's lift / mint /
 // linker pipeline.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -52,6 +53,12 @@ use syn::spanned::Spanned;
 use tracing::{debug, info, trace, warn};
 
 const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
+const ENUMERATE_RPC_METHOD: &str = "sugar.enumerate";
+
+thread_local! {
+    static FN_POPULATIONS: RefCell<BTreeMap<PathBuf, (BTreeMap<String, String>, Vec<Value>)>> =
+        RefCell::new(BTreeMap::new());
+}
 
 // Tier 2b native semantic oracle (spec 2026-05-30-callee-resolution-tiers §2.T2b).
 // The RA LSP client now lives in the `sugar_walk::ra_oracle` library module so
@@ -247,6 +254,7 @@ fn handle_line(line: &str) -> Value {
         "shutdown" => Ok(Value::Null),
         KIT_DECLARATION_RPC_METHOD => Ok(kit_declaration_result()),
         COMPONENT_PLAN_RPC_METHOD => Ok(component_plan_result(&params)),
+        ENUMERATE_RPC_METHOD => enumerate_result(&params),
         "sugar.plugin.resolve_source_memento" => resolve_source_memento_rpc(&params),
         // Implication lifter (#97). For every call expression in every
         // function body in the supplied source files, emit a kind:bridge
@@ -6399,6 +6407,7 @@ fn kit_declaration_result() -> Value {
                 {"name": "shutdown", "required": true},
                 {"name": "sugar.plugin.lift_implications", "required": false},
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
+                {"name": ENUMERATE_RPC_METHOD, "required": false},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": false}
             ]
         },
@@ -6407,6 +6416,108 @@ fn kit_declaration_result() -> Value {
         },
         "residueCategories": []
     })
+}
+
+fn enumerate_result(params: &Value) -> Result<Value, String> {
+    let level = params.get("level").and_then(Value::as_str).unwrap_or("");
+    let root = PathBuf::from(
+        params
+            .get("workspace_root")
+            .and_then(Value::as_str)
+            .ok_or("sugar.enumerate: missing workspace_root")?,
+    );
+    let mut files = BTreeSet::new();
+    let src_dir = root.join("src");
+    if src_dir.is_dir() {
+        collect_rs_files(&src_dir, &mut files);
+        collect_rs_files_shallow(&root, &mut files);
+    } else {
+        collect_rs_files(&root, &mut files);
+    }
+    let rows = files.iter().filter_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
+        Some(json!({"file": relative_display_path(path, &root), "source_cid": blake3_512_of(&bytes)}))
+    }).collect::<Vec<_>>();
+    if level == "source_files" {
+        let sealed = rows
+            .iter()
+            .filter_map(|row| {
+                Some((
+                    row["file"].as_str()?.to_string(),
+                    row["source_cid"].as_str()?.to_string(),
+                ))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let legacy = function_contract_lift(&json!({"workspace_root": root}))?;
+        let sidecar = legacy["ir"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.get("sourceWarrants").is_none())
+            .cloned()
+            .collect();
+        FN_POPULATIONS.with(|p| p.borrow_mut().insert(root.clone(), (sealed, sidecar)));
+        return Ok(
+            json!({"nodes": rows.into_iter().map(|m| json!({"memento":m,"audit":null,"payload":null})).collect::<Vec<_>>(), "gaps": []}),
+        );
+    }
+    if level != "universe" {
+        return Err(format!("sugar.enumerate: level '{level}' is not served by surface 'rust-fn-contracts'; refusing false zero"));
+    }
+    let at = params
+        .get("at")
+        .and_then(Value::as_object)
+        .ok_or("sugar.enumerate universe requires at.file")?;
+    let rel = at
+        .get("file")
+        .and_then(Value::as_str)
+        .ok_or("sugar.enumerate universe requires at.file")?;
+    let (sealed, sidecar) = FN_POPULATIONS
+        .with(|p| p.borrow().get(&root).cloned())
+        .ok_or("rust-fn-contracts universe requires a prepared source_files census")?;
+    let current = rows
+        .iter()
+        .filter_map(|r| {
+            Some((
+                r["file"].as_str()?.to_string(),
+                r["source_cid"].as_str()?.to_string(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    if current != sealed {
+        return Err(
+            "rust-fn-contracts source population changed since the sealed source_files census"
+                .to_string(),
+        );
+    }
+    let row = rows.iter().find(|r| r["file"].as_str() == Some(rel)).ok_or_else(|| format!("rust-fn-contracts source '{rel}' is not a member of the sealed source_files census"))?;
+    if let Some(cid) = at.get("source_cid").and_then(Value::as_str) {
+        if row["source_cid"].as_str() != Some(cid) {
+            return Err(format!(
+                "rust-fn-contracts source '{rel}' changed since the sealed source_files census"
+            ));
+        }
+    }
+    let doc = function_contract_lift(&json!({"workspace_root":root,"source_paths":[rel]}))?;
+    let mut audits = doc["ir"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|e| {
+            e.get("sourceWarrants")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|m| m.get("file").and_then(Value::as_str) == Some(rel))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if sealed.keys().next().map(String::as_str) == Some(rel) {
+        audits.extend(sidecar);
+    }
+    Ok(
+        json!({"nodes": audits.into_iter().map(|audit| json!({"memento":row,"audit":audit,"payload":null})).collect::<Vec<_>>(), "gaps": doc["diagnostics"].as_array().cloned().unwrap_or_default().into_iter().map(|d| json!({"memento":row,"reason":d})).collect::<Vec<_>>() }),
+    )
 }
 
 fn component_plan_result(params: &Value) -> Value {
@@ -7742,10 +7853,12 @@ fn lift_scan_roots(root: &Path, source_paths: &[String]) -> Vec<PathBuf> {
         .iter()
         .map(|p| {
             let candidate = root.join(p);
-            if candidate.is_dir() {
+            if candidate.is_file() {
+                candidate
+            } else if candidate.is_dir() {
                 candidate
             } else {
-                root.to_path_buf()
+                candidate
             }
         })
         .collect()
@@ -8314,6 +8427,12 @@ fn resolve_rs_source_files(
 }
 
 fn collect_rs_files(dir: &Path, visited: &mut std::collections::BTreeSet<PathBuf>) {
+    if dir.is_file() {
+        if path_has_rs_extension(dir) {
+            visited.insert(dir.to_path_buf());
+        }
+        return;
+    }
     if !dir.is_dir() {
         return;
     }
@@ -13429,6 +13548,70 @@ mod tests {
         assert_eq!(ir[0]["sourceSymbol"], "parse_input");
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_population_fold_equals_legacy_and_naive_differs() {
+        let root = temp_workspace("function_contract_population_fold");
+        fs::create_dir_all(root.join("src")).expect("src");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='fold-check'\nversion='0.1.0'\n",
+        )
+        .expect("manifest");
+        fs::write(root.join("src/lib.rs"), "pub fn alpha() -> u32 { 1 }\n").expect("lib");
+        fs::write(root.join("src/other.rs"), "pub fn beta() -> u32 { 2 }\n").expect("other");
+        let legacy = function_contract_lift(&json!({"workspace_root": root})).expect("legacy");
+        let legacy_rows = legacy["ir"].as_array().expect("legacy rows").clone();
+        let mut folded = Vec::new();
+        for file in ["src/lib.rs", "src/other.rs"] {
+            let doc =
+                function_contract_lift(&json!({"workspace_root": root, "source_paths": [file]}))
+                    .expect("file");
+            folded.extend(
+                doc["ir"]
+                    .as_array()
+                    .expect("file rows")
+                    .iter()
+                    .filter(|row| row.get("sourceWarrants").is_some())
+                    .cloned(),
+            );
+        }
+        folded.extend(
+            legacy_rows
+                .iter()
+                .filter(|row| row.get("sourceWarrants").is_none())
+                .cloned(),
+        );
+        let identity = |rows: &[Value]| {
+            let mut keys = rows
+                .iter()
+                .map(|row| serde_json::to_string(row).expect("row"))
+                .collect::<Vec<_>>();
+            keys.sort();
+            keys
+        };
+        assert_eq!(
+            identity(&legacy_rows),
+            identity(&folded),
+            "folded per-file plus sidecar must equal whole legacy by row identity"
+        );
+        let naive = ["src/lib.rs", "src/other.rs"]
+            .iter()
+            .flat_map(|file| {
+                let doc = function_contract_lift(
+                    &json!({"workspace_root": root, "source_paths": [file]}),
+                )
+                .expect("naive file");
+                doc["ir"].as_array().expect("naive rows").clone()
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(
+            identity(&legacy_rows),
+            identity(&naive),
+            "naive per-file legacy must not satisfy the migration control"
+        );
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
