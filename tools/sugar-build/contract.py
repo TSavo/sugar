@@ -322,6 +322,19 @@ def resolve_task_preconditions(name, host, repo_root, path=DEFAULT_CONTRACT):
     }
 
 
+def match_task_command(argv, path=DEFAULT_CONTRACT):
+    data = load_contract(path)
+    matches = []
+    for name in sorted(data["tasks"]):
+        task = resolve_task(name, path)
+        command = task["command"]
+        if list(argv[: len(command)]) == command:
+            matches.append(name)
+    if len(matches) > 1:
+        raise ContractError(f"command closure has multiple owners: {','.join(matches)}")
+    return matches[0] if matches else None
+
+
 def tool_versions(path=DEFAULT_CONTRACT):
     return dict(sorted(load_contract(path)["tools"].items()))
 
@@ -346,12 +359,17 @@ def main(argv=None):
     preconditions.add_argument("task")
     preconditions.add_argument("--host", required=True)
     preconditions.add_argument("--repo-root", required=True)
+    matcher = subparsers.add_parser("match-command")
+    matcher.add_argument("argv", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
         if args.command == "tool-versions": result = tool_versions()
         elif args.command == "resolve-environment": result = resolve_environment(args.environment)
         elif args.command == "resolve-task": result = resolve_task(args.task)
-        else: result = resolve_task_preconditions(args.task, args.host, args.repo_root)
+        elif args.command == "resolve-preconditions": result = resolve_task_preconditions(args.task, args.host, args.repo_root)
+        else:
+            argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            result = {"task": match_task_command(argv)}
     except ContractError as exc:
         print(f"sugar-build: {exc}", file=sys.stderr)
         return 2

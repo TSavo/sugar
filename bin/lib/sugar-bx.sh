@@ -697,7 +697,13 @@ sugar_bx_run_docker() {
   done
   docker_args+=(--env SUGAR_BINARY_SHELF_READ_ONLY=1)
   docker_args+=(--env SUGAR_BINARY_PUBLISH=0)
-  docker_args+=("$image" "$@")
+  docker_args+=("$image")
+  if [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]]; then
+    docker_args+=(python /workspace/sugar/tools/sugar-build/preflight.py run
+      --plan-json "$SUGAR_BX_MANAGED_PRECONDITION_PLAN"
+      --artifact-root /opt/sugar --)
+  fi
+  docker_args+=("$@")
   for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
   sugar_bx_ssh "exec${command}"
 }

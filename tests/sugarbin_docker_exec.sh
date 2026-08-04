@@ -203,6 +203,14 @@ line="$(tail -1 "$tmp/docker.log")"
 examples="$(run explain --host bx --task examples-gate)"
 [[ "$examples" == *"network=required"* ]] || fail "examples-gate network requirement not explicit"
 
+: >"$tmp/docker.log"
+run run --host bx --task showcases >/dev/null
+showcase_line="$(tail -1 "$tmp/docker.log")"
+[[ "$showcase_line" == *"tools/sugar-build/preflight.py"* ]] \
+  || fail "managed showcase task omitted pre-subject preflight"
+[[ "$showcase_line" == *"make"*"test-showcases"* ]] \
+  || fail "managed showcase task lost its declared command"
+
 # Artifact-manifest refusal belongs to the managed entrypoint, after the
 # toolchain has authenticated. Exercise that real shell boundary with /opt
 # relocated into this test's private root; only absolute fixture paths change.

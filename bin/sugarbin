@@ -107,6 +107,7 @@ dispatch_execution_subcommand() {
   # networking available unless a named task explicitly proves it can run
   # offline in sugar-build.toml.
   local task_json="" task_capabilities="" task_needs="" task_network="required"
+  local task_preconditions_json=""
   local -a task_command=()
   if [[ -n "$task" ]]; then
     local contract_python
@@ -132,6 +133,21 @@ dispatch_execution_subcommand() {
     # do not recreate that environment policy.
     if [[ "$host" == bx && "$execution_env_explicit" == 0 ]]; then
       execution_env="docker:$task_capabilities"
+    fi
+    if [[ "$host" == bx ]] && "$contract_python" -c \
+      'import json,sys; raise SystemExit("closure" not in json.load(sys.stdin))' \
+      <<<"$task_json"; then
+      task_preconditions_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-preconditions "$task" --host bx --repo-root "$script_dir/..")" || return $?
+    fi
+  elif [[ "$host" == bx && ${#command[@]} -gt 0 ]]; then
+    local contract_python command_owner_json command_owner
+    contract_python="$(sugarbin_contract_python)" || return $?
+    command_owner_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" match-command -- "${command[@]}")" || return $?
+    command_owner="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["task"] or "")' <<<"$command_owner_json")"
+    if [[ -n "$command_owner" ]]; then
+      printf 'sugarbin: crime=unmanaged-command-closure command=%s task=%s replacement=select --task %s\n' \
+        "$(IFS=,; printf '%s' "${command[*]}")" "$command_owner" "$command_owner" >&2
+      return 70
     fi
   fi
 
@@ -254,6 +270,7 @@ dispatch_execution_subcommand() {
   SUGAR_BX_PATH_PREFIXES=()
   SUGAR_BX_ENV_NAMES=()
   SUGAR_BX_SYNC_BACKS=()
+  SUGAR_BX_MANAGED_PRECONDITION_PLAN="$task_preconditions_json"
   ((${#path_prefixes[@]} == 0)) || SUGAR_BX_PATH_PREFIXES=("${path_prefixes[@]}")
   ((${#env_names[@]} == 0)) || SUGAR_BX_ENV_NAMES=("${env_names[@]}")
   ((${#sync_backs[@]} == 0)) || SUGAR_BX_SYNC_BACKS=("${sync_backs[@]}")
