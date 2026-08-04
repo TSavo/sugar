@@ -263,3 +263,82 @@ def test_eq_producer_routes_its_selected_mint_through_raw_terminal_writer(
     assert script.count('source "$REPO/scripts/showcase-terminal-identity.sh"') == 1
     assert script.count("showcase_run_with_terminal sugar.mint ") == 1
     assert "ComparisonOpSugar.Eq" not in script
+
+
+def test_shell_wrapper_reads_structured_stdout_and_replays_both_streams(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "terminal.json"
+    diagnostic = {
+        "code": -32001,
+        "message": "sugar not written",
+        "data": {
+            "exception_type": "SugarNotWritten",
+            "stage": "dispatch",
+            "diagnostic": {
+                "owner": "binary_operation_exception_floor",
+                "observed": "CallSiteValue >> TermValue",
+                "requested": "authenticated exceptional exit",
+            },
+        },
+    }
+    command = (
+        f"source {ROOT / 'scripts/showcase-terminal-identity.sh'}; "
+        "showcase_run_with_terminal sugar.mint bash -c "
+        + shlex.quote(
+            "printf 'stdout-before\\n'; "
+            "printf '%s\\n' \"$PLANTED_RPC_ERROR\"; "
+            "printf 'stderr-before\\n' >&2; exit 17"
+        )
+    )
+    completed = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={
+            "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
+            "SHOWCASE_TERMINAL_WITNESS": str(output),
+            "PLANTED_RPC_ERROR": json.dumps(diagnostic),
+        },
+    )
+
+    assert completed.returncode == 17
+    assert "stdout-before\n" in completed.stdout
+    assert json.dumps(diagnostic) in completed.stdout
+    assert "stderr-before\n" in completed.stderr
+    assert json.loads(output.read_text(encoding="utf-8"))["owner"] == (
+        "binary_operation_exception_floor"
+    )
+
+
+def test_shell_wrapper_publication_refusal_preserves_selected_exit(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "terminal.json"
+    command = (
+        f"source {ROOT / 'scripts/showcase-terminal-identity.sh'}; "
+        "showcase_run_with_terminal sugar.mint bash -c "
+        + shlex.quote(
+            "printf 'ordinary stdout\\n'; "
+            "printf 'ownerless failure\\n' >&2; exit 19"
+        )
+    )
+    completed = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={
+            "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
+            "SHOWCASE_TERMINAL_WITNESS": str(output),
+        },
+    )
+
+    assert completed.returncode == 19
+    assert completed.stdout == "ordinary stdout\n"
+    assert "ownerless failure\n" in completed.stderr
+    assert "REFUSED: selected command emitted no structured RPC error" in (
+        completed.stderr
+    )
+    assert not output.exists()
