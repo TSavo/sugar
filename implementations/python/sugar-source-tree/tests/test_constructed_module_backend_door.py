@@ -652,6 +652,86 @@ def test_nested_rows_are_in_producer_order_and_module_calls_are_absent(
     assert first.call_occurrence_identity != second.call_occurrence_identity
 
 
+def test_rewritten_nested_call_retains_its_exact_lexical_row(
+    constructed_module_door,
+) -> None:
+    source_file = _file(
+        "def outer(value):\n"
+        "    def child(argument):\n"
+        "        return argument\n"
+        "    sentinel = 1\n"
+        "    return child(value)\n"
+    )
+    call = next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Call" and getattr(node.func, "id", None) == "child"
+    )
+    constant = next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Constant" and node.value == 1
+    )
+    (row,) = source_file.unit.lexical_call_rows_for(call)
+
+    rewritten = call.substitute({"value": constant})
+
+    assert rewritten is not call
+    assert len(rewritten.args) == 1
+    assert rewritten.args[0].value == 1
+    assert source_file.unit.lexical_call_rows_for(rewritten) == (row,)
+
+
+def test_rewritten_call_without_lexical_row_stays_unenrolled(
+    constructed_module_door,
+) -> None:
+    source_file = _file(
+        "def outer(value):\n"
+        "    sentinel = 1\n"
+        "    return external(value)\n"
+    )
+    call = next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Call" and getattr(node.func, "id", None) == "external"
+    )
+    constant = next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Constant" and node.value == 1
+    )
+    assert source_file.unit.lexical_call_rows_for(call) == ()
+
+    rewritten = call.substitute({"value": constant})
+
+    assert rewritten is not call
+    assert len(rewritten.args) == 1
+    assert rewritten.args[0].value == 1
+    assert source_file.unit.lexical_call_rows_for(rewritten) == ()
+
+
+def test_unchanged_nested_call_keeps_identity_and_lexical_row(
+    constructed_module_door,
+) -> None:
+    source_file = _file(
+        "def outer():\n"
+        "    def child():\n"
+        "        return 1\n"
+        "    return child()\n"
+    )
+    call = next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Call" and getattr(node.func, "id", None) == "child"
+    )
+    (row,) = source_file.unit.lexical_call_rows_for(call)
+
+    unchanged = call.substitute({})
+
+    assert unchanged is call
+    assert source_file.unit.lexical_call_rows_for(unchanged) == (row,)
+
+
 def test_parameter_assignment_delete_and_rebind_do_not_authorize_nested_call(
     constructed_module_door,
 ) -> None:

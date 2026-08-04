@@ -10431,7 +10431,7 @@ class Compare(Expression):
 
 class Call(Expression):
     def substitute(self, scope: "dict[str, Node]") -> "Node":
-        rewritten = super().substitute(scope)
+        rewritten = self._substitute_children(scope)
         if (
             rewritten is not self
             and isinstance(rewritten, Call)
@@ -10444,12 +10444,6 @@ class Call(Expression):
     args: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
     _child_fields = ("func", "args", "keywords")
-
-    def substitute(self, scope):
-        """A call binds nothing: recurse into the callee, args, and keywords.
-        (A receiver `v.c(1)` substitutes through `func`, its Attribute; the
-        chain rewrites naturally as the receiver's own tree is substituted.)"""
-        return self._substitute_children(scope)
 
     def receiver(self) -> Optional[Expression]:
         """The object a method call is invoked on, when the callee is an
