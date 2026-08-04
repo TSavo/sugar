@@ -48,6 +48,7 @@ from .nodes import (
     Node,
     SourceUnit,
     Typeable,
+    mint_lexical_call_enrollment,
     resolve_kind,
 )
 from .occurrence import SourceOccurrenceIdentityV1
@@ -512,6 +513,10 @@ class _ConstructedModuleV1(_SealedBackendRelation):
     # a rewritten shell over the same occurrence must join this row (#7346-A).
     function_class_owners: tuple[tuple[object, object | None], ...]
     lexical_call_rows: tuple[object, ...]
+    # Closed producer decision for EVERY call occurrence, keyed by
+    # SourceOccurrenceIdentityV1 (#7346-A/#7348). A rewritten shell over the
+    # same occurrence joins; a miss is a refusal, never "not enrolled".
+    lexical_call_enrollments: tuple[tuple[object, object], ...]
     provider_member_rows: tuple[object, ...]
     leaf_assertion_rows: tuple[object, ...]
     construction_event_receipt: object
@@ -826,11 +831,29 @@ class Backend:
                         events.append((position, target.id, None))
 
         lexical_rows = []
+        # The SAME walk publishes its closed applicability decision for EVERY
+        # call occurrence, not only the positive rows (#7348).  Each `continue`
+        # below is a decision this walk already made; it is now named and
+        # published instead of discarded.  No consumer re-derives it.
+        lexical_enrollments: list[tuple[object, object]] = []
+
+        def publish(call_node, reason: str | None) -> None:
+            lexical_enrollments.append(
+                (
+                    SourceOccurrenceIdentityV1.of(call_node),
+                    mint_lexical_call_enrollment(call_node, reason),
+                )
+            )
+
         for call_position, call in enumerate(constructed_nodes):
-            if not isinstance(call, Call) or not isinstance(call.func, Name):
+            if not isinstance(call, Call):
+                continue
+            if not isinstance(call.func, Name):
+                publish(call, "non-name-callee")
                 continue
             call_scope_position = scope_at_position[call_position]
             if call_scope_position == module_position:
+                publish(call, "module-scope-call")
                 continue
             search_scope = call_scope_position
             definition = None
@@ -860,7 +883,14 @@ class Backend:
                 if search_scope == module_position:
                     break
             if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+                publish(
+                    call,
+                    "no-lexical-binding-in-scope"
+                    if definition_scope_position is None
+                    else "binding-not-a-function-definition",
+                )
                 continue
+            publish(call, None)
             row = object.__new__(_BackendLexicalCallRowV1)
             _close_private(
                 row,
@@ -874,6 +904,7 @@ class Backend:
             )
             lexical_rows.append(row)
         lexical_call_rows = tuple(lexical_rows)
+        lexical_call_enrollments = tuple(lexical_enrollments)
 
         provider_rows = []
         for node in constructed_nodes:
@@ -1022,6 +1053,7 @@ class Backend:
             function_nodes=function_nodes,
             function_class_owners=function_class_owners,
             lexical_call_rows=lexical_call_rows,
+            lexical_call_enrollments=lexical_call_enrollments,
             provider_member_rows=provider_member_rows,
             leaf_assertion_rows=leaf_assertion_rows,
             construction_event_receipt=receipt,

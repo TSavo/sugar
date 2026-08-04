@@ -328,6 +328,156 @@ class TargetPatternNotEnrolledV1(TargetPatternEnrollmentV1):
 TargetPatternEnrollmentV1._variants_closed = True
 
 
+_LEXICAL_CALL_ENROLLMENT_AUTHORITY = object()
+
+
+def _lexical_enrollment_defect(blame, observed: str, requested: str, fix: str):
+    return BackendDefect(
+        blame=blame,
+        owner="LexicalCallEnrollmentV1",
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )
+
+
+class LexicalCallEnrollmentV1:
+    """Closed producer-owned applicability outcome for the lexical relation.
+
+    ``Backend.materialize_module`` already decides, during its ONE structural
+    walk, which call occurrences receive a ``_BackendLexicalCallRowV1``: it
+    classifies the callee shape, the enclosing scope, and the binding event the
+    name resolves to.  It published only the positive rows.  A consumer that
+    wanted the applicability answer therefore read the relation and treated an
+    empty tuple as "not enrolled" -- which also swallowed "the enrolled row was
+    stranded by a rewrite" and "this occurrence was never walked at all".
+
+    This type transports the decision the walk ALREADY made; it is never
+    re-derived.  No consumer may repeat the backend's scope/binding walk.
+
+    Exactly two variants exist and only the producer may mint them.  Mirrors
+    ``TargetPatternEnrollmentV1`` deliberately, including the omission of the
+    product: the enrolled row is NOT carried here.  Carrying it would make this
+    table a second copy of the relation, and a stranded row would then be
+    unobservable.  "Is this occurrence enrolled?" is answered here; "did my
+    lookup find the row?" is answered separately and loudly by
+    ``SourceUnit.require_lexical_call_rows``.  The two questions never share a
+    value, and a LOOKUP MISS is a third, typed failure -- it can never
+    masquerade as either outcome.
+    """
+
+    __slots__ = ("call_occurrence",)
+
+    _variants_closed = False
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        if LexicalCallEnrollmentV1._variants_closed:
+            raise _lexical_enrollment_defect(
+                blame=getattr(cls, "__name__", cls),
+                observed="a third lexical-call enrollment variant",
+                requested="exactly two closed variants",
+                fix="extend the closed outcome deliberately, not by subclassing",
+            )
+
+    def __init__(self, *, call_occurrence, _authority=None) -> None:
+        if _authority is not _LEXICAL_CALL_ENROLLMENT_AUTHORITY:
+            raise _lexical_enrollment_defect(
+                blame=getattr(call_occurrence, "fragment", call_occurrence),
+                observed="lexical-call enrollment minted outside the producer",
+                requested="the one authoritative structural walk",
+                fix="publish enrollment from Backend.materialize_module only",
+            )
+        object.__setattr__(self, "call_occurrence", call_occurrence)
+
+    def __setattr__(self, name, value):  # pragma: no cover - immutability guard
+        raise _lexical_enrollment_defect(
+            blame=getattr(self.call_occurrence, "fragment", self.call_occurrence),
+            observed="mutation of a sealed lexical-call enrollment",
+            requested="an immutable producer outcome",
+            fix="mint a new outcome from the producer walk",
+        )
+
+
+class LexicalCallEnrolledV1(LexicalCallEnrollmentV1):
+    """This call occurrence IS in the lexical relation.
+
+    The row is deliberately not carried; read it strictly through
+    ``SourceUnit.require_lexical_call_rows`` so a stranded row refuses instead
+    of degrading into this value.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "LexicalCallEnrolledV1()"
+
+
+_LEXICAL_CALL_NON_ENROLLMENT_REASONS = frozenset(
+    {
+        # The callee is not a bare Name, so no lexical name resolution applies.
+        "non-name-callee",
+        # The call occurs at module scope; the relation covers calls inside a
+        # function scope only.
+        "module-scope-call",
+        # Name resolution found no binding event for this spelling in any
+        # enclosing function scope (external, builtin, or module-level name).
+        "no-lexical-binding-in-scope",
+        # A binding event was found, but it is a parameter, local assignment,
+        # deletion, rebinding, or a later definition -- not a lexical function
+        # definition visible at this call.
+        "binding-not-a-function-definition",
+        # This unit has no typed module root yet, so no lexical relation has
+        # been published for any occurrence in it.
+        "no-typed-module",
+        # A desugarer-synthesized Call shell (``Node._make_call``) over a
+        # borrowed span: it is not a source call occurrence, so it is outside
+        # the relation's DOMAIN.  Only shadow-minted nodes may take this arm;
+        # a source-backed occurrence with no published decision refuses.
+        "synthesized-call-occurrence",
+    }
+)
+
+
+class LexicalCallNotEnrolledV1(LexicalCallEnrollmentV1):
+    """This call occurrence is lawfully outside the lexical relation."""
+
+    __slots__ = ("reason",)
+
+    def __init__(self, *, call_occurrence, reason, _authority=None):
+        super().__init__(call_occurrence=call_occurrence, _authority=_authority)
+        if reason not in _LEXICAL_CALL_NON_ENROLLMENT_REASONS:
+            raise _lexical_enrollment_defect(
+                blame=getattr(call_occurrence, "fragment", call_occurrence),
+                observed=f"undeclared non-enrollment reason {reason!r}",
+                requested="one of the declared closed reasons",
+                fix="declare the reason deliberately in the closed set",
+            )
+        object.__setattr__(self, "reason", reason)
+
+    def __repr__(self) -> str:
+        return f"LexicalCallNotEnrolledV1({self.reason!r})"
+
+
+LexicalCallEnrollmentV1._variants_closed = True
+
+
+def mint_lexical_call_enrollment(
+    call_occurrence, reason: str | None
+) -> LexicalCallEnrollmentV1:
+    """The ONE door the producer walk mints its published decision through."""
+    if reason is None:
+        return LexicalCallEnrolledV1(
+            call_occurrence=call_occurrence,
+            _authority=_LEXICAL_CALL_ENROLLMENT_AUTHORITY,
+        )
+    return LexicalCallNotEnrolledV1(
+        call_occurrence=call_occurrence,
+        reason=reason,
+        _authority=_LEXICAL_CALL_ENROLLMENT_AUTHORITY,
+    )
+
+
 _TARGET_PATTERN_RECEIPT_AUTHORITY = object()
 
 
@@ -634,7 +784,59 @@ class SourceUnit:
         object.__setattr__(self, "_constructed_module", None)
         object.__setattr__(self, "_retained_lexical_call_rows", {})
 
-    def lexical_call_rows_for(self, call: "Call") -> tuple[object, ...]:
+    def lexical_call_enrollment(self, call: "Call") -> LexicalCallEnrollmentV1:
+        """The producer's ONE closed applicability decision for a call.
+
+        Keyed by the durable source occurrence (#7346-A), so a rewritten shell
+        over the same occurrence gets the same answer.  The producer publishes
+        a decision for EVERY call occurrence it walked; therefore a lookup that
+        finds no decision is a failed join and REFUSES.  It is never reported
+        as not-enrolled: absence and lookup-failure do not share a
+        representation here.
+        """
+        if self.typed_module is None:
+            return mint_lexical_call_enrollment(call, "no-typed-module")
+        occurrence = SourceOccurrenceIdentityV1.of(call)
+        matches = tuple(
+            decision
+            for candidate, decision in self.constructed_module.lexical_call_enrollments
+            if candidate == occurrence
+        )
+        if not matches:
+            from .shadow import ShadowNode
+
+            if isinstance(call.ref, ShadowNode):
+                # Out of DOMAIN, not a failed join.  The desugarer mints fresh
+                # Call shells (``Node._make_call``) over a borrowed span of a
+                # node that is not itself a source call; the one structural
+                # walk never saw them and never could.  ``shadow.rewrite``, by
+                # contrast, preserves the origin's span AND kind, so a
+                # rewritten source call still joins its published decision --
+                # that is exactly what occurrence keying buys (#7346-A).
+                #
+                # Stated exactly: this arm requires the node to be
+                # shadow-minted.  A SOURCE-backed call with no published
+                # decision is still a failed join and still refuses below.
+                return mint_lexical_call_enrollment(
+                    call, "synthesized-call-occurrence"
+                )
+        if len(matches) != 1:
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="SourceUnit.lexical_call_enrollment",
+                observed=f"{len(matches)} published enrollment decisions",
+                requested="one decision for this exact call occurrence",
+                fix="publish one lexical enrollment per call in the producer walk",
+            )
+        return matches[0]
+
+    def _seated_lexical_call_rows(self, call: "Call") -> tuple[object, ...]:
+        """Raw relation read.  Empty means exactly one thing: lookup missed.
+
+        Callers never see this; ``require_lexical_call_rows`` turns a miss into
+        a typed refusal.  Non-enrollment is not expressible here -- that
+        question is answered by ``lexical_call_enrollment`` and nothing else.
+        """
         retained = self._retained_lexical_call_rows.get(call.ref)
         if retained is not None:
             return retained
@@ -643,6 +845,38 @@ class SourceUnit:
             for row in self.constructed_module.lexical_call_rows
             if row.call_occurrence_identity is call.ref
         )
+
+    def require_lexical_call_rows(self, call: "Call") -> tuple[object, ...]:
+        """Strict read of an ENROLLED call's producer-owned row.
+
+        Three facts that used to collapse into one empty tuple now have three
+        distinct representations:
+
+        * lawfully not enrolled -> ``LexicalCallNotEnrolledV1`` (a value, from
+          ``lexical_call_enrollment``, never from here);
+        * enrolled but stranded -> ``BackendDefect`` refusal;
+        * never walked / foreign occurrence -> ``BackendDefect`` refusal from
+          ``lexical_call_enrollment``.
+        """
+        enrollment = self.lexical_call_enrollment(call)
+        if not isinstance(enrollment, LexicalCallEnrolledV1):
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="SourceUnit.require_lexical_call_rows",
+                observed=f"not an enrolled lexical call: {enrollment.reason}",
+                requested="an enrolled lexical call occurrence",
+                fix="ask lexical_call_enrollment before reading the relation",
+            )
+        rows = self._seated_lexical_call_rows(call)
+        if len(rows) != 1:
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="SourceUnit.require_lexical_call_rows",
+                observed=f"{len(rows)} lexical rows for one enrolled call occurrence",
+                requested="the one producer-owned row this occurrence is enrolled for",
+                fix="retain the enrolled row through the authenticated rewrite",
+            )
+        return rows
 
     def lexical_class_owner_for(self, function: "Node") -> "ClassDef | None":
         """Project the exact class owner from the backend's one structural walk.
@@ -678,7 +912,7 @@ class SourceUnit:
         return matches[0]
 
     def retain_lexical_call_row(self, source: "Call", rewritten: "Call") -> None:
-        rows = self.lexical_call_rows_for(source)
+        rows = self.require_lexical_call_rows(source)
         if not rows or type(source) is not type(rewritten):
             raise BackendDefect(
                 blame=rewritten.fragment,
@@ -1365,19 +1599,20 @@ class SourceUnit:
         parameter, local, free, nonlocal, ambiguous, or recursive binding is
         not silently treated as this module definition.
         """
-        if not isinstance(call.func, Name) or self.typed_module is None:
-            return None
-        lexical_rows = self.lexical_call_rows_for(call)
-        if len(lexical_rows) > 1:
-            from .panic import backend_defect
-
-            backend_defect(
-                blame=call.fragment,
-                owner="SourceUnit.source_function_definition_for_call",
-                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
-                requested="zero or one authenticated lexical call row",
-                fix="repair Backend.materialize_module lexical call enrollment",
-            )
+        # Ask the producer's applicability question FIRST; read the relation
+        # only for an enrolled occurrence.  A stranded enrolled row now refuses
+        # instead of entering the fallback and answering with a different
+        # module-level definition (#7348 caller 2).
+        enrollment = self.lexical_call_enrollment(call)
+        if isinstance(enrollment, LexicalCallNotEnrolledV1):
+            if enrollment.reason in ("non-name-callee", "no-typed-module"):
+                return None
+            # module-scope-call / no-lexical-binding-in-scope /
+            # binding-not-a-function-definition: the lawful symtable-classified
+            # path below is this outcome's ONE named continuation.
+            lexical_rows = ()
+        else:
+            lexical_rows = self.require_lexical_call_rows(call)
         if lexical_rows:
             row = lexical_rows[0]
             definition = row.definition_occurrence
@@ -10718,7 +10953,9 @@ class Call(Expression):
         if (
             rewritten is not self
             and isinstance(rewritten, Call)
-            and self.unit.lexical_call_rows_for(self)
+            and isinstance(
+                self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
+            )
         ):
             self.unit.retain_lexical_call_row(self, rewritten)
         return rewritten
@@ -10893,18 +11130,16 @@ class Call(Expression):
         elif isinstance(context, TreeConstructionContextV1):
             assert coordinate is not None
             source_call_resolution = context.source_call_resolutions.get(coordinate)
-        lexical_rows = self.unit.lexical_call_rows_for(self)
-        if len(lexical_rows) > 1:
-            from .panic import backend_defect
-
-            backend_defect(
-                blame=self.fragment,
-                owner="Call._construct_sugar",
-                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
-                requested="zero or one sealed lexical call row",
-                fix="repair lexical call enrollment before constructing the source frame",
+        # Applicability first, relation second.  A non-lexical call is lawfully
+        # not enrolled; a stranded enrolled row refuses instead of quietly
+        # losing the source frame (#7348 caller 4).
+        lexical_row = (
+            self.unit.require_lexical_call_rows(self)[0]
+            if isinstance(
+                self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
             )
-        lexical_row = lexical_rows[0] if lexical_rows else None
+            else None
+        )
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
             if (
@@ -11087,18 +11322,17 @@ class Call(Expression):
             formal_function_sugar = None
             formal_coordinates = ()
             formal_coordinate_cids = ()
-            lexical_rows = self.unit.lexical_call_rows_for(self)
-            if len(lexical_rows) > 1:
-                from .panic import backend_defect
-
-                backend_defect(
-                    blame=self.fragment,
-                    owner="Call._construct_sugar",
-                    observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
-                    requested="zero or one sealed lexical call row",
-                    fix="repair lexical call enrollment before constructing the source frame",
+            # Applicability first, relation second (#7348 caller 5): an
+            # external/module/shadowed Name call is lawfully not enrolled, but
+            # a stranded enrolled row must not fall through to a weaker
+            # ordinary CallSiteSugar.
+            lexical_row = (
+                self.unit.require_lexical_call_rows(self)[0]
+                if isinstance(
+                    self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
                 )
-            lexical_row = lexical_rows[0] if lexical_rows else None
+                else None
+            )
             if lexical_row is not None:
                 function_definition = lexical_row.definition_occurrence
                 if (

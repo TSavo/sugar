@@ -299,29 +299,86 @@ def test_producer_walk_and_published_enrollment_are_one_answer(
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# TOOTH 4 -- the LEXICAL arm.  Same law, same defect; unblocked by #7346.
+#
+# FIXTURE ISOLATION (#7364): SourceUnits are memoized by (source_cid,
+# workspace-relative filename).  Byte-identical fixture text SHARES ONE UNIT
+# across tests no matter how distinct the tmp_path is, and two of these teeth
+# deliberately CORRUPT the unit they hold.  Every source below is therefore
+# unique text under a unique filename.
+# --------------------------------------------------------------------------
+
+LEXICAL_NONNAME_SOURCE = """\
+def dispatcher(bag):
+    marker_nonname = 0
+    return bag.handle(marker_nonname)
+"""
+
+LEXICAL_MODULE_SCOPE_SOURCE = """\
+def target_module_scope(item):
+    return item
+
+
+marker_module_scope = target_module_scope(1)
+"""
+
+LEXICAL_NO_BINDING_SOURCE = """\
+def outer_no_binding(value):
+    marker_no_binding = 1
+    return external_no_binding(value, marker_no_binding)
+"""
+
+LEXICAL_PARAMETER_BINDING_SOURCE = """\
+def outer_parameter_binding(handler):
+    marker_parameter_binding = 2
+    return handler(marker_parameter_binding)
+"""
+
+LEXICAL_DOMAIN_SOURCE = """\
+def caller_domain(marker_domain):
+    def helper_domain(item):
+        return item
+
+    return helper_domain(marker_domain)
+"""
+
+LEXICAL_MISS_SOURCE = """\
+def caller_miss(value):
+    def helper_miss(item):
+        return item
+
+    return helper_miss(value)
+"""
+
+
+def _lexical_call(source_file, spelling: str):
+    return next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Call" and getattr(node.func, "id", None) == spelling
+    )
+
+
 def test_stranded_enrolled_lexical_call_refuses_instead_of_shrugging(
     tmp_path: Path,
 ) -> None:
-    """HARD RED, deliberately. Do not xfail, skip, or delete this.
+    """The tooth #7348 was blocked on. It bites the STRAND, not mere failure.
 
-    The #7348 lexical arm is prerequisite-blocked on #7346: the lexical
-    enrollment decision is not a function of the call node -- it needs the
-    backend's scope/binding classification -- so publishing it requires a
-    keyed negative table, and a shell/ref-keyed one would preserve the same
-    defect under a second carrier. Inventing the key here would be a second
-    answer.
+    The producer must still say "this occurrence IS enrolled" after the
+    relation is emptied, and the strict read must REFUSE.  Before the closed
+    outcome landed, the read simply returned ``()`` and every consumer treated
+    a stranded enrolled call as an ordinary non-lexical one.
 
-    So the hole is real and unfixed today. A strict-xfail would render this
-    board green over a known hole, which is the exact failure this project
-    treats as fatal. Merges here are not gated on CI, so a standing red
-    blocks nothing -- it only stays visible. It turns green when, and only
-    when, the closed lexical outcome lands.
+    Note what is asserted: the enrolled verdict SURVIVES the strand.  A tooth
+    that only asserted "something raised" would be satisfied by the enrollment
+    lookup itself failing, which is a different fact.
     """
     source_file = _open(tmp_path, "lexical.py", LEXICAL_SOURCE)
     call = next(node for node in source_file.nodes() if node.kind == "Call")
     unit = source_file.unit
 
-    rows = unit.lexical_call_rows_for(call)
+    rows = unit.require_lexical_call_rows(call)
     assert rows, "fixture must hold an enrolled lexical call"
 
     # Same mutation as the target arm: strand the enrolled row.
@@ -329,25 +386,156 @@ def test_stranded_enrolled_lexical_call_refuses_instead_of_shrugging(
     object.__setattr__(constructed, "lexical_call_rows", ())
     unit._retained_lexical_call_rows.clear()
 
-    # The producer must still say "this occurrence IS enrolled" and the read
-    # must refuse. Today the read simply returns () and every consumer treats
-    # it as an ordinary non-lexical call.
     enrollment = unit.lexical_call_enrollment(call)
-    assert enrollment.__class__.__name__.endswith("EnrolledV1")
-    with pytest.raises(nodes.BackendDefect):
+    assert isinstance(enrollment, nodes.LexicalCallEnrolledV1)
+    with pytest.raises(nodes.BackendDefect) as stranded:
         unit.require_lexical_call_rows(call)
+    assert "0 lexical rows for one enrolled call occurrence" in str(stranded.value)
 
 
-def test_the_defaulting_lexical_reader_is_still_present_and_why() -> None:
-    """Honest instrument: records exactly what is NOT yet repaired.
+def test_lookup_miss_refuses_and_never_reports_not_enrolled(tmp_path: Path) -> None:
+    """Absence and lookup-failure do not share a representation.
 
-    ``lexical_call_rows_for`` still exists and still returns ``()`` for both
-    lawful non-enrollment and a stranded row.  Deleting it before the producer
-    publishes a closed outcome would force its five callers to re-derive the
-    backend's scope walk -- five second answers instead of one side door.
+    The producer publishes a decision for EVERY call occurrence it walked, so
+    finding none is a failed join.  This is the exact masquerade #7348
+    forbids: it must not come back as ``NotEnrolled``.
     """
-    assert hasattr(nodes.SourceUnit, "lexical_call_rows_for"), (
-        "if this reader was deleted, the closed lexical outcome from #7348 "
-        "step 3 must have landed -- delete this test with it"
+    source_file = _open(tmp_path, "lexical_miss.py", LEXICAL_MISS_SOURCE)
+    call = _lexical_call(source_file, "helper_miss")
+    unit = source_file.unit
+
+    assert isinstance(
+        unit.lexical_call_enrollment(call), nodes.LexicalCallEnrolledV1
     )
-    assert not hasattr(nodes.SourceUnit, "lexical_call_enrollment")
+
+    object.__setattr__(unit.constructed_module, "lexical_call_enrollments", ())
+
+    with pytest.raises(nodes.BackendDefect) as missed:
+        unit.lexical_call_enrollment(call)
+    assert "0 published enrollment decisions" in str(missed.value)
+    assert "SourceUnit.lexical_call_enrollment" in str(missed.value)
+
+
+def test_every_declared_non_enrollment_reason_is_produced_by_the_walk(
+    tmp_path: Path,
+) -> None:
+    """BOTH ARMS, per reason: each declared reason has a live producer path.
+
+    A closed reason set nobody mints is decoration.  Each case below is a
+    ``continue`` the backend walk already executed and used to discard.
+    """
+    enrolled = _open(tmp_path, "lex_enrolled.py", LEXICAL_MISS_SOURCE)
+    assert isinstance(
+        enrolled.unit.lexical_call_enrollment(
+            _lexical_call(enrolled, "helper_miss")
+        ),
+        nodes.LexicalCallEnrolledV1,
+    )
+
+    cases = (
+        ("lex_nonname.py", LEXICAL_NONNAME_SOURCE, None, "non-name-callee"),
+        (
+            "lex_module.py",
+            LEXICAL_MODULE_SCOPE_SOURCE,
+            "target_module_scope",
+            "module-scope-call",
+        ),
+        (
+            "lex_nobinding.py",
+            LEXICAL_NO_BINDING_SOURCE,
+            "external_no_binding",
+            "no-lexical-binding-in-scope",
+        ),
+        (
+            "lex_parameter.py",
+            LEXICAL_PARAMETER_BINDING_SOURCE,
+            "handler",
+            "binding-not-a-function-definition",
+        ),
+    )
+    for name, text, spelling, reason in cases:
+        source_file = _open(tmp_path, name, text)
+        call = (
+            _lexical_call(source_file, spelling)
+            if spelling is not None
+            else next(
+                node for node in source_file.nodes() if node.kind == "Call"
+            )
+        )
+        outcome = source_file.unit.lexical_call_enrollment(call)
+        assert isinstance(outcome, nodes.LexicalCallNotEnrolledV1), (
+            f"{name} expected not-enrolled, got {outcome!r}"
+        )
+        assert outcome.reason == reason, f"{name}: {outcome.reason!r} != {reason!r}"
+
+    assert nodes._LEXICAL_CALL_NON_ENROLLMENT_REASONS == frozenset(
+        {reason for *_, reason in cases}
+        | {"no-typed-module", "synthesized-call-occurrence"}
+    ), "a declared reason with no producer path, or a path with no reason"
+
+
+def test_synthesized_call_is_out_of_domain_but_a_source_miss_still_refuses(
+    tmp_path: Path,
+) -> None:
+    """BOTH ARMS of the domain discriminator, on one unit.
+
+    The desugarer mints fresh Call shells over a borrowed span; the one
+    structural walk never saw them, so they are outside the relation's domain
+    rather than a failed join.  That arm is admitted ONLY for a shadow-minted
+    node -- a source-backed occurrence with no published decision is still a
+    refusal.  A tooth that showed only the first arm would certify a
+    masquerade.
+    """
+    source_file = _open(tmp_path, "lex_domain.py", LEXICAL_DOMAIN_SOURCE)
+    unit = source_file.unit
+    real_call = _lexical_call(source_file, "helper_domain")
+    anchor = next(
+        node
+        for node in source_file.nodes()
+        if node.kind == "Name" and node.id == "marker_domain"
+    )
+
+    synthesized = anchor._make_call(anchor)
+    assert synthesized.kind == "Call"
+    outcome = unit.lexical_call_enrollment(synthesized)
+    assert isinstance(outcome, nodes.LexicalCallNotEnrolledV1)
+    assert outcome.reason == "synthesized-call-occurrence"
+
+    # Arm two, same table state: the SOURCE call is still decided, and once
+    # its decision is removed it refuses instead of taking the domain arm.
+    assert isinstance(
+        unit.lexical_call_enrollment(real_call), nodes.LexicalCallEnrolledV1
+    )
+    object.__setattr__(unit.constructed_module, "lexical_call_enrollments", ())
+    with pytest.raises(nodes.BackendDefect) as missed:
+        unit.lexical_call_enrollment(real_call)
+    assert "0 published enrollment decisions" in str(missed.value)
+
+
+def test_the_lexical_outcome_is_closed_and_producer_minted() -> None:
+    """The sealed base refuses a third variant, a foreign mint, and mutation."""
+    with pytest.raises(nodes.BackendDefect) as third:
+
+        class _ThirdVariant(nodes.LexicalCallEnrollmentV1):
+            pass
+
+    assert "third lexical-call enrollment variant" in str(third.value)
+
+    with pytest.raises(nodes.BackendDefect) as foreign:
+        nodes.LexicalCallEnrolledV1(call_occurrence=object())
+    assert "minted outside the producer" in str(foreign.value)
+
+    with pytest.raises(nodes.BackendDefect) as undeclared:
+        nodes.mint_lexical_call_enrollment(object(), "invented-reason")
+    assert "undeclared non-enrollment reason" in str(undeclared.value)
+
+    outcome = nodes.mint_lexical_call_enrollment(object(), None)
+    with pytest.raises(nodes.BackendDefect):
+        outcome.call_occurrence = object()
+
+
+def test_the_defaulting_lexical_reader_is_gone() -> None:
+    """#7348 step 5: the ambiguous reader is deleted, the loud one stays."""
+    assert not hasattr(nodes.SourceUnit, "lexical_call_rows_for")
+    assert hasattr(nodes.SourceUnit, "retain_lexical_call_row")
+    assert hasattr(nodes.SourceUnit, "require_lexical_call_rows")

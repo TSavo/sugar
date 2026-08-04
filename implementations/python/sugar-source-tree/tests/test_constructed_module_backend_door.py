@@ -672,14 +672,14 @@ def test_rewritten_nested_call_retains_its_exact_lexical_row(
         for node in source_file.nodes()
         if node.kind == "Constant" and node.value == 1
     )
-    (row,) = source_file.unit.lexical_call_rows_for(call)
+    (row,) = source_file.unit.require_lexical_call_rows(call)
 
     rewritten = call.substitute({"value": constant})
 
     assert rewritten is not call
     assert len(rewritten.args) == 1
     assert rewritten.args[0].value == 1
-    assert source_file.unit.lexical_call_rows_for(rewritten) == (row,)
+    assert source_file.unit.require_lexical_call_rows(rewritten) == (row,)
 
 
 def test_rewritten_call_without_lexical_row_stays_unenrolled(
@@ -700,14 +700,20 @@ def test_rewritten_call_without_lexical_row_stays_unenrolled(
         for node in source_file.nodes()
         if node.kind == "Constant" and node.value == 1
     )
-    assert source_file.unit.lexical_call_rows_for(call) == ()
+    assert (
+        source_file.unit.lexical_call_enrollment(call).reason
+        == "no-lexical-binding-in-scope"
+    )
 
     rewritten = call.substitute({"value": constant})
 
     assert rewritten is not call
     assert len(rewritten.args) == 1
     assert rewritten.args[0].value == 1
-    assert source_file.unit.lexical_call_rows_for(rewritten) == ()
+    assert (
+        source_file.unit.lexical_call_enrollment(rewritten).reason
+        == "no-lexical-binding-in-scope"
+    )
 
 
 def test_unchanged_nested_call_keeps_identity_and_lexical_row(
@@ -724,12 +730,12 @@ def test_unchanged_nested_call_keeps_identity_and_lexical_row(
         for node in source_file.nodes()
         if node.kind == "Call" and getattr(node.func, "id", None) == "child"
     )
-    (row,) = source_file.unit.lexical_call_rows_for(call)
+    (row,) = source_file.unit.require_lexical_call_rows(call)
 
     unchanged = call.substitute({})
 
     assert unchanged is call
-    assert source_file.unit.lexical_call_rows_for(unchanged) == (row,)
+    assert source_file.unit.require_lexical_call_rows(unchanged) == (row,)
 
 
 def test_parameter_assignment_delete_and_rebind_do_not_authorize_nested_call(
