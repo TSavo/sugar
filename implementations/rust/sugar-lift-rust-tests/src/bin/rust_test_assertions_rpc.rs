@@ -759,6 +759,7 @@ fn lift_with_prepared_population(
                 assertion_panic_partial_bridges(&assertion_entries, params);
             assertion_surface_audits.extend(assertion_surface_audits_for_file(
                 &out.assertion_facts,
+                &assertion_entries,
                 &assertion_sources,
                 &fns,
                 &mut source_cache,
@@ -3157,56 +3158,141 @@ fn json_to_cvalue(value: &Value) -> Arc<CValue> {
 
 fn assertion_surface_audits_for_file(
     facts: &[AssertionFactEmission],
+    assertion_entries: &[Value],
     sources: &BTreeMap<String, AssertionSourceRecord>,
     fns: &[FnRef<'_>],
     source_cache: &mut FileSourceOracleCache<'_>,
 ) -> Vec<Value> {
-    sources
-        .values()
-        .map(|source| {
-            let fact_rows = assertion_fact_rows_for_kind(
-                facts,
-                source,
-                AssertionFactKind::Warranted,
-                fns,
-                source_cache,
-            );
-            let support_rows = assertion_fact_rows_for_kind(
-                facts,
-                source,
-                AssertionFactKind::Support,
-                fns,
-                source_cache,
-            );
-            let status = if !fact_rows.is_empty() {
-                "facts-emitted"
-            } else if !support_rows.is_empty() {
-                "support-only"
-            } else {
-                "no-facts-emitted"
-            };
-            let mut row = json!({
+    // Provenance is judged over emitted contract instances, not over the
+    // collected FnRef seats. Start with every emitted fact whose contract would
+    // reach the verifier without either accepted provenance kind. FnRef seats
+    // remain a second denominator for source surfaces that emitted no facts;
+    // they are not allowed to hide an emitted contract they cannot name.
+    let mut audits =
+        unmatched_emitted_fact_audits(facts, assertion_entries, sources, fns, source_cache);
+    audits.extend(
+        sources
+            .values()
+            .map(|source| {
+                let fact_rows = assertion_fact_rows_for_kind(
+                    facts,
+                    source,
+                    AssertionFactKind::Warranted,
+                    fns,
+                    source_cache,
+                );
+                let support_rows = assertion_fact_rows_for_kind(
+                    facts,
+                    source,
+                    AssertionFactKind::Support,
+                    fns,
+                    source_cache,
+                );
+                let status = if !fact_rows.is_empty() {
+                    "facts-emitted"
+                } else if !support_rows.is_empty() {
+                    "support-only"
+                } else {
+                    "no-facts-emitted"
+                };
+                let mut row = json!({
+                    "kind": "assertion-surface-audit",
+                    "surface": SURFACE,
+                    "assertionSource": source.assertion_source,
+                    "file": source.file,
+                    "line": source.line,
+                    "sourceStatus": source.source_status,
+                    "status": status,
+                    "facts": fact_rows,
+                    "supportFacts": support_rows,
+                    "sourceMemento": source.memento,
+                });
+                if row["status"] == "no-facts-emitted" {
+                    row["reason"] = json!(source
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "no fact contracts emitted by kit".to_string()));
+                } else if row["status"] == "support-only" {
+                    row["reason"] =
+                        json!("support contracts emitted; no scalar universe emitted by kit");
+                }
+                row
+            })
+            .collect::<Vec<_>>(),
+    );
+    audits
+}
+
+fn unmatched_emitted_fact_audits(
+    facts: &[AssertionFactEmission],
+    assertion_entries: &[Value],
+    sources: &BTreeMap<String, AssertionSourceRecord>,
+    fns: &[FnRef<'_>],
+    source_cache: &mut FileSourceOracleCache<'_>,
+) -> Vec<Value> {
+    let mut missing_by_contract: BTreeMap<String, usize> = BTreeMap::new();
+    for entry in assertion_entries.iter().filter(|entry| {
+        entry.get("kind").and_then(Value::as_str) == Some("contract")
+            && entry.get("sourceWarrants").is_none()
+            && entry.get("proofirProvenance").is_none()
+    }) {
+        if let Some(name) = entry.get("name").and_then(Value::as_str) {
+            *missing_by_contract.entry(name.to_string()).or_default() += 1;
+        }
+    }
+
+    let mut unmatched_by_source: BTreeMap<String, Vec<&AssertionFactEmission>> = BTreeMap::new();
+    for fact in facts {
+        if sources.contains_key(&fact.item_name) {
+            continue;
+        }
+        let Some(remaining) = missing_by_contract.get_mut(&fact.contract_name) else {
+            continue;
+        };
+        if *remaining == 0 {
+            continue;
+        }
+        *remaining -= 1;
+        unmatched_by_source
+            .entry(fact.item_name.clone())
+            .or_default()
+            .push(fact);
+    }
+
+    unmatched_by_source
+        .into_iter()
+        .map(|(assertion_source, unmatched_facts)| {
+            let first = unmatched_facts
+                .first()
+                .expect("unmatched fact group is non-empty");
+            let facts: Vec<Value> = unmatched_facts
+                .iter()
+                .filter(|fact| fact.kind == AssertionFactKind::Warranted)
+                .map(|fact| assertion_fact_row(fact, fns, source_cache))
+                .collect();
+            let support_facts: Vec<Value> = unmatched_facts
+                .iter()
+                .filter(|fact| fact.kind == AssertionFactKind::Support)
+                .map(|fact| assertion_fact_row(fact, fns, source_cache))
+                .collect();
+            let line = unmatched_facts
+                .iter()
+                .flat_map(|fact| fact.fact_spans.iter())
+                .map(|span| span.start().line)
+                .min()
+                .unwrap_or(0);
+            json!({
                 "kind": "assertion-surface-audit",
                 "surface": SURFACE,
-                "assertionSource": source.assertion_source,
-                "file": source.file,
-                "line": source.line,
-                "sourceStatus": source.source_status,
-                "status": status,
-                "facts": fact_rows,
-                "supportFacts": support_rows,
-                "sourceMemento": source.memento,
-            });
-            if row["status"] == "no-facts-emitted" {
-                row["reason"] = json!(source
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| "no fact contracts emitted by kit".to_string()));
-            } else if row["status"] == "support-only" {
-                row["reason"] =
-                    json!("support contracts emitted; no scalar universe emitted by kit");
-            }
-            row
+                "assertionSource": assertion_source,
+                "file": first.source_path,
+                "line": line,
+                "sourceStatus": "unresolved",
+                "status": "provenance-unmatched",
+                "reason": "emitted assertion fact has no matching collected source owner; source provenance is absent",
+                "facts": facts,
+                "supportFacts": support_facts,
+            })
         })
         .collect()
 }
@@ -3221,26 +3307,32 @@ fn assertion_fact_rows_for_kind(
     facts
         .iter()
         .filter(|fact| fact.item_name == source.assertion_source && fact.kind == kind)
-        .map(|fact| {
-            let mementos = source_cache.fact_source_mementos(fns, fact);
-            let mut row = json!({
-                "contract": fact.contract_name,
-                "kind": fact.kind.as_str(),
-                "claimCount": fact.claim_count,
-                "sourcePath": fact.source_path,
-                "sourceMementos": mementos,
-            });
-            if let Some(first) = row
-                .get("sourceMementos")
-                .and_then(Value::as_array)
-                .and_then(|arr| arr.first())
-                .cloned()
-            {
-                row["sourceMemento"] = first;
-            }
-            row
-        })
+        .map(|fact| assertion_fact_row(fact, fns, source_cache))
         .collect()
+}
+
+fn assertion_fact_row(
+    fact: &AssertionFactEmission,
+    fns: &[FnRef<'_>],
+    source_cache: &mut FileSourceOracleCache<'_>,
+) -> Value {
+    let mementos = source_cache.fact_source_mementos(fns, fact);
+    let mut row = json!({
+        "contract": fact.contract_name,
+        "kind": fact.kind.as_str(),
+        "claimCount": fact.claim_count,
+        "sourcePath": fact.source_path,
+        "sourceMementos": mementos,
+    });
+    if let Some(first) = row
+        .get("sourceMementos")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+        .cloned()
+    {
+        row["sourceMemento"] = first;
+    }
+    row
 }
 
 /// Collect every `fn` item in the file -- top-level and nested in inline
@@ -10339,6 +10431,83 @@ mod tests {
                 })),
             "assertion fact must bridge to answer source contract: {response}"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn assertion_surface_audit_reports_emitted_fact_without_matching_fnref_owner() {
+        let root = unique_temp_dir(
+            "assertion_surface_audit_reports_emitted_fact_without_matching_fnref_owner",
+        );
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+struct S;
+
+impl S {
+    fn check() {
+        assert_eq!(1 + 1, 2);
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let audits = response["assertionSurfaceAudits"]
+            .as_array()
+            .expect("assertionSurfaceAudits is an array");
+        let unmatched = audits
+            .iter()
+            .find(|row| row["assertionSource"] == "src/lib.rs::check")
+            .unwrap_or_else(|| {
+                panic!(
+                    "an emitted fact whose FnRef owner is S::check must remain visible: {audits:#?}"
+                )
+            });
+        assert_eq!(unmatched["status"], "provenance-unmatched", "{unmatched}");
+        assert_eq!(unmatched["sourceStatus"], "unresolved", "{unmatched}");
+        assert!(
+            unmatched["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("no matching collected source owner")),
+            "{unmatched}"
+        );
+        let facts = unmatched["facts"]
+            .as_array()
+            .expect("unmatched warranted facts array");
+        assert_eq!(
+            facts.len(),
+            1,
+            "only the verifier-missing fact is audited: {unmatched}"
+        );
+        assert_eq!(
+            unmatched["supportFacts"],
+            json!([]),
+            "derived panic-callsite facts already carry ProofIR provenance and are not missing: {unmatched}"
+        );
+        let fact = facts
+            .first()
+            .unwrap_or_else(|| panic!("unmatched emitted fact must be named: {unmatched}"));
+        assert_eq!(fact["sourceMementos"], json!([]), "{fact}");
+        let contract_name = fact["contract"]
+            .as_str()
+            .expect("unmatched fact contract name");
+        let contract = response["ir"]
+            .as_array()
+            .expect("ir array")
+            .iter()
+            .find(|entry| entry["name"] == contract_name)
+            .unwrap_or_else(|| {
+                panic!("audited contract must exist in emitted IR: {contract_name}")
+            });
+        assert!(contract.get("sourceWarrants").is_none(), "{contract}");
+        assert!(contract.get("proofirProvenance").is_none(), "{contract}");
 
         let _ = std::fs::remove_dir_all(root);
     }
