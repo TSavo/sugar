@@ -687,11 +687,16 @@ sugar_bx_run_docker() {
   fi
   local name arg command=""
   for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
-    # Transport-owned mount authority cannot be forged by a payload env.
-    [[ "$name" != SUGAR_BINARY_SHELF_READ_ONLY ]] || continue
+    # Transport-owned mount and publish authority cannot be forged by a
+    # payload env. Final tasks may consume the shared shelf but only the
+    # explicit managed publisher may stage or install shared cells.
+    case "$name" in
+      SUGAR_BINARY_SHELF_READ_ONLY|SUGAR_BINARY_PUBLISH) continue ;;
+    esac
     [[ ${!name+x} == x ]] && docker_args+=(--env "$name=${!name}")
   done
   docker_args+=(--env SUGAR_BINARY_SHELF_READ_ONLY=1)
+  docker_args+=(--env SUGAR_BINARY_PUBLISH=0)
   docker_args+=("$image" "$@")
   for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
   sugar_bx_ssh "exec${command}"
