@@ -30,6 +30,7 @@ CLOSURE_KEYS = frozenset(
     }
 )
 PROFILED_ARTIFACT = re.compile(r"^(debug|release):([A-Za-z0-9._-]+)$")
+PACKAGE_TOKEN = re.compile(r"^[a-z0-9][a-z0-9+.-]*$")
 IMMUTABLE_IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 EXACT_TOOL_VERSION = {
     "rust": re.compile(r"\d+\.\d+\.\d+"),
@@ -327,6 +328,48 @@ def resolve_task_preconditions(name, host, repo_root, path=DEFAULT_CONTRACT):
     }
 
 
+def resolve_task_image_build(name, repo_root, path=DEFAULT_CONTRACT):
+    plan = resolve_task_preconditions(name, "bx", repo_root, path)
+    packages = sorted(
+        {
+            check["name"]
+            for check in plan["checks"]
+            if check["kind"] == "command"
+        }
+    )
+    invalid_package = next(
+        (package for package in packages if PACKAGE_TOKEN.fullmatch(package) is None),
+        None,
+    )
+    if invalid_package is not None:
+        raise ContractError(f"managed command has no Debian package identity: {invalid_package}")
+    component_checks = [
+        check
+        for check in plan["checks"]
+        if check["kind"] == "toolchain-component"
+    ]
+    channels = sorted({check["channel"] for check in component_checks})
+    if len(channels) != 1:
+        raise ContractError(
+            "task image requires exactly one Rust toolchain: " + ",".join(channels)
+        )
+    rust_version = load_contract(path)["tools"]["rust"]
+    if channels[0] != rust_version:
+        raise ContractError(
+            f"task image Rust toolchain {channels[0]} differs from core {rust_version}"
+        )
+    if PACKAGE_TOKEN.fullmatch(name) is None:
+        raise ContractError(f"task image has invalid target identity: {name}")
+    return {
+        "aptPackages": packages,
+        "rustComponents": sorted({check["name"] for check in component_checks}),
+        "rustToolchain": channels[0],
+        "schemaVersion": 1,
+        "target": f"{name}-closure",
+        "task": name,
+    }
+
+
 def match_task_command(argv, path=DEFAULT_CONTRACT):
     data = load_contract(path)
     matches = []
@@ -364,6 +407,9 @@ def main(argv=None):
     preconditions.add_argument("task")
     preconditions.add_argument("--host", required=True)
     preconditions.add_argument("--repo-root", required=True)
+    image_build = subparsers.add_parser("resolve-task-image-build")
+    image_build.add_argument("task")
+    image_build.add_argument("--repo-root", required=True)
     matcher = subparsers.add_parser("match-command")
     matcher.add_argument("argv", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -372,6 +418,7 @@ def main(argv=None):
         elif args.command == "resolve-environment": result = resolve_environment(args.environment)
         elif args.command == "resolve-task": result = resolve_task(args.task)
         elif args.command == "resolve-preconditions": result = resolve_task_preconditions(args.task, args.host, args.repo_root)
+        elif args.command == "resolve-task-image-build": result = resolve_task_image_build(args.task, args.repo_root)
         else:
             argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             result = {"task": match_task_command(argv)}

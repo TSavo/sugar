@@ -161,3 +161,27 @@ RUN apt-get update \
  && pnpm --version \
  && vampire --version
 ENV JAVA_HOME=/opt/java PATH=/opt/java/bin:${PATH}
+
+# Task-specific requirements are projected by build_task_image.py from the
+# managed showcase closure. The Dockerfile owns only the generic installation
+# door; it does not carry a second git or rust-src roster.
+FROM examples-closure AS showcases-closure
+ARG MANAGED_APT_PACKAGES
+ARG MANAGED_RUST_TOOLCHAIN
+ARG MANAGED_RUST_COMPONENTS
+RUN test -n "${MANAGED_APT_PACKAGES}" \
+ && test -n "${MANAGED_RUST_TOOLCHAIN}" \
+ && test -n "${MANAGED_RUST_COMPONENTS}" \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ${MANAGED_APT_PACKAGES} \
+ && rm -rf /var/lib/apt/lists/* \
+ && for command_name in ${MANAGED_APT_PACKAGES}; do \
+      command -v "${command_name}" >/dev/null; \
+    done \
+ && for component in ${MANAGED_RUST_COMPONENTS}; do \
+      rustup component add --toolchain "${MANAGED_RUST_TOOLCHAIN}" "${component}"; \
+    done \
+ && installed_components="$(rustup component list --toolchain "${MANAGED_RUST_TOOLCHAIN}" --installed)" \
+ && for component in ${MANAGED_RUST_COMPONENTS}; do \
+      printf '%s\n' "${installed_components}" | grep -Eq "^${component}(-[^ ]+)?( \(installed\))?$"; \
+    done

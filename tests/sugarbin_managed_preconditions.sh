@@ -14,6 +14,123 @@ trap 'rm -rf "$tmp"' EXIT
 plan="$(python3 "$contract" resolve-preconditions showcases \
   --host bx --repo-root "$repo")"
 
+status=0
+python3 "$contract" resolve-task-image-build showcases \
+  --repo-root "$repo" >"$tmp/image-build.json" \
+  2>"$tmp/image-build.err" || status=$?
+[[ "$status" == 0 ]] || fail "task image build projection refused: $(cat "$tmp/image-build.err")"
+python3 - "$tmp/image-build.json" <<'PY'
+import json
+import pathlib
+import sys
+
+projection = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert projection == {
+    "aptPackages": ["git"],
+    "rustComponents": ["rust-src"],
+    "rustToolchain": "1.96.0",
+    "schemaVersion": 1,
+    "target": "showcases-closure",
+    "task": "showcases",
+}, projection
+PY
+
+python3 - "$repo" "$tmp/derived-fixture" <<'PY'
+import importlib.util
+import pathlib
+import shutil
+import sys
+
+repo = pathlib.Path(sys.argv[1])
+fixture = pathlib.Path(sys.argv[2])
+fixture.mkdir()
+shutil.copy2(repo / "Makefile", fixture / "Makefile")
+shutil.copy2(repo / "sugar-build.toml", fixture / "sugar-build.toml")
+(fixture / ".github").mkdir()
+shutil.copy2(
+    repo / ".github/showcase-retirements.json",
+    fixture / ".github/showcase-retirements.json",
+)
+std_core = fixture / "examples/std-core-showcase"
+std_core.mkdir(parents=True)
+std_core.joinpath("rust-toolchain.toml").write_text(
+    '[toolchain]\nchannel = "1.96.0"\ncomponents = ["rust-src", "rustfmt"]\nprofile = "minimal"\n'
+)
+contract_text = (fixture / "sugar-build.toml").read_text()
+contract_text = contract_text.replace(
+    'required_commands = ["git"]',
+    'required_commands = ["git", "curl"]',
+)
+(fixture / "sugar-build.toml").write_text(contract_text)
+
+spec = importlib.util.spec_from_file_location(
+    "stage_two_contract", repo / "tools/sugar-build/contract.py"
+)
+contract = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(contract)
+projection = contract.resolve_task_image_build(
+    "showcases", fixture, fixture / "sugar-build.toml"
+)
+assert projection["aptPackages"] == ["curl", "git"], projection
+assert projection["rustComponents"] == ["rust-src", "rustfmt"], projection
+
+second = fixture / "examples/numpy-showcase"
+second.mkdir(parents=True)
+second.joinpath("rust-toolchain.toml").write_text(
+    '[toolchain]\nchannel = "1.95.0"\ncomponents = ["rust-src"]\nprofile = "minimal"\n'
+)
+try:
+    contract.resolve_task_image_build(
+        "showcases", fixture, fixture / "sugar-build.toml"
+    )
+except contract.ContractError as error:
+    assert "exactly one Rust toolchain" in str(error), error
+else:
+    raise AssertionError("mixed Rust toolchains did not refuse")
+PY
+
+mkdir -p "$tmp/image-build-bin"
+cat >"$tmp/image-build-bin/docker" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$DOCKER_BUILD_ARGS"
+SH
+chmod +x "$tmp/image-build-bin/docker"
+DOCKER_BUILD_ARGS="$tmp/docker-build.args" \
+  PATH="$tmp/image-build-bin:$PATH" \
+  python3 "$repo/tools/sugar-build/build_task_image.py" showcases \
+    --repo-root "$repo" --tag ghcr.io/tsavo/sugar-env:stage-two-tooth --load
+python3 - "$tmp/docker-build.args" <<'PY'
+import pathlib
+import sys
+
+args = pathlib.Path(sys.argv[1]).read_text().splitlines()
+assert args[:2] == ["buildx", "build"], args
+assert args[args.index("--platform") + 1] == "linux/amd64", args
+assert args[args.index("--target") + 1] == "showcases-closure", args
+build_args = [
+    args[index + 1]
+    for index, value in enumerate(args)
+    if value == "--build-arg"
+]
+assert "MANAGED_APT_PACKAGES=git" in build_args, build_args
+assert "MANAGED_RUST_TOOLCHAIN=1.96.0" in build_args, build_args
+assert "MANAGED_RUST_COMPONENTS=rust-src" in build_args, build_args
+assert "--load" in args and "--push" not in args, args
+PY
+
+python3 - "$repo/tools/sugar-build/Dockerfile" <<'PY'
+import pathlib
+import sys
+
+dockerfile = pathlib.Path(sys.argv[1]).read_text()
+stage = dockerfile.split("FROM examples-closure AS showcases-closure", 1)[1]
+assert "ARG MANAGED_APT_PACKAGES" in stage
+assert "ARG MANAGED_RUST_TOOLCHAIN" in stage
+assert "ARG MANAGED_RUST_COMPONENTS" in stage
+assert 'apt-get install -y --no-install-recommends ${MANAGED_APT_PACKAGES}' in stage
+assert 'rustup component add --toolchain "${MANAGED_RUST_TOOLCHAIN}" "${component}"' in stage
+PY
+
 python3 - "$plan" "$repo" <<'PY'
 import json
 import pathlib
