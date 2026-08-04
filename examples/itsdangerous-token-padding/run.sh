@@ -1644,3 +1644,4 @@ fi
 echo "==== itsdangerous-token-padding: PASS ===="
 echo "the padded-token confusion refuted statically by one byte literal"
 echo "(rstrip(b'=')) from itsdangerous' own source -- the real-name logo."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

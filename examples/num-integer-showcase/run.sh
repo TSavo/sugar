@@ -148,3 +148,4 @@ run_suite bad REFUSE REFUSE
 
 echo
 echo "== num-integer 0.1.46 showcase: PASS =="
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

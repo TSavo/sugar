@@ -358,3 +358,4 @@ run_tampered_script_suite
 run_tampered_output_suite
 
 echo "PASS: build witness recomputes deterministic builds and refuses script/output drift."
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

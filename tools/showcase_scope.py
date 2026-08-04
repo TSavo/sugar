@@ -13,6 +13,8 @@ from typing import Any, Mapping, Sequence
 
 SCHEMA_VERSION = 1
 RETIREMENT_REASON = "out of scope per scope ruling - Java"
+SUBJECT_WITNESS_ENV = "SHOWCASE_SUBJECT_WITNESS"
+SUBJECT_ID_ENV = "SHOWCASE_SUBJECT_ID"
 
 
 class ScopeRefusal(ValueError):
@@ -145,6 +147,7 @@ def _validate_outcomes(outcomes: object, counts: object) -> None:
         "retired": 0,
         "passed": 0,
         "failed": 0,
+        "unmeasured": 0,
     }
     for ordinal, raw in enumerate(outcomes):
         if not isinstance(raw, dict):
@@ -165,14 +168,26 @@ def _validate_outcomes(outcomes: object, counts: object) -> None:
             if not isinstance(assertion, str) or not assertion.strip():
                 raise ScopeRefusal(f"retired outcome lacks assertion: {path}")
             derived["retired"] += 1
-        elif outcome in ("passed", "failed"):
+        elif outcome in ("passed", "failed", "unmeasured"):
             exit_code = raw.get("exitCode")
             if not isinstance(exit_code, int):
                 raise ScopeRefusal(f"executed outcome lacks integer exitCode: {path}")
             if outcome == "passed" and exit_code != 0:
                 raise ScopeRefusal(f"passed showcase has nonzero exitCode: {path}")
+            if outcome == "passed":
+                witness = raw.get("subjectWitness")
+                if witness != {"schemaVersion": 1, "subjectId": path}:
+                    raise ScopeRefusal(
+                        f"passed showcase lacks authenticated subject witness: {path}"
+                    )
             if outcome == "failed" and exit_code == 0:
                 raise ScopeRefusal(f"failed showcase has zero exitCode: {path}")
+            if outcome == "unmeasured":
+                reason = raw.get("reason")
+                if not isinstance(reason, str) or not reason:
+                    raise ScopeRefusal(
+                        f"unmeasured showcase lacks named reason: {path}"
+                    )
             derived["executed"] += 1
             derived[outcome] += 1
         else:
@@ -195,10 +210,13 @@ def validate_shard_body(body: Mapping[str, object]) -> None:
     _validate_outcomes(outcomes, counts)
     assert isinstance(counts, dict)
     failed = counts.get("failed")
+    unmeasured = counts.get("unmeasured")
     exit_code = body.get("exitCode")
-    if failed and exit_code in (0, "0"):
-        raise ScopeRefusal("active showcase failure was hidden by exitCode=0")
-    if failed == 0 and exit_code not in (0, "0"):
+    if (failed or unmeasured) and exit_code in (0, "0"):
+        raise ScopeRefusal(
+            "active showcase failure or unmeasured outcome was hidden by exitCode=0"
+        )
+    if failed == 0 and unmeasured == 0 and exit_code not in (0, "0"):
         raise ScopeRefusal("green executed showcase ledger has nonzero exitCode")
 
 
@@ -226,7 +244,7 @@ def seal_shard_body(
         "shardIndex": shard_index,
         "shardCount": shard_count,
         "measuredCommit": measured_commit,
-        "status": "completed",
+        "status": "unmeasured" if counts.get("unmeasured") else "completed",
         "exitCode": exit_code,
         "showcaseCounts": counts,
         "showcaseOutcomes": outcomes,
@@ -260,6 +278,7 @@ def run_shard(
     summary_path = summary_path or attr_dir / f"shard-{shard_index}-summary.log"
     outcomes: list[dict[str, object]] = []
     failed: list[str] = []
+    unmeasured: list[str] = []
     failed_logs: list[tuple[str, str]] = []
 
     for path in plan["selected"]:
@@ -275,6 +294,15 @@ def run_shard(
             continue
 
         log_path = attr_dir / _safe_log_name(path)
+        witness_path = attr_dir / (_safe_log_name(path) + ".subject-witness")
+        try:
+            witness_path.unlink()
+        except FileNotFoundError:
+            pass
+        subject_id = path
+        process_env = os.environ.copy()
+        process_env[SUBJECT_WITNESS_ENV] = str(witness_path.resolve())
+        process_env[SUBJECT_ID_ENV] = subject_id
         try:
             proc = subprocess.run(
                 [str(repo_root / path)],
@@ -284,6 +312,7 @@ def run_shard(
                 stderr=subprocess.STDOUT,
                 errors="replace",
                 check=False,
+                env=process_env,
             )
             output = proc.stdout
             returncode = proc.returncode
@@ -295,7 +324,39 @@ def run_shard(
         if output and not output.endswith("\n"):
             print()
         if returncode == 0:
-            outcomes.append({"path": path, "outcome": "passed", "exitCode": 0})
+            try:
+                witnessed_subject = witness_path.read_text(encoding="utf-8") == (
+                    subject_id + "\n"
+                )
+            except OSError:
+                witnessed_subject = False
+            if witnessed_subject:
+                outcomes.append(
+                    {
+                        "path": path,
+                        "outcome": "passed",
+                        "exitCode": 0,
+                        "subjectWitness": {
+                            "schemaVersion": 1,
+                            "subjectId": subject_id,
+                        },
+                    }
+                )
+            else:
+                reason = "subject-witness-absent"
+                marker = f"==== {path}: UNMEASURED {reason} ====\n"
+                sys.stdout.write(marker)
+                with log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(marker)
+                outcomes.append(
+                    {
+                        "path": path,
+                        "outcome": "unmeasured",
+                        "exitCode": 0,
+                        "reason": reason,
+                    }
+                )
+                unmeasured.append(path)
         else:
             marker = f"==== {path}: FAIL ====\n"
             sys.stdout.write(marker)
@@ -311,6 +372,7 @@ def run_shard(
         "retired": sum(row["outcome"] == "retired" for row in outcomes),
         "passed": sum(row["outcome"] == "passed" for row in outcomes),
         "failed": sum(row["outcome"] == "failed" for row in outcomes),
+        "unmeasured": sum(row["outcome"] == "unmeasured" for row in outcomes),
     }
     _validate_outcomes(outcomes, counts)
     if counts["enrolled"] != plan["counts"]["enrolled"]:
@@ -331,6 +393,8 @@ def run_shard(
     )
     if failed:
         summary += f"==== test-showcases FAIL: {' '.join(failed)} ====\n"
+    if unmeasured:
+        summary += f"==== test-showcases UNMEASURED: {' '.join(unmeasured)} ====\n"
     summary_path.write_text(summary, encoding="utf-8")
     print()
     print(
@@ -338,7 +402,7 @@ def run_shard(
         f"enrolled={counts['enrolled']} executed={counts['executed']} "
         f"retired={counts['retired']} ===="
     )
-    return 1 if failed else 0
+    return 1 if failed or unmeasured else 0
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -330,3 +330,4 @@ verify_suite bad unsatisfied
 echo "python bodyguard precondition showcase self-check passed"
 echo "receipts: $WORK/good/.verify.json $WORK/bad/.verify.json"
 echo "federation: $WORK/federation.json"
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

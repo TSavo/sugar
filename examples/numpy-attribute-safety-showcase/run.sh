@@ -307,3 +307,4 @@ run_suite good discharged discharged pass
 run_suite bad refused refused fail
 
 echo "numpy attribute-safety showcase self-check passed"
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

@@ -148,3 +148,4 @@ run_suite bad REFUSE REFUSE
 
 echo
 echo "== url 2.5.8 showcase: PASS =="
+printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"

@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     crimes: list[str] = []
     retired_total = 0
     executed_total = 0
+    unmeasured_total = 0
     for idx, path in attended.items():
         body = json.loads(path.read_text(encoding="utf-8"))
         if args.require_commit and body.get("measuredCommit") not in (
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             counts = body["showcaseCounts"]
             retired_total += counts["retired"]
             executed_total += counts["executed"]
+            unmeasured_total += counts["unmeasured"]
         if body.get("exitCode") not in (0, "0"):
             crimes.append(
                 f"shard-{idx:02d}: exitCode={body.get('exitCode')} (showcase red)"
@@ -74,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- roster: `{args.shard_count}` shards")
     print(f"- attended: `{len(attended)}`")
     print(f"- executed showcases: `{executed_total}`")
+    print(f"- unmeasured showcases: `{unmeasured_total}`")
     print(f"- retired showcases: `{retired_total}`")
     print(f"**R_showcase_shard_attendance = {len(set(missing))}**")
     for i in roster:

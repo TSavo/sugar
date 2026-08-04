@@ -53,11 +53,25 @@ EXPECTED_BY_SHARD = {
 EXPECTED = set().union(*EXPECTED_BY_SHARD.values())
 
 
-def _write_script(path: Path, marker: str, exit_code: int) -> None:
+def _write_script(
+    path: Path,
+    marker: str,
+    exit_code: int,
+    *,
+    testify_subject: bool | None = None,
+) -> None:
+    if testify_subject is None:
+        testify_subject = exit_code == 0
+    testimony = (
+        'printf \'%s\\n\' "$SHOWCASE_SUBJECT_ID" > "$SHOWCASE_SUBJECT_WITNESS"\n'
+        if testify_subject
+        else ""
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "#!/usr/bin/env sh\n"
         f"printf '%s\\n' {json.dumps(marker)} >> \"$SHOWCASE_TRACE\"\n"
+        f"{testimony}"
         f"exit {exit_code}\n",
         encoding="utf-8",
     )
@@ -184,6 +198,7 @@ def test_retired_does_not_execute_while_active_executes_and_stays_red(
         "retired": 1,
         "passed": 0,
         "failed": 1,
+        "unmeasured": 0,
     }
     assert receipt["outcomes"][0]["outcome"] == "retired"
     assert receipt["outcomes"][0]["reason"] == REASON
@@ -225,7 +240,92 @@ def test_retirement_cannot_be_fabricated_by_a_passing_showcase(
         == 0
     )
     body = json.loads(receipt.read_text(encoding="utf-8"))
-    assert body["outcomes"] == [{"path": script, "outcome": "passed", "exitCode": 0}]
+    assert body["outcomes"] == [
+        {
+            "path": script,
+            "outcome": "passed",
+            "exitCode": 0,
+            "subjectWitness": {"schemaVersion": 1, "subjectId": script},
+        }
+    ]
+
+
+def test_exit_zero_without_subject_witness_is_unmeasured_not_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = "examples/python-skip/run.sh"
+    _write_script(
+        tmp_path / script,
+        "SKIP: fixture subject unavailable",
+        0,
+        testify_subject=False,
+    )
+    manifest = tmp_path / "manifest.json"
+    _write_manifest(manifest, [])
+    trace = tmp_path / "trace.txt"
+    monkeypatch.setenv("SHOWCASE_TRACE", str(trace))
+    receipt = tmp_path / "scope.json"
+
+    assert (
+        showcase_scope.run_shard(
+            repo_root=tmp_path,
+            manifest_path=manifest,
+            enrolled=[script],
+            shard_count=1,
+            shard_index=0,
+            attr_dir=tmp_path / "logs",
+            receipt_path=receipt,
+        )
+        != 0
+    )
+    body = json.loads(receipt.read_text(encoding="utf-8"))
+    assert body["counts"] == {
+        "enrolled": 1,
+        "executed": 1,
+        "retired": 0,
+        "passed": 0,
+        "failed": 0,
+        "unmeasured": 1,
+    }
+    assert body["outcomes"] == [
+        {
+            "path": script,
+            "outcome": "unmeasured",
+            "exitCode": 0,
+            "reason": "subject-witness-absent",
+        }
+    ]
+
+
+def test_consumer_refuses_exit_zero_pass_without_subject_witness() -> None:
+    body = {
+        "measurementClass": "test-showcases",
+        "shardIndex": 0,
+        "shardCount": 1,
+        "measuredCommit": "abc",
+        "exitCode": 0,
+        "showcaseCounts": {
+            "enrolled": 1,
+            "executed": 1,
+            "retired": 0,
+            "passed": 1,
+            "failed": 0,
+            "unmeasured": 0,
+        },
+        "showcaseOutcomes": [
+            {
+                "path": "examples/python-pass/run.sh",
+                "outcome": "passed",
+                "exitCode": 0,
+            }
+        ],
+    }
+
+    with pytest.raises(
+        showcase_scope.ScopeRefusal,
+        match="passed showcase lacks authenticated subject witness",
+    ):
+        showcase_scope.validate_shard_body(body)
 
 
 def test_conservation_refuses_missing_showcase() -> None:
@@ -241,9 +341,18 @@ def test_conservation_refuses_missing_showcase() -> None:
             "retired": 0,
             "passed": 1,
             "failed": 0,
+            "unmeasured": 0,
         },
         "showcaseOutcomes": [
-            {"path": "examples/python-pass/run.sh", "outcome": "passed", "exitCode": 0}
+            {
+                "path": "examples/python-pass/run.sh",
+                "outcome": "passed",
+                "exitCode": 0,
+                "subjectWitness": {
+                    "schemaVersion": 1,
+                    "subjectId": "examples/python-pass/run.sh",
+                },
+            }
         ],
     }
     with pytest.raises(showcase_scope.ScopeRefusal, match="conservation"):
@@ -284,6 +393,33 @@ def test_makefile_routes_full_roster_through_scope_owner() -> None:
     assert "showcase-scope active execution: PASS" in target
 
 
+def test_every_active_showcase_testifies_subject_completion() -> None:
+    roster = showcase_scope.makefile_showcase_roster(MAKEFILE)
+    retirements = showcase_scope.load_manifest(MANIFEST, roster)
+    marker = (
+        "printf '%s\\n' \"${SHOWCASE_SUBJECT_ID:?}\" > "
+        "\"${SHOWCASE_SUBJECT_WITNESS:?}\""
+    )
+    active = [path for path in roster if path not in retirements]
+
+    assert len(active) == 46
+    for path in active:
+        assert (ROOT / path).read_text(encoding="utf-8").rstrip().endswith(marker), path
+
+
+def test_python_urlsafe_real_skip_cannot_testify_subject_completion() -> None:
+    text = (ROOT / "examples/python-urlsafe-seam/run.sh").read_text(encoding="utf-8")
+    skip = 'if [ "$provenance_rc" -eq 42 ]; then\n  exit 0\nfi'
+    good = "run_twin good discharged"
+    bad = "run_twin bad refused"
+    witness = (
+        "printf '%s\\n' \"${SHOWCASE_SUBJECT_ID:?}\" > "
+        "\"${SHOWCASE_SUBJECT_WITNESS:?}\""
+    )
+
+    assert text.index(skip) < text.index(good) < text.index(bad) < text.index(witness)
+
+
 def test_ci_seals_scope_receipt_into_shard_body() -> None:
     text = CI.read_text(encoding="utf-8")
     showcase_job = text.split("  showcases:", 1)[1].split("  showcase-attendance:", 1)[
@@ -308,9 +444,18 @@ def test_attendance_refuses_unconserved_body_as_unmeasured(tmp_path: Path) -> No
             "retired": 0,
             "passed": 1,
             "failed": 0,
+            "unmeasured": 0,
         },
         "showcaseOutcomes": [
-            {"path": "examples/python-pass/run.sh", "outcome": "passed", "exitCode": 0}
+            {
+                "path": "examples/python-pass/run.sh",
+                "outcome": "passed",
+                "exitCode": 0,
+                "subjectWitness": {
+                    "schemaVersion": 1,
+                    "subjectId": "examples/python-pass/run.sh",
+                },
+            }
         ],
     }
     (tmp_path / "body.json").write_text(json.dumps(body), encoding="utf-8")
@@ -348,6 +493,16 @@ def test_attendance_stays_red_for_attended_active_failure(tmp_path: Path) -> Non
                 "path": f"examples/python-active-{shard}/run.sh",
                 "outcome": "failed" if shard == 2 else "passed",
                 "exitCode": 7 if shard == 2 else 0,
+                **(
+                    {
+                        "subjectWitness": {
+                            "schemaVersion": 1,
+                            "subjectId": f"examples/python-active-{shard}/run.sh",
+                        }
+                    }
+                    if shard != 2
+                    else {}
+                ),
             },
         ]
         directory = tmp_path / f"shard-{shard}"
@@ -366,6 +521,7 @@ def test_attendance_stays_red_for_attended_active_failure(tmp_path: Path) -> Non
                         "retired": 1,
                         "passed": 0 if shard == 2 else 1,
                         "failed": 1 if shard == 2 else 0,
+                        "unmeasured": 0,
                     },
                     "showcaseOutcomes": outcomes,
                 }
