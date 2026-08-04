@@ -531,7 +531,7 @@ def _handler_reachability(
         return "direct", ["guarded body directly raises/calls the panic hierarchy"]
     function_qualname = _enclosing_qualname(handler, file_info["parents"])
     paths: list[str] = []
-    dynamic = False
+    dynamic_calls: list[str] = []
     for call in sig.calls:
         target, unknown = _resolved_call_target(
             call,
@@ -544,11 +544,20 @@ def _handler_reachability(
         if target and hierarchy in function_index["providers"].get(target, set()):
             paths.append(target)
         if unknown:
-            dynamic = True
+            try:
+                spelling = ast.unparse(call.func)
+            except (AttributeError, ValueError):
+                spelling = ast.dump(call.func, include_attributes=False)
+            dynamic_calls.append(
+                f"{spelling}@{call.lineno}:{call.col_offset}"
+            )
     if paths:
         return "transitive", sorted(paths)
-    if dynamic:
-        return "unresolved", ["guarded body contains a dynamically unresolved call"]
+    if dynamic_calls:
+        return "unresolved", [
+            "guarded body contains dynamically unresolved calls",
+            *sorted(set(dynamic_calls)),
+        ]
     return "outside-construction", []
 
 

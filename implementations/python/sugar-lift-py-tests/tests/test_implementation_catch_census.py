@@ -340,6 +340,10 @@ def invoke(plugin):
 
     assert row["reachability"] == "unresolved"
     assert row["classification"] is None
+    assert row["reachabilityEvidence"] == [
+        "guarded body contains dynamically unresolved calls",
+        "plugin.build@4:8",
+    ]
     assert receipt["result"]["unresolvedCount"] == 1
 
 
