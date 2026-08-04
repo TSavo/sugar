@@ -100,6 +100,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -1109,6 +1110,30 @@ def main() -> int:
         write_prebuilt_demand_table,
     )
 
+    def publish_demand_table(table, path: Path) -> None:
+        """Publish the derived payload through the authenticated CAS door."""
+        repo_root = Path(__file__).resolve().parents[4]
+        completed = subprocess.run(
+            [
+                str(repo_root / "bin" / "sugarbin"),
+                "artifact", "publish", "--kind", "python-demand-table",
+                "--content-key", table.content_cid, "--input", str(path),
+                "--runtime", "cpython-3.12.13",
+            ],
+            cwd=repo_root, capture_output=True, text=True, check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()[:800]
+            raise DemandTableArtifactRefusal(
+                "python-demand-table CAS publication refused: "
+                f"contentCid={table.content_cid} exit={completed.returncode} "
+                f"detail={detail}"
+            )
+        _narrate(
+            "RECENSUS DEMAND_TABLE published CAS "
+            f"contentCid={table.content_cid} runtime=cpython-3.12.13"
+        )
+
     pin_identity = {
         "distribution": observed_pin.distribution,
         "version": observed_pin.version,
@@ -1175,12 +1200,22 @@ def main() -> int:
             if write_path is None and args.out_dir is not None:
                 # Default artifact next to board outputs so shards can find it.
                 write_path = Path(args.out_dir) / "provisional-demand-table.json"
-            if write_path is not None:
-                write_prebuilt_demand_table(table, write_path)
-                _narrate(
-                    f"RECENSUS DEMAND_TABLE wrote path={write_path} "
-                    f"contentCid={table.content_cid}"
+            temporary_path = None
+            if write_path is None:
+                handle = tempfile.NamedTemporaryFile(
+                    prefix="python-demand-table-", suffix=".json", delete=False
                 )
+                temporary_path = Path(handle.name)
+                handle.close()
+                write_path = temporary_path
+            write_prebuilt_demand_table(table, write_path)
+            _narrate(
+                f"RECENSUS DEMAND_TABLE wrote path={write_path} "
+                f"contentCid={table.content_cid}"
+            )
+            publish_demand_table(table, write_path)
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
             refs = install_prebuilt_demand_table(table, root=workspace_root)
             return refs, table.content_cid
 
