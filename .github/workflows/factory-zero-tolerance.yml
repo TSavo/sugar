@@ -8,7 +8,7 @@ on:
       shardCount:
         description: "Process-floor shard count"
         required: false
-        default: "8"
+        default: "4"
         type: string
 
 permissions:
@@ -78,7 +78,7 @@ jobs:
       - id: plan
         name: derive shard matrix
         env:
-          SHARD_COUNT: ${{ inputs.shardCount || '8' }}
+          SHARD_COUNT: ${{ inputs.shardCount || '4' }}
         run: |
           set -euo pipefail
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
