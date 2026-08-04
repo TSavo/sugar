@@ -813,10 +813,16 @@ echo "proof: $(basename "$proof_path")"
 echo "== verify std/core selected source slice =="
 (cd "$PROJECT" && "$SUGAR" verify --project . --json) > "$PROJECT/.verify.json" || true
 
-python3 - "$PROJECT/.verify.json" "$TARGET_POINTER_WIDTH" "$TARGET_POINTER_BYTES" <<'PY'
+python3 - "$PROJECT/.verify.json" "$TARGET_POINTER_WIDTH" "$TARGET_POINTER_BYTES" "$REPO" <<'PY'
 import json
 import re
 import sys
+
+sys.path.insert(0, sys.argv[4])
+from tools.showcase_terminal_identity import (
+    VerificationPropertyAttendanceGap,
+    publish_verification_property_attendance,
+)
 
 path = sys.argv[1]
 target_pointer_width = sys.argv[2]
@@ -980,10 +986,20 @@ mem_location_needles = [
     "consistency:size_of::<usize>#panic_callsite#euf#c:callresult_size_of___usize__panic_callsite_a0()::assertion",
     "consistency:size_of::<* const usize>#panic_callsite#euf#c:callresult_size_of_____const_usize__panic_callsite_a0()::assertion",
 ]
-missing = [
-    needle for needle in needles
-    if not any(needle in (r.get("property") or "") for r in euf_rows)
-]
+attendance = publish_verification_property_attendance(
+    required=needles,
+    observed=[
+        needle
+        for needle in needles
+        if any(needle in (r.get("property") or "") for r in euf_rows)
+    ],
+    entrance="sugar.verify",
+)
+missing = (
+    list(attendance.missing_identities)
+    if isinstance(attendance, VerificationPropertyAttendanceGap)
+    else []
+)
 missing_type_id = [
     needle for needle in type_id_needles
     if not any(needle == (r.get("property") or "") for r in rows)
