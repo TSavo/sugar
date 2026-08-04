@@ -172,4 +172,98 @@ builds2=$(wc -l <"$build_count" | tr -d ' ')
 [[ "$builds2" == "2" ]] || fail "expected second build after dead reclaim, got $builds2 total"
 echo "PASS: dead winner lock reclaimed; next resolver built"
 
+# --- Dynamic 3: the production lock path terminates on both arms ---
+# Exercise the actual bin/sugarbin acquire/release functions, not the model
+# above.  The bad twin makes exactly one planted stale lock impossible to
+# remove; the resolver must refuse once rather than loop forever on
+# holder_pid=unknown / heartbeat_age=999999.
+production_cache="$tmp/production-cache"
+production_stamp="blake3-512_axis7"
+production_lock="$production_cache/.rebuild-locks/fixture-debug-${production_stamp}-sugar.lock"
+
+SUGAR_BINARY_CACHE_DIR="$production_cache" \
+SUGAR_BINARY_SOURCE_STAMP="$production_stamp" \
+  "$sugarbin" preflight-lock --bin sugar --profile debug --platform fixture \
+  >"$tmp/production-good.out" 2>"$tmp/production-good.err" \
+  || fail 'production acquire/release arm refused'
+[[ ! -e "$production_lock" ]] || fail 'production acquire/release arm left lock residue'
+
+mkdir -p "$production_lock"
+mkdir -p "$tmp/refuse-rm-bin"
+cat >"$tmp/refuse-rm-bin/rm" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -rf && "${2:-}" == "${LOCK_TO_REFUSE:?}" ]]; then
+  exit 77
+fi
+exec /bin/rm "$@"
+EOF
+chmod +x "$tmp/refuse-rm-bin/rm"
+
+python3 - "$sugarbin" "$production_cache" "$production_stamp" \
+  "$production_lock" "$tmp/refuse-rm-bin" "$tmp/production-bad.json" <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+sugarbin, cache, stamp, lock, refuse_bin, receipt = sys.argv[1:]
+env = os.environ.copy()
+env.update(
+    {
+        "LOCK_TO_REFUSE": lock,
+        "PATH": refuse_bin + os.pathsep + env["PATH"],
+        "SUGAR_BINARY_CACHE_DIR": cache,
+        "SUGAR_BINARY_REBUILD_LOCK_STALE_S": "0",
+        "SUGAR_BINARY_SOURCE_STAMP": stamp,
+    }
+)
+try:
+    result = subprocess.run(
+        [
+            sugarbin,
+            "preflight-lock",
+            "--bin",
+            "sugar",
+            "--profile",
+            "debug",
+            "--platform",
+            "fixture",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+except subprocess.TimeoutExpired as error:
+    stderr = error.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    print(
+        "production unreclaimable-lock arm did not terminate within 5s",
+        file=sys.stderr,
+    )
+    print(stderr, file=sys.stderr)
+    raise SystemExit(1)
+json.dump(
+    {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr},
+    open(receipt, "w", encoding="utf-8"),
+    sort_keys=True,
+)
+if result.returncode != 70:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit(f"expected exit 70, observed {result.returncode}")
+terminal = "crime=unreclaimable-rebuild-lock"
+if result.stderr.count(terminal) != 1:
+    print(result.stderr, file=sys.stderr)
+    raise SystemExit("expected exactly one named unreclaimable-lock terminal")
+for testimony in (lock, "holder_pid=unknown", "heartbeat_age_s=999999"):
+    if testimony not in result.stderr:
+        print(result.stderr, file=sys.stderr)
+        raise SystemExit(f"missing terminal testimony: {testimony}")
+PY
+
+echo 'PASS: production rebuild lock completes normally and unreclaimable lock terminates'
+
 echo 'PASS: R_shelf_rebuild_single_flight — one build, waiter cell, dead-winner reclaim'
