@@ -99,6 +99,8 @@ struct ClaimExtras {
     body_discharge_eligible: bool,
     body_discharge_refusal_reason: Option<String>,
     proofir_provenance: Option<Arc<CValue>>,
+    panic_loci: Vec<Arc<CValue>>,
+    class_shapes: Vec<Arc<CValue>>,
 }
 
 impl Default for ClaimExtras {
@@ -115,6 +117,8 @@ impl Default for ClaimExtras {
                 "feed_from_tree: body discharge not claimed (no IR policy)".into(),
             ),
             proofir_provenance: None,
+            panic_loci: Vec::new(),
+            class_shapes: Vec::new(),
         }
     }
 }
@@ -209,8 +213,8 @@ fn push_claim_with_slots(
         bridge_source_symbol: extras.bridge_source_symbol,
         body_discharge_eligible: extras.body_discharge_eligible,
         body_discharge_refusal_reason: extras.body_discharge_refusal_reason,
-        panic_loci: Vec::new(),
-        class_shapes: Vec::new(),
+        panic_loci: extras.panic_loci,
+        class_shapes: extras.class_shapes,
         source_warrants,
         proofir_provenance: extras.proofir_provenance,
         contract_name: contract_name.to_string(),
@@ -467,6 +471,26 @@ fn out_binding_from_ir_row(ir: &Json) -> String {
         .to_string()
 }
 
+fn source_sidecars_from_ir_row(
+    ir: &Json,
+) -> Result<(Vec<Arc<CValue>>, Vec<Arc<CValue>>), FeedError> {
+    fn array(ir: &Json, camel: &str, snake: &str) -> Result<Vec<Arc<CValue>>, FeedError> {
+        let Some(items) = ir
+            .get(camel)
+            .or_else(|| ir.get(snake))
+            .and_then(Json::as_array)
+        else {
+            return Ok(Vec::new());
+        };
+        items.iter().map(json_to_cvalue).collect()
+    }
+
+    Ok((
+        array(ir, "panicLoci", "panic_loci")?,
+        array(ir, "classShapes", "class_shapes")?,
+    ))
+}
+
 fn proofir_provenance_variants(ir: &Json) -> Result<Vec<Option<Arc<CValue>>>, FeedError> {
     let Some(provenance) = ir
         .get("proofirProvenance")
@@ -638,6 +662,7 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
         Some(ir) => {
             let (formals, formals_present) = formals_from_ir_row(ir);
             let (eligible, reason) = body_policy_from_ir(ir);
+            let (panic_loci, class_shapes) = source_sidecars_from_ir_row(ir)?;
             ClaimExtras {
                 emit_empty_formals: formals_present && formals.is_empty(),
                 formals,
@@ -647,6 +672,8 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
                 body_discharge_eligible: eligible,
                 body_discharge_refusal_reason: reason,
                 proofir_provenance: None,
+                panic_loci,
+                class_shapes,
             }
         }
         None => ClaimExtras::default(),
@@ -731,6 +758,7 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             }
         }
         let (formals, formals_present) = formals_from_ir_row(ir);
+        let (panic_loci, class_shapes) = source_sidecars_from_ir_row(ir)?;
         // Function-contracts: kind-derived default eligible; IR can refuse.
         let (eligible, reason) = body_policy_from_ir(ir);
         // #3587 sole-construction: do not drop IR proofirProvenance. Ambient
@@ -746,6 +774,8 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             body_discharge_eligible: eligible,
             body_discharge_refusal_reason: reason,
             proofir_provenance: None,
+            panic_loci,
+            class_shapes,
         };
         let provenance_variants = proofir_provenance_variants(ir)?;
         for proofir_provenance in provenance_variants {
@@ -967,6 +997,66 @@ mod silent_loss_3901_tests {
             c.contract_name,
             sorts.len()
         );
+    }
+
+    #[test]
+    fn graph_from_universe_carries_source_sidecars_without_fabricating_empty_ones() {
+        let panic_locus = json!({
+            "callee": "concept:panic-freedom.leaf.runtime-failure-site",
+            "subkind": "attribute-access",
+            "argTerm": {
+                "kind": "ctor",
+                "name": "python:attribute",
+                "args": [
+                    {"kind": "var", "name": "self"},
+                    {"kind": "const", "value": "value", "sort": {"kind": "primitive", "name": "String"}}
+                ]
+            },
+            "attributeSafety": {
+                "kind": "python:attribute-safety-obligation",
+                "receiverClass": "shape.Box",
+                "attribute": "value"
+            }
+        });
+        let class_shape = json!({
+            "kind": "python:class-shape",
+            "className": "shape.Box",
+            "status": "closed",
+            "openReasons": [],
+            "attributes": [{"name": "value", "presence": "guaranteed"}]
+        });
+        let carried = json!({
+            "kind": "function-contract",
+            "name": "shape.Box.read",
+            "post": {"kind": "atomic", "name": "true", "args": []},
+            "panicLoci": [panic_locus.clone()],
+            "classShapes": [class_shape.clone()]
+        });
+        let graph = graph_from_universe(&Universe::for_feed_test(
+            test_memento("shape.Box.read"),
+            Some(carried),
+            None,
+        ))
+        .expect("graph_from_universe");
+        let contract = first_contract(&graph);
+
+        assert_eq!(contract.panic_loci, Some(vec![panic_locus]));
+        assert_eq!(contract.class_shapes, Some(vec![class_shape]));
+
+        let absent = json!({
+            "kind": "function-contract",
+            "name": "identity",
+            "post": {"kind": "atomic", "name": "true", "args": []}
+        });
+        let graph = graph_from_universe(&Universe::for_feed_test(
+            test_memento("identity"),
+            Some(absent),
+            None,
+        ))
+        .expect("graph_from_universe");
+        let contract = first_contract(&graph);
+        assert!(contract.panic_loci.is_none());
+        assert!(contract.class_shapes.is_none());
     }
 
     /// #3587 sole-construction: IR proofirProvenance must reach the sealed

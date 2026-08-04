@@ -36,6 +36,10 @@ class BodyUniverseDto:
     # it appears in harvested call ctors.
     kind: str = "contract"
     bridge_source_symbol: str | None = None
+    # Source-owned testimony carried opaquely to mint/verifier. These are
+    # sidecars on a contract row, not evidence that the function body reduced.
+    panic_loci: list[dict[str, Any]] = field(default_factory=list)
+    class_shapes: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         for slot in ("pre", "post", "inv"):
@@ -90,6 +94,10 @@ class BodyUniverseDto:
         return out
 
     def _attach_sidecars(self, out: dict[str, Any]) -> None:
+        if self.panic_loci:
+            out["panicLoci"] = [to_rpc_value(locus) for locus in self.panic_loci]
+        if self.class_shapes:
+            out["classShapes"] = [to_rpc_value(shape) for shape in self.class_shapes]
         if self.source_warrants:
             out["sourceWarrants"] = [
                 to_rpc_value(warrant) for warrant in self.source_warrants
