@@ -28,19 +28,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
-from json_get import load_receipt
+from json_get import is_substantive_consistency_row, load_receipt
 
 d = load_receipt(sys.argv[2])
 rows = []
 for row in d.get("rows", []):
-    prop = row.get("property") or ""
-    if not prop.startswith("consistency:"):
-        continue
-    if prop.startswith("consistency:rust-source::"):
-        continue
-    if "#panic_callsite#" in prop:
-        continue
-    if "witness-package" in prop:
+    if not is_substantive_consistency_row(row):
         continue
     rows.append(row)
 

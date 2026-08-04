@@ -10,6 +10,20 @@ from typing import Any
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
+def is_substantive_consistency_row(row: Any) -> bool:
+    """Distinguish assertion claims from ambient panic-callsite support."""
+
+    if not isinstance(row, dict):
+        return False
+    prop = row.get("property") or ""
+    return (
+        prop.startswith("consistency:")
+        and not prop.startswith("consistency:rust-source::")
+        and "#panic_callsite#" not in prop
+        and "witness-package" not in prop
+    )
+
+
 def _first_diagnostic_line(text: str) -> str:
     for line in text.splitlines():
         clean = ANSI.sub("", line).strip()

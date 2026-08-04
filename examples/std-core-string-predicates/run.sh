@@ -199,10 +199,14 @@ PY
 run_mint_verify "$GOOD" GOOD
 run_mint_verify "$BAD" BAD
 
-python3 - "$GOOD/.verify.json" "$BAD/.verify.json" <<'PY'
+python3 - "$REPO" "$GOOD/.verify.json" "$BAD/.verify.json" <<'PY'
 import json
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import is_substantive_consistency_row
 
 def receipt(path):
     text = open(path, encoding="utf-8").read()
@@ -221,15 +225,22 @@ def receipt(path):
     print(text, file=sys.stderr)
     raise SystemExit(1)
 
-good = receipt(sys.argv[1])
-bad = receipt(sys.argv[2])
-good_rows = [
+good = receipt(sys.argv[2])
+bad = receipt(sys.argv[3])
+good_candidates = [
     r for r in good.get("rows", [])
     if "#euf#" in (r.get("property") or "") or "tests/ascii.rs::test_is_ascii" in (r.get("property") or "")
 ]
-bad_rows = [
+bad_candidates = [
     r for r in bad.get("rows", [])
     if "#euf#" in (r.get("property") or "") or "tests/ascii_bad.rs::bad_assert_all_none_twin" in (r.get("property") or "")
+]
+good_rows = [row for row in good_candidates if is_substantive_consistency_row(row)]
+bad_rows = [row for row in bad_candidates if is_substantive_consistency_row(row)]
+good_support_rows = [
+    row
+    for row in good_candidates
+    if "#panic_callsite#" in (row.get("property") or "")
 ]
 
 required = {
@@ -237,7 +248,6 @@ required = {
     "contains-char": "method:contains#euf#c:callresult_method_contains_a2(s:\"abc\",s:\"b\")::assertion",
     "starts-with": "method:starts_with#euf#c:callresult_method_starts_with_a2(s:\"abc\",s:\"a\")::assertion",
     "ends-with": "method:ends_with#euf#c:callresult_method_ends_with_a2(s:\"abc\",s:\"c\")::assertion",
-    "len": "method:len#panic_callsite#euf#c:callresult_method_len_panic_callsite_a1(s:\"～～～～～\")::assertion",
     "str-is-ascii": "method:is_ascii#euf#c:callresult_method_is_ascii_a1(s:\"banana\\0\\u{7f}\")::assertion",
     "char-is-ascii": "method:is_ascii#euf#c:callresult_method_is_ascii_a1(s:\"a\")::assertion",
     "char-is-ascii-alpha": "method:is_ascii_alphabetic#euf#c:callresult_method_is_ascii_alphabetic_a1(s:\"A\")::assertion",
@@ -254,18 +264,37 @@ required = {
     "assert-all-none-whitespace": "tests/ascii.rs::test_is_ascii_whitespace",
     "assert-all-none-control": "tests/ascii.rs::test_is_ascii_control",
 }
+required_support = {
+    "len-support": "method:len#panic_callsite#euf#c:callresult_method_len_panic_callsite_a1(s:\"～～～～～\")::assertion",
+}
 
 missing = [
     label for label, needle in required.items()
     if not any(needle in (row.get("property") or "") for row in good_rows)
 ]
 failed_good = [row for row in good_rows if row.get("status") != "discharged"]
+missing_support = [
+    label for label, needle in required_support.items()
+    if not any(needle in (row.get("property") or "") for row in good_support_rows)
+]
+invalid_support = [
+    row for row in good_support_rows
+    if row.get("status") != "refused" or "vacuous" not in (row.get("reason") or "")
+]
 if missing:
     print("GOOD missing required rows:", ", ".join(missing), file=sys.stderr)
     raise SystemExit(1)
 if failed_good:
     print("GOOD has non-discharged #euf# rows:", file=sys.stderr)
     for row in failed_good:
+        print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
+    raise SystemExit(1)
+if missing_support:
+    print("GOOD missing required support rows:", ", ".join(missing_support), file=sys.stderr)
+    raise SystemExit(1)
+if invalid_support:
+    print("GOOD panic-callsite support rows were not honestly vacuous-refused:", file=sys.stderr)
+    for row in invalid_support:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -302,7 +331,10 @@ if all(row.get("status") == "discharged" for row in bad_macro_matches):
         print(json.dumps(row, indent=2), file=sys.stderr)
     raise SystemExit(1)
 
-print(f"GOOD .verify.json ok={good.get('ok')} totalClaims={good.get('totalClaims')} eufRows={len(good_rows)}")
+print(
+    f"GOOD .verify.json ok={good.get('ok')} totalClaims={good.get('totalClaims')} "
+    f"substantiveRows={len(good_rows)} panicSupportRows={len(good_support_rows)}"
+)
 for label, needle in required.items():
     row = next(row for row in good_rows if needle in (row.get("property") or ""))
     print(f"GOOD {label}: {row.get('status')} {row.get('property')}")
