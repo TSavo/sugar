@@ -193,7 +193,7 @@ PY
   fi
   echo "$label proof: $(basename "$proof_path")"
   echo "== verify $label =="
-  (cd "$project" && "$SUGAR" verify --project . --json) > "$project/.verify.json" 2>&1 || true
+  (cd "$project" && "$SUGAR" verify --project . --json) > "$project/.verify.json" || true
 }
 
 run_mint_verify "$GOOD" GOOD

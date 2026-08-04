@@ -264,7 +264,7 @@ run_suite() {
 
   echo "== prove $suite =="
   set +e
-  (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" prove . --json) > "$dir/.prove.json" 2>&1
+  (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" prove . --json) > "$dir/.prove.json"
   local prove_rc=$?
   set -e
 
@@ -305,7 +305,7 @@ run_suite() {
 
     echo "== verify $suite witness =="
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
     local verify_rc=$?
     set -e
     : "$verify_rc"
@@ -319,7 +319,7 @@ run_suite() {
 
     rm -rf "$dir/.sugar/witnesses"
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json" 2>&1
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json"
     local verify_recompute_rc=$?
     set -e
     : "$verify_recompute_rc"

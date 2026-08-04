@@ -176,6 +176,11 @@ check-lift-manifest-pythonpath:
 	$(PYTHON) tools/check_lift_manifest_pythonpath.py --self-test
 	$(PYTHON) tools/check_lift_manifest_pythonpath.py
 
+.PHONY: check-showcase-json-channels
+check-showcase-json-channels:
+	$(PYTHON) tools/showcase_json_channel_law.py --self-test
+	$(PYTHON) tools/showcase_json_channel_law.py
+
 # Lane B instrument 3: partial wall progress receipt (not a product gate).
 # Score transport.jsonl + wall.txt → progress.json. Incomplete is measured.
 # Self-test always runs; scoring requires a wall artifact (set WALL_DIR/LOGS_DIR
@@ -495,7 +500,7 @@ examples-gate-extended:
 	  --nice $(EXAMPLES_GATE_NICE)
 
 .PHONY: test-showcases
-test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
+test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath check-showcase-json-channels
 	@set -e; \
 	shard_count="$${SHOWCASE_SHARD_COUNT:-1}"; \
 	shard_index="$${SHOWCASE_SHARD_INDEX:-0}"; \
