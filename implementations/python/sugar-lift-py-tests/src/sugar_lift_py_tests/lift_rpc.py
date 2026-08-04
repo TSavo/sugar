@@ -598,7 +598,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         file_rel = str(source_path.relative_to(root))
         # No broad skip: a source that cannot be read is a LOUD failure, never a
         # silently omitted file.
-        sf = _tree.source_file(source_path)
+        sf = _tree.source_file(source_path, root=root)
         for fn in sf.functions():
             try:
                 outcome = _tree.function_universe_outcome(fn)
@@ -2227,7 +2227,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         )
                         return
                     _src, _fname, file_cid = identity
-                    sf = _tree.source_file(full_path)
+                    # This entrance only mints the module memento.  It must not
+                    # trigger the provisional demand walk that the subsequent
+                    # facts entrance performs as part of the one roll call.
+                    # An explicit empty contract table is honest here: no
+                    # source sugar is constructed at this level.
+                    sf = open_source_file_for_construction(
+                        full_path,
+                        root=root,
+                        construction_context=tree_construction_context_for_workspace(
+                            root, contract_refs={}
+                        ),
+                        populate_derived=False,
+                    )
                     memento = _tree.module_definition_memento(sf, file_rel, file_cid)
                     _send_enumerate_result(
                         msg_id,
@@ -2285,33 +2297,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # annotation (contract name, formals) is meaning and arrives
                 # when FunctionDef.sugar() is written; syntax does not wait
                 # for it.
-                from sugar_lift_python_source.source_oracle import (
-                    SourceUnavailable,
-                    path_source,
-                )
-                from sugar_source_tree.tree import SourceFile as _TreeSourceFile
-
-                try:
-                    identity = path_source(str(full_path))
-                except SourceUnavailable as unavailable:
-                    _send_enumerate_result(
-                        msg_id, [], [{"memento": at, "reason": str(unavailable)}]
-                    )
-                    return
-                _source, _fname, file_cid = identity
-                requested_cid = at.get("source_cid") if at else None
-                if requested_cid and requested_cid != file_cid:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [
-                            {
-                                "memento": at,
-                                "reason": "source memento CID no longer matches file",
-                            }
-                        ],
-                    )
-                    return
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_python_source.source_oracle import SourceUnavailable
                 # Always inject construction context. Leaving it None makes every
                 # With unconditionally RuntimeSelectedContextManager (false red);
                 # production bind_contract_refs replaces the provisional gap table.
@@ -2334,9 +2321,32 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                 else:
                     construction_context = tree_construction_context_for_workspace(root)
-                tree_file = _TreeSourceFile(
-                    identity, construction_context=construction_context
-                )
+                try:
+                    tree_file = open_source_file_for_construction(
+                        full_path,
+                        root=root,
+                        construction_context=construction_context,
+                        populate_derived=False,
+                    )
+                except SourceUnavailable as unavailable:
+                    _send_enumerate_result(
+                        msg_id, [], [{"memento": at, "reason": str(unavailable)}]
+                    )
+                    return
+                file_cid = tree_file.unit.source_cid
+                requested_cid = at.get("source_cid") if at else None
+                if requested_cid and requested_cid != file_cid:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "source memento CID no longer matches file",
+                            }
+                        ],
+                    )
+                    return
                 from sugar_lift_python_source.manager_summary_derivation import (
                     populate_source_derived_resource_refs,
                 )
@@ -2464,7 +2474,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                sf = _tree.source_file(full_path)
+                sf = _tree.source_file(full_path, root=root)
                 span = at.get("span") if isinstance(at, dict) else None
                 source_assert, assert_node = _tree.temporally_rewritten_assert(sf, span)
                 if source_assert is None or assert_node is None:
@@ -2599,7 +2609,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
-                sf = _tree.source_file(full_path)
+                sf = _tree.source_file(full_path, root=root)
                 term_table = TermTableBuilder()
                 universes = []  # (name, memento_dict, contract_dto)
                 gaps = []
@@ -2779,9 +2789,50 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             if level in ("call_sites", "assertions", "facts"):
                 from sugar_lift_py_tests import tree_enumerate as _tree
 
-                sf = _tree.source_file(full_path)
+                sf = _tree.source_file(full_path, root=root)
 
                 if level in ("call_sites", "assertions"):
+                    if seek:
+                        source_assert = _tree.find_assert(
+                            sf,
+                            at.get("span") if isinstance(at, dict) else None,
+                        )
+                        if source_assert is not None:
+                            memento = _tree.assert_memento(source_assert, file_rel)
+                            if at is not None and _memento_matches(memento, at):
+                                _send_enumerate_result(
+                                    msg_id,
+                                    [
+                                        {
+                                            "memento": memento,
+                                            "audit": None,
+                                            "payload": None,
+                                        }
+                                    ],
+                                    [],
+                                )
+                                _log_enumeration_demand(
+                                    str(level),
+                                    at,
+                                    cache="miss",
+                                    started=demand_started,
+                                )
+                                return
+                        _send_enumerate_result(
+                            msg_id,
+                            [],
+                            [
+                                {
+                                    "memento": at,
+                                    "reason": "no call site for exact memento",
+                                }
+                            ],
+                        )
+                        _log_enumeration_demand(
+                            str(level), at, cache="miss", started=demand_started
+                        )
+                        return
+
                     # at is the parent function (scan) — enumerate its assertions.
                     fn = _tree.find_function(
                         sf,

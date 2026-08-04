@@ -360,6 +360,57 @@ def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
     assert names == ["mathy.add", "test_add"]
 
 
+def test_tree_enumerate_source_file_uses_the_workspace_relative_door(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Syntax enumeration opens through the root-relative source oracle."""
+    from sugar_lift_py_tests import tree_enumerate
+
+    source = tmp_path / "relative_owner.py"
+    source.write_text("def identity(value):\n    return value\n", encoding="utf-8")
+    opened = []
+    real_workspace_path_source = tree_enumerate.workspace_path_source
+
+    def observe_workspace_path_source(path, *, root):
+        opened.append((path, root))
+        return real_workspace_path_source(path, root=root)
+
+    monkeypatch.setattr(
+        tree_enumerate, "workspace_path_source", observe_workspace_path_source
+    )
+
+    source_file = tree_enumerate.source_file(source, root=tmp_path)
+
+    assert opened == [(str(source), str(tmp_path))]
+    assert source_file.unit.filename == "relative_owner.py"
+
+
+def test_functions_level_uses_the_canonical_construction_open(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The RPC functions entrance must not mint a second bare SourceFile."""
+    opened = []
+    real_open = lift_rpc.open_source_file_for_construction
+
+    def observe_open(path, **kwargs):
+        source_file = real_open(path, **kwargs)
+        opened.append((path, kwargs, source_file.unit.filename))
+        return source_file
+
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", observe_open)
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+
+    result = _enumerate("functions", project, at=file_memento)
+
+    assert len(result["nodes"]) == 2
+    assert len(opened) == 1
+    path, kwargs, filename = opened[0]
+    assert path == project / "mathy.py"
+    assert kwargs["root"] == project
+    assert kwargs["populate_derived"] is False
+    assert filename == "mathy.py"
+
+
 def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
@@ -1039,6 +1090,54 @@ def test_exact_seek_for_unknown_callsite_is_a_loud_gap_not_substitution(
         assert len(result["gaps"]) == 1
         assert "no call site for exact memento" in result["gaps"][0]["reason"]
         assert result["gaps"][0]["memento"] == forged
+
+
+def test_assertion_exact_seek_returns_the_identical_observed_locus(
+    project: Path,
+) -> None:
+    """An exact assertion seek is identity, never a second parent scan."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    function = next(
+        node["memento"]
+        for node in _enumerate("functions", project, at=file_memento)["nodes"]
+        if node["memento"]["function_name"] == "test_add"
+    )
+    observed = _enumerate("call_sites", project, at=function)["nodes"][0]
+
+    result = _enumerate(
+        "assertions", project, at=observed["memento"], seek=True
+    )
+
+    assert result["gaps"] == []
+    assert result["nodes"] == [observed]
+
+
+def test_unknown_exact_callsite_seek_is_a_named_miss(project: Path) -> None:
+    """Silence is not a valid answer for an exact locus the tree cannot find."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    function = next(
+        node["memento"]
+        for node in _enumerate("functions", project, at=file_memento)["nodes"]
+        if node["memento"]["function_name"] == "test_add"
+    )
+    observed = _enumerate("call_sites", project, at=function)["nodes"][0]["memento"]
+    unknown = {
+        **observed,
+        "span": {
+            "start_line": 999,
+            "start_col": 0,
+            "end_line": 999,
+            "end_col": 1,
+        },
+        "source_cid": "blake3-512:not-an-observed-callsite",
+    }
+
+    result = _enumerate("call_sites", project, at=unknown, seek=True)
+
+    assert result["nodes"] == []
+    assert result["gaps"] == [
+        {"memento": unknown, "reason": "no call site for exact memento"}
+    ]
 
 
 def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
