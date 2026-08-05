@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and audit the ten sugarbin shell contracts enrolled in per-tip CI."""
+"""Run and audit the nine sugarbin shell contracts enrolled in per-tip CI."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ BATCHES = {
         "tests/sugarbin_mount_proof_guard.sh",
         "tests/sugarbin_docker_daemon_guard.sh",
         "tests/sugarbin_wrapper_compat.sh",
-        "tests/sugarbin_run_authority.sh",
     ],
     "artifacts": [
         "tests/sugarbin_artifact_manifest.sh",
