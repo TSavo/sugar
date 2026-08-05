@@ -153,6 +153,9 @@ def _partials(
                 terminal_rows=[(file, _row(module, file))],
                 demand_table_cid=observed_cid,
                 demand_table_identity=observed_identity,
+                relation_membership_attestation=_relation_membership(
+                    module, [file]
+                ),
                 runtime_attestation=runtime,
             )
         )
@@ -193,6 +196,9 @@ def _direct_seal(
         measured_commit="dc41472e64",
         frontier_attestation=frontier,
         demand_table_agreement=demand_table_agreement,
+        relation_membership_attestation=_relation_membership(
+            module, plan["enrolledFiles"]
+        ),
         runtime_attestation=_runtime_attestation(),
     )
 
@@ -364,3 +370,29 @@ def test_plan_refuses_semantic_identity_with_unrecomputable_content_key() -> Non
         assert "demand-table-identity-content-key-mismatch" in str(error)
     else:
         raise AssertionError("plan accepted an unrecomputable semantic identity")
+
+
+def _relation_membership(module, files):
+    """Positive attendance for both relations over the given files.
+
+    Built by hand rather than through the module so the wire shape the mint
+    demands is pinned here independently of the code that checks it.
+    """
+    relations = {}
+    for relation in module.RELATION_MEMBERSHIP_RELATIONS:
+        members = [
+            module.canonical_cid({"relation": relation, "file": file})
+            for file in files
+        ]
+        preimage = {
+            "schema": "recensus-relation-member-manifest/v1",
+            "relation": relation,
+            "memberCids": members,
+            "memberCount": len(members),
+        }
+        manifest = {**preimage, "manifestCid": module.canonical_cid(preimage)}
+        relations[relation] = {"expected": manifest, "observed": dict(manifest)}
+    return {
+        "schema": "recensus-relation-membership-attestation/v1",
+        "relations": relations,
+    }

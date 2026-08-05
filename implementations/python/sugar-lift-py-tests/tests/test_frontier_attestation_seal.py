@@ -192,6 +192,9 @@ def _compose(module, row, *, runtime_attestation=None):
         aggregate_hash="agg",
         manifest_shape_cid="manifest",
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(
+            module, ["pandas/a.py"]
+        ),
         runtime_attestation=(
             _runtime_attestation()
             if runtime_attestation is None
@@ -293,6 +296,9 @@ def test_partial_without_runtime_identity_refuses_at_compose() -> None:
         shard_index=0,
         terminal_rows=[("pandas/a.py", _row(module))],
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(
+            module, ["pandas/a.py"]
+        ),
         runtime_attestation=attestation,
     )
     for field in ("requiredRuntime", "runtimeIdentity", "runtimeCid"):
@@ -331,6 +337,9 @@ def test_non_recomputable_partial_runtime_cid_refuses() -> None:
         shard_index=0,
         terminal_rows=[("pandas/a.py", _row(module))],
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(
+            module, ["pandas/a.py"]
+        ),
         runtime_attestation=attestation,
     )
     partial["runtimeCid"] = "blake3-512:" + ("0" * 128)
@@ -370,6 +379,9 @@ def test_valid_but_disagreeing_shard_runtime_cids_refuse() -> None:
             shard_index=0,
             terminal_rows=[("pandas/a.py", _row(module))],
             **_demand_table_kwargs(),
+            relation_membership_attestation=_relation_membership(
+                module, ["pandas/a.py"]
+            ),
             runtime_attestation=left,
         ),
         module.mint_partial(
@@ -377,6 +389,9 @@ def test_valid_but_disagreeing_shard_runtime_cids_refuse() -> None:
             shard_index=1,
             terminal_rows=[("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))],
             **_demand_table_kwargs(),
+            relation_membership_attestation=_relation_membership(
+                module, ["pandas/b.py"]
+            ),
             runtime_attestation=right,
         ),
     ]
@@ -412,6 +427,9 @@ def test_well_formed_shard_runtime_wrong_for_compose_authority_refuses() -> None
         shard_index=0,
         terminal_rows=[("pandas/a.py", _row(module))],
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(
+            module, ["pandas/a.py"]
+        ),
         runtime_attestation=forged,
     )
 
@@ -454,6 +472,9 @@ def test_shards_agree_with_each_other_but_not_required_runtime_refuse() -> None:
             shard_index=0,
             terminal_rows=[("pandas/a.py", _row(module))],
             **_demand_table_kwargs(),
+            relation_membership_attestation=_relation_membership(
+                module, ["pandas/a.py"]
+            ),
             runtime_attestation=mutually_agreeing_wrong_runtime,
         ),
         module.mint_partial(
@@ -461,6 +482,9 @@ def test_shards_agree_with_each_other_but_not_required_runtime_refuse() -> None:
             shard_index=1,
             terminal_rows=[("pandas/b.py", _row(module, key=_key("pandas/b.py", "g")))],
             **_demand_table_kwargs(),
+            relation_membership_attestation=_relation_membership(
+                module, ["pandas/b.py"]
+            ),
             runtime_attestation=mutually_agreeing_wrong_runtime,
         ),
     ]
@@ -754,9 +778,38 @@ def test_aggregate_panic_magnitude_cannot_disagree_with_attested_keys() -> None:
         manifest_shape_cid="manifest",
         frontier_attestation=attestation,
         demand_table_agreement=agreement,
+        relation_membership_attestation=_relation_membership(
+            module, ["pandas/a.py"]
+        ),
         runtime_attestation=_runtime_attestation(),
     )
     assert body["measurement"] == "unmeasured"
     assert "frontierWidth" not in body
     assert "R_construction_panics" not in body
     assert "conservationWitness" not in body
+
+
+def _relation_membership(module, files):
+    """Positive attendance for both relations over the given files.
+
+    Built by hand rather than through the module so the wire shape the mint
+    demands is pinned here independently of the code that checks it.
+    """
+    relations = {}
+    for relation in module.RELATION_MEMBERSHIP_RELATIONS:
+        members = [
+            module.canonical_cid({"relation": relation, "file": file})
+            for file in files
+        ]
+        preimage = {
+            "schema": "recensus-relation-member-manifest/v1",
+            "relation": relation,
+            "memberCids": members,
+            "memberCount": len(members),
+        }
+        manifest = {**preimage, "manifestCid": module.canonical_cid(preimage)}
+        relations[relation] = {"expected": manifest, "observed": dict(manifest)}
+    return {
+        "schema": "recensus-relation-membership-attestation/v1",
+        "relations": relations,
+    }

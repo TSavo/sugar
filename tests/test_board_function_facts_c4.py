@@ -354,6 +354,7 @@ def test_compose_seal_uses_three_sealed_meanings() -> None:
         aggregate_hash="agg",
         manifest_shape_cid="cid",
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(compose, files),
     )
     assert status == "sealed"
     assert body["functionsTotal"] == 5
@@ -430,3 +431,29 @@ def test_population_and_enumerated_cannot_be_the_same_informal_int() -> None:
         "sealedFunctionFactCids": dict(fields["sealedFactCids"]),
     }
     BFF.require_sealed_board_function_fields(body)  # does not panic
+
+
+def _relation_membership(module, files):
+    """Positive attendance for both relations over the given files.
+
+    Built by hand rather than through the module so the wire shape the mint
+    demands is pinned here independently of the code that checks it.
+    """
+    relations = {}
+    for relation in module.RELATION_MEMBERSHIP_RELATIONS:
+        members = [
+            module.canonical_cid({"relation": relation, "file": file})
+            for file in files
+        ]
+        preimage = {
+            "schema": "recensus-relation-member-manifest/v1",
+            "relation": relation,
+            "memberCids": members,
+            "memberCount": len(members),
+        }
+        manifest = {**preimage, "manifestCid": module.canonical_cid(preimage)}
+        relations[relation] = {"expected": manifest, "observed": dict(manifest)}
+    return {
+        "schema": "recensus-relation-membership-attestation/v1",
+        "relations": relations,
+    }
