@@ -11276,8 +11276,18 @@ class Call(Expression):
                 call_occurrence=coordinate,
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
+                # The frame TABLE lives on the construction context, so it is
+                # carried only when there IS one. ``coordinate`` is already the
+                # witness of that: it is minted above solely under
+                # ``isinstance(context, TreeConstructionContextV1)``. Guarding
+                # this on ``lexical_row`` alone dereferenced a context that a
+                # context-less open leaves as None -- an AttributeError, which
+                # is an INSTRUMENT failure that makes the whole file unmeasured
+                # rather than a terminal anyone can read.
                 source_call_frame_table=(
-                    context.source_call_frames if lexical_row is not None else None
+                    context.source_call_frames
+                    if lexical_row is not None and coordinate is not None
+                    else None
                 ),
                 source_call_frame_coordinate=(
                     coordinate if lexical_row is not None else None
