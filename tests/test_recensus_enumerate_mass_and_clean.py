@@ -465,6 +465,9 @@ def test_compose_refuses_unattested_clean_board() -> None:
         aggregate_hash="agg",
         manifest_shape_cid="cid",
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(
+            COMPOSE, ["good.py", "blind.py"]
+        ),
     )
     assert status == "unmeasured"
     assert body["status"] == "unmeasured"
@@ -635,3 +638,29 @@ def test_outer_shell_escape_banks_ast_when_roster_demand_also_fails(
     assert row["functionsTotal"] == 2  # AST FunctionDef count
     assert row["functionsEnumerated"] == 0
     assert row.get("cleanRatioRefused") is True
+
+
+def _relation_membership(module, files):
+    """Positive attendance for both relations over the given files.
+
+    Built by hand rather than through the module so the wire shape the mint
+    demands is pinned here independently of the code that checks it.
+    """
+    relations = {}
+    for relation in module.RELATION_MEMBERSHIP_RELATIONS:
+        members = [
+            module.canonical_cid({"relation": relation, "file": file})
+            for file in files
+        ]
+        preimage = {
+            "schema": "recensus-relation-member-manifest/v1",
+            "relation": relation,
+            "memberCids": members,
+            "memberCount": len(members),
+        }
+        manifest = {**preimage, "manifestCid": module.canonical_cid(preimage)}
+        relations[relation] = {"expected": manifest, "observed": dict(manifest)}
+    return {
+        "schema": "recensus-relation-membership-attestation/v1",
+        "relations": relations,
+    }

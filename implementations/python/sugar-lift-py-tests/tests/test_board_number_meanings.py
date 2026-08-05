@@ -228,6 +228,9 @@ def test_seal_board_splits_file_and_residual_meanings() -> None:
         aggregate_hash="pin-hash",
         manifest_shape_cid="manifest",
         **_demand_table_kwargs(),
+        relation_membership_attestation=_relation_membership(
+            mod, [file for file, _ in rows]
+        ),
     )
     assert status == "sealed", body.get("instrumentFailures")
     assert body["filesEnrolled"] == 4
@@ -302,9 +305,38 @@ def test_direct_board_mint_without_frontier_witness_is_unmeasured() -> None:
         measured_commit="abc123",
         aggregate_hash="pin-hash",
         demand_table_agreement=agreement,
+        relation_membership_attestation=_relation_membership(
+            mod, agg["enrolled_files"]
+        ),
     )
     assert body["measurement"] == "unmeasured"
     assert body["kind"] == "measurement-conservation-failure-v1"
     assert "conservationWitness" not in body
     assert "R_construction_panics" not in body
     assert "functionsPopulation" not in body
+
+
+def _relation_membership(module, files):
+    """Positive attendance for both relations over the given files.
+
+    Built by hand rather than through the module so the wire shape the mint
+    demands is pinned here independently of the code that checks it.
+    """
+    relations = {}
+    for relation in module.RELATION_MEMBERSHIP_RELATIONS:
+        members = [
+            module.canonical_cid({"relation": relation, "file": file})
+            for file in files
+        ]
+        preimage = {
+            "schema": "recensus-relation-member-manifest/v1",
+            "relation": relation,
+            "memberCids": members,
+            "memberCount": len(members),
+        }
+        manifest = {**preimage, "manifestCid": module.canonical_cid(preimage)}
+        relations[relation] = {"expected": manifest, "observed": dict(manifest)}
+    return {
+        "schema": "recensus-relation-membership-attestation/v1",
+        "relations": relations,
+    }

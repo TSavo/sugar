@@ -240,6 +240,314 @@ def _validate_demand_table_agreement(
     }
 
 
+_RELATION_MEMBERSHIP_SCHEMA = "recensus-relation-membership-attestation/v1"
+_RELATION_MEMBER_MANIFEST_SCHEMA = "recensus-relation-member-manifest/v1"
+# The relations whose population a sealed width is taken to describe. Both
+# receipts at frontierWidth=477 carried ZERO testimony for either of them.
+RELATION_MEMBERSHIP_RELATIONS = ("lexical-call", "target-pattern")
+_RELATION_MEMBERSHIP_FIELDS = frozenset({"schema", "relations"})
+_RELATION_MEMBER_MANIFEST_FIELDS = frozenset(
+    {"schema", "relation", "memberCids", "memberCount", "manifestCid"}
+)
+
+# Closed refusal vocabulary. Absent is not missing is not extra is not
+# duplicate: four different facts about attendance, four different names, and
+# none of them is "no errors were seen".
+_RELATION_MEMBERSHIP_ABSENT = "relation-membership-attestation-absent"
+_RELATION_MEMBERSHIP_MALFORMED = "relation-membership-attestation-malformed"
+_RELATION_MEMBERSHIP_MISSING = "relation-membership-missing"
+_RELATION_MEMBERSHIP_EXTRA = "relation-membership-extra"
+_RELATION_MEMBERSHIP_DUPLICATE = "relation-membership-duplicate"
+_RELATION_MEMBERSHIP_REFUSAL_CODES = frozenset(
+    {
+        _RELATION_MEMBERSHIP_ABSENT,
+        _RELATION_MEMBERSHIP_MALFORMED,
+        _RELATION_MEMBERSHIP_MISSING,
+        _RELATION_MEMBERSHIP_EXTRA,
+        _RELATION_MEMBERSHIP_DUPLICATE,
+    }
+)
+
+# Only this module may mint an attendance verdict. A new callsite can write a
+# guard; it cannot write this object.
+_RELATION_MEMBERSHIP_AUTHORITY = object()
+
+
+class RelationMembershipAttestationV1:
+    """Closed attendance verdict for the relations a sealed width describes.
+
+    A sealed board must carry POSITIVE ATTENDANCE for every population it
+    claims to have observed. Before this type existed the mint's only inputs
+    were things it could refuse for being *wrong*; nothing forced a claim to
+    exist at all, so a run that never observed the lexical-call relation sealed
+    a width over an unknown denominator and no cryptographic seal failed.
+
+    Exactly two variants exist -- conserved and refused -- and only the mint may
+    make either. ``conserved_wire`` is the sole source of the body's
+    ``relationMembershipAttestation`` field, so the sealed body literal cannot
+    be evaluated without a conserved verdict in hand. That is a missing
+    constructor rather than a bypassable guard.
+    """
+
+    __slots__ = ()
+
+    _variants_closed = False
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if RelationMembershipAttestationV1._variants_closed:
+            raise TypeError(
+                "relation-membership-attestation-variant-not-closed: "
+                f"{cls.__name__} is a third variant"
+            )
+
+    def __init__(self, *, _authority: object = None) -> None:
+        if _authority is not _RELATION_MEMBERSHIP_AUTHORITY:
+            raise TypeError(
+                "relation-membership-attestation-not-mint-minted: "
+                f"{type(self).__name__} may only be minted by the seal door"
+            )
+
+    def refusal_reason(self) -> str | None:
+        """The refusal name, or None when attendance was conserved."""
+        raise NotImplementedError
+
+    def conserved_wire(self) -> dict[str, Any]:
+        """The attested membership. Refused verdicts have no wire form."""
+        raise TypeError(
+            "relation-membership-attestation-refused: "
+            f"{type(self).__name__} carries no conserved membership"
+        )
+
+
+class RelationMembershipConservedV1(RelationMembershipAttestationV1):
+    """Expected and observed agreed exactly, for every declared relation."""
+
+    __slots__ = ("_wire",)
+
+    def __init__(self, *, wire: Mapping[str, Any], _authority: object = None) -> None:
+        super().__init__(_authority=_authority)
+        object.__setattr__(self, "_wire", dict(wire))
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise TypeError("relation-membership-attestation-is-immutable")
+
+    def refusal_reason(self) -> str | None:
+        return None
+
+    def conserved_wire(self) -> dict[str, Any]:
+        return dict(self._wire)
+
+
+class RelationMembershipRefusedV1(RelationMembershipAttestationV1):
+    """Attendance was not conserved, named by which fact failed."""
+
+    __slots__ = ("_findings", "_detail")
+
+    def __init__(
+        self,
+        *,
+        findings: Sequence[tuple[str, str | None]],
+        detail: str,
+        _authority: object = None,
+    ) -> None:
+        super().__init__(_authority=_authority)
+        if not findings:
+            raise TypeError("relation-membership-refusal-without-a-named-fact")
+        for code, _relation in findings:
+            if code not in _RELATION_MEMBERSHIP_REFUSAL_CODES:
+                raise TypeError(
+                    f"relation-membership-refusal-reason-not-declared: {code}"
+                )
+        object.__setattr__(self, "_findings", tuple(findings))
+        object.__setattr__(self, "_detail", detail)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise TypeError("relation-membership-attestation-is-immutable")
+
+    def refusal_reason(self) -> str:
+        names = [
+            code if relation is None else f"{code}:{relation}"
+            for code, relation in self._findings
+        ]
+        return f"{' '.join(names)}: {self._detail}"
+
+
+RelationMembershipAttestationV1._variants_closed = True
+
+
+def _relation_member_manifest(
+    raw: object, *, relation: str, role: str
+) -> tuple[str, ...]:
+    """Authenticate one recomputable member manifest, or name its defect."""
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{role} manifest for {relation} is not an object")
+    fields = set(raw)
+    if fields != _RELATION_MEMBER_MANIFEST_FIELDS:
+        raise ValueError(
+            f"{role} manifest for {relation} closed fields differ "
+            f"missing={sorted(_RELATION_MEMBER_MANIFEST_FIELDS - fields)} "
+            f"extra={sorted(fields - _RELATION_MEMBER_MANIFEST_FIELDS)}"
+        )
+    if raw["schema"] != _RELATION_MEMBER_MANIFEST_SCHEMA:
+        raise ValueError(
+            f"{role} manifest for {relation} schema must be "
+            f"{_RELATION_MEMBER_MANIFEST_SCHEMA}"
+        )
+    if raw["relation"] != relation:
+        raise ValueError(
+            f"{role} manifest is labelled {raw['relation']!r} under {relation!r}"
+        )
+    members = raw["memberCids"]
+    if not isinstance(members, list) or any(
+        not isinstance(member, str) or not member for member in members
+    ):
+        raise ValueError(
+            f"{role} manifest for {relation} memberCids must be non-empty strings"
+        )
+    if type(raw["memberCount"]) is not int or raw["memberCount"] != len(members):
+        raise ValueError(
+            f"{role} manifest for {relation} memberCount={raw['memberCount']!r} "
+            f"disagrees with {len(members)} member CIDs"
+        )
+    recomputed = canonical_cid(
+        {
+            "schema": _RELATION_MEMBER_MANIFEST_SCHEMA,
+            "relation": relation,
+            "memberCids": list(members),
+            "memberCount": len(members),
+        }
+    )
+    if raw["manifestCid"] != recomputed:
+        raise ValueError(
+            f"{role} manifest for {relation} manifestCid is not recomputable: "
+            f"presented={raw['manifestCid']!r} recomputed={recomputed!r}"
+        )
+    return tuple(members)
+
+
+def _member_manifest_wire(relation: str, members: Sequence[str]) -> dict[str, Any]:
+    preimage = {
+        "schema": _RELATION_MEMBER_MANIFEST_SCHEMA,
+        "relation": relation,
+        "memberCids": list(members),
+        "memberCount": len(members),
+    }
+    return {**preimage, "manifestCid": canonical_cid(preimage)}
+
+
+def authenticate_relation_membership(
+    attestation: Mapping[str, Any] | None,
+) -> RelationMembershipAttestationV1:
+    """Sole mint of the attendance verdict a sealed width requires.
+
+    Mirrors ``_validate_demand_table_agreement``: a closed field set, a pinned
+    schema, and one distinctly named refusal per fact. The difference is what
+    absence means here -- an absent agreement is a missing cross-check, an
+    absent membership manifest is an unknown denominator.
+    """
+    if attestation is None:
+        return RelationMembershipRefusedV1(
+            findings=[(_RELATION_MEMBERSHIP_ABSENT, None)],
+            detail=(
+                "sealed mint requires positive expected/observed member "
+                "manifests for "
+                f"{', '.join(RELATION_MEMBERSHIP_RELATIONS)}; a width sealed "
+                "without them attests an unknown denominator"
+            ),
+            _authority=_RELATION_MEMBERSHIP_AUTHORITY,
+        )
+
+    def malformed(detail: str) -> RelationMembershipRefusedV1:
+        return RelationMembershipRefusedV1(
+            findings=[(_RELATION_MEMBERSHIP_MALFORMED, None)],
+            detail=detail,
+            _authority=_RELATION_MEMBERSHIP_AUTHORITY,
+        )
+
+    if not isinstance(attestation, Mapping):
+        return malformed(f"attestation is {type(attestation).__name__}, not an object")
+    fields = set(attestation)
+    if fields != _RELATION_MEMBERSHIP_FIELDS:
+        return malformed(
+            "closed fields differ "
+            f"missing={sorted(_RELATION_MEMBERSHIP_FIELDS - fields)} "
+            f"extra={sorted(fields - _RELATION_MEMBERSHIP_FIELDS)}"
+        )
+    if attestation.get("schema") != _RELATION_MEMBERSHIP_SCHEMA:
+        return malformed(f"schema must be {_RELATION_MEMBERSHIP_SCHEMA}")
+    relations = attestation.get("relations")
+    if not isinstance(relations, Mapping):
+        return malformed("relations must be an object")
+    if set(relations) != set(RELATION_MEMBERSHIP_RELATIONS):
+        return malformed(
+            "declared relations differ "
+            f"missing={sorted(set(RELATION_MEMBERSHIP_RELATIONS) - set(relations))} "
+            f"extra={sorted(set(relations) - set(RELATION_MEMBERSHIP_RELATIONS))}"
+        )
+
+    findings: list[tuple[str, str | None]] = []
+    details: list[str] = []
+    wire_relations: dict[str, Any] = {}
+    for relation in RELATION_MEMBERSHIP_RELATIONS:
+        pair = relations[relation]
+        if not isinstance(pair, Mapping) or set(pair) != {"expected", "observed"}:
+            return malformed(
+                f"{relation} must carry exactly expected and observed manifests"
+            )
+        try:
+            expected = _relation_member_manifest(
+                pair["expected"], relation=relation, role="expected"
+            )
+            observed = _relation_member_manifest(
+                pair["observed"], relation=relation, role="observed"
+            )
+        except ValueError as error:
+            return malformed(str(error))
+        if len(set(expected)) != len(expected):
+            return malformed(
+                f"expected manifest for {relation} repeats a member CID; the "
+                "manifest is not a population"
+            )
+
+        expected_set = set(expected)
+        observed_set = set(observed)
+
+        duplicates = sorted(
+            {member for member in observed if observed.count(member) > 1}
+        )
+        if duplicates:
+            findings.append((_RELATION_MEMBERSHIP_DUPLICATE, relation))
+            details.append(f"{relation} observed twice: {duplicates}")
+
+        absent_members = sorted(expected_set - observed_set)
+        if absent_members:
+            findings.append((_RELATION_MEMBERSHIP_MISSING, relation))
+            details.append(f"{relation} manifest members never observed: "
+                           f"{absent_members}")
+
+        unexpected = sorted(observed_set - expected_set)
+        if unexpected:
+            findings.append((_RELATION_MEMBERSHIP_EXTRA, relation))
+            details.append(f"{relation} observed outside the manifest: {unexpected}")
+
+        wire_relations[relation] = {
+            "expected": _member_manifest_wire(relation, expected),
+            "observed": _member_manifest_wire(relation, observed),
+        }
+
+    if findings:
+        return RelationMembershipRefusedV1(
+            findings=findings,
+            detail="; ".join(details),
+            _authority=_RELATION_MEMBERSHIP_AUTHORITY,
+        )
+    return RelationMembershipConservedV1(
+        wire={"schema": _RELATION_MEMBERSHIP_SCHEMA, "relations": wire_relations},
+        _authority=_RELATION_MEMBERSHIP_AUTHORITY,
+    )
+
+
 def _runtime_attestation_fields(
     runtime_attestation: Mapping[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -988,6 +1296,7 @@ def mint_partial(
     unmeasured_reason: str | None = None,
     demand_table_cid: str | None = None,
     demand_table_identity: Mapping[str, Any] | None = None,
+    relation_membership_attestation: Mapping[str, Any] | None = None,
     runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> dict[str, Any]:
     """Mint a shard partial. Never includes R_construction_panics top-level."""
@@ -1085,6 +1394,14 @@ def mint_partial(
     if demand_reason is not None and unmeasured_reason is None:
         status = "unmeasured"
         unmeasured_reason = demand_reason
+    # A shard that cannot say who it saw cannot contribute to a sealed width.
+    shard_membership = authenticate_relation_membership(
+        relation_membership_attestation
+    )
+    membership_reason = shard_membership.refusal_reason()
+    if membership_reason is not None and unmeasured_reason is None:
+        status = "unmeasured"
+        unmeasured_reason = membership_reason
     measured = status == "completed" and files_complete and unmeasured_reason is None
     if not measured and unmeasured_reason is None:
         unmeasured_reason = (
@@ -1147,6 +1464,8 @@ def mint_partial(
     if demand_claim is not None:
         body["demandTableCid"] = demand_claim[0]
         body["demandTableIdentity"] = demand_claim[1]
+    if membership_reason is None:
+        body["relationMembershipAttestation"] = shard_membership.conserved_wire()
     if runtime is not None:
         body.update(runtime)
     else:
@@ -1417,6 +1736,7 @@ def seal_board_from_aggregate(
     with_census: Mapping[str, Any] | None = None,
     frontier_attestation: Mapping[str, Any] | None = None,
     demand_table_agreement: Mapping[str, Any] | None = None,
+    relation_membership_attestation: Mapping[str, Any] | None = None,
     runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> dict[str, Any]:
     """Mint the sealed authoritative board body. Sole mint of the class."""
@@ -1458,6 +1778,18 @@ def seal_board_from_aggregate(
             plan=plan,
             missing_shards=["plan"],
             unmeasured_reasons={"plan": str(error)},
+            measured_commit=measured_commit,
+            runtime_attestation=runtime,
+        )
+    relation_membership = authenticate_relation_membership(
+        relation_membership_attestation
+    )
+    membership_refusal = relation_membership.refusal_reason()
+    if membership_refusal is not None:
+        return unmeasured_envelope(
+            plan=plan,
+            missing_shards=["plan"],
+            unmeasured_reasons={"plan": membership_refusal},
             measured_commit=measured_commit,
             runtime_attestation=runtime,
         )
@@ -1627,6 +1959,10 @@ def seal_board_from_aggregate(
         "planCid": (plan or {}).get("planCid"),
         "perShardCids": dict(sorted((per_shard_cids or {}).items())),
         "composeSchema": COMPOSE_SCHEMA,
+        # Positive attendance for every population this width describes. Only
+        # a RelationMembershipConservedV1 answers conserved_wire(), so this
+        # literal cannot be evaluated without one.
+        "relationMembershipAttestation": relation_membership.conserved_wire(),
         **runtime,
     }
     plan_claim = authenticated_demand_table_agreement["plan"]
@@ -1773,6 +2109,10 @@ def compose_from_partials(
 
     first_partial_runtime_cid: str | None = None
     shard_demand_claims: dict[str, dict[str, object]] = {}
+    shard_membership_members: dict[str, dict[str, list[str]]] = {
+        relation: {"expected": [], "observed": []}
+        for relation in RELATION_MEMBERSHIP_RELATIONS
+    }
     for i in range(k):
         seat = f"s{i:02d}"
         p = by_index.get(i)
@@ -1862,6 +2202,25 @@ def compose_from_partials(
             continue
         if first_partial_runtime_cid is None:
             first_partial_runtime_cid = partial_runtime_cid
+        # Attendance is conserved shard by shard, then unioned. A seat that
+        # names no population cannot be silently absorbed by seven that do.
+        shard_membership = authenticate_relation_membership(
+            p.get("relationMembershipAttestation")
+        )
+        shard_membership_reason = shard_membership.refusal_reason()
+        if shard_membership_reason is not None:
+            missing.append(seat)
+            reasons[seat] = shard_membership_reason
+            continue
+        shard_wire = shard_membership.conserved_wire()
+        for relation in RELATION_MEMBERSHIP_RELATIONS:
+            pair = shard_wire["relations"][relation]
+            shard_membership_members[relation]["expected"].extend(
+                pair["expected"]["memberCids"]
+            )
+            shard_membership_members[relation]["observed"].extend(
+                pair["observed"]["memberCids"]
+            )
 
     if missing:
         return "unmeasured", unmeasured_envelope(
@@ -1953,6 +2312,20 @@ def compose_from_partials(
         "expectedShardCount": k,
         "allAgree": len(shard_demand_claims) == k,
     }
+    composed_relation_membership = {
+        "schema": _RELATION_MEMBERSHIP_SCHEMA,
+        "relations": {
+            relation: {
+                "expected": _member_manifest_wire(
+                    relation, shard_membership_members[relation]["expected"]
+                ),
+                "observed": _member_manifest_wire(
+                    relation, shard_membership_members[relation]["observed"]
+                ),
+            }
+            for relation in RELATION_MEMBERSHIP_RELATIONS
+        },
+    }
     board = seal_board_from_aggregate(
         agg,
         plan=plan,
@@ -1970,6 +2343,7 @@ def compose_from_partials(
         with_census=with_census,
         frontier_attestation=frontier_attestation,
         demand_table_agreement=demand_table_agreement,
+        relation_membership_attestation=composed_relation_membership,
         runtime_attestation=runtime,
     )
     if board.get("measurement") != "measured":
@@ -2009,6 +2383,7 @@ def compose_k1_from_rows(
     manifest_cid: str | None = None,
     demand_table_cid: str | None = None,
     demand_table_identity: Mapping[str, Any] | None = None,
+    relation_membership_attestation: Mapping[str, Any] | None = None,
     runtime_attestation: Mapping[str, Any] | None | object = _RUNTIME_AUTO,
 ) -> tuple[str, dict[str, Any]]:
     """k=1 path: one full-bin partial + compose (serial observation, one seal door)."""
@@ -2049,6 +2424,7 @@ def compose_k1_from_rows(
         measured_commit=measured_commit,
         demand_table_cid=demand_table_cid,
         demand_table_identity=demand_table_identity,
+        relation_membership_attestation=relation_membership_attestation,
         runtime_attestation=runtime,
     )
     return compose_from_partials(
