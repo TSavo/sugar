@@ -3789,9 +3789,35 @@ def _seat_import_value_use_receipts(
                 # for deciding whether that value is usable.
                 seat_receipt()
                 continue
-            raise ImportValueUseSeatingGap(
-                f"resolution-{imported.kind}",
-                "authenticated value-use receipt did not resolve",
+            # A REAL gap, and it stays one: the authenticated target is not
+            # reachable through the binding it claims. What changes is only
+            # that it now names a construct, a coordinate and a shape, so the
+            # census reads a countable terminal at this exact use instead of a
+            # bare ValueError that voids the file. Do NOT seat the receipt
+            # here — the neighbouring `seat_receipt(); continue` arms above are
+            # honest open-world EXPORTS that carry no definition coordinate;
+            # this is a target that does not resolve at all, and silently
+            # seating it would let an unresolved value ride as authenticated.
+            from sugar_source_tree.panic import ImportValueUseResolutionGap
+
+            raise ImportValueUseResolutionGap(
+                blame=coordinate,
+                owner="manager_construction._seat_import_value_use_receipts",
+                observed=(
+                    "authenticated value-use receipt did not resolve: "
+                    f"resolution-{imported.kind} for target "
+                    f"{receipt.target_symbol!r} through module "
+                    f"{dependency_module!r}"
+                ),
+                requested=(
+                    "a resolved Python object for the receipt's authenticated "
+                    "target symbol, reached through its own import binding"
+                ),
+                fix=(
+                    "resolve the target through the binding it names, or keep "
+                    "this value-use coordinate loud; never seat an unresolved "
+                    "target as an authenticated value"
+                ),
             )
         seat_receipt()
         context.source_import_value_resolutions[coordinate] = imported

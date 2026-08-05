@@ -94,6 +94,49 @@ def _formula_cid(formula) -> str:
     return blake3_512_of(encode_jcs(formula_to_value(formula)).encode("utf-8"))
 
 
+def _content_coordinate(constructed, *, blame, owner: str, what: str) -> str:
+    """The ONE typed door for this module's constructed-value canonicalization.
+
+    ``_constructed_preimage`` is the same canonicalization the reporter membrane
+    runs, and it refuses an unnamed value CATEGORY with a bare
+    ``ConstructedValueCategoryGap`` (a ``TypeError``).  On the reporter path
+    ``present_construction`` wraps that into
+    ``ConstructedValueTestimonyNotWritten`` before it leaves.  Live-loop
+    construction is NOT on the reporter path: it canonicalizes directly, so the
+    unwrapped ``TypeError`` escaped all the way out of ``sugar.enumerate``.  An
+    exception that names no construct, no coordinate and no shape is not a
+    terminal any reader can judge — the recensus banks it as an INSTRUMENT
+    FAILURE, which voids the whole file's measurement and, with it, the shard's
+    partial.  ``cpython_adapter._Handle`` reached both call sites below and
+    voided eight pandas files that way.
+
+    Nothing is silenced and no category is broadened here.  The same gap is
+    raised, over the same values, under the name the census already counts
+    (``ConstructedValueTestimonyNotWritten`` is a ``SugarNotWritten``), blamed
+    on this construct's own fragment.  ``_Handle`` still has no
+    ``ConstructedValueV2`` arm and must not get one: it is raw parser
+    machinery with no authenticated content.
+    """
+    try:
+        return cid_of_json(_constructed_preimage(constructed))
+    except (TypeError, ValueError) as cause:
+        from .panic import ConstructedValueTestimonyNotWritten
+
+        raise ConstructedValueTestimonyNotWritten(
+            blame=blame,
+            owner=owner,
+            observed=f"{what} has no content coordinate: {cause}",
+            requested=(
+                "a constructed value whose category ConstructedValueV2 names, "
+                "so this live-loop record addresses its own content"
+            ),
+            fix=(
+                "teach ConstructedValueV2 the value CATEGORY over its "
+                "authenticated content, or keep this coordinate loud"
+            ),
+        ) from cause
+
+
 def _seal_runtime_state(state):
     """Seal ONE live BindingState into its authenticated SealedBindingStateV1.
 
@@ -109,7 +152,13 @@ def _seal_runtime_state(state):
     if isinstance(state, Node):
         constructed = state.sugar()
         testimony = ConstructedValueTestimonyV1.mint(
-            state.fragment, cid_of_json(_constructed_preimage(constructed))
+            state.fragment,
+            _content_coordinate(
+                constructed,
+                blame=state.fragment,
+                owner="live_loop_construction._seal_runtime_state",
+                what="loop-carried binding state",
+            ),
         )
         return BoundBindingStateV1(testimony)
     if isinstance(state, UnboundBinding):
@@ -399,7 +448,12 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         guard_cid = _formula_cid(live_guard)
         live_guards[guard_cid] = live_guard
         statement_sugar = statement.sugar()
-        effect_cid = cid_of_json(_constructed_preimage(statement_sugar))
+        effect_cid = _content_coordinate(
+            statement_sugar,
+            blame=statement.fragment,
+            owner="live_loop_construction.construct_live_loop_recurrence",
+            what="loop outward-halted face effect",
+        )
         face = _record(
             {
                 "kind": "loop-outward-halted-face",
