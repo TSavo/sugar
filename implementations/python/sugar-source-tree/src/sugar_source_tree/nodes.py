@@ -11073,6 +11073,9 @@ class Call(Expression):
                 span.end_line,
                 span.end_col,
             )
+            # The roster states the ONE classification every authenticated
+            # owner gave this call; owners that disagreed panicked at install,
+            # so there is nothing here to choose between.
             obligation = context.opaque_source_call_obligations.get(coordinate)
             if obligation is not None:
                 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar

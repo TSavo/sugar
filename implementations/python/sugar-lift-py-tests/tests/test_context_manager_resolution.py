@@ -12,6 +12,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
     _hash_json,
     decode_resolved_contract_refs,
+    opaque_source_call_roster_of,
 )
 
 
@@ -25,13 +26,16 @@ def test_opaque_source_call_obligation_transport_is_frozen_and_inspectable():
     )
     owner_cid = "blake3-512:" + "b" * 128
     obligation = OpaqueSourceCallObligationV1(coordinate, "func", owner_cid)
-    table = {coordinate: obligation}
+    roster = opaque_source_call_roster_of(obligation)
+    table = {coordinate: roster}
     context = TreeConstructionContextV1.for_source_call_construction(
         opaque_source_call_obligations=table
     )
 
     assert context.opaque_source_call_obligations is table
-    assert context.opaque_source_call_obligations[coordinate] == obligation
+    assert context.opaque_source_call_obligations[coordinate] == roster
+    assert roster.obligations == (obligation,)
+    assert roster.owner(owner_cid) is obligation
     assert obligation.coordinate == coordinate
     assert obligation.target_name == "func"
     assert obligation.resolved_object_cid == owner_cid
