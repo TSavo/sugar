@@ -220,26 +220,6 @@ dispatch_execution_subcommand() {
     sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
   fi
 
-  # Run authority is testimony, not a permission check. Both arms produce it:
-  # a named task records the image and precondition plan it actually installed,
-  # and an ad-hoc command records that it ran under no declared task. The
-  # command stays permitted; what changes is that its authority is no longer
-  # invisible, so a measurement derived from it is refused downstream instead
-  # of being banked as though it were managed.
-  local run_authority_json=""
-  if [[ ${#command[@]} -gt 0 && "$subcommand" != build ]]; then
-    local contract_python
-    contract_python="$(sugarbin_contract_python)" || return $?
-    local -a authority_args=(--image "${docker_image:-ambient:$execution_env}")
-    if [[ -n "$task" ]]; then
-      authority_args+=(--task "$task" --preflight "$task_preflight_protocol"
-        --plan-json "${task_preconditions_json:-null}")
-    fi
-    run_authority_json="$("$contract_python" \
-      "$script_dir/../tools/sugar-build/contract.py" run-authority \
-      "${authority_args[@]}" -- "${command[@]}")" || return $?
-  fi
-
   if [[ "$subcommand" == explain ]]; then
     [[ "$saw_boundary" == 0 ]] || { echo "sugarbin: explain does not accept a command" >&2; return 2; }
     printf 'host=%s\n' "$host"
@@ -252,7 +232,6 @@ dispatch_execution_subcommand() {
     printf 'network=%s\n' "$task_network"
     printf 'docker_image=%s\n' "$docker_image"
     printf 'preflight=%s\n' "$task_preflight_protocol"
-    printf 'run_authority=%s\n' "$run_authority_json"
     return 0
   fi
 
@@ -308,7 +287,6 @@ dispatch_execution_subcommand() {
   SUGAR_BX_ENV_NAMES=()
   SUGAR_BX_SYNC_BACKS=()
   SUGAR_BX_MANAGED_PRECONDITION_PLAN="$task_preconditions_json"
-  SUGAR_BX_RUN_AUTHORITY="$run_authority_json"
   SUGAR_BX_DETACH_JOB_ID="$detach_job_id"
   ((${#path_prefixes[@]} == 0)) || SUGAR_BX_PATH_PREFIXES=("${path_prefixes[@]}")
   ((${#env_names[@]} == 0)) || SUGAR_BX_ENV_NAMES=("${env_names[@]}")

@@ -877,19 +877,12 @@ sugar_bx_run_docker() {
     # payload env. Final tasks may consume the shared shelf but only the
     # explicit managed publisher may stage or install shared cells.
     case "$name" in
-      SUGAR_BINARY_SHELF_READ_ONLY|SUGAR_BINARY_PUBLISH|SUGAR_BX_RUN_AUTHORITY) continue ;;
+      SUGAR_BINARY_SHELF_READ_ONLY|SUGAR_BINARY_PUBLISH) continue ;;
     esac
     [[ ${!name+x} == x ]] && docker_args+=(--env "$name=${!name}")
   done
   docker_args+=(--env SUGAR_BINARY_SHELF_READ_ONLY=1)
   docker_args+=(--env SUGAR_BINARY_PUBLISH=0)
-  # Transport-owned, like the mount and publish authority above. The
-  # load-bearing protection is bin/sugarbin's UNCONDITIONAL assignment of
-  # SUGAR_BX_RUN_AUTHORITY, which clobbers any caller value before this runs;
-  # the skip in the forwarding case list above is belt-and-braces and is not
-  # independently observable.
-  [[ -z "${SUGAR_BX_RUN_AUTHORITY:-}" ]] \
-    || docker_args+=(--env "SUGAR_BX_RUN_AUTHORITY=$SUGAR_BX_RUN_AUTHORITY")
   case "$preflight_protocol" in
     managed-entrypoint/v1)
       [[ -n "${SUGAR_BX_MANAGED_PRECONDITION_PLAN:-}" ]] || {
