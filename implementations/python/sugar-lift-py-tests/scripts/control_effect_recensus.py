@@ -655,6 +655,7 @@ def terminal_after_measure_escape(
     workspace_root: Path,
     error: BaseException,
     category: str = "panic",
+    source_workspace_root: Path | None = None,
 ) -> dict[str, Any]:
     """Outer-shell law: never bank 0 when roster/AST mass is recoverable.
 
@@ -694,6 +695,7 @@ def terminal_after_measure_escape(
         function_nodes, _gaps = demand_function_roster(
             workspace_root=workspace_root,
             file_rel=relative,
+            source_workspace_root=source_workspace_root,
         )
     except ConstructionPanic:
         raise
