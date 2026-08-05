@@ -422,6 +422,24 @@ def test_a_named_task_produces_managed_testimony_that_authenticates() -> None:
     assert authority.task == "showcases"
 
 
+def test_producer_stamp_door_round_trips_the_transport_env() -> None:
+    """One carrier name, stamped through one door, read by one authenticator."""
+    body = RA.stamp_run_authority(
+        {"totals": {"failed": 0}}, {RA.RUN_AUTHORITY_ENV: json.dumps(_managed())}
+    )
+    authority = RA.authenticate_run_authority(
+        body["runAuthority"], task_command_resolver=_resolver
+    )
+    assert isinstance(authority, RA.ManagedRunAuthority)
+
+    # No transport testimony means the body carries none, and the consumer
+    # reads absence rather than inventing a permissive default.
+    bare = RA.stamp_run_authority({"totals": {"failed": 0}}, {})
+    assert "runAuthority" not in bare
+    with pytest.raises(RA.RunAuthorityRefusal, match=RA.REFUSAL_ABSENT):
+        RA.authenticate_run_authority(bare.get("runAuthority"))
+
+
 def test_producer_refuses_to_emit_half_evidenced_managed_testimony() -> None:
     """A managed claim cannot be constructed without its image and its preflight."""
     with pytest.raises(RA.RunAuthorityRefusal, match=RA.REFUSAL_MALFORMED):

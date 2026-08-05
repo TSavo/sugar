@@ -220,6 +220,24 @@ def build_run_authority(
     }
 
 
+def stamp_run_authority(body: dict[str, Any], environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Producer door: copy the transport's testimony into a report body.
+
+    Every measurement producer stamps through here rather than each spelling
+    ``runAuthority`` for itself, so there is one carrier name and no producer
+    can accidentally invent a second one. When the transport supplied nothing
+    the body carries nothing, and the consumer reads that as
+    ``RunAuthorityAbsentV1`` — fail-closed, because silence is exactly the
+    state that made the original defect bankable.
+    """
+    import os
+
+    raw = (environ if environ is not None else os.environ).get(RUN_AUTHORITY_ENV)
+    if raw:
+        body["runAuthority"] = json.loads(raw)
+    return body
+
+
 def _default_task_command_resolver(task: str) -> Sequence[str] | None:
     """Resolve a declared task's command from the build contract."""
     import importlib.util
