@@ -117,10 +117,19 @@ else
   max="$(awk -v n="$n" 'BEGIN{ m=n/4.0; if (m < 2.0) m=2.0; printf "%.2f", m }')"
 fi
 echo "sugarbin: bx-load-gate phase=before load1=$l1 nproc=$n max=$max lease=held mode=$mode" >&2
-if awk -v l="$l1" -v m="$max" 'BEGIN{ exit !(l+0 > m+0) }'; then
-  echo "sugarbin: crime=host-not-quiet load1=$l1 nproc=$n max=$max lease=held replacement=wait for load1<=$max. Exit 76. A measurement that cannot testify to its own conditions is not a measurement." >&2
-  exit 76
-fi
+# NO LOAD CEILING (owner ruling, 2026-08-05).
+#
+# The ceiling was set for the single-process era and never revisited for the
+# shared-runner topology this workflow is built around: k=8 shards are
+# containers on ONE box, so the fan-out trips a ceiling of nproc/4 by simply
+# existing -- eight seats refused at load1=8.45 on a 32-core host, which is
+# ~26% utilisation. A gate that refuses the very concurrency it was written to
+# permit measures nothing.
+#
+# The condition is still TESTIFIED -- load1 before and after are recorded on
+# every run and travel in the receipt. What is removed is the REFUSAL, not the
+# observation: a measurement still says what its conditions were, and a reader
+# can judge them. Serialisation against human brun remains the lease's job.
 
 set +e
 "$@"
