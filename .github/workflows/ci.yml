@@ -566,7 +566,7 @@ jobs:
   # test-rust, which is deliberately outside per-tip CI. Run the exact shell
   # population directly: one job, three batches, and one attendance receipt.
   sugarbin-shell-contracts:
-    name: sugarbin shell contracts (9/9 attendance)
+    name: sugarbin shell contracts (10/10 attendance)
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
@@ -575,7 +575,7 @@ jobs:
       # Initialize every expected row before setup. If setup or a later batch
       # cannot run, the final audit retains a named absence rather than a
       # smaller denominator.
-      - name: Initialize exact nine-contract attendance ledger
+      - name: Initialize exact ten-contract attendance ledger
         shell: bash
         env:
           # runner.* does not exist until dispatch; never move this to job env.
@@ -600,7 +600,7 @@ jobs:
         if: always() && !cancelled()
         run: tools/ci-apt-install.sh rsync
 
-      # Provisioning failure is one setup refusal, not nine mysterious test
+      # Provisioning failure is one setup refusal, not ten mysterious test
       # failures. This step runs after either provisioner fails so it can name
       # every absent tool; the batches run only when this exact precondition is
       # green.
@@ -654,7 +654,7 @@ jobs:
             --reports-dir "$SUGARBIN_SHELL_TIER_ROOT/bodies" \
             --commit "$GITHUB_SHA"
 
-      - name: Audit exact 9/9 attendance and results
+      - name: Audit exact 10/10 attendance and results
         if: always() && !cancelled()
         shell: bash
         env:

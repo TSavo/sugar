@@ -59,6 +59,11 @@ if str(_PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_SRC))
 
 from sugar_lift_py_tests.conservation_mint import decode_conserved_body  # noqa: E402
+from run_authority import (  # noqa: E402
+    ManagedRunAuthority,
+    RunAuthorityRefusal,
+    require_managed_run_authority,
+)
 
 # ---------------------------------------------------------------------------
 # Units — incommensurable. Presenting two Measured.values without their units
@@ -101,6 +106,9 @@ FORBIDDEN_BOARD_AXIS_NAMES = frozenset(
 )
 
 _MEASURED_SEAL = object()
+
+_UNSET_RUN_AUTHORITY = object()
+"""Distinguishes "caller said nothing" from "caller supplied None" (absent)."""
 
 
 class CommitMeasurementError(TypeError):
@@ -176,6 +184,7 @@ class Measured:
     body_cid: str
     value_field_path: str
     exit_code: int
+    run_authority: ManagedRunAuthority
     _seal: object
 
     def __post_init__(self) -> None:
@@ -203,6 +212,15 @@ class Measured:
             _require_nonempty_str("value_field_path", self.value_field_path),
         )
         _require_int("exit_code", self.exit_code)
+        # Not a guard: the type admits no other inhabitant. A Measured cannot be
+        # spelled without a ManagedRunAuthority, which cannot be spelled without
+        # authenticated managed testimony.
+        if not isinstance(self.run_authority, ManagedRunAuthority):
+            raise CommitMeasurementError(
+                "Measured requires an authenticated ManagedRunAuthority; got "
+                f"{type(self.run_authority).__name__}. THE ARTIFACT MUST PROVE "
+                "WHAT IT CONSUMED."
+            )
 
     @property
     def body_artifact_cid(self) -> str:
@@ -242,8 +260,22 @@ def measured(
     body: Mapping[str, Any],
     value_field_path: str,
     exit_code: int,
+    run_authority: Any,
+    task_command_resolver: Any = None,
 ) -> Measured:
-    """Build Measured from parsed body + declared population + unit. No lease."""
+    """Build Measured from parsed body + declared population + unit. No lease.
+
+    ``run_authority`` is the run-authority/v1 testimony the producing run
+    carried. It is authenticated here and must be MANAGED: an ad-hoc command
+    ran under no declared task, so it selected no task capability image and
+    installed no precondition plan, and nothing it produced is a measurement.
+    """
+    try:
+        authority = require_managed_run_authority(
+            run_authority, task_command_resolver=task_command_resolver
+        )
+    except RunAuthorityRefusal as error:
+        raise CommitMeasurementError(f"Measured refuses: {error}") from error
     if not isinstance(body, Mapping):
         raise CommitMeasurementError(
             f"Measured requires a parsed body mapping; got {type(body).__name__}. "
@@ -284,6 +316,7 @@ def measured(
         content_cid(body),
         path_s,
         exit_code,
+        authority,
         _MEASURED_SEAL,
     )
 
@@ -307,9 +340,19 @@ def measured_from_body(
     collected_field_path: str | None = None,
     lease_record: Any = None,
     lease_receipt_cid: str | None = None,
+    run_authority: Any = _UNSET_RUN_AUTHORITY,
+    task_command_resolver: Any = None,
 ) -> AxisReading:
-    """Cite one axis from a produced report body. No lease required."""
+    """Cite one axis from a produced report body. No lease required.
+
+    The run-authority testimony is read from the body itself when the caller
+    does not supply it: the receipt is the durable carrier, not the caller's
+    memory of how the run was launched. A body carrying none is Unmeasured by
+    absence, which is a different reading from Unmeasured by ad-hoc execution.
+    """
     del commit_sha, lease_record, lease_receipt_cid  # explicitly unused
+    if run_authority is _UNSET_RUN_AUTHORITY:
+        run_authority = body.get("runAuthority") if isinstance(body, Mapping) else None
     if body_artifact_cid is not None and body_cid is None:
         body_cid = body_artifact_cid
     if not isinstance(body, Mapping):
@@ -348,6 +391,8 @@ def measured_from_body(
             body=body,
             value_field_path=path,
             exit_code=exit_code,
+            run_authority=run_authority,
+            task_command_resolver=task_command_resolver,
         )
     except CommitMeasurementError as exc:
         return unmeasured(str(exc))
@@ -402,6 +447,7 @@ def _measured_json(r: Measured) -> dict[str, Any]:
         "valueFieldPath": r.value_field_path,
         "collected": r.population_size,
         "exitCode": r.exit_code,
+        "runAuthority": r.run_authority.as_json(),
     }
 
 

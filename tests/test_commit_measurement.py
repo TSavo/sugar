@@ -30,6 +30,26 @@ def _load(name: str, rel: str):
 
 
 CM = _load("commit_measurement", "tools/commit_measurement.py")
+RA = _load("run_authority", "tools/run_authority.py")
+
+# Every Measured now carries authenticated MANAGED run authority. These teeth
+# are about units and composition, so they run under one genuine managed run:
+# the declared `showcases` task, whose contract command owns this argv.
+MANAGED_TESTIMONY = {
+    "schema": RA.RUN_AUTHORITY_SCHEMA,
+    "authority": RA.AUTHORITY_MANAGED,
+    "task": "showcases",
+    "image": "sha256:showcase-capability-image",
+    "preflightProtocol": "managed-entrypoint/v1",
+    "preconditionPlanCid": RA.plan_cid({"checks": [], "task": "showcases"}),
+    "command": ["make", "test-showcases"],
+}
+
+
+def _measured(*args, **kwargs):
+    kwargs.setdefault("run_authority", MANAGED_TESTIMONY)
+    return CM.measured(*args, **kwargs)
+
 GATE = _load("commit_measurement_gate", "tools/commit_measurement_gate.py")
 
 
@@ -47,6 +67,7 @@ def _floor_body(axis_id: str, failed: int = 0, collected: int = 100) -> dict:
         "totals": {"failed": failed, "collected": collected},
         "populationId": f"corpus:{axis_id}",
         "populationSize": collected,
+        "runAuthority": MANAGED_TESTIMONY,
     }
 
 
@@ -66,6 +87,7 @@ def _recensus_body(panics: int = 0, files: int = 1415) -> dict:
             "status": "passed",
         },
         "measuredCommit": "deadbeef",
+        "runAuthority": MANAGED_TESTIMONY,
         "R_construction_panics": panics,
         "constructionPanics": [{"x": i} for i in range(panics)],
         "enrolledFiles": files,
@@ -110,7 +132,7 @@ def test_process_floor_units_are_not_the_same() -> None:
 
 
 def test_measured_requires_unit() -> None:
-    m = CM.measured(
+    m = _measured(
         3,
         identity="native-crash",
         unit=CM.UNIT_CORPUS_FILE,
@@ -124,7 +146,7 @@ def test_measured_requires_unit() -> None:
     assert m.identity == "native-crash"
     assert not hasattr(m, "receipt_cid")
     with pytest.raises(CM.CommitMeasurementError, match="unit"):
-        CM.measured(
+        _measured(
             3,
             identity="native-crash",
             unit="made-up-unit",
@@ -137,7 +159,7 @@ def test_measured_requires_unit() -> None:
 
 
 def test_measured_json_carries_unit() -> None:
-    m = CM.measured(
+    m = _measured(
         0,
         identity="silent",
         unit=CM.UNIT_ASSERT_FUNCTION_LOCUS,
@@ -217,7 +239,7 @@ def test_no_total_while_any_axis_unmeasured() -> None:
         "sha",
         "roster",
         {
-            "silent": CM.measured(
+            "silent": _measured(
                 0,
                 identity="silent",
                 unit=CM.UNIT_ASSERT_FUNCTION_LOCUS,
@@ -342,7 +364,7 @@ def test_floor_axis_reports_do_not_collapse_to_one_reading(tmp_path: Path) -> No
 def test_enrolled_panics_axis_not_forbidden() -> None:
     """R_construction_panics is cite-enrolled; free R_construction still blocked."""
     body = _recensus_body(2)
-    m = CM.measured(
+    m = _measured(
         2,
         identity="R_construction_panics",
         unit=CM.UNIT_CONSTRUCTION_PANIC,
@@ -375,7 +397,7 @@ def test_legacy_recensus_body_without_conservation_witness_is_refused() -> None:
     body = _recensus_body(2)
     body.pop("conservationWitness")
     with pytest.raises(CM.CommitMeasurementError, match="conservationWitness"):
-        CM.measured(
+        _measured(
             2,
             identity="R_construction_panics",
             unit=CM.UNIT_CONSTRUCTION_PANIC,
@@ -389,7 +411,7 @@ def test_legacy_recensus_body_without_conservation_witness_is_refused() -> None:
 
 def test_measured_requires_body_matching_value() -> None:
     with pytest.raises(CM.CommitMeasurementError, match="parsed body|NoReport"):
-        CM.measured(
+        _measured(
             3,
             identity="x",
             unit=CM.UNIT_CORPUS_FILE,
@@ -400,7 +422,7 @@ def test_measured_requires_body_matching_value() -> None:
             exit_code=1,
         )
     with pytest.raises(CM.CommitMeasurementError, match="does not match"):
-        CM.measured(
+        _measured(
             99,
             identity="x",
             unit=CM.UNIT_CORPUS_FILE,
@@ -417,7 +439,7 @@ def test_partial_has_no_total() -> None:
         "sha",
         "roster",
         {
-            "a": CM.measured(
+            "a": _measured(
                 1,
                 identity="a",
                 unit=CM.UNIT_CORPUS_FILE,
