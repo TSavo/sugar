@@ -26,7 +26,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from sugar_lift_python_source.canonical import cid_of_json
+from sugar_lift_python_source.canonical import (
+    blake3_512_of,
+    canonical_json_bytes,
+    cid_of_json,
+)
 from sugar_lift_py_tests.authenticated_pytest import AuthenticatedPandasCorpus
 from sugar_lift_py_tests.demand_table_identity import (
     DemandTableIdentityV1,
@@ -137,7 +141,7 @@ class PrebuiltDemandTableV1:
     schema: str = SCHEMA
 
     def preimage(self) -> dict[str, Any]:
-        """Bytes that content_cid addresses (no contentCid field)."""
+        """The value the artifact bytes encode. content_cid addresses it."""
         return {
             "schema": self.schema,
             "corpusPin": self.corpus_pin.as_dict(),
@@ -145,15 +149,26 @@ class PrebuiltDemandTableV1:
             "semanticIdentity": self.semantic_identity.as_dict(),
         }
 
-    def to_json_dict(self) -> dict[str, Any]:
-        body = self.preimage()
-        body["contentCid"] = self.content_cid
-        body["semanticIdentity"] = self.semantic_identity.as_dict()
-        return body
+    def artifact_bytes(self) -> bytes:
+        """THE bytes. Stored, hashed, and published are one spelling."""
+        return serialize_prebuilt_demand_table(self.preimage())
+
+
+def serialize_prebuilt_demand_table(preimage: Mapping[str, Any]) -> bytes:
+    """The single artifact byte producer.
+
+    A content address is h(content). There is exactly one serialization of a
+    demand table: these bytes. Storage writes them, the content key hashes
+    them, and CAS publication publishes them. A second spelling — a pretty
+    dump, or a body carrying its own ``contentCid`` — makes the key address
+    bytes that are not the bytes on disk, which is the publish-time CAS lie
+    (``cas-publish-key-payload-mismatch``).
+    """
+    return canonical_json_bytes(dict(preimage))
 
 
 def content_cid_for_preimage(preimage: Mapping[str, Any]) -> str:
-    return cid_of_json(dict(preimage))
+    return blake3_512_of(serialize_prebuilt_demand_table(preimage))
 
 
 def validate_prebuilt_demand_table(
@@ -223,12 +238,19 @@ def mint_prebuilt_demand_table(
 
 
 def write_prebuilt_demand_table(table: PrebuiltDemandTableV1, path: Path) -> Path:
+    """Write the artifact bytes the content key addresses — and only those."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(table.to_json_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    payload = table.artifact_bytes()
+    written = blake3_512_of(payload)
+    if written != table.content_cid:
+        raise DemandTableArtifactRefusal(
+            f"demand table storage key/payload mismatch: "
+            f"claimed={table.content_cid!r} payload={written!r} "
+            f"replacement=derive content_cid from serialize_prebuilt_demand_table "
+            f"(a content address is h(content); one serialization, one place)"
+        )
+    path.write_bytes(payload)
     return path
 
 
@@ -276,9 +298,10 @@ def load_prebuilt_demand_table(
 ) -> PrebuiltDemandTableV1:
     """Load and authenticate a prebuilt table.
 
-    Refuses:
+    The content CID is h(artifact bytes) — read, never presented. Refuses:
       - missing / malformed artifact
-      - contentCid that does not recompute from preimage
+      - bytes that are not the one serialization (a re-dump is a different
+        artifact, and its address is not the plan's address)
       - corpus pin mismatch (wrong pandas / fileCount / aggregate)
       - expected_content_cid mismatch when the plan pin requires a specific CID
     """
@@ -289,8 +312,9 @@ def load_prebuilt_demand_table(
             f"replacement=mint at plan time and pass the path to every shard"
         )
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = path.read_bytes()
+        raw = json.loads(data.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DemandTableArtifactRefusal(
             f"prebuilt demand table unreadable path={path} detail={exc}"
         ) from exc
@@ -324,25 +348,34 @@ def load_prebuilt_demand_table(
             f"replacement=rebuild the table against the authenticated pin "
             f"(blonde law: wrong corpus is not a measurement)"
         )
-    presented = raw.get("contentCid")
-    # Reconstruct the authenticated value first; its preimage() is the only
-    # serialization door shared with minting and validation.
+    if "contentCid" in raw:
+        raise DemandTableArtifactRefusal(
+            "prebuilt demand table body carries its own contentCid: "
+            "the address is h(artifact bytes), so a self-describing key would "
+            "address bytes that are not these bytes "
+            "replacement=rebuild the table; the artifact is the preimage only"
+        )
+    # The address is h(bytes) — read from the file, never taken on the file's
+    # word. Reconstruct through the one serialization door and require the
+    # bytes on disk to BE that serialization.
     table = PrebuiltDemandTableV1(
-        content_cid=str(presented),
+        content_cid=blake3_512_of(data),
         corpus_pin=pin,
         rows=tuple(raw["rows"]),
         semantic_identity=semantic_identity,
     )
-    recomputed = content_cid_for_preimage(table.preimage())
-    if presented != recomputed:
+    if table.artifact_bytes() != data:
         raise DemandTableArtifactRefusal(
-            f"prebuilt demand table contentCid mismatch: "
-            f"presented={presented!r} recomputed={recomputed!r}"
+            f"prebuilt demand table bytes are not the canonical serialization: "
+            f"path={path} storedCid={table.content_cid!r} "
+            f"canonicalCid={content_cid_for_preimage(table.preimage())!r} "
+            f"replacement=write through write_prebuilt_demand_table "
+            f"(one serialization, one place)"
         )
-    if expected_content_cid is not None and presented != expected_content_cid:
+    if expected_content_cid is not None and table.content_cid != expected_content_cid:
         raise DemandTableArtifactRefusal(
             f"prebuilt demand table contentCid != plan demandTableCid: "
-            f"artifact={presented!r} plan={expected_content_cid!r}"
+            f"artifact={table.content_cid!r} plan={expected_content_cid!r}"
         )
     return table
 

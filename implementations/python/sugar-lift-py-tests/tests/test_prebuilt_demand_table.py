@@ -5,12 +5,17 @@ Counting walks is a unit test, not a measurement. No stopwatch.
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 import json
 from pathlib import Path
 
 import pytest
 
+from dataclasses import replace
+
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests import lift_rpc as lr
 from sugar_lift_py_tests.prebuilt_demand_table import (
     DemandTableArtifactRefusal,
@@ -20,6 +25,7 @@ from sugar_lift_py_tests.prebuilt_demand_table import (
     load_plan_bound_demand_table,
     load_prebuilt_demand_table,
     mint_prebuilt_demand_table,
+    publish_prebuilt_demand_table,
     validate_prebuilt_demand_table,
     DemandTableSemanticIdentityMismatch,
     write_prebuilt_demand_table,
@@ -108,7 +114,7 @@ def test_mint_carries_distinct_storage_and_semantic_identities(tmp_path: Path) -
     second = mint_prebuilt_demand_table(_authenticated(second_corpus))
     assert first.semantic_identity.content_key != second.semantic_identity.content_key
     assert first.content_cid != second.content_cid
-    assert first.content_cid == first.to_json_dict()["contentCid"]
+    assert first.content_cid == blake3_512_of(first.artifact_bytes())
     assert first.semantic_identity.as_dict()["contentKey"] != first.content_cid
 
 
@@ -167,10 +173,7 @@ def test_plan_bound_load_cid_mismatch_never_derives_replacement(tmp_path: Path) 
         )
 
     assert caught.value.observed_content_cid == table.content_cid
-    assert (
-        caught.value.observed_semantic_identity
-        == table.semantic_identity.as_dict()
-    )
+    assert caught.value.observed_semantic_identity == table.semantic_identity.as_dict()
     assert lr.preconstruction_walk_count() == walks_before
 
 
@@ -240,18 +243,57 @@ def test_load_refuses_corpus_pin_mismatch(tmp_path: Path) -> None:
         load_prebuilt_demand_table(artifact, expected_corpus_pin=wrong)
 
 
-def test_load_refuses_tampered_content_cid(tmp_path: Path) -> None:
+def test_load_refuses_tampered_bytes_by_plan_address(tmp_path: Path) -> None:
     corpus = _tiny_corpus(tmp_path / "c")
     artifact = tmp_path / "table.json"
     lr.clear_provisional_contract_refs_memo()
     table = mint_prebuilt_demand_table(_authenticated(corpus))
     write_prebuilt_demand_table(table, artifact)
-    raw = artifact.read_text(encoding="utf-8")
-    # Flip one hex nibble in the presented contentCid.
-    bad = raw.replace(table.content_cid[-4:], "ffff", 1)
-    artifact.write_text(bad, encoding="utf-8")
-    with pytest.raises(DemandTableArtifactRefusal, match="contentCid mismatch"):
+    raw = artifact.read_bytes()
+    # Tamper one row payload. The address is h(bytes), so the tampered file
+    # simply is not the plan's artifact.
+    bad = raw.replace(b'"rows":[', b'"rows":[  ', 1)
+    assert bad != raw
+    artifact.write_bytes(bad)
+    with pytest.raises(
+        DemandTableArtifactRefusal, match="not the canonical serialization"
+    ):
         load_prebuilt_demand_table(artifact, expected_corpus_pin=_expected_pin(corpus))
+
+
+def test_load_refuses_body_carrying_its_own_content_cid(tmp_path: Path) -> None:
+    """The old self-describing spelling is the CAS lie; refuse it by shape."""
+    corpus = _tiny_corpus(tmp_path / "c")
+    artifact = tmp_path / "table.json"
+    lr.clear_provisional_contract_refs_memo()
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
+    write_prebuilt_demand_table(table, artifact)
+    body = json.loads(artifact.read_text(encoding="utf-8"))
+    body["contentCid"] = table.content_cid
+    artifact.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", "utf-8")
+    with pytest.raises(DemandTableArtifactRefusal, match="carries its own contentCid"):
+        load_prebuilt_demand_table(artifact, expected_corpus_pin=_expected_pin(corpus))
+
+
+def test_written_bytes_hash_to_the_published_content_key(tmp_path: Path) -> None:
+    """The storage bytes ARE the CAS preimage: h(file) == the claimed key."""
+    corpus = _tiny_corpus(tmp_path / "c")
+    artifact = tmp_path / "table.json"
+    lr.clear_provisional_contract_refs_memo()
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
+    write_prebuilt_demand_table(table, artifact)
+    assert blake3_512_of(artifact.read_bytes()) == table.content_cid
+
+
+def test_write_refuses_a_key_that_is_not_h_of_the_payload(tmp_path: Path) -> None:
+    corpus = _tiny_corpus(tmp_path / "c")
+    lr.clear_provisional_contract_refs_memo()
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
+    lying = replace(table, content_cid="blake3-512:" + ("0" * 128))
+    with pytest.raises(
+        DemandTableArtifactRefusal, match="storage key/payload mismatch"
+    ):
+        write_prebuilt_demand_table(lying, tmp_path / "lying.json")
 
 
 def test_load_refuses_plan_cid_mismatch(tmp_path: Path) -> None:
@@ -282,3 +324,60 @@ def test_install_without_walk_seeds_memo(tmp_path: Path) -> None:
     lr.provisional_contract_refs_from_demands(corpus)
     assert lr.preconstruction_walk_count() == 0
     assert walks == 1
+
+
+def _sugarbin_shelf_env(shelf: Path) -> dict[str, str]:
+    """Isolate CAS publication to a throwaway shelf; never the real one."""
+    env = dict(os.environ)
+    env["SUGAR_BINARY_SHELF_ROOT"] = str(shelf)
+    env["SUGAR_BINARY_PUBLISH"] = "1"
+    return env
+
+
+@pytest.mark.skipif(
+    shutil.which("b3sum") is None, reason="b3sum required for CAS content keys"
+)
+def test_publish_door_accepts_the_minted_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The entrance plan_control_effect_recensus_shards.py uses, end to end.
+
+    mint -> write -> publish through the real bin/sugarbin. This is the call
+    that refused in Actions run 30979536949 with
+    crime=cas-publish-key-payload-mismatch.
+    """
+    corpus = _tiny_corpus(tmp_path / "c")
+    artifact = tmp_path / "python-demand-table.json"
+    shelf = tmp_path / "shelf"
+    lr.clear_provisional_contract_refs_memo()
+    for key, value in _sugarbin_shelf_env(shelf).items():
+        monkeypatch.setenv(key, value)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
+    write_prebuilt_demand_table(table, artifact)
+    publish_prebuilt_demand_table(table, artifact)
+    # A green publish that filed nothing is a no-op wearing success. Require
+    # the cell, and require it to be addressed by h(payload).
+    cells = sorted(shelf.rglob("*.metadata.json"))
+    assert len(cells) == 1, cells
+    key_path_form = table.content_cid.replace("blake3-512:", "blake3-512_")
+    assert key_path_form in str(cells[0]), cells[0]
+
+
+@pytest.mark.skipif(
+    shutil.which("b3sum") is None, reason="b3sum required for CAS content keys"
+)
+def test_publish_door_refuses_a_key_that_is_not_h_of_the_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mismatched claim refuses BY NAME at the CAS door. Do not weaken this."""
+    corpus = _tiny_corpus(tmp_path / "c")
+    artifact = tmp_path / "python-demand-table.json"
+    lr.clear_provisional_contract_refs_memo()
+    for key, value in _sugarbin_shelf_env(tmp_path / "shelf").items():
+        monkeypatch.setenv(key, value)
+    table = mint_prebuilt_demand_table(_authenticated(corpus))
+    write_prebuilt_demand_table(table, artifact)
+    lying = replace(table, content_cid="blake3-512:" + ("0" * 128))
+    with pytest.raises(DemandTableArtifactRefusal) as caught:
+        publish_prebuilt_demand_table(lying, artifact)
+    assert "crime=cas-publish-key-payload-mismatch" in str(caught.value)
