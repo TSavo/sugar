@@ -1969,6 +1969,21 @@ def main() -> int:
     # Shard worker: emit PARTIAL only (SCOREBOARD False). Compose is a separate step.
     if shard_plan is not None:
         assert args.shard_index is not None
+        # A shard that cannot say who it saw cannot contribute to a sealed
+        # width. This is the POSITIVE side of that law: the attendance the
+        # walk actually testified to, per relation, read off the terminals it
+        # banked. When even one walked file is silent the attestation is not
+        # minted at all and the shard stays honestly unmeasured, naming it.
+        from recensus_enumerate_consumer import shard_relation_membership_attestation
+
+        membership_attestation, membership_silence = (
+            shard_relation_membership_attestation(measured_rows)
+        )
+        if membership_silence is not None:
+            _narrate(
+                "RECENSUS RELATION MEMBERSHIP REFUSED "
+                f"shard={args.shard_index} {membership_silence}"
+            )
         partial = mint_partial(
             plan=shard_plan,
             shard_index=args.shard_index,
@@ -1977,6 +1992,7 @@ def main() -> int:
             demand_table_cid=demand_table_cid,
             demand_table_identity=demand_table_identity,
             runtime_attestation=runtime_attestation,
+            relation_membership_attestation=membership_attestation,
         )
         partial_path = args.partial_out or (
             out / f"partial-s{args.shard_index:02d}.json"
@@ -1997,8 +2013,16 @@ def main() -> int:
         return 0 if partial.get("measured") else 2
 
     # Default k=1: one full-bin partial + compose (serial observation, one seal path).
+    from recensus_enumerate_consumer import shard_relation_membership_attestation
+
+    k1_membership, k1_membership_silence = shard_relation_membership_attestation(
+        measured_rows
+    )
+    if k1_membership_silence is not None:
+        _narrate(f"RECENSUS RELATION MEMBERSHIP REFUSED k1 {k1_membership_silence}")
     seal_status, result = compose_k1_from_rows(
         measured_rows,
+        relation_membership_attestation=k1_membership,
         enrolled_files=file_names,
         measured_commit=tip_commit,
         aggregate_hash=observed_pin.aggregate_hash,
