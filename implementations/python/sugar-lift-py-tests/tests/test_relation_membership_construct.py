@@ -258,6 +258,16 @@ def test_one_shard_with_no_membership_refuses_the_whole_compose() -> None:
         for index, file in enumerate(files)
     ]
 
+    # The shard refuses itself first, in its own testimony -- pinned here so
+    # this tooth is not satisfied by compose's separate re-read downstream.
+    assert partials[0]["measured"] is True
+    assert partials[1]["measured"] is False
+    assert (
+        "relation-membership-attestation-absent"
+        in partials[1]["unmeasuredReason"]
+    )
+    assert "relationMembershipAttestation" not in partials[1]
+
     status, body = module.compose_from_partials(
         plan, partials, runtime_attestation=runtime
     )
