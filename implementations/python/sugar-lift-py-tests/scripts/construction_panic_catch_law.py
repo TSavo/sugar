@@ -160,8 +160,14 @@ except BaseException as error:
         }
     ),
     (
+        # These three reviewed membranes did not change. #7374 split the old
+        # ``measure_file_via_enumerate`` body out under this name and left a
+        # thin wrapper behind, which silently orphaned their sanction: the
+        # shapes still matched, the FUNCTION KEY no longer did. Keyed by name,
+        # a rename reads exactly like an unreviewed membrane -- which is the
+        # law behaving correctly, and why it is rekeyed rather than exempted.
         "recensus_enumerate_consumer.py",
-        "measure_file_via_enumerate",
+        "_terminal_via_enumerate",
     ): frozenset(
         {
             _canonical_handler("""

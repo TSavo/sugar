@@ -2460,8 +2460,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # answer onto the wire. A refusal here is a gap, never an
                     # empty membership: a shard that cannot say who it saw
                     # must not be able to look like a shard that saw nobody.
+                    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
                     try:
                         roster = tree_file.unit.relation_membership_roster()
+                    except ConstructionPanic:
+                        # Product testimony crosses this level untouched. A
+                        # construction panic is not "the roster refused"; the
+                        # census already has a loud terminal for it.
+                        raise
                     except BaseException as refusal:  # noqa: BLE001 -- named gap
                         if isinstance(
                             refusal, (KeyboardInterrupt, SystemExit, GeneratorExit)
