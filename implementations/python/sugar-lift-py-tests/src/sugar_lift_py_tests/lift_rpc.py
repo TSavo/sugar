@@ -2171,7 +2171,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
         if level in (
             "functions",
             "context-manager-resolutions",
-            "relation-membership",
             "call_sites",
             "assertions",
             "facts",
@@ -2314,11 +2313,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
 
-            if level in {
-                "functions",
-                "context-manager-resolutions",
-                "relation-membership",
-            }:
+            if level in {"functions", "context-manager-resolutions"}:
                 # The functions level IS SourceFile.functions(): every function
                 # definition in the file, enumerated from the typed tree over
                 # oracle-pinned text. No lift runs, no IR rows are consulted,
@@ -2445,65 +2440,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                 "payload": None,
                             }
                         )
-                if level == "relation-membership":
-                    # WHO this file's ONE structural walk saw, per relation.
-                    # The producer answers; this level only transports the
-                    # answer onto the wire. A refusal here is a gap, never an
-                    # empty membership: a shard that cannot say who it saw
-                    # must not be able to look like a shard that saw nobody.
-                    try:
-                        roster = tree_file.unit.relation_membership_roster()
-                    except BaseException as refusal:  # noqa: BLE001 -- named gap
-                        if isinstance(
-                            refusal, (KeyboardInterrupt, SystemExit, GeneratorExit)
-                        ):
-                            raise
-                        _send_enumerate_result(
-                            msg_id,
-                            [],
-                            [
-                                {
-                                    "memento": at,
-                                    "reason": (
-                                        "relation-membership roster refused: "
-                                        f"{type(refusal).__name__}: {refusal}"
-                                    ),
-                                }
-                            ],
-                        )
-                        _log_enumeration_demand(
-                            str(level), at, cache="miss", started=demand_started
-                        )
-                        return
-                    membership_nodes = []
-                    membership_gaps = []
-                    for relation in sorted(roster):
-                        sides = roster[relation]
-                        for role in ("expected", "observed"):
-                            for occurrence in sides[role]:
-                                membership_nodes.append(
-                                    {
-                                        "memento": {
-                                            "kind": "relation-membership",
-                                            "file": file_rel,
-                                            "source_cid": file_cid,
-                                            "relation": relation,
-                                            "role": role,
-                                            "occurrence": {
-                                                "file": occurrence.file,
-                                                "sourceCid": occurrence.source_cid,
-                                                "start": occurrence.start,
-                                                "end": occurrence.end,
-                                                "nodeKind": occurrence.node_kind,
-                                            },
-                                        },
-                                        "audit": None,
-                                        "payload": None,
-                                    }
-                                )
-                    _send_enumerate_result(
-                        msg_id, membership_nodes, membership_gaps
-                    )
+                    _send_enumerate_result(msg_id, resolution_nodes, [])
                     _log_enumeration_demand(
                         str(level), at, cache="miss", started=demand_started
                     )

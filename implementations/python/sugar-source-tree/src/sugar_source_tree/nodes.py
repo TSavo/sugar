@@ -734,15 +734,6 @@ class SourceUnit:
     typed_module: object = field(init=False, default=None)
     # Field-data memo for materialize (see construction_cache.py).
     construction_cache: object = field(init=False, default=None)
-    # Closed producer decision for EVERY constructed occurrence the ONE
-    # structural walk classified, published in walk order. Mirrors
-    # ``_ConstructedModuleV1.lexical_call_enrollments``: the walk already made
-    # this decision, so the roster is transported, never re-derived. ``None``
-    # means the walk has not run; an empty tuple means it ran and enrolled
-    # nothing. Those are not the same fact and do not share a representation.
-    _target_pattern_enrollments: object = field(
-        init=False, default=None, repr=False, compare=False
-    )
     _target_patterns_by_consumer: object = field(
         init=False, default=None, repr=False, compare=False
     )
@@ -791,7 +782,6 @@ class SourceUnit:
         object.__setattr__(self, "_import_bound_name_targets", None)
         object.__setattr__(self, "_import_value_use_resolutions", {})
         object.__setattr__(self, "_constructed_module", None)
-        object.__setattr__(self, "_target_pattern_enrollments", None)
         object.__setattr__(self, "_retained_lexical_call_rows", {})
 
     def lexical_call_enrollment(self, call: "Call") -> LexicalCallEnrollmentV1:
@@ -1140,17 +1130,12 @@ class SourceUnit:
         object.__setattr__(self, "function_nodes", function_nodes)
         patterns = {}
         patterns_by_target = {}
-        enrollments = []
         constructed_count = 0
         for consumer in constructed_nodes:
             # ONE decision, published.  The walk and every consumer of the
             # applicability question call the same function; nobody re-derives
             # enrollment from node kinds or from an empty relation read.
             enrollment = self.target_pattern_enrollment(consumer)
-            # Published from the walk that made it, positive and negative alike
-            # (#7374).  Attendance testimony reads this roster; it never walks
-            # the tree a second time to ask who should have been enrolled.
-            enrollments.append((consumer, enrollment))
             if not isinstance(enrollment, TargetPatternEnrolledV1):
                 continue
             owned = tuple(
@@ -1204,7 +1189,6 @@ class SourceUnit:
                     )
                 patterns_by_target[target_key] = pattern
             constructed_count += len(owned)
-        object.__setattr__(self, "_target_pattern_enrollments", tuple(enrollments))
         object.__setattr__(self, "_target_patterns_by_consumer", patterns)
         object.__setattr__(self, "_target_patterns_by_target", patterns_by_target)
         object.__setattr__(self, "target_pattern_construction_count", constructed_count)
@@ -1394,77 +1378,6 @@ class SourceUnit:
                 target_occurrence=None,
             )
         return owned
-
-    def relation_membership_roster(self) -> dict:
-        """Attendance for the source relations this unit's ONE walk observed.
-
-        A width sealed over a corpus must say WHO it saw, not merely how many
-        rows it emitted.  Two sealed ``frontierWidth=477`` receipts described
-        their run exactly and carried zero lexical-call testimony (#7351), so
-        the denominator was unknowable and no seal failed.  This is the
-        positive statement that makes that state impossible to reach quietly.
-
-        For each relation:
-
-        * ``expected`` is the producer's own ENROLLMENT ROSTER -- the closed
-          applicability decision the structural walk ALREADY published for
-          every occurrence it classified.
-        * ``observed`` is the RELATION TABLE population verbatim, at full
-          multiplicity.
-
-        Nothing is re-derived: both sides are publications the one walk
-        already made, and neither is computed from the other.  They are
-        separate objects with separate lifetimes, so every way they can come
-        apart has its own name at the seal -- an enrolled occurrence the table
-        never seated is ``missing``, a seated row nobody enrolled is
-        ``extra``, and a row seated twice is ``duplicate``.  A lawfully
-        not-enrolled occurrence enters neither side: absence never wears the
-        costume of a failed join.
-
-        Refuses when the walk never ran at all, because "nothing was enrolled"
-        and "nobody looked" are different facts.
-        """
-        enrollments = self._target_pattern_enrollments
-        if enrollments is None:
-            raise BackendDefect(
-                blame=self.filename,
-                owner="SourceUnit.relation_membership_roster",
-                observed="target-pattern enrollment roster was never published",
-                requested="the roster bind_typed_module publishes from its walk",
-                fix="bind the typed module before asking who the walk saw",
-            )
-        patterns_by_consumer = self._target_patterns_by_consumer
-        if patterns_by_consumer is None:
-            raise BackendDefect(
-                blame=self.filename,
-                owner="SourceUnit.relation_membership_roster",
-                observed="the target-pattern relation table was never built",
-                requested="a built relation table to read attendance from",
-                fix="bind the typed module before asking who the walk seated",
-            )
-        module = self.constructed_module
-
-        return {
-            "lexical-call": {
-                "expected": tuple(
-                    occurrence
-                    for occurrence, decision in module.lexical_call_enrollments
-                    if isinstance(decision, LexicalCallEnrolledV1)
-                ),
-                "observed": tuple(
-                    SourceOccurrenceIdentityV1.of(row.call_occurrence)
-                    for row in module.lexical_call_rows
-                ),
-            },
-            "target-pattern": {
-                "expected": tuple(
-                    SourceOccurrenceIdentityV1.of(consumer)
-                    for consumer, enrollment in enrollments
-                    if isinstance(enrollment, TargetPatternEnrolledV1)
-                ),
-                "observed": tuple(patterns_by_consumer),
-            },
-        }
 
     def require_target_pattern(self, consumer, target) -> TargetPatternV1:
         enrollment = self.target_pattern_enrollment(consumer)
