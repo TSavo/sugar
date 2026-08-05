@@ -160,6 +160,40 @@ except BaseException as error:
         }
     ),
     (
+        # REVIEWED (#7374). This membrane runs AFTER the file's terminal row is
+        # already minted, and it asks a second, separate question: who did the
+        # walk see. A panic raised answering THAT question is not the file's
+        # product terminal -- the loud counted terminal for this file already
+        # exists in ``row``. Re-raising here would destroy it and report the
+        # file as no terminal at all, which is a strictly worse lie than the
+        # one this attestation exists to prevent.
+        #
+        # So the panic becomes a NAMED attendance gap on a row that stays red.
+        # The gap field is never populated beside a membership manifest, so the
+        # shard still cannot look like a shard that saw nobody: it refuses by
+        # name at compose. Absence and lookup-failure keep separate spellings.
+        "recensus_enumerate_consumer.py",
+        "measure_file_via_enumerate",
+    ): frozenset(
+        {
+            _canonical_handler("""
+except BaseException as error:
+    if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+        raise
+    row[RELATION_MEMBERSHIP_GAP_ROW_FIELD] = [
+        {
+            "memento": {"file": file_rel},
+            "reason": (
+                "relation-membership demand raised: "
+                f"{type(error).__name__}: {error}"
+            ),
+        }
+    ]
+    return row
+""")
+        }
+    ),
+    (
         # These three reviewed membranes did not change. #7374 split the old
         # ``measure_file_via_enumerate`` body out under this name and left a
         # thin wrapper behind, which silently orphaned their sanction: the

@@ -926,12 +926,6 @@ def measure_file_via_enumerate(
             source_cid=observed_cid,
             source_workspace_root=source_workspace_root,
         )
-    except ConstructionPanic:
-        # Product testimony, not an attendance gap. A panic raised while asking
-        # who the walk saw belongs to the terminal that already exists for it;
-        # relabelling it "membership unavailable" would convert a loud red row
-        # into a quiet instrument note.
-        raise
     except BaseException as error:  # noqa: BLE001 -- a silent shard, named
         if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
             raise
