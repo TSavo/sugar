@@ -40,23 +40,36 @@ def _bind() -> None:
         g[name] = getattr(da, name)
 
 
-def _export_terminal_result(result: Any) -> Any:
-    """Definition/gap only — no path warrants or import-binding CID.
+def _export_terminal_result(result: Any, prefix: int) -> Any:
+    """Definition plus this key's OWN hops — no caller path, no binding CID.
 
-    Reexport hops carry path warrants and cannot share the pure-entry memo
-    (that memo keeps module-structural reexport warrants).  The terminal memo
-    is the shared definition identity both doors restamp onto.
+    ``prefix`` is how many warrants the caller already held on entry.  Those
+    are the caller's path and are dropped.  Everything after them is the
+    suffix this key resolved through: the hops from the keyed module down to
+    the definition.  The suffix is part of the answer, not part of the path —
+    the keyed module reaches that definition only through those hops, and a
+    memo that discards them answers a different question than the uncached
+    resolve.  Restamping then either fails ``ResolvedPythonObjectV1``'s
+    reaching check ("re-export warrants do not reach the resolved definition")
+    or publishes a definition with no provenance at all.
     """
     if isinstance(result, ResolvedPythonObjectV1):
         return replace(
             result,
             import_binding_cid="",
-            reexport_warrants=(),
+            reexport_warrants=result.reexport_warrants[prefix:],
             cid="",
         )
     if isinstance(result, PythonObjectResolutionGapV1):
         return replace(result, import_binding_cid="")
     return result
+
+
+def _terminal_suffix(terminal: Any) -> tuple:
+    """The hops a stored terminal resolved through, below its keyed module."""
+    if isinstance(terminal, ResolvedPythonObjectV1):
+        return terminal.reexport_warrants
+    return ()
 
 
 def _restamp_export_result(
@@ -98,11 +111,17 @@ def resolve_export(
     * **pure-entry** (``export_resolutions``): how THIS module exports the name,
       including module-structural reexport warrants.  Filled only on pure entry
       (no path warrants / empty seen).
-    * **terminal** (``export_terminals``): definition/gap only.  Filled on every
-      successful resolve so a reexport hop with path warrants can hit after a
-      pure resolve of the same symbol (or after another hop) without re-running
-      prefix fallthrough.  Measured on _json: pure-entry hit for repeats, but
-      reexport hops with warrants skipped the memo and re-paid ~0.8s prefix.
+    * **terminal** (``export_terminals``): definition/gap plus the hops THIS
+      key resolved through, with the entering caller's path warrants stripped.
+      Filled on every successful resolve so a reexport hop with path warrants
+      can hit after a pure resolve of the same symbol (or after another hop)
+      without re-running prefix fallthrough.  Measured on _json: pure-entry hit
+      for repeats, but reexport hops with warrants skipped the memo and re-paid
+      ~0.8s prefix.
+
+    A reader composes its own path with the stored suffix.  The suffix cannot
+    be dropped: the resolved definition may sit several modules below the key,
+    and a chain that stops at the key does not reach it.
 
     ``seen`` still owns cycle detection and is checked before either memo.
     """
@@ -124,12 +143,19 @@ def resolve_export(
         # symbol without a pure-entry row (hops do not write export_resolutions).
         terminal = session.export_terminal_hit(cache_key)
         if terminal is not None:
-            return _restamp_export_result(terminal, binding_cid, warrants=())
+            # Pure entry holds no path, so the stored suffix IS the whole
+            # chain from this module to the definition. Keep it.
+            return _restamp_export_result(terminal, binding_cid)
     else:
-        # Reexport hop / path context: share definition identity only.
+        # Reexport hop: this caller's path, then the hops the memo resolved
+        # through. Dropping the suffix would strand the chain at this module.
         terminal = session.export_terminal_hit(cache_key)
         if terminal is not None:
-            return _restamp_export_result(terminal, binding_cid, warrants=warrants)
+            return _restamp_export_result(
+                terminal,
+                binding_cid,
+                warrants=(*warrants, *_terminal_suffix(terminal)),
+            )
 
     result = _resolve_export_uncached(
         graph,
@@ -140,8 +166,11 @@ def resolve_export(
         seen,
         session=session,
     )
-    # Terminal definition/gap: always, so the next hop can hit.
-    session.remember_export_terminal(cache_key, _export_terminal_result(result))
+    # Terminal definition/gap plus this key's own hops: always, so the next
+    # hop can hit and still compose a chain that reaches the definition.
+    session.remember_export_terminal(
+        cache_key, _export_terminal_result(result, len(warrants))
+    )
     # Pure-entry form (keeps module-structural warrants): pure door only.
     if pure_entry:
         session.remember_export(
