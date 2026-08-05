@@ -1,4 +1,4 @@
-"""Executable teeth for the nine-contract sugarbin shell tier."""
+"""Executable teeth for the ten-contract sugarbin shell tier."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ EXPECTED_BATCHES = {
         "tests/sugarbin_mount_proof_guard.sh",
         "tests/sugarbin_docker_daemon_guard.sh",
         "tests/sugarbin_wrapper_compat.sh",
+        "tests/sugarbin_run_authority.sh",
     ],
     "artifacts": [
         "tests/sugarbin_artifact_manifest.sh",
@@ -66,7 +67,7 @@ class SugarbinShellTierTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             bodies = sorted(reports.glob("sugarbin_*.json"))
-            self.assertEqual(len(bodies), 9)
+            self.assertEqual(len(bodies), 10)
             payloads = [json.loads(path.read_text(encoding="utf-8")) for path in bodies]
             self.assertEqual({body["contract"] for body in payloads}, set(EXPECTED_ROSTER))
             self.assertEqual({body["status"] for body in payloads}, {"unmeasured"})
@@ -117,7 +118,7 @@ class SugarbinShellTierTest(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))
                 for path in reports.glob("sugarbin_*.json")
             ]
-            self.assertEqual(len(bodies), 9)
+            self.assertEqual(len(bodies), 10)
             self.assertEqual({body["status"] for body in bodies}, {"unmeasured"})
             self.assertEqual({body["reason"] for body in bodies}, {"batch-not-started"})
 
@@ -246,7 +247,7 @@ class SugarbinShellTierTest(unittest.TestCase):
                 ("unmeasured", "script-missing"),
             )
 
-    def test_audit_refuses_absence_and_accepts_exact_nine_passes(self) -> None:
+    def test_audit_refuses_absence_and_accepts_exact_ten_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             reports = Path(directory) / "reports"
             receipt = Path(directory) / "receipt.json"
@@ -265,7 +266,7 @@ class SugarbinShellTierTest(unittest.TestCase):
                 "abc123",
             )
             self.assertNotEqual(absent.returncode, 0)
-            self.assertIn("R_sugarbin_shell_attendance = 9", absent.stdout)
+            self.assertIn("R_sugarbin_shell_attendance = 10", absent.stdout)
             self.assertEqual(json.loads(receipt.read_text())["passed"], 0)
 
             fake_bin = Path(directory) / "bin"
@@ -326,7 +327,7 @@ class SugarbinShellTierTest(unittest.TestCase):
             summary = json.loads(receipt.read_text())
             self.assertEqual(
                 (summary["roster"], summary["attended"], summary["passed"]),
-                (9, 9, 9),
+                (10, 10, 10),
             )
             self.assertEqual(summary.get("testElapsedSeconds"), 0.0)
 

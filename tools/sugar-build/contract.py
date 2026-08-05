@@ -262,6 +262,38 @@ def _validate_task_closure(name, closure):
     }
 
 
+def _run_authority_module():
+    tools = ROOT / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    return importlib.import_module("run_authority")
+
+
+def build_run_authority_testimony(argv, task, image, preflight, plan_json):
+    """Canonical run-authority/v1 testimony for one dispatched command.
+
+    ``task`` empty means the command ran ad-hoc: the testimony says so
+    explicitly and durably rather than leaving its authority unstated.
+    """
+    module = _run_authority_module()
+    plan = None
+    if plan_json:
+        try:
+            plan = json.loads(plan_json)
+        except ValueError as exc:
+            raise ContractError(f"managed precondition plan is not JSON: {exc}") from exc
+    try:
+        return module.build_run_authority(
+            argv,
+            image=image,
+            task=task or None,
+            preflight_protocol=preflight or None,
+            precondition_plan=plan,
+        )
+    except module.RunAuthorityRefusal as exc:
+        raise ContractError(str(exc)) from exc
+
+
 def _showcase_authority_module():
     tools = ROOT / "tools"
     if str(tools) not in sys.path:
@@ -461,6 +493,12 @@ def main(argv=None):
     image_build.add_argument("--repo-root", required=True)
     matcher = subparsers.add_parser("match-command")
     matcher.add_argument("argv", nargs=argparse.REMAINDER)
+    authority = subparsers.add_parser("run-authority")
+    authority.add_argument("--task", default="")
+    authority.add_argument("--image", required=True)
+    authority.add_argument("--preflight", default="")
+    authority.add_argument("--plan-json", default="")
+    authority.add_argument("argv", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
         if args.command == "tool-versions": result = tool_versions()
@@ -469,6 +507,11 @@ def main(argv=None):
         elif args.command == "resolve-task-environment": result = resolve_task_environment(args.task)
         elif args.command == "resolve-preconditions": result = resolve_task_preconditions(args.task, args.host, args.repo_root)
         elif args.command == "resolve-task-image-build": result = resolve_task_image_build(args.task, args.repo_root)
+        elif args.command == "run-authority":
+            command_argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            result = build_run_authority_testimony(
+                command_argv, args.task, args.image, args.preflight, args.plan_json
+            )
         else:
             argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             result = {"task": match_task_command(argv)}
