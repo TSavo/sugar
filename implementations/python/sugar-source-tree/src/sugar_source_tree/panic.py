@@ -127,6 +127,31 @@ class OpaqueSourceCallResolutionGap(SugarNotWritten):
     _LABEL = "OPAQUE SOURCE CALL RESOLUTION GAP"
 
 
+class ImportValueUseResolutionGap(SugarNotWritten):
+    """An authenticated import VALUE-use whose target stayed unresolved.
+
+    The value-use sibling of ``OpaqueSourceCallResolutionGap``. A final-checked
+    import receipt named a target symbol, and resolving that target against the
+    authenticated distribution graph produced a resolution GAP rather than a
+    resolved Python object — the target is not reachable through the binding it
+    claims (``target-outside-binding``), or the module it names carries no
+    authenticated source in this artifact (``artifact-module-absent``).
+
+    A *named* subclass of ``SugarNotWritten`` (like
+    ``RuntimeSelectedContextManager``) so the frontier census counts unresolved
+    value-use targets separately, and — decisively — so this refusal travels as
+    a TERMINAL with a construct, a coordinate and a shape. It used to be a bare
+    ``ValueError`` (``ImportValueUseSeatingGap``) that named none of those: it
+    escaped ``sugar.enumerate`` as an instrument failure, voiding the whole
+    file's measurement instead of standing as one readable row at this use.
+
+    Never seat the receipt to make this go away: an unresolved target is not an
+    open-world export that merely carries no definition coordinate.
+    """
+
+    _LABEL = "IMPORT VALUE USE RESOLUTION GAP"
+
+
 class RuntimeSelectedContextManager(SugarNotWritten):
     """A `with` whose manager has no authenticated exit-suppression contract.
 
