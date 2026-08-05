@@ -336,14 +336,31 @@ def demand_function_roster(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None = None,
+    source_workspace_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """D2: sugar.enumerate level=functions → (function nodes, gaps)."""
+    """D2: sugar.enumerate level=functions → (function nodes, gaps).
+
+    ``source_workspace_root`` is the LOCUS authority — the root the minted
+    address is stated against, derived once at the driver from the
+    distribution's own manifest. The roster demand OPENS the file, so it mints
+    the locus; without this the open states an address relative to the corpus
+    root and an installed file's seat law refuses every file by name. That was
+    the whole shard's ``roster-gap``: the driver knew the install root and this
+    demand never received it.
+    """
     at = file_memento(file_rel=file_rel, source_cid=source_cid)
     result = enumerate_rpc(
         level="functions",
         workspace_root=workspace_root,
         at=at,
         seek=False,
+        options={
+            "sourceWorkspaceRoot": (
+                str(source_workspace_root)
+                if source_workspace_root is not None
+                else None
+            )
+        },
     )
     nodes = list(result.get("nodes") or [])
     gaps = list(result.get("gaps") or [])
@@ -765,6 +782,7 @@ def measure_file_via_enumerate(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
+            source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — includes ConstructionPanic
         if _is_process_control(error):

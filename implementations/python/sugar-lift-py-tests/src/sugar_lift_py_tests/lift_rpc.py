@@ -327,8 +327,24 @@ def open_source_file_for_construction(
             contract_refs=contract_refs,
             call_contract_refs=call_contract_refs,
         )
+    # TWO ROOTS, not one. `root` is the WORKSPACE authority: which tree this
+    # open belongs to, what `file_rel` resolves against, which walk session and
+    # construction context own it. `source_workspace_root` is the LOCUS
+    # authority: the root the minted address is stated against. For a
+    # first-party tree they coincide and this reads as before. For an INSTALLED
+    # corpus they must not: seats are recorded relative to the install root, so
+    # opening `.../site-packages/pandas/_testing/_hypothesis.py` under
+    # `root=.../site-packages/pandas` mints `_testing/_hypothesis.py` -- not a
+    # different spelling of the seat, an address no other checkout resolves,
+    # which `require_recorded_seat` refuses by name.
+    #
+    # The locus root is DERIVED ONCE, at the driver, from the distribution's own
+    # manifest (`locus_root_for_corpus` -> `install_root_for`) and carried here.
+    # Nothing on this path adds or strips a package prefix at comparison time:
+    # there is one spelling, minted once, against the root that states it.
+    locus_root = root if source_workspace_root is None else source_workspace_root
     source_file = SourceFile(
-        workspace_path_source(str(path), root=str(root)),
+        workspace_path_source(str(path), root=str(locus_root)),
         reporter=reporter,
         construction_context=construction_context,
     )
@@ -2175,6 +2191,18 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
             full_path = root / file_rel
+            # The LOCUS authority for every open under this demand. `root` says
+            # which tree `file_rel` resolves against; this says which root the
+            # minted address is stated against. They differ for an installed
+            # corpus (seats are recorded against the install root) and coincide
+            # for a first-party tree, where the option is absent and `root`
+            # stands. Read ONCE here so no level can quietly answer differently.
+            demand_locus_root = options.get("sourceWorkspaceRoot")
+            locus_root = (
+                Path(demand_locus_root)
+                if isinstance(demand_locus_root, str) and demand_locus_root
+                else None
+            )
             # SECURITY (macroscope on #3862): a forged memento with an
             # absolute path (pathlib join discards root) or a ../ traversal
             # could enumerate files OUTSIDE the workspace. Require the
@@ -2242,6 +2270,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             root, contract_refs={}
                         ),
                         populate_derived=False,
+                        source_workspace_root=locus_root,
                     )
                     memento = _tree.module_definition_memento(sf, file_rel, file_cid)
                     _send_enumerate_result(
@@ -2330,6 +2359,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         root=root,
                         construction_context=construction_context,
                         populate_derived=False,
+                        source_workspace_root=locus_root,
                     )
                 except SourceUnavailable as unavailable:
                     _send_enumerate_result(
@@ -2363,7 +2393,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # completed resolution response.
                 if level == "context-manager-resolutions":
                     distribution = options.get("distribution")
-                    source_workspace_root = options.get("sourceWorkspaceRoot")
                     if not isinstance(distribution, str) or not distribution:
                         raise TypeError(
                             "context-manager-resolutions requires distribution "
@@ -2377,11 +2406,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             root,
                             enrolled_distributions=frozenset({distribution}),
                         ),
-                        source_workspace_root=(
-                            Path(source_workspace_root)
-                            if isinstance(source_workspace_root, str)
-                            else None
-                        ),
+                        source_workspace_root=locus_root,
                         distribution=distribution,
                     )
                     from sugar_lift_py_tests.context_manager_resolution import (
