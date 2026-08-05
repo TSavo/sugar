@@ -127,7 +127,12 @@ def test_opaque_source_call_obligation_precedes_spread_selection() -> None:
         "func",
         "blake3-512:" + "c" * 128,
     )
-    context.opaque_source_call_obligations[coordinate] = obligation
+    from sugar_lift_py_tests.context_manager_resolution import (
+        opaque_source_call_roster_of,
+    )
+
+    roster = opaque_source_call_roster_of(obligation)
+    context.opaque_source_call_obligations[coordinate] = roster
 
     opaque = opaque_call.sugar()
 
@@ -143,7 +148,7 @@ def test_opaque_source_call_obligation_precedes_spread_selection() -> None:
     with pytest.raises(SugarNotWritten) as raised:
         opaque.desugar()
     assert raised.value.observed == "opaque-call-target:func"
-    assert context.opaque_source_call_obligations[coordinate] is obligation
+    assert context.opaque_source_call_obligations[coordinate] is roster
 
     ordinary = ordinary_call.sugar()
     assert isinstance(ordinary, CallSiteSugar)

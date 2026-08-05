@@ -233,7 +233,12 @@ def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
         and node.func.id == "missing_helper"
     )
     coordinate = _call_coordinate(missing_call)
-    obligation = context.opaque_source_call_obligations[coordinate]
+    roster = context.opaque_source_call_obligations[coordinate]
+    assert roster.coordinate == coordinate
+    assert roster.target_name == "missing_helper"
+    assert roster.resolution_kind == "call-target-source-absent"
+    obligation = roster.owner(resolved.cid)
+    assert obligation is not None
     assert obligation.coordinate == coordinate
     assert obligation.target_name == "missing_helper"
     assert obligation.resolved_object_cid == resolved.cid
@@ -285,6 +290,8 @@ def test_source_call_coordinate_rejects_conflicting_testimony():
     _install_opaque_call_obligation(context, call, obligation)
     _install_opaque_call_obligation(context, call, obligation)
 
+    # SAME authenticated owner, different testimony: still byte-identity or
+    # nothing. This is the arm the law was always about.
     with pytest.raises(BackendDefect, match="conflicting opaque-call obligation"):
         _install_opaque_call_obligation(
             context,
@@ -292,7 +299,7 @@ def test_source_call_coordinate_rejects_conflicting_testimony():
             OpaqueSourceCallObligationV1(
                 coordinate,
                 "other_helper",
-                "blake3-512:" + "2" * 128,
+                "blake3-512:" + "1" * 128,
             ),
         )
     with pytest.raises(BackendDefect, match="frame/obligation collision"):
@@ -306,6 +313,237 @@ def test_source_call_coordinate_rejects_conflicting_testimony():
         _install_opaque_call_obligation(context, call, obligation)
     with pytest.raises(BackendDefect, match="conflicting source-call frame"):
         _install_source_call_frame(context, call, object())
+
+
+def _opaque_probe_call(source: str = "missing_helper(1)\n"):
+    """A construction context plus one Call node to park obligations against."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, "owners.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
+    )
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    return context, call, _call_coordinate(call)
+
+
+def test_second_authenticated_owner_seats_beside_the_first():
+    """One call coordinate, two owners: an ADDITIONAL seat, never a duplicate.
+
+    A helper reached from two exported definitions is parked twice, once per
+    owner. Before the roster this refused as `conflicting opaque-call
+    obligation` and voided the whole file at
+    `phase=context-manager-resolutions` — a BackendDefect where the callee
+    testimony did not differ at all.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+    )
+
+    context, call, coordinate = _opaque_probe_call()
+    first = OpaqueSourceCallObligationV1(
+        coordinate,
+        "missing_helper",
+        "blake3-512:" + "1" * 128,
+        resolution_kind="call-target-source-absent",
+    )
+    second = OpaqueSourceCallObligationV1(
+        coordinate,
+        "missing_helper",
+        "blake3-512:" + "2" * 128,
+        resolution_kind="call-target-source-absent",
+    )
+    _install_opaque_call_obligation(context, call, first)
+    _install_opaque_call_obligation(context, call, second)
+
+    roster = context.opaque_source_call_obligations[coordinate]
+    assert roster.obligations == (first, second)
+    assert roster.owner(first.resolved_object_cid) is first
+    assert roster.owner(second.resolved_object_cid) is second
+    # Absence is None and nothing else.
+    assert roster.owner("blake3-512:" + "9" * 128) is None
+    # The consumed classification is unchanged by the extra seat.
+    assert roster.target_name == "missing_helper"
+    assert roster.resolution_kind == "call-target-source-absent"
+
+
+def test_owners_are_seated_in_owner_order_whatever_the_install_order():
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+    )
+
+    context, call, coordinate = _opaque_probe_call()
+    low = OpaqueSourceCallObligationV1(
+        coordinate, "missing_helper", "blake3-512:" + "1" * 128
+    )
+    high = OpaqueSourceCallObligationV1(
+        coordinate, "missing_helper", "blake3-512:" + "2" * 128
+    )
+    _install_opaque_call_obligation(context, call, high)
+    _install_opaque_call_obligation(context, call, low)
+    assert context.opaque_source_call_obligations[coordinate].obligations == (
+        low,
+        high,
+    )
+
+
+def test_disagreeing_owners_panic_rather_than_void_the_file():
+    """Two owners, two classifications: a countable panic, NOT a BackendDefect.
+
+    A BackendDefect at this coordinate is an instrument failure — the file
+    produces no terminal a reader can judge. A genuine disagreement about what
+    the callee is must land as a construction panic, which the census counts.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+    )
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_source_tree.panic import BackendDefect
+
+    context, call, coordinate = _opaque_probe_call()
+    _install_opaque_call_obligation(
+        context,
+        call,
+        OpaqueSourceCallObligationV1(
+            coordinate,
+            "missing_helper",
+            "blake3-512:" + "1" * 128,
+            resolution_kind="call-target-source-absent",
+        ),
+    )
+    with pytest.raises(ConstructionPanic) as caught:
+        _install_opaque_call_obligation(
+            context,
+            call,
+            OpaqueSourceCallObligationV1(
+                coordinate,
+                "missing_helper",
+                "blake3-512:" + "2" * 128,
+                resolution_kind="call-graph-cycle",
+            ),
+        )
+    assert not isinstance(caught.value, BackendDefect)
+    message = str(caught.value)
+    assert "authenticated owners disagree about one opaque call" in message
+    assert "call-target-source-absent:missing_helper" in message
+    assert "call-graph-cycle:missing_helper" in message
+    # The panic is refusal, not mutation: the first owner's seat is intact and
+    # no half-written roster is left behind.
+    roster = context.opaque_source_call_obligations[coordinate]
+    assert roster.resolution_kind == "call-target-source-absent"
+    assert len(roster.obligations) == 1
+
+
+def test_roster_refuses_a_repeated_owner():
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        OpaqueSourceCallRosterV1,
+    )
+
+    _context, _call, coordinate = _opaque_probe_call()
+    row = OpaqueSourceCallObligationV1(
+        coordinate, "missing_helper", "blake3-512:" + "1" * 128
+    )
+    with pytest.raises(ValueError, match="seats one owner twice"):
+        OpaqueSourceCallRosterV1(
+            coordinate, "missing_helper", "opaque-call-target", (row, row)
+        )
+
+
+def test_roster_refuses_unordered_owners():
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        OpaqueSourceCallRosterV1,
+    )
+
+    _context, _call, coordinate = _opaque_probe_call()
+    low = OpaqueSourceCallObligationV1(
+        coordinate, "missing_helper", "blake3-512:" + "1" * 128
+    )
+    high = OpaqueSourceCallObligationV1(
+        coordinate, "missing_helper", "blake3-512:" + "2" * 128
+    )
+    with pytest.raises(ValueError, match="not owner-ordered"):
+        OpaqueSourceCallRosterV1(
+            coordinate, "missing_helper", "opaque-call-target", (high, low)
+        )
+
+
+def test_roster_refuses_cross_wired_testimony():
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        OpaqueSourceCallRosterV1,
+    )
+
+    _context, _call, coordinate = _opaque_probe_call()
+    row = OpaqueSourceCallObligationV1(
+        coordinate, "missing_helper", "blake3-512:" + "1" * 128
+    )
+    with pytest.raises(ValueError, match="testimony is cross-wired"):
+        OpaqueSourceCallRosterV1(
+            coordinate, "other_helper", "opaque-call-target", (row,)
+        )
+
+
+def test_roster_refuses_to_name_no_owner():
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallRosterV1,
+    )
+
+    _context, _call, coordinate = _opaque_probe_call()
+    with pytest.raises(ValueError, match="names no authenticated owner"):
+        OpaqueSourceCallRosterV1(
+            coordinate, "missing_helper", "opaque-call-target", ()
+        )
+
+
+def test_second_owner_does_not_change_what_the_call_constructs():
+    """The consumer entrance: CallSiteSugar still reads one kind:name.
+
+    ``Call._construct_sugar`` looks the coordinate up and projects
+    ``contract_resolution_gap``. Seating a second owner must not change that
+    projection, and must not make the lookup ambiguous.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+    )
+
+    context, call, coordinate = _opaque_probe_call()
+    _install_opaque_call_obligation(
+        context,
+        call,
+        OpaqueSourceCallObligationV1(
+            coordinate,
+            "missing_helper",
+            "blake3-512:" + "1" * 128,
+            resolution_kind="call-target-source-absent",
+        ),
+    )
+    before = call.sugar()
+    assert before.target_name == "python:unresolved-source-call"
+    assert (
+        before.contract_resolution_gap
+        == "call-target-source-absent:missing_helper"
+    )
+
+    _install_opaque_call_obligation(
+        context,
+        call,
+        OpaqueSourceCallObligationV1(
+            coordinate,
+            "missing_helper",
+            "blake3-512:" + "2" * 128,
+            resolution_kind="call-target-source-absent",
+        ),
+    )
+    after = call.sugar()
+    assert after.target_name == "python:unresolved-source-call"
+    assert (
+        after.contract_resolution_gap == "call-target-source-absent:missing_helper"
+    )
 
 
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):

@@ -256,6 +256,92 @@ class OpaqueSourceCallObligationV1:
 
 
 @dataclass(frozen=True)
+class OpaqueSourceCallRosterV1:
+    """Every authenticated owner that parked an obligation at ONE source call.
+
+    One call coordinate has MANY owners. A helper is reached from several
+    exported definitions; one callee is reached through several distinct
+    import bindings. ``OpaqueSourceCallObligationV1.resolved_object_cid`` is
+    not a property of the call — it is the identity of the export whose frame
+    projection walked through it. A coordinate-keyed table holding a single
+    obligation therefore cannot seat the second owner without either dropping
+    its testimony or refusing a duplicate that was never a duplicate. This
+    roster is the plural type the relation always had.
+
+    ``target_name`` and ``resolution_kind`` are the classification EVERY owner
+    states about the call, and they are the sole testimony the consumer reads.
+    Owners are retained whole, ordered by owner CID, so nothing is drained.
+    Owners that disagree about the classification are not a duplicate and are
+    not a keying artefact — that is a construction panic at the coordinate.
+    """
+
+    coordinate: SourceFragmentCoordinateV1
+    target_name: str
+    resolution_kind: str
+    obligations: tuple[OpaqueSourceCallObligationV1, ...]
+
+    def __post_init__(self) -> None:
+        if not self.obligations:
+            raise ValueError("opaque source-call roster names no authenticated owner")
+        owners = [row.resolved_object_cid for row in self.obligations]
+        if len(set(owners)) != len(owners):
+            raise ValueError("opaque source-call roster seats one owner twice")
+        if owners != sorted(owners):
+            raise ValueError("opaque source-call roster is not owner-ordered")
+        for row in self.obligations:
+            if type(row) is not OpaqueSourceCallObligationV1:
+                raise ValueError("opaque source-call roster holds a malformed row")
+            if (row.coordinate, row.target_name, row.resolution_kind) != (
+                self.coordinate,
+                self.target_name,
+                self.resolution_kind,
+            ):
+                raise ValueError("opaque source-call roster testimony is cross-wired")
+
+    def owner(self, resolved_object_cid: str) -> OpaqueSourceCallObligationV1 | None:
+        """The obligation this exact owner parked, or ``None`` if it parked none.
+
+        Absence is ``None``; there is no lookup-failure spelling that shares it.
+        """
+        return next(
+            (
+                row
+                for row in self.obligations
+                if row.resolved_object_cid == resolved_object_cid
+            ),
+            None,
+        )
+
+    def seating(
+        self, obligation: OpaqueSourceCallObligationV1
+    ) -> "OpaqueSourceCallRosterV1":
+        """This roster with one more owner seated, owner-ordered."""
+        return OpaqueSourceCallRosterV1(
+            self.coordinate,
+            self.target_name,
+            self.resolution_kind,
+            tuple(
+                sorted(
+                    self.obligations + (obligation,),
+                    key=lambda row: row.resolved_object_cid,
+                )
+            ),
+        )
+
+
+def opaque_source_call_roster_of(
+    obligation: OpaqueSourceCallObligationV1,
+) -> OpaqueSourceCallRosterV1:
+    """The one-owner roster for a freshly parked obligation."""
+    return OpaqueSourceCallRosterV1(
+        obligation.coordinate,
+        obligation.target_name,
+        obligation.resolution_kind,
+        (obligation,),
+    )
+
+
+@dataclass(frozen=True)
 class ContextManagerContractRefV1:
     resolution_cid: str
     demand_cid: str

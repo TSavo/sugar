@@ -3605,7 +3605,11 @@ def _seat_import_value_use_receipts(
             continue
         receipt.revalidate()
         paired_obligations = []
-        for obligation in context.opaque_source_call_obligations.values():
+        for obligation in (
+            row
+            for roster in context.opaque_source_call_obligations.values()
+            for row in roster.obligations
+        ):
             relation = obligation.import_call_value_subsumption
             if relation is None or relation.value_use_cid != receipt.use["cid"]:
                 continue
@@ -3664,7 +3668,11 @@ def _seat_import_value_use_receipts(
                 )
             paired_obligations.append(obligation)
         paired_obligations = tuple(paired_obligations)
-        if len(paired_obligations) > 1:
+        # The law is one parked CALL per imported value occurrence. Several
+        # authenticated owners may have walked through that one call, and each
+        # parks its own obligation there; counting owners as calls would refuse
+        # a helper reached from two exports. Count coordinates.
+        if len({row.coordinate for row in paired_obligations}) > 1:
             from sugar_source_tree.panic import BackendDefect
 
             raise BackendDefect(
@@ -3676,7 +3684,8 @@ def _seat_import_value_use_receipts(
             )
 
         def exact_parked_callee() -> bool:
-            if len(paired_obligations) != 1:
+            # One coordinate, however many owners parked at it (checked above).
+            if not paired_obligations:
                 return False
             relation = paired_obligations[0].import_call_value_subsumption
             if relation is None:
@@ -3902,16 +3911,55 @@ def _install_opaque_call_obligation(
             requested="one source-call classification at the exact coordinate",
             fix="keep authenticated frames and opaque obligations disjoint",
         )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        opaque_source_call_roster_of,
+    )
+
+    # One coordinate, many authenticated owners. `resolved_object_cid` names
+    # the export whose frame projection walked through this call, not the call
+    # — so a second owner reaching the same helper (or the same callee through
+    # a second import binding) is an ADDITIONAL seat, never a duplicate. The
+    # byte-identity law below is unchanged and applies where it always meant
+    # to: one owner may state its testimony exactly once, exactly the same way.
     existing = context.opaque_source_call_obligations.get(coordinate)
-    if existing is not None and existing != obligation:
-        raise BackendDefect(
-            blame=call.fragment,
-            owner="manager_construction._install_opaque_call_obligation",
-            observed="conflicting opaque-call obligation",
-            requested="byte-identical duplicate testimony",
-            fix="resolve the conflicting target or authenticated owner",
+    if existing is None:
+        context.opaque_source_call_obligations[coordinate] = (
+            opaque_source_call_roster_of(obligation)
         )
-    context.opaque_source_call_obligations[coordinate] = obligation
+        return
+    seated = existing.owner(obligation.resolved_object_cid)
+    if seated is not None:
+        if seated != obligation:
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="manager_construction._install_opaque_call_obligation",
+                observed="conflicting opaque-call obligation",
+                requested="byte-identical duplicate testimony",
+                fix="resolve the conflicting target or authenticated owner",
+            )
+        return
+    if (existing.target_name, existing.resolution_kind) != (
+        obligation.target_name,
+        obligation.resolution_kind,
+    ):
+        # Not a keying artefact: two authenticated owners state DIFFERENT
+        # unresolved-callee classifications for one call, and the consumer
+        # holds no owner with which to choose. A construction panic is a
+        # countable frontier row; a BackendDefect here would void the file.
+        from sugar_lift_py_tests.gap import construction_panic_gap
+
+        construction_panic_gap(
+            owner="manager_construction._install_opaque_call_obligation",
+            blame=call.fragment,
+            observed=(
+                "authenticated owners disagree about one opaque call: "
+                f"{existing.resolution_kind}:{existing.target_name} vs "
+                f"{obligation.resolution_kind}:{obligation.target_name}"
+            ),
+            requested="one opaque-call classification at the exact coordinate",
+            fix="resolve the callee for every owner, or name why they differ",
+        )
+    context.opaque_source_call_obligations[coordinate] = existing.seating(obligation)
 
 
 def _install_source_call_frame(

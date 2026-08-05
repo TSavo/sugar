@@ -105,7 +105,11 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     assert frame.definition_site.source_cid == module.source_cid
     assert frame.definition_site.source_cid == resolved.definition.source_cid
     obligations = tuple(
-        frame.owner.unit.construction_context.opaque_source_call_obligations.values()
+        row
+        for roster in (
+            frame.owner.unit.construction_context.opaque_source_call_obligations.values()
+        )
+        for row in roster.obligations
     )
     warnings = tuple(
         item for item in obligations if item.target_name == "python:warnings.warn"
@@ -273,7 +277,10 @@ def test_reversed_receipt_iteration_preserves_relation_cid(
         _, target = projected
         rows = tuple(
             row
-            for row in target.unit.construction_context.opaque_source_call_obligations.values()
+            for roster in (
+                target.unit.construction_context.opaque_source_call_obligations.values()
+            )
+            for row in roster.obligations
             if row.target_name == "python:warnings.warn"
         )
         assert len(rows) == 1
