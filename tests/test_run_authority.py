@@ -214,13 +214,30 @@ def test_unmanaged_testimony_carrying_managed_fields_is_conflicting() -> None:
         assert key in text
 
 
-def test_non_json_and_non_object_testimony_is_malformed_not_absent() -> None:
-    for junk in ("{not json", 17, [1, 2, 3]):
+def test_non_object_testimony_is_malformed_not_absent() -> None:
+    for junk in (17, [1, 2, 3]):
         with pytest.raises(RA.RunAuthorityRefusal) as caught:
             RA.authenticate_run_authority(junk, task_command_resolver=_resolver)
         text = str(caught.value)
         assert RA.REFUSAL_MALFORMED in text, text
         assert RA.REFUSAL_ABSENT not in text
+        assert "must be an object" in text, text
+
+
+def test_undecodable_json_transport_refuses_on_the_decode_arm() -> None:
+    """Named by the same refusal, but reached down its own path.
+
+    Asserting only that something MALFORMED was raised would leave this
+    satisfied by the non-object guard downstream, so the decode arm could be
+    deleted with this tooth still green. The detail is what discriminates.
+    """
+    for junk in ("{not json", b'{"schema": '):
+        with pytest.raises(RA.RunAuthorityRefusal) as caught:
+            RA.authenticate_run_authority(junk, task_command_resolver=_resolver)
+        text = str(caught.value)
+        assert RA.REFUSAL_MALFORMED in text, text
+        assert "is not JSON" in text, text
+        assert "must be an object" not in text, text
 
 
 def test_testimony_survives_json_string_transport() -> None:
@@ -318,6 +335,57 @@ def test_measurement_with_no_run_authority_at_all_is_unconstructible() -> None:
     with pytest.raises(CM.CommitMeasurementError) as caught:
         _mint(None)
     assert RA.REFUSAL_ABSENT in str(caught.value)
+
+
+def test_sealing_an_unmanaged_authority_into_measured_refuses_by_name() -> None:
+    """The last line of defence, reached only by a caller holding the seal.
+
+    Through the public `measured(...)` door this is unreachable:
+    `require_managed_run_authority` refuses first and always hands the
+    constructor a ManagedRunAuthority. So this tooth constructs Measured
+    directly WITH the seal — the position a future edit inside the module
+    would occupy — and proves the type still will not admit an unmanaged run.
+
+    Without this, the isinstance check in Measured.__post_init__ is dead
+    weight: it can be deleted with nothing observable changing.
+    """
+    ad_hoc = RA.authenticate_run_authority(_unmanaged(), task_command_resolver=_resolver)
+    assert isinstance(ad_hoc, RA.UnmanagedRunAuthority)
+
+    with pytest.raises(CM.CommitMeasurementError) as caught:
+        CM.Measured(
+            3,
+            "native-crash",
+            CM.UNIT_CORPUS_FILE,
+            "pop:corpus",
+            12,
+            "blake2b-256:" + "0" * 64,
+            "totals.failed",
+            1,
+            ad_hoc,
+            CM._MEASURED_SEAL,
+        )
+    text = str(caught.value)
+    assert "ManagedRunAuthority" in text, text
+    assert "UnmanagedRunAuthority" in text, text
+    assert "THE ARTIFACT MUST PROVE WHAT IT CONSUMED" in text, text
+
+    # And the same position with a genuine managed authority does construct,
+    # so the tooth is discriminating rather than refusing everything.
+    managed = RA.authenticate_run_authority(_managed(), task_command_resolver=_resolver)
+    sealed = CM.Measured(
+        3,
+        "native-crash",
+        CM.UNIT_CORPUS_FILE,
+        "pop:corpus",
+        12,
+        "blake2b-256:" + "0" * 64,
+        "totals.failed",
+        1,
+        managed,
+        CM._MEASURED_SEAL,
+    )
+    assert sealed.run_authority.task == "showcases"
 
 
 def test_measurement_from_a_managed_run_constructs_and_carries_its_authority() -> None:

@@ -212,9 +212,14 @@ class Measured:
             _require_nonempty_str("value_field_path", self.value_field_path),
         )
         _require_int("exit_code", self.exit_code)
-        # Not a guard: the type admits no other inhabitant. A Measured cannot be
-        # spelled without a ManagedRunAuthority, which cannot be spelled without
-        # authenticated managed testimony.
+        # Ordering fact: through the public measured(...) door this can never
+        # fire, because require_managed_run_authority refuses first and always
+        # hands this constructor a ManagedRunAuthority. It is reachable only by
+        # a caller already holding _MEASURED_SEAL — i.e. a future edit inside
+        # this module. That is exactly the position worth defending, so it is
+        # exercised by
+        # test_sealing_an_unmanaged_authority_into_measured_refuses_by_name
+        # rather than left as unexercisable weight.
         if not isinstance(self.run_authority, ManagedRunAuthority):
             raise CommitMeasurementError(
                 "Measured requires an authenticated ManagedRunAuthority; got "
