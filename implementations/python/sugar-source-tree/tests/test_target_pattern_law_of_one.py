@@ -102,7 +102,7 @@ def _products(source_file: SourceFile):
     for consumer in function.walk():
         key = (consumer.kind, consumer.line_col_span().start_line)
         if any(expected[:2] == key for expected in EXPECTED):
-            products.extend(consumer.target_patterns)
+            products.extend(consumer.require_target_patterns())
     return tuple(products)
 
 
@@ -155,13 +155,13 @@ def test_ordinary_nested_star_consumers_construct_exact_patterns_once(tmp_path: 
     live_file = _open_source_file(live_path, tmp_path)
     (live_function,) = tuple(live_file.functions())
     live_loop = next(node for node in live_function.walk() if node.kind == "For")
-    (live_pattern,) = live_loop.target_patterns
+    (live_pattern,) = live_loop.require_target_patterns()
     live_function.sugar()
     live_function.sugar()
     repeated_live_loop = next(
         node for node in live_function.walk() if node.kind == "For"
     )
-    (repeated_live_pattern,) = repeated_live_loop.target_patterns
+    (repeated_live_pattern,) = repeated_live_loop.require_target_patterns()
     assert repeated_live_pattern is live_pattern
     assert live_file.unit.target_pattern_construction_count == 1
 
@@ -214,8 +214,8 @@ def test_same_unit_foreign_for_cannot_claim_local_target(tmp_path: Path):
     (function,) = tuple(source_file.functions())
     loops = tuple(node for node in function.walk() if node.kind == "For")
     assert len(loops) == 2
-    (first_pattern,) = loops[0].target_patterns
-    (second_pattern,) = loops[1].target_patterns
+    (first_pattern,) = loops[0].require_target_patterns()
+    (second_pattern,) = loops[1].require_target_patterns()
     before = source_file.unit.target_pattern_construction_count
 
     with pytest.raises(nodes.TargetPatternConstructionGapV1) as rejected:
@@ -227,8 +227,8 @@ def test_same_unit_foreign_for_cannot_claim_local_target(tmp_path: Path):
     assert rejected.value.consumer_occurrence is second_pattern.consumer_occurrence
     assert rejected.value.target_occurrence is first_pattern.target_occurrence
     assert source_file.unit.target_pattern_construction_count == before
-    assert loops[0].target_patterns[0] is first_pattern
-    assert loops[1].target_patterns[0] is second_pattern
+    assert loops[0].require_target_patterns()[0] is first_pattern
+    assert loops[1].require_target_patterns()[0] is second_pattern
 
 
 def test_assign_rhs_rewrite_retains_its_authenticated_target_pattern(
@@ -248,7 +248,7 @@ def test_assign_rhs_rewrite_retains_its_authenticated_target_pattern(
         for node in function.walk()
         if node.kind == "Assign" and node.line_col_span().start_line == 3
     )
-    (original_pattern,) = original.target_patterns
+    (original_pattern,) = original.require_target_patterns()
 
     frame = function.source_visible_call_frame()
 
@@ -285,7 +285,9 @@ def test_mixed_attribute_unpack_is_not_a_lexical_target_pattern(tmp_path: Path):
     source_file = _open_source_file(path, tmp_path)
     assignment = next(node for node in source_file.nodes() if node.kind == "Assign")
 
-    assert assignment.target_patterns == ()
+    assert (
+        assignment.target_pattern_enrollment.reason == "consumer-shape-not-enrolled"
+    )
     assert source_file.unit.target_pattern_construction_count == 0
 
 

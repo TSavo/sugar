@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
 if TYPE_CHECKING:  # pragma: no cover
     from .fragment import SourceFragment
 
+from .occurrence import SourceOccurrenceIdentityV1
 from .operators import (
     BinaryOperator,
     BooleanOperator,
@@ -201,6 +202,280 @@ class TargetPatternConstructionGapV1(TypeError):
         self.target_pattern = target_pattern
         self.expected_coordinates = expected_coordinates
         self.actual_coordinates = actual_coordinates
+
+
+_TARGET_PATTERN_ENROLLMENT_AUTHORITY = object()
+
+
+class TargetPatternEnrollmentV1:
+    """Closed producer-owned applicability outcome for the target relation.
+
+    ``SourceUnit.bind_typed_module`` already decides, during its one structural
+    walk, whether a constructed node is a target-pattern consumer.  Before this
+    type existed the walk published only positive rows, so a consumer that
+    wanted the applicability answer had to read the relation and treat an empty
+    tuple as "not enrolled" -- which also swallowed "the table was never built"
+    and "the enrolled row was stranded by a rewrite".
+
+    Exactly two variants exist and only the producer may mint them.  This type
+    answers *"is this shape enrolled?"* and nothing else; *"did my lookup find
+    the row?"* is answered separately and loudly by ``require_target_pattern``
+    / ``require_target_patterns``.  The two questions never share a value.
+    """
+
+    __slots__ = ("consumer_occurrence",)
+
+    _variants_closed = False
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        if TargetPatternEnrollmentV1._variants_closed:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-enrollment-variant-not-closed",
+                consumer_occurrence=cls,
+                target_occurrence=None,
+            )
+
+    def __init__(self, *, consumer_occurrence, _authority=None) -> None:
+        if _authority is not _TARGET_PATTERN_ENROLLMENT_AUTHORITY:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-enrollment-not-producer-minted",
+                consumer_occurrence=consumer_occurrence,
+                target_occurrence=None,
+            )
+        object.__setattr__(self, "consumer_occurrence", consumer_occurrence)
+
+    def __setattr__(self, name, value):  # pragma: no cover - immutability guard
+        raise TargetPatternConstructionGapV1(
+            "target-pattern-enrollment-is-immutable",
+            consumer_occurrence=self.consumer_occurrence,
+            target_occurrence=None,
+        )
+
+
+class TargetPatternEnrolledV1(TargetPatternEnrollmentV1):
+    """This occurrence is an enrolled target-pattern consumer.
+
+    ``enrolled_targets`` are the exact target occurrences the producer minted a
+    ``TargetPatternV1`` for.  The row itself is deliberately NOT carried here:
+    this value answers *"is this shape enrolled?"* and the relation read answers
+    *"did my lookup find the row?"*.  Merging them would let a stranded row
+    degrade into this value instead of refusing, so they stay separate even
+    though the relation is now keyed by durable source occurrence (#7346-A).
+    """
+
+    __slots__ = ("enrolled_targets", "_projection_sites")
+
+    def __init__(self, *, consumer_occurrence, projection_sites, _authority=None):
+        super().__init__(
+            consumer_occurrence=consumer_occurrence, _authority=_authority
+        )
+        sites = tuple(projection_sites)
+        object.__setattr__(self, "_projection_sites", sites)
+        object.__setattr__(
+            self, "enrolled_targets", tuple(target for target, _ in sites)
+        )
+        if not self.enrolled_targets:
+            raise TargetPatternConstructionGapV1(
+                "enrolled-target-pattern-consumer-without-targets",
+                consumer_occurrence=consumer_occurrence,
+                target_occurrence=None,
+            )
+
+    def covers(self, target) -> bool:
+        return any(
+            candidate is target or candidate.ref is target.ref
+            for candidate in self.enrolled_targets
+        )
+
+    def __repr__(self) -> str:
+        return f"TargetPatternEnrolledV1(targets={len(self.enrolled_targets)})"
+
+
+_TARGET_PATTERN_NON_ENROLLMENT_REASONS = frozenset(
+    {
+        # The node kind (or, for ``Assign``, every one of its targets) carries
+        # no lexical binding pattern at all.
+        "consumer-shape-not-enrolled",
+        # Candidate targets exist for this shape, but none of them introduces a
+        # lexical binding leaf (e.g. ``self.a, self.b = ...``: pure store).
+        "no-binding-leaf-target",
+    }
+)
+
+
+class TargetPatternNotEnrolledV1(TargetPatternEnrollmentV1):
+    """This occurrence is lawfully outside the target-pattern relation."""
+
+    __slots__ = ("reason",)
+
+    def __init__(self, *, consumer_occurrence, reason, _authority=None):
+        super().__init__(
+            consumer_occurrence=consumer_occurrence, _authority=_authority
+        )
+        if reason not in _TARGET_PATTERN_NON_ENROLLMENT_REASONS:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-non-enrollment-reason-not-declared",
+                consumer_occurrence=consumer_occurrence,
+                target_occurrence=None,
+            )
+        object.__setattr__(self, "reason", reason)
+
+    def __repr__(self) -> str:
+        return f"TargetPatternNotEnrolledV1({self.reason!r})"
+
+
+TargetPatternEnrollmentV1._variants_closed = True
+
+
+_LEXICAL_CALL_ENROLLMENT_AUTHORITY = object()
+
+
+def _lexical_enrollment_defect(blame, observed: str, requested: str, fix: str):
+    return BackendDefect(
+        blame=blame,
+        owner="LexicalCallEnrollmentV1",
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )
+
+
+class LexicalCallEnrollmentV1:
+    """Closed producer-owned applicability outcome for the lexical relation.
+
+    ``Backend.materialize_module`` already decides, during its ONE structural
+    walk, which call occurrences receive a ``_BackendLexicalCallRowV1``: it
+    classifies the callee shape, the enclosing scope, and the binding event the
+    name resolves to.  It published only the positive rows.  A consumer that
+    wanted the applicability answer therefore read the relation and treated an
+    empty tuple as "not enrolled" -- which also swallowed "the enrolled row was
+    stranded by a rewrite" and "this occurrence was never walked at all".
+
+    This type transports the decision the walk ALREADY made; it is never
+    re-derived.  No consumer may repeat the backend's scope/binding walk.
+
+    Exactly two variants exist and only the producer may mint them.  Mirrors
+    ``TargetPatternEnrollmentV1`` deliberately, including the omission of the
+    product: the enrolled row is NOT carried here.  Carrying it would make this
+    table a second copy of the relation, and a stranded row would then be
+    unobservable.  "Is this occurrence enrolled?" is answered here; "did my
+    lookup find the row?" is answered separately and loudly by
+    ``SourceUnit.require_lexical_call_rows``.  The two questions never share a
+    value, and a LOOKUP MISS is a third, typed failure -- it can never
+    masquerade as either outcome.
+    """
+
+    __slots__ = ("call_occurrence",)
+
+    _variants_closed = False
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        if LexicalCallEnrollmentV1._variants_closed:
+            raise _lexical_enrollment_defect(
+                blame=getattr(cls, "__name__", cls),
+                observed="a third lexical-call enrollment variant",
+                requested="exactly two closed variants",
+                fix="extend the closed outcome deliberately, not by subclassing",
+            )
+
+    def __init__(self, *, call_occurrence, _authority=None) -> None:
+        if _authority is not _LEXICAL_CALL_ENROLLMENT_AUTHORITY:
+            raise _lexical_enrollment_defect(
+                blame=getattr(call_occurrence, "fragment", call_occurrence),
+                observed="lexical-call enrollment minted outside the producer",
+                requested="the one authoritative structural walk",
+                fix="publish enrollment from Backend.materialize_module only",
+            )
+        object.__setattr__(self, "call_occurrence", call_occurrence)
+
+    def __setattr__(self, name, value):  # pragma: no cover - immutability guard
+        raise _lexical_enrollment_defect(
+            blame=getattr(self.call_occurrence, "fragment", self.call_occurrence),
+            observed="mutation of a sealed lexical-call enrollment",
+            requested="an immutable producer outcome",
+            fix="mint a new outcome from the producer walk",
+        )
+
+
+class LexicalCallEnrolledV1(LexicalCallEnrollmentV1):
+    """This call occurrence IS in the lexical relation.
+
+    The row is deliberately not carried; read it strictly through
+    ``SourceUnit.require_lexical_call_rows`` so a stranded row refuses instead
+    of degrading into this value.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "LexicalCallEnrolledV1()"
+
+
+_LEXICAL_CALL_NON_ENROLLMENT_REASONS = frozenset(
+    {
+        # The callee is not a bare Name, so no lexical name resolution applies.
+        "non-name-callee",
+        # The call occurs at module scope; the relation covers calls inside a
+        # function scope only.
+        "module-scope-call",
+        # Name resolution found no binding event for this spelling in any
+        # enclosing function scope (external, builtin, or module-level name).
+        "no-lexical-binding-in-scope",
+        # A binding event was found, but it is a parameter, local assignment,
+        # deletion, rebinding, or a later definition -- not a lexical function
+        # definition visible at this call.
+        "binding-not-a-function-definition",
+        # This unit has no typed module root yet, so no lexical relation has
+        # been published for any occurrence in it.
+        "no-typed-module",
+        # A desugarer-synthesized Call shell (``Node._make_call``) over a
+        # borrowed span: it is not a source call occurrence, so it is outside
+        # the relation's DOMAIN.  Only shadow-minted nodes may take this arm;
+        # a source-backed occurrence with no published decision refuses.
+        "synthesized-call-occurrence",
+    }
+)
+
+
+class LexicalCallNotEnrolledV1(LexicalCallEnrollmentV1):
+    """This call occurrence is lawfully outside the lexical relation."""
+
+    __slots__ = ("reason",)
+
+    def __init__(self, *, call_occurrence, reason, _authority=None):
+        super().__init__(call_occurrence=call_occurrence, _authority=_authority)
+        if reason not in _LEXICAL_CALL_NON_ENROLLMENT_REASONS:
+            raise _lexical_enrollment_defect(
+                blame=getattr(call_occurrence, "fragment", call_occurrence),
+                observed=f"undeclared non-enrollment reason {reason!r}",
+                requested="one of the declared closed reasons",
+                fix="declare the reason deliberately in the closed set",
+            )
+        object.__setattr__(self, "reason", reason)
+
+    def __repr__(self) -> str:
+        return f"LexicalCallNotEnrolledV1({self.reason!r})"
+
+
+LexicalCallEnrollmentV1._variants_closed = True
+
+
+def mint_lexical_call_enrollment(
+    call_occurrence, reason: str | None
+) -> LexicalCallEnrollmentV1:
+    """The ONE door the producer walk mints its published decision through."""
+    if reason is None:
+        return LexicalCallEnrolledV1(
+            call_occurrence=call_occurrence,
+            _authority=_LEXICAL_CALL_ENROLLMENT_AUTHORITY,
+        )
+    return LexicalCallNotEnrolledV1(
+        call_occurrence=call_occurrence,
+        reason=reason,
+        _authority=_LEXICAL_CALL_ENROLLMENT_AUTHORITY,
+    )
 
 
 _TARGET_PATTERN_RECEIPT_AUTHORITY = object()
@@ -509,7 +784,59 @@ class SourceUnit:
         object.__setattr__(self, "_constructed_module", None)
         object.__setattr__(self, "_retained_lexical_call_rows", {})
 
-    def lexical_call_rows_for(self, call: "Call") -> tuple[object, ...]:
+    def lexical_call_enrollment(self, call: "Call") -> LexicalCallEnrollmentV1:
+        """The producer's ONE closed applicability decision for a call.
+
+        Keyed by the durable source occurrence (#7346-A), so a rewritten shell
+        over the same occurrence gets the same answer.  The producer publishes
+        a decision for EVERY call occurrence it walked; therefore a lookup that
+        finds no decision is a failed join and REFUSES.  It is never reported
+        as not-enrolled: absence and lookup-failure do not share a
+        representation here.
+        """
+        if self.typed_module is None:
+            return mint_lexical_call_enrollment(call, "no-typed-module")
+        occurrence = SourceOccurrenceIdentityV1.of(call)
+        matches = tuple(
+            decision
+            for candidate, decision in self.constructed_module.lexical_call_enrollments
+            if candidate == occurrence
+        )
+        if not matches:
+            from .shadow import ShadowNode
+
+            if isinstance(call.ref, ShadowNode):
+                # Out of DOMAIN, not a failed join.  The desugarer mints fresh
+                # Call shells (``Node._make_call``) over a borrowed span of a
+                # node that is not itself a source call; the one structural
+                # walk never saw them and never could.  ``shadow.rewrite``, by
+                # contrast, preserves the origin's span AND kind, so a
+                # rewritten source call still joins its published decision --
+                # that is exactly what occurrence keying buys (#7346-A).
+                #
+                # Stated exactly: this arm requires the node to be
+                # shadow-minted.  A SOURCE-backed call with no published
+                # decision is still a failed join and still refuses below.
+                return mint_lexical_call_enrollment(
+                    call, "synthesized-call-occurrence"
+                )
+        if len(matches) != 1:
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="SourceUnit.lexical_call_enrollment",
+                observed=f"{len(matches)} published enrollment decisions",
+                requested="one decision for this exact call occurrence",
+                fix="publish one lexical enrollment per call in the producer walk",
+            )
+        return matches[0]
+
+    def _seated_lexical_call_rows(self, call: "Call") -> tuple[object, ...]:
+        """Raw relation read.  Empty means exactly one thing: lookup missed.
+
+        Callers never see this; ``require_lexical_call_rows`` turns a miss into
+        a typed refusal.  Non-enrollment is not expressible here -- that
+        question is answered by ``lexical_call_enrollment`` and nothing else.
+        """
         retained = self._retained_lexical_call_rows.get(call.ref)
         if retained is not None:
             return retained
@@ -519,6 +846,38 @@ class SourceUnit:
             if row.call_occurrence_identity is call.ref
         )
 
+    def require_lexical_call_rows(self, call: "Call") -> tuple[object, ...]:
+        """Strict read of an ENROLLED call's producer-owned row.
+
+        Three facts that used to collapse into one empty tuple now have three
+        distinct representations:
+
+        * lawfully not enrolled -> ``LexicalCallNotEnrolledV1`` (a value, from
+          ``lexical_call_enrollment``, never from here);
+        * enrolled but stranded -> ``BackendDefect`` refusal;
+        * never walked / foreign occurrence -> ``BackendDefect`` refusal from
+          ``lexical_call_enrollment``.
+        """
+        enrollment = self.lexical_call_enrollment(call)
+        if not isinstance(enrollment, LexicalCallEnrolledV1):
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="SourceUnit.require_lexical_call_rows",
+                observed=f"not an enrolled lexical call: {enrollment.reason}",
+                requested="an enrolled lexical call occurrence",
+                fix="ask lexical_call_enrollment before reading the relation",
+            )
+        rows = self._seated_lexical_call_rows(call)
+        if len(rows) != 1:
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="SourceUnit.require_lexical_call_rows",
+                observed=f"{len(rows)} lexical rows for one enrolled call occurrence",
+                requested="the one producer-owned row this occurrence is enrolled for",
+                fix="retain the enrolled row through the authenticated rewrite",
+            )
+        return rows
+
     def lexical_class_owner_for(self, function: "Node") -> "ClassDef | None":
         """Project the exact class owner from the backend's one structural walk.
 
@@ -526,11 +885,21 @@ class SourceUnit:
         typed module.  Re-walking class bodies here would create a second answer
         to the same ownership question, so consumers use that producer-owned
         relation directly.
+
+        The join is on the SOURCE OCCURRENCE (#7346-A), not on the Python shell
+        that views it: ``shadow.rewrite`` mints a fresh shell over the borrowed
+        origin span, and a rewritten function denotes the same occurrence the
+        producer walked.  Foreign occurrences still miss, and a miss is still
+        the loud zero-row ``BackendDefect`` -- there is no span-only fallback
+        and no second walk.  Exactly one row per occurrence remains the
+        producer's contract: ``None`` as the owner is authenticated no-owner,
+        zero rows is a failed join, more than one row is a malformed relation.
         """
+        occurrence = SourceOccurrenceIdentityV1.of(function)
         matches = tuple(
             owner
             for candidate, owner in self.constructed_module.function_class_owners
-            if candidate is function
+            if candidate == occurrence
         )
         if len(matches) != 1:
             raise BackendDefect(
@@ -543,7 +912,7 @@ class SourceUnit:
         return matches[0]
 
     def retain_lexical_call_row(self, source: "Call", rewritten: "Call") -> None:
-        rows = self.lexical_call_rows_for(source)
+        rows = self.require_lexical_call_rows(source)
         if not rows or type(source) is not type(rewritten):
             raise BackendDefect(
                 blame=rewritten.fragment,
@@ -763,34 +1132,62 @@ class SourceUnit:
         patterns_by_target = {}
         constructed_count = 0
         for consumer in constructed_nodes:
-            targets = ()
-            if isinstance(consumer, Assign):
-                targets = tuple(
-                    (target, ("targets", target_index))
-                    for target_index, target in enumerate(consumer.targets)
-                    if isinstance(target, (Tuple_, List))
-                    and self._is_binding_target_pattern(target)
-                )
-            elif isinstance(consumer, For):
-                targets = ((consumer.target, ("target",)),)
-            elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
-                targets = tuple(
-                    (generator.target, ("generators", index, "target"))
-                    for index, generator in enumerate(consumer.generators)
-                )
-            if not targets:
+            # ONE decision, published.  The walk and every consumer of the
+            # applicability question call the same function; nobody re-derives
+            # enrollment from node kinds or from an empty relation read.
+            enrollment = self.target_pattern_enrollment(consumer)
+            if not isinstance(enrollment, TargetPatternEnrolledV1):
                 continue
             owned = tuple(
-                pattern
-                for target, prefix in targets
-                if (pattern := self._construct_target_pattern(consumer, target, prefix))
-                is not None
+                self._construct_target_pattern(consumer, target, prefix)
+                for target, prefix in enrollment._projection_sites
             )
-            if owned:
-                patterns[consumer.ref] = owned
-            patterns_by_target.update(
-                (pattern.target_occurrence.ref, pattern) for pattern in owned
-            )
+            # Keyed by SourceOccurrenceIdentityV1, never by the producer's Node
+            # shell (#7346-A).  ``shadow.rewrite`` borrows the origin's span and
+            # keeps its kind and unit, so a rewritten consumer denotes the SAME
+            # occurrence and joins this row by construction -- for every enrolled
+            # consumer at once, with no per-consumer retention to remember.
+            #
+            # Both writes REFUSE a duplicate key rather than overwriting it.
+            # Ref-keying made a collision structurally impossible: two shells
+            # over one occurrence were two keys.  Occurrence-keying collapses
+            # them into one, so an overwrite becomes expressible -- and a
+            # silently dropped relation row is the exact defect class this
+            # repair exists to end.  The invariant is believed, not proven, so
+            # it is stated executably here instead of in a comment.
+            #
+            # The two writes are INDEPENDENTLY reachable and neither is the
+            # other's shadow, which is why both are guarded and both have a
+            # tooth.  A blanket collapse of every occurrence only ever reaches
+            # the consumer write -- it raises before the target loop runs -- so
+            # the target write needs its own lever: collapse ONE grammar kind
+            # (``Tuple``) and the two consumers stay distinct while their
+            # targets claim one key.  Both levers are exercised, and each guard
+            # dies alone under mutation (see
+            # test_the_two_duplicate_key_guards_are_independently_reachable).
+            consumer_key = SourceOccurrenceIdentityV1.of(consumer)
+            if consumer_key in patterns:
+                raise TargetPatternConstructionGapV1(
+                    "duplicate-target-pattern-consumer-occurrence",
+                    consumer_occurrence=consumer,
+                    target_occurrence=None,
+                    target_pattern=(consumer_key, patterns[consumer_key], owned),
+                )
+            patterns[consumer_key] = owned
+            for pattern in owned:
+                target_key = SourceOccurrenceIdentityV1.of(pattern.target_occurrence)
+                if target_key in patterns_by_target:
+                    raise TargetPatternConstructionGapV1(
+                        "duplicate-target-pattern-target-occurrence",
+                        consumer_occurrence=consumer,
+                        target_occurrence=pattern.target_occurrence,
+                        target_pattern=(
+                            target_key,
+                            patterns_by_target[target_key],
+                            pattern,
+                        ),
+                    )
+                patterns_by_target[target_key] = pattern
             constructed_count += len(owned)
         object.__setattr__(self, "_target_patterns_by_consumer", patterns)
         object.__setattr__(self, "_target_patterns_by_target", patterns_by_target)
@@ -810,6 +1207,71 @@ class SourceUnit:
                 SourceUnit._is_binding_target_pattern(child) for child in target.elts
             )
         return False
+
+    @staticmethod
+    def _owns_binding_leaf(target) -> bool:
+        """True when this target introduces at least one lexical binding leaf.
+
+        ``_construct_target_pattern`` mints a product exactly when this holds.
+        One predicate serves both the producer walk and the published
+        enrollment outcome, so there is no second answer to enrollment.
+        """
+        if isinstance(target, Name):
+            return True
+        if isinstance(target, Starred):
+            return SourceUnit._owns_binding_leaf(target.value)
+        if isinstance(target, (Tuple_, List)):
+            return any(
+                SourceUnit._owns_binding_leaf(child) for child in target.elts
+            )
+        return False
+
+    def target_pattern_enrollment(self, consumer) -> TargetPatternEnrollmentV1:
+        """The producer's ONE closed applicability decision for a consumer.
+
+        Total and lookup-free: it answers "is this shape enrolled?" without
+        touching the relation table, so it cannot be confused with "did my
+        lookup find the row?".  ``bind_typed_module`` calls this same function
+        while walking, which is what makes it authoritative rather than a
+        reconstruction.
+        """
+        sites = ()
+        if isinstance(consumer, Assign):
+            sites = tuple(
+                (target, ("targets", target_index))
+                for target_index, target in enumerate(consumer.targets)
+                if isinstance(target, (Tuple_, List))
+                and self._is_binding_target_pattern(target)
+            )
+        elif isinstance(consumer, For):
+            sites = ((consumer.target, ("target",)),)
+        elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
+            sites = tuple(
+                (generator.target, ("generators", index, "target"))
+                for index, generator in enumerate(consumer.generators)
+            )
+        if not sites:
+            return TargetPatternNotEnrolledV1(
+                consumer_occurrence=consumer,
+                reason="consumer-shape-not-enrolled",
+                _authority=_TARGET_PATTERN_ENROLLMENT_AUTHORITY,
+            )
+        binding_sites = tuple(
+            (target, prefix)
+            for target, prefix in sites
+            if self._owns_binding_leaf(target)
+        )
+        if not binding_sites:
+            return TargetPatternNotEnrolledV1(
+                consumer_occurrence=consumer,
+                reason="no-binding-leaf-target",
+                _authority=_TARGET_PATTERN_ENROLLMENT_AUTHORITY,
+            )
+        return TargetPatternEnrolledV1(
+            consumer_occurrence=consumer,
+            projection_sites=binding_sites,
+            _authority=_TARGET_PATTERN_ENROLLMENT_AUTHORITY,
+        )
 
     def _construct_target_pattern(
         self, consumer, target, prefix
@@ -842,7 +1304,14 @@ class SourceUnit:
 
         visit(target, prefix)
         if not ordered:
-            return None
+            # Unreachable: the producer only mints for sites the published
+            # enrollment decision named.  Loud rather than ``None`` so the two
+            # can never silently diverge.
+            raise TargetPatternConstructionGapV1(
+                "enrolled-target-without-binding-leaf",
+                consumer_occurrence=consumer,
+                target_occurrence=target,
+            )
         owner_cid = (
             consumer.owned_loop_target.target_cid
             if isinstance(consumer, For) and consumer.owned_loop_target is not None
@@ -865,28 +1334,63 @@ class SourceUnit:
             coordinates=coordinates,
         )
 
-    def target_patterns_for(self, consumer: "Node") -> tuple[TargetPatternV1, ...]:
+    def _seated_target_patterns(self, consumer):
+        """Raw relation read.  ``None`` means exactly one thing: lookup missed.
+
+        Callers never see this; every public reader turns a miss into a typed
+        refusal.  Non-enrollment is not expressible here -- that question is
+        answered by ``target_pattern_enrollment`` and by nothing else.
+        """
         patterns = self._target_patterns_by_consumer
         if patterns is None:
-            return ()
-        return patterns.get(consumer.ref, ())
-
-    def retain_target_patterns(self, source_consumer, rewritten_consumer) -> None:
-        """Seat one rewrite with its exact source consumer's immutable products."""
-        owned = self.target_patterns_for(source_consumer)
-        if not owned or type(rewritten_consumer) is not type(source_consumer):
             raise TargetPatternConstructionGapV1(
-                "foreign-target-consumer-rewrite",
-                consumer_occurrence=rewritten_consumer,
-                target_occurrence=source_consumer,
+                "target-pattern-table-not-built",
+                consumer_occurrence=consumer,
+                target_occurrence=None,
             )
-        patterns = self._target_patterns_by_consumer
-        patterns[rewritten_consumer.ref] = owned
+        return patterns.get(SourceOccurrenceIdentityV1.of(consumer))
+
+    def require_target_patterns(
+        self, consumer: "Node"
+    ) -> tuple[TargetPatternV1, ...]:
+        """Strict read of an ENROLLED consumer's producer-owned products.
+
+        Three facts that used to collapse into one empty tuple now have three
+        distinct representations:
+
+        * table never built  -> ``target-pattern-table-not-built`` refusal;
+        * lawfully not enrolled -> ``TargetPatternNotEnrolledV1`` (a value,
+          obtained from ``target_pattern_enrollment``, never from here);
+        * enrolled but stranded -> ``foreign-target-occurrence`` refusal.
+        """
+        enrollment = self.target_pattern_enrollment(consumer)
+        if not isinstance(enrollment, TargetPatternEnrolledV1):
+            raise TargetPatternConstructionGapV1(
+                "not-an-enrolled-target-pattern-consumer",
+                consumer_occurrence=consumer,
+                target_occurrence=None,
+            )
+        owned = self._seated_target_patterns(consumer)
+        if not owned:
+            raise TargetPatternConstructionGapV1(
+                "foreign-target-occurrence",
+                consumer_occurrence=consumer,
+                target_occurrence=None,
+            )
+        return owned
 
     def require_target_pattern(self, consumer, target) -> TargetPatternV1:
-        for pattern in self.target_patterns_for(consumer):
-            if pattern.target_occurrence.ref is target.ref:
-                return pattern
+        enrollment = self.target_pattern_enrollment(consumer)
+        target_occurrence = SourceOccurrenceIdentityV1.of(target)
+        if isinstance(enrollment, TargetPatternEnrolledV1):
+            for pattern in self._seated_target_patterns(consumer) or ():
+                if (
+                    SourceOccurrenceIdentityV1.of(pattern.target_occurrence)
+                    == target_occurrence
+                ):
+                    return pattern
+        # Not-enrolled and lookup-missed are both refusals HERE by design: this
+        # door promises one exact enrolled pair or nothing.
         raise TargetPatternConstructionGapV1(
             "foreign-target-occurrence",
             consumer_occurrence=consumer,
@@ -895,7 +1399,11 @@ class SourceUnit:
 
     def require_target_pattern_for_target(self, target) -> TargetPatternV1:
         patterns = self._target_patterns_by_target
-        pattern = None if patterns is None else patterns.get(target.ref)
+        pattern = (
+            None
+            if patterns is None
+            else patterns.get(SourceOccurrenceIdentityV1.of(target))
+        )
         if pattern is None:
             raise TargetPatternConstructionGapV1(
                 "foreign-target-occurrence",
@@ -1121,19 +1629,20 @@ class SourceUnit:
         parameter, local, free, nonlocal, ambiguous, or recursive binding is
         not silently treated as this module definition.
         """
-        if not isinstance(call.func, Name) or self.typed_module is None:
-            return None
-        lexical_rows = self.lexical_call_rows_for(call)
-        if len(lexical_rows) > 1:
-            from .panic import backend_defect
-
-            backend_defect(
-                blame=call.fragment,
-                owner="SourceUnit.source_function_definition_for_call",
-                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
-                requested="zero or one authenticated lexical call row",
-                fix="repair Backend.materialize_module lexical call enrollment",
-            )
+        # Ask the producer's applicability question FIRST; read the relation
+        # only for an enrolled occurrence.  A stranded enrolled row now refuses
+        # instead of entering the fallback and answering with a different
+        # module-level definition (#7348 caller 2).
+        enrollment = self.lexical_call_enrollment(call)
+        if isinstance(enrollment, LexicalCallNotEnrolledV1):
+            if enrollment.reason in ("non-name-callee", "no-typed-module"):
+                return None
+            # module-scope-call / no-lexical-binding-in-scope /
+            # binding-not-a-function-definition: the lawful symtable-classified
+            # path below is this outcome's ONE named continuation.
+            lexical_rows = ()
+        else:
+            lexical_rows = self.require_lexical_call_rows(call)
         if lexical_rows:
             row = lexical_rows[0]
             definition = row.definition_occurrence
@@ -1969,9 +2478,17 @@ class Node(Typed):
         return cache
 
     @property
-    def target_patterns(self) -> tuple[TargetPatternV1, ...]:
-        """The eager occurrence-owned target products for this consumer."""
-        return self.unit.target_patterns_for(self)
+    def target_pattern_enrollment(self) -> TargetPatternEnrollmentV1:
+        """Is this shape an enrolled target-pattern consumer? (closed answer)"""
+        return self.unit.target_pattern_enrollment(self)
+
+    def require_target_patterns(self) -> tuple[TargetPatternV1, ...]:
+        """The eager occurrence-owned target products for an ENROLLED consumer.
+
+        Refuses rather than returning an empty tuple: absence of enrollment is
+        ``target_pattern_enrollment``, not a smaller product.
+        """
+        return self.unit.require_target_patterns(self)
 
     def __getattr__(self, name: str):
         # Field data is memoized on the unit once per site; this shell exposes it.
@@ -3866,6 +4383,14 @@ class FunctionDef(Statement):
         last same-name initializer is Python's live class binding; overwritten
         definitions and genuinely free functions keep the ordinary formal
         entrance.
+
+        Active membership is decided on the SOURCE OCCURRENCE (#7346-B), not on
+        the shell.  ``owner.body`` holds the producer's shells; a reconstructed
+        ``__init__`` is a different shell denoting the same occurrence, and the
+        shell comparison silently reclassified the live initializer as
+        overwritten -- degrading its receiver entrance to an ordinary formal.
+        A genuinely overwritten initializer denotes a DIFFERENT occurrence and
+        stays inactive.
         """
         if self.name != "__init__":
             return None
@@ -3880,7 +4405,10 @@ class FunctionDef(Statement):
             ),
             None,
         )
-        return owner if active is self else None
+        if active is None:
+            return None
+        occurrence = SourceOccurrenceIdentityV1.of(self)
+        return owner if SourceOccurrenceIdentityV1.of(active) == occurrence else None
 
     def _constructed_receiver_coordinate(self, owner: "ClassDef", parameter: Param):
         """Mint the same receiver coordinate as the class-construction door."""
@@ -4271,8 +4799,16 @@ class ClassDef(Statement):
             or allocation.value.args[0].id != class_param.name
         ):
             return None
+        # Admission is decided on the SOURCE OCCURRENCE (#7346-C).  The name is
+        # bound exactly once at module level AND that one binding must be THIS
+        # occurrence -- a reconstructed shell of the same class is admitted, a
+        # foreign or shadowed class is not.
         bindings = (self.unit.module_direct_bindings or {}).get(self.name, ())
-        if len(bindings) != 1 or bindings[0] is not self:
+        if len(bindings) != 1 or not isinstance(bindings[0], Node):
+            return None
+        if SourceOccurrenceIdentityV1.of(bindings[0]) != (
+            SourceOccurrenceIdentityV1.of(self)
+        ):
             return None
         if (self.unit.module_direct_bindings or {}).get("super"):
             return None
@@ -5184,8 +5720,8 @@ class Assign(Statement):
         if not changes:
             return self
         rewritten = rewrite(self, **changes)
-        if self.unit.target_patterns_for(self):
-            self.unit.retain_target_patterns(self, rewritten)
+        # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
+        # rewrite denotes the same occurrence, so its row joins by construction.
         return rewritten
 
     def _receiver_field_store_state(self, scope, new_value):
@@ -5310,7 +5846,13 @@ class Assign(Statement):
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)):
             return None
-        if not self.unit.target_patterns_for(self):
+        enrollment = self.unit.target_pattern_enrollment(self)
+        if not isinstance(
+            enrollment, TargetPatternEnrolledV1
+        ) or not enrollment.covers(target):
+            # Lawful fall-through: mixed / pure-store unpack owns no binding
+            # pattern.  This arm is now reached ONLY for authentic
+            # non-enrollment; a stranded enrolled row goes loud below.
             return None
         pattern = self.unit.require_target_pattern(self, target)
         return pattern.bindings_for(self.value)
@@ -6478,7 +7020,6 @@ class For(Statement):
                 if not changed:
                     return self
                 rewritten = rewrite(self, **changed)
-                self.unit.retain_target_patterns(self, rewritten)
                 return rewritten
 
     @staticmethod
@@ -9785,7 +10326,6 @@ class ListComp(Expression):
         if not changed:
             return self
         rewritten = rewrite(self, **changed)
-        self.unit.retain_target_patterns(self, rewritten)
         return rewritten
 
     def _try_unroll_to_display(self, scope):
@@ -9986,17 +10526,15 @@ class ListComp(Expression):
             target_pattern = None
             target_coordinates = ()
             if target.coordinates is not None:
-                matching_patterns = tuple(
-                    pattern
-                    for pattern in self.unit.target_patterns_for(self)
-                    if pattern.target_occurrence.ref is gen.target.ref
+                # A destructuring generator target IS an enrolled consumer
+                # site.  Zero rows here is a stranded relation, never "this
+                # comprehension is symbolic" -- so read strictly and let the
+                # refusal out instead of degrading to ``target_pattern=None``.
+                target_pattern = self.unit.require_target_pattern(self, gen.target)
+                target_coordinates = target_pattern.target_coordinates
+                self.unit.require_target_pattern_coordinates(
+                    target_pattern, target_coordinates
                 )
-                if len(matching_patterns) == 1:
-                    target_pattern = matching_patterns[0]
-                    target_coordinates = target_pattern.target_coordinates
-                    self.unit.require_target_pattern_coordinates(
-                        target_pattern, target_coordinates
-                    )
             specs.append(
                 ComprehensionGeneratorSugar(
                     target=target,
@@ -10009,6 +10547,9 @@ class ListComp(Expression):
                     filters=tuple(guard.sugar() for guard in gen.ifs),
                     target_coordinates=target_coordinates,
                     target_pattern=target_pattern,
+                    target_pattern_enrollment=self.unit.target_pattern_enrollment(
+                        self
+                    ),
                 )
             )
         return tuple(specs)
@@ -10435,7 +10976,9 @@ class Call(Expression):
         if (
             rewritten is not self
             and isinstance(rewritten, Call)
-            and self.unit.lexical_call_rows_for(self)
+            and isinstance(
+                self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
+            )
         ):
             self.unit.retain_lexical_call_row(self, rewritten)
         return rewritten
@@ -10610,18 +11153,16 @@ class Call(Expression):
         elif isinstance(context, TreeConstructionContextV1):
             assert coordinate is not None
             source_call_resolution = context.source_call_resolutions.get(coordinate)
-        lexical_rows = self.unit.lexical_call_rows_for(self)
-        if len(lexical_rows) > 1:
-            from .panic import backend_defect
-
-            backend_defect(
-                blame=self.fragment,
-                owner="Call._construct_sugar",
-                observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
-                requested="zero or one sealed lexical call row",
-                fix="repair lexical call enrollment before constructing the source frame",
+        # Applicability first, relation second.  A non-lexical call is lawfully
+        # not enrolled; a stranded enrolled row refuses instead of quietly
+        # losing the source frame (#7348 caller 4).
+        lexical_row = (
+            self.unit.require_lexical_call_rows(self)[0]
+            if isinstance(
+                self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
             )
-        lexical_row = lexical_rows[0] if lexical_rows else None
+            else None
+        )
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
             if (
@@ -10804,18 +11345,17 @@ class Call(Expression):
             formal_function_sugar = None
             formal_coordinates = ()
             formal_coordinate_cids = ()
-            lexical_rows = self.unit.lexical_call_rows_for(self)
-            if len(lexical_rows) > 1:
-                from .panic import backend_defect
-
-                backend_defect(
-                    blame=self.fragment,
-                    owner="Call._construct_sugar",
-                    observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
-                    requested="zero or one sealed lexical call row",
-                    fix="repair lexical call enrollment before constructing the source frame",
+            # Applicability first, relation second (#7348 caller 5): an
+            # external/module/shadowed Name call is lawfully not enrolled, but
+            # a stranded enrolled row must not fall through to a weaker
+            # ordinary CallSiteSugar.
+            lexical_row = (
+                self.unit.require_lexical_call_rows(self)[0]
+                if isinstance(
+                    self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
                 )
-            lexical_row = lexical_rows[0] if lexical_rows else None
+                else None
+            )
             if lexical_row is not None:
                 function_definition = lexical_row.definition_occurrence
                 if (

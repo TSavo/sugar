@@ -1319,8 +1319,38 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
     arm is a typed gap, never reflection over ``__dict__`` and never
     ``.wire()``.
     """
-    from sugar_source_tree.nodes import TargetPatternV1
+    from sugar_source_tree.nodes import (
+        TargetPatternEnrolledV1,
+        TargetPatternNotEnrolledV1,
+        TargetPatternV1,
+    )
 
+    # The closed producer-owned enrollment outcome (#7348) is seated INTO the
+    # constructed comprehension sugar, so it is a constructed value and needs a
+    # NAMED category -- reflection over its slots is exactly what this function
+    # refuses to do.  The two variants carry different content and different
+    # type tags, so no encoding of one can ever be read as the other.
+    if type(value) is TargetPatternEnrolledV1:
+        return (
+            _cv2_type_tag(value),
+            [
+                ("consumer", value.consumer_occurrence.fragment),
+                # Order and arity are authenticated by the tuple arm: dropping,
+                # duplicating or reordering an enrolled target changes the CID.
+                (
+                    "enrolledTargets",
+                    tuple(target.fragment for target in value.enrolled_targets),
+                ),
+            ],
+        )
+    if type(value) is TargetPatternNotEnrolledV1:
+        return (
+            _cv2_type_tag(value),
+            [
+                ("consumer", value.consumer_occurrence.fragment),
+                ("reason", value.reason),
+            ],
+        )
     if (
         type(value) is TargetPatternV1
         and value.receipt is not None

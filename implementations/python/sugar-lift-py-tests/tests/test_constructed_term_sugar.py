@@ -25,6 +25,7 @@ from sugar_lift_py_tests.sugar.comprehension_sugar import (
     ComprehensionSugar,
     ComprehensionTargetSugar,
 )
+from producer_minted_enrollment import producer_not_enrolled
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 from sugar_lift_py_tests.sugar.fstring_sugar import FormattedValueSugar, JoinedStrSugar
@@ -88,6 +89,7 @@ def _comprehension_generator(iterable, *, filters=()):
         binding_coordinate_cid="blake3-512:" + "g" * 128,
         iterable=iterable,
         filters=filters,
+        target_pattern_enrollment=producer_not_enrolled(),
     )
 
 

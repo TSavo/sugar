@@ -56,6 +56,24 @@ class ComprehensionGeneratorSugar:
     filters: tuple[ConstructedTermSugar, ...]
     target_coordinates: tuple = dataclass_field(default=(), compare=False)
     target_pattern: object | None = dataclass_field(default=None, compare=False)
+    target_pattern_enrollment: object = dataclass_field(kw_only=True, compare=False)
+    """The PRODUCER's closed enrollment answer, minted by #7348's authority.
+
+    This is `SourceUnit.target_pattern_enrollment(consumer)`:
+    `TargetPatternEnrolledV1 | TargetPatternNotEnrolledV1`. It is the fact that
+    separates "no pattern was ever owed" from "an owed pattern was lost"
+    (#7347). Required, with no default -- a default would have re-created the
+    very ambiguity this field exists to remove.
+
+    It is the CONSUMER-level answer, and this sugar reads it as a per-slot one.
+    That is sound in exactly this domain and nowhere else: `_finite_map`
+    consults it only when `target.coordinates` is set, which
+    `_comprehension_target` produces only for a Tuple/List of plain Names, and
+    such a site always owns a binding leaf -- so an enrolled comprehension
+    consumer necessarily owed a pattern for THIS slot. `covers()` is pinned by
+    a tooth. This sugar mints no enrollment value of its own and adapts between
+    no shapes; #7348 owns the type, the authority, and its reasons.
+    """
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(
@@ -64,6 +82,23 @@ class ComprehensionGeneratorSugar:
         for filter_sugar in self.filters:
             require_constructed_term_sugar(
                 filter_sugar, owner="ComprehensionGeneratorSugar.filters"
+            )
+        from sugar_source_tree.nodes import (
+            TargetPatternEnrolledV1,
+            TargetPatternEnrollmentV1,
+        )
+
+        if not isinstance(self.target_pattern_enrollment, TargetPatternEnrollmentV1):
+            raise TypeError(
+                "ComprehensionGeneratorSugar.target_pattern_enrollment requires the "
+                "producer's TargetPatternEnrollmentV1; got "
+                f"{type(self.target_pattern_enrollment).__name__}"
+            )
+        if self.target_pattern is not None and not isinstance(
+            self.target_pattern_enrollment, TargetPatternEnrolledV1
+        ):
+            raise ValueError(
+                "a target pattern cannot exist for an unenrolled consumer"
             )
         if self.target_pattern is not None:
             from sugar_source_tree.nodes import TargetPatternV1
@@ -183,9 +218,59 @@ class ComprehensionSugar(ConstructedTermSugar):
         refuses at the UnaryOp producer.
         """
         if index == 0 and len(self.generators) == 1 and not generator.filters:
-            finite = self._finite_map(generator, iterable, ctx)
-            if finite is not None:
-                return finite
+            from sugar_lift_py_tests.sugar.finite_projection import (
+                FiniteProjectionNonSuccessV1,
+                FiniteProjectionRefusalV1,
+                NotProjected,
+                Projected,
+                require_finite_projection_decision,
+            )
+
+            decision = require_finite_projection_decision(
+                self._finite_map(generator, iterable, ctx),
+                owner="ComprehensionSugar._finite_map",
+            )
+            # EXHAUSTIVE. Only the two LAWFUL non-application reasons may fall
+            # through to symbolic construction; the other two are construction
+            # refusals and may never reach ``Complete`` (#7347).
+            match decision:
+                case Projected(outcome=outcome):
+                    return outcome
+                case NotProjected(
+                    reason=FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE
+                ):
+                    pass
+                case NotProjected(
+                    reason=(
+                        FiniteProjectionNonSuccessV1.PROJECTION_UNAVAILABLE_IN_CONTEXT
+                    )
+                ):
+                    pass
+                case NotProjected(
+                    reason=FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
+                ):
+                    raise FiniteProjectionRefusalV1(
+                        FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED,
+                        construct=self.kind,
+                        coordinate=generator.binding_coordinate_cid,
+                        shape=_target_shape_name(generator.target),
+                        site=self.site,
+                    )
+                case NotProjected(
+                    reason=FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED
+                ):
+                    raise FiniteProjectionRefusalV1(
+                        FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED,
+                        construct=self.kind,
+                        coordinate=generator.binding_coordinate_cid,
+                        shape=_target_shape_name(generator.target),
+                        site=self.site,
+                    )
+                case _:
+                    raise TypeError(
+                        "unhandled FiniteProjectionDecisionV1 variant "
+                        f"{decision!r}: add a match arm, never a fallthrough"
+                    )
         return self._desugar_filters(generator, 0, (), iterable, index, resolved, ctx)
 
     def _finite_map(self, generator, iterable, ctx):
@@ -204,6 +289,12 @@ class ComprehensionSugar(ConstructedTermSugar):
             ctor,
         )
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.finite_projection import (
+            FiniteProjectionNonSuccessV1,
+            NotProjected,
+            Projected,
+        )
+        from sugar_source_tree.nodes import TargetPatternEnrolledV1
 
         members = None
         if isinstance(iterable, (TupleValue, ListValue)):
@@ -216,13 +307,33 @@ class ComprehensionSugar(ConstructedTermSugar):
         ):
             members = iterable.finite_elements
         if members is None:
-            return None
+            return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         target = generator.target
         if target.coordinates is not None and generator.target_pattern is None:
-            return None
+            # The producer's OWN enrollment answer decides which fact this is.
+            # ENROLLED + missing pattern is a stranded authenticated lookup, not
+            # an absence, and it may not be spent as a symbolic Complete.
+            if isinstance(
+                generator.target_pattern_enrollment, TargetPatternEnrolledV1
+            ):
+                return NotProjected(
+                    FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
+                )
+            return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         if ctx is None or not hasattr(ctx, "temporal"):
-            return None
+            return NotProjected(
+                FiniteProjectionNonSuccessV1.PROJECTION_UNAVAILABLE_IN_CONTEXT
+            )
         from dataclasses import replace
+
+        try:
+            # Probe the sole context-replacement capability the projection
+            # needs BEFORE entering the recursion. Inside ``project`` a failure
+            # would have to travel back through ``Outcome.and_then``, which is
+            # exactly how this cause used to be laundered into a bare ``None``.
+            replace(ctx, temporal=ctx.temporal)
+        except TypeError:
+            return NotProjected(FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED)
 
         owner = str(self.site)
 
@@ -287,10 +398,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                     temporal = temporal.bind_value(leaf.source_name, value)
             elif target.source_name is not None:
                 temporal = temporal.bind_value(target.source_name, member)
-            try:
-                inner_ctx = replace(ctx, temporal=temporal)
-            except TypeError:
-                return None
+            inner_ctx = replace(ctx, temporal=temporal)
             if self.key is not None:
                 return self.key.desugar(inner_ctx).and_then(
                     lambda key: self.element.desugar(inner_ctx).and_then(
@@ -310,10 +418,10 @@ class ComprehensionSugar(ConstructedTermSugar):
                 )
             )
 
-        # Outcome.and_then owns terminal/guarded propagation. ``None`` is the
-        # sole finite-projection-unavailable result; every constructed outcome
-        # propagates unchanged through its own continuation law.
-        return project(0, ())
+        # Outcome.and_then owns terminal/guarded propagation. Every constructed
+        # outcome propagates unchanged through its own continuation law and is
+        # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
+        return Projected(project(0, ()))
 
     def _desugar_filters(
         self, generator, filter_index, filters, iterable, index, resolved, ctx
@@ -418,6 +526,14 @@ class ComprehensionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
         return Complete(ComprehensionValue(term))
+
+
+def _target_shape_name(target: ComprehensionTargetSugar) -> str:
+    """The SHAPE a refusal names: a bound name, or a destructuring arity."""
+    if target.source_name is not None:
+        return f"name:{target.source_name}"
+    assert target.coordinates is not None
+    return f"destructure:{len(target.coordinates)}"
 
 
 def _projection(element, index: int, arity: int):

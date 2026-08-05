@@ -41,7 +41,10 @@ def test_attribute_only_unpack_substitution_binding_does_not_raise(
         "        self.left, self.right = left, right\n",
     )
     assignment = next(n for n in sf.nodes() if isinstance(n, Assign))
-    assert assignment.target_patterns == ()
+    assert (
+        assignment.target_pattern_enrollment.reason
+        == "consumer-shape-not-enrolled"
+    )
     # The hierarchy door: substitution_binding must not raise.
     binding = assignment.substitution_binding({})
     assert binding is None or binding == {}
@@ -58,7 +61,9 @@ def test_mixed_name_subscript_unpack_does_not_raise_foreign_target(
     )
     assignment = next(n for n in sf.nodes() if isinstance(n, Assign))
     # May or may not enroll depending on _is_binding_target_pattern (mixed = no).
-    assert assignment.target_patterns == ()
+    assert (
+        assignment.target_pattern_enrollment.reason == "consumer-shape-not-enrolled"
+    )
     binding = assignment.substitution_binding({})
     # Must not raise TargetPatternConstructionGapV1
     assert binding is None or isinstance(binding, dict)
@@ -72,7 +77,7 @@ def test_pure_name_unpack_still_has_pattern_and_binds(tmp_path: Path) -> None:
         "def f(key):\n" "    root, leaf = split(key)\n" "    return root\n",
     )
     assignment = next(n for n in sf.nodes() if isinstance(n, Assign))
-    assert len(assignment.target_patterns) == 1
+    assert len(assignment.require_target_patterns()) == 1
     # require still works for enrolled patterns
     pattern = sf.unit.require_target_pattern(assignment, assignment.targets[0])
-    assert pattern is assignment.target_patterns[0]
+    assert pattern is assignment.require_target_patterns()[0]
