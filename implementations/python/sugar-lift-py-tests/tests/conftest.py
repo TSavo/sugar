@@ -92,6 +92,34 @@ def sugar_binary_handoff() -> str:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_process_resident_files():
+    """One test, one residency (#7364). Cross-test sharing is unrepresentable.
+
+    The process-resident file cache in ``sugar_source_tree`` is keyed by
+    (content CID, workspace-RELATIVE filename), so byte-identical fixture source
+    under the same relative name collides across tests and distinct ``tmp_path``
+    gives ZERO isolation. ``_prepare_uncached`` -- MaterializeModule plus the
+    unit's relation tables -- runs only on a MISS, so a later test can inherit a
+    unit an earlier test already mutated.
+
+    False red is merely expensive. False GREEN is the reason this is autouse: a
+    test expecting a refusal, handed an already-refusing unit, passes without
+    exercising its own mechanism, and that green cannot be told from a real one.
+
+    Unconditional by design -- an opt-out marker would reinstate the silent
+    default this closes. Residency is a within-test property; the prepare-count
+    tests measure it inside one body and clear at entry already.
+
+    Production behaviour is untouched: this resets only at the test boundary.
+    """
+    from sugar_source_tree.process_resident_file import clear_process_resident_files
+
+    clear_process_resident_files()
+    yield
+    clear_process_resident_files()
+
+
+@pytest.fixture(autouse=True)
 def refuse_non_hermetic_sugar_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail loud if any test shells out to sugar mint/prove/lift/verify without SUGAR_HOME.
 
