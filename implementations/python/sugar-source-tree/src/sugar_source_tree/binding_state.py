@@ -566,6 +566,77 @@ class ConstructionTestimonyReporterV1:
     def report_gap(self, node: Node, panic: object) -> None:
         self._delegate.report_gap(node, panic)
 
+    #: Every identity term this guard can refuse on. Closed and NAMED: a
+    #: caller (or a tooth) can enumerate the faults without reading the body,
+    #: and a term added to the body without a name here is a visible omission.
+    SOURCE_CALL_IDENTITY_TERMS = (
+        "definition-not-a-functiondef",
+        "definition-ref-not-materialized",
+        "call-ref-not-materialized",
+        "definition-foreign-source-cid",
+        "resolved-not-a-functiondef",
+        "resolved-seal-mismatch",
+        "call-occurrence-mismatch",
+        "frame-is-none",
+        "frame-owner-ref-mismatch",
+        "frame-definition-site-foreign",
+    )
+
+    def _source_call_identity_fault(
+        self,
+        node: Node,
+        value: object,
+        definition: object,
+        resolved_definition: object,
+        call_occurrence: object,
+        frame: object,
+    ) -> str | None:
+        """The ONE identity term that refused this call, named, or None.
+
+        TEN FAULTS, NOT ONE. These terms were a flat ``or`` chain behind a
+        single sentence, so every one of them printed the same words and the
+        row was countable but not actionable -- the reader could not tell a
+        cross-FILE callee from a missing materialization from a stale frame,
+        and those ask for three different repairs.
+
+        The terms are also NOT independent, which the ``or`` chain hid. The
+        seal comparison is meaningless unless ``resolved_definition`` is a
+        definition, and every frame term is meaningless unless a frame
+        exists. In the chain, safety was a property of the ORDER: evaluated
+        on its own, ``resolved_definition.fragment`` raises AttributeError on
+        None, so reordering two neighbouring terms would have converted a
+        countable construction panic into an instrument failure. Here each
+        dependent term sits BELOW the ``return`` that establishes its
+        precondition, so it is unreachable without it -- the dependence is
+        structural, and breaking it means deleting a guard rather than
+        transposing two lines.
+        """
+        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+            return "definition-not-a-functiondef"
+        if definition.ref not in self._materialized_by_ref:
+            return "definition-ref-not-materialized"
+        if node.ref not in self._materialized_by_ref:
+            return "call-ref-not-materialized"
+        if definition.unit.source_cid != node.unit.source_cid:
+            return "definition-foreign-source-cid"
+        if not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef)):
+            return "resolved-not-a-functiondef"
+        # Reachable only with a resolved definition in hand.
+        if resolved_definition.fragment.seal() != definition.fragment.seal():
+            return "resolved-seal-mismatch"
+        if value.call_occurrence != call_occurrence:
+            return "call-occurrence-mismatch"
+        if frame is None:
+            return "frame-is-none"
+        # Reachable only with a frame in hand.
+        if frame.owner.ref is not definition.ref:
+            return "frame-owner-ref-mismatch"
+        if frame.definition_site.source_cid != node.unit.source_cid:
+            return "frame-definition-site-foreign"
+        return None
+
     def present_construction(self, node: Node, value: object) -> None:
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
         from sugar_source_tree.nodes import Call, FunctionDef, AsyncFunctionDef
@@ -590,24 +661,17 @@ class ConstructionTestimonyReporterV1:
                 span.end_col,
             )
             frame = value.source_call_frame
-            if (
-                not isinstance(definition, (FunctionDef, AsyncFunctionDef))
-                or definition.ref not in self._materialized_by_ref
-                or node.ref not in self._materialized_by_ref
-                or definition.unit.source_cid != node.unit.source_cid
-                or not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef))
-                or resolved_definition.fragment.seal() != definition.fragment.seal()
-                or value.call_occurrence != call_occurrence
-                or frame is None
-                or frame.owner.ref is not definition.ref
-                or frame.definition_site.source_cid != node.unit.source_cid
-            ):
+            fault = self._source_call_identity_fault(
+                node, value, definition, resolved_definition, call_occurrence, frame
+            )
+            if fault is not None:
                 self._testimony_gap(
                     node,
                     value,
                     "constructed value",
                     ValueError(
-                        "source call definition is not this call's exact typed occurrence"
+                        "source call definition is not this call's exact typed "
+                        f"occurrence: {fault}"
                     ),
                 )
         try:
