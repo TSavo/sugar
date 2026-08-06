@@ -348,6 +348,18 @@ def open_source_file_for_construction(
         reporter=reporter,
         construction_context=construction_context,
     )
+    # THE BINDING LEAK (#7171 class, third costume). `SourceFile.__init__` on a
+    # process-residency HIT rebinds `self.reporter` and nothing else: the shell
+    # was already materialized, so every node in it still carries the FIRST
+    # opener's reporter -- `NULL_REPORTER` whenever that first open was a
+    # dependency resolution. Passing `reporter=` therefore does NOT seat the
+    # tree; it only relabels the file object, and the nodes keep writing into a
+    # channel that owns no registration.
+    #
+    # Seat the roll call onto the existing nodes, the same walk the audit leaf
+    # does. This parses nothing and prepares nothing.
+    if reporter is not NULL_REPORTER:
+        _seat_roll_call_reporter(source_file, reporter)
     # ROSTER FLOOR LAW (#7062 class close, #7075 second costume generalized):
     # If SourceFile produced N functions, the board may never report fewer
     # than N without naming why. Bank N *before* populate. Populate failure
@@ -2264,9 +2276,18 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # facts entrance performs as part of the one roll call.
                     # An explicit empty contract table is honest here: no
                     # source sugar is constructed at this level.
+                    # ONE DOOR, ONE LAW: every enumerate open seats a reporter
+                    # that can hold a registration. This level only mints the
+                    # module memento today, but a tree opened on the shared
+                    # `NULL_REPORTER` is a tree whose nodes are born
+                    # unregistered. Do not leave a second null-seated door for
+                    # the defect to move into.
+                    from sugar_source_tree.reporter import CollectingReporter
+
                     sf = open_source_file_for_construction(
                         full_path,
                         root=root,
+                        reporter=CollectingReporter(),
                         construction_context=tree_construction_context_for_workspace(
                             root, contract_refs={}
                         ),
@@ -2358,10 +2379,26 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                 else:
                     construction_context = tree_construction_context_for_workspace(root)
+                # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume).
+                # This door CONSTRUCTS sugar: `populate_source_derived_resource_refs`
+                # below reaches `ClassDef.sugar()`, which builds a
+                # `ConstructionTestimonyReporterV1` consumer roll over
+                # `self.reporter`. Leaving `reporter=` off defaults the whole
+                # tree to `NULL_REPORTER`, so every node in it is born
+                # unregistered. When a source-frame call then retains its
+                # producer definition, `retain_registered_node_from` is handed a
+                # node whose producer is the shared `NULL_REPORTER` -- which
+                # owns no registration and never can -- and refuses. The node is
+                # not foreign; it is genuinely unregistered, because this door
+                # never opened a channel to register it on. Seat the same
+                # `CollectingReporter` `audit_file_gaps` and `census.py` seat.
+                from sugar_source_tree.reporter import CollectingReporter
+
                 try:
                     tree_file = open_source_file_for_construction(
                         full_path,
                         root=root,
+                        reporter=CollectingReporter(),
                         construction_context=construction_context,
                         populate_derived=False,
                         source_workspace_root=locus_root,

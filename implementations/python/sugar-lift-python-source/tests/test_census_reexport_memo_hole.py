@@ -47,8 +47,8 @@ REEXPORT_MEMO_SEATS = (
     "tests/io/parser/common/test_data_list.py",
 )
 
-# ``test_writers.py`` clears the re-export message but does NOT reach a row.
-# Underneath it sits a DIFFERENT, pre-existing defect that the re-export abort
+# ``test_writers.py`` used to clear the re-export message and still not reach a
+# row: underneath it sat a DIFFERENT, pre-existing defect the re-export abort
 # was shadowing::
 #
 #     BACKEND DEFECT [ConstructionTestimonyReporterV1.retain_registered_node_from]
@@ -56,34 +56,16 @@ REEXPORT_MEMO_SEATS = (
 #       observed: foreign or absent producer node registration
 #                 (producer=NullReporter, node_reporter=NullReporter)
 #
-# Measured at MAIN (15ef03354) with only ``export_hit`` /
-# ``export_terminal_hit`` blinded -- the uncached resolve, which is the oracle
-# the memo must agree with -- the seat reaches that same BackendDefect. So it
-# is not reachable-only-after this change; the file simply died earlier before.
-#
-# ``BackendDefect`` is a ``SourceTreePanic``, deliberately NOT a
-# ``SugarNotWritten``: it says OUR implementation is broken, not that the
-# corpus needs a construct written. Retyping it to clear this hole would
-# broaden the countable category to absorb our own bugs. It stays a hole, and
-# it stays named, until the registration defect itself is fixed.
-SHADOWED_BY_BACKEND_DEFECT = "tests/io/excel/test_writers.py"
-
+# That registration defect is now repaired: the enumerate door seats a
+# registering reporter, and a process-residency hit re-seats the roll call onto
+# the tree's existing nodes rather than relabelling only the file object. See
+# ``test_enumerate_door_seats_the_registration_channel.py``. This seat banks a
+# row, so the xfail it carried is gone -- removed because the hole closed, not
+# because the tooth was inconvenient.
 
 def _terminal_seat(seat: str):
-    """xfail STRICT: the day this seat banks a row, this tooth must be told."""
-    if seat != SHADOWED_BY_BACKEND_DEFECT:
-        return seat
-    return pytest.param(
-        seat,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(
-                "pre-existing BackendDefect in retain_registered_node_from "
-                "(reproduces at main with the export memo blinded); this seat "
-                "is still a census hole, for a different cause"
-            ),
-        ),
-    )
+    """All four seats bank a row; none is held open any more."""
+    return seat
 
 
 def _recensus_consumer():
@@ -128,9 +110,8 @@ def test_reexport_memo_seat_measures_to_a_countable_terminal(seat: str) -> None:
     tooth's business -- a panic naming construct/coordinate/shape is the
     product working. What is refused is ``terminalKind`` naming neither.
 
-    Three of the four seats pass. ``test_writers.py`` is xfail-STRICT on a
-    different, pre-existing cause (see ``SHADOWED_BY_BACKEND_DEFECT``) -- the
-    hole is recorded, not silenced.
+    All four seats pass. ``test_writers.py`` was held open by a second,
+    pre-existing registration defect until the enumerate door was seated.
     """
     row = _measure_seat(seat)
     assert row.get("terminalKind") in {"constructed", "construction-panic"}, (
