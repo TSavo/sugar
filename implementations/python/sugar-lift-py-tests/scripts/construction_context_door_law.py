@@ -125,12 +125,26 @@ CONSTRUCTION_DRIVER = "sugar"
 # The failure mode this exists to prevent is someone "fixing" the probe to make
 # the law pass. THE FIX DELETES THE EVIDENCE. If one of these files is genuinely
 # obsolete, delete the file AND its entry together.
-DELIBERATE_OFFENDERS: dict[str, str] = {
-    "implementations/python/sugar-lift-py-tests/scripts/rts_provenance_probe.py": (
+#
+# An entry is ``(reason, pending_branch)``. ``pending_branch`` is None for a
+# file that is in this tree now. It names a branch when the file is NOT here
+# yet, which is a genuinely different fact from "the file is gone" -- one is a
+# merge that has not happened, the other is rot. Collapsing them into "missing"
+# is the same absence-vs-lookup-failure conflation this whole issue is about,
+# committed by the instrument that polices it.
+#
+# A pending entry reports loudly and does not fail. It cannot rot silently,
+# because the moment the branch lands the file EXISTS and the pending marker
+# becomes a lie -- which ``stale_allowlist_entries`` then fails on, forcing
+# whoever merges to confirm the reason rather than inherit it.
+DELIBERATE_OFFENDERS: dict[str, tuple[str, str | None]] = {
+    "implementations/python/sugar-lift-py-tests/scripts/"
+    "probe_runtime_selected_provenance.py": (
         "Discriminator for #7394: drives .sugar() over a bare from_path tree "
         "BESIDE the production door, because exhibiting the forbidden door's "
         "output is the measurement. Fixing this to satisfy the law would "
-        "delete the evidence the law was bought with."
+        "delete the evidence the law was bought with.",
+        "gh/frontier-rts-provenance",
     ),
 }
 
@@ -239,9 +253,16 @@ def stale_allowlist_entries(repo_root: Path) -> list[dict]:
     Neither is fatal to the corpus; both are fatal to the exception.
     """
     stale: list[dict] = []
-    for rel, reason in sorted(DELIBERATE_OFFENDERS.items()):
+    for rel, (reason, pending_branch) in sorted(DELIBERATE_OFFENDERS.items()):
         path = repo_root / rel
         if not path.is_file():
+            if pending_branch is not None:
+                # Expected: the file arrives with its branch. Loud, not fatal.
+                print(
+                    f"  PENDING {rel}: not in this tree yet, expected from "
+                    f"{pending_branch}. Confirm the reason when it merges."
+                )
+                continue
             stale.append(
                 {
                     "path": rel,
@@ -249,6 +270,18 @@ def stale_allowlist_entries(repo_root: Path) -> list[dict]:
                     "rot": "file does not exist -- delete the entry with it, or "
                     "correct the path. An entry pointing nowhere will cover the "
                     "next file to land there.",
+                }
+            )
+            continue
+        if pending_branch is not None:
+            stale.append(
+                {
+                    "path": rel,
+                    "reason": reason,
+                    "rot": f"marked pending on {pending_branch}, but the file is "
+                    f"HERE -- the branch landed. Drop the pending marker and "
+                    f"confirm the reason still describes this file, rather than "
+                    f"inheriting an exception nobody rechecked.",
                 }
             )
             continue
