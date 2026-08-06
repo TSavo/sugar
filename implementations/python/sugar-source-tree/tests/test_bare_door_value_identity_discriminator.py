@@ -192,43 +192,172 @@ def test_value_identity_across_doors(tmp_path, kind) -> None:
         print(f"      production : ...{right[lo:at + 180]}")
 
 
-def test_workspace_root_reaching_the_value_would_be_a_machine_dependent_cid(
-    tmp_path,
-) -> None:
-    """The worst case for FunctionDef, checked directly.
+# ---------------------------------------------------------------------------
+# workspace_root: does it reach the CONTENT ADDRESS?
+#
+# The predecessor of this block opened `<tmp>/one/subject.py` and
+# `<tmp>/two/subject.py` and reported "0 differing". That claimed nothing.
+# `subject.py` sat at the TOP of both roots, so the derived module name was
+# `subject` either way and the comparison could not have come out otherwise --
+# and the test never checked that a bridge symbol was PRESENT at all, so "0
+# differing" was equally consistent with comparing None against None.
+#
+# The derivation decides which fixture is the right one. `FunctionDef.
+# _construct_sugar` reads `workspace_root` and then uses it ONLY as a boolean
+# gate; the symbol itself is derived from `self.unit.filename`, which the
+# construction door already minted WORKSPACE-RELATIVE, and an absolute filename
+# raises SugarNotWritten two lines above rather than being spelled into a value.
+#
+# So the absolute root is structurally incapable of entering the value, and the
+# RELATIVE path is entirely capable of it. Those are two different questions and
+# the fixture that answers one cannot answer the other:
+#
+#   * vary the ABSOLUTE root, hold the relative path fixed -> values must be
+#     IDENTICAL. This is the machine-dependence question, and a difference here
+#     is a machine-dependent content address: STOP, do not repair.
+#   * vary the RELATIVE path, hold the absolute root fixed -> values must
+#     DIFFER. A different relative location is a different source location, and
+#     agreement here would be a bridge-identity COLLISION, the defect in the
+#     other direction.
+#
+# Varying depth under the two roots at once -- the obvious "make it
+# discriminate" move -- changes BOTH at once and can only report a difference it
+# cannot attribute. It is written below as two teeth, one variable each.
+# ---------------------------------------------------------------------------
 
-    ``FunctionDef`` consults the context for ``workspace_root``. If that value
-    reaches the constructed value it enters the content address, and two
-    machines with different workspace roots then disagree about the SAME source.
-    That is not "optional enrichment" -- it is a machine-dependent CID, which is
-    load-bearing in the worst possible way.
+DEEP_RELATIVE = ("pkg", "sub", "subject.py")
 
-    Two production opens under DIFFERENT roots, same source: the constructed
-    values must agree.
+
+def _bridge_symbols(root, relative_parts):
+    """`{coordinate: bridge_source_symbol}` for a production open at a path.
+
+    Reads the symbol out of the constructed value rather than comparing whole
+    reprs, so a difference is attributable to the one field under test instead
+    of to anything else that happens to ride along.
     """
-    first = tmp_path / "one"
-    second = tmp_path / "two"
-    for root in (first, second):
-        root.mkdir(parents=True, exist_ok=True)
-        (root / "subject.py").write_text(SOURCE)
+    import re
 
-    def build(root):
-        source = open_source_file_for_construction(
-            root / "subject.py",
-            root=root,
-            reporter=CollectingReporter(),
-            construction_context=tree_construction_context_for_workspace(root),
-            populate_derived=False,
-        )
-        return _construct_all(source, "FunctionDef")
+    path = root.joinpath(*relative_parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(SOURCE)
+    source = open_source_file_for_construction(
+        path,
+        root=root,
+        reporter=CollectingReporter(),
+        construction_context=tree_construction_context_for_workspace(root),
+        populate_derived=False,
+    )
+    out = {}
+    for coordinate, (status, text) in _construct_all(source, "FunctionDef").items():
+        if status != "ok":
+            out[coordinate] = f"<{status}:{text}>"
+            continue
+        found = re.search(r"bridge_source_symbol=('[^']*'|None)", text)
+        out[coordinate] = None if found is None else found.group(1)
+    return out
 
-    left = build(first)
-    right = build(second)
+
+def test_the_bridge_symbol_is_present_at_all(tmp_path) -> None:
+    """NON-VACUITY CONTROL for both teeth below. Runs first for a reason.
+
+    Every "identical across roots" verdict is worthless if the field being
+    compared is absent on both arms. This asserts the `workspace_root`-gated
+    branch actually fired and put a symbol in the value, so the comparisons
+    below are comparing something.
+    """
+    symbols = _bridge_symbols(tmp_path / "control", DEEP_RELATIVE)
+    present = {c: s for c, s in symbols.items() if s not in (None, "None")}
+    print("\n=== non-vacuity control: bridge symbols present ===")
+    for coordinate, symbol in sorted(symbols.items()):
+        print(f"    line {coordinate[0]}:{coordinate[1]}  {symbol}")
+    assert present, (
+        "no FunctionDef carries a bridge_source_symbol in this fixture, so the "
+        "workspace_root branch never fired and the two teeth below would both "
+        "pass VACUOUSLY -- comparing None against None across every root."
+    )
+    # Deliberately NOT an exact-spelling assert. This is the precondition of the
+    # two teeth below, and if it pinned the spelling it would fire for every
+    # mutation either of them is meant to catch -- three teeth going red at once
+    # and no way to tell which claim was violated. It asserts only that a symbol
+    # exists and names the function, which is all "non-vacuous" requires.
+    assert any(s.endswith(".module_level'") for s in present.values()), (
+        f"no symbol names the module-level function, so the derivation under "
+        f"test was not exercised: {present}"
+    )
+
+
+def test_the_absolute_workspace_root_never_reaches_the_value(tmp_path) -> None:
+    """THE machine-dependent-CID tooth. ONE variable: the absolute root.
+
+    Same relative path under both roots, roots at DIFFERENT ABSOLUTE DEPTHS
+    (`<tmp>/a` vs `<tmp>/b/c/d/e`) so a root that leaked into the value would
+    leak differently. If the symbols differ, `workspace_root`'s VALUE reached
+    the constructed value; it is in the content address; and two machines with
+    the same checkout at different paths disagree about the same source.
+
+    That is not a bug to repair in passing. It is a machine-dependent content
+    address -- STOP and report it.
+    """
+    shallow = tmp_path / "a"
+    deep = tmp_path / "b" / "c" / "d" / "e"
+    left = _bridge_symbols(shallow, DEEP_RELATIVE)
+    right = _bridge_symbols(deep, DEEP_RELATIVE)
+
     assert left and right
+    assert set(left) == set(right), (
+        f"the two roots did not reach the same coordinates: {left} vs {right}"
+    )
     differing = {c for c in left if left[c] != right[c]}
-    print("\n=== workspace_root sensitivity (FunctionDef, two roots) ===")
-    print(f"    coordinates compared : {len(left)}")
-    print(f"    differing            : {len(differing)}")
-    for coordinate in sorted(differing):
-        print(f"    line {coordinate[0]}: {left[coordinate][1][:200]}")
-        print(f"                 vs {right[coordinate][1][:200]}")
+    print("\n=== absolute root varied, relative path HELD (must be identical) ===")
+    print(f"    shallow root : {shallow}")
+    print(f"    deep root    : {deep}")
+    for coordinate in sorted(left):
+        print(f"    line {coordinate[0]}:{coordinate[1]}  {left[coordinate]}")
+    assert not differing, (
+        "MACHINE-DEPENDENT CONTENT ADDRESS. The same source at the same "
+        "relative path constructed two different values because the ABSOLUTE "
+        "workspace root differed:\n"
+        + "\n".join(
+            f"  line {c[0]}:{c[1]}  {left[c]}  !=  {right[c]}"
+            for c in sorted(differing)
+        )
+        + "\nDo not repair this in passing -- two machines disagreeing about "
+        "one source is a finding, and it is reported before it is fixed."
+    )
+
+
+def test_the_relative_path_does_reach_the_value(tmp_path) -> None:
+    """The other direction, and it must NOT be identical. ONE variable: depth.
+
+    Same absolute root depth, file at different depths WITHIN the root. The
+    bridge symbol names a cross-language identity, so two functions at two
+    different source locations must not answer to one symbol. Agreement here
+    would be a collision, not a reassurance -- and it would also mean the tooth
+    above passes for the trivial reason that the symbol tracks nothing.
+    """
+    # ONE root for both arms. Two roots would vary the absolute path as well,
+    # and a difference could then be attributed to either variable -- which is
+    # the mistake the tooth above exists to avoid making.
+    root = tmp_path / "one-root"
+    top = _bridge_symbols(root, ("subject.py",))
+    nested = _bridge_symbols(root, DEEP_RELATIVE)
+
+    assert set(top) == set(nested)
+    print("\n=== relative path varied, root depth HELD (must differ) ===")
+    for coordinate in sorted(top):
+        print(f"    line {coordinate[0]}:{coordinate[1]}")
+        print(f"      subject.py          : {top[coordinate]}")
+        print(f"      pkg/sub/subject.py  : {nested[coordinate]}")
+    # The claim is DIFFERENCE, not a spelling. Pinning the exact strings here
+    # would make this tooth fire for any change to the symbol format, including
+    # the machine-dependent one the tooth above owns -- and then a red would not
+    # say which of the two claims broke.
+    colliding = {c for c in top if top[c] == nested[c]}
+    assert not colliding, (
+        "BRIDGE IDENTITY COLLISION: `subject.py` and `pkg/sub/subject.py` are "
+        "different source locations under the SAME root, but answer to one "
+        "symbol:\n"
+        + "\n".join(f"  line {c[0]}:{c[1]}  {top[c]}" for c in sorted(colliding))
+        + "\nThe symbol does not track the relative path it claims to name, so "
+        "two distinct functions share one cross-language identity."
+    )
