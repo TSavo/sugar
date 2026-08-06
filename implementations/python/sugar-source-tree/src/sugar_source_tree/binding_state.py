@@ -1205,6 +1205,46 @@ def _cv2_type_tag(value: object) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
+def _cv2_slot_spelling(at: object) -> str:
+    """One slot step, spelled by the arm that produced it.
+
+    The three ``at`` kinds are not interchangeable and must not read alike: a
+    dataclass field / mapping key is ``.name``, a tuple index is ``[i]``, and a
+    frozenset's deliberate absence of a coordinate is ``{*}`` -- an unordered
+    member has no slot to name, and saying ``.None`` would invent one.
+    """
+    if at is None:
+        return "{*}"
+    if isinstance(at, int) and not isinstance(at, bool):
+        return f"[{at}]"
+    return f".{at}"
+
+
+def _cv2_slot_path(
+    target: int, root: int, parent_of: dict[int, tuple[int, object]]
+) -> str:
+    """The slot chain from the presented root down to the refused value.
+
+    A value reachable by several paths through a shared DAG child reports the
+    FIRST path the walk descended -- the one that actually reached it here.
+    That is one true path, not a claim of uniqueness.
+    """
+    if target == root:
+        return "<root>"
+    steps: list[str] = []
+    cursor = target
+    # The parent chain is acyclic by construction: an entry is written once,
+    # when a child is first pushed. The root bound is belt-and-braces so a
+    # reporting path can never outlive its own budget and hang the refusal.
+    while cursor != root and cursor in parent_of and len(steps) <= 512:
+        parent, at = parent_of[cursor]
+        steps.append(_cv2_slot_spelling(at))
+        cursor = parent
+    if cursor != root:
+        return "<unrooted>"
+    return "".join(reversed(steps))
+
+
 _NOT_A_LEAF = object()
 
 # (type, cid) pairs whose ``cid_of_json(preimage) == cid`` has been checked once.
@@ -1521,6 +1561,11 @@ def constructed_value_cid_v2(value: object) -> str:
     # Values whose expansion has begun and not finished -- the DFS "gray" set,
     # which is exactly the cycle predicate.
     expanding: dict[int, object] = {}
+    # id(child) -> (id(parent), at). Written once, when a child is first
+    # pushed, so a refusal deep in the graph can say WHICH slot reached it.
+    # A type tag alone cannot separate two same-typed slots of one value.
+    parent_of: dict[int, tuple[int, object]] = {}
+    root_id = id(value)
     stack: list[tuple[object, bool]] = [(value, False)]
     while stack:
         current, expanded = stack.pop()
@@ -1533,21 +1578,35 @@ def constructed_value_cid_v2(value: object) -> str:
             continue
         row = classified.get(id(current))
         if row is None:
-            row = _cv2_classify(current)
+            try:
+                row = _cv2_classify(current)
+            except ConstructedValueCategoryGap as gap:
+                # The refusal itself is UNCHANGED -- same type, same reason,
+                # same instruction. The walk simply stops discarding the path
+                # it already descended to get here.
+                raise ConstructedValueCategoryGap(
+                    f"{gap} [refused at "
+                    f"{_cv2_slot_path(id(current), root_id, parent_of)} of "
+                    f"{_cv2_type_tag(value)}]"
+                ) from gap
             classified[id(current)] = row
         semantic_type, arity, local_fields, children = row
         pinned.append(current)
         if not expanded:
             expanding[id(current)] = current
             stack.append((current, True))
-            for _at, child in children:
+            for at, child in children:
                 if id(child) in child_cid:
                     continue
+                if id(child) not in parent_of and id(child) != root_id:
+                    parent_of[id(child)] = (id(current), at)
                 if id(child) in expanding:
                     raise ConstructedValueCategoryGap(
                         "constructed value graph is CYCLIC through "
                         f"{_cv2_type_tag(child)}: a cycle has no content "
-                        "coordinate. Keep the coordinate loud."
+                        "coordinate. Keep the coordinate loud. [refused at "
+                        f"{_cv2_slot_path(id(child), root_id, parent_of)} of "
+                        f"{_cv2_type_tag(value)}]"
                     )
                 stack.append((child, False))
             continue

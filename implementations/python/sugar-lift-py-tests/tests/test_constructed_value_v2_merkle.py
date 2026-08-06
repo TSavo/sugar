@@ -464,6 +464,69 @@ def test_an_unnameable_category_is_a_typed_gap_never_reflection():
     ).replace("  ", " ")
 
 
+def test_a_category_gap_names_the_slot_it_refused_not_only_the_type():
+    """A type tag alone is not actionable.
+
+    The refused value is reached through a PATH from the presented root, and
+    that path is the whole repair instruction: a reader told only
+    ``builtins.list`` must search every slot of a sugar with a dozen ``Any``
+    fields to find which one carried it. The walk already knows the path -- it
+    descended it -- so refusing to say it discards evidence the instrument
+    holds.
+    """
+    with pytest.raises(ConstructedValueCategoryGap) as caught:
+        constructed_value_cid_v2(Holder(Pair(1, [2, 3])))
+    message = str(caught.value)
+    # The type is still named -- the path is carried IN ADDITION, never instead.
+    assert "builtins.list" in message
+    assert "MUTABLE container" in message
+    # ... and the slot chain from the presented root to the refused value.
+    assert "at .items.right" in message, message
+
+
+def test_the_refused_slot_path_distinguishes_two_slots_of_one_type():
+    """Two fields of the same type are the case a type tag cannot separate."""
+    left_gap = pytest.raises(ConstructedValueCategoryGap)
+    with left_gap:
+        constructed_value_cid_v2(Pair([1], (2,)))
+    right_gap = pytest.raises(ConstructedValueCategoryGap)
+    with right_gap:
+        constructed_value_cid_v2(Pair((1,), [2]))
+    assert "at .left" in str(left_gap.excinfo.value)
+    assert "at .right" in str(right_gap.excinfo.value)
+    assert str(left_gap.excinfo.value) != str(right_gap.excinfo.value)
+
+
+def test_the_three_slot_kinds_do_not_read_alike():
+    """A field, an index and an unordered member are different coordinates.
+
+    Spelling them all ``.at`` would make ``Pair(left=...)`` and a 0th tuple
+    element render identically, and would invent a slot name for a frozenset
+    member -- which deliberately HAS no coordinate.
+    """
+    with pytest.raises(ConstructedValueCategoryGap) as field_gap:
+        constructed_value_cid_v2(Pair([1], 0))
+    assert "at .left" in str(field_gap.value)
+
+    with pytest.raises(ConstructedValueCategoryGap) as index_gap:
+        constructed_value_cid_v2(Holder((0, [1])))
+    # An index is bracketed, never spelled as a field name.
+    assert "at .items[1]" in str(index_gap.value), str(index_gap.value)
+
+    with pytest.raises(ConstructedValueCategoryGap) as member_gap:
+        constructed_value_cid_v2(Holder(frozenset({object()})))
+    # An unordered member has no slot coordinate; say so rather than name one.
+    assert "at .items{*}" in str(member_gap.value), str(member_gap.value)
+    assert ".None" not in str(member_gap.value)
+
+
+def test_a_refusal_at_the_presented_root_says_root_not_an_empty_path():
+    """An empty path and "the root itself" must not share a spelling."""
+    with pytest.raises(ConstructedValueCategoryGap) as caught:
+        constructed_value_cid_v2([1, 2])
+    assert "at <root>" in str(caught.value)
+
+
 def test_a_bare_wire_method_earns_nothing():
     """V1 called ``.wire()`` generically. V2 never does: an arbitrary method's
     inputs cannot be enumerated, so it cannot authenticate anything."""
