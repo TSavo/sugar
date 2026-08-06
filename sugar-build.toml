@@ -104,6 +104,12 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_prefix_threading.py"]
 network = "none"
 
+[tasks.probe-local-generator-manager]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_local_generator_manager.py"]
+network = "none"
+
 [tasks.probe-rts-provenance]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
