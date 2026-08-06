@@ -203,3 +203,58 @@ def test_facts_leaf_never_manufactures_a_contract_ref(
         "the entrance minted a resolution it was never handed: "
         f"{[type(row).__name__ for row in rows]}"
     )
+
+
+def test_facts_leaf_opens_with_the_BOUND_refs_when_the_prebind_installed_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The authority is the AUTHENTICATED table when one exists, not a stand-in.
+
+    ``open_source_file_for_construction`` defaults a context when none is
+    passed, and that default is built from the PROVISIONAL demand table. On a
+    production shard the Rust prebind has installed authenticated resolutions;
+    constructing the frontier against provisional gap rows instead would report
+    every authenticated manager as unresolved -- a second manufactured frontier
+    wearing the first one's clothes.
+
+    So the leaf must pass the bound table explicitly. Nothing else in this file
+    can see that: with no prebind installed, the door's own default and this
+    leaf's choice coincide, and every other arm here stays green either way.
+    """
+    class _BoundRefs:
+        catalog_cid = "blake3-512:catalog-sentinel"
+        table_cid = "blake3-512:table-sentinel"
+        by_use_site: dict = {}
+
+        def require(self, _coordinate):
+            raise AssertionError("no use-site should be required in this fixture")
+
+    bound = _BoundRefs()
+    monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", bound)
+
+    class _Stop(Exception):
+        """Halt the leaf at its open; this tooth reads the argument, not the tree."""
+
+    seen: dict = {}
+
+    def _spy(*args, **kwargs):
+        seen["construction_context"] = kwargs.get("construction_context")
+        raise _Stop
+
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", _spy)
+    (tmp_path / "consumer.py").write_text(UNRESOLVABLE_WITH, encoding="utf-8")
+
+    with pytest.raises(_Stop):
+        lift_rpc._roll_call_audit_leaf(
+            tmp_path / "consumer.py", "consumer.py", root=tmp_path
+        )
+
+    context = seen["construction_context"]
+    assert context is not None, (
+        "the leaf opened with no authority of its own -- it inherits the door's "
+        "provisional default and silently discards the authenticated prebind"
+    )
+    assert context.contract_refs is bound, (
+        "the leaf constructed the frontier against a table that is not the "
+        f"authenticated one: {context.contract_refs!r}"
+    )
