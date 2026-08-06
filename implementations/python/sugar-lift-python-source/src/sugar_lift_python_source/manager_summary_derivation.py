@@ -1965,6 +1965,10 @@ def _install_local_derivation_gap(
             "targetSymbol": target_symbol,
         }
     )
+    if _seat_off_population_citation(
+        context, coordinate, target_symbol, kind, demand_cid
+    ):
+        return
     gap = ContextManagerResolutionGapV1(
         demand_cid,
         coordinate,
@@ -3139,6 +3143,53 @@ def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
     return str(kind), (str(detail) if detail else None)
 
 
+def _seat_off_population_citation(
+    context, coordinate, target_symbol, kind: str, owner_cid: str
+) -> bool:
+    """Seat the positive citation where an off-population gap would go.
+
+    Derivation reaches this point having AUTHENTICATED the callee and then
+    declined to materialize it, because the population membrane refuses to
+    rebuild a distribution the pin does not enroll. That is not the same fact
+    as failing to find the callee, and it must not produce the same row:
+    off-population is "we know exactly which callee this is, and we have
+    decided not to look inside it".
+
+    Returns True when the citation was seated, so the caller skips the gap.
+    Only ``call-target-off-population`` qualifies, and only with a known
+    ``target_symbol`` -- a citation naming no callee would claim knowledge we
+    do not have, which is the lookup-failure spelling wearing this one's
+    clothes.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        mint_opaque_cited_context_manager_ref,
+        opaque_source_call_roster_of,
+    )
+
+    if kind != "call-target-off-population" or not target_symbol:
+        return False
+    roster = context.opaque_source_call_obligations.get(coordinate)
+    if roster is None:
+        roster = opaque_source_call_roster_of(
+            OpaqueSourceCallObligationV1(
+                coordinate,
+                str(target_symbol),
+                owner_cid,
+                "call-target-off-population",
+            )
+        )
+        context.opaque_source_call_obligations[coordinate] = roster
+    elif roster.resolution_kind != "call-target-off-population":
+        # Another owner classified this same call differently. Their testimony
+        # stands; do not overwrite it with a citation.
+        return False
+    context.source_derived_contract_refs[coordinate] = (
+        mint_opaque_cited_context_manager_ref(roster=roster)
+    )
+    return True
+
+
 def _install_derivation_gap(
     context, coordinate, receipt, kind: str, detail: str | None = None
 ) -> None:
@@ -3153,8 +3204,13 @@ def _install_derivation_gap(
         ContextManagerResolutionGapV1,
     )
 
+    demand_cid = receipt.demand.get("cid", receipt.use["cid"])
+    if _seat_off_population_citation(
+        context, coordinate, receipt.target_symbol, kind, demand_cid
+    ):
+        return
     gap = ContextManagerResolutionGapV1(
-        receipt.demand.get("cid", receipt.use["cid"]),
+        demand_cid,
         coordinate,
         receipt.target_symbol,
         kind,
