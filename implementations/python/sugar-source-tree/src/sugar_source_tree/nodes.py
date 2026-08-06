@@ -3238,6 +3238,48 @@ class Node(Typed):
             )
         return context
 
+    def source_occurrence(self):
+        """WHERE this node is. A pure function of the source, minted always.
+
+        ``(unit.source_cid, line_col_span())`` and nothing else. It takes no
+        construction context as input, so there is no state of the context under
+        which the answer is unavailable -- a node occupies a span of a
+        content-addressed source whether or not anything is enrolled at that
+        coordinate, whether or not a table has a row for it, and whether or not
+        the tree was opened through the production door.
+
+        It was previously minted only under
+        ``isinstance(context, TreeConstructionContextV1)``, at two sites that
+        computed it identically, and downstream code then read
+        ``coordinate is not None`` as "there is a context". One field carrying
+        two answers::
+
+            None == "this call occupies no span of any source"   (never true)
+            None == "no context of the expected type was seated" (the real one)
+
+        That is #7394's conflation inside the node whose job is to report
+        occurrences, and ``_require_construction_context`` admits it: it refuses
+        ``None`` and returns ``object``, so a context of another type is within
+        the door's contract and silently produced a call with no occurrence.
+
+        Minting it unconditionally is safe only because that door now bites. The
+        condition was never about whether the occurrence was KNOWABLE -- it was
+        the context witness wearing the occurrence's clothes. The witness is now
+        the context itself.
+        """
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+
+        span = self.line_col_span()
+        return SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+
     def _project_constructed_value_for_testimony(self, value: object) -> object:
         """Project parser machinery before constructed-value testimony."""
         return value
@@ -11272,21 +11314,15 @@ class Call(Expression):
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
         context = self._require_construction_context(owner="Call._construct_sugar")
-        coordinate = None
         from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
         )
 
+        # Unconditional: this is WHERE the call is, not WHETHER a context was
+        # seated. See ``Node.source_occurrence``.
+        coordinate = self.source_occurrence()
+
         if isinstance(context, TreeConstructionContextV1):
-            span = self.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
             # The roster states the ONE classification every authenticated
             # owner gave this call; owners that disagreed panicked at install,
             # so there is nothing here to choose between.
@@ -11494,18 +11530,19 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
                 # The frame TABLE lives on the construction context, so it is
-                # carried only when there IS one. ``coordinate`` is already the
-                # witness of that: it is minted above solely under
-                # ``isinstance(context, TreeConstructionContextV1)``. Guarding
-                # this on ``lexical_row`` alone dereferenced a context that a
-                # context-less open leaves as None -- an AttributeError, which
-                # is an INSTRUMENT failure that makes the whole file unmeasured
-                # rather than a terminal anyone can read.
-                source_call_frame_table=(
-                    context.source_call_frames
-                    if lexical_row is not None and coordinate is not None
-                    else None
-                ),
+                # carried only when the context HAS one. That is asked directly
+                # now. It used to be asked as ``coordinate is not None``, on the
+                # reasoning that the coordinate was minted solely under
+                # ``isinstance(context, TreeConstructionContextV1)`` -- true at
+                # the time, and exactly the double duty that made the call's
+                # occurrence answer a question about the context instead of a
+                # question about the call. A missing table is now spelled as a
+                # missing table.
+                source_call_frame_table=getattr(
+                    context, "source_call_frames", None
+                )
+                if lexical_row is not None
+                else None,
                 source_call_frame_coordinate=(
                     coordinate if lexical_row is not None else None
                 ),
@@ -11537,18 +11574,9 @@ class Call(Expression):
                     CallContractRefProtocolError,
                     CallContractResolutionGapV1,
                 )
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
-
-                span = self.line_col_span()
-                coordinate = SourceFragmentCoordinateV1(
-                    self.unit.source_cid,
-                    span.start_line,
-                    span.start_col,
-                    span.end_line,
-                    span.end_col,
-                )
+                # The occurrence is already minted above, from the same pure
+                # function of the same source. Re-deriving it here was a second
+                # answer to a question already resolved.
                 resolution = None
                 if coordinate in call_refs.enrolled_use_sites:
                     try:
@@ -11848,7 +11876,6 @@ class Call(Expression):
             owner="Call._spread_source_call_frame"
         )
         from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
         )
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
@@ -11858,15 +11885,11 @@ class Call(Expression):
             isinstance(context, TreeConstructionContextV1)
             and context.source_call_frames
         ):
-            span = self.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
+            # Same pure function as every other occurrence mint; the lookup is
+            # what the context gates, not the coordinate.
+            source_call_frame = context.source_call_frames.get(
+                self.source_occurrence()
             )
-            source_call_frame = context.source_call_frames.get(coordinate)
         if source_call_frame is None and isinstance(self.func, Name):
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
