@@ -566,6 +566,77 @@ class ConstructionTestimonyReporterV1:
     def report_gap(self, node: Node, panic: object) -> None:
         self._delegate.report_gap(node, panic)
 
+    #: Every identity term this guard can refuse on. Closed and NAMED: a
+    #: caller (or a tooth) can enumerate the faults without reading the body,
+    #: and a term added to the body without a name here is a visible omission.
+    SOURCE_CALL_IDENTITY_TERMS = (
+        "definition-not-a-functiondef",
+        "definition-ref-not-materialized",
+        "call-ref-not-materialized",
+        "definition-foreign-source-cid",
+        "resolved-not-a-functiondef",
+        "resolved-seal-mismatch",
+        "call-occurrence-mismatch",
+        "frame-is-none",
+        "frame-owner-ref-mismatch",
+        "frame-definition-site-foreign",
+    )
+
+    def _source_call_identity_fault(
+        self,
+        node: Node,
+        value: object,
+        definition: object,
+        resolved_definition: object,
+        call_occurrence: object,
+        frame: object,
+    ) -> str | None:
+        """The ONE identity term that refused this call, named, or None.
+
+        TEN FAULTS, NOT ONE. These terms were a flat ``or`` chain behind a
+        single sentence, so every one of them printed the same words and the
+        row was countable but not actionable -- the reader could not tell a
+        cross-FILE callee from a missing materialization from a stale frame,
+        and those ask for three different repairs.
+
+        The terms are also NOT independent, which the ``or`` chain hid. The
+        seal comparison is meaningless unless ``resolved_definition`` is a
+        definition, and every frame term is meaningless unless a frame
+        exists. In the chain, safety was a property of the ORDER: evaluated
+        on its own, ``resolved_definition.fragment`` raises AttributeError on
+        None, so reordering two neighbouring terms would have converted a
+        countable construction panic into an instrument failure. Here each
+        dependent term sits BELOW the ``return`` that establishes its
+        precondition, so it is unreachable without it -- the dependence is
+        structural, and breaking it means deleting a guard rather than
+        transposing two lines.
+        """
+        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+            return "definition-not-a-functiondef"
+        if definition.ref not in self._materialized_by_ref:
+            return "definition-ref-not-materialized"
+        if node.ref not in self._materialized_by_ref:
+            return "call-ref-not-materialized"
+        if definition.unit.source_cid != node.unit.source_cid:
+            return "definition-foreign-source-cid"
+        if not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef)):
+            return "resolved-not-a-functiondef"
+        # Reachable only with a resolved definition in hand.
+        if resolved_definition.fragment.seal() != definition.fragment.seal():
+            return "resolved-seal-mismatch"
+        if value.call_occurrence != call_occurrence:
+            return "call-occurrence-mismatch"
+        if frame is None:
+            return "frame-is-none"
+        # Reachable only with a frame in hand.
+        if frame.owner.ref is not definition.ref:
+            return "frame-owner-ref-mismatch"
+        if frame.definition_site.source_cid != node.unit.source_cid:
+            return "frame-definition-site-foreign"
+        return None
+
     def present_construction(self, node: Node, value: object) -> None:
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
         from sugar_source_tree.nodes import Call, FunctionDef, AsyncFunctionDef
@@ -590,24 +661,17 @@ class ConstructionTestimonyReporterV1:
                 span.end_col,
             )
             frame = value.source_call_frame
-            if (
-                not isinstance(definition, (FunctionDef, AsyncFunctionDef))
-                or definition.ref not in self._materialized_by_ref
-                or node.ref not in self._materialized_by_ref
-                or definition.unit.source_cid != node.unit.source_cid
-                or not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef))
-                or resolved_definition.fragment.seal() != definition.fragment.seal()
-                or value.call_occurrence != call_occurrence
-                or frame is None
-                or frame.owner.ref is not definition.ref
-                or frame.definition_site.source_cid != node.unit.source_cid
-            ):
+            fault = self._source_call_identity_fault(
+                node, value, definition, resolved_definition, call_occurrence, frame
+            )
+            if fault is not None:
                 self._testimony_gap(
                     node,
                     value,
                     "constructed value",
                     ValueError(
-                        "source call definition is not this call's exact typed occurrence"
+                        "source call definition is not this call's exact typed "
+                        f"occurrence: {fault}"
                     ),
                 )
         try:
@@ -1205,6 +1269,46 @@ def _cv2_type_tag(value: object) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
+def _cv2_slot_spelling(at: object) -> str:
+    """One slot step, spelled by the arm that produced it.
+
+    The three ``at`` kinds are not interchangeable and must not read alike: a
+    dataclass field / mapping key is ``.name``, a tuple index is ``[i]``, and a
+    frozenset's deliberate absence of a coordinate is ``{*}`` -- an unordered
+    member has no slot to name, and saying ``.None`` would invent one.
+    """
+    if at is None:
+        return "{*}"
+    if isinstance(at, int) and not isinstance(at, bool):
+        return f"[{at}]"
+    return f".{at}"
+
+
+def _cv2_slot_path(
+    target: int, root: int, parent_of: dict[int, tuple[int, object]]
+) -> str:
+    """The slot chain from the presented root down to the refused value.
+
+    A value reachable by several paths through a shared DAG child reports the
+    FIRST path the walk descended -- the one that actually reached it here.
+    That is one true path, not a claim of uniqueness.
+    """
+    if target == root:
+        return "<root>"
+    steps: list[str] = []
+    cursor = target
+    # The parent chain is acyclic by construction: an entry is written once,
+    # when a child is first pushed. The root bound is belt-and-braces so a
+    # reporting path can never outlive its own budget and hang the refusal.
+    while cursor != root and cursor in parent_of and len(steps) <= 512:
+        parent, at = parent_of[cursor]
+        steps.append(_cv2_slot_spelling(at))
+        cursor = parent
+    if cursor != root:
+        return "<unrooted>"
+    return "".join(reversed(steps))
+
+
 _NOT_A_LEAF = object()
 
 # (type, cid) pairs whose ``cid_of_json(preimage) == cid`` has been checked once.
@@ -1521,6 +1625,11 @@ def constructed_value_cid_v2(value: object) -> str:
     # Values whose expansion has begun and not finished -- the DFS "gray" set,
     # which is exactly the cycle predicate.
     expanding: dict[int, object] = {}
+    # id(child) -> (id(parent), at). Written once, when a child is first
+    # pushed, so a refusal deep in the graph can say WHICH slot reached it.
+    # A type tag alone cannot separate two same-typed slots of one value.
+    parent_of: dict[int, tuple[int, object]] = {}
+    root_id = id(value)
     stack: list[tuple[object, bool]] = [(value, False)]
     while stack:
         current, expanded = stack.pop()
@@ -1533,21 +1642,35 @@ def constructed_value_cid_v2(value: object) -> str:
             continue
         row = classified.get(id(current))
         if row is None:
-            row = _cv2_classify(current)
+            try:
+                row = _cv2_classify(current)
+            except ConstructedValueCategoryGap as gap:
+                # The refusal itself is UNCHANGED -- same type, same reason,
+                # same instruction. The walk simply stops discarding the path
+                # it already descended to get here.
+                raise ConstructedValueCategoryGap(
+                    f"{gap} [refused at "
+                    f"{_cv2_slot_path(id(current), root_id, parent_of)} of "
+                    f"{_cv2_type_tag(value)}]"
+                ) from gap
             classified[id(current)] = row
         semantic_type, arity, local_fields, children = row
         pinned.append(current)
         if not expanded:
             expanding[id(current)] = current
             stack.append((current, True))
-            for _at, child in children:
+            for at, child in children:
                 if id(child) in child_cid:
                     continue
+                if id(child) not in parent_of and id(child) != root_id:
+                    parent_of[id(child)] = (id(current), at)
                 if id(child) in expanding:
                     raise ConstructedValueCategoryGap(
                         "constructed value graph is CYCLIC through "
                         f"{_cv2_type_tag(child)}: a cycle has no content "
-                        "coordinate. Keep the coordinate loud."
+                        "coordinate. Keep the coordinate loud. [refused at "
+                        f"{_cv2_slot_path(id(child), root_id, parent_of)} of "
+                        f"{_cv2_type_tag(value)}]"
                     )
                 stack.append((child, False))
             continue
