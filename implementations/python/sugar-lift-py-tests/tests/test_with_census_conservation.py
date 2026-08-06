@@ -1,8 +1,13 @@
 """With census conservation: construct-or-panic partition teeth.
 
 Conservation identity (binding):
-  site:with-item == constructed + unconstructed
+  site:with-item == constructed + cited-opaque + unconstructed
   over the effective use-site set With construction sees.
+
+THREE columns because there are three facts (#7384). A cited-opaque With
+constructed, so it is not unconstructed; sugar holds no enter/exit contract
+for it, so it is not constructed either. Collapsing it into either neighbour
+is how a sealed board comes to report knowledge nobody has.
 
 The tally owns canonical coordinate-keyed rows. The partition consumes those
 same keys exactly once while splitting the closed constructed/unconstructed
@@ -47,6 +52,44 @@ def _resolution_row(index: int, outcome: str) -> dict[str, object]:
         "observedEventType": "tests.PlantedResolution",
         "outcome": outcome,
     }
+
+
+def test_cited_opaque_is_its_own_column_and_conserves():
+    """A citation is countable on the board, in neither neighbour's bucket."""
+    module = _load()
+    rows = [
+        *[_resolution_row(index, "constructed") for index in range(1, 3)],
+        *[_resolution_row(index, "cited-opaque") for index in range(3, 7)],
+        *[_resolution_row(index, "unconstructed") for index in range(7, 9)],
+    ]
+    partition = module._with_census_partition(rows, Counter({"site:with-item": 8}))
+    assert partition["constructed"] == 2
+    assert partition["citedOpaque"] == 4
+    assert partition["unconstructed"] == 2
+    assert partition["conserves"] is True
+    assert partition["unaccounted"] == 0
+    # The citation is NOT laundered into either neighbour.
+    assert len(partition["citedOpaqueRows"]) == 4
+    assert all(row["outcome"] == "constructed" for row in partition["constructedRows"])
+    assert all(
+        row["outcome"] == "unconstructed" for row in partition["unconstructedRows"]
+    )
+    assert "cited-opaque" in partition["conservationIdentity"]
+    assert "4 cited-opaque" in partition["reconciliation"]
+
+
+def test_a_citation_never_seals_as_a_constructed_contract():
+    """The board must not be able to spell a citation 'constructed'.
+
+    If it could, this construct would launder ignorance into apparent
+    knowledge -- the one outcome that makes it worse than the refusal it
+    replaced (#7384, #7387).
+    """
+    module = _load()
+    rows = [_resolution_row(index, "cited-opaque") for index in range(1, 4)]
+    partition = module._with_census_partition(rows, Counter({"site:with-item": 3}))
+    assert partition["constructed"] == 0
+    assert partition["citedOpaque"] == 3
 
 
 def test_conservation_identity_is_stated_on_partition_and_refusal():

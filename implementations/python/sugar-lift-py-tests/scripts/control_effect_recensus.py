@@ -351,7 +351,8 @@ def _occurrence_key(
 # Conservation: every sync with-item constructs or does not.
 # No kind vocabulary. Unconstructed rows are panics waiting to be written.
 WITH_CENSUS_CONSERVATION_IDENTITY = (
-    "site:with-item == constructed + unconstructed " "(no residual kind taxonomy)"
+    "site:with-item == constructed + cited-opaque + unconstructed "
+    "(no residual kind taxonomy)"
 )
 
 
@@ -432,10 +433,21 @@ def _with_census_partition(
     unconstructed_rows = [
         dict(row) for row in cm_resolution_rows if row.get("outcome") == "unconstructed"
     ]
-    if len(constructed_rows) + len(unconstructed_rows) != len(cm_resolution_rows):
+    # THREE buckets, because there are three facts. A cited-opaque With
+    # CONSTRUCTED -- so it is not unconstructed -- but sugar holds no enter/exit
+    # contract for it, so calling it constructed would report knowledge nobody
+    # has. Known, unknown and absent each get their own column, here and on the
+    # board, or the sealed numbers cannot say what was observed (#7384, #7387).
+    cited_opaque_rows = [
+        dict(row) for row in cm_resolution_rows if row.get("outcome") == "cited-opaque"
+    ]
+    if (
+        len(constructed_rows) + len(cited_opaque_rows) + len(unconstructed_rows)
+        != len(cm_resolution_rows)
+    ):
         raise TypeError("With partition received a row outside its closed outcomes")
     input_keys = [dict(row["inputKey"]) for row in cm_resolution_rows]
-    output_rows = [*constructed_rows, *unconstructed_rows]
+    output_rows = [*constructed_rows, *cited_opaque_rows, *unconstructed_rows]
     output_keys = [dict(row["inputKey"]) for row in output_rows]
     edge_witness = key_edge_witness(
         stage_id=STAGE_WITH_TALLY_PARTITION,
@@ -455,14 +467,16 @@ def _with_census_partition(
         )
     total = int(ast_sites.get("site:with-item", 0))
     constructed = len(constructed_rows)
+    cited_opaque = len(cited_opaque_rows)
     unconstructed = len(unconstructed_rows)
-    accounted = constructed + unconstructed
+    accounted = constructed + cited_opaque + unconstructed
     if accounted != total:
         unaccounted = total - accounted
         raise ValueError(
             "With census does not conserve. "
             f"LAW: {WITH_CENSUS_CONSERVATION_IDENTITY}. "
             f"REFUSED: with_items_total={total} constructed={constructed} "
+            f"citedOpaque={cited_opaque} "
             f"unconstructed={unconstructed} accounted={accounted} "
             f"unaccounted={unaccounted}. "
             "Construct or panic — fix the partition or write the missing construction."
@@ -471,14 +485,17 @@ def _with_census_partition(
         "conservationIdentity": WITH_CENSUS_CONSERVATION_IDENTITY,
         "edgeWitness": edge_witness,
         "constructedRows": constructed_rows,
+        "citedOpaqueRows": cited_opaque_rows,
         "unconstructedRows": unconstructed_rows,
         "with_items_total": total,
         "constructed": constructed,
+        "citedOpaque": cited_opaque,
         "unconstructed": unconstructed,
         "accounted": accounted,
         "unaccounted": 0,
         "reconciliation": (
-            f"{total} = {constructed} constructed + {unconstructed} unconstructed"
+            f"{total} = {constructed} constructed + {cited_opaque} cited-opaque "
+            f"+ {unconstructed} unconstructed"
         ),
         "conserves": True,
     }
@@ -1675,6 +1692,7 @@ def main() -> int:
                         row["withResolutionRows"] = resolution_rows
                         row["cmResolutions"] = {
                             "constructed": with_partition["constructed"],
+                            "citedOpaque": with_partition["citedOpaque"],
                             "unconstructed": with_partition["unconstructed"],
                         }
                         row["astSites"] = dict(sites)
