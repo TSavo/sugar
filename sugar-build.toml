@@ -92,6 +92,12 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/profile_enumerate_slice.py"]
 network = "none"
 
+[tasks.frontier-misc-diagnose]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/diagnose_frontier_misc.py"]
+network = "none"
+
 [tasks.authenticated-no-call-body-attribution]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
