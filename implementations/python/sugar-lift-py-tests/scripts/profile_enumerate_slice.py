@@ -15,6 +15,14 @@ anything.
 Emits one JSON line per file to stdout (``PROFILE_ROW ...``) so a killed run
 still yields a partial profile, and a final ``PROFILE_TOTAL`` line.
 
+Rows are ALSO streamed, one JSON object per line, to ``<out>.rows.jsonl`` --
+a handle no other writer holds. stdout is shared with the engine log, which
+emits from several threads, so a ``PROFILE_ROW`` line can be interleaved mid-
+record and stop being parseable JSON: a measured 80 of 178 rows lost on one
+run and 0 on another, purely by load. A before/after node-ID diff that reads
+stdout therefore has a parse rate that depends on luck. The sidecar does not,
+and it is written as each row is produced, so a killed run still yields it.
+
 usage:
   python profile_enumerate_slice.py --start 0 --stride 8 [--limit N] --out FILE
 """
@@ -86,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[dict] = []
     counts = {"construction-panic": 0, "constructed": 0, "instrument-failure": 0}
+    # OWN HANDLE, not stdout. Opened before the first seat so a run that dies
+    # on seat 1 still leaves a readable (empty) sidecar rather than nothing.
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    rows_path = args.out.with_suffix(args.out.suffix + ".rows.jsonl")
+    rows_sink = rows_path.open("w", encoding="utf-8")
+    print(f"PROFILE_ROWS_SIDECAR {rows_path}", flush=True)
     for index, seat in enumerate(seats):
         target = corpus.joinpath(*seat.split("/"))
         installed = install_root_for(str(target))
@@ -136,13 +150,15 @@ def main(argv: list[str] | None = None) -> int:
             "elapsedMs": round((time.monotonic() - started) * 1000, 1),
         }
         rows.append(record)
+        rows_sink.write(json.dumps(record, sort_keys=True) + "\n")
+        rows_sink.flush()
         print("PROFILE_ROW " + json.dumps(record, sort_keys=True), flush=True)
         print(
             f"PROFILE_PROGRESS {index + 1}/{len(seats)} {json.dumps(counts, sort_keys=True)}",
             flush=True,
         )
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
+    rows_sink.close()
     args.out.write_text(
         json.dumps(
             {"start": args.start, "stride": args.stride, "counts": counts, "rows": rows},
