@@ -6,6 +6,9 @@ from dataclasses import replace
 
 import pytest
 
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
@@ -29,8 +32,16 @@ def _enum_call() -> tuple[SourceFile, FunctionDef, Call]:
     graph = DependencyArtifactGraph.authenticate_stdlib_module("enum")
     module = graph.modules["enum"]
     reporter = CollectingReporter()
+    # The construction door, not the bare one. This helper holds module source
+    # in memory rather than a path, so it seats the context directly instead of
+    # going through open_source_file_for_construction -- same context, same
+    # seat, just no path to resolve. Opening bare here made Call construct
+    # against a None context, which is a defect in how this test opens the
+    # tree, never a fact about enum.py.
     source = SourceFile(
-        (module.source, module.source_seat, module.source_cid), reporter=reporter
+        (module.source, module.source_seat, module.source_cid),
+        reporter=reporter,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     root, _testimony = _testimony_root(source, reporter)
     definition = next(
@@ -58,7 +69,13 @@ def _ordinary_call(tmp_path, *, helper: str, caller: str):
         f"    return {helper}(value)\n"
     )
     reporter = CollectingReporter()
-    source = SourceFile.from_path(path, reporter=reporter)
+    source = open_source_file_for_construction(
+        path,
+        root=tmp_path,
+        reporter=reporter,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
     root, testimony = _testimony_root(source, reporter)
     definition = next(
         node
