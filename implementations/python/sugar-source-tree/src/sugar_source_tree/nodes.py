@@ -8778,6 +8778,29 @@ class With(Statement):
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
             )
+            from sugar_lift_py_tests.context_manager_resolution import (
+                OpaqueCitedContextManagerRefV1,
+            )
+
+            if isinstance(resolved_ref, OpaqueCitedContextManagerRefV1):
+                # A citation declares no contract, so it declares no
+                # observation slot. `as` binds the OPEN enter-result
+                # coordinate -- the same slot `_construct_sugar` binds.
+                #
+                # This arm is REQUIRED, not defensive tidiness. The
+                # EffectBoundary test below reads `.semantics` through
+                # `getattr(..., None)`, whose default only absorbs
+                # AttributeError; the citation's typed refusal is not one, so
+                # it would escape this frame-projection path as an INSTRUMENT
+                # FAILURE rather than a countable row. Asking a citation for
+                # semantics stays loud -- the answer is that this consumer
+                # must not ask.
+                enter_slot = f"{item._manager_slot_id()}#enter_result"
+                return self._with_assignment_binding(
+                    item,
+                    item._make_observation_ref(enter_slot, ENTER_RESULT),
+                    scope,
+                )
 
             if resolved_ref is not None and isinstance(
                 getattr(resolved_ref, "semantics", None), EffectBoundarySemanticsV1
