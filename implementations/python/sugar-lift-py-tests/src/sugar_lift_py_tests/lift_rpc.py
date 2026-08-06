@@ -348,6 +348,18 @@ def open_source_file_for_construction(
         reporter=reporter,
         construction_context=construction_context,
     )
+    # THE BINDING LEAK (#7171 class, third costume). `SourceFile.__init__` on a
+    # process-residency HIT rebinds `self.reporter` and nothing else: the shell
+    # was already materialized, so every node in it still carries the FIRST
+    # opener's reporter -- `NULL_REPORTER` whenever that first open was a
+    # dependency resolution. Passing `reporter=` therefore does NOT seat the
+    # tree; it only relabels the file object, and the nodes keep writing into a
+    # channel that owns no registration.
+    #
+    # Seat the roll call onto the existing nodes, the same walk the audit leaf
+    # does. This parses nothing and prepares nothing.
+    if reporter is not NULL_REPORTER:
+        _seat_roll_call_reporter(source_file, reporter)
     # ROSTER FLOOR LAW (#7062 class close, #7075 second costume generalized):
     # If SourceFile produced N functions, the board may never report fewer
     # than N without naming why. Bank N *before* populate. Populate failure
@@ -2171,6 +2183,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
         if level in (
             "functions",
             "context-manager-resolutions",
+            "relation-membership",
             "call_sites",
             "assertions",
             "facts",
@@ -2263,9 +2276,18 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     # facts entrance performs as part of the one roll call.
                     # An explicit empty contract table is honest here: no
                     # source sugar is constructed at this level.
+                    # ONE DOOR, ONE LAW: every enumerate open seats a reporter
+                    # that can hold a registration. This level only mints the
+                    # module memento today, but a tree opened on the shared
+                    # `NULL_REPORTER` is a tree whose nodes are born
+                    # unregistered. Do not leave a second null-seated door for
+                    # the defect to move into.
+                    from sugar_source_tree.reporter import CollectingReporter
+
                     sf = open_source_file_for_construction(
                         full_path,
                         root=root,
+                        reporter=CollectingReporter(),
                         construction_context=tree_construction_context_for_workspace(
                             root, contract_refs={}
                         ),
@@ -2313,7 +2335,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
 
-            if level in {"functions", "context-manager-resolutions"}:
+            if level in {
+                "functions",
+                "context-manager-resolutions",
+                "relation-membership",
+            }:
                 # The functions level IS SourceFile.functions(): every function
                 # definition in the file, enumerated from the typed tree over
                 # oracle-pinned text. No lift runs, no IR rows are consulted,
@@ -2353,10 +2379,26 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                 else:
                     construction_context = tree_construction_context_for_workspace(root)
+                # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume).
+                # This door CONSTRUCTS sugar: `populate_source_derived_resource_refs`
+                # below reaches `ClassDef.sugar()`, which builds a
+                # `ConstructionTestimonyReporterV1` consumer roll over
+                # `self.reporter`. Leaving `reporter=` off defaults the whole
+                # tree to `NULL_REPORTER`, so every node in it is born
+                # unregistered. When a source-frame call then retains its
+                # producer definition, `retain_registered_node_from` is handed a
+                # node whose producer is the shared `NULL_REPORTER` -- which
+                # owns no registration and never can -- and refuses. The node is
+                # not foreign; it is genuinely unregistered, because this door
+                # never opened a channel to register it on. Seat the same
+                # `CollectingReporter` `audit_file_gaps` and `census.py` seat.
+                from sugar_source_tree.reporter import CollectingReporter
+
                 try:
                     tree_file = open_source_file_for_construction(
                         full_path,
                         root=root,
+                        reporter=CollectingReporter(),
                         construction_context=construction_context,
                         populate_derived=False,
                         source_workspace_root=locus_root,
@@ -2440,7 +2482,81 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                 "payload": None,
                             }
                         )
+                    # This level answers here and nowhere else. Falling out of
+                    # this branch reaches the generic function-memento tail,
+                    # which would answer a With question with function rows and
+                    # report every With item unconstructed (#7381).
                     _send_enumerate_result(msg_id, resolution_nodes, [])
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+                if level == "relation-membership":
+                    # WHO this file's ONE structural walk saw, per relation.
+                    # The producer answers; this level only transports the
+                    # answer onto the wire. A refusal here is a gap, never an
+                    # empty membership: a shard that cannot say who it saw
+                    # must not be able to look like a shard that saw nobody.
+                    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+                    try:
+                        roster = tree_file.unit.relation_membership_roster()
+                    except ConstructionPanic:
+                        # Product testimony crosses this level untouched. A
+                        # construction panic is not "the roster refused"; the
+                        # census already has a loud terminal for it.
+                        raise
+                    except BaseException as refusal:  # noqa: BLE001 -- named gap
+                        if isinstance(
+                            refusal, (KeyboardInterrupt, SystemExit, GeneratorExit)
+                        ):
+                            raise
+                        _send_enumerate_result(
+                            msg_id,
+                            [],
+                            [
+                                {
+                                    "memento": at,
+                                    "reason": (
+                                        "relation-membership roster refused: "
+                                        f"{type(refusal).__name__}: {refusal}"
+                                    ),
+                                }
+                            ],
+                        )
+                        _log_enumeration_demand(
+                            str(level), at, cache="miss", started=demand_started
+                        )
+                        return
+                    membership_nodes = []
+                    membership_gaps = []
+                    for relation in sorted(roster):
+                        sides = roster[relation]
+                        for role in ("expected", "observed"):
+                            for occurrence in sides[role]:
+                                membership_nodes.append(
+                                    {
+                                        "memento": {
+                                            "kind": "relation-membership",
+                                            "file": file_rel,
+                                            "source_cid": file_cid,
+                                            "relation": relation,
+                                            "role": role,
+                                            "occurrence": {
+                                                "file": occurrence.file,
+                                                "sourceCid": occurrence.source_cid,
+                                                "start": occurrence.start,
+                                                "end": occurrence.end,
+                                                "nodeKind": occurrence.node_kind,
+                                            },
+                                        },
+                                        "audit": None,
+                                        "payload": None,
+                                    }
+                                )
+                    _send_enumerate_result(
+                        msg_id, membership_nodes, membership_gaps
+                    )
                     _log_enumeration_demand(
                         str(level), at, cache="miss", started=demand_started
                     )

@@ -464,6 +464,40 @@ class ConstructionTestimonyReporterV1:
         """
         from sugar_source_tree.reporter import CollectingReporter
 
+        # TWO FAULTS, NOT ONE. "foreign or absent" made a seating defect and an
+        # identity defect share one representation, and the reader could not
+        # tell which repair the message was asking for.
+        #
+        # ABSENT: the producer owns no registration table at all -- the shared
+        # `NULL_REPORTER`, or any reporter that is neither authenticated kind.
+        # No node it ever carried is registered anywhere, so nothing at this
+        # site can repair it: the door that OPENED the tree never seated a
+        # channel. Say that, and send the reader to the door.
+        if type(producer) not in (ConstructionTestimonyReporterV1, CollectingReporter):
+            from sugar_source_tree.panic import backend_defect
+
+            backend_defect(
+                blame=node.fragment,
+                owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
+                observed=(
+                    f"producer reporter owns no registration table "
+                    f"(producer={type(producer).__name__}, "
+                    f"node_reporter={type(getattr(node, 'reporter', None)).__name__})"
+                ),
+                requested=(
+                    "a producer that can own a registration: a "
+                    "ConstructionTestimonyReporterV1 materialize table, or the "
+                    "CollectingReporter this node was opened with"
+                ),
+                fix=(
+                    "seat a real reporter at the door that opened this tree; a "
+                    "node born on NULL_REPORTER is unregistered by construction "
+                    "and no retention at this site can repair it"
+                ),
+            )
+        # FOREIGN: the producer DOES own a roster; this node is simply not the
+        # occurrence it registered. That is a remint or a foreign roll, and the
+        # repair is identity work, not seating.
         if type(producer) is ConstructionTestimonyReporterV1:
             registered = producer._materialized_by_ref.get(node.ref)
         elif (
@@ -487,7 +521,7 @@ class ConstructionTestimonyReporterV1:
                 blame=node.fragment,
                 owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
                 observed=(
-                    f"foreign or absent producer node registration "
+                    f"foreign producer node registration "
                     f"(producer={type(producer).__name__}, "
                     f"node_reporter={type(getattr(node, 'reporter', None)).__name__})"
                 ),

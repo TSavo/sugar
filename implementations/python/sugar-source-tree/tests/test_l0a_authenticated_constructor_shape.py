@@ -103,5 +103,9 @@ def test_null_reporter_producer_still_panics() -> None:
         consumer.retain_registered_node_from(definition, NullReporter())
         raise AssertionError("expected BackendDefect for NullReporter producer")
     except BackendDefect as gap:
-        assert "foreign or absent" in gap.observed
+        # The refusal now names WHICH fault. A NullReporter producer owns no
+        # registration table at all; that is absence (a seating defect at the
+        # door that opened the tree), not a foreign occurrence. See
+        # test_retention_refusal_names_which_fault.py.
+        assert "producer reporter owns no registration table" in gap.observed
         assert "NullReporter" in gap.observed
