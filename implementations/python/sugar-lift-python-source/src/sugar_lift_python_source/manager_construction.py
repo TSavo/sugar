@@ -914,6 +914,29 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         < locus_key
     )
 
+    # THREAD THE BLOCK BEFORE ANYTHING READS IT -- the same order a function
+    # body takes.  ``FunctionDef.source_visible_call_frame`` substitutes its
+    # body and only then sugars each statement; this door used to sugar each
+    # statement where it stood.  Statement-at-a-time construction cannot see the
+    # binding an earlier statement made, so a module-level ``for`` over a
+    # module-level constant (``for _dependency in _hard_dependencies:``) met a
+    # SYMBOLIC iterable, could not unroll, and fell to ``For.sugar`` --
+    # deliberately unwritten, because a SURVIVING ``For`` is the symbolic fold.
+    # The dissolution was already written in ``For.substitute``; this door
+    # simply never reached it.  Nothing here teaches ``For.sugar`` to guess: an
+    # iterable still symbolic after threading keeps the node and stays loud.
+    #
+    # Threading happens HERE, before base-class seating and import-receipt
+    # seating, so every downstream reader sees ONE statement set.  Seating the
+    # unsubstituted classes and then sugaring the substituted ones would key
+    # ``source_class_bases`` on fragment CIDs the sugared statements no longer
+    # carry.
+    #
+    # ``_substitute_body`` may raise SugarNotWritten/TypeError; the caller
+    # (``prefix_has_completed_fallthrough``) already catches exactly those and
+    # turns them into named construction-refusal testimony, never a quiet False.
+    prefix, _threaded = source_file.root._substitute_body(prefix, {})
+
     # Base testimony is installed from exact parser-owned module bindings,
     # never from a class-name scan.  Only earlier module ClassDefs can be a
     # source-visible base at this prefix boundary.
