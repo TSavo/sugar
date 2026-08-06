@@ -3952,6 +3952,7 @@ def _install_opaque_call_obligation(
         context.opaque_source_call_obligations[coordinate] = (
             opaque_source_call_roster_of(obligation)
         )
+        _seat_opaque_cited_manager_ref(context, coordinate)
         return
     seated = existing.owner(obligation.resolved_object_cid)
     if seated is not None:
@@ -3986,6 +3987,52 @@ def _install_opaque_call_obligation(
             fix="resolve the callee for every owner, or name why they differ",
         )
     context.opaque_source_call_obligations[coordinate] = existing.seating(obligation)
+    _seat_opaque_cited_manager_ref(context, coordinate)
+
+
+def _seat_opaque_cited_manager_ref(
+    context: TreeConstructionContextV1,
+    coordinate,
+) -> None:
+    """Seat the positive citation for an OFF-POPULATION call, and only that.
+
+    The ``with`` door must never infer opacity from the absence of a contract.
+    So the producer that authenticated the callee and classified it
+    off-population seats the claim here, positively, at the exact coordinate
+    the manager use-site will read.  ``With._prebound_manager_resolution``
+    then finds it through the existing ``source_derived_contract_refs`` lookup
+    with no consumer-side inference at all.
+
+    ONLY ``call-target-off-population`` is cited.  The sibling kinds are a
+    different fact and must not share this spelling:
+
+    - ``call-target-export-unresolved`` -- we FAILED TO LOOK UP the callee.
+      That is lookup-failure, and citing it would claim we know which callee
+      is opaque when we do not even know which callee it is.
+    - ``call-graph-cycle`` -- a construction limit of ours, not a property of
+      the target.
+
+    Off-population is the only kind where the callee IS authenticated and the
+    only missing thing is its body, by deliberate measurement policy. That is
+    the precise condition under which "we authenticate that we do not know"
+    is a true statement.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueCitedContextManagerRefV1,
+        mint_opaque_cited_context_manager_ref,
+    )
+
+    roster = context.opaque_source_call_obligations.get(coordinate)
+    if roster is None or roster.resolution_kind != "call-target-off-population":
+        return
+    seated = context.source_derived_contract_refs.get(coordinate)
+    if seated is not None and not isinstance(seated, OpaqueCitedContextManagerRefV1):
+        # A real derived contract already stands here. Known beats unknown;
+        # never downgrade authenticated enter/exit testimony to a citation.
+        return
+    context.source_derived_contract_refs[coordinate] = (
+        mint_opaque_cited_context_manager_ref(roster=roster)
+    )
 
 
 def _install_source_call_frame(

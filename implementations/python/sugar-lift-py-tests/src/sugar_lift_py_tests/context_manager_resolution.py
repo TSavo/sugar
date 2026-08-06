@@ -364,6 +364,137 @@ class ContextManagerContractRefV1:
     semantics: ContextManagerSemanticsV1
 
 
+_OPAQUE_CITED_MANAGER_AUTHORITY = object()
+
+
+@dataclass(frozen=True)
+class OpaqueCitedContextManagerRefV1:
+    """An authenticated statement that this manager's enter/exit are UNCITED.
+
+    This is not a gap and not a default.  It is a POSITIVE claim of unknown,
+    seated by the producer that authenticated WHICH callee stands at the
+    ``with`` head and then failed to reach a body for it because the callee is
+    off-population.
+
+    Three spellings that must never merge:
+
+    - **absence** -- no resolution at this coordinate at all.  ``With`` panics
+      through ``require``; nothing was ever authenticated.
+    - **known** -- ``ContextManagerContractRefV1`` and the ``SourceDerived*``
+      family, which carry real enter/exit testimony CIDs.
+    - **unknown** -- this ref.  The citation is authenticated; the semantics
+      are authenticated as ABSENT FROM OUR KNOWLEDGE, which is a different
+      fact from being absent from the program.
+
+    It deliberately carries NO ``semantics``, NO ``contract_cid`` and NO
+    enter/exit testimony CID, and ``__post_init__`` refuses any attempt to give
+    it one.  A consumer that wants enter/exit semantics off this ref must fail
+    to find them -- that is the whole design.  ``roster`` is the authenticated
+    ``OpaqueSourceCallRosterV1``: every owner whose frame projection walked
+    through this call and parked an obligation on it.  The obligation is what
+    travels; this ref is its seat at the ``with`` head.
+
+    Constructing over this ref is honest exactly as long as the opacity is
+    CARRIED.  The moment a consumer reasons as if the manager were
+    transparent, the construction becomes a lie and is worse than the refusal
+    it replaced.
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    target_name: str
+    roster: OpaqueSourceCallRosterV1
+    citation_cid: str
+    _authority: object = field(init=False, repr=False, compare=False, default=None)
+
+    #: Named so a reader of one row can see the claim without the docstring.
+    #: This is testimony, never a bucket key.
+    uncited: str = "enter-exit-semantics-uncited"
+
+    def __post_init__(self) -> None:
+        if self._authority is not _OPAQUE_CITED_MANAGER_AUTHORITY:
+            raise ContractRefProtocolError(
+                "opaque-cited context-manager ref lacks producer authority"
+            )
+        if type(self.roster) is not OpaqueSourceCallRosterV1:
+            raise ContractRefProtocolError(
+                "opaque-cited context-manager ref requires an authenticated "
+                "opaque source-call roster"
+            )
+        if self.roster.coordinate != self.use_site:
+            raise ContractRefProtocolError(
+                "opaque-cited context-manager ref and its roster name different "
+                "call coordinates"
+            )
+        if self.roster.target_name != self.target_name:
+            raise ContractRefProtocolError(
+                "opaque-cited context-manager ref and its roster name different "
+                "call targets"
+            )
+        if self.uncited != "enter-exit-semantics-uncited":
+            raise ContractRefProtocolError(
+                "opaque-cited context-manager ref may state only that its "
+                "enter/exit semantics are uncited"
+            )
+
+    @property
+    def semantics(self):
+        """There is none, and asking is the bug this ref exists to make loud.
+
+        A cited manager has no enter/exit semantics BY CONSTRUCTION.  Returning
+        ``None`` here would let a consumer's ``isinstance`` check fall through
+        to a default arm and reason as if the manager were transparent; that is
+        the exact failure mode the ruling names.  So the attribute exists and
+        REFUSES, which turns a silent misread into a named panic at the
+        consumer that misread it.
+        """
+        raise ContractRefProtocolError(
+            "opaque-cited context-manager ref has no enter/exit semantics: the "
+            f"manager {self.target_name!r} at {self.use_site} is cited, not "
+            "materialized. Carry the undischarged obligation; never substitute "
+            "assumed semantics"
+        )
+
+
+def mint_opaque_cited_context_manager_ref(
+    *,
+    roster: OpaqueSourceCallRosterV1,
+) -> OpaqueCitedContextManagerRefV1:
+    """The sole door that mints an opaque-cited manager ref.
+
+    Requires a real authenticated roster: a ref cannot be conjured for a
+    manager nobody parked an obligation against.
+    """
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    if type(roster) is not OpaqueSourceCallRosterV1:
+        raise ContractRefProtocolError(
+            "opaque-cited context-manager ref requires an authenticated roster"
+        )
+    citation_cid = cid_of_json(
+        {
+            "schemaVersion": 1,
+            "kind": "opaque-cited-context-manager-ref",
+            "useSite": roster.coordinate.wire(),
+            "targetName": roster.target_name,
+            "resolutionKind": roster.resolution_kind,
+            "owners": sorted(row.resolved_object_cid for row in roster.obligations),
+            "uncited": "enter-exit-semantics-uncited",
+        }
+    )
+    ref = object.__new__(OpaqueCitedContextManagerRefV1)
+    for name, value in (
+        ("use_site", roster.coordinate),
+        ("target_name", roster.target_name),
+        ("roster", roster),
+        ("citation_cid", citation_cid),
+        ("uncited", "enter-exit-semantics-uncited"),
+    ):
+        object.__setattr__(ref, name, value)
+    object.__setattr__(ref, "_authority", _OPAQUE_CITED_MANAGER_AUTHORITY)
+    ref.__post_init__()
+    return ref
+
+
 @dataclass(frozen=True)
 class ContextManagerResolutionGapV1:
     """One unresolved context-manager demand: a structural kind beside its data.
@@ -511,7 +642,23 @@ def effective_context_manager_resolutions_for_source(
 
 
 def context_manager_resolution_outcome(resolution: object) -> str:
-    """Closed census projection: exactly constructed or unconstructed."""
+    """Closed census projection: constructed, cited-opaque, or unconstructed.
+
+    THREE values, not two.  ``cited-opaque`` is its own row because the other
+    two would both misreport it:
+
+    - ``constructed`` would claim sugar holds this manager's enter/exit
+      contract.  It does not, and the audit wire would carry that claim
+      onward.
+    - ``unconstructed`` would say the demand is unresolved.  It IS resolved --
+      resolved to an authenticated statement of ignorance, which is a
+      different measurement from a gap nobody has looked at.
+
+    Known, unknown and absent each get their own spelling.  A census that
+    cannot tell them apart cannot say what it observed.
+    """
+    if isinstance(resolution, OpaqueCitedContextManagerRefV1):
+        return "cited-opaque"
     if isinstance(
         resolution,
         (

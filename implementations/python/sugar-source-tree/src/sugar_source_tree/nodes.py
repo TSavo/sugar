@@ -7962,8 +7962,20 @@ class With(Statement):
         from sugar_lift_py_tests.outcome import Completed
         from .panic import UnsupportedContextManagerSemantics
 
+        from sugar_lift_py_tests.context_manager_resolution import (
+            OpaqueCitedContextManagerRefV1,
+        )
+
         if isinstance(resolution, ContextManagerResolutionGapV1):
             self._raise_resolution_gap(resolution)
+        if isinstance(resolution, OpaqueCitedContextManagerRefV1):
+            # A POSITIVE seated citation, not a rescued refusal. This arm never
+            # catches a panic and never infers opacity from a missing contract:
+            # the producer authenticated the callee and authenticated that its
+            # enter/exit semantics are uncited. Semantics are deliberately
+            # unreachable on this ref -- reading `.semantics` raises -- so the
+            # admitted-semantics checks below cannot silently pass it through.
+            return resolution
         if isinstance(resolution, FactoredSourceDerivedContextManagerRefV1):
             faces = getattr(resolution.boundary_faces, "exits", ())
             completed = tuple(face for face in faces if isinstance(face, Completed))
@@ -8218,6 +8230,57 @@ class With(Statement):
             from sugar_lift_py_tests.context_manager_resolution import (
                 SourceDerivedGeneratorResourceRefV1,
             )
+
+            from sugar_lift_py_tests.context_manager_resolution import (
+                OpaqueCitedContextManagerRefV1,
+            )
+
+            if isinstance(resolved_ref, OpaqueCitedContextManagerRefV1):
+                from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
+                    WithOpaqueCitedManagerSugar,
+                )
+
+                # An `as` target on a cited manager binds the OPEN enter-result
+                # coordinate. A simple Name was already discharged by
+                # substitution; any other target is a real store, and
+                # `_bind_store_target` declines to rewrite this contract (it
+                # admits only ProtocolResource semantics), so the binding would
+                # otherwise be silently dropped. A dropped binding is the one
+                # outcome no contract admits -- stay loud.
+                if binds_enter_result and as_name is None:
+                    from .panic import UnsupportedWithBindingTarget
+
+                    panic = UnsupportedWithBindingTarget(
+                        blame=item.optional_vars.fragment,
+                        owner="With._construct_sugar",
+                        observed=(
+                            "cited-opaque manager as-binding to a "
+                            f"{item.optional_vars.kind} store target"
+                        ),
+                        requested=(
+                            "a cited-opaque manager bound to a simple Name, or "
+                            "no target"
+                        ),
+                        fix=(
+                            "authenticate a store projection for the open "
+                            "enter-result coordinate, or keep the store target "
+                            "loud -- never drop the binding"
+                        ),
+                    )
+                    self.reporter.report_gap(self, panic)
+                    raise panic
+                enter_slot = (
+                    f"{item._manager_slot_id()}#enter_result"
+                    if binds_enter_result
+                    else None
+                )
+                return WithOpaqueCitedManagerSugar(
+                    manager=item.context_expr.sugar(),
+                    body=tuple(stmt.sugar() for stmt in self.body),
+                    contract_ref=resolved_ref,
+                    enter_slot_id=enter_slot,
+                    site=self.fragment,
+                )
 
             generator_protocol = (
                 resolved_ref.generator_protocol
