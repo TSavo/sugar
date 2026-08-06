@@ -139,7 +139,7 @@ def test_shared_cid_at_distinct_loci_stays_distinct_without_fake_panics():
     with tempfile.TemporaryDirectory() as root:
         path = Path(root, "t.py")
         path.write_text("import os\nimport os\n")
-        leaf = lift_rpc._roll_call_audit_leaf(path, "t.py")
+        leaf = lift_rpc._roll_call_audit_leaf(path, "t.py", root=Path(root))
 
     panics = leaf["semanticCore"]["panics"]
     owners = [(p["demandedSource"], p["terminalGapLocus"]) for p in panics]
@@ -175,6 +175,7 @@ def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
     lift_rpc._roll_call_audit_leaf(
         path,
         "t.py",
+        root=tmp_path,
         expected_source_cid=source_cid,
     )
     miss = lift_rpc.take_d3_residency_observation(source_cid)
@@ -193,6 +194,7 @@ def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
     lift_rpc._roll_call_audit_leaf(
         path,
         "t.py",
+        root=tmp_path,
         expected_source_cid=source_cid,
     )
     hit = lift_rpc.take_d3_residency_observation(source_cid)
