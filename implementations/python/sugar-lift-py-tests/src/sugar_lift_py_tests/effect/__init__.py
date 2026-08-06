@@ -28,6 +28,7 @@ from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeE
 from .constructor_runtime_effect import ConstructorRuntimeEffect
 from .context_manager_unpack_runtime_effect import ContextManagerUnpackRuntimeEffect
 from .context_manager_exit_runtime_effect import ContextManagerExitRuntimeEffect
+from .context_manager_enter_runtime_effect import ContextManagerEnterRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
 from .callable_argument_binding_runtime_effect import (
     CallableArgumentBindingRuntimeEffect,
@@ -105,6 +106,7 @@ __all__ = [
     "ConstructorRuntimeEffect",
     "ContextManagerUnpackRuntimeEffect",
     "ContextManagerExitRuntimeEffect",
+    "ContextManagerEnterRuntimeEffect",
     "CallResultTypeRuntimeEffect",
     "CallableArgumentBindingRuntimeEffect",
     "runtime_callable_argument_binding",
