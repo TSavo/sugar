@@ -3203,6 +3203,41 @@ class Node(Typed):
             cache.sugar_results[key] = result
             return result
 
+    def _require_construction_context(self, *, owner: str) -> object:
+        """THE ONE DOOR to the construction context on a construction path.
+
+        The enrollment in ``R_bare_construction_door`` is not a roster. It is
+        THIS CALL SITE. A node kind that consults the context reaches here and
+        is therefore covered; a kind that does not consult it (``Constant`` --
+        a literal, no ``with`` to paint and no call frame to resolve) never
+        reaches here and is therefore structurally silent. A kind added
+        tomorrow that consults the context is covered the moment it reads,
+        because reading IS the enrollment. Nothing to remember to update, so
+        nothing to rot.
+
+        Absence and lookup-failure never share a representation here. Every
+        raw read this replaced had the shape::
+
+            context = self.unit.construction_context
+            if not isinstance(context, TreeConstructionContextV1):
+                return None       # <- "no context" and "no entry" as ONE None
+
+        A caller that gets ``None`` back from that cannot tell a tree opened
+        through the bare door from a contexted tree with nothing at this
+        coordinate. The first is an instrument defect and the second is a fact
+        about the source. This door refuses the first LOUDLY and hands back a
+        real context for the second, so the ``None`` that survives downstream
+        means exactly one thing: looked up, genuinely absent.
+        """
+        context = self.unit.construction_context
+        if context is None:
+            from .panic import BareConstructionDoor
+
+            raise BareConstructionDoor(
+                owner=owner, blame=self.fragment, kind=type(self).__name__
+            )
+        return context
+
     def _project_constructed_value_for_testimony(self, value: object) -> object:
         """Project parser machinery before constructed-value testimony."""
         return value
@@ -4695,7 +4730,9 @@ class FunctionDef(Statement):
                     ):
                         substitution_trace = trace_builder.freeze()
                 bridge_source_symbol = None
-                context = self.unit.construction_context
+                context = self._require_construction_context(
+                    owner="FunctionDef._construct_sugar"
+                )
                 workspace_root = getattr(context, "workspace_root", None)
                 if workspace_root is not None and self.unit.is_module_level_function(
                     self.name, self.line_col_span().start_line
@@ -5167,12 +5204,10 @@ class ClassDef(Statement):
         )
         base_sugars = ()
         if self.bases:
-            context = self.unit.construction_context
-            table = (
-                getattr(context, "source_class_bases", None)
-                if context is not None
-                else None
+            context = self._require_construction_context(
+                owner="ClassDef._construct_sugar"
             )
+            table = getattr(context, "source_class_bases", None)
             enrolled = () if table is None else table.get(self.fragment.seal().cid, ())
             # A source-base table carries already-authenticated local class
             # definitions.  Otherwise retain each ordinary base expression as
@@ -7765,9 +7800,9 @@ class With(Statement):
 
     def _prebound_manager_resolution(self, item: WithItem):
         """Read the sole preconstruction contract resolution for this occurrence."""
-        context = self.unit.construction_context
-        if context is None:
-            return None
+        context = self._require_construction_context(
+            owner="With._prebound_manager_resolution"
+        )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContractRefProtocolError,
             SourceFragmentCoordinateV1,
@@ -7818,9 +7853,9 @@ class With(Statement):
 
     def _published_generator_resource_testimony(self, item: WithItem):
         """Return the producer's one closed generator-resource surface."""
-        context = self.unit.construction_context
-        if context is None:
-            return None
+        context = self._require_construction_context(
+            owner="With._published_generator_resource_testimony"
+        )
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceDerivedGeneratorResourceRefV1,
             SourceFragmentCoordinateV1,
@@ -7883,7 +7918,9 @@ class With(Statement):
         """
         if isinstance(item.context_expr, Call):
             return item.context_expr
-        context = self.unit.construction_context
+        context = self._require_construction_context(
+            owner="With._provider_manager_call"
+        )
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
@@ -7906,7 +7943,9 @@ class With(Statement):
         call = self._provider_manager_call(item)
         if call is None:
             return None
-        context = self.unit.construction_context
+        context = self._require_construction_context(
+            owner="With._generator_manager_frame"
+        )
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
@@ -8528,7 +8567,9 @@ class With(Statement):
         )
         from .panic import SugarNotWritten
 
-        refs = self.unit.construction_context.contract_refs
+        refs = self._require_construction_context(
+            owner="With._require_native_resource_definitions"
+        ).contract_refs
         receiver = resolved_ref.use_site
         enter = refs.require_native_definition(
             receiver, NativeProtocolSlot.CONTEXT_ENTER
@@ -11230,7 +11271,7 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
-        context = self.unit.construction_context
+        context = self._require_construction_context(owner="Call._construct_sugar")
         coordinate = None
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
@@ -11803,7 +11844,9 @@ class Call(Expression):
         """
         if any(isinstance(arg, Starred) for arg in self.args):
             return None
-        context = self.unit.construction_context
+        context = self._require_construction_context(
+            owner="Call._spread_source_call_frame"
+        )
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
@@ -12508,7 +12551,10 @@ class Subscript(Expression):
         )
 
         occurrence = None
-        if isinstance(self.unit.construction_context, TreeConstructionContextV1):
+        if isinstance(
+            self._require_construction_context(owner="Subscript._construct_sugar"),
+            TreeConstructionContextV1,
+        ):
             span = self.line_col_span()
             occurrence = SourceFragmentCoordinateV1(
                 self.unit.source_cid,
