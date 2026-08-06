@@ -18,8 +18,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .floor_value import FloorValue
+from sugar_source_tree.producer_authority import ProducerAuthorityV1
 
-_IMPORT_MEMBER_AUTHORITY = object()
+_IMPORT_MEMBER_AUTHORITY = ProducerAuthorityV1("sugar/floor/import-member")
 
 
 @dataclass(frozen=True)

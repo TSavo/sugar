@@ -25,6 +25,7 @@ from .context_manager_contract import _json_value
 
 from sugar_source_tree.nodes import Expression, Module, Node, Statement
 from sugar_source_tree.tree import SourceFile
+from sugar_source_tree.producer_authority import ProducerAuthorityV1
 
 
 class UnsupportedStatementGrammar(RuntimeError):
@@ -118,7 +119,7 @@ class _ModuleFunctionDef:
     definition_site: tuple[int, int, int, int]
 
 
-_IMPORT_AUTHORITY = object()
+_IMPORT_AUTHORITY = ProducerAuthorityV1("sugar/import-binding/import-mint")
 
 # Closed demand-kind admission for AuthenticatedImportUseV1.  Unknown kinds
 # must refuse — there is no fallthrough third surface.

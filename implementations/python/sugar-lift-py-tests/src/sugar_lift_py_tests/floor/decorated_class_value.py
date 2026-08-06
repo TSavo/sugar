@@ -5,11 +5,12 @@ from dataclasses import dataclass, field
 from sugar_lift_python_source.canonical import cid_of_json
 
 from .floor_value import FloorValue
+from sugar_source_tree.producer_authority import ProducerAuthorityV1
 
-_APPLICATION_AUTHORITY = object()
-_PUBLICATION_AUTHORITY = object()
-_MEMBER_AUTHORITY = object()
-_METACLASS_AUTHORITY = object()
+_APPLICATION_AUTHORITY = ProducerAuthorityV1("sugar/floor/decorated-class/application")
+_PUBLICATION_AUTHORITY = ProducerAuthorityV1("sugar/floor/decorated-class/publication")
+_MEMBER_AUTHORITY = ProducerAuthorityV1("sugar/floor/decorated-class/member")
+_METACLASS_AUTHORITY = ProducerAuthorityV1("sugar/floor/decorated-class/metaclass")
 
 
 def _floor_cid(value: FloorValue) -> str:

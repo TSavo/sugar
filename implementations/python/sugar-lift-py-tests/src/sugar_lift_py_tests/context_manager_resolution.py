@@ -17,6 +17,7 @@ from .context_manager_contract import (
     _json_value,
 )
 from .ir import Sort
+from sugar_source_tree.producer_authority import ProducerAuthorityV1
 
 
 class ContractRefProtocolError(ValueError):
@@ -77,7 +78,9 @@ class SourceFragmentCoordinateV1:
         return cid_of_json(self.wire())
 
 
-_IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY = object()
+_IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY = ProducerAuthorityV1(
+    "sugar/context-manager/import-call-value-subsumption"
+)
 
 
 @dataclass(frozen=True)
@@ -364,7 +367,9 @@ class ContextManagerContractRefV1:
     semantics: ContextManagerSemanticsV1
 
 
-_OPAQUE_CITED_MANAGER_AUTHORITY = object()
+_OPAQUE_CITED_MANAGER_AUTHORITY = ProducerAuthorityV1(
+    "sugar/context-manager/opaque-cited-manager"
+)
 
 
 @dataclass(frozen=True)

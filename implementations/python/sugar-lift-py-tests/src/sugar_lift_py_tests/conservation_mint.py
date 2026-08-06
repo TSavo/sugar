@@ -16,11 +16,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from sugar_source_tree.producer_authority import ProducerAuthorityV1
 
 CONSERVATION_WITNESS_SCHEMA = "sugar.conservation-witness.v1"
 
 _CID_PATTERN = re.compile(r"(?:blake3-512:[0-9a-f]{128}|sha256:[0-9a-f]{64})")
-_WITNESS_AUTHORITY = object()
+_WITNESS_AUTHORITY = ProducerAuthorityV1("sugar/conservation/witness-mint")
 
 
 def _content_cid(data: bytes) -> str:

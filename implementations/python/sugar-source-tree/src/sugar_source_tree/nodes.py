@@ -56,6 +56,7 @@ from .panic import (
 )
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import LineColSpan, LineTable, Span
+from .producer_authority import ProducerAuthorityV1
 from .binding_state import (
     BindingEntryV1,
     BindingMap,
@@ -204,7 +205,9 @@ class TargetPatternConstructionGapV1(TypeError):
         self.actual_coordinates = actual_coordinates
 
 
-_TARGET_PATTERN_ENROLLMENT_AUTHORITY = object()
+_TARGET_PATTERN_ENROLLMENT_AUTHORITY = ProducerAuthorityV1(
+    "sugar/nodes/target-pattern-enrollment"
+)
 
 
 class TargetPatternEnrollmentV1:
@@ -328,7 +331,9 @@ class TargetPatternNotEnrolledV1(TargetPatternEnrollmentV1):
 TargetPatternEnrollmentV1._variants_closed = True
 
 
-_LEXICAL_CALL_ENROLLMENT_AUTHORITY = object()
+_LEXICAL_CALL_ENROLLMENT_AUTHORITY = ProducerAuthorityV1(
+    "sugar/nodes/lexical-call-enrollment"
+)
 
 
 def _lexical_enrollment_defect(blame, observed: str, requested: str, fix: str):
@@ -478,7 +483,9 @@ def mint_lexical_call_enrollment(
     )
 
 
-_TARGET_PATTERN_RECEIPT_AUTHORITY = object()
+_TARGET_PATTERN_RECEIPT_AUTHORITY = ProducerAuthorityV1(
+    "sugar/nodes/target-pattern-receipt"
+)
 
 
 @dataclass(frozen=True, init=False)
