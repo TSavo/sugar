@@ -149,7 +149,6 @@ def test_lying_twin_lift_rpc_roll_call_uses_the_one_door(
 ) -> None:
     """lift_rpc must not re-derive presence by CID; it uses the one door."""
     from sugar_lift_py_tests import lift_rpc
-    from sugar_source_tree.tree import SourceFile
     import sugar_source_tree.roll_call as roll_call
 
     report = _split_presence_report()
@@ -168,15 +167,18 @@ def test_lying_twin_lift_rpc_roll_call_uses_the_one_door(
             self.gaps: list = []
             self.present = list(report.reporter.present)
 
+    # The leaf opens through the CONSTRUCTION door, never `SourceFile.from_path`
+    # (a context-less tree paints every With RuntimeSelectedContextManager).
+    # Stub that door, so this test still exercises the real projection.
     monkeypatch.setattr(
-        SourceFile, "from_path", classmethod(lambda cls, *a, **k: _SF())
+        lift_rpc, "open_source_file_for_construction", lambda *a, **k: _SF()
     )
     monkeypatch.setattr(roll_call, "discharge", lambda sf: report)
     monkeypatch.setattr("sugar_source_tree.reporter.CollectingReporter", _Reporter)
 
     path = tmp_path / "t.py"
     path.write_text("# seat file\n", encoding="utf-8")
-    leaf = lift_rpc._roll_call_audit_leaf(path, "t.py")
+    leaf = lift_rpc._roll_call_audit_leaf(path, "t.py", root=tmp_path)
     audit = leaf["auxiliaryRows"]["sourceAudit"]
 
     assert _status_by_line(audit) == {

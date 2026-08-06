@@ -607,15 +607,33 @@ def demand_construction_residual(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None = None,
+    distribution: str | None = None,
+    source_workspace_root: Path | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """D3: sugar.enumerate level=facts + auditFrontier → construction residual."""
+    """D3: sugar.enumerate level=facts + auditFrontier → construction residual.
+
+    ``distribution`` and ``source_workspace_root`` travel with the demand for
+    the same reason D2 carries them: D3 CONSTRUCTS, so its open needs the same
+    preconstruction authority and the same locus authority D2 used. Sending D3
+    with less than D2 had is what let the frontier report a manufactured
+    ``RuntimeSelectedContextManager`` at every ``With``.
+    """
     at = file_memento(file_rel=file_rel, source_cid=source_cid)
     result = enumerate_rpc(
         level="facts",
         workspace_root=workspace_root,
         at=at,
         seek=True,
-        options={"auditFrontier": True, "allowedBrokenComponents": ["python"]},
+        options={
+            "auditFrontier": True,
+            "allowedBrokenComponents": ["python"],
+            "distribution": distribution,
+            "sourceWorkspaceRoot": (
+                str(source_workspace_root)
+                if source_workspace_root is not None
+                else None
+            ),
+        },
     )
     gaps = list(result.get("gaps") or [])
     nodes = list(result.get("nodes") or [])
@@ -1143,6 +1161,8 @@ def _terminal_via_enumerate(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
+            distribution=distribution,
+            source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — residual failed; roster stands
         if _is_process_control(error):

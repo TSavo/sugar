@@ -321,9 +321,11 @@ def test_rpc_entry_preserves_tree_panic_role(
     requests = iter([request])
     sent = []
     monkeypatch.setattr(lift_rpc, "_recv", lambda: next(requests, None))
+    # The facts leaf opens through the CONSTRUCTION door, never the bare one.
     monkeypatch.setattr(
-        "sugar_source_tree.tree.SourceFile.from_path",
-        classmethod(lambda _cls, *_args, **_kwargs: (_ for _ in ()).throw(panic)),
+        lift_rpc,
+        "open_source_file_for_construction",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(panic),
     )
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
 

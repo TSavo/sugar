@@ -1860,10 +1860,43 @@ def _seat_roll_call_reporter(source_file, reporter) -> None:
         reporter.register(node)
 
 
+def audit_frontier_construction_context(root: Path):
+    """The ONE preconstruction authority every ``auditFrontier`` level opens with.
+
+    Bound authenticated refs when the Rust prebind installed them; otherwise the
+    provisional demand table for this workspace root. Never ``None`` and never an
+    empty stand-in: a tree opened without this authority makes every ``With``
+    report ``RuntimeSelectedContextManager`` regardless of resolvability, which
+    is a manufactured frontier, not a measurement.
+
+    This does NOT manufacture a contract ref. It supplies the table the use-site
+    is looked up in; a use-site with no row still resolves to a typed
+    ``ContextManagerResolutionGapV1`` and stays a countable construction panic.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+
+    if _BOUND_CONTRACT_REFS is not None or _BOUND_CALL_CONTRACT_REFS is not None:
+        return TreeConstructionContextV1(
+            (
+                _BOUND_CONTRACT_REFS
+                if _BOUND_CONTRACT_REFS is not None
+                else provisional_contract_refs_from_demands(root)
+            ),
+            call_contract_refs=_BOUND_CALL_CONTRACT_REFS,
+            workspace_root=str(root),
+        )
+    return tree_construction_context_for_workspace(root)
+
+
 def _roll_call_audit_leaf(
     full_path: Path,
     file_rel: str,
     *,
+    root: Path,
+    locus_root: Path | None = None,
+    distribution: str | None = None,
     expected_source_cid: str | None = None,
 ) -> dict:
     from sugar_lift_py_tests.kit_rpc import AuditLeafEnvelopeDto
@@ -1876,7 +1909,6 @@ def _roll_call_audit_leaf(
     """
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.roll_call import discharge
-    from sugar_source_tree.tree import SourceFile
 
     from sugar_lift_py_tests.tree_enumerate import source_audit_from_report
 
@@ -1888,8 +1920,29 @@ def _roll_call_audit_leaf(
     )
     source_file = None
     try:
-        source_file = SourceFile.from_path(str(full_path), reporter=reporter)
-        _seat_roll_call_reporter(source_file, reporter)
+        # THE CONSTRUCTION DOOR, never the bare one. `discharge` drives
+        # `.sugar()` over the whole tree, so this scope CONSTRUCTS. Opening
+        # through the bare path door gave the tree no construction context,
+        # and a context-less tree paints every `With`
+        # `RuntimeSelectedContextManager` regardless of resolvability -- one
+        # panic per file, at the file's FIRST `with`, masking everything behind
+        # it. See scripts/construction_context_door_law.py; the production
+        # `functions` level and `audit_file_gaps` already open this way.
+        source_file = open_source_file_for_construction(
+            full_path,
+            root=root,
+            reporter=reporter,
+            construction_context=audit_frontier_construction_context(root),
+            source_workspace_root=locus_root,
+            # Source-derived manager refs are frozen at exact use-sites only
+            # when the demand names its enrolled distribution -- the same
+            # condition D2's `context-manager-resolutions` level requires. A
+            # demand without one is NOT quietly derived against a guessed
+            # roster: it constructs against the contract table alone, and any
+            # manager that would have derived stays a countable panic.
+            populate_derived=bool(distribution),
+            distribution=distribution,
+        )
         report = discharge(source_file)
     finally:
         if expected_source_cid is not None:
@@ -2312,6 +2365,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     leaf = _roll_call_audit_leaf(
                         full_path,
                         file_rel,
+                        root=root,
+                        locus_root=locus_root,
+                        distribution=(
+                            options.get("distribution")
+                            if isinstance(options.get("distribution"), str)
+                            and options.get("distribution")
+                            else None
+                        ),
                         expected_source_cid=(
                             str(expected_source_cid)
                             if isinstance(expected_source_cid, str)
