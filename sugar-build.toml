@@ -104,6 +104,24 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_prefix_threading.py"]
 network = "none"
 
+[tasks.probe-runtime-selected]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_runtime_selected.py"]
+network = "none"
+
+[tasks.probe-manager-callee-roads]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_manager_callee_roads.py"]
+network = "none"
+
+[tasks.probe-seat-census]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_seat_census.py"]
+network = "none"
+
 [tasks.authenticated-no-call-body-attribution]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
