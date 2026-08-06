@@ -355,6 +355,12 @@ WITH_CENSUS_CONSERVATION_IDENTITY = (
     "(no residual kind taxonomy)"
 )
 
+# The outcome vocabulary the identity above names, in ONE place. The intake
+# gate and the partition MUST read the same set: they are two doors onto one
+# question, and when they disagreed the gate rejected `cited-opaque` as a
+# malformed event before the partition could count it.
+_WITH_RESOLUTION_OUTCOMES = frozenset({"constructed", "cited-opaque", "unconstructed"})
+
 
 def _tally_cm_resolutions(
     context=None,
@@ -385,7 +391,14 @@ def _tally_cm_resolutions(
             if (
                 not isinstance(key, dict)
                 or key.get("sourceCid") != source_cid
-                or outcome not in {"constructed", "unconstructed"}
+                # The SAME three facts the partition below counts. This gate
+                # runs upstream of `_with_census_partition`, so a value it
+                # rejects never reaches the bucket built for it: #7388 added
+                # `cited-opaque` to the law and to the partition and left this
+                # closed set at two. Every cited row then failed here as a
+                # malformed event and voided its whole file -- 86 instrument
+                # failures in run 31128314243 where the census before had zero.
+                or outcome not in _WITH_RESOLUTION_OUTCOMES
                 or not isinstance(observed_type, str)
                 or "." not in observed_type
             ):
