@@ -629,7 +629,30 @@ class DependencyArtifactGraph:
             _require_parseable_module_source(
                 source, path=diagnostic_path, module_name=module_name
             )
-            if module_name in modules:
+            seated = modules.get(module_name)
+            if seated is not None:
+                # PEP 484: ``x.pyi`` is the STUB FOR ``x.py`` -- ONE module with
+                # two recorded seats, not two rival definitions of one name.
+                # Refusing that pair refused the whole numpy graph (151 such
+                # pairs; the first collision is ``numpy.__config__``), so every
+                # numpy manager cited ``no-derived-contract`` even though the
+                # defining source was recorded, enrolled and parseable.  The
+                # implementation seat IS the module; the stub is derivative and
+                # seats nothing.  Rivalry is unchanged: two seats that do not
+                # share one stem (``pkg.py`` vs ``pkg/__init__.py``,
+                # ``pkg/m.pyi`` vs ``pkg/m/__init__.py``) remain a duplicate
+                # module seat and are still refused.
+                seated_seat = PurePosixPath(seated.source_seat)
+                if seated_seat.with_suffix("") == relative.with_suffix(""):
+                    if seated_seat.suffix != ".py" or relative.suffix != ".pyi":
+                        # The canonical-order door above admits only
+                        # (``.py`` seated, ``.pyi`` arriving) for one stem.
+                        # Refuse rather than choose if that ever changes.
+                        raise DependencyArtifactAuthenticationError(
+                            "stub and implementation seats for "
+                            f"{module_name} are not canonically ordered"
+                        )
+                    continue
                 raise DependencyArtifactAuthenticationError(
                     f"distribution contains duplicate module seat {module_name}"
                 )
@@ -1049,9 +1072,11 @@ def _module_name(path: PurePosixPath) -> str | None:
     # in ``.so`` and the source-visible type definitions in a sibling ``.pyi``
     # (PyArrow's exception hierarchy is one such provider).  Discarding that
     # recorded, content-addressed source turns a reachable class definition
-    # into opacity.  A distribution containing both ``x.py`` and ``x.pyi``
-    # remains a duplicate module seat and is refused by the existing intake
-    # check; this door never chooses whichever file is convenient.
+    # into opacity.  A distribution containing both ``x.py`` and ``x.pyi`` is
+    # ONE module with two seats (PEP 484): the intake check seats the
+    # implementation and drops the stub.  Seats that collide on a module name
+    # WITHOUT sharing a stem stay rivals and are still refused there; this door
+    # never chooses whichever file is convenient.
     if path.suffix not in {".py", ".pyi"}:
         return None
     parts = list(path.with_suffix("").parts)
