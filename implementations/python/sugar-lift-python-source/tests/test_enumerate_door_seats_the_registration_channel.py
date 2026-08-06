@@ -31,6 +31,16 @@ THE ENTRANCE IS THE CENSUS ENTRANCE: ``measure_file_via_enumerate``. A bare
 The fix is NOT to let the retention check accept a ``NullReporter`` -- that
 check is the instrument, and it is what caught this.
 ``test_retention_refusal_names_which_fault.py`` pins both of its arms.
+
+CLOSED. #7382 seated the two bare enumerate opens and added
+``_seat_roll_call_reporter`` for the residency-hit leak; #7383 routed the
+``auditFrontier`` facts leaf through the construction door. Both fixed WHICH
+reporter reaches the door. Neither could fix WHICH NODES the seating walk
+reaches -- and the seating walk was minting the very shells it seated, leaving
+the bind-time roster (``function_nodes`` / ``module_direct_bindings``) on the
+first opener's ``NULL_REPORTER`` forever. That roster is where the frame owner
+handed to retention comes from. See
+``test_bind_time_roster_is_seated_too.py``.
 """
 
 from __future__ import annotations
@@ -212,29 +222,23 @@ def measured_seat(measured_prefix) -> dict[str, Any]:
     return measured_prefix[0]
 
 
-STILL_HOLED = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "io/parsers/readers.py is STILL a census hole: a producer this walk "
-        "resolves through is born on NULL_REPORTER from a door not yet found. "
-        "Seating the two enumerate doors and re-seating a residency hit closed "
-        "tests/io/excel/test_writers.py (see test_census_reexport_memo_hole) "
-        "but not this seat. Recorded strict so the day it banks a row this "
-        "tooth is told. The full-corpus profile agrees: 828 panics / 592 "
-        "completed / 1 instrument-failure, unchanged, and this is the 1."
-    ),
-)
+# CLOSED at #7385+1 (this branch). The fourth door was not a bare open at all:
+# ``_seat_roll_call_reporter`` walked ``source_file.nodes()``, and because
+# ``Node.__getattr__`` memoizes child slots under a key containing
+# ``self.reporter``, that walk MINTS the shells it then seats. The bind-time
+# roster handed to ``SourceUnit.bind_typed_module`` -- ``function_nodes`` and
+# ``module_direct_bindings`` -- is never on that walk, and it is exactly where
+# ``SourceUnit`` reads the definition that becomes
+# ``SourceVisibleCallFrameV1.owner``, the producer handed to retention. Seating
+# that roster is the repair; see
+# ``sugar-lift-python-source/tests/test_bind_time_roster_is_seated_too.py``,
+# whose teeth are first-party and run in 20s.
+#
+# The three guards below were strict xfails and all three XPASSed on the repair,
+# which is the machinery doing its job. Their markers are removed, not
+# loosened: they are ordinary guards now and a regression must be red.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "pre-existing bare AttributeError in _populate_same_module_class_"
-        "manager_uses ('SpreadCallSugar' object has no attribute 'args'), "
-        "revealed once the retention defect stopped shadowing it; this seat is "
-        "still a census hole, for a different cause"
-    ),
-)
 def test_seat_banks_a_countable_terminal(measured_seat: dict[str, Any]) -> None:
     """GUARD: the seat banks a row, not a hole.
 
@@ -249,7 +253,6 @@ def test_seat_banks_a_countable_terminal(measured_seat: dict[str, Any]) -> None:
     )
 
 
-@STILL_HOLED
 def test_no_producer_is_born_without_a_registration_table(
     measured_prefix: tuple[dict[str, Any], list[str]],
 ) -> None:
@@ -272,7 +275,6 @@ def test_no_producer_is_born_without_a_registration_table(
     )
 
 
-@STILL_HOLED
 def test_seat_never_names_an_unregistered_producer(
     measured_seat: dict[str, Any],
 ) -> None:

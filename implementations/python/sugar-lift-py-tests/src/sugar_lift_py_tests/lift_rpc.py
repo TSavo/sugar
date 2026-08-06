@@ -1853,11 +1853,53 @@ def _seat_roll_call_reporter(source_file, reporter) -> None:
     each existing node with this consumer's reporter.  Parent-first order also
     ensures any lazily materialized child is born on the same channel.  This
     does not parse, populate, or prepare the SourceFile again.
+
+    THE LIVE WALK IS NOT THE WHOLE TREE.  ``Node.__getattr__`` memoizes child
+    slots under a key that includes ``self.reporter``, so seating a parent does
+    not move its children -- it makes the next read mint FRESH child shells on
+    the new reporter.  ``source_file.nodes()`` is exactly that read.  It
+    therefore seats a tree the walk itself is creating, and never visits the
+    shells materialized at ``Backend.materialize_module`` time and handed to
+    ``SourceUnit.bind_typed_module``.
+
+    That bind-time roster is not inert.  ``SourceUnit`` reads a call's owning
+    definition out of ``unit.function_nodes``, and that FunctionDef becomes
+    ``SourceVisibleCallFrameV1.owner`` -- the exact producer
+    ``Call._project_constructed_value_for_testimony`` hands to
+    ``retain_registered_node_from``.  Left on the first opener's
+    ``NULL_REPORTER`` it owns no registration table, and retention refuses it as
+    ABSENT.  That refusal is right; the stale roster is what is wrong.
+
+    So seat the bind-time roster FIRST, then the live walk.  Both, and in that
+    order: the roster is what the frame owner is read from, and the walk is what
+    ordinary construction traverses.
     """
     source_file.reporter = reporter
-    for node in source_file.nodes():
+    # id -> node, never a bare set of ids. The live walk mints shells nothing
+    # else holds, so a set would let one be collected and its address reused by
+    # the next shell, which would then be skipped as already seated -- silent
+    # under-seating, the exact failure this function exists to end. The mapping
+    # keeps every seated node alive for the duration of the walk.
+    seated: dict[int, object] = {}
+
+    def seat(node) -> None:
+        if id(node) in seated:
+            return
+        seated[id(node)] = node
         object.__setattr__(node, "reporter", reporter)
+        # Rebinding alone is not seating: it moves the label and registers
+        # nothing, which turns the ABSENT refusal into the FOREIGN one -- the
+        # same hole, renamed.  The two must stay one operation.
         reporter.register(node)
+
+    unit = source_file.unit
+    for node in getattr(unit, "function_nodes", ()) or ():
+        seat(node)
+    for statements in (getattr(unit, "module_direct_bindings", None) or {}).values():
+        for statement in statements:
+            seat(statement)
+    for node in source_file.nodes():
+        seat(node)
 
 
 def audit_frontier_construction_context(root: Path):
