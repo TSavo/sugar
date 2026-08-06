@@ -137,31 +137,34 @@ def test_facts_leaf_keeps_the_unresolvable_with_a_countable_panic(
     ), with_gaps
 
 
-def test_facts_leaf_unmasks_what_sits_behind_the_first_with(tmp_path: Path) -> None:
-    """ARM THREE. The point of unmasking: a later function is now measured too.
+def test_facts_leaf_terminal_names_the_resolution_that_actually_ran(
+    tmp_path: Path,
+) -> None:
+    """ARM THREE. The terminal carries testimony only a real resolution can carry.
 
-    The masked board reported ONE panic per file because the file's first
-    ``with`` terminated the roll. ``second`` here holds an unrelated, differently
-    owned gap. It is only observable once the ``with`` in ``first`` stops being a
-    manufactured terminal -- which is why a RISING panic count is discovery.
+    A missing authority has nothing to say about the manager: it reports the
+    same sentence at every use-site. A resolution that RAN reports what it
+    found -- here the demand row's own ``runtime-selected`` kind, at this exact
+    use-site. That suffix is unforgeable by the absent-authority arm, which is
+    what makes this a discriminator rather than a restatement of arm two.
+
+    NOT asserted here: that a later function in the same file now gets
+    measured. An unresolvable ``with`` still terminates the module root, so a
+    file whose only ``with`` cannot resolve reports the same one terminal as
+    before -- with a different, honest name. Unmasking shows up on files whose
+    ``with``es DO resolve, which needs an enrolled distribution and is measured
+    on the corpus, not here.
     """
-    (tmp_path / "behind.py").write_text(
-        "def first(manager):\n"
-        "    with manager:\n"
-        "        pass\n"
-        "\n"
-        "\n"
-        "def second():\n"
-        "    return undefined_name\n",
-        encoding="utf-8",
-    )
+    (tmp_path / "consumer.py").write_text(UNRESOLVABLE_WITH, encoding="utf-8")
 
-    core = _facts_leaf(tmp_path, "behind.py")
-    owners = {str(gap.get("owner")) for gap in _panic_gaps(core)}
-    assert "With._construct_sugar" in owners, owners
-    assert owners - {"With._construct_sugar"}, (
-        "nothing behind the first `with` was measured -- the file is still "
-        f"terminating at it: {core['panics']}"
+    core = _facts_leaf(tmp_path, "consumer.py")
+    observed = [str(gap.get("observed")) for gap in _panic_gaps(core)]
+    assert any(
+        text.startswith(LOOKUP_FAILURE) and text != LOOKUP_FAILURE
+        for text in observed
+    ), (
+        "the terminal names no resolution outcome -- nothing resolved, the "
+        f"entrance only reported its own absence: {observed}"
     )
 
 
