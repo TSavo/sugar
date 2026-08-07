@@ -104,6 +104,36 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_prefix_threading.py"]
 network = "none"
 
+[tasks.probe-decorator-citation-shape]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_decorator_citation_shape.py"]
+network = "none"
+
+[tasks.probe-errstate-blocker]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_errstate_blocker.py"]
+network = "none"
+
+[tasks.probe-local-generator-manager]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_local_generator_manager.py"]
+network = "none"
+
+[tasks.probe-generator-law-subject]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_generator_law_subject.py"]
+network = "none"
+
+[tasks.probe-cm-demand-kinds]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_cm_demand_kinds.py"]
+network = "none"
+
 [tasks.authenticated-no-call-body-attribution]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]

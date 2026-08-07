@@ -2096,20 +2096,26 @@ def _publish_generator_backed_resource_contract(
         construct_generator_backed_protocol,
     )
 
+    declined: list[str] = []
     coords = _protocol_coords_from_generator_decorators(
         generator_target,
         session=session,
         graph=graph,
         dependency_graphs=dependency_graphs,
         distribution_index=distribution_index,
+        declined=declined,
     )
     if coords is None:
+        # Name WHY, per decorator. "unavailable" was true of an off-population
+        # citation, a missing binding and a malformed decorator body alike, so
+        # the row could not say which one a reader was looking at.
         _install_derivation_gap(
             context,
             receiver,
             receipt,
             "generator-protocol",
-            "native enter/exit definition coordinates unavailable",
+            "native enter/exit definition coordinates unavailable"
+            + (f" [{'; '.join(declined)}]" if declined else ""),
         )
         return
     enter, exit_ = coords
@@ -2411,14 +2417,16 @@ def _resolve_nested_generator_function(
     if len(binds) == 1 and isinstance(binds[0], FunctionDef):
         return binds[0]
     if len(binds) == 1 and isinstance(binds[0], ImportFrom):
-        constructed = _construct_decorator_function(
+        outcome = _construct_decorator_function(
             func,
             session=session,
             graph=graph,
             distribution_index=distribution_index,
         )
-        if isinstance(constructed, FunctionDef):
-            return constructed
+        if isinstance(outcome, DecoratorConstructedV1) and isinstance(
+            outcome.function, FunctionDef
+        ):
+            return outcome.function
     return None
 
 
@@ -2733,6 +2741,7 @@ def _protocol_coords_from_generator_decorators(
     graph=None,
     dependency_graphs=None,
     distribution_index=None,
+    declined=None,
 ):
     """Construct enter/exit definition sites from generator decorator testimony."""
     from sugar_source_tree.nodes import FunctionDef
@@ -2743,21 +2752,44 @@ def _protocol_coords_from_generator_decorators(
     if not decorators:
         return None
     published = []
+    # Out-parameter: pass a list and each decorator that could not supply
+    # coordinates appends the NAMED reason it could not. Same shape as
+    # ``_substitute_body_tracked(..., edge_states=...)``; the return contract is
+    # unchanged so existing callers and tests are untouched.
+    if declined is None:
+        declined = []
     for decorator in decorators:
-        decorator_fn = _construct_decorator_function(
+        outcome = _construct_decorator_function(
             decorator,
             session=session,
             graph=graph,
             dependency_graphs=dependency_graphs,
             distribution_index=distribution_index,
         )
-        if decorator_fn is None:
+        # Closed set, reconciled here. A citation is NOT a decline-and-forget:
+        # it is a named, authenticated identity this road cannot yet consume,
+        # and the reason travels so the refusal downstream can say so.
+        if isinstance(outcome, DecoratorCitedV1):
+            declined.append(
+                f"{outcome.module_name}.{outcome.exported_name}: "
+                f"{outcome.membrane_kind}"
+            )
             continue
-        returned_class = _sole_returned_manager_class(decorator_fn)
+        if isinstance(outcome, DecoratorUnresolvedV1):
+            declined.append(f"{outcome.kind}: {outcome.detail}")
+            continue
+        if not isinstance(outcome, DecoratorConstructedV1):
+            raise TypeError(
+                "decorator resolution must be one of the closed outcomes; "
+                f"got {type(outcome).__name__}"
+            )
+        returned_class = _sole_returned_manager_class(outcome.function)
         if returned_class is None:
+            declined.append("decorator body does not return exactly one manager class")
             continue
         coords = _enter_exit_sites_from_class_def(returned_class)
         if coords is None:
+            declined.append("returned class publishes no distinct __enter__/__exit__")
             continue
         published.append(coords)
     # Exactly one decorator arm may yield protocol coordinates; several would
@@ -2765,6 +2797,55 @@ def _protocol_coords_from_generator_decorators(
     if len(published) != 1:
         return None
     return published[0]
+
+
+@dataclass(frozen=True)
+class DecoratorConstructedV1:
+    """The decorator resolved to a source-visible FunctionDef we constructed."""
+
+    function: object
+
+
+@dataclass(frozen=True)
+class DecoratorCitedV1:
+    """The decorator is authenticated but OFF ENROLLED POPULATION.
+
+    Not an absence: the identity is known and content-addressed. The membrane
+    refuses to MaterializeModule it, which is correct -- constructing it would
+    invent testimony about a body sugar cannot see. What a consumer may do with
+    this citation is a separate ruling; what it may NOT do is mistake it for
+    "there was no decorator".
+    """
+
+    module_name: str
+    exported_name: str
+    resolved: object
+    membrane_kind: str
+    membrane_detail: str | None
+
+
+@dataclass(frozen=True)
+class DecoratorUnresolvedV1:
+    """No decorator identity at this site, with the reason named.
+
+    ``absent`` is the only member that means "nothing was there". Every other
+    member is a lookup that failed, and the two must never share a value.
+    """
+
+    kind: Literal[
+        "absent",
+        "artifact-authentication-failed",
+        "module-absent-from-graph",
+        "export-unresolved",
+        "frame-construction-gap",
+        "not-a-function-definition",
+    ]
+    detail: str
+
+
+DecoratorResolutionV1 = (
+    DecoratorConstructedV1 | DecoratorCitedV1 | DecoratorUnresolvedV1
+)
 
 
 def _construct_decorator_function(
@@ -2795,8 +2876,10 @@ def _construct_decorator_function(
         if isinstance(decorator, Name):
             binds = (decorator.unit.module_direct_bindings or {}).get(decorator.id, ())
             if len(binds) == 1 and isinstance(binds[0], FunctionDef):
-                return binds[0]
-        return None
+                return DecoratorConstructedV1(binds[0])
+        return DecoratorUnresolvedV1(
+            "absent", "decorator names no authenticated import or module binding"
+        )
     module_name, exported_name = binding
     graphs = []
     if graph is not None:
@@ -2830,8 +2913,10 @@ def _construct_decorator_function(
             authenticated_dependency = authenticate_dependency_top_level(
                 top_level, distribution_index=distribution_index
             )
-        except DependencyArtifactAuthenticationError:
-            return None
+        except DependencyArtifactAuthenticationError as exc:
+            return DecoratorUnresolvedV1(
+                "artifact-authentication-failed", f"{module_name}: {exc}"
+            )
         if session is not None and session.enabled:
             session.dependency_graphs[top_level] = authenticated_dependency
         if dependency_graphs is not None:
@@ -2855,7 +2940,10 @@ def _construct_decorator_function(
             resolved_graph = candidate
             break
     if resolved is None or resolved_graph is None:
-        return None
+        return DecoratorUnresolvedV1(
+            "export-unresolved",
+            f"{module_name}.{exported_name} did not resolve in any authenticated graph",
+        )
     frame_result = resolve_source_visible_frame(
         resolved,
         graph=resolved_graph,
@@ -2863,11 +2951,30 @@ def _construct_decorator_function(
         session=session,
     )
     if isinstance(frame_result, ManagerConstructionGapV1):
-        return None
+        # OFF-POPULATION IS NOT ABSENCE. The membrane refuses to materialize an
+        # unenrolled module -- correctly -- but the identity it refused to
+        # construct is authenticated and addressable. Returning None here made
+        # that indistinguishable from "there was no decorator", which is how a
+        # citable fact became a silent nothing.
+        if frame_result.kind == "call-target-off-population":
+            return DecoratorCitedV1(
+                module_name=module_name,
+                exported_name=exported_name,
+                resolved=resolved,
+                membrane_kind=frame_result.kind,
+                membrane_detail=frame_result.detail,
+            )
+        return DecoratorUnresolvedV1(
+            "frame-construction-gap",
+            f"{module_name}.{exported_name}: {frame_result.kind}: {frame_result.detail}",
+        )
     _frame, target = frame_result
     if not isinstance(target, FunctionDef):
-        return None
-    return target
+        return DecoratorUnresolvedV1(
+            "not-a-function-definition",
+            f"{module_name}.{exported_name} resolved to {type(target).__name__}",
+        )
+    return DecoratorConstructedV1(target)
 
 
 def _decorator_module_export_binding(decorator) -> tuple[str, str] | None:
