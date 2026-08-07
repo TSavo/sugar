@@ -11,6 +11,7 @@ from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
     ConstructionTestimonyReporterV1,
     SubstitutionTraceBuilderV1,
+    _independent_callee_definition,
 )
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
@@ -155,7 +156,7 @@ def test_call_definition_testimony_rejects_foreign_or_wrong_occurrence(
 
 
 # ---------------------------------------------------------------------------
-# TEN FAULTS, NOT ONE: the identity guard names the term it refused on
+# THIRTEEN FAULTS, NOT ONE: the identity guard names the term it refused on
 # ---------------------------------------------------------------------------
 
 
@@ -273,7 +274,12 @@ def _two_files_one_roll(tmp_path):
     is a different fault and must stay one.
     """
     helper_path = tmp_path / "callee_unit.py"
-    helper_path.write_text("def find_level(value):\n    return value\n")
+    helper_path.write_text(
+        "def find_level(value):\n    return value\n\n"
+        # A SECOND definition in the same unit, so a lying twin can name the
+        # wrong one without leaving the enrolled population.
+        "def other_level(value):\n    return value + 1\n"
+    )
     caller_path = tmp_path / "caller_unit.py"
     caller_path.write_text("def apply(value):\n    return find_level(value)\n")
 
@@ -298,8 +304,13 @@ def _two_files_one_roll(tmp_path):
         for node in caller_root.walk()
         if isinstance(node, Call) and node.segment() == "find_level(value)"
     )
+    other = next(
+        node
+        for node in helper_root.walk()
+        if isinstance(node, FunctionDef) and node.name == "other_level"
+    )
     assert definition.unit.source_cid != call.unit.source_cid
-    return definition, call, testimony
+    return definition, other, call, testimony
 
 
 def test_a_cross_file_enrolled_callee_is_not_an_identity_fault(tmp_path) -> None:
@@ -309,7 +320,7 @@ def test_a_cross_file_enrolled_callee_is_not_an_identity_fault(tmp_path) -> None
     in the CALLER's file, which no real corpus can satisfy -- that described
     our instrument, not a defect in pandas.
     """
-    definition, call, reporter = _two_files_one_roll(tmp_path)
+    definition, _other, call, reporter = _two_files_one_roll(tmp_path)
     truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
     frame = definition.source_visible_call_frame()
 
@@ -328,7 +339,7 @@ def test_an_unauthenticated_callee_unit_still_refuses_by_its_own_name(
     into one outcome. A unit carrying no content address is refused, and it is
     refused under a DIFFERENT name than the cross-file case above returns.
     """
-    definition, call, reporter = _two_files_one_roll(tmp_path)
+    definition, _other, call, reporter = _two_files_one_roll(tmp_path)
     truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
     frame = definition.source_visible_call_frame()
     object.__setattr__(definition.unit, "source_cid", "")
@@ -346,7 +357,7 @@ def test_an_opaque_callee_keeps_its_own_separate_name(tmp_path) -> None:
     unmaterialized `_Handle`s. They are caught ABOVE the unit terms, so
     relaxing the same-unit demand cannot let one through.
     """
-    definition, call, reporter = _two_files_one_roll(tmp_path)
+    definition, _other, call, reporter = _two_files_one_roll(tmp_path)
     truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
 
     class _OpaqueHandle:
@@ -362,7 +373,7 @@ def test_the_frame_site_term_is_keyed_on_the_definitions_unit(tmp_path) -> None:
     """A frame describes the CALLEE's definition, so its site lives in the
     callee's file. Keying it on the caller's unit was the same-unit demand
     wearing a second name -- it refused every cross-file call a second time."""
-    definition, call, reporter = _two_files_one_roll(tmp_path)
+    definition, _other, call, reporter = _two_files_one_roll(tmp_path)
     truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
     frame = definition.source_visible_call_frame()
 
@@ -386,3 +397,130 @@ def test_the_frame_site_term_is_keyed_on_the_definitions_unit(tmp_path) -> None:
         )
         == "frame-definition-site-foreign"
     )
+
+
+# ---------------------------------------------------------------------------
+# THE THIRD AUTHORITY: independence recovered from the callee's own source text
+#
+# The identity guard needs to re-derive the callee from an authority that is
+# not the one which produced the claim. Two were already in play and neither
+# could serve: re-reading the import binding that produced
+# `expected_definition_ref` is CIRCULAR -- the guard would agree with itself by
+# construction -- and the CALLER's unit cannot see a cross-file callee at all.
+#
+# The third is the callee's own text. The binding supplies a NAME; the callee's
+# module supplies a LOCATION and CONTENT under that name; the seal joins them.
+#
+# GREEN TEETH DO NOT ACCEPT THIS. The arms below are ordered refutation first:
+# a check that cannot refuse anything is a tautology, and landing one here
+# would convert loud rows into silent passes rather than draining them.
+# ---------------------------------------------------------------------------
+
+
+def _renamed_callee_roll(tmp_path):
+    """The callee module defines a DIFFERENT name than the call site spells."""
+    helper_path = tmp_path / "renamed_callee_unit.py"
+    helper_path.write_text("def renamed_level(value):\n    return value\n")
+    caller_path = tmp_path / "renamed_caller_unit.py"
+    caller_path.write_text("def apply(value):\n    return find_level(value)\n")
+
+    collector = CollectingReporter()
+    helper_source = SourceFile.from_path(helper_path, reporter=collector)
+    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    testimony = ConstructionTestimonyReporterV1(
+        collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
+    )
+    helper_root = materialize(helper_source.unit, helper_source.root.ref, testimony)
+    caller_root = materialize(caller_source.unit, caller_source.root.ref, testimony)
+    renamed = next(
+        node
+        for node in helper_root.walk()
+        if isinstance(node, FunctionDef) and node.name == "renamed_level"
+    )
+    call = next(
+        node
+        for node in caller_root.walk()
+        if isinstance(node, Call) and node.segment() == "find_level(value)"
+    )
+    return renamed, call, testimony
+
+
+def test_the_independent_derivation_refuses_a_substituted_definition(
+    tmp_path,
+) -> None:
+    """THE ACCEPTANCE GATE. A lying twin, and the check REFUSES it.
+
+    The claim names `other_level`. The callee's own module says the call's
+    spelling `find_level` is a different fragment entirely, and the seal over
+    that fragment disagrees. This is the arm that makes the guard worth having:
+    if no failing case could be built, the check would be a tautology and must
+    not be landed at all.
+    """
+    definition, other, call, reporter = _two_files_one_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    lying = replace(truthful, expected_definition_ref=other)
+
+    resolved = _independent_callee_definition(call, other)
+    # The derivation did NOT hand back the claim it was given. That is the
+    # whole difference between a check and a tautology.
+    assert resolved is not other
+    assert isinstance(resolved, FunctionDef) and resolved.name == "find_level"
+
+    fault = reporter._source_call_identity_fault(
+        call,
+        lying,
+        other,
+        resolved,
+        lying.call_occurrence,
+        other.source_visible_call_frame(),
+    )
+    assert fault == "resolved-seal-mismatch", fault
+
+
+def test_the_independent_derivation_refuses_a_renamed_definition(tmp_path) -> None:
+    """A different disagreement, and it keeps a DIFFERENT name.
+
+    "The callee's module has no such name" is not "the callee's module has the
+    wrong thing under that name". Absence and lookup-failure must not share a
+    representation, so they do not share a term.
+    """
+    renamed, call, reporter = _renamed_callee_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    lying = replace(truthful, expected_definition_ref=renamed)
+
+    fault = reporter._source_call_identity_fault(
+        call,
+        lying,
+        renamed,
+        _independent_callee_definition(call, renamed),
+        lying.call_occurrence,
+        renamed.source_visible_call_frame(),
+    )
+    assert fault == "resolved-name-unbound-in-callee-unit", fault
+
+
+def test_the_truthful_cross_file_call_passes_the_independent_derivation(
+    tmp_path,
+) -> None:
+    """The other arm. A guard that refuses everything is no better than one
+    that refuses nothing -- both are independent of the fact they claim to
+    check. This is the same seat as `_config/config.py` calling
+    `util/_exceptions.find_stack_level`.
+    """
+    definition, _other, call, reporter = _two_files_one_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+
+    resolved = _independent_callee_definition(call, definition)
+    # Separately materialized: joined by SEAL, never by object identity.
+    assert resolved is not definition
+    assert resolved.fragment.seal() == definition.fragment.seal()
+
+    fault = reporter._source_call_identity_fault(
+        call,
+        truthful,
+        definition,
+        resolved,
+        truthful.call_occurrence,
+        definition.source_visible_call_frame(),
+    )
+    assert fault is None, fault

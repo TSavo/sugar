@@ -711,6 +711,21 @@ def _ordered_binding_keys(names):
 
 
 @dataclass(frozen=True)
+class IndependentDefinitionGapV1:
+    """WHY a unit could not answer for a name, as a typed value.
+
+    Absence and lookup-failure must never share a representation, and neither
+    may share one with a definition. Returning ``None`` for "no such name",
+    "several such names" and "bound to something that is not a function" lumps
+    three different defects into one, and returning a definition-shaped
+    ``None`` next to a real definition makes the caller's ``isinstance`` test
+    the only thing standing between a gap and a silent pass.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
 
@@ -1705,6 +1720,42 @@ class SourceUnit:
         ):
             return None
         return definition
+
+    def source_function_definition_named(
+        self, name: str
+    ) -> "FunctionDef | AsyncFunctionDef | IndependentDefinitionGapV1":
+        """THIS unit's own answer for what module-level function ``name`` is.
+
+        A deliberately different question from
+        ``source_function_definition_for_call``, and the reason both exist.
+        That one answers "what does this CALL SITE's name bind to", reading the
+        CALLER's unit and applying the call site's scope discipline. This one
+        answers "what does this unit's own source text define under this name",
+        reading the unit it is asked of and nothing else.
+
+        The distinction is what makes an identity check falsifiable rather than
+        tautological. A guard that re-derives a callee through the same
+        authority that produced the claim can only ever agree with itself. This
+        derivation shares no step with the import binding that produced
+        ``expected_definition_ref``: the binding supplies a NAME, and the
+        callee's own text supplies a LOCATION and CONTENT. They can disagree --
+        on a renamed, shadowed, stale or substituted definition -- and that
+        disagreement is the whole reason the guard exists.
+
+        It carries no scope discipline BECAUSE it is not asking a scope
+        question. Applicability was already decided upstream, where a shadowed
+        or local name refuses by producing no expected definition at all and
+        the identity guard is never reached.
+        """
+        bindings = (self.module_direct_bindings or {}).get(name, ())
+        if not bindings:
+            return IndependentDefinitionGapV1("name-unbound-in-callee-unit")
+        if len(bindings) != 1:
+            return IndependentDefinitionGapV1("name-ambiguous-in-callee-unit")
+        found = bindings[0]
+        if not isinstance(found, (FunctionDef, AsyncFunctionDef)):
+            return IndependentDefinitionGapV1("name-not-a-functiondef")
+        return found
 
     def source_function_definition_for_call(
         self, call: "Call"

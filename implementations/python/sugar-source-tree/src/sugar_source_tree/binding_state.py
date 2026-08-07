@@ -404,6 +404,64 @@ class SubstitutionTraceBuilderV1:
         )
 
 
+def _independent_callee_definition(node: object, definition: object) -> object:
+    """Re-derive this call's callee from a THIRD authority: the callee's TEXT.
+
+    Two authorities were already in play and neither could serve. The import
+    binding produced ``expected_definition_ref``, so re-reading it proves
+    nothing -- the guard would agree with itself by construction. The CALLER's
+    unit was the other, and it cannot see a cross-file callee at all: pandas
+    calling `util/_exceptions.find_stack_level` from `_config/config.py` is
+    ordinary Python, and demanding the callee be defined in the caller's file
+    described our instrument rather than a defect in pandas.
+
+    The third authority is the callee's own source text. The binding supplies a
+    NAME -- `N` in module `M` -- and `M`'s own text supplies a LOCATION and
+    CONTENT for `N`. The join is the seal below, over file, source_cid, span
+    and a hash of the fragment text.
+
+    This is falsifiable, which is the only reason it is worth having. The two
+    derivations genuinely disagree on a renamed, shadowed, stale or substituted
+    definition, and the resulting object is not even the same object as the
+    claim on the truthful path -- it is separately materialized and joined by
+    seal, not by identity.
+
+    The NAME is read off the call's own source spelling rather than off the
+    constructed value's ``target_name``, which for a resolved source call is a
+    synthetic `python:resolved-source-call:<cid>` string carrying no name at
+    all.
+    """
+    from sugar_source_tree.nodes import Attribute, IndependentDefinitionGapV1, Name
+
+    # The only caller reaches here under ``isinstance(node, Call)``, so a
+    # missing ``func`` would be a broken Call and must raise, not be read as
+    # "this callee has no name".
+    func = node.func
+    if isinstance(func, Name):
+        name = func.id
+    elif isinstance(func, Attribute):
+        name = func.attr
+    else:
+        # A callee with no source-level NAME cannot be looked up by one, and
+        # saying so would DELETE a guard rather than add one: measured on the
+        # stride-8 slice, 11 rows at `core/frame.py` and elsewhere carry a
+        # callee the caller's unit resolves through its lexical call row and
+        # this derivation cannot address. Those rows were already checked, and
+        # they keep the authority that was checking them -- the caller's unit,
+        # which for a SAME-unit callee is not the binding that produced the
+        # claim and so is still a second opinion. The new derivation ADDS the
+        # cross-file case the caller's unit cannot see; it does not replace
+        # the case the caller's unit serves correctly.
+        return node.unit.source_function_definition_for_call(node)
+    # Read off the CLAIM's unit: a claim naming a definition in module `M` is
+    # checked against `M`'s text. A claim that is not a node at all has no unit
+    # to check against, and says so rather than being read as "no such name".
+    unit = getattr(definition, "unit", None)
+    if unit is None:
+        return IndependentDefinitionGapV1("callee-unit-absent")
+    return unit.source_function_definition_named(name)
+
+
 class ConstructionTestimonyReporterV1:
     """Explicit one-traversal testimony projection layered over the roll call.
 
@@ -575,6 +633,9 @@ class ConstructionTestimonyReporterV1:
         "call-ref-not-materialized",
         "definition-unit-unauthenticated",
         "resolved-not-a-functiondef",
+        "resolved-name-unbound-in-callee-unit",
+        "resolved-name-ambiguous-in-callee-unit",
+        "resolved-callee-unit-absent",
         "resolved-seal-mismatch",
         "call-occurrence-mismatch",
         "frame-is-none",
@@ -593,7 +654,7 @@ class ConstructionTestimonyReporterV1:
     ) -> str | None:
         """The ONE identity term that refused this call, named, or None.
 
-        TEN FAULTS, NOT ONE. These terms were a flat ``or`` chain behind a
+        THIRTEEN FAULTS, NOT ONE. These terms were a flat ``or`` chain behind a
         single sentence, so every one of them printed the same words and the
         row was countable but not actionable -- the reader could not tell a
         cross-FILE callee from a missing materialization from a stale frame,
@@ -611,7 +672,11 @@ class ConstructionTestimonyReporterV1:
         structural, and breaking it means deleting a guard rather than
         transposing two lines.
         """
-        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+        from sugar_source_tree.nodes import (
+            AsyncFunctionDef,
+            FunctionDef,
+            IndependentDefinitionGapV1,
+        )
 
         if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
             return "definition-not-a-functiondef"
@@ -645,6 +710,33 @@ class ConstructionTestimonyReporterV1:
         # therefore keep DIFFERENT names, which is the whole point.
         if not definition.unit.source_cid:
             return "definition-unit-unauthenticated"
+        # The independent derivation either produced a definition or said in a
+        # typed value WHY it could not. Each reason is a different defect
+        # asking for a different repair -- a name absent from the callee's
+        # module is not a name bound several times is not a callee with no name
+        # to look up -- so each keeps its own term. An unrecognised reason is a
+        # backend defect, never a silent fallthrough into the nearest category.
+        if isinstance(resolved_definition, IndependentDefinitionGapV1):
+            if resolved_definition.reason == "name-unbound-in-callee-unit":
+                return "resolved-name-unbound-in-callee-unit"
+            if resolved_definition.reason == "name-ambiguous-in-callee-unit":
+                return "resolved-name-ambiguous-in-callee-unit"
+            if resolved_definition.reason == "name-not-a-functiondef":
+                return "resolved-not-a-functiondef"
+            if resolved_definition.reason == "callee-unit-absent":
+                return "resolved-callee-unit-absent"
+            from sugar_source_tree.panic import backend_defect
+
+            backend_defect(
+                blame=node.fragment,
+                owner="ConstructionTestimonyReporterV1._source_call_identity_fault",
+                observed=(
+                    "independent callee derivation returned an unnamed reason: "
+                    f"{resolved_definition.reason}"
+                ),
+                requested="one named identity term per derivation outcome",
+                fix="name the new reason here and in SOURCE_CALL_IDENTITY_TERMS",
+            )
         if not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef)):
             return "resolved-not-a-functiondef"
         # Reachable only with a resolved definition in hand.
@@ -680,7 +772,7 @@ class ConstructionTestimonyReporterV1:
             )
 
             definition = value.expected_definition_ref
-            resolved_definition = node.unit.source_function_definition_for_call(node)
+            resolved_definition = _independent_callee_definition(node, definition)
             span = node.line_col_span()
             call_occurrence = SourceFragmentCoordinateV1(
                 node.unit.source_cid,
