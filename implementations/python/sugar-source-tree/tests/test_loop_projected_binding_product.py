@@ -19,7 +19,7 @@ def _function(source: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write(source)
         path = handle.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def _product(*, function_name: str = "arbitrary", carried_name: str = "carried"):

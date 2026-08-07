@@ -21,7 +21,7 @@ from sugar_source_tree.tree import SourceFile
 def _loop(tmp_path: Path, source: str, name: str):
     path = tmp_path / name
     path.write_text(source, encoding="utf-8")
-    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions()).sugar()
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar()
     return next(
         statement
         for statement in function.statements

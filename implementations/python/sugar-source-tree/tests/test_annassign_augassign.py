@@ -31,7 +31,7 @@ def _write(src):
 
 
 def _fn(src):
-    return next(SourceFile(path_source(_write(src)), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions())
+    return next(SourceFile(path_source(_write(src)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def test_annotated_assign_with_value_is_inert_and_threads():
@@ -159,7 +159,7 @@ def _constructed_object(annotation):
     source = _CONSTRUCTED_RECEIVER_SOURCE.format(annotation=annotation)
     function = next(
         item
-        for item in SourceFile(path_source(_write(source)), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions()
+        for item in SourceFile(path_source(_write(source)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()
         if item.name == "make"
     )
     return function.sugar().desugar().value.record.statements[-1].value

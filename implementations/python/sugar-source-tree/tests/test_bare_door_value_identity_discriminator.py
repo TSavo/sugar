@@ -432,7 +432,7 @@ def test_an_empty_context_constructs_the_bare_doors_value(tmp_path) -> None:
             Node._require_construction_context = guarded
 
     bare = bridge(None, unguard=True)
-    migrated = bridge(TreeConstructionContextV1.for_source_call_construction())
+    migrated = bridge(TreeConstructionContextV1.for_test_without_workspace())
     production = bridge(tree_construction_context_for_workspace(tmp_path))
 
     print("\n=== what the migration buys (FunctionDef.bridge_source_symbol) ===")
@@ -453,4 +453,23 @@ def test_an_empty_context_constructs_the_bare_doors_value(tmp_path) -> None:
     assert migrated != production, (
         "the empty context now produces the production value, which would mean "
         "workspace_root stopped gating the bridge identity"
+    )
+
+
+def test_the_no_workspace_constructor_tells_the_truth() -> None:
+    """The name IS the claim, so the name must not be able to become a lie.
+
+    ``for_test_without_workspace()`` exists so that "this caller has no
+    workspace" is an explicit, greppable, per-caller assertion rather than a
+    default inherited by files nobody read. That only holds while the
+    constructor actually produces a context with no workspace root -- if
+    someone later gives it one, every call site silently starts asserting
+    something different from what it says, and the audit trail the name buys
+    evaporates.
+    """
+    context = TreeConstructionContextV1.for_test_without_workspace()
+    assert getattr(context, "workspace_root", "MISSING") is None, (
+        "for_test_without_workspace() returned a context WITH a workspace root. "
+        "Every call site of it reads as the assertion 'this caller has no "
+        "workspace', so the constructor may not quietly acquire one."
     )

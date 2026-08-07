@@ -68,7 +68,7 @@ def _function(source: str):
     directory = Path(tempfile.mkdtemp())
     path = directory / "manager.py"
     path.write_text(source, encoding="utf-8")
-    return next(iter(SourceFile(path_source(str(path)), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions()))
+    return next(iter(SourceFile(path_source(str(path)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()))
 
 
 def _steps(source: str):
@@ -82,7 +82,7 @@ def _steps_of(function):
 
 
 def _production_machine(source: str, actual: ConstructedTermSugar):
-    construction = TreeConstructionContextV1.for_source_call_construction()
+    construction = TreeConstructionContextV1.for_test_without_workspace()
     tree = SourceFile(
         (source, "manager.py", blake3_512_of(source.encode("utf-8"))),
         construction_context=construction,
