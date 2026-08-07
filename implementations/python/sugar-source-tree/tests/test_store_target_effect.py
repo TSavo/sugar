@@ -16,6 +16,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_source_tree.fragment import SourceFragment as TreeSourceFragment
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -23,7 +24,7 @@ def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions())
 
 
 from sugar_lift_py_tests.outcome.exit_set import (

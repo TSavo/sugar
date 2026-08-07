@@ -21,6 +21,7 @@ from sugar_source_tree.nodes import (
     TargetPatternConstructionGapV1,
     TargetPatternV1,
 )
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -30,7 +31,7 @@ def _function(source: str) -> FunctionDef:
             Path(directory).relative_to(Path.cwd()) / "live_for_destructuring_target.py"
         )
         path.write_text(source)
-        tree = SourceFile.from_path(path)
+        tree = SourceFile.from_path(path, construction_context=TreeConstructionContextV1.for_source_call_construction())
         return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
 

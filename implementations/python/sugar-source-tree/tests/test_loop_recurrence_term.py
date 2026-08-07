@@ -14,13 +14,14 @@ from sugar_lift_py_tests.ir import _term_content_cid, ctor, str_const
 from sugar_lift_py_tests.loop_construction import LoopWireError
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.outcome.resource_bindings import ManagerBinding
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _loop(tmp_path: Path, source: str, name: str):
     path = tmp_path / name
     path.write_text(source, encoding="utf-8")
-    function = next(SourceFile(path_source(path)).functions()).sugar()
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions()).sugar()
     return next(
         statement
         for statement in function.statements

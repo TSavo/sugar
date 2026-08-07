@@ -9,6 +9,7 @@ refuses because source testimony decides neither lookup edge.
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import native_carrier_for
@@ -18,7 +19,7 @@ def _fn(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions())
 
 
 def _carrier(src, operator):

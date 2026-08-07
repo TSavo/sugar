@@ -361,3 +361,96 @@ def test_the_relative_path_does_reach_the_value(tmp_path) -> None:
         + "\nThe symbol does not track the relative path it claims to name, so "
         "two distinct functions share one cross-language identity."
     )
+
+
+# ---------------------------------------------------------------------------
+# What the mechanical migration actually buys, and what it does not.
+#
+# The 293 tests that opened bare are turned green by one added argument:
+#
+#     SourceFile(path_source(path))
+#     SourceFile(path_source(path), construction_context=
+#                TreeConstructionContextV1.for_source_call_construction())
+#
+# That satisfies the door -- there IS a context now, so nothing refuses. It does
+# NOT give the caller the enrichment the door was protecting, because
+# `for_source_call_construction()` leaves `workspace_root=None`, and
+# `workspace_root` is the gate on FunctionDef's bridge identity.
+#
+# So the migrated value is the BARE DOOR'S VALUE, unchanged, with the refusal
+# removed. Turning a loud refusal into a silent construction of the same answer
+# is the move this whole law exists to forbid, and doing it 54 times with a sed
+# is how an allowlist gets born wearing a context's clothes.
+#
+# This is not an argument against the migration. An empty context is the honest
+# state for a test that constructs one function from a string literal with no
+# workspace at all: every lookup through it says "looked up, genuinely absent",
+# which is exactly the state step (1) made distinguishable from "no context".
+# It IS an argument against applying it blind -- the choice "this caller has no
+# workspace" has to be made per caller, and a caller that cares about the bridge
+# identity must pass a context carrying a real root.
+#
+# The tooth pins the three-way result so nobody later reads the green suite as
+# evidence the enrichment came back.
+# ---------------------------------------------------------------------------
+
+
+def test_an_empty_context_constructs_the_bare_doors_value(tmp_path) -> None:
+    """Three doors, one source, one field. Only the third answers.
+
+    bare == empty-context  and  empty-context != production. If this ever goes
+    green by the first equality breaking, the migration started doing something
+    it does not do today, and the 54-file campaign should be re-argued.
+    """
+    import re
+
+    path = tmp_path / "subject.py"
+    path.write_text(SOURCE)
+    identity = workspace_path_source(str(path), root=str(tmp_path))
+
+    def bridge(construction_context, *, unguard=False):
+        guarded = Node._require_construction_context
+        if unguard:
+            Node._require_construction_context = (
+                lambda self, *, owner: self.unit.construction_context
+            )
+        try:
+            source = SourceFile(
+                identity,
+                reporter=CollectingReporter(),
+                construction_context=construction_context,
+            )
+            for coordinate, (status, text) in _construct_all(
+                source, "FunctionDef"
+            ).items():
+                if coordinate[1] != 0 or status != "ok":
+                    continue  # module-level function only
+                found = re.search(r"bridge_source_symbol=('[^']*'|None)", text)
+                return None if found is None else found.group(1)
+            return "<no module-level FunctionDef>"
+        finally:
+            Node._require_construction_context = guarded
+
+    bare = bridge(None, unguard=True)
+    migrated = bridge(TreeConstructionContextV1.for_source_call_construction())
+    production = bridge(tree_construction_context_for_workspace(tmp_path))
+
+    print("\n=== what the migration buys (FunctionDef.bridge_source_symbol) ===")
+    print(f"    bare door                      : {bare}")
+    print(f"    migrated (empty context)       : {migrated}")
+    print(f"    production (workspace context) : {production}")
+
+    assert production not in (None, "None"), (
+        "the production arm produced no bridge symbol, so this comparison is "
+        "vacuous and proves nothing about what the migration buys"
+    )
+    assert migrated == bare, (
+        "the empty context no longer reproduces the bare door's value "
+        f"({migrated} vs {bare}). The migration now changes the constructed "
+        "value, which is a different claim than the one measured -- re-argue "
+        "the campaign before extending it."
+    )
+    assert migrated != production, (
+        "the empty context now produces the production value, which would mean "
+        "workspace_root stopped gating the bridge identity"
+    )

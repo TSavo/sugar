@@ -7,6 +7,7 @@ import pytest
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.effect import LoopControlEffect
 from sugar_lift_py_tests.outcome import Halted
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.binding_provenance import SubstitutionTraceV1
@@ -16,7 +17,7 @@ def _function(source: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write(source)
         path = handle.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_source_call_construction()).functions())
 
 
 def test_break_and_continue_emit_owned_halted_exitset_faces():
