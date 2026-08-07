@@ -104,6 +104,12 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_prefix_threading.py"]
 network = "none"
 
+[tasks.probe-decorator-citation-shape]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_decorator_citation_shape.py"]
+network = "none"
+
 [tasks.probe-cm-demand-kinds]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
