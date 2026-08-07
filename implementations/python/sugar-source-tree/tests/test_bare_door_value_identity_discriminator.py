@@ -544,3 +544,87 @@ def test_an_absolute_locus_REFUSES_under_a_workspace_context(tmp_path) -> None:
     assert any(o == "FunctionDef.bridge_source_symbol" for _, o, _ in refused), (
         f"refused, but not at the bridge-symbol door: {refused}"
     )
+
+
+METHOD_SOURCE = '''\
+class Holder:
+    def method(self, value):
+        return value
+
+
+def module_level(value):
+    return value
+'''
+
+
+def test_a_method_at_an_absolute_locus_reaches_no_richer_value(tmp_path) -> None:
+    """THIRD retroactive check on the 41 -- and the first aimed at the REASONING.
+
+    The licence for the 41 was argued on "an absolute locus REFUSES rather than
+    degrading". That refusal is narrower than stated: it sits behind
+    ``self.unit.is_module_level_function(...)``, so for a METHOD the branch
+    never runs and the same context returns ``None`` silently. Silent ``None``
+    is degradation, not refusal -- so if the raise were the load-bearing fact,
+    the licence would be wrong for every method in those 41 files.
+
+    The substantive ground was always the other one: **no richer value is
+    reachable**. A tempfile path lies under no workspace and an invented literal
+    names a module that exists nowhere, so ``None`` is the CORRECT answer, not a
+    dropped one. This measures that directly instead of arguing it.
+
+    Fails if a workspace-bearing context produces anything richer than the
+    no-workspace one for the method -- which would mean the 41 are silently
+    dropping enrichment at their method sites and must come back out.
+    """
+    import re
+
+    from sugar_lift_python_source.source_oracle import path_source
+
+    path = tmp_path / "subject.py"
+    path.write_text(METHOD_SOURCE)
+    identity = path_source(str(path))  # the 41's shape: ABSOLUTE locus
+
+    def bridges(context):
+        source = SourceFile(
+            identity, reporter=CollectingReporter(), construction_context=context
+        )
+        out = {}
+        for node in _walk(source.root):
+            if type(node).__name__ != "FunctionDef":
+                continue
+            try:
+                text = repr(node.sugar())
+                found = re.search(r"bridge_source_symbol=('[^']*'|None)", text)
+                out[node.name] = None if found is None else found.group(1)
+            except Exception as error:
+                out[node.name] = f"<{type(error).__name__}>"
+        return out
+
+    claimed = bridges(TreeConstructionContextV1.for_test_without_workspace())
+    bearing = bridges(tree_construction_context_for_workspace(tmp_path))
+
+    print("\n=== absolute locus: what a workspace context adds, per function ===")
+    for name in sorted(set(claimed) | set(bearing)):
+        print(f"    {name:15} no-workspace={claimed.get(name)}  "
+              f"workspace-bearing={bearing.get(name)}")
+
+    assert "method" in claimed, (
+        "the fixture produced no METHOD, so the case under test never ran"
+    )
+    assert "module_level" in claimed, "the fixture produced no module-level function"
+
+    # The module-level arm is the control: it is where the refusal DOES fire, so
+    # if it looks identical to the method arm the fixture is not discriminating.
+    assert bearing["module_level"] != bearing["method"], (
+        "module-level and method behave identically under a workspace context, "
+        "so this fixture cannot tell the narrowed branch from the wide one: "
+        f"{bearing}"
+    )
+
+    assert claimed["method"] == bearing["method"], (
+        "THE 41's LICENCE IS WRONG AT METHOD SITES. A workspace-bearing context "
+        f"produced {bearing['method']!r} where the no-workspace claim produces "
+        f"{claimed['method']!r}. A richer value IS reachable for methods at an "
+        "absolute locus, so those sites are silently dropping enrichment and "
+        "must come back out. STOP and report."
+    )
