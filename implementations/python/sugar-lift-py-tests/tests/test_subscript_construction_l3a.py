@@ -16,12 +16,14 @@ from sugar_source_tree.nodes import (
 )
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _sugar_fn(src: str):
     sf = SourceFile(
         (src, "l3a_sub.py", blake3_512_of(src.encode())),
         reporter=CollectingReporter(),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     fn = next(sf.functions())
     cid = cid_of_json(

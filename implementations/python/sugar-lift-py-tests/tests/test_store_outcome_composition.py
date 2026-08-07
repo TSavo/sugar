@@ -40,6 +40,7 @@ from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _exits(tmp_path: Path, src, name):
@@ -53,7 +54,10 @@ def _exits(tmp_path: Path, src, name):
     stem = hashlib.blake2b(f"{name}\0{src}".encode(), digest_size=8).hexdigest()
     path = tmp_path / f"case_{stem}.py"
     path.write_text(src, encoding="utf-8")
-    for fn in SourceFile(path_source(str(path))).functions():
+    for fn in SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).functions():
         if fn.name != name:
             continue
         outcome = fn.sugar().desugar(None)

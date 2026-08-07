@@ -39,6 +39,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 TESTER_ATOM = "adt.is_python_type"
 
@@ -47,7 +48,8 @@ def _universe(source: str):
     from sugar_lift_python_source.canonical import blake3_512_of
 
     source_file = SourceFile(
-        (source, "/tmp/retained_identity.py", blake3_512_of(source.encode()))
+        (source, "/tmp/retained_identity.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     return list(source_file.functions())[-1].sugar().desugar()
 

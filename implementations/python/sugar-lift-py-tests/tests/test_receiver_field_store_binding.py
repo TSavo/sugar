@@ -30,6 +30,7 @@ from sugar_source_tree.nodes import (
     Return,
 )
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,10 @@ class _FixedSugar(ConstructedTermSugar):
 def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -> None:
     """The active class initializer must not enter as an arbitrary formal."""
     source = "class Box:\n" "    def __init__(self):\n" "        self.value = 1\n"
-    tree = SourceFile((source, "class_receiver.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "class_receiver.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     definition = next(
         node
         for node in tree.nodes()
@@ -114,7 +118,10 @@ def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -
 def test_genuine_formal_receiver_keeps_the_formal_store_entrance() -> None:
     """A module-level formal carries no constructed receiver authority."""
     source = "def mutate(target):\n" "    target.value = 1\n"
-    tree = SourceFile((source, "formal_receiver.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "formal_receiver.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     function = next(
         node
         for node in tree.nodes()
@@ -131,7 +138,10 @@ def test_genuine_formal_receiver_keeps_the_formal_store_entrance() -> None:
 def test_class_initializer_universe_seats_its_constructed_receiver() -> None:
     """Enumeration binds the exact class receiver before body reduction."""
     source = "class Box:\n" "    def __init__(self):\n" "        self.value = 1\n"
-    tree = SourceFile((source, "class_receiver.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "class_receiver.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     initializer = next(
         node
         for node in tree.nodes()

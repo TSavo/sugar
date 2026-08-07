@@ -12,6 +12,7 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _attribute_refusal(src):
@@ -21,7 +22,12 @@ def _attribute_refusal(src):
     path = os.path.join(directory, "m.py")
     with open(path, "w", encoding="utf-8") as source_file:
         source_file.write(src)
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     try:
         function.sugar().desugar(None)
     except SugarNotWritten as refusal:
@@ -36,7 +42,12 @@ def _subscript_refusal(src):
     path = os.path.join(directory, "m.py")
     with open(path, "w", encoding="utf-8") as source_file:
         source_file.write(src)
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     try:
         function.sugar().desugar(None)
     except SugarNotWritten as refusal:

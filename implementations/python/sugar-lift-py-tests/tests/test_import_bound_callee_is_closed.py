@@ -27,6 +27,7 @@ from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir
 from sugar_lift_py_tests.proofir.scope import ScopedFormula
 from sugar_lift_py_tests.proofir.sorts import UnknownSort
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _post(source: str):
@@ -34,7 +35,14 @@ def _post(source: str):
     path = os.path.join(directory, "m.py")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(source)
-    function = next(iter(SourceFile(path_source(path)).functions()))
+    function = next(
+        iter(
+            SourceFile(
+                path_source(path),
+                construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            ).functions()
+        )
+    )
     return function.sugar().desugar(None).value.post()
 
 

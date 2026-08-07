@@ -30,6 +30,7 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_source_tree.nodes import BinOp, Constant, Subscript
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 _LITERAL_CLASSES = (
     ComplexLiteralSugar,
@@ -78,7 +79,10 @@ def _cid(source: str) -> str:
 
 
 def _sf(source: str, name: str = "t.py") -> SourceFile:
-    return SourceFile((source, name, _cid(source)))
+    return SourceFile(
+        (source, name, _cid(source)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
 
 
 def test_all_literal_leaves_are_constructed_term_sugar() -> None:

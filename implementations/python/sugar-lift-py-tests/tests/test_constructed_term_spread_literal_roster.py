@@ -33,6 +33,7 @@ from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import BinOp, Call, Constant, List, Subscript
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 _SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -44,7 +45,10 @@ def _cid(source: str) -> str:
 
 
 def _sf(source: str, name: str = "t.py") -> SourceFile:
-    return SourceFile((source, name, _cid(source)))
+    return SourceFile(
+        (source, name, _cid(source)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
 
 
 def test_spread_complex_ellipsis_are_constructed_term_sugar() -> None:

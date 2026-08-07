@@ -30,6 +30,7 @@ from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.shadow import rewrite
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _node_classes():
@@ -44,7 +45,11 @@ def _function(src, name=None):
     with open(p, "w") as fh:
         fh.write(src)
     reporter = CollectingReporter()
-    sf = SourceFile.from_path(p, reporter=reporter)
+    sf = SourceFile.from_path(
+        p,
+        reporter=reporter,
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     for fn in sf.functions():
         if name is None or getattr(fn, "name", None) == name:
             return fn, reporter

@@ -36,6 +36,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import PrimitiveSort
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _cid(fill: str) -> str:
@@ -397,7 +398,10 @@ def test_source_call_variadic_projection_returns_the_exact_constructed_child(tmp
     path.write_text("def f():\n    ensure_clean(foo=side_effect())\n")
     call = next(
         node
-        for node in SourceFile(path_source(str(path))).nodes()
+        for node in SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).nodes()
         if isinstance(node, Call) and getattr(node.func, "id", None) == "ensure_clean"
     )
     call_sugar = call.sugar()

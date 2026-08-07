@@ -11,6 +11,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _definition_and_receiver():
@@ -19,7 +20,10 @@ def _definition_and_receiver():
         "    def __setitem__(self, key, value):\n"
         "        super().__setitem__(key, value)\n"
     )
-    tree = SourceFile((source, "mapping_setitem.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "mapping_setitem.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     value = definition.sugar().desugar(ReduceContext.root(owner="test")).value
     return value, value.construct_receiver_state_from_block(None, "receiver")

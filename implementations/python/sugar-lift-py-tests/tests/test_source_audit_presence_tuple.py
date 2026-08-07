@@ -22,6 +22,7 @@ import pytest
 
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.roll_call import MinorityReport
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 class _Seat:
@@ -250,7 +251,13 @@ def test_truthful_twin_roll_call_path_conserves_on_real_source(tmp_path: Path) -
     audit = source_audit_from_roll_call(path, "m.py")
 
     reporter = CollectingReporter()
-    report = discharge(SourceFile.from_path(str(path), reporter=reporter))
+    report = discharge(
+        SourceFile.from_path(
+            str(path),
+            reporter=reporter,
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        )
+    )
     _assert_conserved(audit, report_R=report.R)
     assert audit["totals"]["source_unresolved"] == report.R
     assert audit["totals"]["source_loci"] == len(report.roster)

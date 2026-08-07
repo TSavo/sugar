@@ -18,12 +18,16 @@ from sugar_lift_py_tests.sugar.yield_from_sugar import YieldFromSugar
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _file(tmp_path: Path, source: str) -> SourceFile:
     path = tmp_path / "case.py"
     path.write_text(source, encoding="utf-8")
-    return SourceFile(path_source(str(path)))
+    return SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
 
 
 # --- ClassDef ---

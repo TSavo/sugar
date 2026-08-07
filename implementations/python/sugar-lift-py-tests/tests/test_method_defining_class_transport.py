@@ -6,6 +6,7 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _definitions():
@@ -17,7 +18,10 @@ def _definitions():
         "class Derived(Base):\n"
         "    pass\n"
     )
-    tree = SourceFile((source, "defining_class.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "defining_class.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     return tuple(node for node in tree.root.body if isinstance(node, ClassDef))
 
 
@@ -61,7 +65,10 @@ def test_inherited_method_binds_lexical_class_not_runtime_receiver_class() -> No
 def test_overriding_method_uses_derived_defining_class() -> None:
     base, _ = _definitions()
     source = "class Derived:\n" "    def owner(self):\n" "        return __class__\n"
-    tree = SourceFile((source, "derived_owner.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "derived_owner.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     (derived,) = tuple(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test")
     derived_value = derived.sugar().desugar(context).value

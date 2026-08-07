@@ -57,6 +57,7 @@ from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _identity(name: str):
@@ -89,7 +90,10 @@ def _function(tmp_path: Path, source: str, stem: str = "unpack_seq"):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
     return next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path)).functions()
+        SourceFile(
+            workspace_path_source(str(path), root=str(tmp_path)),
+            construction_context=tree_construction_context_for_workspace(tmp_path),
+        ).functions()
     )
 
 
@@ -130,7 +134,10 @@ def _site(tmp_path: Path):
     path = tmp_path / "store.py"
     path.write_text("def f(obj, key, value):\n    obj[key] = value\n")
     function = next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path)).functions()
+        SourceFile(
+            workspace_path_source(str(path), root=str(tmp_path)),
+            construction_context=tree_construction_context_for_workspace(tmp_path),
+        ).functions()
     )
     return function.body[0].fragment
 
@@ -405,7 +412,12 @@ def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
 
     path = tmp_path / "star.py"
     path.write_text("def f(xs):\n    a, *rest = xs\n    return a\n")
-    fn = next(SourceFile(path_source(str(path))).functions())
+    fn = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     outcome = fn.sugar().desugar(None)
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)

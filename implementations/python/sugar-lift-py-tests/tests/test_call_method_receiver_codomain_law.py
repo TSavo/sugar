@@ -30,6 +30,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
 )
 from sugar_source_tree.nodes import Call
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 # Owners that refuse nested construction testimony. Receiver is load-bearing:
 # it was the hole after L2a/L2b only listed args/keywords.
@@ -61,7 +62,10 @@ def _cid(source: str) -> str:
 
 
 def _sf(source: str, name: str = "t.py") -> SourceFile:
-    return SourceFile((source, name, _cid(source)))
+    return SourceFile(
+        (source, name, _cid(source)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
 
 
 def _outer_call(source: str, name: str) -> Call:

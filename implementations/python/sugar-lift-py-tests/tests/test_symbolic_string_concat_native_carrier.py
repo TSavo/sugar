@@ -25,6 +25,7 @@ from sugar_lift_py_tests.ir import make_var
 from sugar_source_tree.nodes import BinOp
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _tiny_binop_site():
@@ -68,7 +69,10 @@ def test_symbolic_plus_int_still_refuses_undecided() -> None:
 def test_enum_py_line75_binop_desugar_does_not_snw() -> None:
     """Live locus: enum._is_internal_class ``cls_name + '.' + getattr(...)``."""
     enum_path = Path(__import__("enum").__file__)
-    source = SourceFile.from_path(enum_path)
+    source = SourceFile.from_path(
+        enum_path,
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     binops = [
         node
         for node in source.nodes()
@@ -91,7 +95,10 @@ def test_enum_py_line75_binop_desugar_does_not_snw() -> None:
 
 def test_enum_is_internal_class_function_sugar_still_constructs() -> None:
     enum_path = Path(__import__("enum").__file__)
-    source = SourceFile.from_path(enum_path)
+    source = SourceFile.from_path(
+        enum_path,
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     function = next(fn for fn in source.functions() if fn.name == "_is_internal_class")
     sugar = function.sugar()
     outcome = sugar.desugar(None)

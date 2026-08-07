@@ -46,6 +46,7 @@ from sugar_lift_py_tests.operations import SequenceProjectionOperation
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 GUARD = atomic("py.truthy", [make_var("c")])
 
@@ -59,7 +60,12 @@ def _operation(*names: str) -> SequenceProjectionOperation:
 def _outcome(tmp_path: Path, source: str, stem: str):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
-    functions = list(SourceFile(path_source(str(path))).functions())
+    functions = list(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     return functions[-1].sugar().desugar(None)
 
 

@@ -37,6 +37,7 @@ from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, outcome_to_e
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _star_op(
@@ -59,7 +60,12 @@ def _star_op(
 def _function_sugar(tmp_path: Path, source: str, stem: str):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
-    return next(SourceFile(path_source(str(path))).functions()).sugar()
+    return next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    ).sugar()
 
 
 def _workspace_site(tmp_path: Path):
@@ -67,7 +73,10 @@ def _workspace_site(tmp_path: Path):
     path = tmp_path / "pkg" / "site.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("def f(xs):\n    a, *rest = xs\n    return a\n")
-    tree = SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path))
+    tree = SourceFile(
+        workspace_path_source(str(path), root=str(tmp_path)),
+        construction_context=tree_construction_context_for_workspace(tmp_path),
+    )
     function = next(tree.functions())
     return function.body[0].fragment
 
@@ -224,7 +233,10 @@ def _workspace_function_sugar(tmp_path: Path, source: str, stem: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source, encoding="utf-8")
     return next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path)).functions()
+        SourceFile(
+            workspace_path_source(str(path), root=str(tmp_path)),
+            construction_context=tree_construction_context_for_workspace(tmp_path),
+        ).functions()
     ).sugar()
 
 
