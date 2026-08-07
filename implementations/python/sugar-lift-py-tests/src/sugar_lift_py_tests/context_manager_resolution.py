@@ -77,6 +77,56 @@ class SourceFragmentCoordinateV1:
         return cid_of_json(self.wire())
 
 
+@dataclass(frozen=True, order=True)
+class CitedOpaqueProtocolIdentityV1:
+    """One protocol slot of a manager whose decorator is OFF ENROLLED POPULATION.
+
+    NOT a SourceFragmentCoordinateV1 and deliberately not a subclass of one. A
+    constructed coordinate says "this is where the method body is, and we read
+    it". This says "this is the authenticated decorator we could not read, and
+    which slot of its protocol we mean". Those are different claims and must not
+    be substitutable.
+
+    The distinction survives into the content address by construction:
+
+    * ``wire()`` carries a ``kind`` discriminator, so ``cid_of_json`` over a
+      protocol preimage differs from the constructed one.
+    * ``SourceFragmentCoordinateV1.decode`` demands EXACTLY the five constructed
+      keys, so it refuses this wire form without anyone remembering to check.
+
+    ``slot`` is load-bearing, not decoration: a generator-backed protocol refuses
+    when its enter and exit definitions are equal, and one opaque decorator has
+    to supply both. The slot is part of what is cited -- "the enter face of this
+    opaque manager" -- so the two are distinct facts rather than one fact used
+    twice.
+    """
+
+    module_name: str
+    exported_name: str
+    source_cid: str
+    definition_cid: str
+    slot: str
+    membrane_kind: str
+
+    def wire(self) -> dict[str, Any]:
+        return {
+            "kind": "cited-opaque-protocol-identity",
+            "schemaVersion": "1",
+            "moduleName": self.module_name,
+            "exportedName": self.exported_name,
+            "sourceCid": self.source_cid,
+            "definitionCid": self.definition_cid,
+            "slot": self.slot,
+            "membraneKind": self.membrane_kind,
+        }
+
+    @property
+    def cid(self) -> str:
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(self.wire())
+
+
 _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY = object()
 
 

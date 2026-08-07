@@ -1990,6 +1990,7 @@ def _publish_native_definition(context, receiver, slot, definition) -> None:
     from types import MappingProxyType
 
     from sugar_lift_py_tests.context_manager_resolution import (
+        CitedOpaqueProtocolIdentityV1,
         NativeProtocolSlot,
         ResolvedContractRefsV1,
         SourceFragmentCoordinateV1,
@@ -1997,8 +1998,19 @@ def _publish_native_definition(context, receiver, slot, definition) -> None:
 
     if not isinstance(slot, NativeProtocolSlot):
         raise TypeError("native protocol slot must be NativeProtocolSlot")
-    if not isinstance(definition, SourceFragmentCoordinateV1):
-        raise TypeError("native definition must be SourceFragmentCoordinateV1")
+    if not isinstance(
+        definition, (SourceFragmentCoordinateV1, CitedOpaqueProtocolIdentityV1)
+    ):
+        # CLOSED two-member union, reconciled at this seat. A constructed
+        # coordinate and a cited opaque identity are both admissible and are NOT
+        # interchangeable: they wire differently, so they content-address
+        # differently, and SourceFragmentCoordinateV1.decode refuses the cited
+        # form outright. Anything else is still a hard refusal.
+        raise TypeError(
+            "native definition must be SourceFragmentCoordinateV1 (constructed) "
+            "or CitedOpaqueProtocolIdentityV1 (cited off-population); got "
+            f"{type(definition).__name__}"
+        )
     refs = context.contract_refs
     table = refs.native_definitions
     if isinstance(table, MappingProxyType):
@@ -2734,6 +2746,44 @@ def _mint_yield_face(statement) -> GeneratorYieldFaceV1:
     )
 
 
+def _cited_opaque_protocol_identities(cited):
+    """Two distinct cited identities -- enter and exit -- for one opaque decorator.
+
+    The generator-backed protocol refuses when its enter and exit definitions
+    are equal, and a single opaque decorator must supply both. The protocol SLOT
+    is what distinguishes them, and it is part of the cited fact rather than a
+    tiebreaker bolted on: "the enter face of this opaque manager" and "the exit
+    face of this opaque manager" are two claims about one authenticated,
+    deliberately-unread definition.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        CitedOpaqueProtocolIdentityV1,
+        NativeProtocolSlot,
+    )
+
+    resolved = cited.resolved
+    definition = getattr(resolved, "definition", None)
+    source_cid = getattr(resolved, "source_cid", None)
+    if definition is None or not source_cid:
+        return None
+    definition_cid = getattr(definition, "fragment_cid", None) or getattr(
+        definition, "name", None
+    )
+    if not definition_cid:
+        return None
+    return tuple(
+        CitedOpaqueProtocolIdentityV1(
+            module_name=cited.module_name,
+            exported_name=cited.exported_name,
+            source_cid=source_cid,
+            definition_cid=definition_cid,
+            slot=slot.value,
+            membrane_kind=cited.membrane_kind,
+        )
+        for slot in (NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT)
+    )
+
+
 def _protocol_coords_from_generator_decorators(
     generator_target,
     *,
@@ -2770,10 +2820,21 @@ def _protocol_coords_from_generator_decorators(
         # it is a named, authenticated identity this road cannot yet consume,
         # and the reason travels so the refusal downstream can say so.
         if isinstance(outcome, DecoratorCitedV1):
-            declined.append(
-                f"{outcome.module_name}.{outcome.exported_name}: "
-                f"{outcome.membrane_kind}"
-            )
+            # RULING (A): cite the decorator's own authenticated identity as an
+            # opaque protocol identity, rather than constructing its body to
+            # discover which class it returns. Reading that structure is the
+            # thing the membrane refuses, and it refuses correctly -- deciding
+            # what an unread body RETURNS is a claim about meaning, not an
+            # address. What is asserted here is only what is authenticated: this
+            # decorator, this slot, unread.
+            cited = _cited_opaque_protocol_identities(outcome)
+            if cited is None:
+                declined.append(
+                    f"{outcome.module_name}.{outcome.exported_name}: "
+                    f"{outcome.membrane_kind} (no authenticated definition to cite)"
+                )
+                continue
+            published.append(cited)
             continue
         if isinstance(outcome, DecoratorUnresolvedV1):
             declined.append(f"{outcome.kind}: {outcome.detail}")
