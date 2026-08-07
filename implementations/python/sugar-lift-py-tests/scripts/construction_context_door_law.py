@@ -146,6 +146,18 @@ DELIBERATE_OFFENDERS: dict[str, tuple[str, str | None]] = {
         "delete the evidence the law was bought with.",
         "gh/frontier-rts-provenance",
     ),
+    "implementations/python/sugar-source-tree/tests/"
+    "test_bootstrap_construction_permission.py": (
+        "Pins the bootstrap's construction permission (#7396). It drives a bare "
+        "tree at a BAIT source containing a With and a Call, to demonstrate that "
+        "a consulting kind reaching backend.py:931 would be REFUSED -- the "
+        "safety property that makes the isinstance(node.value, Constant) filter "
+        "load-bearing for a law stated in another file. Exhibiting the bare "
+        "door's behaviour is the measurement; opening through the production "
+        "door here would prove nothing, because the whole claim is about what "
+        "happens when there is no context.",
+        None,
+    ),
 }
 
 
