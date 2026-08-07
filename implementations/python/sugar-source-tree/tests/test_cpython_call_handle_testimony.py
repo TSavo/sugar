@@ -257,3 +257,132 @@ def test_the_named_term_set_is_closed_over_the_body() -> None:
     ), returned.symmetric_difference(
         ConstructionTestimonyReporterV1.SOURCE_CALL_IDENTITY_TERMS
     )
+
+
+# ---------------------------------------------------------------------------
+# A cross-FILE callee inside the enrolled population is not a fault
+# ---------------------------------------------------------------------------
+
+
+def _two_files_one_roll(tmp_path):
+    """Two units materialized through ONE reporter roll.
+
+    The cross-file case cannot be built from a single file, and it must share a
+    reporter: a definition materialized by a DIFFERENT reporter is a genuinely
+    unregistered ref and is refused by `definition-ref-not-materialized`, which
+    is a different fault and must stay one.
+    """
+    helper_path = tmp_path / "callee_unit.py"
+    helper_path.write_text("def find_level(value):\n    return value\n")
+    caller_path = tmp_path / "caller_unit.py"
+    caller_path.write_text("def apply(value):\n    return find_level(value)\n")
+
+    collector = CollectingReporter()
+    helper_source = SourceFile.from_path(helper_path, reporter=collector)
+    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    # ONE roll over both units -- `_testimony_root` mints a fresh reporter per
+    # source, and two rolls would make the callee legitimately unregistered.
+    testimony = ConstructionTestimonyReporterV1(
+        collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
+    )
+    helper_root = materialize(helper_source.unit, helper_source.root.ref, testimony)
+    caller_root = materialize(caller_source.unit, caller_source.root.ref, testimony)
+
+    definition = next(
+        node
+        for node in helper_root.walk()
+        if isinstance(node, FunctionDef) and node.name == "find_level"
+    )
+    call = next(
+        node
+        for node in caller_root.walk()
+        if isinstance(node, Call) and node.segment() == "find_level(value)"
+    )
+    assert definition.unit.source_cid != call.unit.source_cid
+    return definition, call, testimony
+
+
+def test_a_cross_file_enrolled_callee_is_not_an_identity_fault(tmp_path) -> None:
+    """`_config/config.py` calling `util/_exceptions.find_stack_level`.
+
+    82 rows of the frontier sat here. The guard demanded the callee be defined
+    in the CALLER's file, which no real corpus can satisfy -- that described
+    our instrument, not a defect in pandas.
+    """
+    definition, call, reporter = _two_files_one_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = definition.source_visible_call_frame()
+
+    fault = reporter._source_call_identity_fault(
+        call, truthful, definition, definition, truthful.call_occurrence, frame
+    )
+    assert fault is None, fault
+
+
+def test_an_unauthenticated_callee_unit_still_refuses_by_its_own_name(
+    tmp_path,
+) -> None:
+    """The boundary that must not move.
+
+    "Foreign but authenticated" and "foreign and unknown" must never collapse
+    into one outcome. A unit carrying no content address is refused, and it is
+    refused under a DIFFERENT name than the cross-file case above returns.
+    """
+    definition, call, reporter = _two_files_one_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = definition.source_visible_call_frame()
+    object.__setattr__(definition.unit, "source_cid", "")
+
+    fault = reporter._source_call_identity_fault(
+        call, truthful, definition, definition, truthful.call_occurrence, frame
+    )
+    assert fault == "definition-unit-unauthenticated"
+
+
+def test_an_opaque_callee_keeps_its_own_separate_name(tmp_path) -> None:
+    """The other half of the same boundary, measured on the real corpus.
+
+    Of 57 cross-file arrivals at this guard in the stride-8 slice, 7 were
+    unmaterialized `_Handle`s. They are caught ABOVE the unit terms, so
+    relaxing the same-unit demand cannot let one through.
+    """
+    definition, call, reporter = _two_files_one_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+
+    class _OpaqueHandle:
+        """Stands where a raw parser handle arrives: no unit, no fragment."""
+
+    fault = reporter._source_call_identity_fault(
+        call, truthful, _OpaqueHandle(), definition, truthful.call_occurrence, None
+    )
+    assert fault == "definition-not-a-functiondef"
+
+
+def test_the_frame_site_term_is_keyed_on_the_definitions_unit(tmp_path) -> None:
+    """A frame describes the CALLEE's definition, so its site lives in the
+    callee's file. Keying it on the caller's unit was the same-unit demand
+    wearing a second name -- it refused every cross-file call a second time."""
+    definition, call, reporter = _two_files_one_roll(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = definition.source_visible_call_frame()
+
+    # The callee's own site passes ...
+    assert (
+        reporter._source_call_identity_fault(
+            call, truthful, definition, definition, truthful.call_occurrence, frame
+        )
+        is None
+    )
+    # ... and a site belonging to neither unit is still refused, by name.
+    foreign_site = replace(frame.definition_site, source_cid="blake3-512:" + "00" * 64)
+    assert (
+        reporter._source_call_identity_fault(
+            call,
+            truthful,
+            definition,
+            definition,
+            truthful.call_occurrence,
+            replace(frame, definition_site=foreign_site),
+        )
+        == "frame-definition-site-foreign"
+    )

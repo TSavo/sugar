@@ -573,7 +573,7 @@ class ConstructionTestimonyReporterV1:
         "definition-not-a-functiondef",
         "definition-ref-not-materialized",
         "call-ref-not-materialized",
-        "definition-foreign-source-cid",
+        "definition-unit-unauthenticated",
         "resolved-not-a-functiondef",
         "resolved-seal-mismatch",
         "call-occurrence-mismatch",
@@ -619,8 +619,32 @@ class ConstructionTestimonyReporterV1:
             return "definition-ref-not-materialized"
         if node.ref not in self._materialized_by_ref:
             return "call-ref-not-materialized"
-        if definition.unit.source_cid != node.unit.source_cid:
-            return "definition-foreign-source-cid"
+        # A callee defined in ANOTHER FILE of the enrolled corpus is ordinary
+        # Python, not a fault. This term used to demand
+        # ``definition.unit.source_cid == node.unit.source_cid`` -- same-unit
+        # sameness -- which no real corpus can satisfy: pandas calls across its
+        # own files constantly, and `_config/config.py` reaching
+        # `util/_exceptions.find_stack_level` is 82 rows of the frontier by
+        # itself. That demand described our instrument, not a defect in pandas.
+        #
+        # What identity actually needs is the callee's OWN unit, and
+        # ``resolved-seal-mismatch`` below already joins on it: a SourceMemento
+        # seals file, source_cid, span and a hash of the fragment text, so a
+        # substituted definition cannot survive it regardless of which file it
+        # lives in. The same-unit demand added no identity, only a false
+        # requirement.
+        #
+        # What remains here is the case the same-unit demand was ALSO silently
+        # covering: a unit with no content address at all. Off-population and
+        # unenrolled callees are refused above and upstream -- the population
+        # membrane never materializes them (measured: of 57 cross-file arrivals
+        # in the stride-8 slice, 50 are materialized FunctionDefs all inside the
+        # enrolled tree, and the other 7 are unmaterialized `_Handle`s caught by
+        # `definition-not-a-functiondef`; zero materialized FunctionDefs came
+        # from outside). "Foreign but authenticated" and "foreign and unknown"
+        # therefore keep DIFFERENT names, which is the whole point.
+        if not definition.unit.source_cid:
+            return "definition-unit-unauthenticated"
         if not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef)):
             return "resolved-not-a-functiondef"
         # Reachable only with a resolved definition in hand.
@@ -633,7 +657,12 @@ class ConstructionTestimonyReporterV1:
         # Reachable only with a frame in hand.
         if frame.owner.ref is not definition.ref:
             return "frame-owner-ref-mismatch"
-        if frame.definition_site.source_cid != node.unit.source_cid:
+        # Keyed on the DEFINITION's unit, not the call's. A frame describes the
+        # callee's definition, so its site living in the callee's file is
+        # correct; comparing it to the CALLER's unit was the same same-unit
+        # demand wearing a second name, and it refused every cross-file call
+        # a second time even once the term above stopped doing so.
+        if frame.definition_site.source_cid != definition.unit.source_cid:
             return "frame-definition-site-foreign"
         return None
 
