@@ -175,9 +175,14 @@ def test_corpus_name_subscript_unpack_constructs_then_stays_undischarged() -> No
     # identity at all.
     tree = SourceFile(
         workspace_path_source(str(path), root=str(corpus.root.parent)),
-        construction_context=tree_construction_context_for_workspace(
-            corpus.root.parent
-        ),
+        # LOCUS root and CONTEXT root differ ON PURPOSE. The locus must be the
+        # seat the distribution recorded (relative to the install root) or the
+        # oracle refuses it. The context must NOT be rooted there: building a
+        # context over all of site-packages materializes every installed
+        # distribution and dies in numpy. It does not need to be -- workspace_root
+        # is only a BOOLEAN GATE on the bridge branch; the symbol itself derives
+        # from unit.filename, which the locus already fixed.
+        construction_context=tree_construction_context_for_workspace(corpus.root),
     )
     assigns = tuple(
         node
