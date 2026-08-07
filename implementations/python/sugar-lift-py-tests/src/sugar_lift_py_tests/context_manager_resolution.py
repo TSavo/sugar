@@ -533,8 +533,96 @@ class NativeDefinitionCoordinateGapV1:
     reason: str
 
 
+@dataclass(frozen=True)
+class CitedOpaqueProtocolIdentityV1:
+    """An authenticated protocol identity sugar CITES because it cannot construct it.
+
+    #7384: an off-population target cites, it does not construct. The membrane
+    refuses to materialize the callable's body -- correctly -- so there is no
+    ``__enter__``/``__exit__`` SPAN to name. What is published is the identity
+    and the slot it stands for.
+
+    The distinction lives in the VALUE. ``wire()`` carries a ``kind``
+    discriminator, and ``SourceFragmentCoordinateV1.decode`` demands exactly its
+    own five keys, so a cited wire form is refused by the constructed decoder by
+    construction and the two CIDs can never collide.
+    """
+
+    slot: str
+    module_name: str
+    exported_name: str
+    resolved_object_cid: str
+    membrane_kind: str
+
+    def __post_init__(self) -> None:
+        # A citation with nothing cited is an absence wearing one's clothes.
+        if not all(
+            (
+                self.slot,
+                self.module_name,
+                self.exported_name,
+                self.resolved_object_cid,
+                self.membrane_kind,
+            )
+        ):
+            raise ContractRefProtocolError(
+                "cited opaque protocol identity lacks authenticated testimony"
+            )
+
+    @classmethod
+    def decode(cls, raw: Any) -> "CitedOpaqueProtocolIdentityV1":
+        if not isinstance(raw, dict) or set(raw) != {
+            "kind",
+            "schemaVersion",
+            "slot",
+            "moduleName",
+            "exportedName",
+            "resolvedObjectCid",
+            "membraneKind",
+        }:
+            raise ContractRefProtocolError("malformed cited opaque protocol identity")
+        if (
+            raw["kind"] != "cited-opaque-protocol-identity"
+            or raw["schemaVersion"] != "1"
+        ):
+            raise ContractRefProtocolError(
+                "cited opaque protocol identity names another kind"
+            )
+        fields = (
+            raw["slot"],
+            raw["moduleName"],
+            raw["exportedName"],
+            raw["resolvedObjectCid"],
+            raw["membraneKind"],
+        )
+        if not all(isinstance(value, str) for value in fields):
+            raise ContractRefProtocolError(
+                "malformed cited opaque protocol identity fields"
+            )
+        return cls(*fields)
+
+    def wire(self) -> dict[str, Any]:
+        return {
+            "kind": "cited-opaque-protocol-identity",
+            "schemaVersion": "1",
+            "slot": self.slot,
+            "moduleName": self.module_name,
+            "exportedName": self.exported_name,
+            "resolvedObjectCid": self.resolved_object_cid,
+            "membraneKind": self.membrane_kind,
+        }
+
+    @property
+    def cid(self) -> str:
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(self.wire())
+
+
+NativeDefinitionV1 = SourceFragmentCoordinateV1 | CitedOpaqueProtocolIdentityV1
+
 NativeDefinitionCoordinateResolutionV1 = (
-    SourceFragmentCoordinateV1 | NativeDefinitionCoordinateGapV1
+    NativeDefinitionV1 | NativeDefinitionCoordinateGapV1
 )
 
 

@@ -1990,6 +1990,7 @@ def _publish_native_definition(context, receiver, slot, definition) -> None:
     from types import MappingProxyType
 
     from sugar_lift_py_tests.context_manager_resolution import (
+        CitedOpaqueProtocolIdentityV1,
         NativeProtocolSlot,
         ResolvedContractRefsV1,
         SourceFragmentCoordinateV1,
@@ -1997,8 +1998,17 @@ def _publish_native_definition(context, receiver, slot, definition) -> None:
 
     if not isinstance(slot, NativeProtocolSlot):
         raise TypeError("native protocol slot must be NativeProtocolSlot")
-    if not isinstance(definition, SourceFragmentCoordinateV1):
-        raise TypeError("native definition must be SourceFragmentCoordinateV1")
+    # Closed two-member union reconciled at one seat: a definition was either
+    # DERIVED (a span in an in-population source) or CITED (an authenticated,
+    # caller-vouched off-population identity). Nothing else may be published.
+    if not isinstance(
+        definition, (SourceFragmentCoordinateV1, CitedOpaqueProtocolIdentityV1)
+    ):
+        raise TypeError(
+            "native definition must be a derived SourceFragmentCoordinateV1 or a "
+            "cited CitedOpaqueProtocolIdentityV1; got "
+            f"{type(definition).__name__}"
+        )
     refs = context.contract_refs
     table = refs.native_definitions
     if isinstance(table, MappingProxyType):
@@ -2744,6 +2754,10 @@ def _protocol_coords_from_generator_decorators(
     declined=None,
 ):
     """Construct enter/exit definition sites from generator decorator testimony."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        CitedOpaqueProtocolIdentityV1,
+        NativeProtocolSlot,
+    )
     from sugar_source_tree.nodes import FunctionDef
 
     if not isinstance(generator_target, FunctionDef):
@@ -2770,9 +2784,24 @@ def _protocol_coords_from_generator_decorators(
         # it is a named, authenticated identity this road cannot yet consume,
         # and the reason travels so the refusal downstream can say so.
         if isinstance(outcome, DecoratorCitedV1):
-            declined.append(
-                f"{outcome.module_name}.{outcome.exported_name}: "
-                f"{outcome.membrane_kind}"
+            # #7384: an off-population target CITES, it does not construct.
+            # Publish the authenticated identity itself as the protocol's
+            # enter/exit -- never an invented span. The slot is part of the
+            # identity, which is what keeps enter and exit distinct.
+            published.append(
+                tuple(
+                    CitedOpaqueProtocolIdentityV1(
+                        slot.value,
+                        outcome.module_name,
+                        outcome.exported_name,
+                        outcome.resolved.cid,
+                        outcome.membrane_kind,
+                    )
+                    for slot in (
+                        NativeProtocolSlot.CONTEXT_ENTER,
+                        NativeProtocolSlot.CONTEXT_EXIT,
+                    )
+                )
             )
             continue
         if isinstance(outcome, DecoratorUnresolvedV1):
@@ -2835,6 +2864,7 @@ class DecoratorUnresolvedV1:
     kind: Literal[
         "absent",
         "artifact-authentication-failed",
+        "unvouched-artifact-testimony",
         "module-absent-from-graph",
         "export-unresolved",
         "frame-construction-gap",
@@ -2886,6 +2916,26 @@ def _construct_decorator_function(
         graphs.append(graph)
     top_level = module_name.split(".", 1)[0]
     local_graphs = dependency_graphs if dependency_graphs is not None else {}
+    # A CITATION IS ONLY LEGITIMATE OVER TESTIMONY THE CALLER SUPPLIED.
+    # Snapshot that testimony BEFORE any fallback runs. Everything reached
+    # afterwards comes from `authenticate_dependency_top_level`, which succeeds
+    # merely because the module is installed on this machine -- so citing it
+    # would make machine state a silent input to a content-addressed result,
+    # and would make "the caller vouched for no graph" indistinguishable from
+    # "the caller vouched for one and it is off-population".
+    caller_vouched = [
+        candidate
+        for candidate in (
+            graph,
+            local_graphs.get(top_level),
+            (
+                session.dependency_graphs.get(top_level)
+                if session is not None and session.enabled
+                else None
+            ),
+        )
+        if candidate is not None
+    ]
     authenticated_dependency = local_graphs.get(top_level)
     if authenticated_dependency is None and session is not None and session.enabled:
         authenticated_dependency = session.dependency_graphs.get(top_level)
@@ -2957,6 +3007,16 @@ def _construct_decorator_function(
         # that indistinguishable from "there was no decorator", which is how a
         # citable fact became a silent nothing.
         if frame_result.kind == "call-target-off-population":
+            if not any(resolved_graph is item for item in caller_vouched):
+                # Authenticated, off-population -- but on testimony nobody
+                # vouched for in this construction. Its own named reason: this
+                # is neither an absence nor a citable identity.
+                return DecoratorUnresolvedV1(
+                    "unvouched-artifact-testimony",
+                    f"{module_name}.{exported_name}: off-population identity "
+                    "resolved only through machine-installed artifact testimony "
+                    "the caller did not supply",
+                )
             return DecoratorCitedV1(
                 module_name=module_name,
                 exported_name=exported_name,
