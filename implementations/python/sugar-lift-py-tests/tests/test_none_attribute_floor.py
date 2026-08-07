@@ -89,19 +89,28 @@ def test_the_whole_function_lifts_through_either_source_door(
         path_source,
         workspace_path_source,
     )
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
     from sugar_source_tree.tree import SourceFile
 
     path = tmp_path / "none_attribute.py"
     path.write_text("def f():\n    return None.foo\n", encoding="utf-8")
 
-    source = (
-        workspace_path_source(str(path), root=str(tmp_path))
-        if workspace_relative
-        else path_source(str(path))
-    )
+    # THE CONTEXT IS PARAMETRIZED ALONGSIDE THE DOOR, because the two arms make
+    # different claims about the same line. The rooted arm holds a workspace
+    # (``root`` is required, so its presence proves one) and must honour it; the
+    # absolute arm genuinely has none, and asserting so is true there. Collapsing
+    # them to one context would make one arm lie -- and the whole point of this
+    # test is that both doors are asserted side by side.
+    if workspace_relative:
+        source = workspace_path_source(str(path), root=str(tmp_path))
+        context = tree_construction_context_for_workspace(tmp_path)
+    else:
+        source = path_source(str(path))
+        context = TreeConstructionContextV1.for_test_without_workspace()
 
-    fn = next(SourceFile(source).functions())
+    fn = next(SourceFile(source, construction_context=context).functions())
     outcome = fn.sugar().desugar(None)
 
     assert isinstance(outcome, Complete)
