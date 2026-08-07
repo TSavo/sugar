@@ -35,6 +35,8 @@ from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Assign, Call, FunctionDef
+from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
@@ -101,8 +103,19 @@ def test_real_coordinate_constructs_unpack_store_with_setitem_leaf() -> None:
     """Production construction at the real assign: Name bind + setitem store."""
     corpus = authenticated_pandas_corpus()
     path = corpus.root / CORPUS_REL
-    source = path.read_text(encoding="utf-8")
-    tree = SourceFile((source, str(path), blake3_512_of(source.encode("utf-8"))))
+    # The corpus is an INSTALLED DISTRIBUTION: its address is the seat the
+    # distribution recorded (`pandas/core/...`), relative to the INSTALL root --
+    # not to `corpus.root`, which is `site-packages/pandas`. The oracle refuses a
+    # locus derived from any other root, because such an address resolves in no
+    # other checkout. The module door was checked first and is unusable here: it
+    # answers with an ABSOLUTE filename, which yields no workspace-relative
+    # identity at all.
+    tree = SourceFile(
+        workspace_path_source(str(path), root=str(corpus.root.parent)),
+        construction_context=tree_construction_context_for_workspace(
+            corpus.root.parent
+        ),
+    )
     assigns = tuple(
         node
         for node in tree.nodes()
