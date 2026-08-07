@@ -36,6 +36,7 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.binding_state import mint_binding_coordinate_v1
 from sugar_source_tree.nodes import For, FunctionDef
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 _OPTION_PAIR_MANAGER = (
@@ -63,7 +64,7 @@ _RENAMED_TWIN = (
 
 def _function(source: str) -> FunctionDef:
     tree = SourceFile(
-        (source, "generator_for_step_v1.py", blake3_512_of(source.encode("utf-8")))
+        (source, "generator_for_step_v1.py", blake3_512_of(source.encode("utf-8"))), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 

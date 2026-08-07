@@ -10,6 +10,7 @@ from __future__ import annotations
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -17,7 +18,7 @@ def _sub(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    universe = next(SourceFile(path_source(path)).functions()).sugar().desugar().value
+    universe = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar().desugar().value
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term

@@ -16,6 +16,7 @@ from sugar_source_tree.binding_state import (
 )
 from sugar_source_tree.nodes import Node
 from sugar_source_tree.panic import BackendDefect, SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -23,14 +24,14 @@ def _out(source: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(source)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar()
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar().desugar()
 
 
 def _substituted(source: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(source)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).substitute({})
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).substitute({})
 
 
 def _assert_unpack_effect(effect, *, arity: int, names: tuple[str, ...]):

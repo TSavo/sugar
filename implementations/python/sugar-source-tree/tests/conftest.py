@@ -68,9 +68,6 @@ def oracle_source_file(source: str, backend=None, suffix: str = ".py"):
     the oracle's path-addressed identity — there is no raw-string door to
     bypass, in tests or anywhere else.
     """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
     from sugar_source_tree.tree import SourceFile
 
     with tempfile.NamedTemporaryFile(
@@ -78,8 +75,4 @@ def oracle_source_file(source: str, backend=None, suffix: str = ".py"):
     ) as handle:
         handle.write(source)
         path = handle.name
-    return SourceFile.from_path(
-        path,
-        backend=backend,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
+    return SourceFile.from_path(path, backend=backend)

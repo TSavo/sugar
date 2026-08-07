@@ -10,6 +10,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal import bind_temporal
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -20,7 +21,7 @@ def _function(source: str):
                 source,
                 "tests/for_iterator_recurrence_integration.py",
                 blake3_512_of(source.encode()),
-            )
+            ), construction_context=TreeConstructionContextV1.for_test_without_workspace()
         ).functions()
     )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -10,7 +11,7 @@ def _function(source: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write(source)
         path = handle.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def test_live_for_projects_break_and_exhaustion_before_tail_substitution():

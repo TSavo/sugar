@@ -4,6 +4,7 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.reporter import CollectingReporter
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -11,7 +12,7 @@ def test_unchanged_if_mints_and_stores_its_branch_slot_once(monkeypatch, tmp_pat
     source = "def f(c):\n if c:\n  pass\n"
     path = tmp_path / "unchanged_if.py"
     path.write_text(source, encoding="utf-8")
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
     import sugar_source_tree.nodes as nodes
 
@@ -38,7 +39,7 @@ def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(
         f.write(source)
         path = f.name
     reporter = CollectingReporter()
-    function = next(SourceFile(path_source(path), reporter=reporter).functions())
+    function = next(SourceFile(path_source(path), reporter=reporter, construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     sugar = function.sugar()
 
     if_sugar = sugar.statements[1]

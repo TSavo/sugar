@@ -12,6 +12,7 @@ from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 from sugar_source_tree.nodes import Assign, ClassDef
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -46,7 +47,7 @@ def _authenticated_re_source(backend=None) -> tuple[SourceFile, ClassDef]:
         "    IGNORECASE = I = _compiler.SRE_FLAG_IGNORECASE # ignore case"
     )
     source = SourceFile(
-        (module.source, module.source_seat, module.source_cid), backend=backend
+        (module.source, module.source_seat, module.source_cid), backend=backend, construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     regex_flag = next(
         node
@@ -170,7 +171,7 @@ def test_removing_class_chained_assign_arm_restores_exact_re_failure(
 
 def test_class_chained_assignment_refuses_a_non_name_target() -> None:
     source = SourceFile(
-        ("class Flags:\n    I = holder.IGNORECASE = 7\n", "lying.py", "cid")
+        ("class Flags:\n    I = holder.IGNORECASE = 7\n", "lying.py", "cid"), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
 

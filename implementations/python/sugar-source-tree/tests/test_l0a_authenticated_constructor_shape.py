@@ -18,11 +18,12 @@ from sugar_source_tree.binding_state import (
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef, Name, Node
 from sugar_source_tree.panic import BackendDefect
 from sugar_source_tree.reporter import CollectingReporter
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _sf(source: str, name: str = "l0a.py") -> SourceFile:
-    return SourceFile((source, name, blake3_512_of(source.encode("utf-8"))))
+    return SourceFile((source, name, blake3_512_of(source.encode("utf-8"))), construction_context=TreeConstructionContextV1.for_test_without_workspace())
 
 
 def test_non_class_nodes_answer_none_for_constructor_shape() -> None:
@@ -72,7 +73,7 @@ def test_collecting_reporter_producer_retains_into_testimony_consumer() -> None:
     source = "def exact():\n    return 1\n"
     identity = (source, "retain_collect.py", blake3_512_of(source.encode()))
     collector = CollectingReporter()
-    tree = SourceFile(identity, reporter=collector)
+    tree = SourceFile(identity, reporter=collector, construction_context=TreeConstructionContextV1.for_test_without_workspace())
     # Ordinary open: definition lives on CollectingReporter, not testimony table.
     definition = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
     assert definition.reporter is collector
@@ -93,7 +94,7 @@ def test_null_reporter_producer_still_panics() -> None:
     source = "def exact():\n    return 1\n"
     identity = (source, "retain_null.py", blake3_512_of(source.encode()))
     collector = CollectingReporter()
-    tree = SourceFile(identity, reporter=collector)
+    tree = SourceFile(identity, reporter=collector, construction_context=TreeConstructionContextV1.for_test_without_workspace())
     definition = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
     consumer = ConstructionTestimonyReporterV1(
         CollectingReporter(),
