@@ -10,6 +10,51 @@ from sugar_source_tree.fragment import SourceMemento
 from .context_manager_resolution import SourceFragmentCoordinateV1
 
 
+def _term_as_semantic_value(value: object, *, path: str) -> object:
+    """A wire-shaped term, respelled as the VALUE it already is.
+
+    ``MutableGlobalBindingV1.term`` is carried into constructed-value testimony
+    through ``SourceVisibleCallFrameV1.mutable_global_bindings`` ->
+    ``CallSiteSugar.source_call_frame``.  The wire dialect spells a ctor's fixed
+    argument sequence ``list`` -- and ConstructedValueV2 refuses to snapshot a
+    mutable container, correctly, because a snapshot of one authenticates a
+    moment rather than a value.  The sequence cannot move: it arrives as a
+    ``*args`` tuple and nothing appends to it.
+
+    The respelling happens HERE, at the carrier, and not in the wire builders:
+    the verification dialect reads these same terms through ``isinstance(args,
+    list)`` guards, so retagging them at the source would turn a loud refusal
+    into a silently-skipped branch.  Only the copy that becomes testimony is
+    respelled; the wire keeps its wire shape, and ``cid_of_json`` encodes a
+    tuple and a list identically, so no CID moves.
+
+    Categories are CLOSED.  An unrecognised member is a loud refusal, never a
+    reflective guess -- a term carrying something genuinely mutable must still
+    refuse, which is the whole content of the category law being honored.
+    """
+    if isinstance(value, dict):
+        frozen = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise SourceCallBindingGap(
+                    f"mutable global binding term at {path} carries a "
+                    f"non-string key {type(key).__name__}"
+                )
+            frozen[key] = _term_as_semantic_value(item, path=f"{path}.{key}")
+        return frozen
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            _term_as_semantic_value(item, path=f"{path}[{index}]")
+            for index, item in enumerate(value)
+        )
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise SourceCallBindingGap(
+        f"mutable global binding term at {path} carries "
+        f"{type(value).__name__}, which is not a wire term value"
+    )
+
+
 @dataclass(frozen=True)
 class MutableGlobalBindingV1:
     source_cid: str
@@ -26,6 +71,11 @@ class MutableGlobalBindingV1:
             raise ValueError("mutable global binding occurrence/source CID mismatch")
         if not self.name or self.kind not in {"dict", "list", "set"}:
             raise ValueError("mutable global binding requires a closed mutable kind")
+        # Respell FIRST so an unrecognised member is a typed refusal naming its
+        # path, not `cid_of_json`'s bare TypeError -- but hash the wire spelling
+        # below, because `cid_of_json` admits a list and refuses a tuple. The
+        # slot carried into testimony is the value; the coordinate is the wire.
+        semantic_term = _term_as_semantic_value(self.term, path="term")
         object.__setattr__(
             self,
             "cid",
@@ -43,6 +93,7 @@ class MutableGlobalBindingV1:
                 }
             ),
         )
+        object.__setattr__(self, "term", semantic_term)
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
