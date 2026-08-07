@@ -681,6 +681,23 @@ class ConstructionTestimonyReporterV1:
 
             definition = value.expected_definition_ref
             resolved_definition = node.unit.source_function_definition_for_call(node)
+            if resolved_definition is None:
+                # The caller's unit is the lexical authority for a call in it,
+                # and for a cross-FILE callee it correctly has no answer -- the
+                # callee is not lexically bound here. Falling straight through
+                # left every cross-file call reading `resolved-not-a-functiondef`,
+                # which named a missing DEFINITION when the truth was that the
+                # wrong unit had been asked.
+                #
+                # The independent authority is the callee's OWN SOURCE TEXT.
+                # Re-pointing this at the import binding would be circular --
+                # `expected_definition_ref` came from there, and a guard that
+                # re-derives from its own source proves nothing. The binding
+                # supplies a NAME; the callee's unit supplies a LOCATION and
+                # CONTENT, and those can disagree.
+                resolved_definition = _callee_definition_by_name_in_its_unit(
+                    definition
+                )
             span = node.line_col_span()
             call_occurrence = SourceFragmentCoordinateV1(
                 node.unit.source_cid,
@@ -782,6 +799,41 @@ class ConstructionTestimonyReporterV1:
 
     def projected_snapshots_for(self, statement: Node):
         return self._trace_builder.projected_snapshots_for(statement, self)
+
+
+def _callee_definition_by_name_in_its_unit(definition: object):
+    """What the callee's NAME resolves to in the callee's own unit.
+
+    The third authority. The import binding says *name N in module M*; this
+    parses nothing new but reads M's own already-materialized definitions and
+    answers *here is the module-scope definition of N, at this span*. The two
+    can disagree -- a renamed definition, a redefined name, a stale ref, a
+    substituted body -- and the seal comparison downstream is what catches it.
+
+    The authority is ``module_direct_bindings`` -- the unit's own module-scope
+    binding table, the same one the in-unit resolver consults -- never a scan of
+    ``function_nodes``. A scan would happily return a NESTED definition that
+    shares the callee's name, which is precisely the lie this exists to catch.
+
+    Exactly one module binding, or nothing: a name bound twice at module scope
+    is ambiguous, and answering with either would be picking. Returning None
+    leaves the caller's existing terms to name the fault, unchanged.
+    """
+    from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+
+    if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        return None
+    unit = getattr(definition, "unit", None)
+    name = getattr(definition, "name", None)
+    if unit is None or not name:
+        return None
+    bindings = (getattr(unit, "module_direct_bindings", None) or {}).get(name, ())
+    if len(bindings) != 1:
+        return None
+    resolved = bindings[0]
+    if not isinstance(resolved, (FunctionDef, AsyncFunctionDef)):
+        return None
+    return resolved
 
 
 def _testimony_blame(node: object) -> str:

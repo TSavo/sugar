@@ -9,6 +9,7 @@ import pytest
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
+    _callee_definition_by_name_in_its_unit,
     ConstructionTestimonyReporterV1,
     SubstitutionTraceBuilderV1,
 )
@@ -386,3 +387,103 @@ def test_the_frame_site_term_is_keyed_on_the_definitions_unit(tmp_path) -> None:
         )
         == "frame-definition-site-foreign"
     )
+
+
+# ---------------------------------------------------------------------------
+# THE FALSIFIABILITY GATE: the third authority must be able to REFUSE
+# ---------------------------------------------------------------------------
+
+
+def _shadowing_callee_unit(tmp_path):
+    """A callee unit where the callee's NAME is also bound nested.
+
+    The module binding of `find_level` is the top-level def. The nested def
+    inside `other` shares the name and is a DIFFERENT span and different text.
+    """
+    helper_path = tmp_path / "shadow_callee.py"
+    helper_path.write_text(
+        "def find_level(value):\n"
+        "    return value\n"
+        "\n"
+        "def other(value):\n"
+        "    def find_level(inner):\n"
+        "        return inner + 1\n"
+        "    return find_level(value)\n"
+    )
+    caller_path = tmp_path / "shadow_caller.py"
+    caller_path.write_text("def apply(value):\n    return find_level(value)\n")
+
+    collector = CollectingReporter()
+    helper_source = SourceFile.from_path(helper_path, reporter=collector)
+    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    testimony = ConstructionTestimonyReporterV1(
+        collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
+    )
+    helper_root = materialize(helper_source.unit, helper_source.root.ref, testimony)
+    caller_root = materialize(caller_source.unit, caller_source.root.ref, testimony)
+
+    definitions = [
+        node
+        for node in helper_root.walk()
+        if isinstance(node, FunctionDef) and node.name == "find_level"
+    ]
+    assert len(definitions) == 2, definitions
+    top_level = min(definitions, key=lambda d: d.line_col_span().start_line)
+    nested = max(definitions, key=lambda d: d.line_col_span().start_line)
+    call = next(
+        node
+        for node in caller_root.walk()
+        if isinstance(node, Call) and node.segment() == "find_level(value)"
+    )
+    return top_level, nested, call, testimony
+
+
+def test_the_third_authority_accepts_the_true_cross_file_callee(tmp_path) -> None:
+    """The truthful arm of the twin, so the refusal below is discrimination
+    and not a guard that refuses everything."""
+    top_level, _nested, call, reporter = _shadowing_callee_unit(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = top_level.source_visible_call_frame()
+
+    # Exactly what `present_construction` now supplies: the caller's unit has
+    # no answer for a cross-file callee, so the third authority answers.
+    resolved = _callee_definition_by_name_in_its_unit(top_level)
+    # Not `is`: the module binding table holds an equal-but-distinct instance
+    # for the same span. The SEAL is the identity here, which is the whole
+    # point -- content, not object address.
+    assert resolved.fragment.seal() == top_level.fragment.seal()
+    assert (
+        reporter._source_call_identity_fault(
+            call, truthful, top_level, resolved, truthful.call_occurrence, frame
+        )
+        is None
+    )
+
+
+def test_a_shadowed_same_name_definition_is_REFUSED(tmp_path) -> None:
+    """THE LYING TWIN.
+
+    A nested definition sharing the callee's name is handed over as the
+    callee. Same name, same unit, same file -- everything a name-only check
+    would accept. The callee's own source says the module binding of that name
+    is somewhere else entirely, and the seal over file+cid+span+text is what
+    catches it.
+
+    If this ever passes, the third authority is a tautology and must be torn
+    out: it would convert 81 loud rows into 81 silent ones.
+    """
+    _top_level, nested, call, reporter = _shadowing_callee_unit(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = nested.source_visible_call_frame()
+
+    # The third authority does NOT return the nested impostor: it reads the
+    # unit's module binding table, which names the top-level definition.
+    resolved = _callee_definition_by_name_in_its_unit(nested)
+    assert resolved.fragment.seal() != nested.fragment.seal(), (
+        "the authority accepted the impostor"
+    )
+
+    fault = reporter._source_call_identity_fault(
+        call, truthful, nested, resolved, truthful.call_occurrence, frame
+    )
+    assert fault == "resolved-seal-mismatch", fault
