@@ -65,6 +65,7 @@ from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSug
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
@@ -82,7 +83,7 @@ def _site(tmp_path: Path):
     path = tmp_path / "attr_store.py"
     path.write_text("def f(obj, value):\n    obj.attr = value\n")
     function = next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path)).functions()
     )
     return function.body[0].fragment
 
@@ -424,7 +425,7 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[CORPUS_LINE - 1].strip() == CORPUS_TEXT
 
-    tree = SourceFile(workspace_path_source(str(path), root=str(install_root)))
+    tree = SourceFile(workspace_path_source(str(path), root=str(install_root)), construction_context=tree_construction_context_for_workspace(install_root))
     function = next(
         fn for fn in tree.functions() if fn.name == "test_pickle_preserves_name"
     )
@@ -454,7 +455,7 @@ def _real_pandas_name_store():
     corpus = authenticated_pandas_corpus()
     install_root = corpus.root.parent
     path = install_root / CORPUS_RELATIVE
-    tree = SourceFile(workspace_path_source(str(path), root=str(install_root)))
+    tree = SourceFile(workspace_path_source(str(path), root=str(install_root)), construction_context=tree_construction_context_for_workspace(install_root))
     function = next(
         fn for fn in tree.functions() if fn.name == "test_pickle_preserves_name"
     )

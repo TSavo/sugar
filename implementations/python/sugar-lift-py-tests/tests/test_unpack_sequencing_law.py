@@ -54,6 +54,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_source_tree.nodes import Assign
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_source_tree.tree import SourceFile
 
 
@@ -87,7 +88,7 @@ def _function(tmp_path: Path, source: str, stem: str = "unpack_seq"):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
     return next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path)).functions()
     )
 
 
@@ -128,7 +129,7 @@ def _site(tmp_path: Path):
     path = tmp_path / "store.py"
     path.write_text("def f(obj, key, value):\n    obj[key] = value\n")
     function = next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path)), construction_context=tree_construction_context_for_workspace(tmp_path)).functions()
     )
     return function.body[0].fragment
 
