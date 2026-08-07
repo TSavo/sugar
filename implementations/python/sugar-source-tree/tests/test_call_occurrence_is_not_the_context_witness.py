@@ -144,3 +144,56 @@ def test_a_constructed_call_always_carries_its_own_occurrence(tmp_path) -> None:
                 f"carrying the answer to 'was a context of the expected type "
                 f"seated', and no caller downstream can tell those apart."
             )
+
+
+def test_the_guard_still_refuses_a_bare_tree_with_the_proxy_removed(tmp_path) -> None:
+    """WHY (2) WAS SEQUENCED AFTER (1), pinned as its own tooth.
+
+    Minting the occurrence unconditionally is exactly the change that, on its
+    own, SILENCES the law: the old refusal for a context-less ``Call`` was
+    reached through ``call_occurrence=None`` -- an absent coordinate standing in
+    for an absent context, detected downstream as a testimony mismatch. Remove
+    that proxy and, without a read-site guard, a bare tree constructs happily.
+
+    So this asserts the refusal survives the proxy's removal and comes from the
+    read itself: a bare tree still raises ``BareConstructionDoor`` naming
+    ``Call._construct_sugar``, with no coordinate anywhere in the story.
+
+    It also pins the escape property. ``BareConstructionDoor`` must NOT be a
+    ``SourceTreePanic`` -- ``sugar()`` catches those and memoizes them as
+    construction gaps, which would file a defect in how the tree was OPENED as a
+    countable fact about the SOURCE, and would let the refusal be answered from
+    cache the second time.
+    """
+    from sugar_source_tree.panic import BareConstructionDoor, SourceTreePanic
+
+    path = tmp_path / "subject.py"
+    path.write_text(SOURCE)
+    bare = SourceFile(
+        workspace_path_source(str(path), root=str(tmp_path)),
+        reporter=CollectingReporter(),
+    )
+    assert bare.unit.construction_context is None, "this arm must be the bare door"
+
+    calls = [n for n in _walk(bare.root) if type(n).__name__ == "Call"]
+    assert calls, "no Call in the fixture -- nothing measured"
+
+    for call in calls:
+        try:
+            call.sugar()
+        except BareConstructionDoor as refused:
+            assert "Call._construct_sugar" in str(refused), refused
+            assert not isinstance(refused, SourceTreePanic), (
+                "BareConstructionDoor became a SourceTreePanic. sugar() catches "
+                "those and memoizes them, so a defect in how the tree was OPENED "
+                "would be counted as a frontier row about the SOURCE, and would "
+                "be answerable from cache on the second ask."
+            )
+        else:
+            raise AssertionError(
+                "a context-less Call CONSTRUCTED. The occurrence is now minted "
+                "unconditionally, so the old proxy refusal (call_occurrence=None "
+                "detected downstream) is gone -- and nothing replaced it. This is "
+                "step (2) silencing the law, which is the exact reason it was "
+                "sequenced after the read-site guard."
+            )
