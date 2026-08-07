@@ -34,6 +34,42 @@ Stated plainly because it cuts against the lesson of the rest of this work: the
 read-site guard beat static scanning everywhere else tonight. Here the read site
 has strictly less information than the call site, so the scan is not a weaker
 substitute -- it is the only place the question can be asked.
+
+THE BOUNDARY ON THE DOCTRINE, which this file is the first instance of::
+
+    enforce at the READ when the deciding fact survives to the read
+    enforce at the CALL when the call is where the fact exists
+
+Reading-is-enrollment beat every scan elsewhere on this branch, twice finding
+shapes no scan could see. It inverts here because the deciding fact is destroyed
+before construction runs.
+
+WHAT THIS GUARD DOES NOT COVER, named because a guard that silently misses a
+shape is worse than one that states its limit.
+
+It cannot see the AUTHENTICATED-CORPUS shape::
+
+    corpus = authenticated_pandas_corpus()
+    path = corpus.root / CORPUS_REL
+    tree = SourceFile((source, str(path), source_cid))
+
+That is a real installed module, at a real path, with a root in hand -- the most
+workspace-bearing shape found, and the falsest place the no-workspace claim
+could be made. But it hands over an ALREADY-BUILT identity tuple, so no
+``workspace_path_source`` appears at the call and there is nothing here to match.
+
+The limit is pinned rather than widened because the tuple **erases the
+provenance by construction**: ``(source, str(path), cid)`` records no trace of
+whether ``source`` came from a corpus read or a string literal, and recovering
+it needs dataflow, not a scan. A syntactic rule broad enough to catch it -- say,
+"the filename element is not a literal" -- also flags legitimate synthetic seats
+like ``seat = f"{name}.py"``, and a guard that cries wolf is one people learn to
+silence. Catching this shape needs provenance carried on the identity, which is
+a change to the oracle and not to this file.
+
+Until then it is a READING obligation, and it is discharged by reading: the 41
+callers migrated under #7396 were re-checked at SITE granularity for exactly
+this shape and none of them reads a corpus, an installed module, or ``__file__``.
 """
 
 from __future__ import annotations
