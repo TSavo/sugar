@@ -473,3 +473,74 @@ def test_the_no_workspace_constructor_tells_the_truth() -> None:
         "Every call site of it reads as the assertion 'this caller has no "
         "workspace', so the constructor may not quietly acquire one."
     )
+
+
+def test_an_absolute_locus_REFUSES_under_a_workspace_context(tmp_path) -> None:
+    """THE GATE for the 41-file migration. Load-bearing, so it is RUN, not read.
+
+    The campaign was authorised on this claim: for callers that seat an
+    ABSOLUTE filename -- every ``path_source(tempfile...)`` site -- there is no
+    workspace-bearing alternative that would have produced a richer value, so
+    migrating them cannot be silently trading a better answer for a worse one.
+
+    The reason is that ``FunctionDef._construct_sugar`` does not degrade on an
+    absolute locus, it REFUSES::
+
+        relative = Path(self.unit.filename)
+        if relative.is_absolute():
+            raise SugarNotWritten(owner="FunctionDef.bridge_source_symbol", ...)
+
+    If that ever silently produces a value instead, a workspace-bearing
+    alternative DOES exist for these callers, the byte-identical trap applies
+    to them after all, and the authorisation for the 41 is void. This tooth is
+    the difference between "I read the code" and "I ran it".
+    """
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.panic import SugarNotWritten
+
+    path = tmp_path / "subject.py"
+    path.write_text(SOURCE)
+    identity = path_source(str(path))
+    assert identity[1] == str(path), "path_source is expected to seat the path given"
+    from pathlib import Path as _P
+
+    assert _P(identity[1]).is_absolute(), (
+        "this fixture must seat an ABSOLUTE locus or it is not the case under test"
+    )
+
+    context = tree_construction_context_for_workspace(tmp_path)
+    assert getattr(context, "workspace_root", None) is not None, (
+        "the context must CARRY a workspace root, or the branch under test "
+        "never runs and this tooth passes vacuously"
+    )
+
+    source = SourceFile(
+        identity, reporter=CollectingReporter(), construction_context=context
+    )
+    functions = [n for n in _walk(source.root) if type(n).__name__ == "FunctionDef"]
+    assert functions, "no FunctionDef in the fixture -- nothing measured"
+
+    refused = []
+    for node in functions:
+        try:
+            node.sugar()
+        except SugarNotWritten as panic:
+            refused.append((node.name, panic.owner, str(panic)))
+        except Exception as other:
+            refused.append((node.name, type(other).__name__, str(other)))
+
+    print("\n=== absolute locus + workspace-bearing context ===")
+    for name, owner, text in refused:
+        print(f"    {name}: {owner}")
+        print(f"      {text[:160]}")
+
+    assert refused, (
+        "AUTHORISATION VOID. A FunctionDef at an ABSOLUTE locus CONSTRUCTED a "
+        "value under a workspace-bearing context instead of refusing. That "
+        "means a workspace-bearing alternative exists for the 41 tempfile "
+        "callers, so migrating them WOULD silently drop enrichment -- the "
+        "byte-identical trap the campaign refusal was built on. STOP and report."
+    )
+    assert any(o == "FunctionDef.bridge_source_symbol" for _, o, _ in refused), (
+        f"refused, but not at the bridge-symbol door: {refused}"
+    )
