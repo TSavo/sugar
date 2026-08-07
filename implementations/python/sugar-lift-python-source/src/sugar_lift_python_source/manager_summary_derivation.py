@@ -1990,6 +1990,7 @@ def _publish_native_definition(context, receiver, slot, definition) -> None:
     from types import MappingProxyType
 
     from sugar_lift_py_tests.context_manager_resolution import (
+        CitedOpaqueProtocolIdentityV1,
         NativeProtocolSlot,
         ResolvedContractRefsV1,
         SourceFragmentCoordinateV1,
@@ -1997,8 +1998,18 @@ def _publish_native_definition(context, receiver, slot, definition) -> None:
 
     if not isinstance(slot, NativeProtocolSlot):
         raise TypeError("native protocol slot must be NativeProtocolSlot")
-    if not isinstance(definition, SourceFragmentCoordinateV1):
-        raise TypeError("native definition must be SourceFragmentCoordinateV1")
+    # Closed two-member union, reconciled at this seat: a definition was either
+    # DERIVED (a span in an in-population source) or CITED (an authenticated
+    # off-population identity the membrane refused to construct). Nothing else
+    # may be published, and the two never share a wire form.
+    if not isinstance(
+        definition, (SourceFragmentCoordinateV1, CitedOpaqueProtocolIdentityV1)
+    ):
+        raise TypeError(
+            "native definition must be a derived SourceFragmentCoordinateV1 or a "
+            "cited CitedOpaqueProtocolIdentityV1; got "
+            f"{type(definition).__name__}"
+        )
     refs = context.contract_refs
     table = refs.native_definitions
     if isinstance(table, MappingProxyType):
@@ -2744,6 +2755,10 @@ def _protocol_coords_from_generator_decorators(
     declined=None,
 ):
     """Construct enter/exit definition sites from generator decorator testimony."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        CitedOpaqueProtocolIdentityV1,
+        NativeProtocolSlot,
+    )
     from sugar_source_tree.nodes import FunctionDef
 
     if not isinstance(generator_target, FunctionDef):
@@ -2770,9 +2785,28 @@ def _protocol_coords_from_generator_decorators(
         # it is a named, authenticated identity this road cannot yet consume,
         # and the reason travels so the refusal downstream can say so.
         if isinstance(outcome, DecoratorCitedV1):
-            declined.append(
-                f"{outcome.module_name}.{outcome.exported_name}: "
-                f"{outcome.membrane_kind}"
+            # #7384: an off-population target CITES, it does not construct.
+            # Deriving this protocol would mean materializing the decorator to
+            # read the manager class it returns -- the membrane refuses that,
+            # correctly. So publish the authenticated identity ITSELF as the
+            # protocol's enter/exit, carrying its own ignorance in the value:
+            # the wire form says "cited", so nothing downstream can read it as
+            # a derived span. The slot is part of the identity, which is also
+            # what keeps enter and exit distinct without inventing coordinates.
+            published.append(
+                tuple(
+                    CitedOpaqueProtocolIdentityV1(
+                        slot.value,
+                        outcome.module_name,
+                        outcome.exported_name,
+                        outcome.resolved.cid,
+                        outcome.membrane_kind,
+                    )
+                    for slot in (
+                        NativeProtocolSlot.CONTEXT_ENTER,
+                        NativeProtocolSlot.CONTEXT_EXIT,
+                    )
+                )
             )
             continue
         if isinstance(outcome, DecoratorUnresolvedV1):
