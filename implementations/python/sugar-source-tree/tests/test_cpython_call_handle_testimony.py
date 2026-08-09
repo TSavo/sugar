@@ -671,3 +671,41 @@ def test_a_class_definition_shows_up_on_the_roll(tmp_path) -> None:
         )
     kinds = {type(node).__name__ for node in reporter._materialized_by_ref.values()}
     assert "ClassDef" in kinds, sorted(kinds)
+
+
+def test_an_allocation_handle_is_projected_to_its_typed_class_occurrence(
+    tmp_path,
+) -> None:
+    """The projection arm, which no other tooth reaches.
+
+    On the production path an allocation call carries
+    ``expected_definition_ref=bound_frame.owner.ref`` -- a raw parser handle,
+    not a typed node. Every other allocation tooth hands the guard a typed
+    definition directly and so routes AROUND the projection; a mutation that
+    dropped its ClassDef arm failed nothing at all. This is that tooth.
+    """
+    top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
+    constructed = call._construct_sugar()
+    # Exactly what the preconstruction branch installs.
+    with_handle = replace(constructed, expected_definition_ref=top_level.ref)
+    assert not isinstance(with_handle.expected_definition_ref, ClassDef)
+
+    projected = call._project_constructed_value_for_testimony(with_handle)
+
+    assert isinstance(projected.expected_definition_ref, ClassDef), (
+        projected.expected_definition_ref
+    )
+    assert (
+        projected.expected_definition_ref.fragment.seal()
+        == top_level.fragment.seal()
+    )
+    # And the projected occurrence is one the guard can actually admit: a raw
+    # handle stops at term 1, a projected class reaches the seal join.
+    assert reporter._source_call_identity_fault(
+        call,
+        projected,
+        with_handle.expected_definition_ref,
+        top_level,
+        projected.call_occurrence,
+        top_level.source_visible_constructor_frame(),
+    ) == "definition-not-a-functiondef"
