@@ -4804,6 +4804,17 @@ class ClassDef(Statement):
     )
 
     def __post_init__(self):
+        # A NODE OFF THE ROLL. `Node.__post_init__` is where registration
+        # happens, and its own docstring is the law: "calling ``cls(...)`` at
+        # all is showing up on the roll -- there is no way to new a node
+        # without it." This override silently was that way: every ClassDef in
+        # the corpus was constructed unregistered, so the identity guard's
+        # `definition-ref-not-materialized` was unsatisfiable for every
+        # allocation callee no matter what the guard admitted.
+        #
+        # The binding-target check below is this class's OWN extra demand and
+        # keeps running; it is not a reason to skip the roll.
+        super().__post_init__()
         if (
             not isinstance(self.binding_target, Name)
             or self.binding_target.id != self.name
@@ -11189,8 +11200,12 @@ class Call(Expression):
         if not isinstance(value, CallSiteSugar):
             return value
         definition_ref = value.expected_definition_ref
+        # An allocation callee's definition occurrence is a ClassDef. It is the
+        # SAME projection -- a parser handle standing in for this roll's typed
+        # occurrence -- and leaving it unprojected left the identity guard
+        # holding a raw `_Handle` and naming the wrong fault.
         if definition_ref is None or isinstance(
-            definition_ref, (FunctionDef, AsyncFunctionDef)
+            definition_ref, (FunctionDef, AsyncFunctionDef, ClassDef)
         ):
             return value
         lookup = getattr(self.reporter, "materialized_node_for_ref", None)
@@ -11200,7 +11215,9 @@ class Call(Expression):
         if definition is None and value.source_call_frame is not None:
             producer_definition = value.source_call_frame.owner
             if (
-                isinstance(producer_definition, (FunctionDef, AsyncFunctionDef))
+                isinstance(
+                    producer_definition, (FunctionDef, AsyncFunctionDef, ClassDef)
+                )
                 and producer_definition.ref is definition_ref
             ):
                 retain = getattr(self.reporter, "retain_registered_node_from", None)
@@ -11208,7 +11225,7 @@ class Call(Expression):
                     definition = retain(
                         producer_definition, producer_definition.reporter
                     )
-        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
             return value
         source_call_frame = value.source_call_frame
         if source_call_frame is not None:

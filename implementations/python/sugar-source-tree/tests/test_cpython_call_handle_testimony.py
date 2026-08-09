@@ -13,7 +13,7 @@ from sugar_source_tree.binding_state import (
     ConstructionTestimonyReporterV1,
     SubstitutionTraceBuilderV1,
 )
-from sugar_source_tree.nodes import Call, FunctionDef
+from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
 from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.tree import SourceFile
@@ -487,3 +487,187 @@ def test_a_shadowed_same_name_definition_is_REFUSED(tmp_path) -> None:
         call, truthful, nested, resolved, truthful.call_occurrence, frame
     )
     assert fault == "resolved-seal-mismatch", fault
+
+
+# ---------------------------------------------------------------------------
+# A CLASS is a legitimate callee -- and the same gate applies to it
+# ---------------------------------------------------------------------------
+
+
+def _shadowing_allocation_unit(tmp_path):
+    """A callee unit where an ALLOCATION callee's name is also bound nested.
+
+    ``Boom`` is a module-scope exception class with no ``__init__`` -- the
+    exact shape of ``pandas._config.config.OptionError``. The nested class
+    inside ``other`` shares the name, has a different span and different text,
+    and is the lie.
+    """
+    helper_path = tmp_path / "shadow_allocation_callee.py"
+    helper_path.write_text(
+        "class Boom(ValueError):\n"
+        '    """The module-scope allocation callee."""\n'
+        "\n"
+        "\n"
+        "def other(value):\n"
+        "    class Boom(ValueError):\n"
+        '        """A NESTED class of the same name -- the impostor."""\n'
+        "\n"
+        "    return Boom\n"
+    )
+    caller_path = tmp_path / "shadow_allocation_caller.py"
+    caller_path.write_text("def apply(value):\n    raise Boom(value)\n")
+
+    collector = CollectingReporter()
+    helper_source = SourceFile.from_path(helper_path, reporter=collector)
+    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    testimony = ConstructionTestimonyReporterV1(
+        collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
+    )
+    helper_root = materialize(helper_source.unit, helper_source.root.ref, testimony)
+    caller_root = materialize(caller_source.unit, caller_source.root.ref, testimony)
+
+    definitions = [
+        node
+        for node in helper_root.walk()
+        if isinstance(node, ClassDef) and node.name == "Boom"
+    ]
+    assert len(definitions) == 2, definitions
+    top_level = min(definitions, key=lambda d: d.line_col_span().start_line)
+    nested = max(definitions, key=lambda d: d.line_col_span().start_line)
+    call = next(
+        node
+        for node in caller_root.walk()
+        if isinstance(node, Call) and node.segment() == "Boom(value)"
+    )
+    return top_level, nested, call, testimony
+
+
+def test_a_class_callee_carries_a_derivable_constructor_law(tmp_path) -> None:
+    """The premise this admission rests on, measured rather than assumed.
+
+    ``Boom`` defines no ``__init__``, so the claim under test is that its
+    constructor law is derivable IN POPULATION -- from its own body plus the
+    authenticated base graph -- and not a body sugar cannot see. If this ever
+    goes red, admitting a ClassDef below stops being sound and the citation
+    road is the correct repair after all.
+    """
+    top_level, _nested, _call, _reporter = _shadowing_allocation_unit(tmp_path)
+    assert not any(
+        getattr(member, "name", None) == "__init__" for member in top_level.body
+    )
+    assert top_level._inherits_default_exception_constructor() is True
+    frame = top_level.source_visible_constructor_frame()
+    assert frame.parameters == ("args",), frame.parameters
+    assert frame.parameter_kinds == ("vararg",), frame.parameter_kinds
+    assert frame.owner is top_level
+
+
+def test_the_third_authority_accepts_the_true_allocation_callee(tmp_path) -> None:
+    """The truthful arm, so the refusal below is discrimination."""
+    top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = top_level.source_visible_constructor_frame()
+
+    resolved = _callee_definition_by_name_in_its_unit(top_level)
+    assert resolved.fragment.seal() == top_level.fragment.seal()
+    assert (
+        reporter._source_call_identity_fault(
+            call, truthful, top_level, resolved, truthful.call_occurrence, frame
+        )
+        is None
+    )
+
+
+def test_a_shadowed_same_name_CLASS_is_REFUSED(tmp_path) -> None:
+    """THE LYING TWIN, allocation arm.
+
+    A nested class sharing the callee's name is handed over as the callee.
+    Same name, same unit, same file, same bases -- everything a name-only or
+    kind-only check would accept. Admitting ClassDef must not cost the seal.
+
+    If this ever passes, the admission is a tautology and must be torn out: it
+    would convert 78 loud rows into 78 silent ones.
+    """
+    _top_level, nested, call, reporter = _shadowing_allocation_unit(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = nested.source_visible_constructor_frame()
+
+    resolved = _callee_definition_by_name_in_its_unit(nested)
+    assert resolved.fragment.seal() != nested.fragment.seal(), (
+        "the authority accepted the impostor"
+    )
+
+    fault = reporter._source_call_identity_fault(
+        call, truthful, nested, resolved, truthful.call_occurrence, frame
+    )
+    assert fault == "resolved-seal-mismatch", fault
+
+
+def test_a_class_resolving_to_a_function_of_the_same_name_is_REFUSED(
+    tmp_path,
+) -> None:
+    """The kind disagreement gets its OWN name.
+
+    The two authorities can disagree about WHAT a name is, not only about
+    where it lives. Lumping that into the seal term would print a fault that
+    names the wrong repair.
+    """
+    top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    frame = top_level.source_visible_constructor_frame()
+    _source, function_definition, _fn_call, _fn_reporter = _ordinary_call(
+        tmp_path, helper="Boom", caller="apply_function"
+    )
+    assert isinstance(function_definition, FunctionDef)
+
+    fault = reporter._source_call_identity_fault(
+        call,
+        truthful,
+        top_level,
+        function_definition,
+        truthful.call_occurrence,
+        frame,
+    )
+    assert fault == "resolved-definition-kind-mismatch", fault
+
+
+def test_an_opaque_allocation_callee_still_refuses_by_its_own_name(
+    tmp_path,
+) -> None:
+    """The boundary that must not move.
+
+    Admitting ClassDef must not admit a callee with no readable definition at
+    all. An unmaterialized handle is still `definition-not-a-functiondef`.
+    """
+    top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
+    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+
+    class _OpaqueHandle:
+        """Stands where a raw parser handle arrives: no unit, no fragment."""
+
+    fault = reporter._source_call_identity_fault(
+        call, truthful, _OpaqueHandle(), top_level, truthful.call_occurrence, None
+    )
+    assert fault == "definition-not-a-functiondef"
+
+
+def test_a_class_definition_shows_up_on_the_roll(tmp_path) -> None:
+    """A NODE OFF THE ROLL.
+
+    ``Node.__post_init__`` states the law: registering in the constructor is
+    what makes ``cls(...)`` show up on the roll, and there is no way to new a
+    node without it. ``ClassDef`` overrode that method and never called it, so
+    every class in the corpus was constructed unregistered -- and
+    ``definition-ref-not-materialized`` was unsatisfiable for every allocation
+    callee no matter what the identity guard admitted.
+
+    This is about the ROLL, not about the guard: a class must be on it for the
+    same reason a function is.
+    """
+    top_level, nested, _call, reporter = _shadowing_allocation_unit(tmp_path)
+    for definition in (top_level, nested):
+        assert reporter.materialized_node_for_ref(definition.ref) is not None, (
+            f"ClassDef at line {definition.line_col_span().start_line} is off the roll"
+        )
+    kinds = {type(node).__name__ for node in reporter._materialized_by_ref.values()}
+    assert "ClassDef" in kinds, sorted(kinds)

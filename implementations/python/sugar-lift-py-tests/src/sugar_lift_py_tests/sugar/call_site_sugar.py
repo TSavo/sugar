@@ -191,10 +191,19 @@ class CallSiteSugar(ConstructedTermSugar):
             and self.expected_definition_ref is not None
         ):
             from sugar_source_tree.panic import SugarNotWritten
-            from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+            from sugar_source_tree.nodes import (
+                AsyncFunctionDef,
+                ClassDef,
+                FunctionDef,
+            )
 
+            # A projected ALLOCATION callee is a ClassDef occurrence, so it
+            # answers with `.ref` exactly as a projected function does. Without
+            # this arm it fell to the raw-handle branch and compared a typed
+            # node against a ref, which never matches.
             if isinstance(
-                self.expected_definition_ref, (FunctionDef, AsyncFunctionDef)
+                self.expected_definition_ref,
+                (FunctionDef, AsyncFunctionDef, ClassDef),
             ):
                 owner_matches = (
                     self.source_call_frame.owner.ref is self.expected_definition_ref.ref

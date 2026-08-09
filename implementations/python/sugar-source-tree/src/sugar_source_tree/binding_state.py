@@ -575,6 +575,7 @@ class ConstructionTestimonyReporterV1:
         "call-ref-not-materialized",
         "definition-unit-unauthenticated",
         "resolved-not-a-functiondef",
+        "resolved-definition-kind-mismatch",
         "resolved-seal-mismatch",
         "call-occurrence-mismatch",
         "frame-is-none",
@@ -611,9 +612,27 @@ class ConstructionTestimonyReporterV1:
         structural, and breaking it means deleting a guard rather than
         transposing two lines.
         """
-        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef, ClassDef
 
-        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        # A CLASS is a legitimate callee. `OptionError(msg)` is an allocation,
+        # not a function call, and its definition occurrence is a ClassDef by
+        # construction -- so refusing every non-FunctionDef here refused an
+        # ordinary shape of Python rather than a defect, exactly as the
+        # same-unit demand did before it.
+        #
+        # This does NOT admit an unreadable constructor. The frame the call
+        # already carries is minted by `ClassDef.source_visible_constructor_frame`
+        # from the class's OWN in-population body plus, for an exception type,
+        # the authenticated base-graph law `(*args)` that
+        # `_inherits_default_exception_constructor` derives from the declared
+        # builtin-exception roster. Nothing off-population is read here; the
+        # frame exists whether or not this guard admits it.
+        #
+        # Identity is unchanged in strength: the resolved definition must be
+        # the SAME KIND (below), and `resolved-seal-mismatch` still joins on
+        # the callee's own sealed fragment, so a substituted or nested
+        # same-name class cannot survive.
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
             return "definition-not-a-functiondef"
         if definition.ref not in self._materialized_by_ref:
             return "definition-ref-not-materialized"
@@ -645,8 +664,19 @@ class ConstructionTestimonyReporterV1:
         # therefore keep DIFFERENT names, which is the whole point.
         if not definition.unit.source_cid:
             return "definition-unit-unauthenticated"
-        if not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef)):
+        if not isinstance(
+            resolved_definition, (FunctionDef, AsyncFunctionDef, ClassDef)
+        ):
             return "resolved-not-a-functiondef"
+        # A definition and its independent re-derivation must be the same KIND.
+        # A class resolving to a function of the same name (or the reverse) is
+        # a genuine disagreement between the two authorities and is exactly
+        # what this guard exists to catch -- it must not be lumped into the
+        # seal comparison below, whose message would name the wrong fault.
+        if isinstance(definition, ClassDef) is not isinstance(
+            resolved_definition, ClassDef
+        ):
+            return "resolved-definition-kind-mismatch"
         # Reachable only with a resolved definition in hand.
         if resolved_definition.fragment.seal() != definition.fragment.seal():
             return "resolved-seal-mismatch"
@@ -819,9 +849,9 @@ def _callee_definition_by_name_in_its_unit(definition: object):
     is ambiguous, and answering with either would be picking. Returning None
     leaves the caller's existing terms to name the fault, unchanged.
     """
-    from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+    from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef, ClassDef
 
-    if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+    if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
         return None
     unit = getattr(definition, "unit", None)
     name = getattr(definition, "name", None)
@@ -831,7 +861,14 @@ def _callee_definition_by_name_in_its_unit(definition: object):
     if len(bindings) != 1:
         return None
     resolved = bindings[0]
-    if not isinstance(resolved, (FunctionDef, AsyncFunctionDef)):
+    # The SAME authority answers for an allocation callee. A nested ClassDef
+    # sharing the callee's name is the same lie a nested FunctionDef is, and
+    # the module-scope binding table is what excludes it in both cases. The
+    # KIND the table answers with is not filtered here -- a class binding
+    # answering for a function callee is a real disagreement and belongs to
+    # the caller's `resolved-definition-kind-mismatch` term, not to a silent
+    # None that would print the wrong fault.
+    if not isinstance(resolved, (FunctionDef, AsyncFunctionDef, ClassDef)):
         return None
     return resolved
 
