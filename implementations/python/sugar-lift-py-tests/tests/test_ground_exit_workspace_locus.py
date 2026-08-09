@@ -33,6 +33,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 CORPUS = """\
 def ground_index():
@@ -164,7 +165,10 @@ def test_absolute_locus_still_refuses_to_construct_a_ground_exit(
     from sugar_source_tree.tree import SourceFile
 
     path = corpus / "ground_exits.py"
-    source_file = SourceFile(path_source(str(path)))
+    source_file = SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     function = next(fn for fn in source_file.functions() if fn.name == "ground_index")
     with pytest.raises(ConstructionPanic) as raised:
         function.sugar().desugar(None)

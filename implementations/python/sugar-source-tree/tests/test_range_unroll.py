@@ -10,6 +10,7 @@ import pytest
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import authenticated_function_value
@@ -19,7 +20,7 @@ def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def _invs(src):

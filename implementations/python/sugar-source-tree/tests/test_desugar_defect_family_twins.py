@@ -33,6 +33,7 @@ from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -40,7 +41,7 @@ def _out(source: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(source)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar()
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar().desugar()
 
 
 def _statements(out):
@@ -250,7 +251,7 @@ def test_dotted_expr_name_is_structural_not_a_name_table() -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as h:
         h.write("def f(a, d, k):\n return (a, a.b.c, a.b(), d[k].b)\n")
         path = h.name
-    fn = next(SourceFile(path_source(path)).functions())
+    fn = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     named, dotted, called, subscripted = fn.body[0].value.elts
     assert isinstance(named, Name)
     assert named.dotted_expr_name() == "a"
@@ -272,7 +273,7 @@ def test_chained_equality_uses_each_pairs_own_left_operand() -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as h:
         h.write("def f(a, b, c):\n return a.k == b == c\n")
         path = h.name
-    fn = next(SourceFile(path_source(path)).functions())
+    fn = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     boolop = fn.body[0].value.sugar()
     pairs = [v for v in boolop.values if isinstance(v, EqualityOpSugar)]
     assert len(pairs) == 2

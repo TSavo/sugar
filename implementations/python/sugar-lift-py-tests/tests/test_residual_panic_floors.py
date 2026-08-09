@@ -22,6 +22,7 @@ from sugar_lift_py_tests.ir import atomic, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def test_string_attribute_is_py_getattr_coordinate():
@@ -60,7 +61,12 @@ def test_nested_function_def_under_if_does_not_panic_on_universe_guarded():
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    fn = next(SourceFile(path_source(path)).functions())
+    fn = next(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     outcome = fn.sugar().desugar()
     # Must complete without ConstructionPanic on UniverseValue.guarded.
     assert outcome is not None

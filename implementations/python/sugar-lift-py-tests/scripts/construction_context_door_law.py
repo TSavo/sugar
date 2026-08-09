@@ -2,13 +2,50 @@
 """R_bare_construction_door — construction never enters through the bare door.
 
 ``SourceFile.from_path`` builds a tree with **no construction context**. That is
-a legitimate door: a demand-table scan, a roll-call discharge, a parse-only
-corpus emit all use it correctly, because none of them construct sugar.
+a legitimate door: a roll-call discharge and a parse-only corpus emit use it
+correctly.
 
-Constructing through it is a different act, and it does not fail — it LIES.
-Without a context every ``with`` paints ``RuntimeSelectedContextManager``
-regardless of resolvability, so the tree answers every question with a plausible
-wrong number instead of a refusal.
+**CORRECTION — this file used to claim "a demand-table scan ... because none of
+them construct". The demand-table scan CONSTRUCTS.**
+
+    mint_prebuilt_demand_table
+      -> _preconstruction_demand_rows        lift_rpc.py
+      -> _call_contract_demand_rows          lift_rpc.py
+      -> authenticated_import_uses           import_binding.py
+      -> _run_lexical_import_pass            import_binding.py
+      -> SourceFile.__new__ -> materialize_module -> _materialize_module_body
+      -> Constant.sugar()
+
+The demand table is what MINTS the construction context, and minting it runs a
+lexical import pass that materializes modules, which constructs. **The context
+is a PRODUCT of construction, so a TOTAL law is self-contradictory at
+bootstrap** -- armed as a total rule it killed the census before seat 1. The
+rule below is narrowed accordingly, and the bootstrap's permission is pinned by
+its own teeth in ``sugar-source-tree/tests/
+test_bootstrap_construction_permission.py`` rather than left to the predicate
+happening to exclude ``Constant``.
+
+Constructing through the bare door is a different act, and it fails in **TWO
+DISTINCT MODES**. This file used to name only the first, and the word "LIES"
+collapsed them:
+
+1. **LOUD OVER-COUNT.** Without a context every ``with`` paints
+   ``RuntimeSelectedContextManager`` regardless of resolvability. With a
+   testimony reporter seated this is a *named refusal*, not silence -- but it
+   is one refusal per ``with``, so the tree answers with a plausible wrong
+   NUMBER: false frontier rows, halting at the first ``with``. The phantom is
+   in the COUNT, not in the quiet.
+
+2. **SILENT CONSTRUCTION.** With a non-testimony reporter seated there is no
+   refusal at all: bare door plus a plain ``CollectingReporter`` constructs
+   happily with ``call_occurrence=None``. The production bootstrap is worse
+   still -- it seats ``NULL_REPORTER``, which retains nothing, so there is not
+   even a registered-without-discharge trace an auditor could find later.
+
+They have different detection stories and different severities, and a law that
+names only the first will be read as covering both. The runtime guard
+(``Node._require_construction_context``) closes both, because it keys on
+**whether a context exists**, never on which reporter happens to be seated.
 
 That door has manufactured a false frontier three times:
 
@@ -67,6 +104,61 @@ from sugar_lift_py_tests.repo_root import resolve_repo_root
 BARE_DOOR = "from_path"
 BARE_DOOR_OWNER = "SourceFile"
 CONSTRUCTION_DRIVER = "sugar"
+
+# ---------------------------------------------------------------------------
+# DELIBERATE OFFENDERS -- an authenticated predicate, written down
+# ---------------------------------------------------------------------------
+# A measurement that must EXHIBIT the forbidden door's output has no other way
+# to do it: there is no way to show what the bare door produces except to drive
+# it. Such a file is an offender on purpose.
+#
+# This is an allowlist and allowlists are how laws die, so it carries two
+# conditions that the rest of this instrument enforces rather than requests:
+#
+#   * the reason is stated HERE, per entry, in the entry itself -- never a bare
+#     path, never "known issue";
+#   * a stale entry is LOUD. If an allowlisted file stops existing, or stops
+#     being an offender, ``--self-test`` fails. The danger is not the exception;
+#     it is the exception outliving its reason and quietly covering a NEW
+#     offender that happens to land at the same path.
+#
+# The failure mode this exists to prevent is someone "fixing" the probe to make
+# the law pass. THE FIX DELETES THE EVIDENCE. If one of these files is genuinely
+# obsolete, delete the file AND its entry together.
+#
+# An entry is ``(reason, pending_branch)``. ``pending_branch`` is None for a
+# file that is in this tree now. It names a branch when the file is NOT here
+# yet, which is a genuinely different fact from "the file is gone" -- one is a
+# merge that has not happened, the other is rot. Collapsing them into "missing"
+# is the same absence-vs-lookup-failure conflation this whole issue is about,
+# committed by the instrument that polices it.
+#
+# A pending entry reports loudly and does not fail. It cannot rot silently,
+# because the moment the branch lands the file EXISTS and the pending marker
+# becomes a lie -- which ``stale_allowlist_entries`` then fails on, forcing
+# whoever merges to confirm the reason rather than inherit it.
+DELIBERATE_OFFENDERS: dict[str, tuple[str, str | None]] = {
+    "implementations/python/sugar-lift-py-tests/scripts/"
+    "probe_runtime_selected_provenance.py": (
+        "Discriminator for #7394: drives .sugar() over a bare from_path tree "
+        "BESIDE the production door, because exhibiting the forbidden door's "
+        "output is the measurement. Fixing this to satisfy the law would "
+        "delete the evidence the law was bought with.",
+        "gh/frontier-rts-provenance",
+    ),
+    "implementations/python/sugar-source-tree/tests/"
+    "test_bootstrap_construction_permission.py": (
+        "Pins the bootstrap's construction permission (#7396). It drives a bare "
+        "tree at a BAIT source containing a With and a Call, to demonstrate that "
+        "a consulting kind reaching backend.py:931 would be REFUSED -- the "
+        "safety property that makes the isinstance(node.value, Constant) filter "
+        "load-bearing for a law stated in another file. Exhibiting the bare "
+        "door's behaviour is the measurement; opening through the production "
+        "door here would prove nothing, because the whole claim is about what "
+        "happens when there is no context.",
+        None,
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -151,11 +243,89 @@ def offenders_in_source(text: str, *, path: str) -> list[Offender]:
     return found
 
 
-def scan_roots(roots: Iterable[Path]) -> tuple[list[Offender], list[dict]]:
+def _allowlisted(path: Path, repo_root: Path) -> bool:
+    """True when this exact file is a stated deliberate offender."""
+    try:
+        rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return False
+    return rel in DELIBERATE_OFFENDERS
+
+
+def stale_allowlist_entries(repo_root: Path) -> list[dict]:
+    """Entries that no longer name a real offender. A stale exception is LOUD.
+
+    Two ways an entry rots, and both are reported rather than tolerated:
+
+    * the file is GONE -- the exception now covers nothing, and will silently
+      cover whatever lands at that path next;
+    * the file is CLEAN -- it stopped driving the bare door, so the reason
+      recorded here is no longer true of it.
+
+    Neither is fatal to the corpus; both are fatal to the exception.
+    """
+    stale: list[dict] = []
+    for rel, (reason, pending_branch) in sorted(DELIBERATE_OFFENDERS.items()):
+        path = repo_root / rel
+        if not path.is_file():
+            if pending_branch is not None:
+                # Expected: the file arrives with its branch. Loud, not fatal.
+                print(
+                    f"  PENDING {rel}: not in this tree yet, expected from "
+                    f"{pending_branch}. Confirm the reason when it merges."
+                )
+                continue
+            stale.append(
+                {
+                    "path": rel,
+                    "reason": reason,
+                    "rot": "file does not exist -- delete the entry with it, or "
+                    "correct the path. An entry pointing nowhere will cover the "
+                    "next file to land there.",
+                }
+            )
+            continue
+        if pending_branch is not None:
+            stale.append(
+                {
+                    "path": rel,
+                    "reason": reason,
+                    "rot": f"marked pending on {pending_branch}, but the file is "
+                    f"HERE -- the branch landed. Drop the pending marker and "
+                    f"confirm the reason still describes this file, rather than "
+                    f"inheriting an exception nobody rechecked.",
+                }
+            )
+            continue
+        try:
+            found = offenders_in_source(
+                path.read_text(encoding="utf-8"), path=str(path)
+            )
+        except (OSError, UnicodeError, SyntaxError) as error:
+            stale.append({"path": rel, "reason": reason, "rot": f"unreadable: {error}"})
+            continue
+        if not found:
+            stale.append(
+                {
+                    "path": rel,
+                    "reason": reason,
+                    "rot": "no longer drives the bare door -- the stated reason "
+                    "is no longer true of this file, so the exception should go.",
+                }
+            )
+    return stale
+
+
+def scan_roots(
+    roots: Iterable[Path], *, repo_root: Path | None = None
+) -> tuple[list[Offender], list[dict]]:
     offenders: list[Offender] = []
     unreadable: list[dict] = []
+    root_for_allowlist = repo_root if repo_root is not None else resolve_repo_root()
     for root in roots:
         for path in sorted(root.rglob("*.py")):
+            if _allowlisted(path, root_for_allowlist):
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeError) as error:
@@ -245,6 +415,10 @@ def self_test() -> int:
     # The outer scope opens the door; only the INNER scope constructs. Blaming
     # the outer one would be the module-level granularity error in miniature.
     expect("nested scopes", NESTED_SCOPES, offends=False)
+
+    # The allowlist is part of the law, so it is proved like the rest of it.
+    for row in stale_allowlist_entries(resolve_repo_root()):
+        failures.append(f"stale allowlist entry {row['path']}: {row['rot']}")
 
     for line in failures:
         print(f"SELF-TEST FAIL {line}")

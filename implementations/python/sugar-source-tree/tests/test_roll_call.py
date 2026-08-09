@@ -10,6 +10,7 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.reporter import CollectingReporter, NullReporter
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.roll_call import (
     MinorityReport,
@@ -23,7 +24,7 @@ def _sf(src: str, reporter) -> SourceFile:
     f = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp")
     f.write(src)
     f.close()
-    return SourceFile(path_source(f.name), reporter=reporter)
+    return SourceFile(path_source(f.name), reporter=reporter, construction_context=TreeConstructionContextV1.for_test_without_workspace())
 
 
 _THREE = "def a(z):\n    return z\ndef b():\n    return 1\ndef c():\n    pass\n"

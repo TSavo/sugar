@@ -54,7 +54,10 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_source_tree.nodes import Assign
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _identity(name: str):
@@ -87,7 +90,10 @@ def _function(tmp_path: Path, source: str, stem: str = "unpack_seq"):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
     return next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+        SourceFile(
+            workspace_path_source(str(path), root=str(tmp_path)),
+            construction_context=tree_construction_context_for_workspace(tmp_path),
+        ).functions()
     )
 
 
@@ -128,7 +134,10 @@ def _site(tmp_path: Path):
     path = tmp_path / "store.py"
     path.write_text("def f(obj, key, value):\n    obj[key] = value\n")
     function = next(
-        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+        SourceFile(
+            workspace_path_source(str(path), root=str(tmp_path)),
+            construction_context=tree_construction_context_for_workspace(tmp_path),
+        ).functions()
     )
     return function.body[0].fragment
 
@@ -164,9 +173,24 @@ def test_corpus_name_subscript_unpack_constructs_then_stays_undischarged() -> No
     """
     corpus = authenticated_pandas_corpus()
     path = corpus.root / CORPUS_REL
-    source = path.read_text(encoding="utf-8")
-    source_cid = blake3_512_of(source.encode("utf-8"))
-    tree = SourceFile((source, str(path), source_cid))
+    # The corpus is an INSTALLED DISTRIBUTION: its address is the seat the
+    # distribution recorded (`pandas/core/...`), relative to the INSTALL root --
+    # not to `corpus.root`, which is `site-packages/pandas`. The oracle refuses a
+    # locus derived from any other root, because such an address resolves in no
+    # other checkout. The module door was checked first and is unusable here: it
+    # answers with an ABSOLUTE filename, which yields no workspace-relative
+    # identity at all.
+    tree = SourceFile(
+        workspace_path_source(str(path), root=str(corpus.root.parent)),
+        # LOCUS root and CONTEXT root differ ON PURPOSE. The locus must be the
+        # seat the distribution recorded (relative to the install root) or the
+        # oracle refuses it. The context must NOT be rooted there: building a
+        # context over all of site-packages materializes every installed
+        # distribution and dies in numpy. It does not need to be -- workspace_root
+        # is only a BOOLEAN GATE on the bridge branch; the symbol itself derives
+        # from unit.filename, which the locus already fixed.
+        construction_context=tree_construction_context_for_workspace(corpus.root),
+    )
     assigns = tuple(
         node
         for node in tree.nodes()
@@ -388,7 +412,12 @@ def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
 
     path = tmp_path / "star.py"
     path.write_text("def f(xs):\n    a, *rest = xs\n    return a\n")
-    fn = next(SourceFile(path_source(str(path))).functions())
+    fn = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     outcome = fn.sugar().desugar(None)
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)

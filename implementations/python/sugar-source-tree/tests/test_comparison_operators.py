@@ -8,6 +8,7 @@ method (py.lt/py.le/py.gt/py.ge); `!=` is `==` negated; a chained comparison
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import authenticated_function_value, native_carrier_for
@@ -17,7 +18,7 @@ def _inv(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     # Deleted expectation: an undecided formal equality was already completed.
     return authenticated_function_value(function, operator="equals").invs()[0]
 
@@ -27,7 +28,7 @@ def _carrier(src: str, operator: str):
         f.write(src)
         path = f.name
     return native_carrier_for(
-        next(SourceFile(path_source(path)).functions()), operator=operator
+        next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()), operator=operator
     )
 
 

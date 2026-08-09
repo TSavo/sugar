@@ -20,6 +20,7 @@ from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -30,7 +31,7 @@ def _write(src):
 
 
 def _fn(src):
-    return next(SourceFile(path_source(_write(src))).functions())
+    return next(SourceFile(path_source(_write(src)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def test_annotated_assign_with_value_is_inert_and_threads():
@@ -158,7 +159,7 @@ def _constructed_object(annotation):
     source = _CONSTRUCTED_RECEIVER_SOURCE.format(annotation=annotation)
     function = next(
         item
-        for item in SourceFile(path_source(_write(source))).functions()
+        for item in SourceFile(path_source(_write(source)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()
         if item.name == "make"
     )
     return function.sugar().desugar().value.record.statements[-1].value

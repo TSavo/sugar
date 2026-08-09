@@ -18,6 +18,7 @@ from sugar_lift_py_tests.ir import PrimitiveSort, _Lambda, ctor, make_var, num
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def test_lambda_body_is_not_lift_time_decidable() -> None:
@@ -61,7 +62,12 @@ def test_source_list_plus_comprehension_returns_universe(tmp_path: Path) -> None
         "def f(xs):\n" "    return [1] + [x for x in xs]\n",
         encoding="utf-8",
     )
-    fn = next(SourceFile(path_source(str(path))).functions())
+    fn = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     out = fn.sugar().desugar(None)
     assert isinstance(out, Complete)
     assert isinstance(out.value, UniverseValue)

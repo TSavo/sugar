@@ -22,13 +22,19 @@ from sugar_lift_py_tests.ir import (
     num,
     eq as _eq,
 )
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _universe_and_unit(src):
     d = tempfile.mkdtemp()
     p = os.path.join(d, "m.py")
     open(p, "w").write(src)
-    fn = list(SourceFile(path_source(p)).functions())[0]
+    fn = list(
+        SourceFile(
+            path_source(p),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )[0]
     universe = fn.sugar().desugar(None).value
     from sugar_lift_py_tests import tree_enumerate as _tree
 

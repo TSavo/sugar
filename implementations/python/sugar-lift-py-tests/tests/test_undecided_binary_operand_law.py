@@ -242,13 +242,19 @@ def test_the_whole_function_publishes_undecided_named_refusal(
     tmp_path, name, source
 ) -> None:
     """Whole-function construction cannot launder sole completion or TypeError."""
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.tree import SourceFile
 
     path = tmp_path / f"{name}.py"
     path.write_text(source, encoding="utf-8")
 
-    fn = next(SourceFile(path_source(str(path))).functions())
+    fn = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     with pytest.raises(SugarNotWritten) as raised:
         fn.sugar().desugar(None)
     assert raised.value.owner == "binary_operation_exception_floor"

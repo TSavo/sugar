@@ -22,6 +22,7 @@ from __future__ import annotations
 import pathlib
 import textwrap
 
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 # A nested definition called from its enclosing scope: the shape that seats a
@@ -55,7 +56,7 @@ def test_context_less_open_constructs_instead_of_raising_attributeerror(
     construction context, which is exactly the condition the census hit.
     """
     source = _unique_source(tmp_path, "contextless")
-    module = SourceFile.from_path(source).constructed_module.root
+    module = SourceFile.from_path(source, construction_context=TreeConstructionContextV1.for_test_without_workspace()).constructed_module.root
 
     # The point is that this does not raise AttributeError on a None context.
     for statement in module.body:

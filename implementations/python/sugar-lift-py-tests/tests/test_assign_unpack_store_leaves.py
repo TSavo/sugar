@@ -49,12 +49,18 @@ from sugar_lift_py_tests.sugar.assign_sugar import (
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _function(tmp_path: Path, source: str, stem: str = "assign_case"):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
-    return next(SourceFile(path_source(str(path))).functions())
+    return next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
 
 
 def _function_sugar(tmp_path: Path, source: str, stem: str = "assign_case"):

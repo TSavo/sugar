@@ -44,12 +44,21 @@ from sugar_lift_py_tests.outcome.exit_set import (
 
 
 def _source(tmp_path: Path, name: str, text: str):
+    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.tree import SourceFile
 
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
-    return SourceFile(workspace_path_source(str(path), root=str(tmp_path)))
+    # ``root`` is a REQUIRED keyword on workspace_path_source, so a workspace IS
+    # in hand here and the locus is relative to it. Claiming "no workspace"
+    # would construct bridge_source_symbol=None where a real symbol is
+    # reachable -- a second, poorer answer with no refusal to mark it. Honour
+    # the root this caller already declared.
+    return SourceFile(
+        workspace_path_source(str(path), root=str(tmp_path)),
+        construction_context=tree_construction_context_for_workspace(tmp_path),
+    )
 
 
 def _mint_count(monkeypatch, source_file) -> list[str]:

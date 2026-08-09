@@ -10,6 +10,7 @@ Regression: recursive Name-calls (def f: ... f(...)) used to make
 from __future__ import annotations
 
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef, Name
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -17,7 +18,7 @@ def _source_file(source: str) -> SourceFile:
     from sugar_lift_python_source.canonical import blake3_512_of
 
     return SourceFile(
-        (source, "allocation_fixture.py", blake3_512_of(source.encode("utf-8"))),
+        (source, "allocation_fixture.py", blake3_512_of(source.encode("utf-8"))), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
 
 

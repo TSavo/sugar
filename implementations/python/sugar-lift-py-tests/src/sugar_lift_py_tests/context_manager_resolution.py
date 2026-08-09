@@ -880,6 +880,47 @@ class TreeConstructionContextV1:
             ),
         )
 
+    @classmethod
+    def for_test_without_workspace(cls) -> "TreeConstructionContextV1":
+        """A caller ASSERTING it has no workspace. The name is the claim.
+
+        Use this only where the assertion is true: a test that builds one
+        function from a string literal, in a throwaway ``tempfile`` directory,
+        with no corpus and no cross-language bridge to name. Every lookup
+        through the returned context then answers "looked up, genuinely
+        absent" -- which is a FACT, and is exactly the state
+        ``_require_construction_context`` was built to make distinguishable
+        from "this tree was opened without a context" (an instrument defect).
+
+        WHAT IT DOES NOT MEAN, and why this constructor exists at all.
+        ``workspace_root`` is None here, and ``workspace_root`` gates
+        ``FunctionDef``'s ``bridge_source_symbol``. So a value constructed
+        through this context is BYTE-IDENTICAL to the one the bare door
+        produced -- ``bridge_source_symbol=None`` either way -- with the
+        refusal removed::
+
+            bare door                : bridge_source_symbol=None
+            this context             : bridge_source_symbol=None
+            a real workspace context : 'python:subject.module_level'
+
+        Turning a loud refusal into a silent construction of the same answer is
+        the defect this law exists to eliminate. It is legitimate HERE only
+        because the caller genuinely has no workspace, and illegitimate the
+        moment that is untrue.
+
+        That is why this is a distinct constructor and not
+        ``for_source_call_construction()`` with a default. "No workspace" is a
+        claim about the CALLER, it has to be made per caller, and it must not
+        arrive by inheritance in a file nobody read. Spelled this way it is
+        explicit, greppable and auditable: every site that asserts it says so
+        in the name, and a reviewer can enumerate them.
+
+        ``test_an_empty_context_constructs_the_bare_doors_value`` pins the
+        three-way result above, so a suite that goes green through this door
+        can never be read as evidence the enrichment came back.
+        """
+        return cls.for_source_call_construction()
+
 
 def _gap_kinds() -> None:
     """Deleted closed taxonomy. Kinds are free structural keys, not a census enum."""

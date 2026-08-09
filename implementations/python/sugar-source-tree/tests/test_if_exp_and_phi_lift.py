@@ -17,6 +17,7 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import authenticated_function_value, native_carrier_for
@@ -26,7 +27,7 @@ def _post(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     outcome = function.sugar().desugar()
     if isinstance(outcome, Complete):
         return outcome.value.post()
@@ -54,7 +55,7 @@ def test_single_assignment_fold_reads_the_old_binding():
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(source)
         path = f.name
-    function = next(SourceFile(path_source(path)).functions())
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     # Deleted expectation: z+1 projected before the caller authenticated z.
     carrier = native_carrier_for(function, operator="add")
     left, right = carrier.operands

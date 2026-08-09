@@ -32,6 +32,14 @@ from sugar_source_tree.tree import SourceFile
 def _source_file(source: str, *, context=None) -> SourceFile:
     from sugar_lift_python_source.canonical import blake3_512_of
 
+    if context is None:
+        # `construction_context=context` READS as contexted while defaulting to
+        # a bare tree -- the door is decided by the CALLER, invisibly. This
+        # file seats an invented locus (`renamed_fixture.py`), so no workspace
+        # is reachable and the claim is true; callers that pass a real context
+        # are unaffected.
+        context = TreeConstructionContextV1.for_test_without_workspace()
+
     return SourceFile(
         (source, "renamed_fixture.py", blake3_512_of(source.encode("utf-8"))),
         construction_context=context,

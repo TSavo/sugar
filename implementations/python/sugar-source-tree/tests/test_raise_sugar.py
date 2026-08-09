@@ -14,6 +14,7 @@ import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -21,7 +22,7 @@ def _raise(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    fn = next(SourceFile(path_source(path)).functions())
+    fn = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     return next(n for n in fn.walk() if n.kind == "Raise")
 
 
@@ -127,7 +128,7 @@ def test_handler_reraise_resolves_in_flight_effect_not_isolated_desugar():
             "        raise\n"
         )
         path = f.name
-    fn = next(SourceFile(path_source(path)).functions())
+    fn = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     # Full body door — not an isolated Raise.desugar without handler context.
     outcome = fn.sugar().desugar()
     # Universe/block may collapse to ExitSet or Incomplete; extract raise effects.

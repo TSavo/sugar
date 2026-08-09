@@ -62,6 +62,7 @@ from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import _loop_exit_face
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import GuardedBindingReadSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 # The shape of `pandas/core/methods/selectn.py:224`: a name carried across a
 # `for` loop that can `break`, then READ after the loop. The read is where the
@@ -119,7 +120,10 @@ def _desugar_all(path: Path) -> None:
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.tree import SourceFile
 
-    for function in SourceFile(path_source(str(path))).functions():
+    for function in SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).functions():
         sugar = function.sugar()
         if sugar is not None:
             sugar.desugar(None)

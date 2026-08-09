@@ -38,6 +38,7 @@ from sugar_source_tree.binding_provenance import (
     _decode_state,
     _state_wire,
 )
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 _CID = "blake3-512:" + "ab" * 64
 _CID2 = "blake3-512:" + "cd" * 64
@@ -67,7 +68,10 @@ def _desugar_all(path: Path) -> None:
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.tree import SourceFile
 
-    for function in SourceFile(path_source(str(path))).functions():
+    for function in SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).functions():
         sugar = function.sugar()
         if sugar is not None:
             sugar.desugar(None)
@@ -207,7 +211,14 @@ def coordinate_wire(tmp_path_factory):
 
     path = tmp_path_factory.mktemp("coord") / "fixture.py"
     path.write_text("def f(v):\n    return v\n")
-    function = next(iter(SourceFile(path_source(str(path))).functions()))
+    function = next(
+        iter(
+            SourceFile(
+                path_source(str(path)),
+                construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            ).functions()
+        )
+    )
     return BindingCoordinateV1.mint(_CID, function.fragment, ("v",)).wire()
 
 

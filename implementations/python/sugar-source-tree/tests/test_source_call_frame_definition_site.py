@@ -7,6 +7,7 @@ import pytest
 from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_source_tree.nodes import ClassDef
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -23,7 +24,7 @@ def test_source_call_frame_rejects_same_source_foreign_definition_site(
         encoding="utf-8",
     )
     functions = {
-        function.name: function for function in SourceFile.from_path(path).functions()
+        function.name: function for function in SourceFile.from_path(path, construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()
     }
     left = functions["left"].source_visible_call_frame()
     right = functions["right"].source_visible_call_frame()
@@ -45,7 +46,7 @@ def test_class_constructor_binds_its_initializer_parameter_roster(tmp_path) -> N
         "        self.value = value\n",
         encoding="utf-8",
     )
-    source = SourceFile.from_path(path)
+    source = SourceFile.from_path(path, construction_context=TreeConstructionContextV1.for_test_without_workspace())
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     frame = class_node.source_visible_constructor_frame()
     actual = TermValue(11)
@@ -72,7 +73,7 @@ def test_class_constructor_rejects_same_arity_foreign_initializer_roster(
         "        self.value = value\n",
         encoding="utf-8",
     )
-    source = SourceFile.from_path(path)
+    source = SourceFile.from_path(path, construction_context=TreeConstructionContextV1.for_test_without_workspace())
     classes = {node.name: node for node in source.nodes() if isinstance(node, ClassDef)}
     left = classes["Left"].source_visible_constructor_frame()
     right = classes["Right"].source_visible_constructor_frame()
@@ -87,7 +88,7 @@ def test_class_constructor_rejects_same_arity_foreign_initializer_roster(
 def test_inherited_exception_constructor_retains_vararg_roster(tmp_path) -> None:
     path = tmp_path / "exception_frame.py"
     path.write_text("class Raised(Exception):\n    pass\n", encoding="utf-8")
-    source = SourceFile.from_path(path)
+    source = SourceFile.from_path(path, construction_context=TreeConstructionContextV1.for_test_without_workspace())
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     frame = class_node.source_visible_constructor_frame()
     left = TermValue(1)

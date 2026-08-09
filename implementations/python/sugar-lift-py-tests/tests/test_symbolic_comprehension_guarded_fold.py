@@ -30,6 +30,7 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.ir import ctor as _ctor, make_var, num
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _post_of(source, path=None):
@@ -37,7 +38,12 @@ def _post_of(source, path=None):
         path = os.path.join(tempfile.mkdtemp(), "m.py")
     with open(path, "w") as handle:
         handle.write(source)
-    function = list(SourceFile(path_source(path)).functions())[0]
+    function = list(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )[0]
     return function.sugar().desugar(None).value.post()
 
 

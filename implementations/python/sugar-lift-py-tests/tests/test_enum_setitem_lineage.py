@@ -20,11 +20,13 @@ from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _source_receiver(source: str):
     tree = SourceFile(
-        (source, "enum_setitem_lineage.py", blake3_512_of(source.encode()))
+        (source, "enum_setitem_lineage.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test_enum_setitem_lineage")

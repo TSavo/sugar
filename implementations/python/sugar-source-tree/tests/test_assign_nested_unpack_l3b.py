@@ -23,13 +23,14 @@ from sugar_source_tree.nodes import (
     _SUBSTITUTION_TRACE_BUILDER,
 )
 from sugar_source_tree.reporter import CollectingReporter
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _fn_sugar(src: str):
     sf = SourceFile(
         (src, "l3b_assign.py", blake3_512_of(src.encode())),
-        reporter=CollectingReporter(),
+        reporter=CollectingReporter(), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     fn = next(sf.functions())
     cid = cid_of_json(
@@ -50,7 +51,7 @@ def _fn_sugar(src: str):
 def _first_assign_sugar(src: str):
     sf = SourceFile(
         (src, "l3b_assign.py", blake3_512_of(src.encode())),
-        reporter=CollectingReporter(),
+        reporter=CollectingReporter(), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     fn = next(sf.functions())
     cid = cid_of_json(

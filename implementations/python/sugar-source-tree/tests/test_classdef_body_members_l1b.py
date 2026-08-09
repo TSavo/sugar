@@ -14,13 +14,14 @@ from sugar_lift_py_tests.sugar.class_definition_sugar import (
     ConstructedClassConditionalFieldsV1,
 )
 from sugar_source_tree.nodes import ClassDef
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _class(src: str, name: str = "C") -> ClassDef:
     seat = f"{name}.py"
     cid = cid_of_json({"source": src, "seat": seat})
-    source = SourceFile((src, seat, cid))
+    source = SourceFile((src, seat, cid), construction_context=TreeConstructionContextV1.for_test_without_workspace())
     return next(
         node
         for node in source.nodes()

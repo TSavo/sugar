@@ -15,11 +15,12 @@ from __future__ import annotations
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Assert, Compare, FunctionDef, Name
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _tree(source: str) -> SourceFile:
-    return SourceFile((source, "formal_use_site.py", blake3_512_of(source.encode())))
+    return SourceFile((source, "formal_use_site.py", blake3_512_of(source.encode())), construction_context=TreeConstructionContextV1.for_test_without_workspace())
 
 
 def test_formal_ref_at_use_keeps_use_site_span_not_param_span() -> None:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
@@ -24,7 +25,7 @@ def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def _call_term(src):

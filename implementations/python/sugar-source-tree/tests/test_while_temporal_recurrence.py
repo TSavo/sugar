@@ -14,13 +14,14 @@ from sugar_lift_py_tests.loop_construction import (
 )
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import While
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _function(tmp_path: Path, source: str):
     path = tmp_path / "while_temporal_recurrence.py"
     path.write_text(source, encoding="utf-8")
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def _record(graph, kind: str):

@@ -54,13 +54,19 @@ from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBound
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _entries(tmp_path: Path, source: str, stem: str = "warn_case"):
     """Every record entry of every completed face, from real lifted source."""
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
-    function = next(SourceFile(path_source(str(path))).functions())
+    function = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
     return tuple(
         entry for face in exits.exits for entry in getattr(face.value, "entries", ())
@@ -322,7 +328,12 @@ def _refusal_members(tmp_path, source, stem):
     """Route real lifted source into the boundary; return the named bucket."""
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
-    function = next(SourceFile(path_source(str(path))).functions())
+    function = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
     entries = tuple(
         entry for face in exits.exits for entry in getattr(face.value, "entries", ())

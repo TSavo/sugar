@@ -19,6 +19,7 @@ from sugar_lift_py_tests.proofir.formulas import _free_vars_in_ir_term
 from sugar_lift_py_tests.proofir.sorts import Sort
 from sugar_lift_py_tests.proofir.terms import term_from_ir
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import completed_function_value, native_carrier_for
@@ -28,7 +29,7 @@ def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
 def _out(src):

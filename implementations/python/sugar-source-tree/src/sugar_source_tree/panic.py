@@ -281,3 +281,39 @@ def backend_defect(
         requested=requested,
         fix=fix,
     )
+
+
+class BareConstructionDoor(Exception):
+    """Construction consulted the context on a tree that has none.
+
+    DELIBERATELY NOT A ``SourceTreePanic``. Every ``SourceTreePanic`` is caught
+    by ``Node.sugar`` and recorded as a countable construction gap -- a fact
+    about the SOURCE. This is a fact about how the TREE WAS OPENED: the caller
+    used the bare door (``SourceFile.from_path`` / ``SourceFile(...)``) and then
+    drove construction over a tree with ``construction_context is None``.
+
+    Folding it into ``SugarNotWritten`` would file a HARNESS defect as a
+    property of the corpus and grow the frontier by the width of the mistake.
+    It escapes ``sugar()`` uncaught, as an instrument failure, and can never be
+    counted as a frontier row.
+
+    The fix is never to widen a category: it is to open the file through
+    ``open_source_file_for_construction(path, root=...)``, which threads the
+    construction context and the locus root together.
+    """
+
+    def __init__(self, *, owner: str, blame: object, kind: str) -> None:
+        self.owner = owner
+        self.blame = blame
+        self.kind = kind
+        super().__init__(
+            f"{owner}: {kind} consulted the construction context, but the tree "
+            f"has none -- it was opened through the bare door. "
+            f"blame={_render_blame(blame)}. "
+            f"construct: open through open_source_file_for_construction("
+            f"path, root=<corpus root>). "
+            f"coordinate: {_render_blame(blame)}. "
+            f"shape: {kind}._construct_sugar consults "
+            f"unit.construction_context; a None context makes every answer a "
+            f"plausible wrong number instead of a refusal."
+        )

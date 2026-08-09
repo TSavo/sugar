@@ -12,10 +12,14 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _classes(source: str):
-    tree = SourceFile((source, "source_class_bases.py", blake3_512_of(source.encode())))
+    tree = SourceFile(
+        (source, "source_class_bases.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     return tuple(node for node in tree.root.body if isinstance(node, ClassDef))
 
 
