@@ -6,7 +6,17 @@ this work. So this prints the file, the anchor, and the replacement it made,
 and exits non-zero with a named reason if it could not make it. Check that
 line before believing any red or green.
 
+GIT CHECKOUT IS NOT A REVERT WHEN THE THING YOU ARE MUTATING IS UNCOMMITTED
+WORK. This script's first version reverted with `git checkout -- <files>`,
+which restored HEAD and so DELETED the working change the mutations existed
+to test. Mutation 2 then ran against a tree without it and its red was
+meaningless; mutations 3-5 REFUSED, because their anchors no longer existed.
+Those refusals are the only reason it was caught, and the whole series was
+discarded as non-evidence. Revert from a snapshot taken before the first
+mutation -- `--snapshot` -- and never from the index.
+
 usage:
+  python scripts/mutate_one.py --snapshot     # BEFORE the first mutation
   python scripts/mutate_one.py <name>
   python scripts/mutate_one.py --revert
 """
