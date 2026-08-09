@@ -265,3 +265,94 @@ def test_bound_result_rejects_missing_or_extra_coordinate(
             corrupt if coordinate_kind == "formal" else formal,
             corrupt if coordinate_kind == "native" else native,
         )
+
+
+# ---------------------------------------------------------------------------
+# The carried term is a VALUE; the wire term stays wire-shaped
+# ---------------------------------------------------------------------------
+
+
+def _binding(term):
+    frame = _frame(filename="mutable_global_value.py")
+    return MutableGlobalBindingV1(
+        source_cid=frame.source_identity_cid,
+        binding_occurrence=frame.owner.fragment.seal(),
+        name="_global_config",
+        kind="dict",
+        term=term,
+        line=frame.owner.lineno,
+        col=frame.owner.col_offset,
+    )
+
+
+def _pin_term():
+    from sugar_lift_python_source.value_pins import mutable_global_pin_term
+
+    return mutable_global_pin_term("_global_config", "dict")
+
+
+def test_a_carried_pin_term_canonicalizes_as_a_value():
+    """The seat behind 78 frontier rows.
+
+    Every `with pandas.option_context(...)` digs `_config/config.py`, whose
+    module-level mutable globals are pinned. The pin already does the honest
+    thing -- it refuses to snapshot the mutable value and carries only the loud
+    ``(name, kind)`` coordinate -- but the wire dialect spells that fixed
+    two-element coordinate ``list``, so ConstructedValueV2 refused the very
+    repair the pin had already made.
+    """
+    from sugar_source_tree.binding_state import constructed_value_cid_v2
+
+    binding = _binding(_pin_term())
+    assert isinstance(binding.term["args"], tuple)
+    assert constructed_value_cid_v2(binding.term).startswith("blake3-512:")
+
+
+def test_respelling_the_carried_term_moves_no_coordinate():
+    """Content is unchanged, so the binding CID must be unchanged.
+
+    The CID is taken of the wire spelling before the slot is respelled --
+    ``cid_of_json`` admits a list and refuses a tuple, so this ordering is
+    load-bearing rather than incidental.
+    """
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    binding = _binding(_pin_term())
+    expected = cid_of_json(
+        {
+            "kind": "mutable-global-binding",
+            "schemaVersion": "1",
+            "sourceCid": binding.source_cid,
+            "bindingOccurrence": binding.binding_occurrence.to_dict(),
+            "name": binding.name,
+            "mutableKind": binding.kind,
+            # the WIRE spelling, list and all
+            "term": _pin_term(),
+            "line": binding.line,
+            "col": binding.col,
+        }
+    )
+    assert binding.cid == expected
+
+
+def test_the_mutable_container_category_was_not_broadened():
+    """A real list in a real slot must still refuse.
+
+    If this passes only because ``_cv2_entries`` learned to absorb lists, the
+    78 rows were bought by authenticating a moment.
+    """
+    from sugar_source_tree.binding_state import (
+        ConstructedValueCategoryGap,
+        constructed_value_cid_v2,
+    )
+
+    with pytest.raises(ConstructedValueCategoryGap) as caught:
+        constructed_value_cid_v2({"kind": "ctor", "args": [{"kind": "var"}]})
+    assert "MUTABLE container" in str(caught.value)
+    assert "builtins.list" in str(caught.value)
+
+
+def test_a_term_member_outside_the_wire_categories_refuses_loudly():
+    """Categories are CLOSED: the respelling is not a reflective deep-copy."""
+    with pytest.raises(SourceCallBindingGap, match="not a wire term value"):
+        _binding({"kind": "ctor", "args": [object()]})

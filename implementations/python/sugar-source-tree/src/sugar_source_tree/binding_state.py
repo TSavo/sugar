@@ -573,8 +573,9 @@ class ConstructionTestimonyReporterV1:
         "definition-not-a-functiondef",
         "definition-ref-not-materialized",
         "call-ref-not-materialized",
-        "definition-foreign-source-cid",
+        "definition-unit-unauthenticated",
         "resolved-not-a-functiondef",
+        "resolved-definition-kind-mismatch",
         "resolved-seal-mismatch",
         "call-occurrence-mismatch",
         "frame-is-none",
@@ -611,18 +612,71 @@ class ConstructionTestimonyReporterV1:
         structural, and breaking it means deleting a guard rather than
         transposing two lines.
         """
-        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef
+        from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef, ClassDef
 
-        if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        # A CLASS is a legitimate callee. `OptionError(msg)` is an allocation,
+        # not a function call, and its definition occurrence is a ClassDef by
+        # construction -- so refusing every non-FunctionDef here refused an
+        # ordinary shape of Python rather than a defect, exactly as the
+        # same-unit demand did before it.
+        #
+        # This does NOT admit an unreadable constructor. The frame the call
+        # already carries is minted by `ClassDef.source_visible_constructor_frame`
+        # from the class's OWN in-population body plus, for an exception type,
+        # the authenticated base-graph law `(*args)` that
+        # `_inherits_default_exception_constructor` derives from the declared
+        # builtin-exception roster. Nothing off-population is read here; the
+        # frame exists whether or not this guard admits it.
+        #
+        # Identity is unchanged in strength: the resolved definition must be
+        # the SAME KIND (below), and `resolved-seal-mismatch` still joins on
+        # the callee's own sealed fragment, so a substituted or nested
+        # same-name class cannot survive.
+        if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
             return "definition-not-a-functiondef"
         if definition.ref not in self._materialized_by_ref:
             return "definition-ref-not-materialized"
         if node.ref not in self._materialized_by_ref:
             return "call-ref-not-materialized"
-        if definition.unit.source_cid != node.unit.source_cid:
-            return "definition-foreign-source-cid"
-        if not isinstance(resolved_definition, (FunctionDef, AsyncFunctionDef)):
+        # A callee defined in ANOTHER FILE of the enrolled corpus is ordinary
+        # Python, not a fault. This term used to demand
+        # ``definition.unit.source_cid == node.unit.source_cid`` -- same-unit
+        # sameness -- which no real corpus can satisfy: pandas calls across its
+        # own files constantly, and `_config/config.py` reaching
+        # `util/_exceptions.find_stack_level` is 82 rows of the frontier by
+        # itself. That demand described our instrument, not a defect in pandas.
+        #
+        # What identity actually needs is the callee's OWN unit, and
+        # ``resolved-seal-mismatch`` below already joins on it: a SourceMemento
+        # seals file, source_cid, span and a hash of the fragment text, so a
+        # substituted definition cannot survive it regardless of which file it
+        # lives in. The same-unit demand added no identity, only a false
+        # requirement.
+        #
+        # What remains here is the case the same-unit demand was ALSO silently
+        # covering: a unit with no content address at all. Off-population and
+        # unenrolled callees are refused above and upstream -- the population
+        # membrane never materializes them (measured: of 57 cross-file arrivals
+        # in the stride-8 slice, 50 are materialized FunctionDefs all inside the
+        # enrolled tree, and the other 7 are unmaterialized `_Handle`s caught by
+        # `definition-not-a-functiondef`; zero materialized FunctionDefs came
+        # from outside). "Foreign but authenticated" and "foreign and unknown"
+        # therefore keep DIFFERENT names, which is the whole point.
+        if not definition.unit.source_cid:
+            return "definition-unit-unauthenticated"
+        if not isinstance(
+            resolved_definition, (FunctionDef, AsyncFunctionDef, ClassDef)
+        ):
             return "resolved-not-a-functiondef"
+        # A definition and its independent re-derivation must be the same KIND.
+        # A class resolving to a function of the same name (or the reverse) is
+        # a genuine disagreement between the two authorities and is exactly
+        # what this guard exists to catch -- it must not be lumped into the
+        # seal comparison below, whose message would name the wrong fault.
+        if isinstance(definition, ClassDef) is not isinstance(
+            resolved_definition, ClassDef
+        ):
+            return "resolved-definition-kind-mismatch"
         # Reachable only with a resolved definition in hand.
         if resolved_definition.fragment.seal() != definition.fragment.seal():
             return "resolved-seal-mismatch"
@@ -633,7 +687,12 @@ class ConstructionTestimonyReporterV1:
         # Reachable only with a frame in hand.
         if frame.owner.ref is not definition.ref:
             return "frame-owner-ref-mismatch"
-        if frame.definition_site.source_cid != node.unit.source_cid:
+        # Keyed on the DEFINITION's unit, not the call's. A frame describes the
+        # callee's definition, so its site living in the callee's file is
+        # correct; comparing it to the CALLER's unit was the same same-unit
+        # demand wearing a second name, and it refused every cross-file call
+        # a second time even once the term above stopped doing so.
+        if frame.definition_site.source_cid != definition.unit.source_cid:
             return "frame-definition-site-foreign"
         return None
 
@@ -652,6 +711,23 @@ class ConstructionTestimonyReporterV1:
 
             definition = value.expected_definition_ref
             resolved_definition = node.unit.source_function_definition_for_call(node)
+            if resolved_definition is None:
+                # The caller's unit is the lexical authority for a call in it,
+                # and for a cross-FILE callee it correctly has no answer -- the
+                # callee is not lexically bound here. Falling straight through
+                # left every cross-file call reading `resolved-not-a-functiondef`,
+                # which named a missing DEFINITION when the truth was that the
+                # wrong unit had been asked.
+                #
+                # The independent authority is the callee's OWN SOURCE TEXT.
+                # Re-pointing this at the import binding would be circular --
+                # `expected_definition_ref` came from there, and a guard that
+                # re-derives from its own source proves nothing. The binding
+                # supplies a NAME; the callee's unit supplies a LOCATION and
+                # CONTENT, and those can disagree.
+                resolved_definition = _callee_definition_by_name_in_its_unit(
+                    definition
+                )
             span = node.line_col_span()
             call_occurrence = SourceFragmentCoordinateV1(
                 node.unit.source_cid,
@@ -753,6 +829,48 @@ class ConstructionTestimonyReporterV1:
 
     def projected_snapshots_for(self, statement: Node):
         return self._trace_builder.projected_snapshots_for(statement, self)
+
+
+def _callee_definition_by_name_in_its_unit(definition: object):
+    """What the callee's NAME resolves to in the callee's own unit.
+
+    The third authority. The import binding says *name N in module M*; this
+    parses nothing new but reads M's own already-materialized definitions and
+    answers *here is the module-scope definition of N, at this span*. The two
+    can disagree -- a renamed definition, a redefined name, a stale ref, a
+    substituted body -- and the seal comparison downstream is what catches it.
+
+    The authority is ``module_direct_bindings`` -- the unit's own module-scope
+    binding table, the same one the in-unit resolver consults -- never a scan of
+    ``function_nodes``. A scan would happily return a NESTED definition that
+    shares the callee's name, which is precisely the lie this exists to catch.
+
+    Exactly one module binding, or nothing: a name bound twice at module scope
+    is ambiguous, and answering with either would be picking. Returning None
+    leaves the caller's existing terms to name the fault, unchanged.
+    """
+    from sugar_source_tree.nodes import FunctionDef, AsyncFunctionDef, ClassDef
+
+    if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
+        return None
+    unit = getattr(definition, "unit", None)
+    name = getattr(definition, "name", None)
+    if unit is None or not name:
+        return None
+    bindings = (getattr(unit, "module_direct_bindings", None) or {}).get(name, ())
+    if len(bindings) != 1:
+        return None
+    resolved = bindings[0]
+    # The SAME authority answers for an allocation callee. A nested ClassDef
+    # sharing the callee's name is the same lie a nested FunctionDef is, and
+    # the module-scope binding table is what excludes it in both cases. The
+    # KIND the table answers with is not filtered here -- a class binding
+    # answering for a function callee is a real disagreement and belongs to
+    # the caller's `resolved-definition-kind-mismatch` term, not to a silent
+    # None that would print the wrong fault.
+    if not isinstance(resolved, (FunctionDef, AsyncFunctionDef, ClassDef)):
+        return None
+    return resolved
 
 
 def _testimony_blame(node: object) -> str:
