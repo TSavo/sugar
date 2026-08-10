@@ -19,6 +19,16 @@ name: Control-effect recensus (authoritative scoreboard)
 # - Missing or failed seat → UNMEASURED envelope naming the missing shards;
 #   NEVER seal over the shards that finished.
 # - fail-fast: false so compose always sees the receipt set.
+# - RUNNER LABELS ARE CASE-SENSITIVE TO THE AUTOSCALER. runs-on MUST be
+#   [self-hosted, Linux, X64] — the exact spelling of RUNNER_LABELS in the
+#   autoscaler pool. poolMatchesJob() is `jobLabels.every(l => pool.includes(l))`,
+#   a plain string compare, and it gates BOTH the webhook and the reconciler.
+#   This file shipped `linux, x64` from #6984; every other workflow in the repo
+#   uses `Linux, X64`. Consequence: the autoscaler NEVER spawned a runner for
+#   the scoreboard door — it only ever ran by scavenging runners spawned for
+#   other workflows. Seats that found no scavenged runner sat queued until
+#   GitHub cancelled them (run 31331282506, s6: 36m queued, no runner ever
+#   assigned, conclusion=cancelled).
 # - CORPUS PIN GATE (exit 78): every plan and every shard job refuses unless the
 #   runner's pandas matches docs/ledgers/pins/pandas-3.0.3.pin.json
 #   (3.0.3 / 1421 files). A sealed board against the wrong pin is worse than
@@ -66,7 +76,7 @@ jobs:
   # Does not measure. planCid is the content-addressed identity workers bind.
   plan:
     name: LPT plan
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     outputs:
       root: ${{ steps.population.outputs.root }}
@@ -256,7 +266,7 @@ jobs:
   shard:
     name: recensus shard s${{ matrix.shard }}
     needs: plan
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, Linux, X64]
     # Per-seat budget: serial ~12 min → LPT k=8 pole ~2 min; leave headroom.
     timeout-minutes: 180
     strategy:
@@ -386,7 +396,7 @@ jobs:
     name: compose seal (sole SCOREBOARD door)
     needs: [plan, shard]
     if: always() && needs.plan.result == 'success'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     steps:
       - name: Checkout
