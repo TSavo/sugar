@@ -342,10 +342,18 @@ class CallSiteSugar(ConstructedTermSugar):
             source_call_frame = self.source_call_frame_table.get(
                 self.source_call_frame_coordinate
             )
+            # The slot carries the lexical row's raw parser ref until this
+            # roll's projection swaps in the typed occurrence for it
+            # (``Call._project_constructed_value_for_testimony``). A projected
+            # occurrence's ``.ref`` IS that same handle, so reading through it
+            # keeps the identity check on the EXACT parser handle -- the
+            # comparison is unchanged, only the spelling of where it is read.
+            expected_owner = self.expected_source_call_frame_owner
+            if isinstance(expected_owner, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                expected_owner = expected_owner.ref
             if (
                 source_call_frame is None
-                or source_call_frame.owner.ref
-                is not self.expected_source_call_frame_owner
+                or source_call_frame.owner.ref is not expected_owner
             ):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",

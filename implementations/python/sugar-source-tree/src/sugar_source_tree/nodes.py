@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import symtable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
+from typing import TYPE_CHECKING, ClassVar, Iterator, NoReturn, Optional, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover
     from .fragment import SourceFragment
@@ -11237,6 +11237,64 @@ class Compare(Expression):
         return ChainedCompareSugar(values=pairs, site=self.fragment)
 
 
+# ---------------------------------------------------------------------------
+# TWO FAULTS, NOT ONE -- the projection outcome (#7394 arm (a))
+#
+# ``retain_registered_node_from`` already carries this split twelve lines into
+# ``binding_state``: "foreign or absent" made a seating defect and an identity
+# defect share one representation. The same lesson had not been applied to the
+# projection that FEEDS it. Asking this roll for a ref's typed occurrence has
+# three outcomes and they are genuinely different repairs:
+#
+#   ABSENT       there was no ref -- nothing was ever owed, nothing to project
+#   ANSWERED     the roll owns the typed occurrence for that ref
+#   UNANSWERED   a ref WAS carried and nothing in this roll answered for it
+#
+# Spelled as a nullable, the last two collapse: ``None`` meant both "no ref
+# here" and "asked, and the table had nothing". The caller could not tell them
+# apart, so it returned the value unprojected either way and handed a raw
+# parser ``_Handle`` to canonicalization -- which then refused it as an
+# UNCLASSIFIED CATEGORY. That refusal names the wrong fault. The category is
+# not missing; ``_Handle`` is deliberately uncategorized parser machinery with
+# no authenticated content, and broadening the category to admit it would be
+# worse than the gap. What failed was the LOOKUP, and only a closed set that
+# distinguishes the three can say so.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ParserHandleProjected:
+    """ANSWERED: this roll's typed occurrence for the ref that was carried."""
+
+    occurrence: object
+
+
+@dataclass(frozen=True)
+class ParserHandleLookupFailed:
+    """UNANSWERED: a ref was carried and this roll answered for none of it.
+
+    ``reason`` names WHICH lookup failed, so the reader is sent to the repair
+    rather than to the category table.
+    """
+
+    ref: object
+    reason: str
+
+
+@dataclass(frozen=True)
+class NothingToProject:
+    """ABSENT: no ref was carried, so no occurrence was ever owed."""
+
+
+#: The closed set. A member added here without an arm at every reconciliation
+#: site raises there by name; nothing falls through.
+PARSER_HANDLE_PROJECTION_OUTCOMES = (
+    ParserHandleProjected,
+    ParserHandleLookupFailed,
+    NothingToProject,
+)
+
+
 class Call(Expression):
     def substitute(self, scope: "dict[str, Node]") -> "Node":
         rewritten = self._substitute_children(scope)
@@ -11276,48 +11334,147 @@ class Call(Expression):
                     seen[node.object_identity_cid] = node
         return tuple(seen.values())
 
-    def _project_constructed_value_for_testimony(self, value: object) -> object:
-        """Replace a parser definition handle with this roll's typed occurrence."""
-        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+    def _ask_roll_for_occurrence(self, ref: object, value: object) -> object:
+        """One closed outcome: ABSENT, ANSWERED, or UNANSWERED.
 
-        if not isinstance(value, CallSiteSugar):
-            return value
-        definition_ref = value.expected_definition_ref
+        The ONE door from a raw parser ref to this roll's typed occurrence.
+        It never returns the ref it was given dressed as an answer, and it
+        never returns ``None`` -- see PARSER_HANDLE_PROJECTION_OUTCOMES for why
+        that nullable was the defect.
+        """
+        if ref is None:
+            return NothingToProject()
         # An allocation callee's definition occurrence is a ClassDef. It is the
         # SAME projection -- a parser handle standing in for this roll's typed
         # occurrence -- and leaving it unprojected left the identity guard
         # holding a raw `_Handle` and naming the wrong fault.
-        if definition_ref is None or isinstance(
-            definition_ref, (FunctionDef, AsyncFunctionDef, ClassDef)
-        ):
-            return value
+        if isinstance(ref, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            # Already the typed occurrence: the projection is the identity, and
+            # saying so is not the same as saying nothing was owed.
+            return ParserHandleProjected(ref)
         lookup = getattr(self.reporter, "materialized_node_for_ref", None)
         if lookup is None:
-            return value
-        definition = lookup(definition_ref)
-        if definition is None and value.source_call_frame is not None:
-            producer_definition = value.source_call_frame.owner
+            return ParserHandleLookupFailed(
+                ref, "this roll seats no materialize table to ask"
+            )
+        definition = lookup(ref)
+        frame = getattr(value, "source_call_frame", None)
+        if definition is None and frame is not None:
+            producer_definition = frame.owner
             if (
                 isinstance(
                     producer_definition, (FunctionDef, AsyncFunctionDef, ClassDef)
                 )
-                and producer_definition.ref is definition_ref
+                and producer_definition.ref is ref
             ):
                 retain = getattr(self.reporter, "retain_registered_node_from", None)
                 if retain is not None:
                     definition = retain(
                         producer_definition, producer_definition.reporter
                     )
+        if definition is None:
+            return ParserHandleLookupFailed(
+                ref, "no occurrence is registered for this ref in this roll"
+            )
         if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            return ParserHandleLookupFailed(
+                ref,
+                "this roll answered with "
+                f"{type(definition).__name__}, not a definition occurrence",
+            )
+        return ParserHandleProjected(definition)
+
+    def _refuse_unanswered_projection(
+        self, slot: str, outcome: "ParserHandleLookupFailed"
+    ) -> NoReturn:
+        """The lookup failed. Say THAT, at this coordinate, by name."""
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass
+        panic = BackendDefect(
+            blame=self.fragment,
+            owner="Call._project_constructed_value_for_testimony",
+            observed=(
+                f"parser handle projection FAILED for .{slot} at {where}: "
+                f"{outcome.reason} (ref={type(outcome.ref).__name__})"
+            ),
+            requested=(
+                "this roll's typed definition occurrence for the parser ref "
+                f"carried at .{slot}"
+            ),
+            fix=(
+                "register the definition occurrence in the roll that "
+                "constructs this call, or keep the coordinate loud -- do NOT "
+                "hand the raw parser handle to canonicalization, which can "
+                "only report it as a missing category and names the wrong "
+                "fault"
+            ),
+        )
+        # Testify through the SAME roll call the census reads before throwing,
+        # exactly as `_construct_sugar` does. A refusal that reaches the driver
+        # untestified is an instrument failure, not a row: it would trade a
+        # loud measured row for a dead file.
+        self.reporter.report_gap(self, panic)
+        raise panic
+
+    def _project_constructed_value_for_testimony(self, value: object) -> object:
+        """Replace every parser definition handle with this roll's occurrence.
+
+        TWO handle-bearing slots, not one. ``expected_definition_ref`` was
+        projected here from the start; ``expected_source_call_frame_owner`` --
+        seated from ``lexical_row.definition_occurrence_identity``, which IS a
+        raw ``.ref`` -- was never visited by any projection at all. The raw
+        ``_Handle`` that reached canonicalization did not arrive through a
+        silent escape on the definition slot; it arrived on the slot nobody
+        projected. Both now go through the one door.
+        """
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        if not isinstance(value, CallSiteSugar):
+            return value
+        projected: dict[str, object] = {}
+        swapped: set[str] = set()
+        for slot in ("expected_definition_ref", "expected_source_call_frame_owner"):
+            ref = getattr(value, slot)
+            outcome = self._ask_roll_for_occurrence(ref, value)
+            if isinstance(outcome, NothingToProject):
+                continue
+            if isinstance(outcome, ParserHandleProjected):
+                projected[slot] = outcome.occurrence
+                if outcome.occurrence is not ref:
+                    swapped.add(slot)
+                continue
+            if isinstance(outcome, ParserHandleLookupFailed):
+                self._refuse_unanswered_projection(slot, outcome)
+            # Closed set, reconciled: an outcome nobody wrote an arm for
+            # raises here by name instead of falling through as "no change".
+            backend_defect(
+                blame=self.fragment,
+                owner="Call._project_constructed_value_for_testimony",
+                observed=(
+                    f"unrecognised parser-handle projection outcome "
+                    f"{type(outcome).__name__} for .{slot}"
+                ),
+                requested=(
+                    "a member of PARSER_HANDLE_PROJECTION_OUTCOMES with an arm "
+                    "at this reconciliation"
+                ),
+                fix=(
+                    "give the new outcome an arm here; never let an outcome "
+                    "reconcile by falling through"
+                ),
+            )
+        if not projected:
             return value
         source_call_frame = value.source_call_frame
-        if source_call_frame is not None:
-            source_call_frame = replace(source_call_frame, owner=definition)
-        return replace(
-            value,
-            expected_definition_ref=definition,
-            source_call_frame=source_call_frame,
-        )
+        if source_call_frame is not None and "expected_definition_ref" in swapped:
+            source_call_frame = replace(
+                source_call_frame, owner=projected["expected_definition_ref"]
+            )
+        return replace(value, source_call_frame=source_call_frame, **projected)
 
     def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
