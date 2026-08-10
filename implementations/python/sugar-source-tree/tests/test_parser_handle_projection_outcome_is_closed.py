@@ -17,12 +17,20 @@ the function returned ``value`` for both.
 
 These teeth pin the split as a CLOSED SET that reconciles:
 
+    RollProjectsNothing       this roll seats no table; it projects nothing
     NothingToProject          no ref was carried; none was ever owed
     ParserHandleProjected     the roll owns the typed occurrence for the ref
     ParserHandleLookupFailed  a ref WAS carried and nothing answered for it
 
 and an outcome nobody wrote an arm for raises by name rather than falling
 through as "no change".
+
+RollProjectsNothing is here because the pandas slice REFUTED its absence. A
+first version folded it into ParserHandleLookupFailed, and a unit tooth
+asserting that only the canonicalizing roll reaches this projection passed
+while being false about production: 61 measured files became instrument
+failures. That is why the fourth member exists and why its tooth is written
+against the production shape rather than against the class hierarchy.
 """
 
 from __future__ import annotations
@@ -47,6 +55,7 @@ from sugar_source_tree.nodes import (
     PARSER_HANDLE_PROJECTION_OUTCOMES,
     ParserHandleLookupFailed,
     ParserHandleProjected,
+    RollProjectsNothing,
 )
 from sugar_source_tree.panic import (
     BackendDefect,
@@ -269,19 +278,32 @@ def test_an_unrecognised_outcome_raises_instead_of_falling_through(
     assert "_UnruledOutcome" in str(gap.value)
 
 
-def test_only_a_roll_that_canonicalizes_is_asked_to_project(tmp_path) -> None:
-    """The one escape that is NOT a failed lookup, stated and pinned.
+def test_a_roll_with_no_materialize_table_is_owed_nothing_not_refused(
+    tmp_path,
+) -> None:
+    """NOT OWED is its own member, and this is the tooth that was missing.
 
-    A reporter with no materialize table is not a roll that asked and missed --
-    it is a roll that owes no answer, because it canonicalizes nothing. That
-    claim is load-bearing (if it were false, every ordinary CollectingReporter
-    run would start refusing), so it is pinned rather than assumed: the roll
-    that DOES canonicalize is exactly the roll that owns the table.
+    A first version of this repair folded "this roll seats no materialize
+    table" into UNANSWERED. A unit tooth asserting that only the canonicalizing
+    reporter reaches this projection PASSED -- and was true about the classes
+    while being false about production. The pandas slice refuted it: 61 files
+    that measured cleanly became instrument failures, because rolls with no
+    table reach here throughout the enrolled corpus.
+
+    So the claim is now pinned where it broke: a roll with no table must be
+    handed its value back UNTOUCHED and must never refuse.
     """
-    from sugar_source_tree.reporter import CollectingReporter as _Collecting
+    _source, definition, call, _reporter = _roll(tmp_path, name="subject")
+    value = call._construct_sugar()
+    assert isinstance(value, CallSiteSugar)
 
-    canonicalizing = ConstructionTestimonyReporterV1
-    assert hasattr(canonicalizing, "materialized_node_for_ref")
-    # The ordinary file-open roll neither canonicalizes nor owns a table.
-    assert not hasattr(_Collecting, "materialized_node_for_ref")
-    assert _Collecting.present_construction(_Collecting(), None, None) is None
+    plain = CollectingReporter()
+    assert not hasattr(plain, "materialized_node_for_ref")
+    object.__setattr__(call, "reporter", plain)
+
+    outcome = call._ask_roll_for_occurrence(definition.ref, value)
+    assert isinstance(outcome, RollProjectsNothing), outcome
+    # NOT OWED is not ABSENT and not UNANSWERED.
+    assert not isinstance(outcome, (NothingToProject, ParserHandleLookupFailed))
+    # And it refuses NOTHING: the value comes back exactly as it went in.
+    assert call._project_constructed_value_for_testimony(value) is value

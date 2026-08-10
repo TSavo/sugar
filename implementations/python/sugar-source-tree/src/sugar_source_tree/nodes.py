@@ -11246,9 +11246,18 @@ class Compare(Expression):
 # projection that FEEDS it. Asking this roll for a ref's typed occurrence has
 # three outcomes and they are genuinely different repairs:
 #
+#   NOT OWED     this roll seats no materialize table, so it projects nothing
 #   ABSENT       there was no ref -- nothing was ever owed, nothing to project
 #   ANSWERED     the roll owns the typed occurrence for that ref
 #   UNANSWERED   a ref WAS carried and nothing in this roll answered for it
+#
+# NOT OWED is measured, not assumed. A first version of this repair folded it
+# into UNANSWERED on the reasoning that only the canonicalizing roll reaches
+# here -- and a unit tooth asserting exactly that passed. The pandas slice
+# refuted it: rolls with no materialize table reach this projection all over
+# the enrolled corpus, and refusing them turned 61 measured files into
+# instrument failures. A roll that canonicalizes nothing is owed no occurrence;
+# that is not a lookup that failed, and the two must not share an arm either.
 #
 # Spelled as a nullable, the last two collapse: ``None`` meant both "no ref
 # here" and "asked, and the table had nothing". The caller could not tell them
@@ -11286,12 +11295,23 @@ class NothingToProject:
     """ABSENT: no ref was carried, so no occurrence was ever owed."""
 
 
+@dataclass(frozen=True)
+class RollProjectsNothing:
+    """NOT OWED: this roll seats no materialize table and canonicalizes nothing.
+
+    Distinct from ABSENT (a ref could have been carried, and this says nothing
+    about whether one was) and from UNANSWERED (no lookup was performed at all,
+    so none failed).
+    """
+
+
 #: The closed set. A member added here without an arm at every reconciliation
 #: site raises there by name; nothing falls through.
 PARSER_HANDLE_PROJECTION_OUTCOMES = (
     ParserHandleProjected,
     ParserHandleLookupFailed,
     NothingToProject,
+    RollProjectsNothing,
 )
 
 
@@ -11354,9 +11374,7 @@ class Call(Expression):
             return ParserHandleProjected(ref)
         lookup = getattr(self.reporter, "materialized_node_for_ref", None)
         if lookup is None:
-            return ParserHandleLookupFailed(
-                ref, "this roll seats no materialize table to ask"
-            )
+            return RollProjectsNothing()
         definition = lookup(ref)
         frame = getattr(value, "source_call_frame", None)
         if definition is None and frame is not None:
@@ -11440,6 +11458,9 @@ class Call(Expression):
         for slot in ("expected_definition_ref", "expected_source_call_frame_owner"):
             ref = getattr(value, slot)
             outcome = self._ask_roll_for_occurrence(ref, value)
+            if isinstance(outcome, RollProjectsNothing):
+                # Nothing is owed by this roll for ANY slot: stop asking.
+                return value
             if isinstance(outcome, NothingToProject):
                 continue
             if isinstance(outcome, ParserHandleProjected):
