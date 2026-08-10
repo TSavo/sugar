@@ -213,6 +213,12 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_class_allocation_census.py"]
 network = "none"
 
+[tasks.probe-corpus-source-at]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_corpus_source_at.py"]
+network = "none"
+
 [tasks.probe-class-allocation-identity]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
