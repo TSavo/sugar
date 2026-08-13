@@ -113,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     disambiguated = 0  # (file, name): count > 1 under the old rule, == 1 under the new
     vanished = 0       # (file, name): had a binding ONLY because of the over-count
     target_kinds: Counter[str] = Counter()
+    affected_by_kind: Counter[str] = Counter()
+    ambiguous_by_kind: Counter[str] = Counter()
     exemplars: list[str] = []
     read_ok = 0
     refused: list[str] = []
@@ -130,6 +132,11 @@ def main(argv: list[str] | None = None) -> int:
         old: dict[str, int] = {}
         new: dict[str, int] = {}
         touched_here = False
+        # Which TARGET KIND is responsible for each name's over-count. The
+        # brief called this defect "attribute assignment"; `X[k] = v` is the
+        # same defect through the same walk, so the two are attributed
+        # separately rather than merged into one number.
+        blame_kinds: dict[str, set[str]] = {}
         for statement in tree.body:
             old_names = _statement_names(statement, _old_rule)
             new_names = _statement_names(statement, _new_rule)
@@ -140,11 +147,17 @@ def main(argv: list[str] | None = None) -> int:
             if old_names != new_names:
                 statements_touched += 1
                 touched_here = True
-                if isinstance(statement, ast.Assign):
-                    for target in statement.targets:
-                        target_kinds[type(target).__name__] += 1
-                else:
-                    target_kinds[type(statement.target).__name__] += 1
+                targets_here = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else (statement.target,)
+                )
+                for target in targets_here:
+                    kind = type(target).__name__
+                    target_kinds[kind] += 1
+                    if kind in ("Attribute", "Subscript"):
+                        for name in _old_rule(target) - _new_rule(target):
+                            blame_kinds.setdefault(name, set()).add(kind)
                 if len(exemplars) < 12:
                     exemplars.append(
                         f"{seat}:{statement.lineno}:{statement.col_offset} "
@@ -157,10 +170,14 @@ def main(argv: list[str] | None = None) -> int:
             if after == count:
                 continue
             spurious_pairs += 1
+            kinds = blame_kinds.get(name) or {"unattributed"}
+            key = "+".join(sorted(kinds))
+            affected_by_kind[key] += 1
             if after == 0:
                 vanished += 1
             elif count > 1 and after == 1:
                 disambiguated += 1
+                ambiguous_by_kind[key] += 1
 
     print(f"WIDTH_READ_OK {read_ok} REFUSED {len(refused)}", flush=True)
     for line in refused:
@@ -175,6 +192,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     for kind, count in sorted(target_kinds.items(), key=lambda item: -item[1]):
         print(f"WIDTH_TARGET_KIND {kind} {count}", flush=True)
+    for kind, count in sorted(affected_by_kind.items(), key=lambda item: -item[1]):
+        print(f"WIDTH_NAME_SEATS_BY_KIND {kind} {count}", flush=True)
+    for kind, count in sorted(ambiguous_by_kind.items(), key=lambda item: -item[1]):
+        print(f"WIDTH_FALSELY_AMBIGUOUS_BY_KIND {kind} {count}", flush=True)
     for line in exemplars:
         print(f"WIDTH_EXEMPLAR {line}", flush=True)
 
