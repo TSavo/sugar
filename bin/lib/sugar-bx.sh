@@ -488,6 +488,23 @@ exit \"\$st\""
 
 sugar_bx_docker_bind_source() {
   local source="$1" resolved
+  # Docker Desktop's WSL integration decides which bind-path form its engine
+  # resolves, and it CHANGES. Observed on one host inside a single day: first
+  # the UNC form resolved while the plain Linux path silently mounted EMPTY;
+  # later the daemon REJECTED the UNC form outright ("is not an absolute
+  # path") while the plain path resolved correctly. The default below is the
+  # UNC form because the empty mount is the silent failure and the rejection
+  # is the loud one -- prefer the failure you can see.
+  #
+  # SUGAR_BX_BIND_FORM=plain overrides it for a host whose integration is in
+  # the other state. This is NOT a bypass of the empty-mount guard: entrypoint.sh
+  # still verifies SUGAR_BX_MOUNT_PROOF inside the container and refuses with
+  # crime=empty-or-stale-bind-mount if the mount did not resolve. The override
+  # chooses which form to try; the proof still decides whether it worked.
+  if [[ "${SUGAR_BX_BIND_FORM:-}" == plain ]]; then
+    printf '%s\n' "$source"
+    return 0
+  fi
   # On a WSL2 host, Docker Desktop's engine runs in a separate distro: a
   # plain Linux path like /home/tsavo/... does not fail to bind, it silently
   # binds an EMPTY directory. Only the Windows UNC form
