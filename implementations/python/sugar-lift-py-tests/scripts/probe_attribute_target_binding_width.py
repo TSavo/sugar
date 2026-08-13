@@ -82,7 +82,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_source_tree.tree import SourceTree
 
     authenticated = authenticated_pandas_corpus()
     corpus = authenticated.root
@@ -94,9 +93,19 @@ def main(argv: list[str] | None = None) -> int:
 
     roster = sorted(
         path.resolve().relative_to(corpus).as_posix()
-        for path in SourceTree(corpus).paths()
+        for path in corpus.rglob("*.py")
     )
     print(f"WIDTH_ROSTER files={len(roster)}", flush=True)
+    # The walk is not the authority on the population; the authenticated pin
+    # is. If they disagree the census is over the wrong universe, and that is
+    # a refusal, not a footnote.
+    if len(roster) != authenticated.file_count:
+        print(
+            f"WIDTH_ROSTER_DISAGREES walked={len(roster)} "
+            f"authenticated={authenticated.file_count}",
+            flush=True,
+        )
+        return 4
 
     files_touched = 0
     statements_touched = 0
@@ -170,17 +179,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"WIDTH_EXEMPLAR {line}", flush=True)
 
     if args.verify_table:
-        from sugar_lift_python_source.source_oracle import install_root_for
-        from sugar_source_tree.source_file import SourceFile
-
-        install_root_for(corpus)
+        try:
+            from sugar_lift_py_tests.lift_rpc import (
+                open_source_file_for_construction,
+            )
+        except ModuleNotFoundError as error:
+            # A verification arm that quietly does not run is worse than one
+            # that fails: it reads as a clean confirmation. Say so and refuse.
+            print(f"WIDTH_TABLE_ARM_UNAVAILABLE {error}", flush=True)
+            return 5
         for seat in args.verify_table:
             if seat not in roster:
                 print(f"WIDTH_SEAT_ABSENT {seat}", flush=True)
                 return 2
             path = corpus.joinpath(*seat.split("/"))
-            source_file = SourceFile.from_path(path)
-            source_file.sugar()
+            # The SOLE construction door -- never the bare `SourceFile`
+            # entrance, which seats no construction context.
+            source_file = open_source_file_for_construction(
+                path,
+                root=corpus,
+                source_workspace_root=corpus,
+                distribution="pandas",
+            )
             table = source_file.unit.module_direct_bindings or {}
             names = args.name or sorted(table)
             for name in names:
