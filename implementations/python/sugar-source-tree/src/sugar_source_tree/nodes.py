@@ -1857,17 +1857,60 @@ class SourceUnit:
                 if isinstance(statement, Assign)
                 else (statement.target,)
             )
-            return {
-                node.id
-                for target in targets
-                for node in ((target,) if isinstance(target, Name) else target.walk())
-                if isinstance(node, Name)
-            }
+            names: set[str] = set()
+            for target in targets:
+                names |= SourceUnit._assignment_target_bound_names(target, statement)
+            return names
         if statement.kind in ("Import", "ImportFrom"):
             return {
                 alias.asname or alias.name.split(".", 1)[0] for alias in statement.names
             }
         return set()
+
+    @staticmethod
+    def _assignment_target_bound_names(
+        target: "Node", statement: "Node"
+    ) -> set[str]:
+        """The names an assignment TARGET binds -- a closed grammar decision.
+
+        ``X.attr = v`` and ``X[k] = v`` MUTATE the object ``X`` already denotes.
+        Neither BINDS the name ``X``.  The former reading collected every
+        ``Name`` in the whole target subtree, so ``get_option.__module__ =
+        "pandas"`` at ``_config/config.py:950`` published a second module-scope
+        binding of ``get_option`` -- and the by-name authority that must refuse
+        an ambiguous name then refused a name that is not ambiguous.  Two
+        different facts, "assigns to an attribute OF this name" and "binds this
+        name", were sharing one table (#7394).
+
+        A name-binding table must never be widened to make a lookup succeed, so
+        this is a decision over the target grammar rather than a filter: Python
+        admits exactly Name, Tuple, List, Starred, Attribute and Subscript in an
+        assignment target.  Anything else is a producer defect and PANICS naming
+        the construct, the coordinate and the shape -- it is not bucketed as
+        "binds nothing", because a silently empty answer here is indistinguish-
+        able from a legitimately non-binding target.
+        """
+        if isinstance(target, Name):
+            return {target.id}
+        if isinstance(target, (Tuple_, List)):
+            names: set[str] = set()
+            for element in target.elts:
+                names |= SourceUnit._assignment_target_bound_names(element, statement)
+            return names
+        if isinstance(target, Starred):
+            return SourceUnit._assignment_target_bound_names(target.value, statement)
+        if isinstance(target, (Attribute, Subscript)):
+            # Mutates an existing object; binds no module-scope name.
+            return set()
+        raise BackendDefect(
+            blame=getattr(target, "fragment", None) or statement.fragment,
+            owner="SourceUnit._assignment_target_bound_names",
+            observed=(
+                f"assignment target is not an assignable construct: {target.kind}"
+            ),
+            requested="Name, Tuple, List, Starred, Attribute or Subscript",
+            fix="produce assignment targets from the Python assignment grammar",
+        )
 
     def exception_type_identity(self, node: "Name"):
         """Return the authenticated exception-class coordinate reaching ``node``.
