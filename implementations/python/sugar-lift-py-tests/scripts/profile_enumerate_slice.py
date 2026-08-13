@@ -79,13 +79,31 @@ def main(argv: list[str] | None = None) -> int:
     seats = _roster(corpus)[args.start :: args.stride]
     if args.limit is not None:
         seats = seats[: args.limit]
+    # State the bound where the reader meets the rows it produced. A profile
+    # that does not say which ceiling was in force cannot be compared with
+    # another profile at all.
+    from sugar_lift_py_tests.measurement_ceiling import ceiling_seconds
+
     print(
-        f"PROFILE_PLAN start={args.start} stride={args.stride} seats={len(seats)}",
+        f"PROFILE_PLAN start={args.start} stride={args.stride} seats={len(seats)} "
+        f"measurementCeilingSeconds={ceiling_seconds()}",
         flush=True,
     )
+    # REFUSE AN ABSENT SEAT BY NAME. A slice keyed on a wrong spelling
+    # silently measures nobody and reports panics=0 -- a non-measurement that
+    # reads exactly like a clean corpus.
+    for seat in seats:
+        if not corpus.joinpath(*seat.split("/")).is_file():
+            raise SystemExit(f"PROFILE_REFUSED absent seat: {seat!r} under {corpus}")
+    print("PROFILE_SEATS " + json.dumps(seats), flush=True)
 
     rows: list[dict] = []
-    counts = {"construction-panic": 0, "constructed": 0, "instrument-failure": 0}
+    counts = {
+        "construction-panic": 0,
+        "constructed": 0,
+        "measurement-exhausted": 0,
+        "instrument-failure": 0,
+    }
     for index, seat in enumerate(seats):
         target = corpus.joinpath(*seat.split("/"))
         installed = install_root_for(str(target))
@@ -129,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(panic, dict)
             ),
             "panicCount": len(row.get("constructionPanics") or []),
+            "measurementExhaustion": row.get("measurementExhaustion"),
             "instrumentFailure": (
                 str((row.get("instrumentFailure") or {}).get("message") or "")[:400]
                 or None

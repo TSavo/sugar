@@ -85,6 +85,20 @@ def _enter(*, sugar: str, role: str, site: str) -> _Frame:
         return frame
 
 
+def active_stack_snapshot() -> list[str]:
+    """The live reduction stack of the calling thread, outermost first.
+
+    Read by the measurement ceiling from inside a signal handler, before any
+    unwinding has happened, so an exhausted seat can name the construct and
+    coordinate it was actually inside. Returns fingerprints (``sugar|role|
+    site``), never frames, so no caller can hold a reference into the engine's
+    live bookkeeping.
+    """
+    thread_id = threading.get_ident()
+    with _LOCK:
+        return [item.fingerprint for item in _ACTIVE.get(thread_id, [])]
+
+
 def _finish(frame: _Frame, *, event: str, level: int, **fields) -> None:
     now = time.monotonic()
     thread_id = threading.get_ident()
