@@ -183,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             from sugar_lift_py_tests.lift_rpc import (
                 open_source_file_for_construction,
             )
+            from sugar_lift_python_source.source_oracle import install_root_for
         except ModuleNotFoundError as error:
             # A verification arm that quietly does not run is worse than one
             # that fails: it reads as a clean confirmation. Say so and refuse.
@@ -193,12 +194,19 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"WIDTH_SEAT_ABSENT {seat}", flush=True)
                 return 2
             path = corpus.joinpath(*seat.split("/"))
+            # An installed file's address is the seat its DISTRIBUTION
+            # recorded, not the spelling the roster happens to use. The
+            # roster says `_config/config.py`; the recorded seat is
+            # `pandas/_config/config.py`, and opening against the package
+            # root mints an address no other checkout resolves.
+            installed = install_root_for(str(path))
+            locus_root = corpus if installed is None else Path(installed)
             # The SOLE construction door -- never the bare `SourceFile`
             # entrance, which seats no construction context.
             source_file = open_source_file_for_construction(
                 path,
                 root=corpus,
-                source_workspace_root=corpus,
+                source_workspace_root=locus_root,
                 distribution="pandas",
             )
             table = source_file.unit.module_direct_bindings or {}
