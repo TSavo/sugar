@@ -1006,10 +1006,17 @@ def main() -> int:
     from sugar_source_tree.tree import SourceTree
 
     tip = args.commit or _git_commit(args.repo.resolve()) or "unpinned"
+    # State the bound in force at the top of the run. A row that says
+    # "exceeded the ceiling" is unreadable without the number that produced
+    # it, and a reader must never have to guess which bound a board was
+    # measured under.
+    from sugar_lift_py_tests.measurement_ceiling import ceiling_seconds
+
     _narrate(
         "RECENSUS START "
         f"corpus={corpus} corpus_root={corpus_root} tip={tip} "
         f"out_dir={args.out_dir.resolve()} "
+        f"measurement_ceiling_s={ceiling_seconds()} "
         f"host={platform.node()} pid={os.getpid()}"
     )
 
@@ -1391,6 +1398,7 @@ def main() -> int:
         )
     defects: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
+    measurement_exhausted: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
     families: Counter[str] = Counter()
     desugar_families: Counter[str] = Counter()
@@ -1984,10 +1992,23 @@ def main() -> int:
                 families["ConstructionPanic"] = (
                     int(families.get("ConstructionPanic") or 0) + 1
                 )
+        elif category == "measurement-exhausted":
+            # A seat that exceeded the stated per-file bound. Counted, named,
+            # and NOT folded into either of the other two arms: it is neither a
+            # completion nor a refusal, and calling it one of those would
+            # invent a product fact out of a clock.
+            exhaustion = row.get("measurementExhaustion")
+            if not isinstance(exhaustion, dict):
+                raise TypeError(
+                    "measurement-exhausted terminal must carry "
+                    f"measurementExhaustion naming the construct; got none for {file}"
+                )
+            measurement_exhausted.append({"file": file, **exhaustion})
         else:
             raise TypeError(
-                "control-effect recensus terminal category must be completed or "
-                f"panic; got {category!r} for {file}"
+                "control-effect recensus terminal category must be completed, "
+                "panic or measurement-exhausted; got "
+                f"{category!r} for {file}"
             )
 
     from pandas_floor_summary import floor_summary
@@ -2114,6 +2135,9 @@ def main() -> int:
     r_desugar = int(result.get("R_desugar") or 0)
     r_backend = int(result.get("R_backend_defects") or 0)
     construction_panics = list(result.get("constructionPanics") or [])
+    # From the composed board, not the walk-local list: compose is the sole
+    # door that has reconciled the three-arm partition.
+    measurement_exhausted = list(result.get("measurementExhausted") or [])
     defects = list(result.get("defects") or [])
     desugar_construction_panics = list(result.get("desugarConstructionPanics") or [])
     desugar_defects = list(result.get("desugarDefects") or [])
@@ -2189,9 +2213,16 @@ def main() -> int:
     stable_zero_terms = {
         "completedDenominatorPositive": files_completed > 0,
         "denominatorComplete": denominator_complete,
-        # This instrument has no timeout mechanism: it runs in-process and a
-        # hang is a hang, not a row. Any timeout testimony can only arrive as a
-        # named defect, so that is where it is counted from.
+        # This instrument DOES have a timeout mechanism now: every seat is
+        # measured under a stated per-file wall-clock ceiling
+        # (sugar_lift_py_tests.measurement_ceiling), and a seat that exceeds it
+        # produces a `measurement-exhausted` terminal row instead of consuming
+        # the shard. Counted from that arm BY NAME -- not from a substring
+        # search, which reads whatever happens to spell "timeout" somewhere in
+        # a defect and misses an exhaustion row entirely. The substring sweep
+        # stays beside it because third-party timeout testimony still arrives
+        # as a named defect and must not go quiet.
+        "measurementExhausted": len(measurement_exhausted),
         "timeouts": _matching("imeout"),
         "constructionPanics": len(construction_panics),
         "factoringGaps": _matching("FactoringGap"),
@@ -2215,6 +2246,16 @@ def main() -> int:
         red_reasons.append(f"{len(defects)} per-file terminal defect rows")
     if construction_panics:
         red_reasons.append(f"{len(construction_panics)} construction panics")
+    if measurement_exhausted:
+        # Named, with a coordinate, because a countable frontier row is the
+        # whole point: "CI is broken" becomes "here is one row on the frontier".
+        first = measurement_exhausted[0]
+        red_reasons.append(
+            f"{len(measurement_exhausted)} files exceeded the per-file "
+            f"measurement ceiling ({first.get('boundSeconds')}s), first at "
+            f"{first.get('file')} {first.get('construct')} "
+            f"{first.get('coordinate')}"
+        )
     if desugar_construction_panics:
         red_reasons.append(
             f"{len(desugar_construction_panics)} desugar construction panics "
@@ -2244,6 +2285,7 @@ def main() -> int:
         stable_zero_terms["completedDenominatorPositive"]
         and stable_zero_terms["denominatorComplete"]
         and stable_zero_terms["timeouts"] == 0
+        and stable_zero_terms["measurementExhausted"] == 0
         and stable_zero_terms["constructionPanics"] == 0
         and stable_zero_terms["factoringGaps"] == 0
         and stable_zero_terms["unresolvableDispatchTargets"] == 0
@@ -2261,6 +2303,7 @@ def main() -> int:
         f"R_construction={result.get('R_construction')} "
         f"R_desugar={result.get('R_desugar')} "
         f"cpanic={len(construction_panics)} defect={len(defects)} "
+        f"exhausted={len(measurement_exhausted)} "
         f"elapsed_s={time.time() - started:.1f} "
         f"result={result_path} progress={progress_path} engine={engine_path} "
         f"running_counts={running_counts_path}"
@@ -2271,6 +2314,7 @@ def main() -> int:
         1
         if defects
         or construction_panics
+        or measurement_exhausted
         or desugar_construction_panics
         or desugar_defects
         or files_completed != len(file_names)

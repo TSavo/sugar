@@ -54,7 +54,19 @@ STAGE_WITH_TALLY_PARTITION = "control-effect-with-tally-partition/v1"
 STAGE_TERMINAL_AGGREGATE_SEAL = "compose-terminal-aggregate-seal/v1"
 _CONSTRUCTION_PANIC_TYPE = "sugar_lift_py_tests.gap.panic.ConstructionPanic"
 _SOURCE_PANIC_PREFIX = "sugar_source_tree.panic."
-_TERMINAL_KINDS = frozenset({"constructed", "construction-panic"})
+# The terminal partition. THREE members, not two: a seat can construct, it can
+# refuse (construction-panic), or it can exhaust the stated measurement bound
+# (measurement-exhausted, see sugar_lift_py_tests.measurement_ceiling).
+# Absence, refusal and exhaustion never share a representation. An
+# unrecognised member is refused below rather than falling through.
+_TERMINAL_KINDS = frozenset(
+    {"constructed", "construction-panic", "measurement-exhausted"}
+)
+_TERMINAL_CATEGORY = {
+    "constructed": "completed",
+    "construction-panic": "panic",
+    "measurement-exhausted": "measurement-exhausted",
+}
 _TERMINAL_CONVENTION = {
     "observed_chain_length": "number of observed terminals in order",
     "blocking_terminal_count": "number of terminals that blocked construction",
@@ -915,7 +927,7 @@ def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, 
         )
         return failures
     category = row.get("category")
-    expected_category = "completed" if terminal_kind == "constructed" else "panic"
+    expected_category = _TERMINAL_CATEGORY[terminal_kind]
     if category != expected_category:
         failures.append(
             {
@@ -929,7 +941,10 @@ def _terminal_row_failures(file: str, row: Mapping[str, Any]) -> list[dict[str, 
     blocking_count = row.get("blocking_terminal_count")
     if not isinstance(chain_length, int) or chain_length < 1:
         failures.append({"file": file, "reason": "observed_chain_length absent"})
-    if blocking_count != (1 if terminal_kind == "construction-panic" else 0):
+    # Both a refusal and an exhaustion blocked construction; only a
+    # construction produced an artifact. The count says which, the kind says
+    # how -- two different facts, two different fields.
+    if blocking_count != (0 if terminal_kind == "constructed" else 1):
         failures.append({"file": file, "reason": "blocking_terminal_count disagrees"})
     if row.get("final_terminal") != terminal_kind:
         failures.append({"file": file, "reason": "final_terminal disagrees"})
@@ -995,6 +1010,7 @@ def attest_frontier_rows(
     terminal_inputs: list[dict[str, Any]] = []
     constructed: list[dict[str, Any]] = []
     panicked: list[dict[str, Any]] = []
+    exhausted: list[dict[str, Any]] = []
     terminal_rows: list[dict[str, Any]] = []
     expected_stages = {
         EDGE_ENUMERATE_FILE: STAGE_ENUMERATE_FILE_TERMINAL,
@@ -1010,6 +1026,23 @@ def attest_frontier_rows(
                 constructed.append(dict(key))
             elif row.get("terminalKind") == "construction-panic":
                 panicked.append(dict(key))
+            elif row.get("terminalKind") == "measurement-exhausted":
+                exhausted.append(dict(key))
+            else:
+                # The kind was already validated against the closed set above;
+                # reaching here means a member was added without being routed
+                # into the partition, which would silently drop the seat from
+                # the final union. Say so instead.
+                failures.append(
+                    {
+                        "file": file,
+                        "reason": (
+                            "terminal kind is in the closed set but has no "
+                            "partition arm: "
+                            f"{row.get('terminalKind')!r}"
+                        ),
+                    }
+                )
         terminal_rows.append(
             {
                 field: row.get(field)
@@ -1062,7 +1095,7 @@ def attest_frontier_rows(
     terminal_edge = key_edge_witness(
         stage_id=STAGE_TERMINAL_AGGREGATE_SEAL,
         input_keys=terminal_inputs,
-        output_keys=[*constructed, *panicked],
+        output_keys=[*constructed, *panicked, *exhausted],
     )
     edges[EDGE_TERMINAL_SEAL] = terminal_edge
     if (
@@ -1077,17 +1110,30 @@ def attest_frontier_rows(
                 **terminal_edge,
             }
         )
-    constructed_rendered = {_render_key(key) for key in constructed}
-    panicked_rendered = {_render_key(key) for key in panicked}
-    overlap = sorted(constructed_rendered & panicked_rendered)
-    if overlap:
-        failures.append(
-            {
-                "edgeId": EDGE_TERMINAL_SEAL,
-                "reason": "constructed and construction-panic manifests overlap",
-                "overlapKeys": [json.loads(row) for row in overlap],
-            }
-        )
+    # Pairwise disjointness over all THREE arms. Checking only two of them
+    # would let a seat be counted as both constructed and exhausted while the
+    # sum still looked right.
+    rendered = {
+        "constructed": {_render_key(key) for key in constructed},
+        "construction-panic": {_render_key(key) for key in panicked},
+        "measurement-exhausted": {_render_key(key) for key in exhausted},
+    }
+    overlap: list[str] = []
+    for left, right in (
+        ("constructed", "construction-panic"),
+        ("constructed", "measurement-exhausted"),
+        ("construction-panic", "measurement-exhausted"),
+    ):
+        shared = sorted(rendered[left] & rendered[right])
+        if shared:
+            overlap.extend(shared)
+            failures.append(
+                {
+                    "edgeId": EDGE_TERMINAL_SEAL,
+                    "reason": f"{left} and {right} manifests overlap",
+                    "overlapKeys": [json.loads(row) for row in shared],
+                }
+            )
     attestation = {
         "schema": "control-effect-frontier-attestation/v1",
         "stageMap": stage_map,
@@ -1097,12 +1143,17 @@ def attest_frontier_rows(
         "constructedKeyCid": key_manifest_cid(constructed),
         "constructionPanicKeyManifest": _canonical_key_manifest(panicked),
         "constructionPanicKeyCid": key_manifest_cid(panicked),
+        "measurementExhaustedKeyManifest": _canonical_key_manifest(exhausted),
+        "measurementExhaustedKeyCid": key_manifest_cid(exhausted),
         "instrumentFailures": list(failures),
         "terminalConvention": dict(_TERMINAL_CONVENTION),
         "finalSeal": {
             "inputKeyManifest": _canonical_key_manifest(terminal_inputs),
             "inputKeyCid": key_manifest_cid(terminal_inputs),
+            # Name kept for readers of existing boards; it now means all
+            # three terminal arms are pairwise disjoint, not just two.
             "constructedAndPanicDisjoint": not overlap,
+            "terminalArmsPairwiseDisjoint": not overlap,
             "conserves": not terminal_edge["missingKeys"]
             and not terminal_edge["extraKeys"]
             and not terminal_edge["duplicateKeys"]
@@ -1572,6 +1623,33 @@ def aggregate_d3_residency_exposure(
     }
 
 
+def reconcile_terminal_partition(
+    *,
+    files_terminal: int,
+    files_completed: int,
+    files_panicked: int,
+    files_exhausted: int,
+) -> None:
+    """The terminal partition must account for every terminal exactly once.
+
+    ``filesTerminal == filesCompleted + filesPanicked + filesExhausted``.
+
+    A member added to the closed set without an arm here does not produce a
+    wrong number; it produces a MISSING one, and a missing seat is the failure
+    that let one file destroy a whole run's evidence in the first place. So
+    the sum is checked rather than assumed, and it raises rather than
+    reporting a smaller denominator.
+    """
+    accounted = files_completed + files_panicked + files_exhausted
+    if accounted != files_terminal:
+        raise ValueError(
+            "terminal partition does not conserve: "
+            f"completed={files_completed} panicked={files_panicked} "
+            f"exhausted={files_exhausted} accounted={accounted} "
+            f"terminal={files_terminal}"
+        )
+
+
 def aggregate_terminal_rows(
     measured_rows: Sequence[tuple[str, Mapping[str, Any]]],
     *,
@@ -1610,9 +1688,11 @@ def aggregate_terminal_rows(
     unresolvable_dispatch: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
     defects: list[dict[str, Any]] = []
+    measurement_exhausted: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
     files_completed = 0
     files_panicked = 0
+    files_exhausted = 0
     functions_total = 0
     functions_clean = 0
     functions_enumerated = 0
@@ -1656,9 +1736,24 @@ def aggregate_terminal_rows(
 
         if category == "completed":
             files_completed += 1
+        elif category == "measurement-exhausted":
+            # THIRD ARM. The old rule here was "anything not completed is a
+            # panic". That rule was written when construct-or-panic was the
+            # whole partition, and applying it to an exhausted seat would
+            # publish a refusal the product never made -- a construction panic
+            # manufactured by a clock. Exhaustion is counted on its own axis
+            # and never enters construction_panics or defects.
+            files_exhausted += 1
+            exhaustion = row.get("measurementExhaustion")
+            if not isinstance(exhaustion, dict):
+                raise TypeError(
+                    "measurement-exhausted terminal must carry "
+                    f"measurementExhaustion naming the construct; got none for {file}"
+                )
+            measurement_exhausted.append({"file": file, **exhaustion})
         else:
             files_panicked += 1
-            # construct-or-panic: anything not completed is a panic (no kind labels)
+            # construct-or-panic: anything not completed or exhausted is a panic
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(dict(panic))
@@ -1694,9 +1789,11 @@ def aggregate_terminal_rows(
         "unresolvable_dispatch": unresolvable_dispatch,
         "construction_panics": construction_panics,
         "defects": defects,
+        "measurement_exhausted": measurement_exhausted,
         "floor_rows": floor_rows,
         "files_completed": files_completed,
         "files_panicked": files_panicked,
+        "files_exhausted": files_exhausted,
         "functions_total": functions_total,
         "functions_clean": functions_clean,
         "functions_enumerated": functions_enumerated,
@@ -1813,9 +1910,20 @@ def seal_board_from_aggregate(
     files_enrolled = len(file_names)
     files_terminal = int(agg["terminal_count"])
     files_completed = int(agg["files_completed"])
-    files_panicked = int(
-        agg.get("files_panicked") or max(0, files_terminal - files_completed)
+    files_exhausted = int(agg.get("files_exhausted") or 0)
+    # The old fallback here was `files_terminal - files_completed`, which
+    # silently absorbed every non-completion into the panic arm. With a third
+    # member in the partition that fallback would have reported exhausted seats
+    # as construction panics, so it is gone: the aggregate states its own arm
+    # and the sum is checked rather than assumed.
+    files_panicked = int(agg["files_panicked"])
+    reconcile_terminal_partition(
+        files_terminal=files_terminal,
+        files_completed=files_completed,
+        files_panicked=files_panicked,
+        files_exhausted=files_exhausted,
     )
+    measurement_exhausted = list(agg.get("measurement_exhausted") or [])
     files_missing = len(agg["missing_files"])
 
     # C4 Step 1: three sealed meanings, not one overloaded int.
@@ -1907,6 +2015,19 @@ def seal_board_from_aggregate(
         "filesTerminal": files_terminal,
         "filesCompleted": files_completed,
         "filesPanicked": files_panicked,
+        "filesExhausted": files_exhausted,
+        "measurementExhausted": measurement_exhausted,
+        "R_measurement_exhausted": len(measurement_exhausted),
+        "terminalPartition": {
+            "identity": (
+                "filesTerminal == filesCompleted + filesPanicked + filesExhausted"
+            ),
+            "filesTerminal": files_terminal,
+            "filesCompleted": files_completed,
+            "filesPanicked": files_panicked,
+            "filesExhausted": files_exhausted,
+            "conserves": True,
+        },
         "filesMissing": files_missing,
         "filesTotal": files_enrolled,
         "enrolledFiles": files_enrolled,

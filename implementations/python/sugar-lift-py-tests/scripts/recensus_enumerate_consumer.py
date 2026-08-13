@@ -15,10 +15,19 @@ stays even if D3 panics. Do not lose work already done.
 from __future__ import annotations
 
 import ast
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.measurement_ceiling import (
+    CATEGORY_EXHAUSTED,
+    MeasurementCeilingExceeded,
+    TERMINAL_KIND_EXHAUSTED,
+    exhaustion_coordinates,
+    is_unswallowable,
+    measurement_ceiling,
+)
 
 SCOREBOARD_AUTHORITY = False
 
@@ -274,6 +283,105 @@ def _attest_terminal_row(
         input_keys=function_keys,
         output_keys=function_keys,
     )
+    return row
+
+
+def measurement_exhausted_row(
+    error: MeasurementCeilingExceeded,
+    *,
+    file_rel: str,
+    elapsed_seconds: float,
+    source_cid: str | None,
+    function_nodes: list[dict[str, Any]],
+    ast_function_defs: int,
+) -> dict[str, Any]:
+    """One countable frontier row for a seat that exceeded the bound.
+
+    A member of the terminal partition, attested like any other terminal, so
+    the seat still occupies its place in ``constructed + construction-panic +
+    measurement-exhausted == enrolled``. It is not an instrument failure: the
+    row carries an ``inputKey`` and is authenticated at compose, which is
+    exactly what an instrument-failure row is not.
+
+    ROSTER-FLOOR. Whatever mass the walk had already banked before the bound
+    fired travels in the row. Banking 0 over a roster we actually hold is the
+    #7073 mass-erase class with a timer on it -- and a timer is precisely what
+    this code adds, so the hazard is live here and nowhere else.
+
+    The function key manifest is deliberately ABSENT rather than empty. An
+    empty manifest is a claim that the file has no functions; absence is the
+    truthful statement that measurement was cut off before attendance could be
+    taken. Absence and emptiness are different facts and do not share a
+    representation.
+    """
+    from compose_control_effect_board import canonical_cid, key_edge_witness
+    from compose_control_effect_board import (
+        EDGE_ENUMERATE_FILE,
+        EDGE_WITH_PARTITION,
+        STAGE_ENUMERATE_FILE_TERMINAL,
+        STAGE_WITH_TALLY_PARTITION,
+    )
+
+    coordinates = exhaustion_coordinates(error.active_stack)
+    tip = coordinates[-1] if coordinates else None
+    row: dict[str, Any] = {
+        "category": CATEGORY_EXHAUSTED,
+        "terminalKind": TERMINAL_KIND_EXHAUSTED,
+        "measurementExhaustion": {
+            "file": file_rel,
+            "boundSeconds": error.bound_seconds,
+            "elapsedSeconds": round(elapsed_seconds, 3),
+            "stageId": STAGE_ENUMERATE_FILE_TERMINAL,
+            "observedEventType": _qualified_type(error),
+            # construct / coordinate / shape -- the whole reason this is a
+            # frontier row and not a complaint about the clock.
+            "construct": (tip or {}).get("construct"),
+            "coordinate": (tip or {}).get("coordinate"),
+            "role": (tip or {}).get("role"),
+            "activeStack": coordinates,
+            "activeDepth": len(coordinates),
+            "message": str(error),
+        },
+        "functionsTotal": len(function_nodes),
+        "functionsEnumerated": len(function_nodes),
+        "functionsNotEnumerated": max(0, ast_function_defs - len(function_nodes)),
+        "functionsEnumerationComplete": False,
+        "astFunctionDefs": ast_function_defs,
+        "functionsClean": None,
+        "cleanRatioRefused": True,
+        "cleanRefuseReason": (
+            f"measurement ceiling ({error.bound_seconds}s) exceeded; "
+            "clean was not measured"
+        ),
+        "families": {},
+        "enumerateSource": True,
+        "observedEventType": _qualified_type(error),
+        # An exhausted seat blocked construction -- it produced no constructed
+        # artifact -- but it did so without a refusal. Both facts, separately.
+        "blocking_terminal_count": 1,
+        "observed_chain_length": max(1, len(coordinates)),
+        "final_terminal": TERMINAL_KIND_EXHAUSTED,
+    }
+    if source_cid:
+        input_key = {"sourceCid": source_cid, "file": file_rel}
+        row["inputKey"] = input_key
+        row["rowId"] = canonical_cid({"inputKey": input_key})
+        row["stageId"] = STAGE_ENUMERATE_FILE_TERMINAL
+        # No keys were conserved through either edge, and the witnesses say so
+        # rather than being omitted. An absent witness reads as an unattested
+        # row; an empty one reads as what happened.
+        row["edgeWitnesses"] = {
+            EDGE_ENUMERATE_FILE: key_edge_witness(
+                stage_id=STAGE_ENUMERATE_FILE_TERMINAL,
+                input_keys=[],
+                output_keys=[],
+            ),
+            EDGE_WITH_PARTITION: key_edge_witness(
+                stage_id=STAGE_WITH_TALLY_PARTITION,
+                input_keys=[],
+                output_keys=[],
+            ),
+        }
     return row
 
 
@@ -920,6 +1028,67 @@ def measure_file_via_enumerate(
     otherwise mint a manifest covering only the files it walked this
     invocation -- a smaller denominator under a full-shard seal.
     """
+    # THE BOUND. Read sugar_lift_py_tests.measurement_ceiling for what it is
+    # and why it is that number. A seat that exceeds it produces a countable
+    # frontier row here and the walk moves on; it never consumes the shard.
+    progress: dict[str, Any] = {
+        "sourceCid": None,
+        "functionNodes": [],
+        "astFunctionDefs": 0,
+    }
+    started = time.monotonic()
+    try:
+        # The bound covers the WHOLE seat, membership included. Bounding only
+        # the terminal would leave the membership demand unbounded, and an
+        # unbounded tail consumes a shard exactly as an unbounded body does.
+        with measurement_ceiling(seat=file_rel):
+            return _measure_seat_under_ceiling(
+                workspace_root=workspace_root,
+                file_rel=file_rel,
+                source_cid=source_cid,
+                contract_refs=contract_refs,
+                distribution=distribution,
+                source_workspace_root=source_workspace_root,
+                progress=progress,
+            )
+    except MeasurementCeilingExceeded as exhausted:
+        banked = progress.get("terminalRow")
+        if isinstance(banked, dict):
+            # The terminal COMPLETED and only membership exhausted the bound.
+            # That is not an exhausted seat: it is a measured seat whose
+            # membership is a gap. Publishing the terminal as exhausted would
+            # discard a construction outcome we actually hold.
+            banked[RELATION_MEMBERSHIP_GAP_ROW_FIELD] = [
+                {
+                    "memento": {"file": file_rel},
+                    "reason": (
+                        "relation-membership demand exceeded the per-file "
+                        f"measurement ceiling ({exhausted.bound_seconds}s)"
+                    ),
+                }
+            ]
+            return banked
+        return measurement_exhausted_row(
+            exhausted,
+            file_rel=file_rel,
+            elapsed_seconds=time.monotonic() - started,
+            source_cid=progress.get("sourceCid"),
+            function_nodes=list(progress.get("functionNodes") or []),
+            ast_function_defs=int(progress.get("astFunctionDefs") or 0),
+        )
+
+
+def _measure_seat_under_ceiling(
+    *,
+    workspace_root: Path,
+    file_rel: str,
+    source_cid: str | None,
+    contract_refs,
+    distribution: str | None,
+    source_workspace_root: Path | None,
+    progress: dict[str, Any],
+) -> dict[str, Any]:
+    """Terminal plus membership for one seat. Caller owns the bound."""
     row = _terminal_via_enumerate(
         workspace_root=workspace_root,
         file_rel=file_rel,
@@ -927,7 +1096,9 @@ def measure_file_via_enumerate(
         contract_refs=contract_refs,
         distribution=distribution,
         source_workspace_root=source_workspace_root,
+        progress=progress,
     )
+    progress["terminalRow"] = row
     observed_cid = (row.get("inputKey") or {}).get("sourceCid")
     if not isinstance(observed_cid, str) or not observed_cid:
         row[RELATION_MEMBERSHIP_GAP_ROW_FIELD] = [
@@ -945,7 +1116,7 @@ def measure_file_via_enumerate(
             source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 -- a silent shard, named
-        if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+        if is_unswallowable(error):
             raise
         row[RELATION_MEMBERSHIP_GAP_ROW_FIELD] = [
             {
@@ -974,6 +1145,7 @@ def _terminal_via_enumerate(
     contract_refs=None,
     distribution: str | None = None,
     source_workspace_root: Path | None = None,
+    progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Produce one terminal solely from sugar.enumerate demands.
 
@@ -987,6 +1159,11 @@ def _terminal_via_enumerate(
 
     path = (workspace_root / file_rel).resolve()
     ast_fn = count_ast_function_defs(path)
+    # ROSTER-FLOOR under a timer. `progress` is the only way a bound that fires
+    # mid-walk can report the mass already banked instead of zero; it is
+    # written as each stage completes and read only by the exhaustion handler.
+    if progress is not None:
+        progress["astFunctionDefs"] = int(ast_fn or 0)
 
     try:
         from sugar_lift_python_source.source_oracle import path_source
@@ -995,7 +1172,7 @@ def _terminal_via_enumerate(
     except ConstructionPanic:
         raise
     except BaseException as error:  # noqa: BLE001 — source identity is attendance
-        if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+        if is_unswallowable(error):
             raise
         return _instrument_failure_row(
             error,
@@ -1017,9 +1194,8 @@ def _terminal_via_enumerate(
             functions_enumerated=0,
         )
     source_cid = observed_source_cid
-
-    def _is_process_control(error: BaseException) -> bool:
-        return isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit))
+    if progress is not None:
+        progress["sourceCid"] = source_cid
 
     try:
         function_nodes, function_gaps = demand_function_roster(
@@ -1029,7 +1205,7 @@ def _terminal_via_enumerate(
             source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — includes ConstructionPanic
-        if _is_process_control(error):
+        if is_unswallowable(error):
             raise
         auth = int(ast_fn) if ast_fn is not None else 0
         panic = _panic_from_exception(error, file_rel=file_rel, phase="roster")
@@ -1064,6 +1240,9 @@ def _terminal_via_enumerate(
             function_nodes=[],
         )
 
+    if progress is not None:
+        progress["functionNodes"] = list(function_nodes)
+
     if function_gaps and not function_nodes:
         return terminal_from_enumerate(
             file_rel=file_rel,
@@ -1097,7 +1276,7 @@ def _terminal_via_enumerate(
             source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — distinct instrument/product paths
-        if _is_process_control(error):
+        if is_unswallowable(error):
             raise
         panic = _panic_from_exception(
             error, file_rel=file_rel, phase="context-manager-resolutions"
@@ -1165,7 +1344,7 @@ def _terminal_via_enumerate(
             source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — residual failed; roster stands
-        if _is_process_control(error):
+        if is_unswallowable(error):
             raise
         row = terminal_from_enumerate(
             file_rel=file_rel,
