@@ -98,6 +98,12 @@ binaries = ["sugar"]
 command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_attribute_target_binding_width.py"]
 network = "none"
 
+[tasks.probe-temporal-blowup-shape]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-u", "implementations/python/sugar-lift-py-tests/scripts/probe_temporal_blowup_shape.py"]
+network = "none"
+
 [tasks.probe-constructed-value-slot]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
