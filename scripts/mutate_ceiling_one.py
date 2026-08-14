@@ -117,6 +117,73 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
         "        banked = progress.get(\"terminalRow\")",
         "        banked = None",
     ),
+    # --- membership-exemption layer (#7415 follow-up) ---
+    #
+    # N1 -- exemption granted on the SPELLING of the kind, with no
+    # authenticated payload behind it. "exempt" becomes a word a shard can
+    # write beside any silent file.
+    "exemption_unauthenticated": (
+        "consumer",
+        '    if not isinstance(bound, (int, float)) or not isinstance(coordinate, str):\n'
+        "        return None\n"
+        "    if not coordinate:\n"
+        "        return None\n",
+        "",
+    ),
+    # N2 -- blanket tolerance: every silent seat is treated as exempt, which
+    # re-opens the exact hole the ceiling closed.
+    "blanket_membership_tolerance": (
+        "consumer",
+        '    if row.get("terminalKind") != TERMINAL_KIND_EXHAUSTED:\n        return None',
+        "    pass",
+    ),
+    # N3 -- the seal door stops cross-checking exemptions against the terminal
+    # rows, so a shard can exempt a seat it never bounded.
+    "exemption_crosscheck_dropped": (
+        "compose",
+        "        unsupported = sorted(claimed - exhausted_files)",
+        "        unsupported = []",
+    ),
+    # N4 -- exhausted rows go back in the instrument-defect bag: a harness
+    # fault reported for a product fact.
+    "exhausted_is_an_instrument_defect": (
+        "compose",
+        '        elif cat == "measurement-exhausted":',
+        '        elif cat == "measurement-exhausted-DISABLED":',
+    ),
+    # N5 -- the exemptions are dropped from the conserved wire, so no board
+    # reader can audit which seats were exempt or why.
+    "exemptions_dropped_from_seal": (
+        "compose",
+        '            "measurementExhaustedSeats": exempt_wire,',
+        '            "measurementExhaustedSeats": [],',
+    ),
+    # N6 -- the payload's own `file` key wins over the walked seat, keying the
+    # shard row on whatever the payload said. This was a REAL defect the
+    # falsifiability arm caught, not a hypothetical.
+    "payload_file_key_wins": (
+        "compose",
+        '                {**exhaustion, "file": file}',
+        '                {"file": file, **exhaustion}',
+    ),
+    # N7 -- the compose union drops the exempt seats, so a seat bounded in one
+    # shard is invisible on the corpus board.
+    "union_drops_exempt_seats": (
+        "compose",
+        "        shard_exempt_seats.extend(",
+        "        [].extend(",
+    ),
+    # N8 -- the SEAL-DOOR copy of the final union keeps only two arms. This
+    # was a real gap merged in #7415: the shard door conserved, the seal door
+    # refused, and nothing caught it until a board actually carried an
+    # exhausted seat through compose_from_partials.
+    "seal_door_union_two_arms": (
+        "compose",
+        "        input_keys=terminal[\"inputKeyManifest\"],\n"
+        "        output_keys=[*constructed, *panicked, *exhausted],",
+        "        input_keys=terminal[\"inputKeyManifest\"],\n"
+        "        output_keys=[*constructed, *panicked],",
+    ),
     "partition_sum_unchecked": (
         "compose",
         "    if accounted != files_terminal:",

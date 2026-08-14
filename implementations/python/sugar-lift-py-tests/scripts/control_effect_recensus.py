@@ -1458,6 +1458,7 @@ def main() -> int:
         live_done = 0
         live_panic = 0  # ConstructionPanic only (file-level kit panic)
         live_defect = 0
+        live_exhausted = 0  # seats the measurement ceiling stopped
         live_fns = 0
         live_clean = 0
         live_clean_refused = False  # any file refused clean → no clean% identity
@@ -1488,6 +1489,8 @@ def main() -> int:
                 )
                 if cat == "panic":
                     live_panic += 1
+                elif cat == "measurement-exhausted":
+                    live_exhausted += 1
                 elif cat not in {"completed", ""}:
                     live_defect += 1
                 live_done += 1
@@ -1774,6 +1777,12 @@ def main() -> int:
                     status = "cpanic"
                 elif cat == "completed":
                     status = "done"
+                elif cat == "measurement-exhausted":
+                    # Its own live counter. Adding it to `defect` would make
+                    # the progress line say the instrument broke on a seat
+                    # where the instrument worked exactly as specified.
+                    live_exhausted += 1
+                    status = "exhausted"
                 else:
                     live_defect += 1
                     status = cat

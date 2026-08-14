@@ -620,6 +620,38 @@ RELATION_MEMBERSHIP_ROW_FIELD = "relationMembership"
 RELATION_MEMBERSHIP_GAP_ROW_FIELD = "relationMembershipGaps"
 
 
+def _measurement_exhausted_exemption(
+    file_rel: object, row: object
+) -> dict[str, Any] | None:
+    """The seat's exemption from membership, or None if it is not exempt.
+
+    AUTHENTICATED, not asserted. A row is exempt only if it is an exhausted
+    terminal AND carries the exhaustion payload naming the bound it exceeded
+    and the coordinate it stopped at. A row that merely spells the kind is not
+    exempt -- otherwise the exemption would be a blanket "tolerate missing
+    membership", which re-opens the hole the ceiling exists to close.
+    """
+    if not isinstance(row, Mapping):
+        return None
+    if row.get("terminalKind") != TERMINAL_KIND_EXHAUSTED:
+        return None
+    exhaustion = row.get("measurementExhaustion")
+    if not isinstance(exhaustion, Mapping):
+        return None
+    bound = exhaustion.get("boundSeconds")
+    coordinate = exhaustion.get("coordinate")
+    if not isinstance(bound, (int, float)) or not isinstance(coordinate, str):
+        return None
+    if not coordinate:
+        return None
+    return {
+        "file": str(file_rel),
+        "boundSeconds": bound,
+        "construct": str(exhaustion.get("construct")),
+        "coordinate": coordinate,
+    }
+
+
 def shard_relation_membership_attestation(
     rows,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -629,6 +661,15 @@ def shard_relation_membership_attestation(
     saw. That shard then stays UNMEASURED and the reason names the files. A
     manifest assembled from the files that could testify would be a smaller
     denominator wearing a seal, which is the #7351 casualty exactly.
+
+    ONE exception, and it is not a tolerance: a seat the measurement ceiling
+    stopped never got far enough to produce membership testimony, so its
+    silence is EXPECTED rather than unexplained. Those seats are named in
+    ``measurementExhaustedSeats`` with the bound they exceeded and the
+    coordinate they stopped at, and the attendance conserves --
+    ``walked == testified + exempt``. Absent-because-measurement-stopped and
+    absent-because-nothing-was-found are two different facts and do not share
+    a representation. Every seat that actually finished must still testify.
     """
     from compose_control_effect_board import RELATION_MEMBERSHIP_RELATIONS
 
@@ -637,7 +678,20 @@ def shard_relation_membership_attestation(
         for relation in RELATION_MEMBERSHIP_RELATIONS
     }
     silent: list[str] = []
+    exempt: list[dict[str, Any]] = []
+    walked = 0
+    testified = 0
     for file_rel, row in rows:
+        walked += 1
+        exemption = _measurement_exhausted_exemption(file_rel, row)
+        if exemption is not None:
+            # A seat the ceiling stopped could not have produced membership
+            # testimony. Refusing the shard for that absence would punish it
+            # for the bound working -- but the seat is NAMED here, not waved
+            # through, and the requirement below still bites for every seat
+            # that actually finished.
+            exempt.append(exemption)
+            continue
         membership = row.get(RELATION_MEMBERSHIP_ROW_FIELD) if isinstance(row, Mapping) else None
         if not isinstance(membership, Mapping):
             silent.append(str(file_rel))
@@ -645,17 +699,28 @@ def shard_relation_membership_attestation(
         if set(membership) != set(RELATION_MEMBERSHIP_RELATIONS):
             silent.append(str(file_rel))
             continue
+        malformed_side = False
         for relation in RELATION_MEMBERSHIP_RELATIONS:
             side = membership[relation]
             if not isinstance(side, Mapping) or set(side) != {"expected", "observed"}:
                 silent.append(str(file_rel))
+                malformed_side = True
                 break
             populations[relation]["expected"].extend(side["expected"])
             populations[relation]["observed"].extend(side["observed"])
+        if not malformed_side:
+            testified += 1
     if silent:
         return None, (
             "relation-membership testimony absent for "
             f"{len(silent)} walked file(s): {sorted(set(silent))[:10]}"
+        )
+    # Counted on the way through, not derived from each other -- `testified =
+    # walked - exempt` would be a tautology dressed as a conservation check.
+    if testified + len(exempt) != walked:
+        raise ValueError(
+            "membership attendance does not conserve: "
+            f"walked={walked} testified={testified} exempt={len(exempt)}"
         )
     from compose_control_effect_board import (
         _RELATION_MEMBERSHIP_SCHEMA,
@@ -665,6 +730,7 @@ def shard_relation_membership_attestation(
     return (
         {
             "schema": _RELATION_MEMBERSHIP_SCHEMA,
+            "measurementExhaustedSeats": exempt,
             "relations": {
                 relation: {
                     "expected": _member_manifest_wire(

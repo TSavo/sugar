@@ -257,7 +257,24 @@ _RELATION_MEMBER_MANIFEST_SCHEMA = "recensus-relation-member-manifest/v1"
 # The relations whose population a sealed width is taken to describe. Both
 # receipts at frontierWidth=477 carried ZERO testimony for either of them.
 RELATION_MEMBERSHIP_RELATIONS = ("lexical-call", "target-pattern")
-_RELATION_MEMBERSHIP_FIELDS = frozenset({"schema", "relations"})
+# `measurementExhaustedSeats` is part of the attestation's own vocabulary, not
+# a tolerance bolted onto it. A seat the measurement ceiling stopped could not
+# have produced membership testimony, and its silence means something entirely
+# different from a seat that walked, finished, and still said nothing:
+#
+#   absent because measurement stopped   -> named here, countable, expected
+#   absent because nothing was found     -> a refusal, and still a refusal
+#
+# Those two never share a representation. The field is REQUIRED (possibly
+# empty) rather than optional, so a shard cannot omit it and leave a reader
+# unable to tell "no seats were exempt" from "this shard does not report
+# exemptions".
+_RELATION_MEMBERSHIP_FIELDS = frozenset(
+    {"schema", "relations", "measurementExhaustedSeats"}
+)
+_RELATION_MEMBERSHIP_EXEMPT_SEAT_FIELDS = frozenset(
+    {"file", "boundSeconds", "construct", "coordinate"}
+)
 _RELATION_MEMBER_MANIFEST_FIELDS = frozenset(
     {"schema", "relation", "memberCids", "memberCount", "manifestCid"}
 )
@@ -270,6 +287,10 @@ _RELATION_MEMBERSHIP_MALFORMED = "relation-membership-attestation-malformed"
 _RELATION_MEMBERSHIP_MISSING = "relation-membership-missing"
 _RELATION_MEMBERSHIP_EXTRA = "relation-membership-extra"
 _RELATION_MEMBERSHIP_DUPLICATE = "relation-membership-duplicate"
+# A seat claimed exempt with no exhausted terminal row behind it. This is the
+# only way the exemption could become a blanket "tolerate missing membership",
+# so it is a named refusal rather than a silent pass.
+_RELATION_MEMBERSHIP_EXEMPTION_UNSUPPORTED = "relation-membership-exemption-unsupported"
 _RELATION_MEMBERSHIP_REFUSAL_CODES = frozenset(
     {
         _RELATION_MEMBERSHIP_ABSENT,
@@ -277,6 +298,7 @@ _RELATION_MEMBERSHIP_REFUSAL_CODES = frozenset(
         _RELATION_MEMBERSHIP_MISSING,
         _RELATION_MEMBERSHIP_EXTRA,
         _RELATION_MEMBERSHIP_DUPLICATE,
+        _RELATION_MEMBERSHIP_EXEMPTION_UNSUPPORTED,
     }
 )
 
@@ -498,6 +520,38 @@ def authenticate_relation_membership(
             f"extra={sorted(set(relations) - set(RELATION_MEMBERSHIP_RELATIONS))}"
         )
 
+    exempt_seats = attestation.get("measurementExhaustedSeats")
+    if not isinstance(exempt_seats, list):
+        return malformed("measurementExhaustedSeats must be a list")
+    exempt_wire: list[dict[str, Any]] = []
+    for seat in exempt_seats:
+        if not isinstance(seat, Mapping):
+            return malformed("measurementExhaustedSeats entries must be objects")
+        if set(seat) != _RELATION_MEMBERSHIP_EXEMPT_SEAT_FIELDS:
+            return malformed(
+                "measurementExhaustedSeats entry has closed fields "
+                f"{sorted(_RELATION_MEMBERSHIP_EXEMPT_SEAT_FIELDS)}; got "
+                f"{sorted(seat)}"
+            )
+        # An exemption must NAME what stopped and where. "this one timed out"
+        # is not testimony; it is the absence of testimony with a label on it.
+        if not isinstance(seat.get("file"), str) or not seat["file"]:
+            return malformed("measurementExhaustedSeats entry lacks a file")
+        if not isinstance(seat.get("boundSeconds"), (int, float)):
+            return malformed(
+                f"measurementExhaustedSeats entry {seat.get('file')!r} lacks the "
+                "bound it exceeded"
+            )
+        if not isinstance(seat.get("coordinate"), str) or not seat["coordinate"]:
+            return malformed(
+                f"measurementExhaustedSeats entry {seat.get('file')!r} lacks the "
+                "coordinate measurement stopped at"
+            )
+        exempt_wire.append(dict(seat))
+    exempt_files = [str(seat["file"]) for seat in exempt_wire]
+    if len(set(exempt_files)) != len(exempt_files):
+        return malformed("measurementExhaustedSeats names a file twice")
+
     findings: list[tuple[str, str | None]] = []
     details: list[str] = []
     wire_relations: dict[str, Any] = {}
@@ -555,7 +609,14 @@ def authenticate_relation_membership(
             _authority=_RELATION_MEMBERSHIP_AUTHORITY,
         )
     return RelationMembershipConservedV1(
-        wire={"schema": _RELATION_MEMBERSHIP_SCHEMA, "relations": wire_relations},
+        wire={
+            "schema": _RELATION_MEMBERSHIP_SCHEMA,
+            "relations": wire_relations,
+            # Carried into the sealed body: a reader of the board can see
+            # exactly which seats were exempt and why, without having to
+            # reconcile the attestation against the terminal rows by hand.
+            "measurementExhaustedSeats": exempt_wire,
+        },
         _authority=_RELATION_MEMBERSHIP_AUTHORITY,
     )
 
@@ -1241,7 +1302,24 @@ def _validate_frontier_attestation_for_common_seal(
     terminal = validated[EDGE_TERMINAL_SEAL]
     constructed = frontier_attestation.get("constructedKeyManifest")
     panicked = frontier_attestation.get("constructionPanicKeyManifest")
-    if not isinstance(constructed, list) or not isinstance(panicked, list):
+    # THREE arms here too. This validator is a SECOND, independent copy of the
+    # final union -- attest_frontier_rows conserves at the shard door, and this
+    # one re-derives it at the seal door on purpose, so that a board cannot be
+    # sealed on the strength of a claim it carries about itself. Two doors that
+    # must agree only agree if BOTH know the partition has three members;
+    # teaching one of them and not the other is how a board that conserves at
+    # the shard is refused at the seal.
+    exhausted = frontier_attestation.get("measurementExhaustedKeyManifest")
+    if exhausted is None:
+        # Older boards predate the third member. An absent manifest is an
+        # empty arm, NOT an unknown one -- those boards were sealed before a
+        # seat could be exhausted at all.
+        exhausted = []
+    if (
+        not isinstance(constructed, list)
+        or not isinstance(panicked, list)
+        or not isinstance(exhausted, list)
+    ):
         raise ValueError("frontier terminal partition manifests absent")
     if len(panicked) != expected_panic_count:
         raise ValueError(
@@ -1251,7 +1329,7 @@ def _validate_frontier_attestation_for_common_seal(
     final_edge = key_edge_witness(
         stage_id=STAGE_TERMINAL_AGGREGATE_SEAL,
         input_keys=terminal["inputKeyManifest"],
-        output_keys=[*constructed, *panicked],
+        output_keys=[*constructed, *panicked, *exhausted],
     )
     if (
         final_edge["missingKeys"]
@@ -1259,11 +1337,24 @@ def _validate_frontier_attestation_for_common_seal(
         or final_edge["duplicateKeys"]
     ):
         raise ValueError("frontier final disjoint union does not conserve")
-    overlap = {_render_key(row) for row in constructed if isinstance(row, Mapping)} & {
-        _render_key(row) for row in panicked if isinstance(row, Mapping)
+    rendered_arms = {
+        "constructed": {
+            _render_key(row) for row in constructed if isinstance(row, Mapping)
+        },
+        "construction-panic": {
+            _render_key(row) for row in panicked if isinstance(row, Mapping)
+        },
+        "measurement-exhausted": {
+            _render_key(row) for row in exhausted if isinstance(row, Mapping)
+        },
     }
-    if overlap:
-        raise ValueError("frontier constructed and panic manifests overlap")
+    for left, right in (
+        ("constructed", "construction-panic"),
+        ("constructed", "measurement-exhausted"),
+        ("construction-panic", "measurement-exhausted"),
+    ):
+        if rendered_arms[left] & rendered_arms[right]:
+            raise ValueError(f"frontier {left} and {right} manifests overlap")
     final_seal = frontier_attestation.get("finalSeal")
     if (
         not isinstance(final_seal, Mapping)
@@ -1398,6 +1489,7 @@ def mint_partial(
     panics: list[dict[str, Any]] = []
     families: Counter[str] = Counter()
     instrument_defects: list[dict[str, Any]] = []
+    shard_exhausted: list[dict[str, Any]] = []
     for file, raw in terminals:
         cat = str(raw.get("category") or "")
         families.update(raw.get("families") or {})
@@ -1407,6 +1499,20 @@ def mint_partial(
                 panics.append(dict(panic))
             elif "ConstructionPanic" not in (raw.get("families") or {}):
                 families["ConstructionPanic"] += 1
+        elif cat == "measurement-exhausted":
+            # NOT an instrument defect. The instrument did what it was told
+            # and was stopped by its own stated bound; calling that a defect
+            # would report a harness fault for a product fact, and would put
+            # exhaustion back in a bag it does not belong in.
+            exhaustion = raw.get("measurementExhaustion")
+            shard_exhausted.append(
+                # `file` LAST: the payload carries its own `file` and letting
+                # it win would key the shard's row on whatever the payload
+                # said rather than on the seat actually walked.
+                {**exhaustion, "file": file}
+                if isinstance(exhaustion, Mapping)
+                else {"file": file, "reason": "measurementExhaustion absent"}
+            )
         elif cat not in {"completed", ""}:
             defect = raw.get("defect")
             instrument_defects.append(
@@ -1450,6 +1556,30 @@ def mint_partial(
         relation_membership_attestation
     )
     membership_reason = shard_membership.refusal_reason()
+    if membership_reason is None:
+        # THE TOOTH ON THE EXEMPTION. The attestation is written by the same
+        # shard whose seats it exempts, so a shape check there proves nothing
+        # about whether the seat was really stopped by the bound. Here -- the
+        # one place that holds the terminal rows AND the attestation -- every
+        # claimed exemption must be backed by an exhausted terminal row in
+        # THIS shard. Without this, "exempt" is a word a shard can write next
+        # to any silent file.
+        exhausted_files = {str(row["file"]) for row in shard_exhausted}
+        claimed = {
+            str(seat.get("file"))
+            for seat in shard_membership.conserved_wire().get(
+                "measurementExhaustedSeats"
+            )
+            or []
+        }
+        unsupported = sorted(claimed - exhausted_files)
+        if unsupported:
+            membership_reason = (
+                f"{_RELATION_MEMBERSHIP_EXEMPTION_UNSUPPORTED}: "
+                f"{len(unsupported)} seat(s) claimed exempt from membership "
+                "with no measurement-exhausted terminal row in this shard: "
+                f"{unsupported[:10]}"
+            )
     if membership_reason is not None and unmeasured_reason is None:
         status = "unmeasured"
         unmeasured_reason = membership_reason
@@ -1502,6 +1632,8 @@ def mint_partial(
             "constructionPanics": panics,
             "families": dict(families),
             "instrumentDefects": instrument_defects,
+            "measurementExhausted": shard_exhausted,
+            "R_measurement_exhausted_shard": len(shard_exhausted),
             "R_construction_panics_shard": len(panics),
         },
         "d3ResidencyExposure": aggregate_d3_residency_exposure(
@@ -2234,6 +2366,12 @@ def compose_from_partials(
         relation: {"expected": [], "observed": []}
         for relation in RELATION_MEMBERSHIP_RELATIONS
     }
+    # Exempt seats union across shards exactly as members do. A seat the
+    # ceiling stopped in s4 must still be visible, by name, on the corpus
+    # board -- otherwise the width is sealed over a seat nobody can see was
+    # never measured, which is the unknown denominator this attestation
+    # exists to make impossible.
+    shard_exempt_seats: list[dict[str, Any]] = []
     for i in range(k):
         seat = f"s{i:02d}"
         p = by_index.get(i)
@@ -2342,6 +2480,9 @@ def compose_from_partials(
             shard_membership_members[relation]["observed"].extend(
                 pair["observed"]["memberCids"]
             )
+        shard_exempt_seats.extend(
+            dict(seat) for seat in shard_wire["measurementExhaustedSeats"]
+        )
 
     if missing:
         return "unmeasured", unmeasured_envelope(
@@ -2446,6 +2587,12 @@ def compose_from_partials(
             }
             for relation in RELATION_MEMBERSHIP_RELATIONS
         },
+        # Sorted for determinism. A file belongs to exactly one bin, so a
+        # repeated name here is two shards claiming the same seat -- the
+        # authenticator refuses that rather than deduplicating it away.
+        "measurementExhaustedSeats": sorted(
+            shard_exempt_seats, key=lambda seat: str(seat.get("file"))
+        ),
     }
     board = seal_board_from_aggregate(
         agg,
