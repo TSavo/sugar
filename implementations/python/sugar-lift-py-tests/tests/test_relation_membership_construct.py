@@ -101,6 +101,10 @@ def _membership(module, files) -> dict[str, object]:
     return {
         "schema": "recensus-relation-membership-attestation/v1",
         "relations": relations,
+        # Required, not optional: an empty list says "no seat was exempt",
+        # which is a different fact from a shard that does not report
+        # exemptions at all.
+        "measurementExhaustedSeats": [],
     }
 
 
@@ -377,3 +381,96 @@ def test_two_attesting_shards_seal_the_unioned_population() -> None:
             for file in files
         )
     assert body["bodyCid"]
+
+
+def test_a_bounded_seat_in_one_shard_is_named_on_the_sealed_corpus_board() -> None:
+    """Shard 4's shape, composed for real.
+
+    The measurement ceiling stops one seat; that shard must still seal, and
+    the seat must be visible BY NAME on the corpus board. Building the
+    composed attestation by hand would only prove the hand-built object --
+    this drives ``compose_from_partials``, the door the census actually uses.
+    """
+    module = _load()
+    files = ["pandas/f0.py", "pandas/core/groupby/generic.py"]
+    demand_cid = "blake3-512:table-construct"
+    demand_identity = _demand_identity()
+    plan = module.build_plan(
+        enrolled_files=sorted(files),
+        shard_count=2,
+        measured_commit="098bf65aa",
+        aggregate_hash="agg",
+        manifest_shape_cid="manifest",
+        bins=[[file] for file in sorted(files)],
+        split_mode="fixture",
+        prior_hits=0,
+        prior_misses=2,
+        estimated_loads=[1.0, 1.0],
+        demand_table_cid=demand_cid,
+        demand_table_identity=demand_identity,
+    )
+    runtime = _runtime_attestation()
+    bounded = "pandas/core/groupby/generic.py"
+
+    sys.path.insert(0, str(_SCRIPTS))
+    from recensus_enumerate_consumer import (
+        measurement_exhausted_row,
+        shard_relation_membership_attestation,
+    )
+    from sugar_lift_py_tests.measurement_ceiling import MeasurementCeilingExceeded
+
+    # The REAL row builder, not a hand-rolled dict: the frontier attestation
+    # authenticates these rows, and a fixture that skips that path would seal
+    # a shape the census never produces.
+    exhausted_row = measurement_exhausted_row(
+        MeasurementCeilingExceeded(
+            seat=bounded,
+            bound_seconds=300.0,
+            active_stack=[
+                "SubstituteStatement|temporal|"
+                "pandas/core/groupby/generic.py:1324 Return"
+            ],
+        ),
+        file_rel=bounded,
+        elapsed_seconds=300.1,
+        source_cid=module.canonical_cid({"file": bounded}),
+        function_nodes=[],
+        ast_function_defs=88,
+    )
+
+    partials = []
+    for index, file in enumerate(sorted(files)):
+        if file == bounded:
+            rows = [(file, exhausted_row)]
+            membership, refusal = shard_relation_membership_attestation(rows)
+            assert refusal is None, refusal
+        else:
+            rows = [(file, _row(module, file))]
+            membership = _membership(module, [file])
+        partials.append(
+            module.mint_partial(
+                plan=plan,
+                shard_index=index,
+                terminal_rows=rows,
+                demand_table_cid=demand_cid,
+                demand_table_identity=demand_identity,
+                relation_membership_attestation=membership,
+                runtime_attestation=runtime,
+            )
+        )
+    assert all(p["measured"] for p in partials), [
+        p.get("unmeasuredReason") for p in partials
+    ]
+
+    status, body = module.compose_from_partials(
+        plan, partials, runtime_attestation=runtime
+    )
+    assert status == "sealed", (
+        body.get("unmeasuredReasons"),
+        body.get("instrumentFailures"),
+    )
+    sealed = body["relationMembershipAttestation"]
+    exempt = sealed["measurementExhaustedSeats"]
+    assert [seat["file"] for seat in exempt] == [bounded], exempt
+    assert exempt[0]["boundSeconds"] == 300.0
+    assert exempt[0]["coordinate"] == "pandas/core/groupby/generic.py:1324 Return"

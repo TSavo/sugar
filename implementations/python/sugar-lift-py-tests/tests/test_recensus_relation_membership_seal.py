@@ -194,6 +194,10 @@ def _membership_attestation(
     return {
         "schema": "recensus-relation-membership-attestation/v1",
         "relations": relations,
+        # Required, not optional: an empty list says "no seat was exempt",
+        # which is a different fact from a shard that does not report
+        # exemptions at all.
+        "measurementExhaustedSeats": [],
     }
 
 
