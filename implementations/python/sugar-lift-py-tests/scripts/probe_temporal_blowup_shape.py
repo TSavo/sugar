@@ -166,6 +166,45 @@ def _bisect_source(lines, method, block, keep: int) -> str:
     return _SUBJECT_HEAD + "\n".join(body) + "\n"
 
 
+_SPLICE_TEMPLATE = """\
+import numpy as np
+
+
+def subject(seed, flag):
+    diff = np.zeros(seed)
+    for level in {iterable}:
+        diff = np.add({operands})
+{chain}
+    if flag:
+        out = np.repeat(seed, {last})
+    return out
+"""
+
+
+def _splice_source(*, iterations: int, uses: int, tail: int) -> str:
+    """A name MUTATED inside a CONCRETE `for`, which dissolves and SPLICES.
+
+    This is the axis #7411 left inferred. ``For.substitute`` unrolls only a
+    concrete iterable (``List``/``Tuple`` literal or ``range`` of int literals,
+    capped at ``_UNROLL_FUEL``); the unrolled statements are spliced into the
+    block and threaded there. So the question is whether threading a name that
+    reads its own previous term, once per spliced iteration, can make that term
+    re-enter itself. ONE AXIS: ``iterations``.
+    """
+    operands = ", ".join(["diff"] * (uses - 1) + ["level"])
+    lines = []
+    for index in range(tail):
+        source = "diff" if index == 0 else f"v{index - 1}"
+        lines.append(f"    v{index} = np.add({source}, {source})")
+    last = f"v{tail - 1}" if tail else "diff"
+    return _SPLICE_TEMPLATE.format(
+        iterable=repr(list(range(iterations))),
+        operands=operands,
+        chain="\n".join(lines),
+        last=last,
+    )
+
+
 def _timed_construct(module_source: str, bound_s: float) -> tuple[str, float]:
     """Construct one synthetic module under a wall-clock bound.
 
@@ -225,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end", type=int, default=1340)
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--bisect", action="store_true")
+    parser.add_argument("--splice", action="store_true")
+    parser.add_argument("--iterations", type=int, nargs="+", default=[1,2,3,4,6,8,12,16])
+    parser.add_argument("--tail", type=int, default=0)
     parser.add_argument("--keep", type=int, nargs="+", default=None)
     parser.add_argument("--emit", type=int, default=None)
     parser.add_argument("--max-length", type=int, default=12)
@@ -251,6 +293,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.emit is not None:
         lines, method, block = _bins_block(handle.root)
         print(_bisect_source(lines, method, block, args.emit))
+
+    if args.splice:
+        # A cycle would show as non-termination at a size the finite reading
+        # says is trivial. A clean curve across `iterations` shows the spliced
+        # mutation threads FORWARD only.
+        print("SPLICE_HEADER iterations uses tail outcome seconds", flush=True)
+        for uses in args.uses:
+            for iterations in args.iterations:
+                source = _splice_source(
+                    iterations=iterations, uses=uses, tail=args.tail
+                )
+                outcome, seconds = _timed_construct(source, args.bound)
+                print(
+                    f"SPLICE_ROW iterations={iterations} uses={uses} "
+                    f"tail={args.tail} outcome={outcome} seconds={seconds:.3f}",
+                    flush=True,
+                )
+                if outcome == "measurement-exhausted":
+                    print(f"SPLICE_WALL iterations={iterations} uses={uses}",
+                          flush=True)
+                    break
 
     if args.bisect:
         # The bisection: REAL source, one axis (how many statements of the
