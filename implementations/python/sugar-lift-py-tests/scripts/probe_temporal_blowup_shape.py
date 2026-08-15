@@ -115,6 +115,57 @@ def _chain_source(*, length: int, uses: int, nested: bool) -> str:
     return _CHAIN_TEMPLATE.format(chain="\n".join(lines), nest=nest, tail=tail)
 
 
+_VALUE_COUNTS_START = 1090          # `def value_counts(` in the pinned 3.0.3 file
+_BINS_BLOCK_STMT_INDEX = 30         # the `if bins is not None:` at 1293
+_SUBJECT_HEAD = "import numpy as np\n\n\nclass G:\n"
+
+
+def _bins_block(corpus: Path):
+    """Locate value_counts and its `if bins is not None:` block in REAL source.
+
+    Returns (lines, method_lineno, block, inner_statements). Everything the
+    bisect emits is a verbatim LINE SLICE of the corpus file -- not
+    ``ast.unparse`` -- so each arm is the real source, not a re-rendering of it.
+    """
+    import ast
+
+    text = (corpus / _CORPUS_FILE).read_text(encoding="utf-8")
+    lines = text.splitlines()
+    tree = ast.parse(text)
+    method = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "SeriesGroupBy":
+            for child in node.body:
+                if (
+                    isinstance(child, ast.FunctionDef)
+                    and child.name == "value_counts"
+                    and child.lineno == _VALUE_COUNTS_START
+                ):
+                    method = child
+    if method is None:
+        raise SystemExit("value_counts not found at the pinned coordinate")
+    block = method.body[_BINS_BLOCK_STMT_INDEX]
+    if not isinstance(block, ast.If) or block.lineno != 1293:
+        raise SystemExit(f"block moved: {type(block).__name__} at {block.lineno}")
+    return lines, method, block
+
+
+def _bisect_source(lines, method, block, keep: int) -> str:
+    """value_counts with the `bins` block truncated after `keep` statements.
+
+    ONE AXIS: `keep`. Everything before the block -- the ~200 preceding lines of
+    value_counts, every name, the class nesting -- is byte-identical across all
+    arms. `keep=0` drops the block entirely.
+    """
+    prefix_end = method.body[_BINS_BLOCK_STMT_INDEX - 1].end_lineno
+    body = lines[_VALUE_COUNTS_START - 1 : prefix_end]
+    if keep > 0:
+        last = block.body[keep - 1].end_lineno
+        body += lines[block.lineno - 1 : last]
+    body.append("        return out")
+    return _SUBJECT_HEAD + "\n".join(body) + "\n"
+
+
 def _timed_construct(module_source: str, bound_s: float) -> tuple[str, float]:
     """Construct one synthetic module under a wall-clock bound.
 
@@ -173,6 +224,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=int, default=1080)
     parser.add_argument("--end", type=int, default=1340)
     parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--bisect", action="store_true")
+    parser.add_argument("--keep", type=int, nargs="+", default=None)
+    parser.add_argument("--emit", type=int, default=None)
     parser.add_argument("--max-length", type=int, default=12)
     parser.add_argument("--bound", type=float, default=60.0)
     # The DISCRIMINATING axis. If the mechanism is term duplication at each
@@ -193,6 +247,32 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dump:
         _dump(handle.root, args.start, args.end)
+
+    if args.emit is not None:
+        lines, method, block = _bins_block(handle.root)
+        print(_bisect_source(lines, method, block, args.emit))
+
+    if args.bisect:
+        # The bisection: REAL source, one axis (how many statements of the
+        # `bins` block survive). A prefix that completes gives a point on the
+        # curve; a prefix that exhausts the bound gives the wall's location.
+        # `measurement-exhausted` is NOT `non-terminating` -- it is the bound.
+        lines, method, block = _bins_block(handle.root)
+        total = len(block.body)
+        keeps = args.keep if args.keep else list(range(0, total + 1))
+        print(f"BISECT_PLAN block_statements={total} keeps={keeps}", flush=True)
+        for keep in keeps:
+            source = _bisect_source(lines, method, block, keep)
+            outcome, seconds = _timed_construct(source, args.bound)
+            print(
+                f"BISECT_ROW keep={keep} lines={source.count(chr(10))} "
+                f"outcome={outcome} seconds={seconds:.3f}",
+                flush=True,
+            )
+            if outcome == "measurement-exhausted":
+                print(f"BISECT_WALL keep={keep} -- bound {args.bound}s exceeded",
+                      flush=True)
+                break
 
     if args.synthetic:
         # ONE AXIS AT A TIME. uses=1 and uses=2 differ in nothing but the
