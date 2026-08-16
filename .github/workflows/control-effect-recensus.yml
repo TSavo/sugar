@@ -268,17 +268,14 @@ jobs:
     needs: plan
     runs-on: [self-hosted, Linux, X64]
     # Per-seat budget: serial ~12 min → LPT k=8 pole ~2 min; leave headroom.
-    # 360, not 180: the LPT prior can only price a file that has been MEASURED.
-    # A shard that times out never uploads its cost delta, so its files stay
-    # unpriced, take the default, and re-clump into whichever bin they land in
-    # next -- the heavy bin MOVES between runs but never disappears. Observed:
-    # s0 177min then 10min, s5 8min then 181min, same corpus. This is a
-    # bootstrap deadlock, not a bad split: k is banked (#7055) and the split KEY
-    # is already correct. Raised once so the unpriced set can complete and be
-    # priced; after that the prior balances and this ceiling should be dead
-    # weight. If a shard ever needs it again, the prior stopped restoring --
-    # look there, do NOT raise this number.
-    timeout-minutes: 360
+    # 180. The per-file measurement ceiling (#7415) is what makes this
+    # sufficient: no single file can consume a shard any more -- exceeding the
+    # bound is a countable frontier row, not a killed job. Raised to 360 in
+    # #7410 on a bootstrap-deadlock reading that was well-evidenced and wrong:
+    # the heavy bin really did MOVE between runs, but the cost was unbounded,
+    # so no ceiling was ever correct. With the per-file bound in place the
+    # eight shards land at 6-11 minutes.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
