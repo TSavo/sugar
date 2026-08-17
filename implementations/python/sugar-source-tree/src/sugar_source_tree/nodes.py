@@ -2715,6 +2715,47 @@ class Node(Typed):
             ),
         )
 
+    def _substituted_child(self, child: "Node", scope: BindingMap) -> "Node":
+        """``child.substitute(scope)``, asked ONCE per (child, scope) pair.
+
+        Substitution already shares on the way down -- ``Name.substitute``
+        returns the BOUND NODE ITSELF -- so a threaded term is a DAG of shared
+        objects, not a copied tree. What was not shared is the *asking*: every
+        path that reaches a shared term descends it again, so a binding read
+        ``u`` times down a chain of ``N`` costs ``u^N`` visits over a term of
+        size ``O(N)``. That is #7411, and it is a redundant question, not a
+        redundant term.
+
+        So the sharing added here is a memo on the FUNCTION, keyed by its two
+        arguments: the child's construction coordinate and the scope OBJECT it
+        is asked against. It is not a judgement that two terms are equal, and
+        it never merges two answers -- it returns the one answer this exact
+        call already produced.
+
+        WHERE IT DECLINES TO SHARE, which is the whole safety argument: a
+        different scope object is a different key, full stop. Every scope in
+        this file is either threaded through unchanged or built FRESH
+        (``{**scope, **binding}`` per statement in ``_substitute_body_tracked``,
+        ``dict(scope)`` in ``With``/live-loop, a masked comprehension of
+        ``scope`` in ``FunctionDef``/``Comprehension``); none is mutated after
+        it has been substituted against. So a name rebound mid-block, a
+        mutation between two reads, and a masking scope-owner each present a
+        scope the memo has never seen, and the child substitutes again.
+        """
+        cache = child._construction_cache()
+        key = (id(child.ref), id(child.reporter), id(scope))
+        remembered = cache.substitutions.get(key)
+        if remembered is not None:
+            return remembered
+        result = child.substitute(scope)
+        # Pin both identity-bearing participants for the row's lifetime: a
+        # transient shadow ref or a dropped scope dict must not have its
+        # address recycled into a live key (the hazard construction_cache
+        # already closes for field rows).
+        cache._pinned[key] = (child.ref, child.reporter, scope)
+        cache.substitutions[key] = result
+        return result
+
     def _substitute_field(self, value, scope):
         """Substitute ONE field value (a child Node, None, or a tuple of
         them) against a scope. Returns ``(new_value, changed)``. A scope-owner
@@ -2723,7 +2764,7 @@ class Node(Typed):
         if value is None:
             return value, False
         if isinstance(value, Node):
-            new = value.substitute(scope)
+            new = self._substituted_child(value, scope)
             if isinstance(new, _Splice):
                 raise TypeError(
                     "_Splice escaped into a generic child field: a statement "
@@ -2736,7 +2777,8 @@ class Node(Typed):
             return new, new is not value
         items = tuple(value)
         new_items = tuple(
-            item.substitute(scope) if isinstance(item, Node) else item for item in items
+            self._substituted_child(item, scope) if isinstance(item, Node) else item
+            for item in items
         )
         changed = any(new is not old for new, old in zip(new_items, items))
         if changed:

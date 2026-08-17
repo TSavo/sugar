@@ -190,7 +190,13 @@ class ConstructionCache:
     enclosing loop/handler so the key population converges with the ref set.
     """
 
-    __slots__ = ("fields", "sugar_results", "sugar_panics", "_pinned")
+    __slots__ = (
+        "fields",
+        "sugar_results",
+        "sugar_panics",
+        "substitutions",
+        "_pinned",
+    )
 
     def __init__(self) -> None:
         # key -> {slot_name: resolved value}
@@ -216,6 +222,26 @@ class ConstructionCache:
         # the coordinate rule -- the reporter testifies each coordinate once,
         # whether it answers present or absent.
         self.sugar_panics: dict[tuple, BaseException] = {}
+        # (ref, scope) -> the node that substitution produced for that PAIR.
+        #
+        # Substitution is a function of exactly two things: the node it
+        # rewrites and the scope it rewrites against. It is already SHARING by
+        # object identity on the way down (``Name.substitute`` returns the
+        # bound node itself), so the substituted term is a DAG -- but a
+        # re-substitution of that term (a call frame re-binding formals over an
+        # already-substituted callee body, a rewritten statement threaded a
+        # second time) descends it as a TREE, once per path. A binding read `u`
+        # times down a chain of `N` therefore costs u^N *visits* over a term of
+        # size O(N). #7411.
+        #
+        # This row is that function's memo, and nothing else. It never decides
+        # whether two terms are "the same"; it answers the same CALL once.
+        # Different scope object => different key => substituted again, which
+        # is what keeps a name rebound mid-block from reading the earlier
+        # term: ``_substitute_body_tracked`` mints a FRESH scope dict per
+        # binding (``{**scope, **binding}``), never mutates one in place, so a
+        # rebind cannot alias a memo row that was minted before it.
+        self.substitutions: dict[tuple, Any] = {}
         # key -> pin bag. The cache key embeds live identities (ref,
         # construction_context, and for control-sensitive kinds the nearest
         # loop/exception binding); pin every participant so IDs cannot be
