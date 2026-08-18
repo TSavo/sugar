@@ -145,11 +145,16 @@ jobs:
           import json
           import importlib.util
           import os
+          import sys
           print("attendance phase=compose status=loading_commit_measurement", flush=True)
           spec = importlib.util.spec_from_file_location(
               "cm", Path("tools/commit_measurement.py")
           )
           mod = importlib.util.module_from_spec(spec)
+          # @dataclass(slots=True) resolves its own class through
+          # sys.modules[cls.__module__]; an unregistered module makes that None
+          # and the decorator dies before any measurement is composed.
+          sys.modules[spec.name] = mod
           spec.loader.exec_module(mod)
           sha = os.environ["SHA"]
           vector = mod.compose_tip_from_receipts_dir(sha, Path("receipts"))
