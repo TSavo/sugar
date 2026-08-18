@@ -8,6 +8,11 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.sugar.call_site_sugar import (
+    CallSiteSugar,
+    DefinitionOccurrenceAbsentV1,
+    DefinitionOccurrenceAbsenceReasonV1,
+)
 
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 from sugar_source_tree.backend import materialize
@@ -119,13 +124,12 @@ def test_parser_call_definition_is_materialized_before_reporter_testimony(
 def test_raw_or_reminted_parser_handle_never_becomes_semantic_testimony(
     tmp_path,
 ) -> None:
-    _source, _definition, call = _enum_call()
-    pre_reporter = call._construct_sugar()
-    raw_handle = pre_reporter.expected_definition_ref
-    _reminted_source, _reminted_definition, reminted_call, reminted_reporter = (
+    _source, definition, call = _enum_call()
+    raw_handle = definition.ref
+    _reminted_source, reminted_definition, reminted_call, reminted_reporter = (
         _ordinary_call(tmp_path, helper="_is_single_bit", caller="other_call")
     )
-    reminted_handle = reminted_call._construct_sugar().expected_definition_ref
+    reminted_handle = reminted_definition.ref
     assert reminted_handle is not raw_handle
 
     # The current offender is retained only to prove the adapter object itself
@@ -138,6 +142,71 @@ def test_raw_or_reminted_parser_handle_never_becomes_semantic_testimony(
     with pytest.raises(ConstructedValueTestimonyNotWritten) as reminted_gap:
         reminted_reporter.present_construction(reminted_call, reminted_handle)
     assert "cpython_adapter._Handle" in str(reminted_gap.value)
+
+
+def test_call_site_constructor_refuses_raw_definition_handle(tmp_path) -> None:
+    """The handle escape stops at the field, before testimony can inspect it."""
+    _source, definition, call, _reporter = _ordinary_call(
+        tmp_path, helper="predicate", caller="apply"
+    )
+    raw_handle = definition.ref
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            r"CallSiteSugar\.expected_definition_ref must be a projected "
+            r"definition occurrence or DefinitionOccurrenceAbsentV1; got _Handle"
+        ),
+    ):
+        CallSiteSugar(
+            target_name="predicate",
+            args=(),
+            site=call.fragment,
+            expected_definition_ref=raw_handle,
+        )
+
+
+def test_call_site_constructor_refuses_raw_frame_owner_handle(tmp_path) -> None:
+    """The primary 24-seat escape cannot inhabit the frame-owner coordinate."""
+    _source, definition, call, _reporter = _ordinary_call(
+        tmp_path, helper="predicate", caller="apply"
+    )
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            r"CallSiteSugar\.expected_source_call_frame_owner must be a projected "
+            r"definition occurrence or DefinitionOccurrenceAbsentV1; got _Handle"
+        ),
+    ):
+        CallSiteSugar(
+            target_name="predicate",
+            args=(),
+            site=call.fragment,
+            expected_source_call_frame_owner=definition.ref,
+        )
+
+
+def test_source_backed_call_refuses_a_false_definition_absence(tmp_path) -> None:
+    """Positive absence cannot bypass source-call identity testimony."""
+    _source, _definition, call, _reporter = _ordinary_call(
+        tmp_path, helper="predicate", caller="apply"
+    )
+    truthful = call._construct_sugar()
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            r"CallSiteSugar\.expected_definition_ref cannot claim absence "
+            r"when source_call_frame is present"
+        ),
+    ):
+        replace(
+            truthful,
+            expected_definition_ref=DefinitionOccurrenceAbsentV1(
+                DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -165,11 +234,17 @@ def test_call_definition_testimony_rejects_foreign_or_wrong_occurrence(
     else:
         lie = definition.sugar
 
-    substituted = replace(truthful, expected_definition_ref=lie)
-    with pytest.raises(ConstructedValueTestimonyNotWritten) as gap:
-        reporter.present_construction(call, substituted)
-    assert "CollectingReporter.present_construction" in str(gap.value)
-    assert call.unit.filename in str(gap.value)
+    if axis == "foreign-source":
+        substituted = replace(truthful, expected_definition_ref=lie)
+        with pytest.raises(ConstructedValueTestimonyNotWritten) as gap:
+            reporter.present_construction(call, substituted)
+        assert "CollectingReporter.present_construction" in str(gap.value)
+        assert call.unit.filename in str(gap.value)
+    else:
+        with pytest.raises(
+            TypeError, match=r"CallSiteSugar\.expected_definition_ref"
+        ):
+            replace(truthful, expected_definition_ref=lie)
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +253,7 @@ def test_call_definition_testimony_rejects_foreign_or_wrong_occurrence(
 
 
 def test_every_identity_refusal_names_which_term_refused(tmp_path) -> None:
-    """A countable row is not an actionable one.
-
-    All four axes below are genuinely different defects asking for different
-    repairs. If they all print the same sentence, the board can count them and
-    nobody can fix them.
-    """
+    """Illegal categories stop at mint; a typed foreign definition goes on."""
     _source, definition, call, reporter = _ordinary_call(
         tmp_path, helper="predicate", caller="apply"
     )
@@ -193,26 +263,21 @@ def test_every_identity_refusal_names_which_term_refused(tmp_path) -> None:
     )
     assert foreign_source.unit.source_cid != call.unit.source_cid
 
-    seen = set()
-    for lie in (
-        foreign_definition,
-        foreign_call,
-        definition.body[0],
-        definition.sugar,
-    ):
-        substituted = replace(truthful, expected_definition_ref=lie)
-        with pytest.raises(ConstructedValueTestimonyNotWritten) as gap:
-            reporter.present_construction(call, substituted)
-        named = [
-            term
-            for term in ConstructionTestimonyReporterV1.SOURCE_CALL_IDENTITY_TERMS
-            if term in str(gap.value)
-        ]
-        # Exactly one term, never zero (lumped) and never several (ambiguous).
-        assert len(named) == 1, (named, str(gap.value))
-        seen.add(named[0])
-    # The four lies are not all one fault wearing four costumes.
-    assert len(seen) > 1, seen
+    for lie in (foreign_call, definition.body[0], definition.sugar):
+        with pytest.raises(
+            TypeError, match=r"CallSiteSugar\.expected_definition_ref"
+        ):
+            replace(truthful, expected_definition_ref=lie)
+
+    substituted = replace(truthful, expected_definition_ref=foreign_definition)
+    with pytest.raises(ConstructedValueTestimonyNotWritten) as gap:
+        reporter.present_construction(call, substituted)
+    named = [
+        term
+        for term in ConstructionTestimonyReporterV1.SOURCE_CALL_IDENTITY_TERMS
+        if term in str(gap.value)
+    ]
+    assert len(named) == 1, (named, str(gap.value))
 
 
 def test_the_seal_term_is_unreachable_without_a_resolved_definition(tmp_path) -> None:
@@ -234,7 +299,7 @@ def test_the_seal_term_is_unreachable_without_a_resolved_definition(tmp_path) ->
     # ``call-occurrence-mismatch`` (a red that predates this change and is
     # tracked separately). Riding on it would make this tooth report that
     # defect instead of the one it is here to catch.
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     definition = truthful.expected_definition_ref
     call_occurrence = truthful.call_occurrence
     frame = truthful.source_call_frame
@@ -328,7 +393,7 @@ def test_a_cross_file_enrolled_callee_is_not_an_identity_fault(tmp_path) -> None
     our instrument, not a defect in pandas.
     """
     definition, call, reporter = _two_files_one_roll(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = definition.source_visible_call_frame()
 
     fault = reporter._source_call_identity_fault(
@@ -347,7 +412,7 @@ def test_an_unauthenticated_callee_unit_still_refuses_by_its_own_name(
     refused under a DIFFERENT name than the cross-file case above returns.
     """
     definition, call, reporter = _two_files_one_roll(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = definition.source_visible_call_frame()
     object.__setattr__(definition.unit, "source_cid", "")
 
@@ -365,7 +430,7 @@ def test_an_opaque_callee_keeps_its_own_separate_name(tmp_path) -> None:
     relaxing the same-unit demand cannot let one through.
     """
     definition, call, reporter = _two_files_one_roll(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
 
     class _OpaqueHandle:
         """Stands where a raw parser handle arrives: no unit, no fragment."""
@@ -381,7 +446,7 @@ def test_the_frame_site_term_is_keyed_on_the_definitions_unit(tmp_path) -> None:
     callee's file. Keying it on the caller's unit was the same-unit demand
     wearing a second name -- it refused every cross-file call a second time."""
     definition, call, reporter = _two_files_one_roll(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = definition.source_visible_call_frame()
 
     # The callee's own site passes ...
@@ -459,7 +524,7 @@ def test_the_third_authority_accepts_the_true_cross_file_callee(tmp_path) -> Non
     """The truthful arm of the twin, so the refusal below is discrimination
     and not a guard that refuses everything."""
     top_level, _nested, call, reporter = _shadowing_callee_unit(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = top_level.source_visible_call_frame()
 
     # Exactly what `present_construction` now supplies: the caller's unit has
@@ -490,7 +555,7 @@ def test_a_shadowed_same_name_definition_is_REFUSED(tmp_path) -> None:
     out: it would convert 81 loud rows into 81 silent ones.
     """
     _top_level, nested, call, reporter = _shadowing_callee_unit(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = nested.source_visible_call_frame()
 
     # The third authority does NOT return the nested impostor: it reads the
@@ -582,7 +647,7 @@ def test_a_class_callee_carries_a_derivable_constructor_law(tmp_path) -> None:
 def test_the_third_authority_accepts_the_true_allocation_callee(tmp_path) -> None:
     """The truthful arm, so the refusal below is discrimination."""
     top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = top_level.source_visible_constructor_frame()
 
     resolved = _callee_definition_by_name_in_its_unit(top_level)
@@ -606,7 +671,7 @@ def test_a_shadowed_same_name_CLASS_is_REFUSED(tmp_path) -> None:
     would convert 78 loud rows into 78 silent ones.
     """
     _top_level, nested, call, reporter = _shadowing_allocation_unit(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = nested.source_visible_constructor_frame()
 
     resolved = _callee_definition_by_name_in_its_unit(nested)
@@ -630,7 +695,7 @@ def test_a_class_resolving_to_a_function_of_the_same_name_is_REFUSED(
     names the wrong repair.
     """
     top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
     frame = top_level.source_visible_constructor_frame()
     _source, function_definition, _fn_call, _fn_reporter = _ordinary_call(
         tmp_path, helper="Boom", caller="apply_function"
@@ -657,7 +722,7 @@ def test_an_opaque_allocation_callee_still_refuses_by_its_own_name(
     all. An unmaterialized handle is still `definition-not-a-functiondef`.
     """
     top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
-    truthful = call._project_constructed_value_for_testimony(call._construct_sugar())
+    truthful = call._construct_sugar()
 
     class _OpaqueHandle:
         """Stands where a raw parser handle arrives: no unit, no fragment."""
@@ -693,36 +758,11 @@ def test_a_class_definition_shows_up_on_the_roll(tmp_path) -> None:
 def test_an_allocation_handle_is_projected_to_its_typed_class_occurrence(
     tmp_path,
 ) -> None:
-    """The projection arm, which no other tooth reaches.
-
-    On the production path an allocation call carries
-    ``expected_definition_ref=bound_frame.owner.ref`` -- a raw parser handle,
-    not a typed node. Every other allocation tooth hands the guard a typed
-    definition directly and so routes AROUND the projection; a mutation that
-    dropped its ClassDef arm failed nothing at all. This is that tooth.
-    """
-    top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
+    """The producer closes the field before CallSiteSugar can be minted."""
+    top_level, _nested, call, _reporter = _shadowing_allocation_unit(tmp_path)
     constructed = call._construct_sugar()
-    # Exactly what the preconstruction branch installs.
-    with_handle = replace(constructed, expected_definition_ref=top_level.ref)
-    assert not isinstance(with_handle.expected_definition_ref, ClassDef)
-
-    projected = call._project_constructed_value_for_testimony(with_handle)
-
-    assert isinstance(projected.expected_definition_ref, ClassDef), (
-        projected.expected_definition_ref
-    )
+    assert constructed.expected_definition_ref is top_level
     assert (
-        projected.expected_definition_ref.fragment.seal()
+        constructed.expected_definition_ref.fragment.seal()
         == top_level.fragment.seal()
     )
-    # And the projected occurrence is one the guard can actually admit: a raw
-    # handle stops at term 1, a projected class reaches the seal join.
-    assert reporter._source_call_identity_fault(
-        call,
-        projected,
-        with_handle.expected_definition_ref,
-        top_level,
-        projected.call_occurrence,
-        top_level.source_visible_constructor_frame(),
-    ) == "definition-not-a-functiondef"

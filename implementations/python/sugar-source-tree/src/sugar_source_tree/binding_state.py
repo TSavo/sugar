@@ -697,13 +697,51 @@ class ConstructionTestimonyReporterV1:
         return None
 
     def present_construction(self, node: Node, value: object) -> None:
-        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_lift_py_tests.sugar.call_site_sugar import (
+            CallSiteSugar,
+            DefinitionOccurrenceAbsentV1,
+        )
         from sugar_source_tree.nodes import Call, FunctionDef, AsyncFunctionDef
 
         if (
             isinstance(node, Call)
             and isinstance(value, CallSiteSugar)
-            and value.expected_definition_ref is not None
+            and isinstance(
+                value.expected_definition_ref, DefinitionOccurrenceAbsentV1
+            )
+            and value.source_call_frame is not None
+        ):
+            self._testimony_gap(
+                node,
+                value,
+                "constructed value",
+                ValueError(
+                    "source-backed call falsely claims no definition occurrence"
+                ),
+            )
+        if (
+            isinstance(node, Call)
+            and isinstance(value, CallSiteSugar)
+            and isinstance(
+                value.expected_source_call_frame_owner,
+                DefinitionOccurrenceAbsentV1,
+            )
+            and value.source_call_frame_table is not None
+        ):
+            self._testimony_gap(
+                node,
+                value,
+                "constructed value",
+                ValueError(
+                    "seated source-frame table falsely claims no lexical owner"
+                ),
+            )
+        if (
+            isinstance(node, Call)
+            and isinstance(value, CallSiteSugar)
+            and not isinstance(
+                value.expected_definition_ref, DefinitionOccurrenceAbsentV1
+            )
         ):
             from sugar_lift_py_tests.context_manager_resolution import (
                 SourceFragmentCoordinateV1,

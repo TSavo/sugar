@@ -3268,13 +3268,10 @@ class Node(Typed):
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
             try:
-                result = self._project_constructed_value_for_testimony(
-                    self._construct_sugar()
-                )
-                # Testimony projection is INSIDE the discharge, not after it.
-                # A constructed value whose testimony cannot be content-
-                # addressed raises ConstructedValueTestimonyNotWritten here, so
-                # the coordinate records the ABSENT answer (memoized panic, gap
+                result = self._construct_sugar()
+                # A constructed value whose testimony cannot be content-addressed
+                # raises ConstructedValueTestimonyNotWritten here, so the
+                # coordinate records the ABSENT answer (memoized panic, gap
                 # already testified through the reporter) instead of a present
                 # answer whose testimony silently failed to exist.
                 self.reporter.present_construction(self, result)
@@ -3364,10 +3361,6 @@ class Node(Typed):
             span.end_line,
             span.end_col,
         )
-
-    def _project_constructed_value_for_testimony(self, value: object) -> object:
-        """Project parser machinery before constructed-value testimony."""
-        return value
 
     def _authenticated_new_constructor_shape(self):
         """Source-owned ``__new__`` allocation shape, or None.
@@ -11361,48 +11354,33 @@ class Call(Expression):
                     seen[node.object_identity_cid] = node
         return tuple(seen.values())
 
-    def _project_constructed_value_for_testimony(self, value: object) -> object:
-        """Replace a parser definition handle with this roll's typed occurrence."""
-        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-
-        if not isinstance(value, CallSiteSugar):
-            return value
-        definition_ref = value.expected_definition_ref
-        # An allocation callee's definition occurrence is a ClassDef. It is the
-        # SAME projection -- a parser handle standing in for this roll's typed
-        # occurrence -- and leaving it unprojected left the identity guard
-        # holding a raw `_Handle` and naming the wrong fault.
-        if definition_ref is None or isinstance(
-            definition_ref, (FunctionDef, AsyncFunctionDef, ClassDef)
-        ):
-            return value
-        lookup = getattr(self.reporter, "materialized_node_for_ref", None)
-        if lookup is None:
-            return value
-        definition = lookup(definition_ref)
-        if definition is None and value.source_call_frame is not None:
-            producer_definition = value.source_call_frame.owner
-            if (
-                isinstance(
-                    producer_definition, (FunctionDef, AsyncFunctionDef, ClassDef)
-                )
-                and producer_definition.ref is definition_ref
-            ):
-                retain = getattr(self.reporter, "retain_registered_node_from", None)
-                if retain is not None:
-                    definition = retain(
-                        producer_definition, producer_definition.reporter
-                    )
+    def _project_call_definition_occurrence(
+        self, definition: object, *, coordinate: str
+    ) -> "FunctionDef | AsyncFunctionDef | ClassDef":
+        """Reconcile a producer definition with this call reporter before mint."""
         if not isinstance(definition, (FunctionDef, AsyncFunctionDef, ClassDef)):
-            return value
-        source_call_frame = value.source_call_frame
-        if source_call_frame is not None:
-            source_call_frame = replace(source_call_frame, owner=definition)
-        return replace(
-            value,
-            expected_definition_ref=definition,
-            source_call_frame=source_call_frame,
-        )
+            raise BackendDefect(
+                owner="Call._construct_sugar",
+                blame=self.fragment,
+                observed=f"{coordinate} producer supplied {type(definition).__name__}",
+                requested="a typed source definition occurrence to reconcile",
+                fix="project the parser handle through the call reporter before minting CallSiteSugar",
+            )
+        if self.reporter is definition.reporter:
+            return definition
+        retain = getattr(self.reporter, "retain_registered_node_from", None)
+        if retain is None:
+            return definition
+        projected = retain(definition, definition.reporter)
+        if not isinstance(projected, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            raise BackendDefect(
+                owner="Call._construct_sugar",
+                blame=self.fragment,
+                observed=f"{coordinate} could not project {type(definition.ref).__name__}",
+                requested="this roll's exact typed source definition occurrence",
+                fix="repair definition registration or keep the call loud before CallSiteSugar construction",
+            )
+        return projected
 
     def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
@@ -11582,7 +11560,11 @@ class Call(Expression):
                 )
         if source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+            from sugar_lift_py_tests.sugar.call_site_sugar import (
+                CallSiteSugar,
+                DefinitionOccurrenceAbsentV1,
+                DefinitionOccurrenceAbsenceReasonV1,
+            )
 
             if any(keyword.arg is None for keyword in self.keywords):
                 raise SourceCallBindingGap(
@@ -11624,6 +11606,11 @@ class Call(Expression):
                     keywords=keyword_sugars,
                     source_call_frame=bound_frame,
                 )
+            projected_definition = self._project_call_definition_occurrence(
+                bound_frame.owner,
+                coordinate="CallSiteSugar.expected_definition_ref",
+            )
+            bound_frame = replace(bound_frame, owner=projected_definition)
             return CallSiteSugar(
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
                 args=tuple(a.sugar() for a in self.args),
@@ -11649,14 +11636,23 @@ class Call(Expression):
                     coordinate if lexical_row is not None else None
                 ),
                 expected_source_call_frame_owner=(
-                    lexical_row.definition_occurrence_identity
+                    self._project_call_definition_occurrence(
+                        lexical_row.definition_occurrence,
+                        coordinate="CallSiteSugar.expected_source_call_frame_owner",
+                    )
                     if lexical_row is not None
-                    else None
+                    else DefinitionOccurrenceAbsentV1(
+                        DefinitionOccurrenceAbsenceReasonV1.NO_LEXICAL_SOURCE_CALL_ROW
+                    )
                 ),
-                expected_definition_ref=bound_frame.owner.ref,
+                expected_definition_ref=projected_definition,
             )
         if isinstance(self.func, Name):
-            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+            from sugar_lift_py_tests.sugar.call_site_sugar import (
+                CallSiteSugar,
+                DefinitionOccurrenceAbsentV1,
+                DefinitionOccurrenceAbsenceReasonV1,
+            )
 
             # The call-site coordinate absorbs the callee's spelling instead of
             # its sugar, so the callee never constructs. That absorption IS its
@@ -11788,6 +11784,25 @@ class Call(Expression):
                     )
                 )
 
+            definition_occurrence = (
+                function_definition
+                if function_definition is not None
+                else definition
+            )
+            if definition_occurrence is None:
+                expected_definition = DefinitionOccurrenceAbsentV1(
+                    DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
+                )
+            else:
+                expected_definition = self._project_call_definition_occurrence(
+                    definition_occurrence,
+                    coordinate="CallSiteSugar.expected_definition_ref",
+                )
+                if source_call_frame is not None:
+                    source_call_frame = replace(
+                        source_call_frame, owner=expected_definition
+                    )
+
             return CallSiteSugar(
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
@@ -11799,9 +11814,7 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
-                expected_definition_ref=(
-                    None if function_definition is None else function_definition.ref
-                ),
+                expected_definition_ref=expected_definition,
                 native_operation_formal_coordinates=tuple(formal_coordinates),
             )
         if isinstance(self.func, Attribute):
