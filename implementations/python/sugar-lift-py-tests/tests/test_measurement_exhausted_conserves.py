@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 import pytest
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
@@ -164,9 +165,7 @@ def test_exhausted_seat_is_inside_the_final_disjoint_union() -> None:
     exhausted_manifest = attestation["measurementExhaustedKeyManifest"]
     assert [key["file"] for key in exhausted_manifest] == ["core/groupby/generic.py"]
     # And it is NOT in the panic arm.
-    panic_files = [
-        key["file"] for key in attestation["constructionPanicKeyManifest"]
-    ]
+    panic_files = [key["file"] for key in attestation["constructionPanicKeyManifest"]]
     assert "core/groupby/generic.py" not in panic_files
 
 
@@ -192,9 +191,9 @@ def test_an_unrecognised_terminal_kind_is_refused_not_ignored() -> None:
     row["terminalKind"] = "measurement-exhasuted"  # one transposition
     row["category"] = "measurement-exhasuted"
     _, failures = compose.attest_frontier_rows([("x.py", row)])
-    assert any("not closed" in str(failure.get("reason")) for failure in failures), (
-        failures
-    )
+    assert any(
+        "not closed" in str(failure.get("reason")) for failure in failures
+    ), failures
 
 
 def test_exhausted_terminal_is_counted_on_its_own_axis_in_the_board() -> None:

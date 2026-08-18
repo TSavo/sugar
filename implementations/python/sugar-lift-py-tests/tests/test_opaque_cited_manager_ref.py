@@ -38,6 +38,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
     WithOpaqueCitedManagerSugar,
 )
+from sugar_source_tree.binding_state import constructed_value_cid_v2
 
 SOURCE_CID = "blake3-512:" + "aa" * 64
 OWNER_CID = "blake3-512:" + "bb" * 64
@@ -233,6 +234,28 @@ def test_ref_cannot_be_constructed_without_producer_authority():
     assert "lacks producer authority" in str(raised.value)
 
 
+def test_ref_refuses_a_nonproducer_value_of_the_authority_category():
+    """Naming the category must not let a caller mint producer testimony."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        _OPAQUE_CITED_MANAGER_AUTHORITY,
+    )
+
+    ref = _ref()
+    clone = object.__new__(OpaqueCitedContextManagerRefV1)
+    for name, value in (
+        ("use_site", ref.use_site),
+        ("target_name", ref.target_name),
+        ("roster", ref.roster),
+        ("citation_cid", ref.citation_cid),
+        ("uncited", ref.uncited),
+        ("_authority", type(_OPAQUE_CITED_MANAGER_AUTHORITY)()),
+    ):
+        object.__setattr__(clone, name, value)
+    with pytest.raises(ContractRefProtocolError) as raised:
+        clone.__post_init__()
+    assert "lacks producer authority" in str(raised.value)
+
+
 def test_ref_refuses_a_roster_naming_another_call():
     """Citation and roster must name ONE call; cross-wired testimony refuses."""
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -286,6 +309,11 @@ def test_context_manager_edge_wire_refuses_a_citation():
     with pytest.raises(ContextManagerEdgeTransportError) as raised:
         ContextManagerEdgeDtoV1.from_resolved(ref, ref.use_site)
     assert "authenticated derived ref" in str(raised.value)
+
+
+def test_producer_authority_has_a_named_constructed_value_category():
+    """The real With seat canonicalizes without inventing a reflected category."""
+    assert constructed_value_cid_v2(_node()).startswith("blake3-512:")
 
 
 # --------------------------------------------------- absence is not unknown

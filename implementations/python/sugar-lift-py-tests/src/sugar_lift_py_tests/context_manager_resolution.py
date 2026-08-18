@@ -364,7 +364,12 @@ class ContextManagerContractRefV1:
     semantics: ContextManagerSemanticsV1
 
 
-_OPAQUE_CITED_MANAGER_AUTHORITY = object()
+@dataclass(frozen=True, eq=False)
+class _OpaqueCitedManagerAuthority:
+    """Named category whose one producer instance is checked by identity."""
+
+
+_OPAQUE_CITED_MANAGER_AUTHORITY = _OpaqueCitedManagerAuthority()
 
 
 @dataclass(frozen=True)
@@ -404,7 +409,15 @@ class OpaqueCitedContextManagerRefV1:
     target_name: str
     roster: OpaqueSourceCallRosterV1
     citation_cid: str
-    _authority: object = field(init=False, repr=False, compare=False, default=None)
+    _authority: _OpaqueCitedManagerAuthority = field(
+        init=False,
+        repr=False,
+        compare=False,
+        # The public dataclass constructor receives a same-category lie, so it
+        # still reaches the identity guard and refuses. Only the mint door
+        # overwrites this field with the producer singleton below.
+        default_factory=_OpaqueCitedManagerAuthority,
+    )
 
     #: Named so a reader of one row can see the claim without the docstring.
     #: This is testimony, never a bucket key.
