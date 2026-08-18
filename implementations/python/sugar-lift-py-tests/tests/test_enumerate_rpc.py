@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from sugar_lift_py_tests.repo_root import resolve_repo_root
+
 import pytest
 
 from sugar_lift_py_tests import lift_rpc
@@ -873,7 +875,7 @@ def test_full_tree_universe_carries_source_constructed_attribute_sidecars(
 ) -> None:
     """An incomplete body must keep its testimony without becoming complete."""
     source = (
-        Path(__file__).parents[4]
+        resolve_repo_root()
         / "examples/numpy-attribute-safety-showcase/good/src/numpy_box.py"
     ).read_text(encoding="utf-8")
     subject = tmp_path / "numpy_box.py"
@@ -1106,9 +1108,7 @@ def test_assertion_exact_seek_returns_the_identical_observed_locus(
     )
     observed = _enumerate("call_sites", project, at=function)["nodes"][0]
 
-    result = _enumerate(
-        "assertions", project, at=observed["memento"], seek=True
-    )
+    result = _enumerate("assertions", project, at=observed["memento"], seek=True)
 
     assert result["gaps"] == []
     assert result["nodes"] == [observed]

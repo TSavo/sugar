@@ -17,10 +17,11 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 import pytest
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
@@ -34,7 +35,6 @@ from sugar_lift_py_tests.measurement_ceiling import (  # noqa: E402
     is_unswallowable,
     measurement_ceiling,
 )
-
 
 # --------------------------------------------------------------------------
 # ARM ONE: the bound fires, and the row names the coordinate.
@@ -138,9 +138,10 @@ def test_ordinary_work_completes_untouched_and_the_timer_is_disarmed() -> None:
             ):
                 observed.append(seat)
         # Disarmed between seats, every time -- not merely at the end.
-        assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0), (
-            f"timer still armed after {seat}"
-        )
+        assert signal.getitimer(signal.ITIMER_REAL) == (
+            0.0,
+            0.0,
+        ), f"timer still armed after {seat}"
     assert observed == ["a.py", "b.py", "c.py"]
 
 
