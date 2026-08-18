@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass, field as dataclass_field
-from typing import Any
+from enum import Enum
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 
@@ -13,6 +14,48 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     require_constructed_term_sugar,
 )
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+
+
+class DefinitionOccurrenceAbsenceReasonV1(str, Enum):
+    """Why a call producer positively claims no source definition occurrence."""
+
+    NOT_SOURCE_RESOLVED = "not-source-resolved"
+    NO_LEXICAL_SOURCE_CALL_ROW = "no-lexical-source-call-row"
+
+
+@dataclass(frozen=True)
+class DefinitionOccurrenceAbsentV1:
+    """Positive absence arm for a call's definition reconciliation fields."""
+
+    reason: DefinitionOccurrenceAbsenceReasonV1
+
+    def __post_init__(self) -> None:
+        if type(self.reason) is not DefinitionOccurrenceAbsenceReasonV1:
+            raise TypeError(
+                "DefinitionOccurrenceAbsentV1.reason must be "
+                "DefinitionOccurrenceAbsenceReasonV1"
+            )
+
+
+if TYPE_CHECKING:
+    from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
+
+    DefinitionOccurrenceReconciliationV1: TypeAlias = (
+        FunctionDef
+        | AsyncFunctionDef
+        | ClassDef
+        | DefinitionOccurrenceAbsentV1
+    )
+else:
+    DefinitionOccurrenceReconciliationV1 = object
+
+
+_DEFINITION_NOT_SOURCE_RESOLVED = DefinitionOccurrenceAbsentV1(
+    DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
+)
+_NO_LEXICAL_SOURCE_CALL_ROW = DefinitionOccurrenceAbsentV1(
+    DefinitionOccurrenceAbsenceReasonV1.NO_LEXICAL_SOURCE_CALL_ROW
+)
 
 
 @dataclass(frozen=True)
@@ -48,11 +91,13 @@ class CallSiteSugar(ConstructedTermSugar):
     source_call_frame: Any = dataclass_field(default=None, compare=False)
     source_call_frame_table: Any = dataclass_field(default=None, compare=False)
     source_call_frame_coordinate: Any = dataclass_field(default=None, compare=False)
-    expected_source_call_frame_owner: Any = dataclass_field(default=None, compare=False)
+    expected_source_call_frame_owner: DefinitionOccurrenceReconciliationV1 = (
+        dataclass_field(default=_NO_LEXICAL_SOURCE_CALL_ROW, compare=False)
+    )
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
-    expected_definition_ref: object | None = dataclass_field(
-        default=None, compare=False
+    expected_definition_ref: DefinitionOccurrenceReconciliationV1 = dataclass_field(
+        default=_DEFINITION_NOT_SOURCE_RESOLVED, compare=False
     )
     native_operation_formal_coordinates: tuple = dataclass_field(
         default=(), compare=False
@@ -73,6 +118,65 @@ class CallSiteSugar(ConstructedTermSugar):
             raise TypeError(
                 "CallSiteSugar.call_occurrence must be SourceFragmentCoordinateV1"
             )
+        self._require_definition_reconciliation(
+            self.expected_definition_ref,
+            coordinate="CallSiteSugar.expected_definition_ref",
+        )
+        self._require_definition_reconciliation(
+            self.expected_source_call_frame_owner,
+            coordinate="CallSiteSugar.expected_source_call_frame_owner",
+        )
+        if isinstance(
+            self.expected_definition_ref, DefinitionOccurrenceAbsentV1
+        ) and self.source_call_frame is not None:
+            raise TypeError(
+                "CallSiteSugar.expected_definition_ref cannot claim absence "
+                "when source_call_frame is present"
+            )
+        if isinstance(
+            self.expected_source_call_frame_owner,
+            DefinitionOccurrenceAbsentV1,
+        ) and self.source_call_frame_table is not None:
+            raise TypeError(
+                "CallSiteSugar.expected_source_call_frame_owner cannot claim "
+                "absence when source_call_frame_table is present"
+            )
+
+    @staticmethod
+    def _require_definition_reconciliation(
+        value: object, *, coordinate: str
+    ) -> None:
+        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
+
+        if not isinstance(
+            value,
+            (
+                FunctionDef,
+                AsyncFunctionDef,
+                ClassDef,
+                DefinitionOccurrenceAbsentV1,
+            ),
+        ):
+            raise TypeError(
+                f"{coordinate} must be a projected definition occurrence or "
+                "DefinitionOccurrenceAbsentV1; got "
+                f"{type(value).__name__}"
+            )
+
+    @staticmethod
+    def _reconciled_definition_ref(value: object) -> object | None:
+        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
+
+        match value:
+            case DefinitionOccurrenceAbsentV1():
+                return None
+            case FunctionDef() | AsyncFunctionDef() | ClassDef() as definition:
+                return definition.ref
+            case _:
+                raise TypeError(
+                    "definition reconciliation must be a projected definition "
+                    "occurrence or DefinitionOccurrenceAbsentV1"
+                )
 
     @classmethod
     def witnesses(cls):
@@ -186,32 +290,20 @@ class CallSiteSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        if (
-            self.source_call_frame is not None
-            and self.expected_definition_ref is not None
-        ):
+        if self.source_call_frame is not None:
             from sugar_source_tree.panic import SugarNotWritten
             from sugar_source_tree.nodes import (
                 AsyncFunctionDef,
-                ClassDef,
                 FunctionDef,
             )
 
-            # A projected ALLOCATION callee is a ClassDef occurrence, so it
-            # answers with `.ref` exactly as a projected function does. Without
-            # this arm it fell to the raw-handle branch and compared a typed
-            # node against a ref, which never matches.
-            if isinstance(
-                self.expected_definition_ref,
-                (FunctionDef, AsyncFunctionDef, ClassDef),
-            ):
-                owner_matches = (
-                    self.source_call_frame.owner.ref is self.expected_definition_ref.ref
-                )
-            else:
-                owner_matches = (
-                    self.source_call_frame.owner.ref is self.expected_definition_ref
-                )
+            expected_definition_ref = self._reconciled_definition_ref(
+                self.expected_definition_ref
+            )
+            owner_matches = (
+                expected_definition_ref is not None
+                and self.source_call_frame.owner.ref is expected_definition_ref
+            )
             if not owner_matches:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
@@ -342,11 +434,15 @@ class CallSiteSugar(ConstructedTermSugar):
             source_call_frame = self.source_call_frame_table.get(
                 self.source_call_frame_coordinate
             )
-            if (
-                source_call_frame is None
-                or source_call_frame.owner.ref
-                is not self.expected_source_call_frame_owner
-            ):
+            expected_owner_ref = self._reconciled_definition_ref(
+                self.expected_source_call_frame_owner
+            )
+            owner_matches = (
+                source_call_frame is not None
+                and expected_owner_ref is not None
+                and source_call_frame.owner.ref is expected_owner_ref
+            )
+            if source_call_frame is None or not owner_matches:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,
