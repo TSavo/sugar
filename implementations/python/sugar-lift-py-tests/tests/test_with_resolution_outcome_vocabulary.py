@@ -19,15 +19,14 @@ diverge again.
 from __future__ import annotations
 
 import importlib.util
-import pathlib
 import re
 import sys
 
 import pytest
 
-_SCRIPTS = (
-    pathlib.Path(__file__).resolve().parents[1] / "scripts"
-)
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 
 
 def _load():

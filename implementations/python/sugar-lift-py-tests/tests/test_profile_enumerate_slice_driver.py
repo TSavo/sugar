@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 import pytest
 
@@ -20,7 +21,7 @@ SPEC = os.environ.get("PROFILE_SLICE")
 
 @pytest.mark.skipif(not SPEC, reason="PROFILE_SLICE not set")
 def test_profile_slice() -> None:
-    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    scripts = sugar_lift_py_tests_package_root() / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
     import profile_enumerate_slice

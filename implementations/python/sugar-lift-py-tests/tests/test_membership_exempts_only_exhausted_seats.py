@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 import pytest
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
@@ -327,9 +328,9 @@ def test_a_lying_twin_cannot_buy_exemption_with_a_payload_alone() -> None:
         },
     }
     attestation, reason = shard_relation_membership_attestation([("twin.py", twin)])
-    assert attestation is None, (
-        "a constructed seat bought a membership exemption with a payload"
-    )
+    assert (
+        attestation is None
+    ), "a constructed seat bought a membership exemption with a payload"
     assert "twin.py" in reason
 
 
@@ -370,9 +371,9 @@ def test_the_exempt_seat_reaches_the_corpus_board_by_name() -> None:
     }
     corpus = compose.authenticate_relation_membership(composed)
     assert corpus.refusal_reason() is None
-    assert [s["file"] for s in corpus.conserved_wire()["measurementExhaustedSeats"]] == [
-        "g.py"
-    ]
+    assert [
+        s["file"] for s in corpus.conserved_wire()["measurementExhaustedSeats"]
+    ] == ["g.py"]
 
 
 def test_two_shards_claiming_the_same_exempt_seat_are_refused() -> None:
