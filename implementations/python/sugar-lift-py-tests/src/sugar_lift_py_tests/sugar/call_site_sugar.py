@@ -89,7 +89,13 @@ class CallSiteSugar(ConstructedTermSugar):
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
-    source_call_frame_table: Any = dataclass_field(default=None, compare=False)
+    # Lookup aid: the frame is read OUT of this table by
+    # ``source_call_frame_coordinate`` (testified) and reconciled against
+    # ``expected_source_call_frame_owner`` (testified); the table itself is
+    # never testimony (see ConstructedValueV2's lookup rule).
+    source_call_frame_table: Any = dataclass_field(
+        default=None, compare=False, metadata={"testimony": "lookup"}
+    )
     source_call_frame_coordinate: Any = dataclass_field(default=None, compare=False)
     expected_source_call_frame_owner: DefinitionOccurrenceReconciliationV1 = (
         dataclass_field(default=_NO_LEXICAL_SOURCE_CALL_ROW, compare=False)

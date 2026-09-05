@@ -2526,6 +2526,23 @@ class _Splice:
         self.bindings = bindings or {}
 
 
+
+_FRAMES_UNDER_CONSTRUCTION: set = set()
+
+
+class SourceCallFrameCycle(Exception):
+    """Re-entry into a source-visible frame still under construction.
+
+    Raised by ``FunctionDef.source_visible_call_frame`` and caught only at the
+    inline call sites in ``Call._construct_sugar``, where the call becomes a
+    recursion seat (definition known, ``call-graph-cycle`` resolution gap).
+    """
+
+    def __init__(self, definition) -> None:
+        super().__init__(definition.name)
+        self.definition = definition
+
+
 @_abstract
 @dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Node(Typed):
@@ -3932,6 +3949,28 @@ class FunctionDef(Statement):
     def source_visible_call_frame(self):
         """Construct this callable body through the ordinary node/Sugar door.
 
+        RECURSION IS A SEAT, NOT AN UNFOLDING. A same-module callee's frame is
+        constructed inline at its call; along a recursive call graph
+        (``ensure_key_mapped`` <-> ``_ensure_key_mapped_multiindex`` in pandas
+        core/sorting.py) that re-enters this door for a definition whose frame
+        is still under construction and unfolds until RecursionError (6 files
+        on the 2026-09-05 board). The fixpoint reference is the definition
+        itself: re-entry raises ``SourceCallFrameCycle``, and the call that
+        asked carries the definition with a ``call-graph-cycle`` seat -- never
+        a second body.
+        """
+        definition_cid = self.fragment.seal().cid
+        if definition_cid in _FRAMES_UNDER_CONSTRUCTION:
+            raise SourceCallFrameCycle(self)
+        _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
+        try:
+            return FunctionDef._source_visible_call_frame_unguarded(self)
+        finally:
+            _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
+
+    def _source_visible_call_frame_unguarded(self):
+        """Construct this callable body through the ordinary node/Sugar door.
+
         Parameterized frames require the shared BindingCoordinateV1 owner.  The
         coordinate-free zero-parameter arm can already carry its exact body;
         it is built from the same substituted statement nodes as `_construct_sugar`.
@@ -4774,126 +4813,135 @@ class FunctionDef(Statement):
         # tree construction path re-enters it here.
         lc = self.line_col_span()
         where = f"{self.unit.filename}:{lc.start_line} {self.name}"
-        with reduction_span(sugar="FunctionUniverse", role="construction", site=where):
-            # Phase spans: the bisection instrument. A slow function names its
-            # slow PHASE here; the per-statement spans inside _substitute_body
-            # then name the statement. We measure; we do not guess.
-            with reduction_span(sugar="Substitute", role="temporal", site=where):
-                # Substitute the body against an empty scope: formals are masked
-                # (stay free -> symbolic), locals thread/inline, phis -> IfExps.
-                from sugar_lift_python_source.canonical import cid_of_json
+        # Same seat law as source_visible_call_frame: a callee's universe asked
+        # for while that callee's own universe is under construction is the
+        # recursion seat, not a second unfolding.
+        definition_cid = self.fragment.seal().cid
+        if definition_cid in _FRAMES_UNDER_CONSTRUCTION:
+            raise SourceCallFrameCycle(self)
+        _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
+        try:
+            with reduction_span(sugar="FunctionUniverse", role="construction", site=where):
+                # Phase spans: the bisection instrument. A slow function names its
+                # slow PHASE here; the per-statement spans inside _substitute_body
+                # then name the statement. We measure; we do not guess.
+                with reduction_span(sugar="Substitute", role="temporal", site=where):
+                    # Substitute the body against an empty scope: formals are masked
+                    # (stay free -> symbolic), locals thread/inline, phis -> IfExps.
+                    from sugar_lift_python_source.canonical import cid_of_json
 
-                scope_owner_cid = cid_of_json(
-                    {
-                        "kind": "binding-scope-owner",
-                        "schemaVersion": "1",
-                        "source": self.fragment.seal().to_dict(),
-                    }
-                )
-                trace_builder = SubstitutionTraceBuilderV1(scope_owner_cid)
-                loop_trace_required = any(
-                    isinstance(node, (For, AsyncFor, While))
-                    for statement in self.body
-                    for node in statement.walk()
-                )
-                substituted = self.substitute(
-                    {
-                        _SCOPE_OWNER_CID: scope_owner_cid,
-                        _SUBSTITUTION_TRACE_BUILDER: trace_builder,
-                        _BINDING_ENTRY_FACTORY: RuntimeBindingEntryFactoryV1(
-                            scope_owner_cid
-                        ),
-                    }
-                )
-            with reduction_span(sugar="Construct", role="construction", site=where):
-                from .backend import materialize
-                from .binding_state import ConstructionTestimonyReporterV1
-
-                if loop_trace_required:
-                    with reduction_span(
-                        sugar="Construct.rematerialize",
-                        role="construction",
-                        site=where,
-                    ):
-                        testimony_reporter = ConstructionTestimonyReporterV1(
-                            self.reporter, trace_builder
-                        )
-                        construction_root = materialize(
-                            substituted.unit, substituted.ref, testimony_reporter
-                        )
-                    body_stmts = construction_root.body
-                    with reduction_span(
-                        sugar="Construct.body", role="construction", site=where
-                    ):
-                        statements = tuple(
-                            self._sugar_body_statement(stmt) for stmt in body_stmts
-                        )
-                    with reduction_span(
-                        sugar="Construct.freeze_trace",
-                        role="construction",
-                        site=where,
-                    ):
-                        substitution_trace = trace_builder.freeze(testimony_reporter)
-                else:
-                    # Every statement still has an immutable runtime snapshot.
-                    # Only a loop consumer demands the sealed state projection;
-                    # ordinary functions retain the runtime trace without
-                    # sealing/hashing every binding (see freeze()).
-                    with reduction_span(
-                        sugar="Construct.body", role="construction", site=where
-                    ):
-                        statements = tuple(
-                            self._sugar_body_statement(stmt)
-                            for stmt in substituted.body
-                        )
-                    with reduction_span(
-                        sugar="Construct.freeze_trace",
-                        role="construction",
-                        site=where,
-                    ):
-                        substitution_trace = trace_builder.freeze()
-                bridge_source_symbol = None
-                context = self._require_construction_context(
-                    owner="FunctionDef._construct_sugar"
-                )
-                workspace_root = getattr(context, "workspace_root", None)
-                if workspace_root is not None and self.unit.is_module_level_function(
-                    self.name, self.line_col_span().start_line
-                ):
-                    from pathlib import Path
-
-                    # The construction door already mints the locus
-                    # workspace-relative (`workspace_path_source`). Re-deriving
-                    # it here would be a second answer to a question already
-                    # resolved; an absolute filename means the unit did NOT come
-                    # through that door, and that stays LOUD.
-                    relative = Path(self.unit.filename)
-                    if relative.is_absolute():
-                        raise SugarNotWritten(
-                            blame=self.fragment,
-                            owner="FunctionDef.bridge_source_symbol",
-                            observed=f"absolute source locus `{self.unit.filename}`",
-                            requested="workspace-relative source locus",
-                            fix=(
-                                "route the source through the workspace-relative "
-                                "lift door (`workspace_path_source`)"
+                    scope_owner_cid = cid_of_json(
+                        {
+                            "kind": "binding-scope-owner",
+                            "schemaVersion": "1",
+                            "source": self.fragment.seal().to_dict(),
+                        }
+                    )
+                    trace_builder = SubstitutionTraceBuilderV1(scope_owner_cid)
+                    loop_trace_required = any(
+                        isinstance(node, (For, AsyncFor, While))
+                        for statement in self.body
+                        for node in statement.walk()
+                    )
+                    substituted = self.substitute(
+                        {
+                            _SCOPE_OWNER_CID: scope_owner_cid,
+                            _SUBSTITUTION_TRACE_BUILDER: trace_builder,
+                            _BINDING_ENTRY_FACTORY: RuntimeBindingEntryFactoryV1(
+                                scope_owner_cid
                             ),
-                        )
-                    module_parts = list(relative.with_suffix("").parts)
-                    if module_parts and module_parts[-1] == "__init__":
-                        module_parts.pop()
-                    module_name = ".".join(module_parts)
-                    bridge_source_symbol = f"python:{module_name}.{self.name}"
-                return FunctionUniverseSugar(
-                    name=self.name,
-                    formals=tuple(p.name for p in self.params),
-                    statements=statements,
-                    site=self.fragment,
-                    bridge_source_symbol=bridge_source_symbol,
-                    substitution_trace=substitution_trace,
-                    formal_coordinates=self.formal_coordinates(),
-                )
+                        }
+                    )
+                with reduction_span(sugar="Construct", role="construction", site=where):
+                    from .backend import materialize
+                    from .binding_state import ConstructionTestimonyReporterV1
 
+                    if loop_trace_required:
+                        with reduction_span(
+                            sugar="Construct.rematerialize",
+                            role="construction",
+                            site=where,
+                        ):
+                            testimony_reporter = ConstructionTestimonyReporterV1(
+                                self.reporter, trace_builder
+                            )
+                            construction_root = materialize(
+                                substituted.unit, substituted.ref, testimony_reporter
+                            )
+                        body_stmts = construction_root.body
+                        with reduction_span(
+                            sugar="Construct.body", role="construction", site=where
+                        ):
+                            statements = tuple(
+                                self._sugar_body_statement(stmt) for stmt in body_stmts
+                            )
+                        with reduction_span(
+                            sugar="Construct.freeze_trace",
+                            role="construction",
+                            site=where,
+                        ):
+                            substitution_trace = trace_builder.freeze(testimony_reporter)
+                    else:
+                        # Every statement still has an immutable runtime snapshot.
+                        # Only a loop consumer demands the sealed state projection;
+                        # ordinary functions retain the runtime trace without
+                        # sealing/hashing every binding (see freeze()).
+                        with reduction_span(
+                            sugar="Construct.body", role="construction", site=where
+                        ):
+                            statements = tuple(
+                                self._sugar_body_statement(stmt)
+                                for stmt in substituted.body
+                            )
+                        with reduction_span(
+                            sugar="Construct.freeze_trace",
+                            role="construction",
+                            site=where,
+                        ):
+                            substitution_trace = trace_builder.freeze()
+                    bridge_source_symbol = None
+                    context = self._require_construction_context(
+                        owner="FunctionDef._construct_sugar"
+                    )
+                    workspace_root = getattr(context, "workspace_root", None)
+                    if workspace_root is not None and self.unit.is_module_level_function(
+                        self.name, self.line_col_span().start_line
+                    ):
+                        from pathlib import Path
+
+                        # The construction door already mints the locus
+                        # workspace-relative (`workspace_path_source`). Re-deriving
+                        # it here would be a second answer to a question already
+                        # resolved; an absolute filename means the unit did NOT come
+                        # through that door, and that stays LOUD.
+                        relative = Path(self.unit.filename)
+                        if relative.is_absolute():
+                            raise SugarNotWritten(
+                                blame=self.fragment,
+                                owner="FunctionDef.bridge_source_symbol",
+                                observed=f"absolute source locus `{self.unit.filename}`",
+                                requested="workspace-relative source locus",
+                                fix=(
+                                    "route the source through the workspace-relative "
+                                    "lift door (`workspace_path_source`)"
+                                ),
+                            )
+                        module_parts = list(relative.with_suffix("").parts)
+                        if module_parts and module_parts[-1] == "__init__":
+                            module_parts.pop()
+                        module_name = ".".join(module_parts)
+                        bridge_source_symbol = f"python:{module_name}.{self.name}"
+                    return FunctionUniverseSugar(
+                        name=self.name,
+                        formals=tuple(p.name for p in self.params),
+                        statements=statements,
+                        site=self.fragment,
+                        bridge_source_symbol=bridge_source_symbol,
+                        substitution_trace=substitution_trace,
+                        formal_coordinates=self.formal_coordinates(),
+                    )
+        finally:
+            _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
 
 class AsyncFunctionDef(Statement):
     """`async def` — same FunctionUniverse body door as FunctionDef (L1a).
@@ -10504,7 +10552,11 @@ class Lambda(Expression):
         from .shadow import ShadowNode
 
         if not isinstance(self.ref, ShadowNode):
-            return super()._construct_sugar()
+            # Asked for outside a substituted body (a default formal:
+            # ``f=lambda x: x.sum()``, 1 row on the 2026-09-05 board). The law
+            # is the same as inside one: mask the formals by substitution
+            # first, then construct. Never the bare gap.
+            return self.substitute({}).sugar()
 
         from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 
@@ -11492,6 +11544,7 @@ class Call(Expression):
         )
         source_call_frame = None
         source_call_resolution = None
+        recursion_seat = None
 
         if (
             isinstance(context, TreeConstructionContextV1)
@@ -11533,7 +11586,16 @@ class Call(Expression):
                     fix="repair lexical call enrollment before constructing the source frame",
                 )
             if source_call_frame is None:
-                source_call_frame = function_definition.source_visible_call_frame()
+                try:
+                    source_call_frame = function_definition.source_visible_call_frame()
+                except SourceCallFrameCycle as cycle:
+                    # The callee's frame is under construction up the stack: this
+                    # call is the recursion seat. Definition known, body not unfolded.
+                    source_call_frame = None
+                    recursion_seat = (
+                        f"call-graph-cycle:{cycle.definition.name}"
+                        f"@{cycle.definition.line_col_span().start_line}"
+                    )
         if source_call_resolution is not None:
             from sugar_lift_py_tests.source_call_resolution import (
                 SourceCallPreconstructionGapV1,
@@ -11752,12 +11814,33 @@ class Call(Expression):
                     self
                 )
             if function_definition is not None:
-                formal_function_sugar = function_definition.sugar()
+                try:
+                    formal_function_sugar = function_definition.sugar()
+                except SourceCallFrameCycle as cycle:
+                    # Recursion seat: the callee's universe is under
+                    # construction up the stack. Definition known, no second
+                    # unfolding; the call carries a call-graph-cycle gap.
+                    formal_function_sugar = None
+                    recursion_seat = (
+                        f"call-graph-cycle:{cycle.definition.name}"
+                        f"@{cycle.definition.line_col_span().start_line}"
+                    )
                 formal_coordinates = function_definition.formal_coordinates()
                 formal_coordinate_cids = tuple(
                     coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
-                source_call_frame = function_definition.source_visible_call_frame()
+                try:
+                    source_call_frame = function_definition.source_visible_call_frame()
+                except SourceCallFrameCycle as cycle:
+                    # The callee's frame is under construction up the stack: this
+                    # call is the recursion seat. Definition known, body not unfolded.
+                    source_call_frame = None
+                    recursion_seat = (
+                        f"call-graph-cycle:{cycle.definition.name}"
+                        f"@{cycle.definition.line_col_span().start_line}"
+                    )
+                if recursion_seat is not None and contract_ref is None:
+                    contract_resolution_gap = recursion_seat
                 if lexical_row is not None:
                     if source_call_frame is not None:
                         if (
@@ -11774,9 +11857,16 @@ class Call(Expression):
                                 fix="retain the seated frame or keep the call loud",
                             )
                     else:
-                        source_call_frame = (
-                            function_definition.source_visible_call_frame()
-                        )
+                        try:
+                            source_call_frame = (
+                                function_definition.source_visible_call_frame()
+                            )
+                        except SourceCallFrameCycle as cycle:
+                            source_call_frame = None
+                            recursion_seat = (
+                                f"call-graph-cycle:{cycle.definition.name}"
+                                f"@{cycle.definition.line_col_span().start_line}"
+                            )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None

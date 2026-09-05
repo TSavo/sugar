@@ -683,7 +683,21 @@ class ConstructionTestimonyReporterV1:
         if value.call_occurrence != call_occurrence:
             return "call-occurrence-mismatch"
         if frame is None:
-            return "frame-is-none"
+            # Absence is a lie only when a frame WAS seated for this exact
+            # coordinate and the sugar dropped it. A resolved definition with
+            # no frame anywhere (an in-population class constructor whose
+            # frame is not derived) is honest testimony of the frame's
+            # absence, not a mismatch -- 9 rows on the 2026-09-05 board were
+            # BooleanArray(...) / OptionError(...) / SingleBlockManager(...).
+            table = getattr(value, "source_call_frame_table", None)
+            coordinate = getattr(value, "source_call_frame_coordinate", None)
+            if (
+                table is not None
+                and coordinate is not None
+                and table.get(coordinate) is not None
+            ):
+                return "frame-is-none"
+            return None
         # Reachable only with a frame in hand.
         if frame.owner.ref is not definition.ref:
             return "frame-owner-ref-mismatch"
@@ -1685,9 +1699,19 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
     if is_dataclass(value) and not isinstance(value, type):
         params = getattr(value, "__dataclass_params__", None)
         if params is not None and params.frozen:
+            # A field declared ``metadata={"testimony": "lookup"}`` is a
+            # lookup aid (a table the consumer reads a value OUT of by a key it
+            # already testifies separately), never testimony itself. Walking it
+            # would authenticate whatever happened to be seated in the table
+            # at testimony time -- and refuse on its non-string keys (8
+            # CallSiteSugar rows on the 2026-09-05 board).
             return (
                 _cv2_type_tag(value),
-                [(field.name, getattr(value, field.name)) for field in fields(value)],
+                [
+                    (field.name, getattr(value, field.name))
+                    for field in fields(value)
+                    if field.metadata.get("testimony") != "lookup"
+                ],
             )
         raise ConstructedValueCategoryGap(
             f"{_cv2_type_tag(value)} is a MUTABLE dataclass: its content can "

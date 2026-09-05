@@ -408,6 +408,11 @@ def _tally_cm_resolutions(
                     "inputKey": dict(key),
                     "observedEventType": observed_type,
                     "outcome": outcome,
+                    # Attribution (plan Cut 0): the structural gap kind and the
+                    # authenticated target, so unconstructed rows are
+                    # classifiable from the board without re-reading the corpus.
+                    "kind": event.get("kind"),
+                    "targetSymbol": event.get("targetSymbol"),
                 }
             )
     else:
@@ -423,6 +428,11 @@ def _tally_cm_resolutions(
                         f"{type(resolution).__module__}.{type(resolution).__qualname__}"
                     ),
                     "outcome": context_manager_resolution_outcome(resolution),
+                    "kind": getattr(resolution, "kind", None),
+                    "targetSymbol": (
+                        getattr(resolution, "target_symbol", None)
+                        or getattr(resolution, "target_name", None)
+                    ),
                 }
             )
     return sorted(rows, key=lambda row: json.dumps(row["inputKey"], sort_keys=True))

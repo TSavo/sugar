@@ -30,7 +30,27 @@ def _cid(source: str) -> str:
 
 
 def _sf(source: str, name: str = "t.py") -> SourceFile:
-    return SourceFile((source, name, _cid(source)))
+    """Open through the workspace door: since #7406 a Call consults the
+    construction context, and the bare ``SourceFile((...))`` door has none."""
+    import tempfile
+    from pathlib import Path
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_source_tree.reporter import CollectingReporter
+
+    root = Path(tempfile.mkdtemp(prefix="kw-star-"))
+    path = root / name
+    path.write_text(source, encoding="utf-8")
+    return open_source_file_for_construction(
+        path,
+        root=root,
+        reporter=CollectingReporter(),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
 
 
 def test_named_keyword_actual_constructs_on_call_site() -> None:

@@ -771,6 +771,11 @@ def _provisional_resolution_events(
                 "inputKey": coordinate.wire(),
                 "observedEventType": _qualified_type(resolution),
                 "outcome": context_manager_resolution_outcome(resolution),
+                "kind": getattr(resolution, "kind", None),
+                "targetSymbol": (
+                    getattr(resolution, "target_symbol", None)
+                    or getattr(resolution, "target_name", None)
+                ),
             }
         )
     return events
