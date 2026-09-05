@@ -509,6 +509,127 @@ def mint_opaque_cited_context_manager_ref(
 
 
 @dataclass(frozen=True)
+class PartitionedOpaqueCitedContextManagerRefV1:
+    """A ``with`` head whose manager is ONE OF several cited callees.
+
+    The consumer wrote ``m = a.A`` / ``elif``: ``m = b.B`` / ``with m(...)``.
+    Every arm is an authenticated import value whose callee the population
+    membrane declined to look inside, so every arm is an
+    :class:`OpaqueCitedContextManagerRefV1` seated at its own assignment
+    occurrence.  The partition is cited exactly when every member is: opacity
+    is carried through the selection, never averaged over it.
+
+    Like the single-member ref this carries NO semantics -- a manager chosen at
+    runtime among callees nobody materialized has, at best, the union of their
+    unknowns.  ``target_name`` is testimony text only (the members, ordered by
+    their assignment coordinates); the identity is ``citation_cid`` over the
+    member citations.  Members are keyed by their own use sites, so the same
+    callee assigned in two arms is two members, not one.
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    members: tuple[OpaqueCitedContextManagerRefV1, ...]
+    citation_cid: str
+    _authority: _OpaqueCitedManagerAuthority = field(
+        init=False,
+        repr=False,
+        compare=False,
+        default_factory=_OpaqueCitedManagerAuthority,
+    )
+    uncited: str = "enter-exit-semantics-uncited"
+
+    def __post_init__(self) -> None:
+        if self._authority is not _OPAQUE_CITED_MANAGER_AUTHORITY:
+            raise ContractRefProtocolError(
+                "partitioned opaque-cited context-manager ref lacks producer authority"
+            )
+        if not self.members:
+            raise ContractRefProtocolError(
+                "partitioned opaque-cited context-manager ref names no member"
+            )
+        for member in self.members:
+            if type(member) is not OpaqueCitedContextManagerRefV1:
+                raise ContractRefProtocolError(
+                    "partitioned opaque-cited context-manager ref admits only "
+                    "authenticated opaque-cited members"
+                )
+        sites = [member.use_site for member in self.members]
+        if len(set(sites)) != len(sites):
+            raise ContractRefProtocolError(
+                "partitioned opaque-cited context-manager ref seats one member twice"
+            )
+        if sites != sorted(sites, key=_coordinate_order):
+            raise ContractRefProtocolError(
+                "partitioned opaque-cited context-manager ref is not member-ordered"
+            )
+        if self.uncited != "enter-exit-semantics-uncited":
+            raise ContractRefProtocolError(
+                "partitioned opaque-cited context-manager ref may state only "
+                "that its enter/exit semantics are uncited"
+            )
+
+    @property
+    def target_name(self) -> str:
+        """Testimony text for reasons and rows; never a bucket key."""
+        return " | ".join(member.target_name for member in self.members)
+
+    @property
+    def semantics(self):
+        raise ContractRefProtocolError(
+            "partitioned opaque-cited context-manager ref has no enter/exit "
+            f"semantics: the manager at {self.use_site} is one of "
+            f"{self.target_name!r}, each cited, none materialized. Carry the "
+            "undischarged obligation; never substitute assumed semantics"
+        )
+
+
+def _coordinate_order(site: SourceFragmentCoordinateV1) -> tuple:
+    return (site.start_line, site.start_col, site.end_line, site.end_col)
+
+
+def mint_partitioned_opaque_cited_context_manager_ref(
+    *,
+    use_site: SourceFragmentCoordinateV1,
+    members: tuple[OpaqueCitedContextManagerRefV1, ...],
+) -> PartitionedOpaqueCitedContextManagerRefV1:
+    """The sole door that mints a partitioned opaque-cited manager ref.
+
+    Every member must itself have come through
+    :func:`mint_opaque_cited_context_manager_ref`; this door orders them by
+    their assignment coordinates and seals the citation over their CIDs.
+    """
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    for member in members:
+        if type(member) is not OpaqueCitedContextManagerRefV1:
+            raise ContractRefProtocolError(
+                "partitioned opaque-cited context-manager ref requires "
+                "authenticated opaque-cited members"
+            )
+    ordered = tuple(sorted(members, key=lambda m: _coordinate_order(m.use_site)))
+    citation_cid = cid_of_json(
+        {
+            "schemaVersion": 1,
+            "kind": "partitioned-opaque-cited-context-manager-ref",
+            "useSite": use_site.wire(),
+            "members": [member.citation_cid for member in ordered],
+            "uncited": "enter-exit-semantics-uncited",
+        }
+    )
+    ref = object.__new__(PartitionedOpaqueCitedContextManagerRefV1)
+    for name, value in (
+        ("use_site", use_site),
+        ("members", ordered),
+        ("citation_cid", citation_cid),
+        ("uncited", "enter-exit-semantics-uncited"),
+    ):
+        object.__setattr__(ref, name, value)
+    object.__setattr__(ref, "_authority", _OPAQUE_CITED_MANAGER_AUTHORITY)
+    ref.__post_init__()
+    return ref
+
+
+@dataclass(frozen=True)
 class ContextManagerResolutionGapV1:
     """One unresolved context-manager demand: a structural kind beside its data.
 
