@@ -2581,6 +2581,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                     "outcome": context_manager_resolution_outcome(
                                         resolution
                                     ),
+                                    "kind": getattr(resolution, "kind", None),
+                                    "targetSymbol": (
+                                        getattr(resolution, "target_symbol", None)
+                                        or getattr(resolution, "target_name", None)
+                                    ),
                                 },
                                 "payload": None,
                             }

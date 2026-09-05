@@ -594,18 +594,35 @@ def test_lambda_rejects_foreign_body_and_formal_coordinate_testimony() -> None:
         replace(left, formal_coordinate_cids=right.formal_coordinate_cids)
 
 
-def test_unauthenticated_lambda_callee_stays_loud() -> None:
+def test_module_scope_lambda_callee_constructs_by_substituting_first() -> None:
+    """A lambda outside any substituted body masks its own formals first.
+
+    This used to pin ``SUGAR NOT WRITTEN [Lambda.sugar]`` -- a deliberate
+    gap, not a discrimination. The law is the one a lambda inside a body
+    already had: substitute (mask formals), then construct. Truthful
+    witness: ``(lambda value: value + 1)(2) + 3`` is 6."""
     tree, _, _ = _tree("result = (lambda value: value + 1)(2) + 3\n")
     outer = next(
         node
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
+    value = outer.sugar().desugar(None).value
+    if not isinstance(value, TermValue):
+        value = value._dig_floor_or_none(None, owner="module-scope-lambda")
+    assert value == TermValue(6)
 
-    with pytest.raises(SugarNotWritten, match=r"SUGAR NOT WRITTEN \[Lambda\.sugar\]"):
-        outer.sugar().desugar(None)
 
-
+def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
+    """Lying twin: ``missing`` is bound nowhere. The lambda constructs (its
+    formals are its own), the call applies, and the dig refuses at the binary
+    floor by name -- it never invents a number for ``2 + missing``."""
+    tree, _, _ = _tree("result = (lambda value: value + missing)(2)\n")
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    outcome = call.sugar().desugar(None)
+    assert isinstance(outcome, Complete)
+    with pytest.raises(SugarNotWritten, match="binary_operation_exception_floor"):
+        outcome.value._dig_floor_or_none(None, owner="module-scope-lambda-unbound")
 def test_nested_function_source_return_projects_into_outer_caller() -> None:
     tree, _, _ = _tree(
         "def outer():\n"
