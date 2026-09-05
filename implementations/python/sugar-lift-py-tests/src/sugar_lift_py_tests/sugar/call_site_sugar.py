@@ -317,17 +317,18 @@ class CallSiteSugar(ConstructedTermSugar):
             # not a function symtable named after the class.  Asking the
             # function-only lookup for it turns an authenticated constructor
             # into a SourceTreePanic before its existing binder can run.
+            free_names: tuple[str, ...] = ()
             if isinstance(
                 owner := self.source_call_frame.owner, (FunctionDef, AsyncFunctionDef)
             ):
                 table = owner.unit.function_symtable(
                     owner.name, owner.line_col_span().start_line
                 )
-            free_names = tuple(
-                symbol.get_name()
-                for symbol in table.get_symbols()
-                if symbol.is_free() or symbol.is_nonlocal()
-            )
+                free_names = tuple(
+                    symbol.get_name()
+                    for symbol in table.get_symbols()
+                    if symbol.is_free() or symbol.is_nonlocal()
+                )
             if free_names and not getattr(
                 self.source_call_frame, "captured_binding_coordinates", ()
             ):
