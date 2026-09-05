@@ -101,16 +101,22 @@ def test_static_open_control_prefix_declines_static_door() -> None:
     assert _static_prefix_always_fallthrough(module, locus) is False
 
 
-def test_stdlib_graph_still_short_circuits(monkeypatch) -> None:
+def test_unenrolled_stdlib_graph_still_short_circuits(monkeypatch) -> None:
+    """A stdlib graph NOT in the roster still cites without MaterializeModule.
+
+    Since plan Cut 1 the membrane is roster-only (nothing refused by kind),
+    so the graph carries its real distribution name ``cpython-stdlib``; with
+    an empty roster it is off-population and short-circuits exactly as before.
+    """
     source = "def export():\n    return 1\n"
     module = _module(source)
     locus = _locus_of(source, "export")
-    graph = SimpleNamespace(artifact_kind="stdlib")
+    graph = SimpleNamespace(artifact_kind="stdlib", distribution_name="cpython-stdlib")
     calls = {"n": 0}
 
     def boom(*a, **k):
         calls["n"] += 1
-        raise AssertionError("stdlib must not reach outcome")
+        raise AssertionError("unenrolled stdlib must not reach outcome")
 
     monkeypatch.setattr(
         "sugar_lift_python_source.manager_construction._module_prefix_outcome",
@@ -132,6 +138,22 @@ def test_stdlib_graph_still_short_circuits(monkeypatch) -> None:
     assert calls["n"] == 0
 
 
+def test_the_membrane_is_roster_only_not_kind() -> None:
+    """Cut 1: stdlib is off-population only when NOT enrolled; a module-scoped
+    entry pulls exactly its module in. Nothing is decided by artifact kind."""
+    from sugar_lift_python_source.manager_construction import _graph_is_off_population
+
+    graph = SimpleNamespace(artifact_kind="stdlib", distribution_name="cpython-stdlib")
+    empty = SourceResolutionSession(enrolled_distributions=frozenset())
+    enrolled = SourceResolutionSession(
+        enrolled_distributions=frozenset({"cpython-stdlib:contextlib"})
+    )
+    assert _graph_is_off_population(graph, session=empty, module_name="contextlib")
+    assert not _graph_is_off_population(
+        graph, session=enrolled, module_name="contextlib"
+    )
+    # The module entry admits only its module, never the whole distribution.
+    assert _graph_is_off_population(graph, session=enrolled, module_name="warnings")
 def test_prefix_construction_refusal_is_typed_and_memoized(monkeypatch) -> None:
     """Construction refusal is testimony, never cached ordinary False."""
     from sugar_source_tree.panic import SugarNotWritten

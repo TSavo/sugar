@@ -314,7 +314,10 @@ def open_source_file_for_construction(
     *before* SourceFile still raises (empty denominator). Process-control
     exceptions (``BaseException`` outside ``Exception``) still halt.
     """
-    from sugar_lift_python_source.resolution_session import walk_session_for
+    from sugar_lift_python_source.resolution_session import (
+        enrolled_population_roster,
+        walk_session_for,
+    )
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
@@ -385,7 +388,7 @@ def open_source_file_for_construction(
                 )
             session = walk_session_for(
                 root,
-                enrolled_distributions=frozenset({distribution}),
+                enrolled_distributions=enrolled_population_roster(distribution),
             )
         # Catch Exception, not BaseException: KeyboardInterrupt / SystemExit /
         # GeneratorExit still halt the process. Do not enumerate SNW/TypeError
@@ -2528,7 +2531,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_python_source.manager_summary_derivation import (
                     populate_source_derived_resource_refs,
                 )
-                from sugar_lift_python_source.resolution_session import walk_session_for
+                from sugar_lift_python_source.resolution_session import (
+        enrolled_population_roster,
+        walk_session_for,
+    )
 
                 # Walk-scoped multi-resolve owner: same session as other opens
                 # under this workspace root (census / re-open amortization).
@@ -2549,7 +2555,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         path=full_path,
                         session=walk_session_for(
                             root,
-                            enrolled_distributions=frozenset({distribution}),
+                            enrolled_distributions=enrolled_population_roster(distribution),
                         ),
                         source_workspace_root=locus_root,
                         distribution=distribution,

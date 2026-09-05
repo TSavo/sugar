@@ -4989,6 +4989,22 @@ class AsyncFunctionDef(Statement):
         """One body door: statement constructs through its children."""
         return FunctionDef._sugar_body_statement(self, stmt)
 
+    def source_visible_call_frame(self):
+        """Same frame door as FunctionDef (same formals/body shape); the
+        guard and the recursion seat live there."""
+        return FunctionDef.source_visible_call_frame(self)
+
+    # Frame-door helper shared with FunctionDef (a staticmethod there).
+    _owns_yield = staticmethod(FunctionDef._owns_yield)
+
+    def _make_coordinate_ref(self, *args, **kwargs):
+        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
+        return FunctionDef._make_coordinate_ref(self, *args, **kwargs)
+
+    def _source_visible_generator_steps_from(self, *args, **kwargs):
+        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
+        return FunctionDef._source_visible_generator_steps_from(self, *args, **kwargs)
+
     def _construct_sugar(self):
         """L1a: FunctionUniverse body construction — same door as FunctionDef."""
         return FunctionDef._construct_sugar(self)
@@ -5175,25 +5191,15 @@ class ClassDef(Statement):
         """
         from sugar_lift_py_tests.floor import ConstructedClassMethodV1
 
-        if isinstance(method, FunctionDef):
-            # White FunctionDef door — ClassDef does not reimplement method bodies.
+        if isinstance(method, (FunctionDef, AsyncFunctionDef)):
+            # White FunctionDef door -- ClassDef does not reimplement method
+            # bodies. AsyncFunctionDef shares it (same formals/body shape); its
+            # universe is a coroutine factory, which the SYNC manager protocol
+            # never enters. Refusing the whole class over an async member is
+            # why contextlib.nullcontext (async def __aenter__) stopped at
+            # force-floor the moment contextlib was enrolled (plan Cut 1).
             body = method.sugar()
             frame = method.source_visible_call_frame()
-        elif isinstance(method, AsyncFunctionDef):
-            from sugar_source_tree.panic import SugarNotWritten
-
-            # Membership is recognized (not "unsupported class member"). Body
-            # construction is the FunctionDef door (async arm not written yet).
-            raise SugarNotWritten(
-                blame=method.fragment,
-                owner="ClassDef._construct_class_method_member",
-                observed="AsyncFunctionDef method body construction",
-                requested="AsyncFunctionDef construction through the FunctionDef door",
-                fix=(
-                    "write AsyncFunctionDef body construction on the FunctionDef "
-                    "door; ClassDef L1b owns fields/nested/conditionals only"
-                ),
-            )
         else:
             from sugar_source_tree.panic import SugarNotWritten
 

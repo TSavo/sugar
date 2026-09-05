@@ -1428,6 +1428,12 @@ def build_plan(
     return plan
 
 
+def _declared_extra_populations() -> frozenset:
+    from sugar_lift_python_source.resolution_session import declared_extra_populations
+
+    return declared_extra_populations()
+
+
 def mint_partial(
     *,
     plan: Mapping[str, Any],
@@ -1606,6 +1612,9 @@ def mint_partial(
             "kind": "shard-bin",
             "assignedFiles": assigned,
             "assignedFileCount": len(assigned),
+            # Plan Cut 1: the extra authenticated source populations this
+            # measurement enrolled (declared, never inferred).
+            "enrolledExtraPopulations": sorted(_declared_extra_populations()),
         },
         "shardFileSetCid": shard_file_set_cid(assigned),
         "terminalFiles": terminal_files,
