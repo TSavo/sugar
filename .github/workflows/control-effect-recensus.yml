@@ -62,6 +62,9 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: "1"
+  # Dump the Python stack on SIGSEGV: the plan phase died with a bare
+  # libpython segfault (2026-09-05, twice) and left no frame to attribute.
+  PYTHONFAULTHANDLER: "1"
   # Banked LPT k — keep fixed; change the split KEY (prior), not k (#7055).
   RECENSUS_SHARD_COUNT: "8"
   # Host bind-mount lease (serializes with human brun exclusive quiet gate).
