@@ -193,12 +193,30 @@ def test_constructed_value_v2_seals_float_and_bytes():
         encoded = _cv2_leaf(value)
         assert cid_of_json({"v": encoded}) == cid_of_json({"v": encoded})
 
+
+def test_constructed_value_v2_seals_complex():
+    # ComplexLiteralSugar's node construction shape carries a bare ``complex``;
+    # it enters the wire as two fixed-point components under one tag.
+    from sugar_source_tree.binding_state import _cv2_leaf
+
+    assert _cv2_leaf(1.5 + 2j) == {"complex": {"real": "1.5", "imag": "2.0"}}
+    assert _cv2_leaf(3j) == {"complex": {"real": "0.0", "imag": "3.0"}}
+    assert _cv2_leaf(-1e-05j) == {"complex": {"real": "-0.0", "imag": "-0.00001"}}
+    # Never confusable with the float or the tuple that spell the same digits.
+    assert _cv2_leaf(2 + 0j) != _cv2_leaf(2.0)
+    assert _cv2_leaf(2 + 0j) != {"float": "2.0"}
+    encoded = _cv2_leaf(1.5 + 2j)
+    assert cid_of_json({"v": encoded}) == cid_of_json({"v": encoded})
+
     # Bad twin: a value with no canonical spelling stays LOUD, never silently
     # collapses to a fabricated testimony, and never falls back to reflection.
-    from sugar_source_tree.binding_state import constructed_value_cid_v2
+    from sugar_source_tree.binding_state import (
+        _NOT_A_LEAF,
+        ConstructedValueCategoryGap,
+        constructed_value_cid_v2,
+    )
 
-    from sugar_source_tree.binding_state import _NOT_A_LEAF
-
-    assert _cv2_leaf(1 + 2j) is _NOT_A_LEAF
+    unnamed = object()
+    assert _cv2_leaf(unnamed) is _NOT_A_LEAF
     with pytest.raises(ConstructedValueCategoryGap, match="unclassified"):
-        constructed_value_cid_v2(1 + 2j)
+        constructed_value_cid_v2(unnamed)

@@ -1546,6 +1546,17 @@ def _cv2_leaf(value: object) -> Any:
         # term_value.to_term / ir.real_lit): a fixed-point decimal string, never
         # a Python float text form.
         return {"float": format(Decimal(str(value)), "f")}
+    if isinstance(value, complex):
+        from decimal import Decimal
+
+        # Two fixed-point components under one tag: the pair IS the value, so
+        # a complex never collides with a float, a tuple of floats, or a str.
+        return {
+            "complex": {
+                "real": format(Decimal(str(value.real)), "f"),
+                "imag": format(Decimal(str(value.imag)), "f"),
+            }
+        }
     if isinstance(value, bytes):
         return {"bytes": value.hex()}
     if isinstance(value, SourceFragment):
