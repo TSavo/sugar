@@ -692,7 +692,27 @@ def _session_lexical_import_runner(session: SourceResolutionSession, module):
         )
     else:
         # Opens SourceFile (process-resident MaterializeModule) then lexical once.
-        typed = SourceFile((module.source, str(path), module.source_cid)).root
+        # SEAT A REGISTERING REPORTER (#7171 class). This open is often the
+        # FIRST opener of a dependency module in the process, so its bind-time
+        # roster and the lexical rows' ``definition_occurrence`` nodes carry
+        # whatever reporter is passed here for the rest of the process. Left on
+        # ``NULL_REPORTER``, a consumer call that retains such a definition
+        # (``CallSiteSugar.expected_definition_ref`` /
+        # ``expected_source_call_frame_owner``, #7423) refuses with "producer
+        # reporter owns no registration table" -- 25 files on the 2026-09-05
+        # board. Same producer roll the prefix door seats.
+        from sugar_source_tree.binding_state import (
+            ConstructionTestimonyReporterV1,
+            SubstitutionTraceBuilderV1,
+        )
+        from sugar_source_tree.reporter import NULL_REPORTER
+
+        producer_reporter = ConstructionTestimonyReporterV1(
+            NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+        )
+        typed = SourceFile(
+            (module.source, str(path), module.source_cid), reporter=producer_reporter
+        ).root
         runner = get_or_prepare_lexical_import_pass(
             typed,
             root=root,
@@ -2272,12 +2292,17 @@ def _resolve_source_visible_frame_uncached(
         context = TreeConstructionContextV1.for_source_call_construction(
             frame_projection=True
         )
-        source_file = SourceFile(
-            (module.source, module.source_seat, module.source_cid),
-            construction_context=context,
-        )
         producer_reporter = ConstructionTestimonyReporterV1(
             NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+        )
+        # Seat the producer roll at the open, not only at materialize: the
+        # bind-time roster (``unit.function_nodes`` / ``module_direct_bindings``)
+        # is what a frame owner and a lexical definition are read from, and it
+        # carries the reporter of whoever opened this identity first.
+        source_file = SourceFile(
+            (module.source, module.source_seat, module.source_cid),
+            reporter=producer_reporter,
+            construction_context=context,
         )
         producer_root = materialize(
             source_file.unit, source_file.root.ref, producer_reporter
