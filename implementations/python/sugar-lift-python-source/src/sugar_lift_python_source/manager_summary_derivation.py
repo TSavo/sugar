@@ -1850,7 +1850,18 @@ def _name_binders(function, name: str):
                 assignments.append(node)
             elif any(name in names_in(target) for target in node.targets):
                 other.append(node)
-        elif isinstance(node, (AugAssign, AnnAssign, NamedExpr)):
+        elif isinstance(node, AnnAssign):
+            # ``m: Callable`` declares; it binds nothing (pandas/_testing/_io.py:94
+            # refused the reproducer through exactly this line on the first
+            # sealed board). ``m: T = a.A`` is an arm like any Assign to ``m``.
+            if node.value is None or not (
+                isinstance(node.target, Name) and node.target.id == name
+            ):
+                if name in names_in(node.target) and node.value is not None:
+                    other.append(node)
+                continue
+            assignments.append(node)
+        elif isinstance(node, (AugAssign, NamedExpr)):
             if name in names_in(node.target):
                 other.append(node)
         elif isinstance(node, (For, AsyncFor)):

@@ -157,3 +157,27 @@ def _site(line: int):
     )
 
     return SourceFragmentCoordinateV1("blake3-512:" + "ab" * 64, line, 0, line, 10)
+
+
+def test_annotated_declaration_is_not_a_binder(tmp_path: Path) -> None:
+    """``compress_method: Callable`` declares and binds nothing (pandas/_testing/_io.py:94).
+
+    The first sealed board after #7429 refused the reproducer through this
+    exact line. ``m: T = a.A`` with a value is an arm like any other."""
+    source = PARTITION.replace(
+        "def f(p, kind):\n",
+        "from typing import Callable\n\ndef f(p, kind):\n    compress_method: Callable\n",
+    ).replace(
+        "        compress_method = bz2.BZ2File\n",
+        "        compress_method: Callable = bz2.BZ2File\n",
+    )
+    root = _corpus(tmp_path, **{"annotated.py": source})
+    source_file = _open(root, "annotated.py")
+    with_node, ref = _with_resolution(source_file)
+
+    assert isinstance(ref, PartitionedOpaqueCitedContextManagerRefV1), ref
+    assert [m.target_name for m in ref.members] == [
+        "python:gzip.GzipFile",
+        "python:bz2.BZ2File",
+    ]
+    assert isinstance(with_node.sugar(), WithOpaqueCitedManagerSugar)
