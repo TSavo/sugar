@@ -1360,6 +1360,7 @@ def populate_source_derived_resource_refs(
         owner="manager_summary_derivation imported manager value receipt pairing",
     )
     paired_receipts = []
+    paired_keys = set()
     for call_key, selected in uses.items():
         _, call, _ = selected
         source_cid = call.unit.source_cid
@@ -1381,6 +1382,7 @@ def populate_source_derived_resource_refs(
             receipt = value_receipts_by_site.get(callee_key)
         if receipt is not None:
             paired_receipts.append((receipt, selected))
+            paired_keys.add(call_key)
 
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     # Seed from session so tops already resolved in frame/prefix projection
@@ -1758,11 +1760,302 @@ def populate_source_derived_resource_refs(
             )
         )
 
+    # A callee Name assigned in every arm of a selection (``m = a.A`` /
+    # ``elif``: ``m = b.B`` / ``with m(...)``) has no receipt at the call, but
+    # each ARM has a value receipt at its own occurrence. Derive the partition
+    # member by member through the same import door; a partition of cited
+    # members is a cited partition.
+    _populate_assigned_partition_manager_uses(
+        source_file,
+        context,
+        uses,
+        paired_keys=paired_keys,
+        value_receipts_by_site=value_receipts_by_site,
+        graphs=graphs,
+        session=session,
+        distribution_index=distribution_index,
+    )
+
     # Same-module ClassDef managers have no import receipt. Derive them through
     # module_direct_bindings → Call.force_floor → protocol → summary — the same
     # publication door as import-backed ClassDef CMs. Uncovered uses stay empty
     # for With.require (L3d) to panic.
     _populate_same_module_class_manager_uses(source_file, context, uses)
+
+
+def _enclosing_function(source_file, node):
+    """The innermost FunctionDef whose body contains ``node``, or None."""
+    innermost = None
+    innermost_span = None
+    for function in source_file.functions():
+        if not any(candidate is node for candidate in function.walk()):
+            continue
+        span = function.line_col_span()
+        key = (span.start_line, span.start_col, -span.end_line, -span.end_col)
+        if innermost_span is None or key > innermost_span:
+            innermost, innermost_span = function, key
+    return innermost
+
+
+def _name_binders(function, name: str):
+    """Every statement in ``function`` that binds ``name``, by shape.
+
+    Returns ``(assignments, other_binders)``: the single-target ``Assign``
+    arms whose RHS may carry an import value receipt, and every other binder
+    (augmented / annotated assignment, loop or with target, walrus, nested
+    def/class, global/nonlocal, a formal of the same name). Any entry in the
+    second list means the name's reaching value is not the assignment arms
+    alone, so the partition is not authenticated by them.
+    """
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        AsyncFor,
+        AsyncWith,
+        AugAssign,
+        ClassDef,
+        For,
+        FunctionDef,
+        Global,
+        Name,
+        NamedExpr,
+        Nonlocal,
+        With,
+    )
+
+    def names_in(target) -> set:
+        if isinstance(target, Name):
+            return {target.id}
+        found = set()
+        for child in getattr(target, "elts", ()) or ():
+            found |= names_in(child)
+        value = getattr(target, "value", None)
+        if getattr(target, "kind", None) == "Starred" and value is not None:
+            found |= names_in(value)
+        return found
+
+    assignments = []
+    other = []
+    if any(param.name == name for param in function.params):
+        other.append(function)
+    for node in function.walk():
+        if node is function:
+            continue
+        if isinstance(node, Assign):
+            if (
+                len(node.targets) == 1
+                and isinstance(node.targets[0], Name)
+                and node.targets[0].id == name
+            ):
+                assignments.append(node)
+            elif any(name in names_in(target) for target in node.targets):
+                other.append(node)
+        elif isinstance(node, (AugAssign, AnnAssign, NamedExpr)):
+            if name in names_in(node.target):
+                other.append(node)
+        elif isinstance(node, (For, AsyncFor)):
+            if name in names_in(node.target):
+                other.append(node)
+        elif isinstance(node, (With, AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None and name in names_in(
+                    item.optional_vars
+                ):
+                    other.append(node)
+        elif isinstance(node, (FunctionDef, ClassDef)):
+            if node.name == name:
+                other.append(node)
+        elif isinstance(node, (Global, Nonlocal)):
+            if name in tuple(node.names):
+                other.append(node)
+    return assignments, other
+
+
+def _populate_assigned_partition_manager_uses(
+    source_file,
+    context,
+    uses,
+    *,
+    paired_keys,
+    value_receipts_by_site,
+    graphs,
+    session,
+    distribution_index,
+) -> None:
+    """Derive ``with m(...)`` where ``m`` is assigned an import value per arm.
+
+    Reproducer (pandas/_testing/_io.py): ``compress_method`` is bound to
+    ``gzip.GzipFile`` / ``bz2.BZ2File`` / ... in an if/elif chain, then used
+    once as the manager callee. The call has no receipt (its callee is a local
+    Name), so the demand table left it ``runtime-selected``. Every arm,
+    however, is an authenticated import value with its own receipt.
+
+    Law: the reaching value of the callee is exactly the set of assignment
+    arms when nothing else binds the name in the function. Each arm resolves
+    through the ordinary import door. The membrane's off-population refusal
+    cites the member (the same seat a direct ``with gzip.GzipFile(...)`` gets);
+    a partition whose members are all cited is minted as one
+    ``PartitionedOpaqueCitedContextManagerRefV1``. Anything else stays a loud
+    typed gap naming the arm that refused -- never ``runtime-selected``.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        SourceFragmentCoordinateV1,
+        mint_opaque_cited_context_manager_ref,
+        mint_partitioned_opaque_cited_context_manager_ref,
+        opaque_source_call_roster_of,
+    )
+    from sugar_source_tree.nodes import Name
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1,
+        authenticate_dependency_top_level,
+        resolve_import_binding,
+    )
+    from .manager_construction import (
+        ManagerConstructionGapV1,
+        resolve_source_visible_frame,
+    )
+
+    def arm_coordinate(node):
+        span = node.value.line_col_span()
+        return SourceFragmentCoordinateV1(
+            node.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+
+    def arm_receipt(node):
+        span = node.value.line_col_span()
+        return value_receipts_by_site.get(
+            (
+                node.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+        )
+
+    def graph_for(receipt):
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        graph = graphs.get(top_level)
+        if graph is None and session.enabled:
+            graph = session.dependency_graphs.get(top_level)
+        if graph is None:
+            graph = authenticate_dependency_top_level(
+                top_level, distribution_index=distribution_index
+            )
+            if session.enabled:
+                session.dependency_graphs[top_level] = graph
+        graphs[top_level] = graph
+        return graph
+
+    for call_key, (coordinate, call, _exit_face_id) in uses.items():
+        if call_key in paired_keys:
+            continue
+        if coordinate in context.source_derived_contract_refs:
+            continue
+        if not isinstance(call.func, Name):
+            continue
+        function = _enclosing_function(source_file, call)
+        if function is None:
+            continue
+        name = call.func.id
+        assignments, other_binders = _name_binders(function, name)
+        arms = [(node, arm_receipt(node)) for node in assignments]
+        receipted = [(node, receipt) for node, receipt in arms if receipt is not None]
+        if not receipted:
+            # Not this law's shape: no arm is an import value.
+            continue
+        first_receipt = receipted[0][1]
+        if other_binders:
+            where = ", ".join(
+                f"{type(binder).__name__}@{binder.line_col_span().start_line}"
+                for binder in other_binders
+            )
+            _install_derivation_gap(
+                context,
+                coordinate,
+                first_receipt,
+                "partition-member-unauthenticated",
+                f"{name!r} is also bound by {where}; the assignment arms are not "
+                "its whole reaching value",
+            )
+            continue
+        unreceipted = [node for node, receipt in arms if receipt is None]
+        if unreceipted:
+            where = ", ".join(str(node.line_col_span().start_line) for node in unreceipted)
+            _install_derivation_gap(
+                context,
+                coordinate,
+                first_receipt,
+                "partition-member-unauthenticated",
+                f"{name!r} arm(s) at line {where} are not authenticated import values",
+            )
+            continue
+        members = []
+        failed = None
+        for node, receipt in receipted:
+            member_site = arm_coordinate(node)
+            try:
+                graph = graph_for(receipt)
+            except DependencyArtifactAuthenticationError as exc:
+                failed = (
+                    "partition-member-no-derived-contract",
+                    f"{receipt.target_symbol}: dependency artifact authentication "
+                    f"failed: {exc}",
+                )
+                break
+            resolved = resolve_import_binding(receipt, graph=graph, session=session)
+            if not isinstance(resolved, ResolvedPythonObjectV1):
+                kind = getattr(resolved, "kind", None) or "no-derived-contract"
+                failed = (f"partition-member-{kind}", receipt.target_symbol)
+                break
+            frame_result = resolve_source_visible_frame(
+                resolved,
+                graph=graph,
+                dependency_graphs=graphs,
+                session=session,
+            )
+            if not isinstance(frame_result, ManagerConstructionGapV1):
+                # An in-population member has a real body. Folding N derived
+                # protocols under one selection is its own law; keep this arm
+                # loud under a name that says so.
+                failed = (
+                    "partition-member-derived-unfolded",
+                    f"{receipt.target_symbol} resolves to an enrolled definition",
+                )
+                break
+            if frame_result.kind != "call-target-off-population":
+                failed = (
+                    f"partition-member-{frame_result.kind}",
+                    f"{receipt.target_symbol}: {frame_result.detail}",
+                )
+                break
+            demand_cid = receipt.demand.get("cid", receipt.use["cid"])
+            roster = opaque_source_call_roster_of(
+                OpaqueSourceCallObligationV1(
+                    member_site,
+                    str(receipt.target_symbol),
+                    demand_cid,
+                    "call-target-off-population",
+                )
+            )
+            context.opaque_source_call_obligations.setdefault(member_site, roster)
+            members.append(mint_opaque_cited_context_manager_ref(roster=roster))
+        if failed is not None:
+            kind, detail = failed
+            _install_derivation_gap(context, coordinate, first_receipt, kind, detail)
+            continue
+        context.source_derived_contract_refs[coordinate] = (
+            mint_partitioned_opaque_cited_context_manager_ref(
+                use_site=coordinate, members=tuple(members)
+            )
+        )
 
 
 def _populate_same_module_class_manager_uses(source_file, context, uses) -> None:

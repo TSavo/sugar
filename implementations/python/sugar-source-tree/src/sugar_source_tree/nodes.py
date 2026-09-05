@@ -8136,9 +8136,16 @@ class With(Statement):
             OpaqueCitedContextManagerRefV1,
         )
 
+        from sugar_lift_py_tests.context_manager_resolution import (
+            PartitionedOpaqueCitedContextManagerRefV1,
+        )
+
         if isinstance(resolution, ContextManagerResolutionGapV1):
             self._raise_resolution_gap(resolution)
-        if isinstance(resolution, OpaqueCitedContextManagerRefV1):
+        if isinstance(
+            resolution,
+            (OpaqueCitedContextManagerRefV1, PartitionedOpaqueCitedContextManagerRefV1),
+        ):
             # A POSITIVE seated citation, not a rescued refusal. This arm never
             # catches a panic and never infers opacity from a missing contract:
             # the producer authenticated the callee and authenticated that its
@@ -8403,9 +8410,16 @@ class With(Statement):
 
             from sugar_lift_py_tests.context_manager_resolution import (
                 OpaqueCitedContextManagerRefV1,
+                PartitionedOpaqueCitedContextManagerRefV1,
             )
 
-            if isinstance(resolved_ref, OpaqueCitedContextManagerRefV1):
+            if isinstance(
+                resolved_ref,
+                (
+                    OpaqueCitedContextManagerRefV1,
+                    PartitionedOpaqueCitedContextManagerRefV1,
+                ),
+            ):
                 from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
                     WithOpaqueCitedManagerSugar,
                 )

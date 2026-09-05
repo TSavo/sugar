@@ -59,9 +59,13 @@ class WithOpaqueCitedManagerSugar(Sugar):
     def __post_init__(self) -> None:
         from sugar_lift_py_tests.context_manager_resolution import (
             OpaqueCitedContextManagerRefV1,
+            PartitionedOpaqueCitedContextManagerRefV1,
         )
 
-        if type(self.contract_ref) is not OpaqueCitedContextManagerRefV1:
+        if type(self.contract_ref) not in (
+            OpaqueCitedContextManagerRefV1,
+            PartitionedOpaqueCitedContextManagerRefV1,
+        ):
             raise ValueError(
                 "WithOpaqueCitedManagerSugar requires an authenticated "
                 "OpaqueCitedContextManagerRefV1; a cited manager is never "
