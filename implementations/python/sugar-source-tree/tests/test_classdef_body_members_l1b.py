@@ -103,16 +103,21 @@ def test_l1b_fields_alongside_sync_method() -> None:
     assert sugar.methods[0].source_call_frame is not None
 
 
-def test_l1b_async_method_is_method_member_not_unsupported() -> None:
-    """AsyncFunctionDef is a method member — FunctionDef door, not unsupported."""
-    from sugar_source_tree.panic import SugarNotWritten
+def test_l1b_async_method_is_method_member_through_the_function_door() -> None:
+    """AsyncFunctionDef is a method member constructed through the FunctionDef
+    door -- not "unsupported class member", and (since plan Cut 1) not a
+    refusal either: ``contextlib.nullcontext`` carries ``async def __aenter__``
+    beside the sync protocol, and refusing the whole class over a member the
+    sync protocol never enters kept every enrolled stdlib manager at
+    ``force-floor``."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import FunctionUniverseSugar
+    from sugar_source_tree.nodes import AsyncFunctionDef
 
-    with pytest.raises(SugarNotWritten) as ei:
-        _class(
-            "class C:\n" "    a = 1\n" "    async def m(self):\n" "        return 1\n"
-        ).sugar()
-    err = ei.value
-    assert err.owner == "ClassDef._construct_class_method_member"
-    assert "AsyncFunctionDef" in err.observed
-    assert "unsupported class member" not in err.observed
-    assert "FunctionDef door" in err.fix
+    cls = _class("class C:\n" "    a = 1\n" "    async def m(self):\n" "        return 1\n")
+    member = next(m for m in cls.body if isinstance(m, AsyncFunctionDef))
+    constructed = cls._construct_class_method_member(member)
+    assert constructed.name == "m"
+    assert isinstance(constructed.body, FunctionUniverseSugar)
+    assert cls.sugar() is not None
+
+

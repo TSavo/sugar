@@ -899,7 +899,9 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     # Defensive membrane: stdlib must never reach MaterializeModule here.
     # Callers should short-circuit in prefix_has_completed_fallthrough; if they
     # do not, refuse loudly rather than rebuild an unenrolled module.
-    if graph is not None and _graph_is_off_population(graph, session=session):
+    if graph is not None and _graph_is_off_population(
+        graph, session=session, module_name=getattr(module, "module_name", None)
+    ):
         raise RuntimeError(
             "population membrane: _module_prefix_outcome must not MaterializeModule "
             f"off-population seat {module.source_seat!r}; cite via "
@@ -1198,7 +1200,9 @@ def prefix_has_completed_fallthrough(
     from sugar_lift_py_tests.outcome import Completed, true_guard
 
     session = session_or_new(session)
-    if graph is not None and _graph_is_off_population(graph, session=session):
+    if graph is not None and _graph_is_off_population(
+        graph, session=session, module_name=getattr(module, "module_name", None)
+    ):
         # Cite path: admit static export without off-population construction.
         return PrefixFallthroughOutcomeV1("completed")
 
@@ -1409,8 +1413,18 @@ def _graph_is_off_population(
     graph: "DependencyArtifactGraph",
     *,
     session: SourceResolutionSession | None = None,
+    module_name: str | None = None,
 ) -> bool:
     """True when ``graph`` is outside the enrolled measurement population.
+
+    ROSTER-ONLY LAW (plan Cut 1). The population is what the measurement
+    DECLARES (``enrolled_population_roster``): the corpus distribution plus
+    any extra authenticated source population -- ``pytest``, ``numpy``, and
+    the stdlib under its own graph name ``cpython-stdlib`` -- optionally one
+    module at a time (``cpython-stdlib:contextlib``). Nothing is refused by
+    kind any more; stdlib used to be refused unconditionally, which is why
+    every ``pytest.raises`` / ``nullcontext`` / ``open`` on the 2026-09-05
+    board was cited or gapped and ``cmResolutions.constructed`` was 0.
 
     - stdlib is always off-pin (CPython is not the corpus pin).
     - any distribution whose name is absent from the session's authoritative
@@ -1421,10 +1435,12 @@ def _graph_is_off_population(
         raise TypeError(
             "population classification requires an enrolled distribution roster"
         )
-    if getattr(graph, "artifact_kind", None) == "stdlib":
-        return True
+    from .resolution_session import population_admits
+
     name = getattr(graph, "distribution_name", None)
-    return name is not None and name not in session.enrolled_distributions
+    if name is None:
+        return False
+    return not population_admits(session.enrolled_distributions, name, module_name)
 
 
 def _off_population_materialize_gap(
@@ -1443,7 +1459,9 @@ def _off_population_materialize_gap(
     Return a typed gap so every caller takes the same cite path failure already
     uses.
     """
-    if not _graph_is_off_population(graph, session=session):
+    if not _graph_is_off_population(
+        graph, session=session, module_name=resolved.module_name
+    ):
         return None
     if graph.artifact_kind == "stdlib":
         detail = (
