@@ -188,15 +188,32 @@ Bare-Name heads (`ctx`) go through the existing reaching-binding projection
 once their producer call resolves.
 
 ### Cut 9 — the 26 non-With rows (bugs; any time, ideally first)
-- canonicalize `frame-is-none` (9): `CallSiteSugar` claims a definition
-  with `source_call_frame is None` — a #7423 reconciliation arm.
+Status 2026-09-05: landed with Cut 0 ("Cut 0 + Cut 9" commit).
+- canonicalize `frame-is-none` (9): every in-population class constructor
+  call has a resolved ClassDef and no constructor frame anywhere; the
+  checker called that absence a mismatch. Absence is a lie only when the
+  table seats a frame at the coordinate and the sugar dropped it. **Done.**
 - canonicalize `mappings require string keys` (8): `source_call_frame_table`
-  is a lookup aid keyed by coordinates, not testimony; exclude it from the
-  ConstructedValueV2 walk or carry it as ordered pairs.
-- `RecursionError` in `FunctionDef` construction (6: `merge.py:146`,
-  `sorting.py:58`): make the offending construction iterative.
-- `Lambda.sugar` (1): a closure value over an expression body.
-- `python.super` (1), `SymbolicValue.attribute` (1).
+  is a lookup aid keyed by coordinates, not testimony; a frozen field
+  declared `metadata={"testimony": "lookup"}` is excluded from the
+  ConstructedValueV2 walk. **Done.**
+- `RecursionError` (6): not deep bodies — a call-graph cycle
+  (`ensure_key_mapped <-> _ensure_key_mapped_multiindex`) re-entering the
+  callee's universe/frame inline. Recursion is a seat: re-entry into a
+  definition under construction raises at the door and the asking call
+  carries the definition with a `call-graph-cycle` gap. Fixpoint
+  *semantics* (an unfolding bound) is a later law; the seat is the honest
+  shape today. **Done.**
+- `Lambda.sugar` (1): `LambdaSugar` existed only after body substitution;
+  a lambda as a default formal is asked for before that. Substitute first,
+  then construct. **Done.**
+- `python.super` (1): **deferred, designed.** Zero-argument `super()` reads
+  `__class__` and the first formal from the temporal, and nothing seats
+  `__class__` today. The law: a method universe owned by a ClassDef carries
+  one class-cell coordinate (the `ConstructedReceiverRef` precedent for
+  initializers), seated by the class enumeration entrance.
+- `SymbolicValue.attribute` (1): `pd.array` on a dynamically exported
+  `pandas` — this is Cut 7 (export algebra), not a bug.
 
 ## Order and why
 
