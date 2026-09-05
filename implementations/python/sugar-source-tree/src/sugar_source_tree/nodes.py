@@ -3576,14 +3576,17 @@ class Param(Node):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """A formal stands as its symbolic universe variable. Plain parameters
-        only; a default or annotation is not yet folded in, so a parameter that
-        carries one stays a loud gap rather than silently dropping it."""
-        if self.default is not None or self.annotation is not None:
-            return super()._construct_sugar()
+        """A formal stands as its symbolic universe variable. A default is
+        folded in through the same door the source-visible call frame uses
+        (``default.sugar()``), so the two can never disagree; an annotation is
+        a type witness, not a value, and never refuses the formal."""
         from sugar_lift_py_tests.sugar.param_sugar import ParamSugar
 
-        return ParamSugar(name=self.name, site=self.fragment)
+        return ParamSugar(
+            name=self.name,
+            site=self.fragment,
+            default=self.default.sugar() if self.default is not None else None,
+        )
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import Optional
 
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import make_var
@@ -22,6 +23,11 @@ class ParamSugar(Sugar):
 
     name: str
     site: object = dataclass_field(compare=False)
+    # The default expression's sugar, constructed through the same door the
+    # source-visible call frame uses (``param.default.sugar()``). None for a
+    # formal without a default. Carried, not reduced here: the formal still
+    # stands as its universe variable; the caller-side frame applies defaults.
+    default: Optional[Sugar] = None
 
     @classmethod
     def witnesses(cls):
