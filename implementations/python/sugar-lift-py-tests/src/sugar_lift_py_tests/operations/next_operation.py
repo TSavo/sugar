@@ -25,6 +25,17 @@ class NextOperation:
     owner: str
     blame: object
 
+    @property
+    def site(self) -> object:
+        """The source locus of this demand (recorded under ``blame``).
+
+        Consumers that reduce this operation over an undecided receiver -- an
+        ImportMemberValue under an enrolled stdlib body -- read
+        ``operation.site``. Sibling operations that lacked it raised
+        AttributeError and voided the file (see SubscriptOperation.site).
+        """
+        return self.blame
+
     def submit(self, receiver: Any, ctx: Any = None) -> Any:
         """Ask the iterator for the next value. The iterator owns the answer."""
         return receiver.next_with(self, ctx)
