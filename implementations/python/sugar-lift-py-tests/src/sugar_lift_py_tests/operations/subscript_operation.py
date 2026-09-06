@@ -30,6 +30,19 @@ class SubscriptOperation:
     blame: object
     use_occurrence: object | None = None
 
+    @property
+    def site(self) -> object:
+        """The source locus of this subscript demand.
+
+        Sibling operations expose ``site``; this one recorded the same fragment
+        under ``blame`` (subscript_sugar passes ``blame=self.site``). A consumer
+        that reduces a subscript over an undecided receiver (an ImportMemberValue
+        under an enrolled stdlib body, e.g. warnings) reads ``operation.site`` --
+        without this it raised AttributeError and voided the file (31 files on the
+        warnings tip board).
+        """
+        return self.blame
+
     def submit(self, receiver: Any, ctx: object) -> Outcome:
         """Ask the receiver to answer this subscript demand."""
         return receiver.subscript_with(self, ctx)
