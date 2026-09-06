@@ -13,6 +13,7 @@ from .module_bound_var import ModuleBoundVar
 from .mutable_global_value import MutableGlobalValue
 from .named_expression_value import NamedExpressionValue
 from .native_callable_value import NativeCallableValue
+from .re_match_value import ReMatchValue
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .builtin_exception_class_value import BuiltinExceptionClassValue
@@ -190,6 +191,7 @@ __all__ = [
     "ModuleBoundVar",
     "NamedExpressionValue",
     "NativeCallableValue",
+    "ReMatchValue",
     "BuilderState",
     "Bv32Value",
     "BuiltinExceptionClassValue",

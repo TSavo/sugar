@@ -48,6 +48,12 @@ class BuiltinSemanticCallable(FloorValue):
             if floored is not None:
                 return floored
             return self._unhandled_construct(operation, "dict")
+        if self.operation in (
+            "python.re.search",
+            "python.re.match",
+            "python.re.fullmatch",
+        ):
+            return self._re_match(operation)
         if self.operation == "python.isinstance":
             return self._isinstance(operation)
         if self.operation == "python.len":
@@ -184,6 +190,71 @@ class BuiltinSemanticCallable(FloorValue):
                 )
             )
         )
+
+    def _re_match(self, operation):
+        """``re.search``/``re.match``/``re.fullmatch`` over the decidable subset.
+
+        Plan Cut 2: language-owned C-floor semantics. Both operands must be
+        concrete ``str`` floors; the pattern must be in the decidable subset
+        (validate_pattern is the authority). A successful match is a truthy
+        ``ReMatchValue``; no match is ``NoneValue``. Symbolic operands or a
+        pattern outside the subset keep the call loud -- never a guessed
+        match or non-match.
+        """
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.re_match_value import ReMatchValue
+        from sugar_lift_py_tests.floor.re_subset_matcher import (
+            UnsupportedRegexInput,
+            UnsupportedRegexPattern,
+            re_fullmatch,
+            re_match,
+            re_search,
+        )
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import Complete
+
+        owner = f"BuiltinSemanticCallable.{self.operation}"
+        if operation.keyword_names or len(operation.arguments) != 2:
+            construction_panic_gap(
+                owner=owner,
+                blame=str(operation.site),
+                observed=(len(operation.arguments), operation.keyword_names),
+                requested="exactly two positional authenticated re operands",
+                fix="construct re.search/match/fullmatch arity exactly or keep it loud",
+            )
+        pattern_v, subject_v = operation.arguments
+        if not isinstance(pattern_v, StringValue) or not isinstance(
+            subject_v, StringValue
+        ):
+            construction_panic_gap(
+                owner=owner,
+                blame=str(operation.site),
+                observed=(type(pattern_v).__name__, type(subject_v).__name__),
+                requested="concrete str pattern and subject",
+                fix=(
+                    "keep re over a symbolic pattern/subject loud; only concrete "
+                    "operands are decided by the subset matcher"
+                ),
+            )
+        matcher = {
+            "python.re.search": re_search,
+            "python.re.match": re_match,
+            "python.re.fullmatch": re_fullmatch,
+        }[self.operation]
+        try:
+            span = matcher(pattern_v.value, subject_v.value)
+        except (UnsupportedRegexPattern, UnsupportedRegexInput) as exc:
+            construction_panic_gap(
+                owner=owner,
+                blame=str(operation.site),
+                observed=str(exc),
+                requested="a pattern in the decidable re subset",
+                fix="keep the call loud until the subset covers this pattern",
+            )
+        if span is None:
+            return Complete(NoneValue())
+        return Complete(ReMatchValue(subject=subject_v.value, span=span))
 
     def _isinstance(self, operation):
         """Exact ``isinstance(obj, classinfo)`` over authenticated floors.
