@@ -110,6 +110,39 @@ can refute:
 **Twins.** exit never suppresses: a raise inside `with open(...)` propagates
 (truthful); the same site asserted as suppressed → refuted (lying).
 
+### Cut 2 — status 2026-09-05 (first increment landed)
+
+The **matcher core is built and tested**, decoupled from the wiring:
+- `floor/re_subset_matcher.py` — `validate_pattern` is the sole authority on
+  the decidable subset (refuses look-around, back-references, named-group
+  back-refs, conditional/atomic groups, possessive quantifiers, the global
+  inline-flags prefix — each by name); a validated pattern is executed by the
+  authenticated runtime's own `re` (`PythonRuntimeIdentity` is the key), which
+  IS the definition of the answer for the subset. Returns a bounded
+  `RegexMatchSpanV1` or None.
+- `floor/re_match_value.py` — `ReMatchValue`: subject + spans, unconditionally
+  truthy (a Match always is), `group_text(n)` decidable; None-match is
+  `NoneValue` (falsy).
+- `BuiltinSemanticCallable` gained `python.re.search/match/fullmatch`: concrete
+  `StringValue` operands only; symbolic operands or out-of-subset patterns keep
+  the call loud (`ConstructionPanic`), never a guessed (non-)match.
+- Twins: `test_re_subset_matcher` (26 — every subset case agrees with the
+  runtime; every refused construct refuses by name; bad pattern is loud) and
+  `test_re_semantic_callable` (6 — truthful/lying search, anchored match/
+  fullmatch, group recovery, symbolic + out-of-subset stay loud).
+
+**Not yet wired (the remaining half of Cut 2):** recognizing an authenticated
+import target `python:re.search` at call resolution and binding the callee to
+`BuiltinSemanticCallable(operation="python.re.search")`. Today `re.search`
+resolves to an `ImportMemberValue` / seated cpython frame that bottoms out at
+`_sre`. The wiring must sit at the authenticated-import call door (NOT the
+spelling), the same door `pytest.raises`'s `match=` flows through. BLOCKER:
+the re-authentication seating path (`test_regex_search_dependency_authority`,
+`test_regexflag_relative_member_seating`) has ~9 pre-existing failures; those
+must go green before the C-floor recognition can hang off a trustworthy
+authenticated target. `_io.open` and the other C-floor callables take the same
+recognition door once it exists.
+
 ### Cut 3 — derive `pytest.raises` (5,815 sites) — *assertion-With milestone, part 1*
 With pytest enrolled, `_pytest/raises.py::RaisesExc.__exit__` derives through
 the existing generator/class doors into a **factored** effect boundary
