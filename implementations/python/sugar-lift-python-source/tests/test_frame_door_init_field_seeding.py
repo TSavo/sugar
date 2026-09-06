@@ -14,8 +14,8 @@ i.e. `self.r = r`'s post_state reduces to a fresh empty ObjectValue instead of
 a ReceiverFieldStoreValue, because the constructed-receiver coordinate minted
 by ClassDef._source_visible_body is not matched on the frame-door path.
 
-This test pins the DESIRED behavior; xfail(strict) so it flips to a failure
-the moment the receiver seeds its field, forcing the pin to be removed.
+This is the fix's regression pin: the frame-door receiver seeds __init__'s
+field stores, so ``self.r`` is decided at __enter__.
 """
 
 from __future__ import annotations
@@ -75,7 +75,6 @@ def _install(root: Path) -> importlib.metadata.Distribution:
     return importlib.metadata.Distribution.at(meta)
 
 
-@pytest.mark.xfail(strict=True, reason="Cut 6: frame-door receiver drops __init__ field stores")
 def test_import_backed_manager_receiver_runs_init_field_stores(tmp_path) -> None:
     dist = _install(tmp_path)
     graph = DependencyArtifactGraph.authenticate(dist)
