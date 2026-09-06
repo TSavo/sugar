@@ -185,6 +185,24 @@ is a two-face partition (`nullcontext` | `assert_produces_warning`) — the
 factored ref carries both faces; the `CHAINED_WARNING_DISABLED` module pin
 decides which face is live at the pin.
 
+### Cut 6 — diagnosis pinned 2026-09-05 (frame-door __init__ field seeding)
+
+Localized to the exact seam. `ClassDefinitionValue.construct_receiver_state_from_block`
+is handed the reduced constructor body:
+- same-module path:  `BlockValue[ReceiverFieldStoreValue]` -> receiver fields `{'r'}` (correct)
+- import/frame-door: `BlockValue[ObjectValue(empty)]`      -> receiver fields `{}`   (bug)
+
+i.e. `self.r = r`'s `post_state` reduces to a fresh empty `ObjectValue` instead
+of a `ReceiverFieldStoreValue` on the frame door, because the constructed-
+receiver coordinate minted by `ClassDef._source_visible_body`
+(`BindingCoordinateV1.mint(self.fragment.seal().cid, receiver_param.fragment,
+("receiver", 0))`) is not matched when the class was materialized under the
+frame-door producer reporter. Fix is in the post_state reduction's receiver-
+coordinate match, and must not regress same-module manager construction.
+Pinned by `test_frame_door_init_field_seeding.py` (xfail strict -> xpass when
+fixed). This is what blocks `contextlib.nullcontext` and the pandas resource
+classes from deriving once enrolled.
+
 ### Cut 6 — pandas resource classes (~320) — *resource-With milestone*
 `ExcelFile`, `ExcelWriter`, `HDFStore`, `StataReader`, `TextFileReader`,
 `IOHandles`/`get_handle`, `SQLDatabase`: class `__enter__`/`__exit__` derive
