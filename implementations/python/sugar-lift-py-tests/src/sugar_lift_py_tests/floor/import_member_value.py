@@ -115,13 +115,33 @@ class ImportMemberValue(FloorValue):
         del ctx
         return self.contains(operation.item, operation.site)
 
-    def callable_application_with(self, operation: Any, ctx: object):
-        """Call-through-import: boundary effect, not CallSite construction.
+    #: Authenticated C-floor callables whose meaning is language-owned (plan
+    #: Cut 2). The KEY is the authenticated ``target_symbol`` (``qualified_name``
+    #: here), never the spelling. Recognition hands a decidable call to the
+    #: shared ``BuiltinSemanticCallable`` operation; an undecidable one (symbolic
+    #: operand, or a pattern outside the decided subset) falls through to the
+    #: ordinary import-member runtime-effect boundary -- never a guess.
+    _C_FLOOR_SEMANTIC_OPERATIONS = {
+        "re.search": "python.re.search",
+        "re.match": "python.re.match",
+        "re.fullmatch": "python.re.fullmatch",
+    }
 
-        Runtime type is undecided at lift; do not invent a CallSite sugar path
-        here (that door is not this floor's). Name the import-member call
-        boundary with the shared ImportedModuleRuntimeEffect incomplete.
+    def callable_application_with(self, operation: Any, ctx: object):
+        """Call-through-import: a recognized C-floor semantic when the call is
+        DECIDABLE, else the ordinary boundary effect.
+
+        Runtime type is undecided at lift for an arbitrary import member, so the
+        default door names the ImportMemberCallEffect boundary and invents no
+        CallSite. But a small closed set of C-floor callables (``re.search`` and
+        friends) have language-owned semantics; when THIS authenticated member
+        is one of them and its operands are concrete, decide it here.
         """
+        operation_name = self._C_FLOOR_SEMANTIC_OPERATIONS.get(self.qualified_name)
+        if operation_name is not None:
+            decided = self._decide_c_floor_semantic(operation_name, operation, ctx)
+            if decided is not None:
+                return decided
         del ctx
         return _import_member_runtime_effect(
             self,
@@ -129,6 +149,49 @@ class ImportMemberValue(FloorValue):
             shape=f"{self.qualified_name}(...)",
             replacement="ImportMemberCallEffect",
         )
+
+    def _decide_c_floor_semantic(self, operation_name, operation, ctx):
+        """Apply the language-owned semantic when the call is decidable; return
+        ``None`` to fall through to the undecided boundary effect.
+
+        Decidable means: the semantic's own operand contract is satisfied
+        (arity, concrete ``str`` operands) AND -- for ``re`` -- the pattern is
+        in the decided subset. Anything else is a genuine undecided at THIS
+        boundary, not our missing floor, so it stays a runtime effect."""
+        from sugar_lift_py_tests.floor.builtin_semantic_callable import (
+            BuiltinSemanticCallable,
+        )
+        from sugar_lift_py_tests.floor.re_subset_matcher import (
+            UnsupportedRegexInput,
+            UnsupportedRegexPattern,
+            validate_pattern,
+        )
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+        if operation.keyword_names or len(operation.arguments) < 2:
+            return None
+        # re.search(pattern, string[, flags]) -- flags beyond the subset make it
+        # undecided here, not a panic. Only the two-operand concrete form is
+        # decided; a third (flags) operand keeps the boundary.
+        if len(operation.arguments) != 2:
+            return None
+        pattern_v, subject_v = operation.arguments
+        if not isinstance(pattern_v, StringValue) or not isinstance(
+            subject_v, StringValue
+        ):
+            return None
+        try:
+            validate_pattern(pattern_v.value)
+        except (UnsupportedRegexPattern, UnsupportedRegexInput):
+            return None
+        callee = BuiltinSemanticCallable(operation=operation_name)
+        try:
+            return callee.callable_application_with(operation, ctx)
+        except ConstructionPanic:
+            # The subset authority already cleared this call; a panic here would
+            # be a real defect, not an undecided -- do not swallow it.
+            raise
 
     def call_method_with(self, operation: Any, ctx: object):
         del ctx
