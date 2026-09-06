@@ -250,6 +250,24 @@ class ClassDefinitionValue(GuardStableValue):
         )
         if block is None:
             return receiver
+        # The initializer may reduce directly to the CONSTRUCTED receiver -- an
+        # ObjectValue that already carries __init__'s field stores -- rather
+        # than to pending ReceiverFieldStoreValue statements. The same-module
+        # path leaves stores pending; the import/frame door completes them into
+        # the receiver (its ObjectValue.identity is exactly this receiver
+        # coordinate). A block that is exactly this receiver IS the receiver;
+        # rebuilding an empty one here dropped every __init__ field on the
+        # frame door (enter-may-halt ObjectValue.attribute, plan Cut 6).
+        if (
+            len(block.statements) == 1
+            and isinstance(block.statements[0], (ObjectValue, MappingObjectValue))
+            and getattr(
+                block.statements[0].defining_class, "class_definition_cid", None
+            )
+            == self.class_definition_cid
+            and block.statements[0].identity == receiver.identity
+        ):
+            return block.statements[0]
         guarded_stores = tuple(
             statement
             for statement in block.statements
