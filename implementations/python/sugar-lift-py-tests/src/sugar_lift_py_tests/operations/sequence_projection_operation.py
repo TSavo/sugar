@@ -65,6 +65,17 @@ class SequenceProjectionOperation:
     prefix_names: tuple[str, ...] = ()
     suffix_names: tuple[str, ...] = ()
 
+    @property
+    def site(self) -> object:
+        """The source locus of this demand (recorded under ``blame``).
+
+        Consumers that reduce this operation over an undecided receiver -- an
+        ImportMemberValue under an enrolled stdlib body -- read
+        ``operation.site``. Sibling operations that lacked it raised
+        AttributeError and voided the file (see SubscriptOperation.site).
+        """
+        return self.blame
+
     def __post_init__(self) -> None:
         if self.star_name is None:
             if self.prefix_names or self.suffix_names:

@@ -34,6 +34,17 @@ class UnpackMemberRoster:
     occurrence: object  # authenticated source fragment (operation blame)
     demand_cid: str  # content address of unpack demand (site + arity)
 
+    @property
+    def site(self) -> object:
+        """The source locus of this demand (recorded under ``blame``).
+
+        Consumers that reduce this operation over an undecided receiver -- an
+        ImportMemberValue under an enrolled stdlib body -- read
+        ``operation.site``. Sibling operations that lacked it raised
+        AttributeError and voided the file (see SubscriptOperation.site).
+        """
+        return self.blame
+
     def __post_init__(self) -> None:
         if not isinstance(self.demand_cid, str) or not self.demand_cid:
             raise ValueError(

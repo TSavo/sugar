@@ -51,6 +51,17 @@ class InplaceBinaryOperatorOperation:
     owner: str
     blame: object
 
+    @property
+    def site(self) -> object:
+        """The source locus of this demand (recorded under ``blame``).
+
+        Consumers that reduce this operation over an undecided receiver -- an
+        ImportMemberValue under an enrolled stdlib body -- read
+        ``operation.site``. Sibling operations that lacked it raised
+        AttributeError and voided the file (see SubscriptOperation.site).
+        """
+        return self.blame
+
     def inplace_default(self, receiver, ctx) -> Any:
         """Species without inplace override: ordinary binary by surface operator."""
         del ctx
