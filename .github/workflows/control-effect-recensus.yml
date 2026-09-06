@@ -56,12 +56,24 @@ on:
       corpus_subtree:
         description: "Optional subtree inside the corpus for a bounded run"
         required: false
+      enrolled_populations:
+        description: >-
+          Extra authenticated source populations to enroll (plan Cut 1),
+          comma list of <distribution> or <distribution>:<module>, e.g.
+          'cpython-stdlib:contextlib,pytest'. Empty = corpus only.
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 env:
   PYTHONUNBUFFERED: "1"
+  # Plan Cut 1: extra authenticated source populations to enroll (declared,
+  # never inferred). Empty on the schedule; a workflow_dispatch may set it to
+  # measure a tip board with e.g. contextlib/pytest enrolled. The corpus
+  # distribution is always enrolled regardless.
+  SUGAR_ENROLLED_POPULATIONS: ${{ github.event.inputs.enrolled_populations || '' }}
   # Banked LPT k — keep fixed; change the split KEY (prior), not k (#7055).
   RECENSUS_SHARD_COUNT: "8"
   # Host bind-mount lease (serializes with human brun exclusive quiet gate).
