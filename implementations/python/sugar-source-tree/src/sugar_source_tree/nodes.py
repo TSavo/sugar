@@ -7878,6 +7878,14 @@ class If(Statement):
                 ),
             ),
             self.reporter,
+            # Preserve the enclosing control context (loop targets AND exception
+            # slots) across the branch-result rewrite -- as ``rewrite`` does.
+            # Without it a slot-rewritten If inside an ``except`` lost the
+            # in-flight exception slot, so a bare ``raise`` in one of its
+            # branches (``if exc is not value: raise`` in contextlib
+            # _GeneratorContextManager.__exit__) refused with 'no authenticated
+            # in-flight exception slot'.
+            self.control_context,
         )
 
     def _make_assign(self, name: str, value: "Node") -> "Node":
