@@ -58,7 +58,7 @@ class BuiltinSuperValue(FloorValue):
         keywords=(),
         required_frame=None,
     ):
-        del owner, ctx
+        del owner
         if required_frame is not None:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -123,6 +123,24 @@ class BuiltinSuperValue(FloorValue):
                 lambda updated: Complete(
                     ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
                 )
+            )
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+
+        if isinstance(base, ClassDefinitionValue):
+            # Zero-arg super into a source-defined next class: run the selected
+            # base method on the original instance receiver.  The base body
+            # reduces with __class__ seeded to its defining class, so a further
+            # super() inside it selects the class after the base.
+            return base.dispatch_super_method(
+                self.receiver,
+                name,
+                arguments,
+                owner="BuiltinSuperValue.call_method_value",
+                blame=blame,
+                ctx=ctx,
+                keywords=keywords,
             )
         construction_panic_gap(
             owner="BuiltinSuperValue.call_method_value",
