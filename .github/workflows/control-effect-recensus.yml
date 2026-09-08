@@ -70,10 +70,15 @@ permissions:
 env:
   PYTHONUNBUFFERED: "1"
   # Plan Cut 1: extra authenticated source populations to enroll (declared,
-  # never inferred). Empty on the schedule; a workflow_dispatch may set it to
-  # measure a tip board with e.g. contextlib/pytest enrolled. The corpus
-  # distribution is always enrolled regardless.
-  SUGAR_ENROLLED_POPULATIONS: ${{ github.event.inputs.enrolled_populations || '' }}
+  # never inferred). The schedule now enrolls the MEASURED-clean stdlib module
+  # cpython-stdlib:contextlib -- the corpus's own @contextmanager managers
+  # (option_context et al.) construct only through contextlib's generator
+  # machinery, so a corpus-only board hid 1,161 real constructions (+1 panic;
+  # measured on tip board run 34170728474 after #7443). Promoting a
+  # module-at-a-time measured population to the daily roster is exactly Cut 1.
+  # A workflow_dispatch may still override to add pytest/numpy or set corpus
+  # -only. The corpus distribution is always enrolled regardless.
+  SUGAR_ENROLLED_POPULATIONS: ${{ github.event.inputs.enrolled_populations || 'cpython-stdlib:contextlib' }}
   # Banked LPT k — keep fixed; change the split KEY (prior), not k (#7055).
   RECENSUS_SHARD_COUNT: "8"
   # Host bind-mount lease (serializes with human brun exclusive quiet gate).
