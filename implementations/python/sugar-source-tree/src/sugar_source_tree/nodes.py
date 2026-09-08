@@ -9717,19 +9717,23 @@ class Try(Statement):
             if not type_nodes:
                 return super()._construct_sugar()  # empty tuple: no honest matcher
             for type_node in type_nodes:
-                if not isinstance(type_node, Name):
-                    # ``except re.error`` / dotted types are not bare Names.
-                    # SoftUnresolvedTrySugar was a second mechanism that
-                    # rendered unfinished except-type Sugar as Incomplete.
-                    # Raise: write the missing Sugar door, do not soft-survive.
-                    raise SugarNotWritten(
-                        owner="Try._construct_sugar",
-                        blame=self.fragment,
-                        observed="non-Name except type without authenticated identity",
-                        requested="a constructed exception-type coordinate (or Name)",
-                        fix="resolve the handler type lexically or write Sugar for dotted except types",
+                # A bare Name authenticates through the lexical builtin/source
+                # vocabulary; a dotted import-bound type (``except re.error``)
+                # authenticates through the same closed import identity used for
+                # ``raise re.error(...)`` operands.  Only a head that is neither
+                # -- a computed, shadowed, or instance-attribute except type --
+                # stays loud.
+                class_value = None
+                if isinstance(type_node, Name):
+                    identity = self.unit.exception_type_identity(type_node)
+                    mro = (
+                        self.unit.exception_type_mro(type_node)
+                        if identity is not None
+                        else None
                     )
-                identity = self.unit.exception_type_identity(type_node)
+                else:
+                    identity = self.unit.imported_exception_type_identity(type_node)
+                    mro = None
                 if identity is None:
                     raise SugarNotWritten(
                         owner="Try._construct_sugar",
@@ -9742,13 +9746,27 @@ class Try(Statement):
                     AuthenticatedExceptionTypeSugar,
                 )
 
+                if not isinstance(type_node, Name):
+                    # Seal the import-bound dotted head as an exception class
+                    # value, exactly as the Raise-operand door does, so the
+                    # handler carries a concrete class rather than a bare
+                    # module-attribute floor.
+                    from sugar_lift_py_tests.floor.exception_class_value import (
+                        ExceptionClassValue,
+                    )
+
+                    qualified = getattr(identity.args[1], "value", None)
+                    if isinstance(qualified, str) and qualified:
+                        class_value = ExceptionClassValue(qualified)
+
                 handler_specs.append(
                     (
                         AuthenticatedExceptionTypeSugar(
                             type_node.sugar(),
                             identity,
-                            self.unit.exception_type_mro(type_node),
+                            mro,
                             type_node.fragment,
+                            class_value=class_value,
                         ),
                         body_sugars,
                         slot_id,

@@ -932,6 +932,13 @@ class _Pass:
             handler_entry = _join(*exceptional_prefixes)
             paths = [self.statements(node.body, state, scope)]
             for handler in node.handlers:
+                # The except-TYPE expression is a value use on the exceptional
+                # path (``except re.error`` reads the import-bound ``re``); it
+                # must be enrolled so a dotted handler type can later
+                # authenticate its import identity, exactly as a With
+                # context_expr is enrolled below.
+                if handler.type_ is not None:
+                    self.expression(handler.type_, handler_entry, scope)
                 handler_state = dict(handler_entry)
                 if handler.name:
                     handler_state[handler.name] = frozenset({_NON_IMPORT})
