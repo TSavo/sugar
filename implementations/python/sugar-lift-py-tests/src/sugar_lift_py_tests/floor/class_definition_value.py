@@ -187,6 +187,102 @@ class ClassDefinitionValue(GuardStableValue):
         )
         return call.producer_outcome(method_ctx)
 
+    def dispatch_super_method(
+        self,
+        receiver,
+        name,
+        arguments,
+        *,
+        owner,
+        blame,
+        ctx=None,
+        keywords=(),
+    ):
+        """Run method ``name`` resolved from THIS class's MRO, bound to an
+        explicit ``receiver``.
+
+        Zero-argument ``super()`` uses this to invoke a selected source-defined
+        base method: the original instance stays the bound ``self`` while the
+        base body reduces with ``__class__`` seeded to the method's defining
+        class, so a chained ``super`` inside that body selects the next class.
+        This mirrors ``ObjectValue.call_method_value`` exactly; only the method
+        table (this class's ``_object_methods`` MRO) and the explicit receiver
+        differ.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        for method in reversed(self._object_methods()):
+            if method.name != name:
+                continue
+            if not method.parameters:
+                raise SugarNotWritten(
+                    owner=owner,
+                    blame=blame,
+                    observed=f"{self.class_name}.{name}",
+                    requested="a bound self parameter on the selected base method",
+                    fix=f"add method binding sugar for `{self.class_name}.{name}`",
+                )
+            target_name = f"{self.class_name}.{name}"
+            arg_values = (receiver, *arguments)
+            bound_source_actuals = None
+            selected_frame = method.source_call_frame
+            if selected_frame is not None:
+                from sugar_lift_py_tests.source_call_frame import (
+                    SourceCallBindingGap,
+                )
+
+                try:
+                    bound_source_actuals = selected_frame.bind_actuals(
+                        arg_values, keywords, ctx
+                    )
+                    arg_values = bound_source_actuals.actuals
+                except SourceCallBindingGap as exc:
+                    raise SugarNotWritten(
+                        owner=owner,
+                        blame=blame,
+                        observed=str(exc),
+                        requested="actuals matching the selected base method signature",
+                        fix="preserve exact defaults/variadics or keep the call loud",
+                    )
+            elif keywords or len(arguments) != len(method.parameters) - 1:
+                raise SugarNotWritten(
+                    owner=owner,
+                    blame=blame,
+                    observed=f"{self.class_name}.{name}",
+                    requested="arguments matching the selected base method",
+                    fix="bind through the authenticated base frame or keep loud",
+                )
+            arg_terms = [
+                value.to_term(owner=f"{owner} super argument")
+                for value in arg_values
+            ]
+            call_value = CallSiteValue(
+                target_name=target_name,
+                arg_values=arg_values,
+                parameters=method.parameters,
+                term=ctor(
+                    f"call:{target_name}",
+                    arg_terms,
+                    symbol_kind="contract-target",
+                ),
+                body=method.body,
+                site=blame,
+                source_call_frame_cid=method.source_call_frame_cid,
+                formal_coordinate_cids=method.formal_coordinate_cids,
+                bound_source_actuals=bound_source_actuals,
+                lexical_defining_class=method.defining_class,
+            )
+            return Complete(call_value)
+        raise SugarNotWritten(
+            owner=owner,
+            blame=blame,
+            observed=f"{self.class_name}.{name}",
+            requested="a source-defined base method for zero-argument super",
+            fix=f"construct a diggable body for `{self.class_name}.{name}` or keep loud",
+        )
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
