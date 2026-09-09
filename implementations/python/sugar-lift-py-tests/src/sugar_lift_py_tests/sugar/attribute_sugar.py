@@ -101,6 +101,15 @@ class AttributeSugar(ConstructedTermSugar):
 
         if type(site) is SourceFragment:
             span = site.line_col_span
+            # The force-floor has REACHED this value-use.  If manager receipt
+            # seating deferred an unresolved-target refusal here, mint it now as
+            # the countable terminal it always was (reachability-scoped: an
+            # unreached message-only use never runs this consumer).
+            deferred = site.unit.deferred_unresolved_import_value_use(
+                (span.start_line, span.start_col, span.end_line, span.end_col)
+            )
+            if deferred is not None:
+                raise deferred.as_gap(blame=site)
             receipt = site.unit.import_value_use_resolution(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )

@@ -763,6 +763,13 @@ class SourceUnit:
     # Final-checked import value-use resolutions at exact use sites of this
     # unit only (source_cid match). Never foreign LineTable spans.
     _import_value_use_resolutions: object = field(init=False, default=None)
+    # Reachability-scoped deferrals: value-use coordinates whose target did not
+    # resolve.  Manager receipt seating records the marker here instead of
+    # voiding the whole manager; the value-use consumer raises the countable
+    # ImportValueUseResolutionGap only if the force-floor actually reaches the
+    # use.  Kept in its own table so it never enters the strict
+    # receipt->resolved state machine of _import_value_use_resolutions.
+    _deferred_unresolved_value_uses: object = field(init=False, default=None)
     _constructed_module: object = field(init=False, default=None, repr=False)
     _retained_lexical_call_rows: dict = field(
         init=False, default_factory=dict, repr=False, compare=False
@@ -790,6 +797,7 @@ class SourceUnit:
         object.__setattr__(self, "_exception_type_identity_cache", {})
         object.__setattr__(self, "_import_bound_name_targets", None)
         object.__setattr__(self, "_import_value_use_resolutions", {})
+        object.__setattr__(self, "_deferred_unresolved_value_uses", {})
         object.__setattr__(self, "_constructed_module", None)
         object.__setattr__(self, "_target_pattern_enrollments", None)
         object.__setattr__(self, "_retained_lexical_call_rows", {})
@@ -1107,6 +1115,73 @@ class SourceUnit:
         Frames consume only exact seated coordinates — no scanning, no spelling.
         """
         table = self._import_value_use_resolutions
+        if not table:
+            return None
+        return table.get(span)
+
+    def defer_unresolved_import_value_use(
+        self,
+        span: Tuple[int, int, int, int],
+        marker: object,
+        *,
+        source_cid: str,
+    ) -> None:
+        """Record a reachability-scoped unresolved value-use at ``span``.
+
+        Seated by manager receipt seating in place of an eager
+        ``ImportValueUseResolutionGap`` raise: the marker stays dormant until a
+        value-use consumer reaches the coordinate and mints the countable
+        terminal.  A span that later RESOLVES (seated in
+        ``_import_value_use_resolutions``) takes precedence at read time.
+        """
+        from sugar_source_tree.panic import (
+            BackendDefect,
+            UnresolvedImportValueUseV1,
+        )
+
+        if source_cid != self.source_cid:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.defer_unresolved_import_value_use",
+                observed=f"source_cid={source_cid!r}",
+                requested=f"source_cid={self.source_cid!r} (this unit only)",
+                fix="defer only value-use coordinates of this unit's source",
+            )
+        if type(marker) is not UnresolvedImportValueUseV1:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.defer_unresolved_import_value_use",
+                observed=type(marker).__name__,
+                requested="UnresolvedImportValueUseV1",
+                fix="defer only the closed unresolved value-use marker",
+            )
+        table = self._deferred_unresolved_value_uses
+        if table is None:
+            table = {}
+            object.__setattr__(self, "_deferred_unresolved_value_uses", table)
+        existing = table.get(span)
+        if existing is not None and existing != marker:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.defer_unresolved_import_value_use",
+                observed="conflicting deferred markers at one value-use seat",
+                requested="one unresolved-target testimony per exact coordinate",
+                fix="defer the producer-owned unresolved marker only once",
+            )
+        table[span] = marker
+
+    def deferred_unresolved_import_value_use(
+        self, span: Tuple[int, int, int, int]
+    ) -> object | None:
+        """The deferred unresolved-target marker at ``span``, or None.
+
+        A resolved seating always wins: a span present in
+        ``_import_value_use_resolutions`` is not reported as deferred.
+        """
+        resolved = self._import_value_use_resolutions
+        if resolved and span in resolved:
+            return None
+        table = self._deferred_unresolved_value_uses
         if not table:
             return None
         return table.get(span)
@@ -12708,6 +12783,14 @@ class Attribute(Expression):
         when neither is known, the producer refuses instead of inventing a
         completed ``py.getattr`` projection or guessing ``AttributeError``."""
         span = self.line_col_span()
+        # A reached value-use whose target manager seating deferred is minted
+        # as its countable ImportValueUseResolutionGap here, at the exact
+        # coordinate the force-floor reached (reachability-scoped refusal).
+        deferred = self.unit.deferred_unresolved_import_value_use(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if deferred is not None:
+            raise deferred.as_gap(blame=self.fragment)
         receipt = self.unit.import_value_use_resolution(
             (span.start_line, span.start_col, span.end_line, span.end_col)
         )

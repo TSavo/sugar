@@ -3855,36 +3855,34 @@ def _seat_import_value_use_receipts(
                 # for deciding whether that value is usable.
                 seat_receipt()
                 continue
-            # A REAL gap, and it stays one: the authenticated target is not
-            # reachable through the binding it claims. What changes is only
-            # that it now names a construct, a coordinate and a shape, so the
-            # census reads a countable terminal at this exact use instead of a
-            # bare ValueError that voids the file. Do NOT seat the receipt
-            # here — the neighbouring `seat_receipt(); continue` arms above are
-            # honest open-world EXPORTS that carry no definition coordinate;
-            # this is a target that does not resolve at all, and silently
-            # seating it would let an unresolved value ride as authenticated.
-            from sugar_source_tree.panic import ImportValueUseResolutionGap
+            # A REAL gap: the authenticated target is not reachable through
+            # the binding it claims.  It stays a countable terminal, but
+            # receipt seating walks the ENTIRE frame span while the manager's
+            # exit CONTRACT only reaches the value-uses on its suppress/raise
+            # decision path.  Raising here voids the whole manager even when
+            # this unresolved value is reached only on a failure-MESSAGE branch
+            # the contract never takes (pytest's ``_config.get_verbosity``
+            # inside ``RaisesExc._check_match``).  So DEFER the refusal: record
+            # a reachability-scoped marker at the exact use.  Do NOT seat the
+            # receipt (the neighbouring ``seat_receipt(); continue`` arms are
+            # honest open-world EXPORTS; seating this would let an unresolved
+            # value ride as authenticated).  The value-use CONSUMER
+            # (AttributeSugar / Attribute._construct_sugar) mints the identical
+            # ``ImportValueUseResolutionGap`` if and when the force-floor
+            # actually reaches the coordinate; an unreached message-only use is
+            # never consumed, so the manager constructs.
+            from sugar_source_tree.panic import UnresolvedImportValueUseV1
 
-            raise ImportValueUseResolutionGap(
-                blame=coordinate,
-                owner="manager_construction._seat_import_value_use_receipts",
-                observed=(
-                    "authenticated value-use receipt did not resolve: "
-                    f"resolution-{imported.kind} for target "
-                    f"{receipt.target_symbol!r} through module "
-                    f"{dependency_module!r}"
+            unit.defer_unresolved_import_value_use(
+                span_key,
+                UnresolvedImportValueUseV1(
+                    resolution_kind=imported.kind,
+                    target_symbol=receipt.target_symbol,
+                    dependency_module=dependency_module,
                 ),
-                requested=(
-                    "a resolved Python object for the receipt's authenticated "
-                    "target symbol, reached through its own import binding"
-                ),
-                fix=(
-                    "resolve the target through the binding it names, or keep "
-                    "this value-use coordinate loud; never seat an unresolved "
-                    "target as an authenticated value"
-                ),
+                source_cid=module.source_cid,
             )
+            continue
         seat_receipt()
         context.source_import_value_resolutions[coordinate] = imported
         unit.seat_import_value_use_resolution(
