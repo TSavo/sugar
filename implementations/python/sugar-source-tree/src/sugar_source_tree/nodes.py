@@ -12783,14 +12783,9 @@ class Attribute(Expression):
         when neither is known, the producer refuses instead of inventing a
         completed ``py.getattr`` projection or guessing ``AttributeError``."""
         span = self.line_col_span()
-        # A reached value-use whose target manager seating deferred is minted
-        # as its countable ImportValueUseResolutionGap here, at the exact
-        # coordinate the force-floor reached (reachability-scoped refusal).
-        deferred = self.unit.deferred_unresolved_import_value_use(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
-        )
-        if deferred is not None:
-            raise deferred.as_gap(blame=self.fragment)
+        # A deferred (proven message-only) value-use constructs its ordinary
+        # AttributeSugar here; the opacity is a force-floor concern resolved at
+        # reduce (AttributeSugar.project_attribute yields a MessageOpaqueValue).
         receipt = self.unit.import_value_use_resolution(
             (span.start_line, span.start_col, span.end_line, span.end_col)
         )

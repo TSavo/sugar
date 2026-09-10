@@ -75,10 +75,11 @@ def test_defer_refuses_a_non_marker_and_foreign_source_cid() -> None:
         )
 
 
-def test_reached_attribute_consumer_mints_the_countable_gap() -> None:
-    # An Attribute whose exact span carries a deferred marker raises the
-    # countable ImportValueUseResolutionGap when constructed (the force-floor
-    # reaching it), rather than projecting an authenticated member.
+def test_construct_over_a_deferred_marker_does_not_raise() -> None:
+    # A deferred (proven message-only) value-use constructs its ordinary
+    # AttributeSugar -- the opacity is resolved at reduce (a MessageOpaqueValue),
+    # never a construct-time gap.  as_gap remains the SEAT-time abort path for a
+    # decision-reaching unresolved value (see test_message_only_value_use.py).
     tree = _tree("def f(mod):\n    return mod.thing\n")
     unit = tree.unit
     attr = next(
@@ -90,23 +91,11 @@ def test_reached_attribute_consumer_mints_the_countable_gap() -> None:
     key = (span.start_line, span.start_col, span.end_line, span.end_col)
     unit.defer_unresolved_import_value_use(key, _marker(), source_cid=unit.source_cid)
 
-    with pytest.raises(ImportValueUseResolutionGap):
-        attr.sugar()
+    # Must not raise ImportValueUseResolutionGap at construction.
+    attr.sugar()
 
 
-def test_unreached_attribute_without_marker_does_not_raise_the_gap() -> None:
-    # The lying-twin control: the SAME attribute shape with NO deferred marker
-    # must not mint the gap (the refusal is reachability + deferral scoped,
-    # never fabricated).
-    tree = _tree("def f(mod):\n    return mod.thing\n")
-    attr = next(
-        node
-        for node in tree.root.walk()
-        if isinstance(node, Attribute) and node.attr == "thing"
-    )
-    try:
-        attr.sugar()
-    except ImportValueUseResolutionGap:  # pragma: no cover
-        pytest.fail("no deferred marker was seated; the gap must not appear")
-    except Exception:
-        pass  # an ordinary opaque-receiver refusal is fine; the GAP must not.
+def test_marker_as_gap_still_available_for_seat_time_abort() -> None:
+    # The decision-path abort path still mints the identical countable gap.
+    gap = _marker().as_gap(blame="deferred_use.py:2:11")
+    assert isinstance(gap, ImportValueUseResolutionGap)

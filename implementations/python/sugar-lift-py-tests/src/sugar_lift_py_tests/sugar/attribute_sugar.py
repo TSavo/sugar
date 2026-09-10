@@ -109,7 +109,25 @@ class AttributeSugar(ConstructedTermSugar):
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
             if deferred is not None:
-                raise deferred.as_gap(blame=site)
+                # PROVEN message-only (frame_value_use_is_message_only gated the
+                # deferral): the contract does not depend on this value, so the
+                # force-floor reaching it here yields a message opacity rather
+                # than a refusal, letting the manager construct.
+                from sugar_lift_py_tests.floor.message_opaque_value import (
+                    MessageOpaqueValue,
+                )
+                from sugar_lift_py_tests.ir import ctor, str_const
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(
+                    MessageOpaqueValue(
+                        term=ctor(
+                            "python:message-opaque-value",
+                            [str_const(deferred.target_symbol)],
+                            symbol_kind="coordinate",
+                        )
+                    )
+                )
             receipt = site.unit.import_value_use_resolution(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
