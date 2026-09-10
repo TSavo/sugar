@@ -129,3 +129,52 @@ def test_augassign_of_taint_aborts() -> None:
     )
     # AugAssign is unmodelled and mentions the taint -> abort.
     assert _is_message_only(src, "get_verbosity") is False
+
+
+# --- the seater may pass a COARSER frame than the enclosing function ----------
+def test_coarser_class_or_module_frame_descends_to_the_function() -> None:
+    from sugar_source_tree.nodes import Attribute, ClassDef
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    src = (
+        "class RaisesExc:\n"
+        "    def _check_match(self, cfg):\n"
+        "        if isinstance(self.rawmatch, str):\n"
+        "            verbose = (cfg.get_verbosity(0) if cfg is not None else 0)\n"
+        "            self._fail_reason = str(verbose)\n"
+        "            return False\n"
+        "        return True\n"
+    )
+    tree = SourceFile(
+        (src, "cls.py", blake3_512_of(src.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    attr = next(
+        n for n in tree.root.walk() if isinstance(n, Attribute) and n.attr == "get_verbosity"
+    )
+    sp = attr.line_col_span()
+    use = (sp.start_line, sp.start_col, sp.end_line, sp.end_col)
+    cls = next(n for n in tree.root.walk() if isinstance(n, ClassDef))
+    # Coarser frames (ClassDef, Module) must descend to _check_match's body.
+    assert frame_value_use_is_message_only(cls, use) is True
+    assert frame_value_use_is_message_only(tree.root, use) is True
+
+
+def test_module_level_use_outside_any_function_is_not_message_only() -> None:
+    from sugar_source_tree.nodes import Attribute
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    src = "x = cfg.get_verbosity()\n"
+    tree = SourceFile(
+        (src, "mod.py", blake3_512_of(src.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    attr = next(
+        n for n in tree.root.walk() if isinstance(n, Attribute) and n.attr == "get_verbosity"
+    )
+    sp = attr.line_col_span()
+    use = (sp.start_line, sp.start_col, sp.end_line, sp.end_col)
+    # Not inside any function -> not a manager-frame value -> refuse.
+    assert frame_value_use_is_message_only(tree.root, use) is False

@@ -166,6 +166,31 @@ def _statement_mentions_tainted(stmt, tainted_spans, tainted_names) -> bool:
     return mentions(stmt)
 
 
+def _innermost_enclosing_function(frame, use_span: Span):
+    """The innermost FunctionDef within ``frame`` whose span contains
+    ``use_span`` (``frame`` itself if it is that function), or None when the use
+    is not inside any function definition."""
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+
+    best = None
+    best_span: Span | None = None
+    walk = getattr(frame, "walk", None)
+    candidates = list(frame.walk()) if callable(walk) else [frame]
+    for node in candidates:
+        if not isinstance(node, (FunctionDef, AsyncFunctionDef)):
+            continue
+        fs = _span_of(node)
+        if not ((fs[0], fs[1]) <= (use_span[0], use_span[1]) and (use_span[2], use_span[3]) <= (fs[2], fs[3])):
+            continue
+        # Prefer the tightest containing function.
+        if best_span is None or (
+            (best_span[0], best_span[1]) <= (fs[0], fs[1])
+            and (fs[2], fs[3]) <= (best_span[2], best_span[3])
+        ):
+            best, best_span = node, fs
+    return best
+
+
 def frame_value_use_is_message_only(frame, use_span: Span) -> bool:
     """True iff the value-use at ``use_span`` PROVABLY reaches only a declared
     message sink within ``frame``'s body.
@@ -174,7 +199,15 @@ def frame_value_use_is_message_only(frame, use_span: Span) -> bool:
     it cannot prove benignity.  Never returns True for a value that could reach
     a ``return``, ``raise``, or control-flow test.
     """
-    body = getattr(frame, "body", None)
+    # Seating passes whatever frame owns the use span -- which can be COARSER
+    # than the function the use lives in (a ClassDef, or the Module).  A
+    # reachability slice is only meaningful over the innermost enclosing
+    # function's own body, so descend to it first; a use not inside any function
+    # (module/class level) is not a manager-frame value and stays a refusal.
+    function = _innermost_enclosing_function(frame, tuple(use_span))
+    if function is None:
+        return False
+    body = getattr(function, "body", None)
     if not body:
         return False
     # Seed the taint at the smallest enclosing expression whose VALUE is the
