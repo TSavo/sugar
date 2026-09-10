@@ -220,3 +220,16 @@ def frame_value_use_is_message_only(frame, use_span: Span) -> bool:
     except Exception:
         # Any structural surprise is a refusal to prove, never a silent defer.
         return False
+
+
+def describe_message_only(frame, use_span: Span) -> str:
+    """DIAGNOSTIC: one-line why-verdict string for the abort path."""
+    try:
+        fn = _innermost_enclosing_function(frame, tuple(use_span))
+        fname = getattr(fn, "name", None)
+        frame_kind = type(frame).__name__
+        verdict = frame_value_use_is_message_only(frame, use_span)
+        nstmt = len(getattr(fn, "body", []) or []) if fn is not None else -1
+        return f"frame={frame_kind} innermost_fn={fname} body_stmts={nstmt} message_only={verdict}"
+    except Exception as exc:  # pragma: no cover
+        return f"describe-failed:{type(exc).__name__}:{str(exc)[:80]}"
