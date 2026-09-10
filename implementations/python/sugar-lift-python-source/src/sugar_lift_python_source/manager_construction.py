@@ -3873,16 +3873,30 @@ def _seat_import_value_use_receipts(
             # never consumed, so the manager constructs.
             from sugar_source_tree.panic import UnresolvedImportValueUseV1
 
-            unit.defer_unresolved_import_value_use(
-                span_key,
-                UnresolvedImportValueUseV1(
-                    resolution_kind=imported.kind,
-                    target_symbol=receipt.target_symbol,
-                    dependency_module=dependency_module,
-                ),
-                source_cid=module.source_cid,
+            marker = UnresolvedImportValueUseV1(
+                resolution_kind=imported.kind,
+                target_symbol=receipt.target_symbol,
+                dependency_module=dependency_module,
             )
-            continue
+            from sugar_lift_python_source.message_only_value_use import (
+                frame_value_use_is_message_only,
+            )
+
+            if frame_value_use_is_message_only(target, span_key):
+                # PROVABLY message-only within this frame: the unresolved value
+                # cannot reach the exit contract's suppress/raise decision.
+                # Defer -- the consumer mints the countable gap only if the
+                # force-floor reaches it, and an unreached message use lets the
+                # manager construct.
+                unit.defer_unresolved_import_value_use(
+                    span_key, marker, source_cid=module.source_cid
+                )
+                continue
+            # Decision-reaching, or not provably message-only: refuse NOW.  This
+            # keeps the early abort that bounds construction cost for frames
+            # whose unresolved value gates deep materialization (io/json/_json.py),
+            # and is the identical countable ImportValueUseResolutionGap.
+            raise marker.as_gap(blame=coordinate)
         seat_receipt()
         context.source_import_value_resolutions[coordinate] = imported
         unit.seat_import_value_use_resolution(

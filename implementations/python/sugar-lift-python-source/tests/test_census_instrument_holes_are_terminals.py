@@ -206,10 +206,18 @@ def test_unresolved_import_value_use_is_deferred_never_seated() -> None:
 
     source = inspect.getsource(_seat_import_value_use_receipts)
     assert "defer_unresolved_import_value_use" in source, (
-        "the unresolved-target arm must DEFER a reachability-scoped marker"
+        "the message-only arm must DEFER a reachability-scoped marker"
     )
     assert "UnresolvedImportValueUseV1" in source, (
         "the deferred arm must record the named unresolved-value-use marker"
+    )
+    assert "frame_value_use_is_message_only" in source, (
+        "deferral must be GATED on the message-only reachability slice, never "
+        "unconditional -- a decision-reaching unresolved value must still abort"
+    )
+    assert "raise marker.as_gap" in source, (
+        "the decision-reaching / unprovable arm must still RAISE the countable "
+        "ImportValueUseResolutionGap at seat time (bounds construction cost)"
     )
     for silently_seated in (
         '"target-outside-binding"',
