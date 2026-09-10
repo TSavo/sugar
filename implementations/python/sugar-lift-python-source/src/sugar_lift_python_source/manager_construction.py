@@ -3896,22 +3896,6 @@ def _seat_import_value_use_receipts(
             # keeps the early abort that bounds construction cost for frames
             # whose unresolved value gates deep materialization (io/json/_json.py),
             # and is the identical countable ImportValueUseResolutionGap.
-            import os as _os
-
-            if _os.environ.get("SUGAR_DIAG_MESSAGE_SLICE") or "get_verbosity" in receipt.target_symbol:
-                from sugar_lift_python_source.message_only_value_use import (
-                    describe_message_only,
-                )
-
-                _diag = describe_message_only(target, span_key)
-                _gap = marker.as_gap(blame=coordinate)
-                raise type(_gap)(
-                    blame=coordinate,
-                    owner="manager_construction._seat_import_value_use_receipts",
-                    observed=f"{_gap.observed} :: DIAG[{_diag}]",
-                    requested="a resolved Python object",
-                    fix="diagnostic",
-                )
             raise marker.as_gap(blame=coordinate)
         seat_receipt()
         context.source_import_value_resolutions[coordinate] = imported
