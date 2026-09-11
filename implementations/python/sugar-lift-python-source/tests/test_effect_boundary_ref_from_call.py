@@ -92,3 +92,20 @@ def test_no_exception_type_argument_returns_none() -> None:
 
 def test_non_exception_positional_returns_none() -> None:
     assert _seal("def f():\n    with ctx(123):\n        pass\n") is None
+
+
+
+def test_tuple_of_exception_types_seals() -> None:
+    ref = _seal(
+        "import pytest\ndef f():\n    with pytest.raises((ValueError, TypeError), match='x'):\n        pass\n"
+    )
+    assert isinstance(ref, SourceDerivedContextManagerRefV1)
+    assert ref.semantics.expected_type_operand.parameter_index == 0
+    assert isinstance(
+        ref.semantics.message_pattern_operand, OptionalFormalArgumentProjectionV1
+    )
+
+
+def test_tuple_with_one_non_exception_element_returns_none() -> None:
+    # Not every element authenticates -> not a tuple of exception types.
+    assert _seal("def f(x):\n    with ctx((ValueError, x)):\n        pass\n") is None

@@ -632,10 +632,20 @@ def _effect_boundary_ref_from_call(coordinate, call):
     formal-role-keyed (any manager called with an authenticated exception-type
     argument), never by spelling.  Returns a ref, or None.
     """
-    from sugar_source_tree.nodes import Attribute, Call, Name
+    from sugar_source_tree.nodes import Attribute, Call, Name, Tuple_
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceDerivedContextManagerRefV1,
     )
+
+    def _names_exception_type(node) -> bool:
+        if isinstance(node, Name):
+            return (
+                node.unit.exception_type_identity(node) is not None
+                or node.unit.imported_exception_type_identity(node) is not None
+            )
+        if isinstance(node, Attribute):
+            return node.unit.imported_exception_type_identity(node) is not None
+        return False
 
     if not isinstance(call, Call):
         return None
@@ -643,14 +653,16 @@ def _effect_boundary_ref_from_call(coordinate, call):
     keywords = tuple(getattr(call, "keywords", ()) or ())
     expected_index = None
     for i, node in enumerate(args):
-        identity = None
-        if isinstance(node, Name):
-            identity = node.unit.exception_type_identity(
-                node
-            ) or node.unit.imported_exception_type_identity(node)
-        elif isinstance(node, Attribute):
-            identity = node.unit.imported_exception_type_identity(node)
-        if identity is not None:
+        authenticated = _names_exception_type(node)
+        if not authenticated and isinstance(node, Tuple_):
+            # ``pytest.raises((ValueError, TypeError), ...)`` -- a tuple whose
+            # every element authenticates as an exception type is an authenticated
+            # expects-raise operand (one of these types).
+            elts = tuple(getattr(node, "elts", ()) or ())
+            authenticated = bool(elts) and all(
+                _names_exception_type(elt) for elt in elts
+            )
+        if authenticated:
             expected_index = i
             break
     if expected_index is None:
