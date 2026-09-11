@@ -436,6 +436,15 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        # An Expects-Raise manager\'s __enter__ (pytest RaisesExc: self.excinfo
+        # = ExceptionInfo.for_later()) refuses on a library observation object
+        # the source-force-floor cannot resolve. That refusal is NOT evidence
+        # against the expects-raise contract: the call already authenticated
+        # the expected-type formal. Seal from the formals, exactly as the exit
+        # arm does -- the enter result is modelled by ExceptionInfoBindingV1.
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
@@ -444,6 +453,9 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
