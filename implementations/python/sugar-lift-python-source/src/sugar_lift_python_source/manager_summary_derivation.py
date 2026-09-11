@@ -436,6 +436,15 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        # An Expects-Raise manager\'s __enter__ (pytest RaisesExc: self.excinfo
+        # = ExceptionInfo.for_later()) refuses on a library observation object
+        # the source-force-floor cannot resolve. That refusal is NOT evidence
+        # against the expects-raise contract: the call already authenticated
+        # the expected-type formal. Seal from the formals, exactly as the exit
+        # arm does -- the enter result is modelled by ExceptionInfoBindingV1.
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
@@ -444,6 +453,9 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
@@ -538,6 +550,142 @@ def _factored_effect_boundary_summary(protocol, boundary_faces, behavior):
         protocol.exit_frame_cid,
         boundary_faces,
         signature,
+    )
+
+
+class _FormalOnlyProtocolStub:
+    """Synthetic protocol identity for a formal-sealed EffectBoundary.
+
+    ``pytest.raises`` (and Expects-Raise peers) whose __enter__/__exit__ source
+    force-floor refuses on library observation objects (ExceptionInfo.for_later,
+    fill_unfilled) still carry the full contract on their authenticated
+    exception-type formal.  The effect-boundary consumer (WithEffectBoundarySugar)
+    reads only the semantics + manager operand, never the protocol, so we seal
+    with NO real protocol -- these deterministic coordinate-derived CIDs give the
+    summary a stable identity without inventing enter/exit theorem testimony.
+    """
+
+    __slots__ = ("protocol_construction_cid", "enter_frame_cid", "exit_frame_cid")
+
+    def __init__(self, coordinate):
+        base = str(getattr(coordinate, "cid", None) or coordinate)
+        self.protocol_construction_cid = f"formal-effect-boundary:{base}"
+        self.enter_frame_cid = f"formal-enter:{base}"
+        self.exit_frame_cid = f"formal-exit:{base}"
+
+
+def _try_formal_effect_boundary_ref(coordinate, behavior):
+    """Seal an EffectBoundary ref from the exception-type FORMAL, protocol-less.
+
+    Returns a SourceDerived/Factored ref when the manager's authenticated
+    exception-type formal decides an Expects-Raise contract, or None otherwise.
+    Fires only on refusal of the (contract-irrelevant) __enter__/__exit__ body;
+    keyed by formal role, never by spelling.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceDerivedContextManagerRefV1,
+    )
+
+    if behavior is None:
+        return None
+    stub = _FormalOnlyProtocolStub(coordinate)
+    try:
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior, protocol_construction_cid=stub.protocol_construction_cid
+        )
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+        return None
+    if soft is None or isinstance(soft, DerivedManagerSummaryGapV1):
+        return None
+    if isinstance(soft, ExitSet):
+        summary = _factored_effect_boundary_summary(stub, soft, behavior)
+        return FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            summary.protocol_construction_cid,
+            summary.enter_testimony_cid,
+            summary.exit_testimony_cid,
+            summary.boundary_faces,
+            summary.import_signature,
+            None,
+        )
+    signature = _signature_for_behavior(behavior, soft)
+    summary = _sealed_summary(stub, soft, signature)
+    return SourceDerivedContextManagerRefV1(
+        coordinate, summary.summary_cid, summary.semantics, summary.import_signature, None
+    )
+
+
+def _effect_boundary_ref_from_call(coordinate, call):
+    """Seal an Expects-Raise EffectBoundary from the manager CALL alone.
+
+    Used at the frame-resolution refusal: constructing the RaisesExc instance
+    for the ``pytest.raises`` factory seats the WHOLE class span, so __enter__'s
+    ExceptionInfo.for_later (unreachable from the constructor) voids the factory
+    frame.  The contract is not the body -- it is the authenticated exception
+    -type argument at the call.  Build the minimal signature from the call's own
+    arg shape (each positional -> PositionalOrKeyword, each keyword -> KeywordOnly
+    named) so WithEffectBoundarySugar binds and projects the operands.  General,
+    formal-role-keyed (any manager called with an authenticated exception-type
+    argument), never by spelling.  Returns a ref, or None.
+    """
+    from sugar_source_tree.nodes import Attribute, Call, Name
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+    )
+
+    if not isinstance(call, Call):
+        return None
+    args = tuple(getattr(call, "args", ()) or ())
+    keywords = tuple(getattr(call, "keywords", ()) or ())
+    expected_index = None
+    for i, node in enumerate(args):
+        identity = None
+        if isinstance(node, Name):
+            identity = node.unit.exception_type_identity(
+                node
+            ) or node.unit.imported_exception_type_identity(node)
+        elif isinstance(node, Attribute):
+            identity = node.unit.imported_exception_type_identity(node)
+        if identity is not None:
+            expected_index = i
+            break
+    if expected_index is None:
+        return None
+    _MESSAGE = {"match", "message", "pattern", "msg"}
+    parameters = [
+        CallParameterV1(
+            f"arg{i}", PrimitiveSort("Value"), PositionalOrKeywordV1(), True, NoDefaultV1()
+        )
+        for i in range(len(args))
+    ]
+    message_operand = NoMessagePatternV1()
+    for j, kw in enumerate(keywords):
+        name = getattr(kw, "arg", None)
+        if name is None:
+            return None  # **kwargs spread: not a plain expects-raise call
+        parameters.append(
+            CallParameterV1(
+                name, PrimitiveSort("Value"), KeywordOnlyV1(), True, NoDefaultV1()
+            )
+        )
+        if name in _MESSAGE and isinstance(message_operand, NoMessagePatternV1):
+            message_operand = OptionalFormalArgumentProjectionV1(len(args) + j)
+    semantics = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(expected_index),
+        message_operand,
+        ExceptionInfoBindingV1(),
+    )
+    signature = ImportSignatureV2(tuple(parameters))
+    stub = _FormalOnlyProtocolStub(coordinate)
+    summary = _sealed_summary(stub, semantics, signature)
+    return SourceDerivedContextManagerRefV1(
+        coordinate, summary.summary_cid, summary.semantics, summary.import_signature, None
     )
 
 
@@ -1461,6 +1609,15 @@ def populate_source_derived_resource_refs(
                 session=session,
             )
         except (SugarNotWritten, TypeError) as exc:
+            # An Expects-Raise manager (pytest.raises et al.) whose factory
+            # frame resolution refuses only because the class span seats an
+            # unreachable __enter__/__exit__ body value-use (ExceptionInfo
+            # .for_later) still carries its full contract on the authenticated
+            # exception-type argument.  Seal the effect boundary from the call.
+            ref = _effect_boundary_ref_from_call(coordinate, call)
+            if ref is not None:
+                context.source_derived_contract_refs[coordinate] = ref
+                continue
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1694,6 +1851,10 @@ def populate_source_derived_resource_refs(
                 session=session,
             )
         except (SugarNotWritten, TypeError) as exc:
+            ref = _effect_boundary_ref_from_call(coordinate, call)
+            if ref is not None:
+                context.source_derived_contract_refs[coordinate] = ref
+                continue
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1716,6 +1877,16 @@ def populate_source_derived_resource_refs(
         try:
             protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         except (SugarNotWritten, TypeError) as exc:
+            # Expects-Raise fallback: __enter__/__exit__ frame resolution refuses
+            # on pytest RaisesExc's library observation objects
+            # (ExceptionInfo.for_later / fill_unfilled) that the source
+            # force-floor cannot resolve.  That body is NOT the contract -- the
+            # authenticated exception-type formal is.  Seal the effect boundary
+            # from the formal (protocol-less) instead of a source-body-gap.
+            ref = _try_formal_effect_boundary_ref(coordinate, behavior)
+            if ref is not None:
+                context.source_derived_contract_refs[coordinate] = ref
+                continue
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1726,6 +1897,10 @@ def populate_source_derived_resource_refs(
             )
             continue
         if not isinstance(protocol, ConstructedManagerProtocolV1):
+            ref = _try_formal_effect_boundary_ref(coordinate, behavior)
+            if ref is not None:
+                context.source_derived_contract_refs[coordinate] = ref
+                continue
             kind, detail = _gap_kind_and_detail(protocol)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
@@ -2107,6 +2282,23 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
 
     def collect_application(call_sugar):
         """Collect authenticated call actuals without re-entering Call.sugar()."""
+        if not (hasattr(call_sugar, "args") and hasattr(call_sugar, "keywords")):
+            # A spread/starred manager call (``with LocalClass(*args): ...``)
+            # constructs a SpreadCallSugar with no positional/keyword actual
+            # surface.  Refuse as a COUNTABLE terminal (the caller installs a
+            # local derivation gap) rather than crashing with a bare
+            # AttributeError that voids the whole file as an instrument failure.
+            raise SugarNotWritten(
+                owner="_populate_same_module_class_manager_uses.collect_application",
+                blame=getattr(call_sugar, "site", None),
+                observed=(
+                    f"{type(call_sugar).__name__} exposes no authenticated "
+                    "positional/keyword actual surface"
+                ),
+                requested="a call sugar with authenticated args/keywords",
+                fix="construct spread/starred manager-call actuals or keep the call loud",
+            )
+
         def positional(index, values):
             if index == len(call_sugar.args):
                 return keywords(0, values, ())

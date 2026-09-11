@@ -172,26 +172,52 @@ def test_import_value_use_resolution_gap_is_a_countable_census_row() -> None:
     assert "IMPORT VALUE USE RESOLUTION GAP" in str(gap)
 
 
-def test_unresolved_import_value_use_is_still_refused_never_seated() -> None:
-    """GUARD: that the fix did not silence the gap.
+def test_unresolved_import_value_use_is_deferred_never_seated() -> None:
+    """GUARD: that the reachability deferral did not silence the gap.
 
-    The neighbouring arms in ``_seat_import_value_use_receipts``
-    (``dynamic-export``, ``static-export-absent``, ``reexport-cycle``,
-    ``ambiguous-static-export``) answer with ``seat_receipt(); continue`` —
-    honest open-world exports that carry no definition coordinate. Adding
-    ``target-outside-binding`` to that set would ALSO clear the hole, while
-    seating an unresolved target as an authenticated value. This tooth reads
-    the source of the function and refuses that shape.
+    Receipt seating walks the ENTIRE frame span while a manager's exit contract
+    only reaches its suppress/raise decision path, so eagerly RAISING on an
+    unresolved value-use voids managers whose unresolved use is reached only on
+    a failure-message branch (pytest ``_config.get_verbosity``).  The seater
+    now DEFERS: it records an ``UnresolvedImportValueUseV1`` marker at the exact
+    use, and the value-use CONSUMER mints the identical
+    ``ImportValueUseResolutionGap`` if the force-floor reaches it.  Two shapes
+    are still forbidden and pinned here:
+
+    - The seater must NOT seat the receipt for a real gap (the neighbouring
+      ``seat_receipt(); continue`` open-world arms carry a definition
+      coordinate; an unresolved target does not).  Adding
+      ``target-outside-binding`` / ``artifact-module-absent`` to a seating arm
+      would let an unresolved value ride as authenticated.
+    - The deferred marker must still stand for a COUNTABLE terminal: its
+      ``as_gap`` is an ``ImportValueUseResolutionGap`` (a ``SugarNotWritten``),
+      never a bare ``ValueError`` hole.
     """
     import inspect
 
     from sugar_lift_python_source.manager_construction import (
         _seat_import_value_use_receipts,
     )
+    from sugar_source_tree.panic import (
+        ImportValueUseResolutionGap,
+        SugarNotWritten,
+        UnresolvedImportValueUseV1,
+    )
 
     source = inspect.getsource(_seat_import_value_use_receipts)
-    assert "ImportValueUseResolutionGap" in source, (
-        "the unresolved-target arm must RAISE a named terminal"
+    assert "defer_unresolved_import_value_use" in source, (
+        "the message-only arm must DEFER a reachability-scoped marker"
+    )
+    assert "UnresolvedImportValueUseV1" in source, (
+        "the deferred arm must record the named unresolved-value-use marker"
+    )
+    assert "frame_value_use_is_message_only" in source, (
+        "deferral must be GATED on the message-only reachability slice, never "
+        "unconditional -- a decision-reaching unresolved value must still abort"
+    )
+    assert "raise marker.as_gap" in source, (
+        "the decision-reaching / unprovable arm must still RAISE the countable "
+        "ImportValueUseResolutionGap at seat time (bounds construction cost)"
     )
     for silently_seated in (
         '"target-outside-binding"',
@@ -205,6 +231,15 @@ def test_unresolved_import_value_use_is_still_refused_never_seated() -> None:
             "open-world export; seating it lets an unresolved value ride as "
             "authenticated."
         )
+    # The deferred marker still stands for the exact countable terminal.
+    gap = UnresolvedImportValueUseV1(
+        resolution_kind="target-outside-binding",
+        target_symbol="python:_pytest.assertion.util._config.get_verbosity",
+        dependency_module="_pytest.assertion.util",
+    ).as_gap(blame="pandas/io/json/_json.py:1:0")
+    assert isinstance(gap, ImportValueUseResolutionGap)
+    assert isinstance(gap, SugarNotWritten)
+    assert "resolution-target-outside-binding" in str(gap)
 
 
 # --------------------------------------------------------------------------
