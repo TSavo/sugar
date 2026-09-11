@@ -1545,7 +1545,7 @@ def populate_source_derived_resource_refs(
                 coordinate,
                 receipt,
                 kind,
-                detail,
+                detail + " @ARM=FRAME",
             )
             continue
         if isinstance(frame_result, ManagerConstructionGapV1):
@@ -1772,13 +1772,14 @@ def populate_source_derived_resource_refs(
                 session=session,
             )
         except (SugarNotWritten, TypeError) as exc:
+            ref = _try_formal_effect_boundary_ref(coordinate, None)
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
                 coordinate,
                 receipt,
                 kind,
-                detail,
+                detail + " @ARM=BEHAVIOR",
             )
             continue
         from .manager_construction import ConstructedManagerBehaviorV1
