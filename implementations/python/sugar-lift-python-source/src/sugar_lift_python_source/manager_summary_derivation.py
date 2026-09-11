@@ -553,6 +553,72 @@ def _factored_effect_boundary_summary(protocol, boundary_faces, behavior):
     )
 
 
+class _FormalOnlyProtocolStub:
+    """Synthetic protocol identity for a formal-sealed EffectBoundary.
+
+    ``pytest.raises`` (and Expects-Raise peers) whose __enter__/__exit__ source
+    force-floor refuses on library observation objects (ExceptionInfo.for_later,
+    fill_unfilled) still carry the full contract on their authenticated
+    exception-type formal.  The effect-boundary consumer (WithEffectBoundarySugar)
+    reads only the semantics + manager operand, never the protocol, so we seal
+    with NO real protocol -- these deterministic coordinate-derived CIDs give the
+    summary a stable identity without inventing enter/exit theorem testimony.
+    """
+
+    __slots__ = ("protocol_construction_cid", "enter_frame_cid", "exit_frame_cid")
+
+    def __init__(self, coordinate):
+        base = str(getattr(coordinate, "cid", None) or coordinate)
+        self.protocol_construction_cid = f"formal-effect-boundary:{base}"
+        self.enter_frame_cid = f"formal-enter:{base}"
+        self.exit_frame_cid = f"formal-exit:{base}"
+
+
+def _try_formal_effect_boundary_ref(coordinate, behavior):
+    """Seal an EffectBoundary ref from the exception-type FORMAL, protocol-less.
+
+    Returns a SourceDerived/Factored ref when the manager's authenticated
+    exception-type formal decides an Expects-Raise contract, or None otherwise.
+    Fires only on refusal of the (contract-irrelevant) __enter__/__exit__ body;
+    keyed by formal role, never by spelling.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceDerivedContextManagerRefV1,
+    )
+
+    if behavior is None:
+        return None
+    stub = _FormalOnlyProtocolStub(coordinate)
+    try:
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior, protocol_construction_cid=stub.protocol_construction_cid
+        )
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+        return None
+    if soft is None or isinstance(soft, DerivedManagerSummaryGapV1):
+        return None
+    if isinstance(soft, ExitSet):
+        summary = _factored_effect_boundary_summary(stub, soft, behavior)
+        return FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            summary.protocol_construction_cid,
+            summary.enter_testimony_cid,
+            summary.exit_testimony_cid,
+            summary.boundary_faces,
+            summary.import_signature,
+            None,
+        )
+    signature = _signature_for_behavior(behavior, soft)
+    summary = _sealed_summary(stub, soft, signature)
+    return SourceDerivedContextManagerRefV1(
+        coordinate, summary.summary_cid, summary.semantics, summary.import_signature, None
+    )
+
+
 def _construct_message_pattern_operand(
     projected_match,
     *,
@@ -1728,6 +1794,16 @@ def populate_source_derived_resource_refs(
         try:
             protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         except (SugarNotWritten, TypeError) as exc:
+            # Expects-Raise fallback: __enter__/__exit__ frame resolution refuses
+            # on pytest RaisesExc's library observation objects
+            # (ExceptionInfo.for_later / fill_unfilled) that the source
+            # force-floor cannot resolve.  That body is NOT the contract -- the
+            # authenticated exception-type formal is.  Seal the effect boundary
+            # from the formal (protocol-less) instead of a source-body-gap.
+            ref = _try_formal_effect_boundary_ref(coordinate, behavior)
+            if ref is not None:
+                context.source_derived_contract_refs[coordinate] = ref
+                continue
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1738,6 +1814,10 @@ def populate_source_derived_resource_refs(
             )
             continue
         if not isinstance(protocol, ConstructedManagerProtocolV1):
+            ref = _try_formal_effect_boundary_ref(coordinate, behavior)
+            if ref is not None:
+                context.source_derived_contract_refs[coordinate] = ref
+                continue
             kind, detail = _gap_kind_and_detail(protocol)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
