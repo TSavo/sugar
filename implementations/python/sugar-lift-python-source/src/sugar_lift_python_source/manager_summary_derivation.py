@@ -2119,6 +2119,23 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
 
     def collect_application(call_sugar):
         """Collect authenticated call actuals without re-entering Call.sugar()."""
+        if not (hasattr(call_sugar, "args") and hasattr(call_sugar, "keywords")):
+            # A spread/starred manager call (``with LocalClass(*args): ...``)
+            # constructs a SpreadCallSugar with no positional/keyword actual
+            # surface.  Refuse as a COUNTABLE terminal (the caller installs a
+            # local derivation gap) rather than crashing with a bare
+            # AttributeError that voids the whole file as an instrument failure.
+            raise SugarNotWritten(
+                owner="_populate_same_module_class_manager_uses.collect_application",
+                blame=getattr(call_sugar, "site", None),
+                observed=(
+                    f"{type(call_sugar).__name__} exposes no authenticated "
+                    "positional/keyword actual surface"
+                ),
+                requested="a call sugar with authenticated args/keywords",
+                fix="construct spread/starred manager-call actuals or keep the call loud",
+            )
+
         def positional(index, values):
             if index == len(call_sugar.args):
                 return keywords(0, values, ())
