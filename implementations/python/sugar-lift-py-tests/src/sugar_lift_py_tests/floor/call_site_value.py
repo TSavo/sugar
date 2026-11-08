@@ -966,12 +966,57 @@ class CallSiteValue(FloorValue):
 
         return Complete(self.linear_method_call("__format__", (spec,), site))
 
+    def names_a_string(self) -> bool:
+        """Whether this callsite is known to produce a ``str`` if it completes.
+
+        ``type(x).__name__`` / ``__qualname__`` always return ``str``. A named
+        string concat (``call:__add__`` or ``python:fstring``) does too, so
+        ``backquote`` can join ``"`" + name + "`"`` without inventing text.
+        """
+        if self.target_name in {"__name__", "__qualname__"}:
+            return True
+        from sugar_lift_py_tests.ir import _Ctor
+
+        term = self.term
+        return type(term) is _Ctor and term.name in {"call:__add__", "python:fstring"}
+
+    @staticmethod
+    def named_string_concat(left, right, site):
+        """Name ``str + named-string-coordinate`` without inventing the string."""
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            CallSiteValue(
+                target_name="__add__",
+                arg_values=(left, right),
+                parameters=(),
+                term=ctor(
+                    "call:__add__",
+                    [
+                        left.to_term(owner="CallSiteValue.named_string_concat"),
+                        right.to_term(owner="CallSiteValue.named_string_concat"),
+                    ],
+                    symbol_kind="coordinate",
+                ),
+                body=None,
+                site=site,
+            )
+        )
+
     def add(self, other, site):
         """Addition floor via interface dispatch: dig, redispatch, or refuse.
 
         AddOpSugar calls left.add(right) — not binary_operator_with. Without this
         totalizer, dig of `want_bytes(x) + self.sep` construction_panics mid-body.
+        A named string coordinate plus a ground string
+        (``type(exc).__name__ + "()"``) is concatenation: emit ``call:__add__``
+        without inventing the string or falling through ``_undecided_binary_law``.
         """
+        from sugar_lift_py_tests.floor.string_value import StringValue
+
+        if type(other) is StringValue and self.names_a_string():
+            return self.named_string_concat(self, other, site)
         return self._dig_or_refuse_binop(other, site, op="+", floor_method="add")
 
     def subtract(self, other, site):
@@ -1032,6 +1077,11 @@ class CallSiteValue(FloorValue):
 
         No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
         Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
+
+        Keep an opaque named leaf (``preserve_opaque_leaf``). ``_exception_type_name``
+        reduces to ``attr:__name__``, which has no further body; discarding that
+        leaf would refuse ``helper() + "()"`` on the helper callsite itself
+        instead of naming concat of the known string coordinate.
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 
@@ -1041,6 +1091,7 @@ class CallSiteValue(FloorValue):
         dug = self._dig_floor_or_none(
             None,
             owner=f"CallSiteValue.{floor_method}",
+            preserve_opaque_leaf=True,
         )
         if dug is not None and dug is not self:
             method = getattr(dug, floor_method, None)
