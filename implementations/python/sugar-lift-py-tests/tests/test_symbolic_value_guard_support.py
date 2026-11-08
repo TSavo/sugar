@@ -143,3 +143,103 @@ def test_type_call_result_is_a_type_object() -> None:
     )
     assert isinstance(as_tuple, Complete)
     assert isinstance(as_tuple.value, FalseBoolLiteralSugar)
+
+
+def _name_attribute_callsite():
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    receiver = SymbolicValue(make_var("exc_type"))
+    site = "name-attr"
+    return CallSiteValue(
+        target_name="__name__",
+        arg_values=(receiver,),
+        parameters=(),
+        term=ctor(
+            "attr:__name__",
+            [receiver.to_term(owner=str(site))],
+            symbol_kind="method-coordinate",
+        ),
+        body=None,
+        site=site,
+    )
+
+
+def test_name_attribute_plus_string_is_a_concat_coordinate_not_an_invented_string() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    name = _name_attribute_callsite()
+    suffix = StringValue("()")
+    site = "name-plus-string"
+    outcome = name.add(suffix, site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert not isinstance(outcome.value, StringValue)
+    assert outcome.value.target_name == "__add__"
+    assert outcome.value.term == ctor(
+        "call:__add__",
+        [
+            name.to_term(owner="CallSiteValue.named_string_concat"),
+            suffix.to_term(owner="CallSiteValue.named_string_concat"),
+        ],
+        symbol_kind="coordinate",
+    )
+
+
+def test_string_plus_name_attribute_is_a_concat_coordinate_not_an_invented_string() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    name = _name_attribute_callsite()
+    prefix = StringValue("`")
+    site = "string-plus-name"
+    outcome = prefix.add(name, site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert not isinstance(outcome.value, StringValue)
+    assert outcome.value.target_name == "__add__"
+    assert outcome.value.term == ctor(
+        "call:__add__",
+        [
+            prefix.to_term(owner="CallSiteValue.named_string_concat"),
+            name.to_term(owner="CallSiteValue.named_string_concat"),
+        ],
+        symbol_kind="coordinate",
+    )
+
+
+
+def test_backquote_joins_a_named_concat_without_inventing_the_string() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    name = _name_attribute_callsite()
+    inner = name.add(StringValue("()"), "inner")
+    assert isinstance(inner, Complete)
+    prefixed = StringValue("`").add(inner.value, "prefix")
+    assert isinstance(prefixed, Complete)
+    assert isinstance(prefixed.value, CallSiteValue)
+    assert not isinstance(prefixed.value, StringValue)
+    wrapped = prefixed.value.add(StringValue("`"), "suffix")
+    assert isinstance(wrapped, Complete)
+    assert isinstance(wrapped.value, CallSiteValue)
+    assert not isinstance(wrapped.value, StringValue)
+    assert wrapped.value.target_name == "__add__"
+    assert getattr(wrapped.value.term, "name", None) == "call:__add__"
+    assert wrapped.value.term == ctor(
+        "call:__add__",
+        [
+            prefixed.value.to_term(owner="CallSiteValue.named_string_concat"),
+            StringValue("`").to_term(owner="CallSiteValue.named_string_concat"),
+        ],
+        symbol_kind="coordinate",
+    )

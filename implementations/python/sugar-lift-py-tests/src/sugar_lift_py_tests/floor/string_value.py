@@ -475,6 +475,11 @@ class StringValue(GuardStableValue):
                 operands=(self, other),
                 coordinates=(None, getattr(other, "formal_coordinate", None)),
             )
+        if type(other) is CallSiteValue and other.names_a_string():
+            # "`" + type(exc).__name__ + "()" inside backquote. Do not wrap
+            # as SymbolicValue.add(CallSiteValue) — that is the drained
+            # f-string dead-end. Do not invent the concatenated string.
+            return CallSiteValue.named_string_concat(self, other, site)
         if type(other) in (CallSiteValue, ImportAliasValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         if other.denotes_value() and other.runtime_type_is_decided():
