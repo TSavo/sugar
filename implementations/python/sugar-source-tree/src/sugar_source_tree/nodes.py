@@ -2046,8 +2046,10 @@ class SourceUnit:
         - ``try: import mod`` / ``except ImportError:`` that does not rebind
           ``mod`` on the handler path
 
-        The coordinate names the import target path.  It does not invent MRO or
-        ClassValue ancestry when defining source is absent from the seat.
+        Language-owned builtins keep their builtin identity even through an
+        import alias: qualification does not create a new exception class.
+        Other coordinates name the import target path, without inventing MRO
+        or ClassValue ancestry when defining source is absent from the seat.
         """
         from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -2068,6 +2070,16 @@ class SourceUnit:
             return None
         module = target[len("python:") :] if target.startswith("python:") else target
         qualified = ".".join([module, *reversed(attributes)])
+        components = qualified.split(".")
+        if components[0] == "builtins":
+            from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+            # Only the language's closed exception vocabulary can testify for
+            # this namespace. An unknown member is not a foreign exception.
+            if len(components) != 2:
+                return None
+            identity, _mro = _builtin_exception_identity(components[1])
+            return identity
         return ctor(
             "python:exception_type_identity",
             [str_const("import"), str_const(qualified)],
@@ -9358,12 +9370,12 @@ class Raise(Statement):
                         identity = self.unit.imported_exception_type_identity(
                             type_operand
                         )
-                        mro = None
+                        mro = self.unit._builtin_exception_ancestry(identity)
                     else:
                         mro = self.unit.exception_type_mro(type_operand)
                 else:
                     identity = self.unit.imported_exception_type_identity(type_operand)
-                    mro = None
+                    mro = self.unit._builtin_exception_ancestry(identity)
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
             exception_sugar = self.exc.sugar()
