@@ -5049,3 +5049,115 @@ def test_boolop_or_message_comparison_is_not_effect_boundary(tmp_path):
         isinstance(summary, DerivedManagerSummaryV1)
         and isinstance(summary.semantics, EffectBoundarySemanticsV1)
     ), summary
+
+
+
+def test_optional_match_or_still_derives_effect_boundary(tmp_path):
+    """``pattern is None or message == pattern`` stays an EffectBoundary."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+
+    behavior, protocol = _identity_and_message_protocol(
+        tmp_path,
+        "(effect_type is self.expected) and "
+        "(self.pattern is None or effect.message == self.pattern)",
+    )
+    summary = derive_manager_summary(protocol, behavior=behavior)
+    assert isinstance(summary, DerivedManagerSummaryV1), summary
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert summary.semantics.message_pattern_operand == (
+        OptionalFormalArgumentProjectionV1(1)
+    )
+
+
+def test_partitioned_match_faces_emit_factored_effect_boundary(tmp_path):
+    """Constructor-partitioned match=None vs match=pattern stays factored."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.floor import (
+        ReceiverStatePartitionValue,
+        StringValue,
+        SymbolicValue,
+    )
+    from sugar_lift_py_tests.ir import _term_content_cid, make_var
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source.manager_summary_derivation import (
+        FactoredEffectBoundarySummaryV1,
+    )
+
+    graph, resolved, expected, call_site = _resolved(
+        tmp_path,
+        "class Boundary:\n"
+        "    def __init__(self, expected, match=None, flag=None):\n"
+        "        self.expected = expected\n"
+        "        if flag:\n"
+        "            self.match = match\n"
+        "        else:\n"
+        "            self.match = None\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError('unmet')\n"
+        "        return (effect_type is self.expected) and (\n"
+        "            self.match is None or effect.message == self.match\n"
+        "        )\n"
+        "def make_guard(expected, match=None, flag=None):\n"
+        "    return Boundary(expected, match, flag)\n",
+    )
+    pattern_source = SourceFile(
+        ('"needle"\n', str(tmp_path / "pattern.py"), "blake3-512:" + ("92" * 64))
+    )
+    pattern_node = next(
+        node for node in pattern_source.nodes() if isinstance(node, Constant)
+    )
+    pattern_value = StringValue("needle")
+    pattern = ConstructedCallActualV1(
+        pattern_node,
+        pattern_value,
+        ConstructedValueTestimonyV1.mint(
+            pattern_node.fragment,
+            _term_content_cid(pattern_value.to_term(owner=resolved.cid)),
+        ),
+    )
+    flag_source = SourceFile(
+        ("0\n", str(tmp_path / "flag.py"), "blake3-512:" + ("93" * 64))
+    )
+    flag_node = next(
+        node for node in flag_source.nodes() if isinstance(node, Constant)
+    )
+    flag_value = SymbolicValue(make_var("constructor-flag"))
+    flag = ConstructedCallActualV1(
+        flag_node,
+        flag_value,
+        ConstructedValueTestimonyV1.mint(
+            flag_node.fragment,
+            _term_content_cid(flag_value.to_term(owner=resolved.cid)),
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(expected, pattern, flag),
+        call_site=call_site,
+    )
+    assert isinstance(behavior.receiver_state, ReceiverStatePartitionValue)
+    protocol = construct_manager_protocol(behavior, exit_face_id="partition-face")
+    summary = derive_manager_summary(protocol, behavior=behavior)
+    assert isinstance(summary, FactoredEffectBoundarySummaryV1), summary
+    completed = [
+        face
+        for face in summary.boundary_faces.exits
+        if isinstance(face, Completed)
+    ]
+    operands = {face.value.message_pattern_operand for face in completed}
+    assert NoMessagePatternV1() in operands
+    assert any(
+        isinstance(operand, OptionalFormalArgumentProjectionV1)
+        for operand in operands
+    )
+    assert len(completed) == 2

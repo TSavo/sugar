@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 from typing import Literal
 
@@ -458,6 +458,10 @@ def derive_manager_summary(
         return DerivedManagerSummaryGapV1(
             "enter-may-halt", protocol.protocol_construction_cid, "__enter__ ExitSet"
         )
+    if behavior is not None:
+        factored = _derive_factored_effect_boundary(protocol, behavior)
+        if factored is not None:
+            return factored
     try:
         exit_outcome = protocol.exit_outcome()
         from sugar_lift_py_tests.caller_parameter_contract import (
@@ -630,7 +634,9 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
     )
 
 
-def _derive_effect_boundary_from_deferred_carrier(carrier, protocol, behavior):
+def _derive_effect_boundary_from_deferred_carrier(
+    carrier, protocol, behavior, receiver=None
+):
     """Derive an effect boundary from a short-circuited deferred message lookup.
 
     The identity half is already a completed ``PredicateValue`` — identity is
@@ -639,6 +645,11 @@ def _derive_effect_boundary_from_deferred_carrier(carrier, protocol, behavior):
     total ``eq`` formula (payload ``__eq__`` can raise). The message formal is
     the unique factory actual stored in the receiver field named by the
     comparison's other operand.
+
+    A source may wrap the comparison as ``field is None or effect.message ==
+    field``. That inner ``or`` is not itself an EffectBoundary; it only records
+    that this face already decided the pattern is present. The outer ``and``
+    remains the identity half. ``==`` still is not treated as a total formula.
     """
     from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -654,11 +665,14 @@ def _derive_effect_boundary_from_deferred_carrier(carrier, protocol, behavior):
         or not carrier.coordinates
         or not isinstance(carrier.coordinates[0], ExitValueCoordinate)
         or carrier.coordinates[0].face_id != protocol.exit_face_id
-        or len(carrier.short_circuits) != 1
+        or not carrier.short_circuits
+        or len(carrier.short_circuits) > 2
     ):
         return None
 
-    continuing_guard, stopped, _continuing_face, _stopped_face = carrier.short_circuits[0]
+    continuing_guard, stopped, _continuing_face, _stopped_face = (
+        carrier.short_circuits[-1]
+    )
     if (
         len(stopped.exits) != 1
         or not isinstance(stopped.exits[0], Completed)
@@ -687,9 +701,18 @@ def _derive_effect_boundary_from_deferred_carrier(carrier, protocol, behavior):
     ]
     if len(equalities) != 1:
         return None
-    message_index = _message_pattern_formal_index(equalities[0], behavior, actual_terms)
+    message_index = _message_pattern_formal_index(
+        equalities[0], behavior, actual_terms, receiver=receiver
+    )
     if message_index is None or message_index == expected_index:
         return None
+    if len(carrier.short_circuits) == 2:
+        field_name = _message_comparison_receiver_field(equalities[0])
+        field_value = _receiver_field_value(behavior, field_name, receiver=receiver)
+        if not _inner_short_circuit_is_absent_pattern(
+            carrier.short_circuits[0][1], field_value
+        ):
+            return None
 
     from sugar_lift_py_tests.floor import BranchResultAuthentication
 
@@ -737,7 +760,7 @@ def _closed_over_continuation_values(carrier):
     return values
 
 
-def _message_pattern_formal_index(equality, behavior, actual_terms):
+def _message_comparison_receiver_field(equality):
     from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
     sides = (equality.left, equality.right)
@@ -749,10 +772,14 @@ def _message_pattern_formal_index(equality, behavior, actual_terms):
     other_sides = [side for side in sides if side not in message_sides]
     if len(message_sides) != 1 or len(other_sides) != 1:
         return None
-    field_name = _receiver_attribute_name(other_sides[0])
+    return _receiver_attribute_name(other_sides[0])
+
+
+def _message_pattern_formal_index(equality, behavior, actual_terms, receiver=None):
+    field_name = _message_comparison_receiver_field(equality)
     if field_name is None:
         return None
-    value = _receiver_field_value(behavior, field_name)
+    value = _receiver_field_value(behavior, field_name, receiver=receiver)
     if value is None:
         return None
     to_term = getattr(value, "to_term", None)
@@ -779,12 +806,142 @@ def _receiver_attribute_name(sugar):
     return sugar.name
 
 
-def _receiver_field_value(behavior, name):
-    fields = getattr(behavior.receiver_state, "fields", ())
+def _receiver_field_value(behavior, name, receiver=None):
+    state = behavior.receiver_state if receiver is None else receiver
+    fields = getattr(state, "fields", ())
     matches = [
         field.value for field in fields if getattr(field, "name", None) == name
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def _inner_short_circuit_is_absent_pattern(stopped, field_value):
+    """True when the inner ``or`` stopped because ``field is None`` is false.
+
+    A constructed string is disjoint from ``None``, so ``"needle" is None``
+    folds to exact ``False``. A symbolic field emits an ``identity`` formula
+    against ``None``. Other inner guards are not the optional-pattern theorem.
+    """
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+
+    if field_value is None:
+        return False
+    if len(stopped.exits) != 1 or not isinstance(stopped.exits[0], Completed):
+        return False
+    value = stopped.exits[0].value
+    if isinstance(value, FalseBoolLiteralSugar):
+        return type(field_value) is not NoneValue
+    if not isinstance(value, PredicateValue):
+        return False
+    formula = value.formula
+    if getattr(formula, "name", None) != "identity":
+        return False
+    operands = getattr(formula, "operands", ())
+    if len(operands) != 2:
+        return False
+    return NoneValue().to_term(owner="") in operands
+
+
+def _derive_boundary_for_receiver(protocol, behavior, receiver):
+    """Derive one EffectBoundary from a single completed constructor face."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+
+    specialized = replace(protocol, receiver_state=receiver)
+    try:
+        exit_outcome = specialized.exit_outcome()
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+        return None
+    if (
+        isinstance(exit_outcome, NativeOperationExitCarrierV1)
+        and any(coordinate is not None for coordinate in exit_outcome.coordinates)
+        and all(
+            coordinate is None
+            or (
+                isinstance(coordinate, ExitValueCoordinate)
+                and coordinate.face_id == protocol.exit_face_id
+            )
+            for coordinate in exit_outcome.coordinates
+        )
+    ):
+        return _derive_effect_boundary_from_deferred_carrier(
+            exit_outcome, specialized, behavior, receiver=receiver
+        )
+    try:
+        exit_ = outcome_to_exitset(exit_outcome)
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+        return None
+    return _derive_effect_boundary(exit_, specialized, behavior)
+
+
+def _derive_factored_effect_boundary(protocol, behavior):
+    """Keep constructor-partitioned match faces as guarded alternatives.
+
+    ``match=None`` and ``match=pattern`` are different receiver states, not one
+    sealed optional operand. Each completed leaf keeps the EffectBoundary that
+    its own fields justify; the faces are never recombined into one summary CID.
+    """
+    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    from .manager_protocol_construction import _completed_receiver_exits
+
+    if not isinstance(behavior.receiver_state, ReceiverStatePartitionValue):
+        return None
+    completed = [
+        face
+        for face in _completed_receiver_exits(behavior.receiver_state).exits
+        if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
+    ]
+    if len(completed) < 2:
+        return None
+    derived = []
+    for face in completed:
+        boundary = _derive_boundary_for_receiver(protocol, behavior, face.value)
+        if not isinstance(boundary, EffectBoundarySemanticsV1):
+            return None
+        derived.append(Completed(face.guard, boundary))
+    none_faces = [
+        face
+        for face in derived
+        if isinstance(face.value.message_pattern_operand, NoMessagePatternV1)
+    ]
+    pattern_faces = [
+        face
+        for face in derived
+        if isinstance(
+            face.value.message_pattern_operand, OptionalFormalArgumentProjectionV1
+        )
+    ]
+    if not none_faces or not pattern_faces:
+        return None
+    if len(none_faces) + len(pattern_faces) != len(derived):
+        return None
+    first = derived[0].value
+    if any(
+        face.value.mode != first.mode
+        or face.value.effect_kind != first.effect_kind
+        or face.value.expected_type_operand != first.expected_type_operand
+        or face.value.binding != first.binding
+        for face in derived[1:]
+    ):
+        return None
+    pattern_semantics = pattern_faces[0].value
+    return FactoredEffectBoundarySummaryV1(
+        protocol.protocol_construction_cid,
+        protocol.enter_frame_cid,
+        protocol.exit_frame_cid,
+        ExitSet(tuple(derived)),
+        _signature_for_behavior(behavior, pattern_semantics),
+    )
 
 
 def _guarded_literal_suppression_formula(exit_set):
