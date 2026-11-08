@@ -140,6 +140,55 @@ def test_local_classdef_cm_derives_and_constructs(tmp_path: Path):
     assert isinstance(sugar, WithSourceResourceSugar)
 
 
+def test_isinstance_tuple_wrap_derives_expected_exceptions(tmp_path: Path):
+    """RaisesExc-style isinstance wrap keeps the constructed expected_exceptions.
+
+    ``if isinstance(expected_exception, tuple): ... else: (expected,)``
+    partitions the constructor. The completed leaf already stores
+    ``expected_exceptions``; rejecting the partition as a provenance mismatch
+    dropped that field before EffectBoundary derivation could see it.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+
+    source = textwrap.dedent("""\
+        class RaisesExc:
+            def __init__(self, expected_exception=None):
+                if isinstance(expected_exception, tuple):
+                    expected_exceptions = expected_exception
+                elif expected_exception is None:
+                    expected_exceptions = ()
+                else:
+                    expected_exceptions = (expected_exception,)
+                self.expected_exceptions = expected_exceptions
+            def __enter__(self):
+                return self
+            def __exit__(self, effect_type, effect, traceback):
+                if effect_type is None:
+                    raise RuntimeError()
+                return effect_type is self.expected_exceptions[0]
+        def use():
+            with RaisesExc(ValueError):
+                raise ValueError("nested")
+        """)
+    tree, context, path = _source_file(tmp_path, source)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    ref = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
+    assert getattr(ref, "kind", None) is None, ref
+    assert isinstance(ref.semantics, EffectBoundarySemanticsV1), ref.semantics
+    assert isinstance(ref.semantics.mode, ExpectsModeV1)
+
+
 def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
     """ClassDef without __enter__/__exit__: gap row; With panics named."""
     source = textwrap.dedent("""\
