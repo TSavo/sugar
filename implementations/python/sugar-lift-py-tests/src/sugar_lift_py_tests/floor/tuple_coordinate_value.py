@@ -296,6 +296,65 @@ class TupleCoordinateValue(FloorValue):
             self._from_slice(source=self, index=index, use_occurrence=occurrence)
         )
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        """A constructed tuple is exactly an instance of ``tuple`` / ``object``.
+
+        Members stay unknown; the construction itself is still a tuple, so
+        ``isinstance(expected_exceptions, type)`` in RaisesExc's mismatch
+        diagnostic is False rather than an open predicate that would then
+        ask ``issubclass`` of a non-class.
+        """
+        from sugar_lift_py_tests.floor.python_type_coordinate import (
+            authenticated_python_type_spelling,
+        )
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        del type_name
+        authenticated = authenticated_python_type_spelling(
+            type_term, owner="TupleCoordinateValue.python_isinstance", site=site
+        )
+        if authenticated in {"tuple", "object"}:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        if authenticated in {
+            "list",
+            "dict",
+            "set",
+            "frozenset",
+            "str",
+            "bytes",
+            "int",
+            "bool",
+            "float",
+            "type",
+            "NoneType",
+        }:
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().python_isinstance(authenticated, type_term, site)
+
+    def test_python_type(self, value, site):
+        """Name isinstance against this constructed tuple without inventing members.
+
+        RaisesExc's ``matches`` checks ``isinstance(exception, expected_exceptions)``.
+        A tuple of types is valid classinfo. Members stay unknown, so this cannot
+        fold to a Bool or expand into an or of per-element tests the way
+        TupleValue does. Emit ``adt.is_python_type(value, tuple_term)`` the same
+        way ``native_type_tester`` names a cited type coordinate without
+        inventing the Boolean.
+        """
+        from sugar_lift_py_tests.floor.type_tester import native_type_tester
+
+        return native_type_tester(
+            value,
+            self.to_term(owner="TupleCoordinateValue.test_python_type"),
+            site,
+        )
+
     def length(self, site):
         from sugar_lift_py_tests.outcome import Complete
 
