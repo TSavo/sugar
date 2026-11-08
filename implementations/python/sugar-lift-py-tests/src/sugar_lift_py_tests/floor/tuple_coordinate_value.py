@@ -207,6 +207,23 @@ class TupleCoordinateValue(FloorValue):
         del owner
         return self.term
 
+    def truth(self, site):
+        """Stand as a condition via the construction term, without inventing cardinality.
+
+        ``if not self.expected_exceptions`` asks this coordinate whether the
+        constructed tuple is empty. Members are not invented, so truth cannot
+        fold to a Bool; it can emit ``py.truthy`` over the same term a
+        bodyless ``tuple(...)`` CallSiteValue uses when the result is not
+        lift-time decidable. Default FloorValue.truth panicked
+        ``truth:TupleCoordinateValue`` and turned that RaisesExc check into
+        exit-may-halt after the field had already been written.
+        """
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(PredicateValue(py_truthy(self.term), site))
+
     def subscript(self, index, site):
         return self.subscript_with_occurrence(index, site, None)
 

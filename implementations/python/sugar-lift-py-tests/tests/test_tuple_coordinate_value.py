@@ -95,6 +95,25 @@ def test_source_builtin_tuple_constructs_authenticated_coordinate(
     assert length.term == ctor("call:len", (constructed.term,), symbol_kind="builtin")
 
 
+
+def test_tuple_coordinate_truth_emits_predicate_without_inventing_cardinality(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import py_truthy
+
+    call, _ = _nodes(_tree(tmp_path, "truth-predicate.py"))
+    ctx = _context("tuple-coordinate-truth-predicate")
+    constructed = _value(call.sugar().desugar(ctx))
+
+    assert isinstance(constructed, TupleCoordinateValue)
+    outcome = constructed.truth(call.fragment)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, PredicateValue)
+    assert outcome.value.formula == py_truthy(constructed.term)
+
+
 def test_source_tuple_slice_extends_receiver_coordinate_and_occurrence(
     tmp_path: Path,
 ) -> None:
