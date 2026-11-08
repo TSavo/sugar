@@ -34,6 +34,9 @@ from sugar_lift_py_tests.context_manager_contract import (
     semantics_to_value,
 )
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor.branch_result_coordinate import (
+    resolve_branch_result_guards as _resolve_branch_result_guards,
+)
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.outcome import Complete, Completed, outcome_to_exitset
 
@@ -456,7 +459,36 @@ def derive_manager_summary(
             "enter-may-halt", protocol.protocol_construction_cid, "__enter__ ExitSet"
         )
     try:
-        exit_ = outcome_to_exitset(protocol.exit_outcome())
+        exit_outcome = protocol.exit_outcome()
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+
+        # A deferred lookup is not a suppression theorem. Admit only the real
+        # source protocol, whose exit will run with each actual With body face.
+        # Other construction refusals still take the typed gap doors below.
+        if (
+            isinstance(protocol, ConstructedManagerProtocolV1)
+            and isinstance(exit_outcome, NativeOperationExitCarrierV1)
+            and any(coordinate is not None for coordinate in exit_outcome.coordinates)
+            and all(
+                coordinate is None
+                or (
+                    isinstance(coordinate, ExitValueCoordinate)
+                    and coordinate.face_id == protocol.exit_face_id
+                )
+                for coordinate in exit_outcome.coordinates
+            )
+        ):
+            semantics = ProtocolResourceSemanticsV1(
+                EnterResultContractV1(PrimitiveSort("Value")),
+                ExitContractV1(ReturnTruthinessDispositionV1()),
+            )
+            return _sealed_summary(
+                protocol, semantics, _signature_for_behavior(behavior, semantics)
+            )
+        exit_ = outcome_to_exitset(exit_outcome)
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
@@ -682,38 +714,6 @@ def _guarded_literal_suppression_formula(exit_set):
                     saw_true = True
                     formula = _or_guards(formula, resolved)
     return formula if saw_true else None
-
-
-def _resolve_branch_result_guards(formula, authenticated):
-    """Replace each branch-result slot literal by its AUTHENTICATED guard.
-
-    A branch guard is spelled ``py.truthy(python:branch_result(<slot>))`` — an
-    opaque coordinate. The block also carries a ``BranchResultAuthentication``
-    proving that slot equivalent to the real observed comparison. Only that
-    testimony may stand in for the slot; an unauthenticated slot returns
-    ``None`` and the whole boundary stays loud rather than being read from a
-    coordinate nobody proved anything about.
-    """
-    from sugar_lift_py_tests.ir import _Atomic, _Connective, _ConstStr, _Ctor
-
-    if isinstance(formula, _Connective):
-        operands = []
-        for operand in formula.operands:
-            resolved = _resolve_branch_result_guards(operand, authenticated)
-            if resolved is None:
-                return None
-            operands.append(resolved)
-        return type(formula)(formula.kind, tuple(operands))
-    if not isinstance(formula, _Atomic) or formula.name != "py.truthy":
-        return formula
-    if len(formula.args) != 1:
-        return formula
-    term = formula.args[0]
-    if not isinstance(term, _Ctor) or term.name != "python:branch_result":
-        return formula
-    if len(term.args) != 1 or not isinstance(term.args[0], _ConstStr):
-        return None
-    return authenticated.get(term.args[0].value)
 
 
 def _exact_bool_literal(value: object) -> bool | None:

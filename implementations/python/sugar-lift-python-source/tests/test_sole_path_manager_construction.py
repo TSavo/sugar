@@ -4479,3 +4479,466 @@ def test_resource_actual_construction_refuses_foreign_occurrence_or_call_shape(
         construction.bind(replace(manager, args=()), use_site=construction.use_site)
     with pytest.raises(ContractRefProtocolError, match="defining source frame"):
         replace(construction, source_call_frame=None)
+
+
+@pytest.mark.parametrize("message", ["needle", "haystack"])
+def test_with_body_value_discharges_deferred_exit_message(tmp_path, message):
+    """Same source protocol, actual body payload decides suppression (or not)."""
+    from sugar_lift_py_tests.context_manager_contract import ProtocolResourceSemanticsV1
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithSourceResourceSugar,
+    )
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import StringValue
+
+    source = _DEFERRED_BODY_MESSAGE_RESOURCE
+    native = {}
+    exec(source, native)
+    observed = []
+    try:
+        with native["boundary"]("needle"):
+            raise native["MyError"](message)
+        observed.append("completed")
+    except native["MyError"]:
+        observed.append("raised")
+    assert observed == (["completed"] if message == "needle" else ["raised"])
+
+    tree, _ = _attribute_exception_tree(
+        tmp_path,
+        manager='arbitrary.boundary("needle")',
+        body="raise actual_error",
+        implementation=source,
+    )
+    sugar = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(sugar, WithSourceResourceSugar)
+    assert isinstance(sugar.summary.semantics, ProtocolResourceSemanticsV1)
+    actual_error = _constructed_message_error(
+        tmp_path / "actual-error", StringValue(message)
+    )
+    identity = actual_error.identity
+    ctx = _actual_error_context(actual_error)
+    result = outcome_to_exitset(sugar.desugar(ctx))
+    live = [
+        face
+        for face in result.exits
+        if not (
+            isinstance(face, Completed)
+            and getattr(face.value, "can_fall_through", True) is False
+        )
+    ]
+    assert live
+    if message == "needle":
+        assert all(isinstance(face, Completed) for face in live)
+    else:
+        assert all(
+            isinstance(face, Halted)
+            and isinstance(face.effect, RaiseEffect)
+            and face.effect.exception_type_coordinate == identity
+            for face in live
+        )
+
+
+def _constructed_message_error(root, message, eq_body=None):
+    """Construct the actual exception through a cited native initializer frame."""
+    root.mkdir()
+    source = (
+        "class MyError(Exception):\n"
+        "    def __init__(self, message):\n"
+        "        self.message = message\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, *args):\n"
+        "        return False\n"
+        "def make_guard(message):\n"
+        "    return MyError(message)\n"
+    )
+    if eq_body is not None:
+        source = source.replace(
+            "def make_guard",
+            "    def __eq__(self, other):\n        " + eq_body + "\ndef make_guard",
+        )
+    graph, resolved, _, site = _resolved(root, source)
+    # An actual supplied at a value boundary, not a forged literal constructor.
+    source = "actual_message\n"
+    actual_tree = SourceFile(
+        (source, "actual_message.py", blake3_512_of(source.encode()))
+    )
+    node = next(n for n in actual_tree.nodes() if isinstance(n, Name))
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    actual = ConstructedCallActualV1(
+        node,
+        message,
+        ConstructedValueTestimonyV1.mint(
+            node.fragment, _term_content_cid(message.to_term(owner="actual message"))
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    value = behavior.receiver_state
+    unit = value.defining_class.initializer.source_call_frame.owner.unit
+    name = next(
+        n for n in unit.typed_module.walk() if isinstance(n, Name) and n.id == "MyError"
+    )
+    identity = unit.exception_type_identity(name)
+    assert identity is not None
+    from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+        AuthenticatedExceptionTypeValue,
+    )
+
+    return AuthenticatedExceptionTypeValue(value, identity)
+
+
+def _actual_error_context(error):
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    return ReduceContext(
+        temporal=builtin_name_temporal().bind_value("actual_error", error)
+    )
+
+
+_DEFERRED_BODY_MESSAGE_RESOURCE = (
+    "class MyError(Exception):\n"
+    "    def __init__(self, message):\n"
+    "        self.message = message\n"
+    "class Resource:\n"
+    "    def __init__(self, pattern):\n"
+    "        self.pattern = pattern\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "    def __exit__(self, effect_type, effect, traceback):\n"
+    "        if effect_type is None:\n"
+    "            return False\n"
+    "        return effect.message == self.pattern\n"
+    "def boundary(pattern):\n"
+    "    return Resource(pattern)\n"
+)
+
+
+def test_with_body_value_keeps_native_comparison_raise(tmp_path):
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    payload_root = tmp_path / "payload"
+    payload_root.mkdir()
+    NativePayload, payload = _source_equality_payload(
+        payload_root, 'raise LookupError("equality")'
+    )
+    native = {}
+    exec(_DEFERRED_BODY_MESSAGE_RESOURCE, native)
+    native_error = native["MyError"](NativePayload(23))
+    with pytest.raises(LookupError, match="equality"):
+        with native["boundary"]("needle"):
+            raise native_error
+
+    error = _constructed_message_error(tmp_path / "error", payload)
+    tree, _ = _attribute_exception_tree(
+        tmp_path / "consumer",
+        manager='arbitrary.boundary("needle")',
+        body="raise actual_error",
+        implementation=_DEFERRED_BODY_MESSAGE_RESOURCE,
+    )
+    sugar = next(n for n in tree.nodes() if n.kind == "With").sugar()
+    result = outcome_to_exitset(sugar.desugar(_actual_error_context(error)))
+    live = [
+        f
+        for f in result.exits
+        if not (
+            isinstance(f, Completed)
+            and getattr(f.value, "can_fall_through", True) is False
+        )
+    ]
+    assert live
+    assert all(
+        isinstance(f, Halted)
+        and isinstance(f.effect, RaiseEffect)
+        and f.effect.exception_name == "LookupError"
+        for f in live
+    )
+
+
+def test_with_normal_body_binds_none_before_exit_lookup(tmp_path):
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    source = _DEFERRED_BODY_MESSAGE_RESOURCE.replace(
+        "            return False",
+        "            return effect is None and traceback is None",
+    )
+    native = {}
+    exec(source, native)
+    with native["boundary"]("needle"):
+        pass
+    tree, _ = _attribute_exception_tree(
+        tmp_path,
+        manager='arbitrary.boundary("needle")',
+        body="pass",
+        implementation=source,
+    )
+    result = outcome_to_exitset(
+        next(n for n in tree.nodes() if n.kind == "With").sugar().desugar()
+    )
+    assert result.exits and all(isinstance(f, Completed) for f in result.exits)
+
+
+@pytest.mark.parametrize("reads_value", [False, True])
+@pytest.mark.parametrize("value_kind", ["absent", "class"])
+def test_body_exit_missing_actual_value_is_not_a_guessed_instance(
+    tmp_path, reads_value, value_kind
+):
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    result_expression = "effect.message" if reads_value else "False"
+    graph, resolved, actual, site = _resolved(
+        tmp_path,
+        "class Resource:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, kind, effect, stack):\n"
+        f"        return {result_expression}\n"
+        "def make_guard(marker):\n"
+        "    return Resource(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="missing-actual-face")
+    entered = outcome_to_exitset(protocol.enter_resource_outcome()).exits[0].value
+    from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+
+    value = None if value_kind == "absent" else ExceptionClassValue("ValueError")
+    body = Halted(
+        true_guard(),
+        RaiseEffect.for_builtin("ValueError", occurrence=site, raised_value=value),
+    )
+    outcome = protocol.exit_outcome_for_body(entered, body)
+    if reads_value:
+        assert isinstance(outcome, NativeOperationExitCarrierV1)
+        with pytest.raises(
+            ConstructionPanic, match="undischarged native operation demand"
+        ):
+            outcome_to_exitset(outcome)
+    else:
+        assert all(isinstance(f, Completed) for f in outcome_to_exitset(outcome).exits)
+
+
+def test_native_exit_guarded_returns_keep_authentication_and_obligations():
+    from sugar_lift_py_tests.floor import BranchResultAuthentication, GuardedReturn
+    from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import (
+        complement_guard,
+        partition,
+        true_guard,
+    )
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import _exit_return_values
+    from sugar_source_tree.binding_state import BranchResultSlot
+
+    slot = BranchResultSlot("native-return-slot")
+    observed = atomic("native.condition", [])
+    guard = branch_result_guard(slot, None)
+    block = BlockValue(
+        (
+            BranchResultAuthentication(slot, observed),
+            GuardedReturn((guard,), TermValue(True)),
+            ReturnValue(TermValue(False)),
+        ),
+        can_fall_through=False,
+    )
+    faces = frozenset({partition("native-return-owner")[0]})
+    # Opaque plumbing sentinel: projection must conserve, not re-mint, demands.
+    from types import SimpleNamespace
+
+    pending = (
+        SimpleNamespace(demands=(SimpleNamespace(demand_cid="retained-demand"),)),
+    )
+    result = _exit_return_values(
+        ExitSet((Completed(true_guard(), block, faces, pending),))
+    )
+    assert {f.value.value: f.guard for f in result.exits} == {
+        True: observed,
+        False: complement_guard(observed),
+    }
+    assert all(
+        f.faces == faces and f.pending_contracts == pending for f in result.exits
+    )
+
+
+@pytest.mark.parametrize("refusal", ["unproved-guard", "prefix-store", "empty-green"])
+def test_native_exit_return_projection_cannot_drop_unproved_work(refusal):
+    from sugar_lift_py_tests.floor import GuardedReturn, ObjectValue
+    from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
+    from sugar_lift_py_tests.floor.receiver_field_store_value import (
+        ReceiverFieldStoreValue,
+    )
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import _exit_return_values
+    from sugar_source_tree.binding_state import BranchResultSlot
+
+    if refusal == "unproved-guard":
+        statements = (
+            GuardedReturn(
+                (branch_result_guard(BranchResultSlot("unknown"), None),),
+                TermValue(True),
+            ),
+        )
+    elif refusal == "prefix-store":
+        statements = (
+            ReceiverFieldStoreValue(
+                ObjectValue("Resource", ()), "marker", TermValue(3)
+            ),
+            ReturnValue(TermValue(True)),
+        )
+    else:
+        statements = ()
+    with pytest.raises(ConstructionPanic):
+        _exit_return_values(
+            ExitSet.completed(BlockValue(statements, can_fall_through=False))
+        )
+
+
+def test_deferred_protocol_admission_rejects_a_foreign_exit_slot(tmp_path, monkeypatch):
+    graph, resolved, actual, site = _resolved(
+        tmp_path,
+        _DEFERRED_BODY_MESSAGE_RESOURCE.replace(
+            "def boundary(pattern):", "def make_guard(pattern):"
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="owned-exit-face")
+    _, foreign, _ = _deferred_exit_message_comparison()
+    monkeypatch.setattr(
+        ConstructedManagerProtocolV1, "exit_outcome", lambda self, ctx=None: foreign
+    )
+    summary = derive_manager_summary(protocol, behavior=behavior)
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    assert summary.kind == "exit-may-halt"
+
+
+@pytest.mark.parametrize(
+    "eq_body", ["return True", 'raise LookupError("exception equality")']
+)
+def test_with_exit_compares_native_instance_not_its_type_witness(tmp_path, eq_body):
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    source = _DEFERRED_BODY_MESSAGE_RESOURCE.replace(
+        "return effect.message == self.pattern", "return effect == self.pattern"
+    )
+    source = source.replace(
+        "class Resource:",
+        "    def __eq__(self, other):\n        " + eq_body + "\nclass Resource:",
+    )
+    native = {}
+    exec(source, native)
+
+    def run_native():
+        with native["boundary"]("needle"):
+            raise native["MyError"]("message")
+
+    if eq_body == "return True":
+        run_native()
+    else:
+        with pytest.raises(LookupError, match="exception equality"):
+            run_native()
+
+    actual_error = _constructed_message_error(
+        tmp_path / "actual-error", StringValue("message"), eq_body
+    )
+    tree, _ = _attribute_exception_tree(
+        tmp_path / "consumer",
+        manager='arbitrary.boundary("needle")',
+        body="raise actual_error",
+        implementation=source,
+    )
+    result = outcome_to_exitset(
+        next(n for n in tree.nodes() if n.kind == "With")
+        .sugar()
+        .desugar(_actual_error_context(actual_error))
+    )
+    live = [
+        f
+        for f in result.exits
+        if not (
+            isinstance(f, Completed)
+            and getattr(f.value, "can_fall_through", True) is False
+        )
+    ]
+    assert live
+    if eq_body == "return True":
+        assert all(isinstance(f, Completed) for f in live)
+    else:
+        assert all(
+            isinstance(f, Halted)
+            and isinstance(f.effect, RaiseEffect)
+            and f.effect.exception_name == "LookupError"
+            for f in live
+        )
+
+
+def test_raised_type_coordinate_is_not_rich_comparison_outcome_testimony():
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+    from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
+    from sugar_lift_py_tests.gap import ConstructionPanic
+
+    effect = RaiseEffect.for_builtin("ValueError", occurrence="raised type coordinate")
+    value = RaisedExitTypeValue(effect.exception_type_coordinate)
+    for other in (NoneValue(), ExceptionClassValue("ValueError")):
+        with pytest.raises(ConstructionPanic):
+            value.equals(other, "native class equality")
+    with pytest.raises(ConstructionPanic):
+        value.is_identical(ExceptionClassValue("ValueError"), "native class identity")
+
+
+@pytest.mark.parametrize("expression", ["kind == ValueError", "ValueError == kind"])
+def test_body_type_coordinate_defers_rich_compare_until_class_binding(
+    tmp_path, expression
+):
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    graph, resolved, actual, site = _resolved(
+        tmp_path,
+        "class Resource:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, kind, value, stack):\n"
+        f"        return {expression}\n"
+        "def make_guard(marker):\n"
+        "    return Resource(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="class-binding-face")
+    entered = outcome_to_exitset(protocol.enter_resource_outcome()).exits[0].value
+    body = Halted(true_guard(), RaiseEffect.for_builtin("ValueError", occurrence=site))
+    outcome = protocol.exit_outcome_for_body(entered, body)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
+        outcome_to_exitset(outcome)

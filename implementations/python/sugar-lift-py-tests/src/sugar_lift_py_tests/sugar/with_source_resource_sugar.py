@@ -88,12 +88,24 @@ class WithSourceResourceSugar(Sugar):
                         self.enter_slot_id, enter_value
                     ).to_facts(site=self.site)
                 body_es = promote_raise_halts(
-                    reduce_block_to_exitset(self.body)
+                    reduce_block_to_exitset(self.body, ctx)
                 ).guarded(guard)
-                exit_es = outcome_to_exitset(
-                    self.protocol.exit_outcome_for(entered, ctx)
+                concrete_exit = getattr(self.protocol, "exit_outcome_for_body", None)
+                # Generator protocols have a linear resume: retain their single
+                # existing exit reduction instead of resuming per body face.
+                abstract_exit = (
+                    None
+                    if concrete_exit is not None
+                    else outcome_to_exitset(
+                        self.protocol.exit_outcome_for(entered, ctx)
+                    )
                 )
                 for body_face in body_es.exits:
+                    exit_es = (
+                        outcome_to_exitset(concrete_exit(entered, body_face, ctx))
+                        if concrete_exit is not None
+                        else abstract_exit
+                    )
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face
                     ).to_facts(site=self.site, guard=body_face.guard)
@@ -187,24 +199,109 @@ def _returned_value(value):
 
 
 def _exit_return_values(exit_es):
-    """Project each completed source method block to its real return value."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+    """Project native returns, retaining guards and refusing untransported state.
 
-    return ExitSet(
-        tuple(
-            (
+    A constructed conditional return is GuardedReturn, not a truthy BlockValue.
+    Branch-result slots may be eliminated only by their native authentication.
+    Prefix stores/effects are not discarded to obtain a convenient predicate.
+    """
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        BranchResultAuthentication,
+        GuardedReturn,
+        NoneValue,
+        ReturnValue,
+    )
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        resolve_branch_result_guards,
+    )
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+        true_guard,
+    )
+
+    results = []
+    for face in exit_es.exits:
+        if isinstance(face, Halted):
+            results.append(face)
+            continue
+        block = face.value
+        if not isinstance(block, BlockValue):
+            results.append(face)
+            continue
+        authentication = {
+            item.slot.slot_id: item.observed_guard
+            for item in block.statements
+            if isinstance(item, BranchResultAuthentication)
+        }
+        remaining = true_guard()
+        for item in block.statements:
+            if isinstance(item, BranchResultAuthentication):
+                continue
+            if not isinstance(item, (ReturnValue, GuardedReturn)):
+                construction_panic_gap(
+                    owner="WithSourceResourceSugar.exit-return",
+                    blame=type(item).__name__,
+                    observed="native exit prefix requires state/effect transport",
+                    requested="return testimony without discarding prefix operations",
+                    fix="transport the native prefix state before projecting its return",
+                )
+            guards = item.guards if isinstance(item, GuardedReturn) else ()
+            local_guard = guards[0] if len(guards) == 1 else and_(list(guards))
+            local_guard = resolve_branch_result_guards(local_guard, authentication)
+            if local_guard is None:
+                construction_panic_gap(
+                    owner="WithSourceResourceSugar.exit-return",
+                    blame=type(item).__name__,
+                    observed="return guard lacks native branch authentication",
+                    requested="native branch-result testimony",
+                    fix="carry the branch producer's actual observed guard",
+                )
+            results.append(
                 Completed(
-                    face.guard,
-                    _returned_value(face.value),
+                    _and(face.guard, _and(remaining, local_guard)),
+                    item.value,
                     face.faces,
                     face.pending_contracts,
                 )
-                if isinstance(face, Completed)
-                else face
             )
-            for face in exit_es.exits
+            remaining = _and(remaining, complement_guard(local_guard))
+        if block.can_fall_through:
+            fall_guard = resolve_branch_result_guards(
+                and_(list(block.fall_through)), authentication
+            )
+            if fall_guard is None:
+                construction_panic_gap(
+                    owner="WithSourceResourceSugar.exit-return",
+                    blame="fall-through",
+                    observed="fall-through guard lacks native branch authentication",
+                    requested="native branch-result testimony",
+                    fix="carry the branch producer's actual observed guard",
+                )
+            results.append(
+                Completed(
+                    _and(face.guard, _and(remaining, fall_guard)),
+                    NoneValue(),
+                    face.faces,
+                    face.pending_contracts,
+                )
+            )
+        # A terminal residue without a return contributes no completed result.
+    result = ExitSet(tuple(results)).normalize()
+    if not result.exits:
+        construction_panic_gap(
+            owner="WithSourceResourceSugar.exit-return",
+            blame="native exit",
+            observed="exit has no returned, fall-through, or halted face",
+            requested="a reachable native exit outcome, not an empty green",
+            fix="retain the native exit's actual control outcome",
         )
-    )
+    return result
 
 
 def _and(left, right):

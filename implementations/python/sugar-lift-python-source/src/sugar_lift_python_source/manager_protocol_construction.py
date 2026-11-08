@@ -143,6 +143,92 @@ class ConstructedManagerProtocolV1:
             ctx,
         ).reduce_source_outcome(ctx)
 
+    def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
+        """Invoke the cited exit frame with this body face's actual ABI inputs.
+
+        Python language reference 8.5, the with statement:
+        https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
+
+        Bind before reducing the native method, not after an abstract reduction:
+        unreachable normal/exceptional branches must not perform field lookups.
+        """
+        from sugar_lift_py_tests.outcome import Completed, Halted
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+        from sugar_lift_py_tests.floor import FloorValue, NoneValue
+        from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+            AuthenticatedExceptionTypeValue,
+        )
+        from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
+        from sugar_lift_py_tests.floor.class_value import ClassValue
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+        from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        if not isinstance(entered, EnteredManagerStateValue):
+            construction_panic_gap(
+                owner="ManagerProtocol.exit_outcome_for_body",
+                blame=self.exit_face_id,
+                observed=type(entered).__name__,
+                requested="matching entered manager state",
+                fix="carry the exact enter face into resource exit",
+            )
+        if isinstance(body_face, Completed) or (
+            isinstance(body_face, Halted)
+            and isinstance(body_face.effect, LoopControlEffect)
+        ):
+            args = (NoneValue(), NoneValue(), NoneValue())
+        elif isinstance(body_face, Halted) and isinstance(
+            body_face.effect, RaiseEffect
+        ):
+            effect = body_face.effect
+            value = effect.raised_value
+            # The RaiseEffect already owns type identity. Pass the native value,
+            # not that identity witness, into the callee's operation dispatch.
+            while isinstance(value, AuthenticatedExceptionTypeValue):
+                value = value.value
+            if value is None or isinstance(
+                value, (ClassValue, ClassDefinitionValue, ExceptionClassValue)
+            ):
+                # A bare class still needs native exception instantiation; it
+                # must never stand in for the actual instance supplied by With.
+                # The raise authenticates an instance's existence, not its
+                # fields. An unused slot needs no fabricated instance; a lookup
+                # on this still-undischarged slot remains a typed demand.
+                value = ExitValueCoordinate(self.exit_face_id, None)
+            if not isinstance(value, FloorValue):
+                construction_panic_gap(
+                    owner="ManagerProtocol.exit_outcome_for_body",
+                    blame=effect.occurrence,
+                    observed="authenticated raise without an actual exception value",
+                    requested="actual raised Floor value, not a guessed instance",
+                    fix="retain the exception producer's actual value on the body face",
+                )
+            args = (
+                RaisedExitTypeValue(
+                    effect.exception_type_coordinate, effect.exception_type_mro
+                ),
+                value,
+                ExitTracebackCoordinate(self.exit_face_id, None),
+            )
+        else:
+            construction_panic_gap(
+                owner="ManagerProtocol.exit_outcome_for_body",
+                blame=self.exit_face_id,
+                observed=type(getattr(body_face, "effect", body_face)).__name__,
+                requested="normal control or an authenticated raised body face",
+                fix="authenticate the body exit before constructing native exit inputs",
+            )
+        return _call_protocol_method(
+            entered.receiver_state,
+            "__exit__",
+            args,
+            self.exit_face_id,
+            ctx,
+        ).reduce_source_outcome(ctx)
+
 
 def _completed_object_receivers(receiver) -> tuple[ObjectValue, ...]:
     """Flatten nested constructor partitions to completed ObjectValue faces.

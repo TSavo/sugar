@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
+from sugar_lift_py_tests.ir import Term
+
 from .floor_value import FloorValue
 
 
@@ -144,3 +146,76 @@ def _dynamic_subtype_operand(subtype, supertype, site):
         requested="authenticated class, tuple-of-classes, or symbolic type operand",
         fix="construct the Python type operand or keep issubclass loudly unsupported",
     )
+
+
+@dataclass(frozen=True)
+class RaisedExitTypeValue(FloorValue):
+    """Actual exception-class coordinate authenticated by a raised body face.
+
+    A raised face proves the type slot is not None. It does not invent a
+    class spelling or any exception potentially thrown by its operations.
+    """
+
+    identity: Term
+    mro: tuple[Term, ...] | None = None
+
+    def to_term(self, *, owner: str):
+        del owner
+        return self.identity
+
+    @property
+    def coordinate_cid(self):
+        from sugar_lift_py_tests.ir import _term_content_cid
+
+        return _term_content_cid(self.to_term(owner="raised native class coordinate"))
+
+    @property
+    def formal_coordinate(self):
+        # Rich operators must wait for an actual class/metaclass Floor, on
+        # either side of comparison. Identity against None is total separately.
+        return self
+
+    def denotes_value(self) -> bool:
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        # A class identity alone does not construct its metaclass operations.
+        return False
+
+    def exception_type_identity(self):
+        return self.identity
+
+    def exception_type_mro(self):
+        return self.mro
+
+    def equals(self, other, site):
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="RaisedExitTypeValue.equals",
+            blame=site,
+            observed=type(other).__name__,
+            requested="native class/metaclass equality outcome testimony",
+            fix="construct rich dispatch; a raised type identity is not its outcome",
+        )
+
+    def is_identical(self, other, site):
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome.exit_set import false_guard
+
+        if isinstance(other, NoneValue):
+            return Complete(PredicateValue(false_guard(), site))
+        # Type coordinates do not by themselves identify an arbitrary Floor's
+        # runtime value (an instance can carry its class's identity too).
+        # Do not compare that metadata to a raw class/value predicate.
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="RaisedExitTypeValue.is_identical",
+            blame=site,
+            observed=type(other).__name__,
+            requested="native class-object identity testimony for both operands",
+            fix="construct actual class values before comparing their identities",
+        )

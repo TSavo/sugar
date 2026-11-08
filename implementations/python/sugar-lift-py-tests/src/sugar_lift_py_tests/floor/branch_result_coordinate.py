@@ -57,3 +57,35 @@ class BranchResultAuthentication(FloorValue):
         return InvValue(
             implies(formula, and_(list(self.inv_contribution()))), self.site
         )
+
+
+def resolve_branch_result_guards(formula, authenticated):
+    """Replace each branch-result slot literal by its AUTHENTICATED guard.
+
+    A branch guard is spelled ``py.truthy(python:branch_result(<slot>))`` — an
+    opaque coordinate. The block also carries a ``BranchResultAuthentication``
+    proving that slot equivalent to the real observed comparison. Only that
+    testimony may stand in for the slot; an unauthenticated slot returns
+    ``None`` and the whole boundary stays loud rather than being read from a
+    coordinate nobody proved anything about.
+    """
+    from sugar_lift_py_tests.ir import _Atomic, _Connective, _ConstStr, _Ctor
+
+    if isinstance(formula, _Connective):
+        operands = []
+        for operand in formula.operands:
+            resolved = resolve_branch_result_guards(operand, authenticated)
+            if resolved is None:
+                return None
+            operands.append(resolved)
+        return type(formula)(formula.kind, tuple(operands))
+    if not isinstance(formula, _Atomic) or formula.name != "py.truthy":
+        return formula
+    if len(formula.args) != 1:
+        return formula
+    term = formula.args[0]
+    if not isinstance(term, _Ctor) or term.name != "python:branch_result":
+        return formula
+    if len(term.args) != 1 or not isinstance(term.args[0], _ConstStr):
+        return None
+    return authenticated.get(term.args[0].value)
