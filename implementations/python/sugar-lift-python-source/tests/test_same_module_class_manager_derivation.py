@@ -396,6 +396,58 @@ def test_constructor_validation_halt_still_derives_expected_exceptions(tmp_path:
     assert isinstance(ref.semantics.mode, ExpectsModeV1)
 
 
+def test_installed_like_absent_effect_exit_derives_expected_exceptions(tmp_path: Path):
+    """RaisesExc's absent-effect diagnostic uses ``not`` / ``len == 1`` / ``[0]``.
+
+    When the constructor actual is a class, the isinstance wrap floors to a
+    one-element tuple, so those checks fold and EffectBoundary still seals.
+    A formal without that class actual must not invent members to pass the
+    same ``[0]``.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+
+    source = textwrap.dedent("""\
+        class RaisesExc:
+            def __init__(self, expected_exception=None):
+                if isinstance(expected_exception, tuple):
+                    expected_exceptions = expected_exception
+                elif expected_exception is None:
+                    expected_exceptions = ()
+                else:
+                    expected_exceptions = (expected_exception,)
+                self.expected_exceptions = expected_exceptions
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                if exc_type is None:
+                    if not self.expected_exceptions:
+                        raise RuntimeError("DID NOT RAISE any exception")
+                    if len(self.expected_exceptions) == 1:
+                        raise RuntimeError(self.expected_exceptions[0].__name__)
+                    raise RuntimeError("several")
+                return exc_type is self.expected_exceptions[0]
+        def use():
+            with RaisesExc(ValueError):
+                raise ValueError("nested")
+        """)
+    tree, context, path = _source_file(tmp_path, source)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    ref = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
+    assert isinstance(ref.semantics, EffectBoundarySemanticsV1), ref.semantics
+    assert isinstance(ref.semantics.mode, ExpectsModeV1)
+
+
 def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
     """ClassDef without __enter__/__exit__: gap row; With panics named."""
     source = textwrap.dedent("""\

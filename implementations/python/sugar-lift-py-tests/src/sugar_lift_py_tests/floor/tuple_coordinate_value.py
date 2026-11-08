@@ -6,6 +6,7 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.ir import Term, _term_content_cid, ctor
 from sugar_lift_python_source.canonical import cid_of_json
 
+from .call_site_value import CallSiteValue
 from .closed_operation_witness import (
     ClosedSemanticOperationWitness,
     PythonRuntimeIdentity,
@@ -51,6 +52,22 @@ def _slice_coordinate_cid(
             "resultTermCid": result_cid,
         }
     )
+
+
+@dataclass(frozen=True)
+class TupleLengthValue(CallSiteValue):
+    """Successful ``len`` of a constructed tuple is an ``int``.
+
+    Members and cardinality stay unknown. ``tuple.__len__`` cannot fail and
+    always returns ``int``, so ``len(xs) == 1`` is native int equality
+    rather than undecided ``__eq__`` dispatch. A plain CallSiteValue for
+    ``len`` leaves the result type undecided, which turned that RaisesExc
+    check into ComparisonOpSugar.Eq exit-may-halt after the field had
+    already been written.
+    """
+
+    def runtime_type_is_decided(self) -> bool:
+        return True
 
 
 @dataclass(frozen=True)
@@ -261,11 +278,10 @@ class TupleCoordinateValue(FloorValue):
         )
 
     def length(self, site):
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            CallSiteValue(
+            TupleLengthValue(
                 target_name="len",
                 arg_values=(self,),
                 parameters=(),
