@@ -16,6 +16,33 @@ class TupleValue(FloorValue):
 
     elements: tuple
 
+    def match_raise_effect(self, effect):
+        """Tuple classinfo is disjunction of its members' subtype predicates.
+
+        Python's isinstance/issubclass classinfo rule (also used by exception
+        handlers and pytest.raises) accepts any member, not the tuple as a
+        single type: https://docs.python.org/3/library/functions.html#issubclass
+        Open members retain their predicates; no open edge is assumed false.
+        """
+        from sugar_lift_py_tests.authenticated_exception_matching import (
+            MatchDecided,
+            MatchRetained,
+            matches_raise_effect,
+        )
+        from sugar_lift_py_tests.ir import or_
+
+        retained = []
+        for element in self.elements:
+            verdict = matches_raise_effect(effect, element)
+            if isinstance(verdict, MatchDecided):
+                if verdict.value:
+                    return verdict
+            else:
+                retained.append(verdict.obligation)
+        if retained:
+            return MatchRetained(retained[0] if len(retained) == 1 else or_(retained))
+        return MatchDecided(False)
+
     def denotes_value(self) -> bool:
         """This floor value denotes a ``tuple``."""
         return True
