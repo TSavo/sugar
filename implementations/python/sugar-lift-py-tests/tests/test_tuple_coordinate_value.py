@@ -114,6 +114,37 @@ def test_tuple_coordinate_truth_emits_predicate_without_inventing_cardinality(
     assert outcome.value.formula == py_truthy(constructed.term)
 
 
+
+def test_tuple_coordinate_length_equals_int_is_native_int_equality(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.floor.tuple_coordinate_value import TupleLengthValue
+    from sugar_lift_py_tests.ir import py_eq
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+        publish_undecided_equality_edges,
+    )
+
+    call, _ = _nodes(_tree(tmp_path, "length-eq.py"))
+    ctx = _context("tuple-coordinate-length-eq")
+    constructed = _value(call.sugar().desugar(ctx))
+
+    assert isinstance(constructed, TupleCoordinateValue)
+    length = _value(constructed.length(call.fragment))
+    assert isinstance(length, TupleLengthValue)
+    assert length.runtime_type_is_decided()
+
+    one = TermValue(1)
+    outcome = length.equals(one, call.fragment)
+    published = publish_undecided_equality_edges(
+        length, one, call.fragment, "Eq", outcome
+    )
+
+    assert isinstance(published, Complete)
+    assert isinstance(published.value, PredicateValue)
+    assert published.value.formula == py_eq(length.term, one.to_term(owner=str(call.fragment)))
+
+
 def test_source_tuple_slice_extends_receiver_coordinate_and_occurrence(
     tmp_path: Path,
 ) -> None:
