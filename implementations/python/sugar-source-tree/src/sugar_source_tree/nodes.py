@@ -5305,6 +5305,26 @@ class ClassDef(Statement):
             self._method_descriptor_kind(method),
         )
 
+
+    def _sugar_source_class_base(self, base):
+        """Sugar a base, unwrapping a local ``Base`` or ``Base[T]`` to that class.
+
+        Subscription supplies type arguments; it does not change which class
+        owns inherited runtime methods. The module-level ClassDef binding is
+        the same door ``module_direct_bindings`` already uses for allocation.
+        Computed and attributed bases stay ordinary expressions.
+        """
+        name = None
+        if isinstance(base, Name):
+            name = base.id
+        elif isinstance(base, Subscript) and isinstance(base.value, Name):
+            name = base.value.id
+        if name is not None:
+            bindings = (self.unit.module_direct_bindings or {}).get(name, ())
+            if len(bindings) == 1 and isinstance(bindings[0], ClassDef):
+                return bindings[0].sugar()
+        return base.sugar()
+
     def _construct_sugar(self):
         """Construct source-visible class structure through body members.
 
@@ -5485,11 +5505,16 @@ class ClassDef(Statement):
             table = getattr(context, "source_class_bases", None)
             enrolled = () if table is None else table.get(self.fragment.seal().cid, ())
             # A source-base table carries already-authenticated local class
-            # definitions.  Otherwise retain each ordinary base expression as
-            # Sugar so desugaring evaluates it through the temporal floor.
-            # Dropping an unenrolled builtin base here erased ``dict`` from
-            # ``class _EnumDict(dict)`` and fabricated a plain-object receiver.
-            base_sugars = enrolled or tuple(base.sugar() for base in self.bases)
+            # definitions.  Otherwise unwrap a local ``Base`` / ``Base[T]``
+            # through the module binding door, and retain any other base
+            # expression as Sugar so desugaring evaluates it through the
+            # temporal floor. Dropping an unenrolled builtin base here erased
+            # ``dict`` from ``class _EnumDict(dict)`` and fabricated a
+            # plain-object receiver. Dropping ``AbstractRaises[T]`` left
+            # ``super()`` with zero direct bases.
+            base_sugars = enrolled or tuple(
+                self._sugar_source_class_base(base) for base in self.bases
+            )
         return ClassDefinitionSugar(
             class_name=self.name,
             source_identity_cid=self.unit.source_cid,
