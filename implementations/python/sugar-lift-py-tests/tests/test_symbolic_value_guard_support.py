@@ -110,3 +110,36 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, CallSiteValue)
     assert getattr(outcome.value.term, "name", None) == "python:fstring"
+
+
+def test_type_call_result_is_a_type_object() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    result = CallSiteValue(
+        target_name="type",
+        arg_values=(SymbolicValue(make_var("exc")),),
+        parameters=(),
+        term=ctor(
+            "call:type",
+            [SymbolicValue(make_var("exc")).to_term(owner="type-call")],
+            symbol_kind="builtin",
+        ),
+        body=None,
+        site="type-call",
+    )
+
+    as_type = result.python_isinstance(
+        "type", ctor("python:type", [str_const("type")]), "site"
+    )
+    assert isinstance(as_type, Complete)
+    assert isinstance(as_type.value, TrueBoolLiteralSugar)
+
+    as_tuple = result.python_isinstance(
+        "tuple", ctor("python:type", [str_const("tuple")]), "site"
+    )
+    assert isinstance(as_tuple, Complete)
+    assert isinstance(as_tuple.value, FalseBoolLiteralSugar)
