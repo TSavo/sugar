@@ -1799,18 +1799,18 @@ def populate_source_derived_resource_refs(
                         )
             return surface
 
-        def _actual_outcome(node, *, formal_name: str | None = None):
-            return _actual_sugar(node, formal_name=formal_name).desugar(actual_ctx)
-
         actuals = []
+        positional_sugars = []
         for index, node in enumerate(call.args):
             formal_name = (
                 frame_parameters[index] if index < len(frame_parameters) else None
             )
-            outcome = _actual_outcome(node, formal_name=formal_name)
+            actual_sugar = _actual_sugar(node, formal_name=formal_name)
+            outcome = actual_sugar.desugar(actual_ctx)
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
+            positional_sugars.append(actual_sugar)
             actuals.append(
                 ConstructedCallActualV1(
                     node,
@@ -1822,17 +1822,20 @@ def populate_source_derived_resource_refs(
                 )
             )
         keyword_actuals = []
+        keyword_sugars = []
         if len(actuals) == len(call.args):
             for keyword in call.keywords:
                 if keyword.arg is None:
                     keyword_actuals = []
                     actuals = []
                     break
-                outcome = _actual_outcome(keyword.value, formal_name=keyword.arg)
+                actual_sugar = _actual_sugar(keyword.value, formal_name=keyword.arg)
+                outcome = actual_sugar.desugar(actual_ctx)
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []
                     break
+                keyword_sugars.append((keyword.arg, actual_sugar))
                 keyword_actuals.append(
                     (
                         keyword.arg,
@@ -1943,6 +1946,10 @@ def populate_source_derived_resource_refs(
         # Publication: class-source __enter__/__exit__ definition coordinates
         # at the exact use-site receiver. Consumption reads them through
         # require_native_definition; this arm never looks them up later.
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceCallActualSugarsV1,
+        )
+
         _publish_class_protocol_native_definitions(context, coordinate, behavior)
         context.source_derived_contract_refs[coordinate] = (
             SourceDerivedContextManagerRefV1(
@@ -1951,6 +1958,16 @@ def populate_source_derived_resource_refs(
                 summary.semantics,
                 summary.import_signature,
                 protocol,
+                call_actual_sugars=(
+                    SourceCallActualSugarsV1(
+                        coordinate,
+                        tuple(positional_sugars),
+                        tuple(keyword_sugars),
+                        behavior.source_call_frame,
+                    )
+                    if isinstance(summary.semantics, ProtocolResourceSemanticsV1)
+                    else None
+                ),
             )
         )
 

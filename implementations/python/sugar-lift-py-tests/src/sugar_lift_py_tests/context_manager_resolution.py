@@ -673,6 +673,76 @@ NativeDefinitionCoordinateResolutionV1 = (
 
 
 @dataclass(frozen=True)
+class SourceCallActualSugarsV1:
+    """The exact call's authenticated construction, never cached runtime values.
+
+    Preconstruction and resource performance reduce the same operand Sugar
+    trees in their respective contexts. Import testimony survives that handoff;
+    free operands still read the caller's current temporal bindings.
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    positional: tuple
+    keywords: tuple
+    source_call_frame: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.sugar.sugar_base import require_constructed_term_sugar
+        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+
+        if not isinstance(self.source_call_frame, SourceVisibleCallFrameV1):
+            raise ContractRefProtocolError(
+                "authenticated resource actuals require their defining source frame"
+            )
+
+        for sugar in (*self.positional, *(value for _, value in self.keywords)):
+            require_constructed_term_sugar(sugar, owner="SourceCallActualSugarsV1")
+
+    def bind(self, manager, *, use_site):
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        if self.use_site != use_site:
+            raise ContractRefProtocolError(
+                "authenticated call actuals belong to a different source occurrence"
+            )
+        if not isinstance(manager, (CallSiteSugar, MethodCallSugar)):
+            raise ContractRefProtocolError(
+                "authenticated call actuals require the original call Sugar"
+            )
+        if len(manager.args) != len(self.positional) or tuple(
+            name for name, _ in manager.keywords
+        ) != tuple(name for name, _ in self.keywords):
+            raise ContractRefProtocolError(
+                "authenticated call actuals disagree with the original call shape"
+            )
+        frame = manager.source_call_frame
+        if frame is not None and (
+            frame.declaration_frame_cid != self.source_call_frame.declaration_frame_cid
+        ):
+            raise ContractRefProtocolError(
+                "authenticated resource actuals have a foreign defining source frame"
+            )
+        definition = (
+            {
+                "expected_definition_ref": self.source_call_frame.owner,
+                "expected_source_call_frame_owner": self.source_call_frame.owner,
+            }
+            if isinstance(manager, CallSiteSugar)
+            else {}
+        )
+        return replace(
+            manager,
+            args=self.positional,
+            keywords=self.keywords,
+            source_call_frame=self.source_call_frame,
+            **definition,
+        )
+
+
+@dataclass(frozen=True)
 class SourceDerivedContextManagerRefV1:
     """Live protocol testimony plus its immutable h=h(p) summary coordinate."""
 
@@ -681,6 +751,9 @@ class SourceDerivedContextManagerRefV1:
     semantics: ContextManagerSemanticsV1
     import_signature: ImportSignatureV2
     protocol: object = field(compare=False, repr=False)
+    call_actual_sugars: SourceCallActualSugarsV1 | None = field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
 
 
 @dataclass(frozen=True)
