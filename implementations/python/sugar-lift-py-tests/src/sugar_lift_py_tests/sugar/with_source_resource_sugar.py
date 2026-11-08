@@ -58,7 +58,11 @@ class WithSourceResourceSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        # A manager call coordinate is not its returned receiver. Perform its
+        # source outcome once, preserving exceptional faces before enter.
+        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx)).sequence(
+            lambda value: _project_manager_receiver(value, ctx)
+        )
         parts = []
         for manager_face in manager_es.exits:
             if isinstance(manager_face, Halted):
@@ -139,6 +143,37 @@ class WithSourceResourceSugar(Sugar):
         for part in parts[1:]:
             result = result.union(part)
         return result.normalize()
+
+
+def _project_manager_receiver(value, ctx, seen=frozenset()):
+    """Follow retained factory returns, not fresh source-body evaluations.
+
+    A factory may return another call (including its class constructor). Each
+    floor projects its own retained completion; only the fixed-point receiver
+    reaches enter. ExitSet sequencing keeps every exceptional/guarded face.
+    """
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if id(value) in seen:
+        raise SugarNotWritten(
+            blame="WithSourceResourceSugar.manager",
+            owner="WithSourceResourceSugar.manager",
+            observed="cycle in retained manager return projections",
+            requested="an acyclic constructed manager receiver",
+            fix="retain the source call-graph cycle as a construction gap",
+        )
+    projected = value.project_operation_receiver_outcome(
+        ctx, owner="WithSourceResourceSugar.manager"
+    )
+    return outcome_to_exitset(projected).sequence(
+        lambda receiver: (
+            ExitSet.completed(receiver)
+            if receiver is value
+            else _project_manager_receiver(receiver, ctx, seen | {id(value)})
+        )
+    )
 
 
 def _returned_value(value):

@@ -8664,12 +8664,27 @@ class With(Statement):
                         item._make_parametric_exit_call().sugar(),
                         native_definition_coordinate=exit_definition,
                     )
+                manager_sugar = (
+                    generator_manager
+                    if generator_protocol is not None
+                    else item.context_expr.sugar()
+                )
+                if (
+                    generator_protocol is None
+                    and resolved_ref.call_actual_sugars is not None
+                ):
+                    from sugar_lift_py_tests.context_manager_resolution import (
+                        SourceFragmentCoordinateV1,
+                    )
+
+                    manager_sugar = resolved_ref.call_actual_sugars.bind(
+                        manager_sugar,
+                        use_site=SourceFragmentCoordinateV1(
+                            self.unit.source_cid, *item._manager_use_site_span()
+                        ),
+                    )
                 return WithSourceResourceSugar(
-                    manager=(
-                        generator_manager
-                        if generator_protocol is not None
-                        else item.context_expr.sugar()
-                    ),
+                    manager=manager_sugar,
                     enter=enter_sugar,
                     exit=exit_sugar,
                     protocol=(

@@ -1269,31 +1269,30 @@ def populate_source_derived_resource_refs(
         )
         frame_parameters = tuple(getattr(frame, "parameters", ()) or ())
 
-        def _actual_outcome(node, *, formal_name: str | None = None):
-            # Substitution has already replaced every reaching lexical binding.
-            # A surviving bare builtin is therefore the language-owned value,
-            # not a free formal. NameSugar deliberately represents every other
-            # survivor symbolically, so project this one native floor here.
-            #
-            # Import Attribute exception-class paths (``pkg.Error``) and
-            # provider-gated importorskip heads (``pa.ArrowInvalid``) seal
-            # identity without Attribute floors inventing member success.
-            from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
-                AuthenticatedExceptionTypeValue,
-            )
-            from sugar_lift_py_tests.floor.exception_class_value import (
-                ExceptionClassValue,
-            )
-            from sugar_lift_py_tests.outcome import Complete as _Complete
+        def _actual_sugar(node, *, formal_name: str | None = None):
+            # Authentication is compositional: construct exception operands
+            # through their existing Sugar owners before reducing the tuple.
+            from dataclasses import replace
+
             from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
                 AuthenticatedExceptionTypeSugar,
             )
-            from sugar_source_tree.nodes import Attribute, Name
+            from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
+            from sugar_source_tree.nodes import Attribute, Name, Tuple_
 
+            surface = node.sugar()
+            if isinstance(node, Tuple_) and isinstance(surface, TupleSugar):
+                return replace(
+                    surface,
+                    elements=tuple(
+                        _actual_sugar(element, formal_name=formal_name)
+                        for element in node.elts
+                    ),
+                )
             if isinstance(node, Name):
                 builtin = actual_ctx.temporal.value_if_bound(node.id)
                 if builtin is not None:
-                    return _Complete(builtin)
+                    return surface
             # Exception-type formals: seal import / provider-gated identity.
             if formal_name in _EXCEPTION_TYPE_FORMALS and isinstance(node, Name):
                 identity = None
@@ -1313,12 +1312,12 @@ def populate_source_derived_resource_refs(
                         )
                 if identity is not None:
                     return AuthenticatedExceptionTypeSugar(
-                        node.sugar(),
+                        surface,
                         identity,
                         mro,
                         site=node.fragment,
                         class_value=class_value,
-                    ).desugar(actual_ctx)
+                    )
             if isinstance(node, Attribute):
                 from sugar_source_tree.panic import UnattributableRefusal
 
@@ -1349,35 +1348,36 @@ def populate_source_derived_resource_refs(
                     ) from exc
                 if testimony is not None:
                     class_value = testimony.class_value()
-                    return _Complete(
-                        AuthenticatedExceptionTypeValue(
-                            class_value,
-                            testimony.identity,
-                            testimony.ancestry,
-                            class_value,
-                        )
+                    return AuthenticatedExceptionTypeSugar(
+                        surface,
+                        testimony.identity,
+                        testimony.ancestry,
+                        site=node.fragment,
+                        class_value=class_value,
                     )
                 identity = node.unit.imported_exception_type_identity(node)
                 if identity is not None:
                     qualified = getattr(identity.args[1], "value", None)
                     if isinstance(qualified, str) and qualified:
-                        class_value = ExceptionClassValue(qualified)
-                        return _Complete(
-                            AuthenticatedExceptionTypeValue(
-                                class_value, identity, None, class_value
-                            )
+                        # The authenticated Sugar owns floor construction; the
+                        # imported coordinate need not re-evaluate its module.
+                        return AuthenticatedExceptionTypeSugar(
+                            surface, identity, site=node.fragment
                         )
-            return node.sugar().desugar(actual_ctx)
+            return surface
 
         actuals = []
+        positional_sugars = []
         for index, node in enumerate(call.args):
             formal_name = (
                 frame_parameters[index] if index < len(frame_parameters) else None
             )
-            outcome = _actual_outcome(node, formal_name=formal_name)
+            actual_sugar = _actual_sugar(node, formal_name=formal_name)
+            outcome = actual_sugar.desugar(actual_ctx)
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
+            positional_sugars.append(actual_sugar)
             actuals.append(
                 ConstructedCallActualV1(
                     node,
@@ -1389,17 +1389,20 @@ def populate_source_derived_resource_refs(
                 )
             )
         keyword_actuals = []
+        keyword_sugars = []
         if len(actuals) == len(call.args):
             for keyword in call.keywords:
                 if keyword.arg is None:
                     keyword_actuals = []
                     actuals = []
                     break
-                outcome = _actual_outcome(keyword.value, formal_name=keyword.arg)
+                actual_sugar = _actual_sugar(keyword.value, formal_name=keyword.arg)
+                outcome = actual_sugar.desugar(actual_ctx)
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []
                     break
+                keyword_sugars.append((keyword.arg, actual_sugar))
                 keyword_actuals.append(
                     (
                         keyword.arg,
@@ -1494,6 +1497,10 @@ def populate_source_derived_resource_refs(
         # Publication: class-source __enter__/__exit__ definition coordinates
         # at the exact use-site receiver. Consumption reads them through
         # require_native_definition; this arm never looks them up later.
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceCallActualSugarsV1,
+        )
+
         _publish_class_protocol_native_definitions(context, coordinate, behavior)
         context.source_derived_contract_refs[coordinate] = (
             SourceDerivedContextManagerRefV1(
@@ -1502,6 +1509,16 @@ def populate_source_derived_resource_refs(
                 summary.semantics,
                 summary.import_signature,
                 protocol,
+                call_actual_sugars=(
+                    SourceCallActualSugarsV1(
+                        coordinate,
+                        tuple(positional_sugars),
+                        tuple(keyword_sugars),
+                        behavior.source_call_frame,
+                    )
+                    if isinstance(summary.semantics, ProtocolResourceSemanticsV1)
+                    else None
+                ),
             )
         )
 

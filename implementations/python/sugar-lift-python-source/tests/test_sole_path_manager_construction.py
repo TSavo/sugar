@@ -3890,6 +3890,21 @@ _NONSUPPRESSING_NATIVE_ENTRY = (
 )
 
 
+_DOTTED_TUPLE_RESOURCE = (
+    "class Boundary:\n"
+    "    def __init__(self, payload):\n"
+    "        self.payload = payload\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "    def __exit__(self, effect_type, effect, traceback):\n"
+    "        return False\n\n"
+    "def boundary(payload):\n"
+    "    return Boundary(payload)\n\n"
+    "class MyError(Exception):\n"
+    "    pass\n"
+)
+
+
 @pytest.mark.parametrize("body", ["pass", "raise ValueError('must escape')"])
 def test_exception_argument_cannot_turn_nonsuppressing_manager_into_assertion(
     tmp_path, body
@@ -4284,3 +4299,183 @@ def test_source_manager_protocol_defers_exit_lookup_until_actual_value(tmp_path,
             assert isinstance(face.value, BlockValue)
             assert isinstance(face.value.statements[-1], ReturnValue)
             assert face.value.statements[-1].value.formula == expected.formula
+
+
+@pytest.mark.parametrize("parameter", ["payload", "expected"])
+@pytest.mark.parametrize("keyword", [False, True])
+def test_dotted_tuple_preconstruction_preserves_member_testimony_and_resource_contract(
+    tmp_path, parameter, keyword
+):
+    """Tuple members take the scalar construction door before frame binding."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+        ProtocolResourceSemanticsV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+    )
+    from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+        AuthenticatedExceptionTypeValue,
+    )
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithSourceResourceSugar,
+    )
+
+    argument = "(ValueError, arbitrary.MyError)"
+    if keyword:
+        argument = f"{parameter}={argument}"
+    tree, context = _attribute_exception_tree(
+        tmp_path,
+        manager=f"arbitrary.boundary({argument})",
+        body="pass",
+        implementation=_DOTTED_TUPLE_RESOURCE.replace("payload", parameter),
+    )
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1)
+    assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(
+        reference.semantics.exit.disposition, NeverSuppressesDispositionV1
+    )
+    # A type operand does not turn a nonsuppressing resource into Expects-Raise.
+    assert isinstance(
+        next(n for n in tree.nodes() if n.kind == "With").sugar(),
+        WithSourceResourceSugar,
+    )
+    projected = reference.protocol.receiver_state.attribute(
+        parameter, "tuple-preconstruction"
+    )
+    assert isinstance(projected, Complete)
+    assert isinstance(projected.value, TupleValue)
+    assert len(projected.value.elements) == 2
+    member = projected.value.elements[1]
+    assert isinstance(member, AuthenticatedExceptionTypeValue)
+    assert member.exception_type_identity() == ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const("arbitrary.manager.MyError")],
+    )
+    assert member.class_value is not None
+    assert member.exception_type_mro() is not None
+
+
+def test_dotted_tuple_preconstruction_keeps_missing_provider_member_loud(tmp_path):
+    from sugar_source_tree.panic import UnattributableRefusal
+
+    with pytest.raises(UnattributableRefusal) as caught:
+        _attribute_exception_tree(
+            tmp_path,
+            manager="arbitrary.boundary((ValueError, arbitrary.MissingError))",
+            body="pass",
+            implementation=_DOTTED_TUPLE_RESOURCE,
+        )
+    assert caught.value.owner == "provider_exception_type_construction"
+
+
+@pytest.mark.parametrize("keyword", [False, True])
+@pytest.mark.parametrize("tuple_operand", [False, True])
+@pytest.mark.parametrize("body", ["pass", 'raise ValueError("boom")'])
+def test_authenticated_resource_actuals_reduce_without_raw_module_attributes(
+    tmp_path, keyword, tuple_operand, body
+):
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    argument = (
+        "(ValueError, arbitrary.MyError)" if tuple_operand else "arbitrary.MyError"
+    )
+    if keyword:
+        argument = f"payload={argument}"
+    tree, _ = _attribute_exception_tree(
+        tmp_path,
+        manager=f"arbitrary.boundary({argument})",
+        body=body,
+        implementation=_DOTTED_TUPLE_RESOURCE,
+    )
+    boundary = next(n for n in tree.nodes() if n.kind == "With").sugar()
+    exits = outcome_to_exitset(boundary.desugar()).exits
+    if body == "pass":
+        assert len(exits) == 1
+        assert isinstance(exits[0], Completed)
+        assert exits[0].value.can_fall_through
+    else:
+        halts = [face for face in exits if isinstance(face, Halted)]
+        assert len(halts) == 1
+        assert isinstance(halts[0].effect, RaiseEffect)
+        assert halts[0].effect.exception_name == "ValueError"
+        # Resource binding facts may ride a companion terminal residue. It
+        # must never become an executable completion that swallows the raise.
+        assert all(
+            isinstance(face, Halted) or not face.value.can_fall_through
+            for face in exits
+        )
+
+
+@pytest.mark.parametrize("runtime_value", [7, 19])
+def test_resource_actual_construction_reads_current_context_not_preconstruction_values(
+    tmp_path, runtime_value
+):
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.floor import ObjectValue, TermValue
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        _project_manager_receiver,
+    )
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    tree, context = _attribute_exception_tree(
+        tmp_path,
+        manager="arbitrary.boundary((arbitrary.MyError, runtime))",
+        body="pass",
+        implementation=_DOTTED_TUPLE_RESOURCE,
+    )
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    previous = reference.protocol.receiver_state.attribute("payload", "test").value
+    assert previous.elements[1].to_term(owner="test") != TermValue(
+        runtime_value
+    ).to_term(owner="test")
+    boundary = next(n for n in tree.nodes() if n.kind == "With").sugar()
+    ctx = ReduceContext(
+        temporal=builtin_name_temporal().bind_value("runtime", TermValue(runtime_value))
+    )
+    managers = (
+        outcome_to_exitset(boundary.manager.desugar(ctx))
+        .sequence(lambda value: _project_manager_receiver(value, ctx))
+        .exits
+    )
+    assert len(managers) == 1
+    assert isinstance(managers[0], Completed)
+    assert isinstance(managers[0].value, ObjectValue)
+    current = managers[0].value.attribute("payload", "test").value
+    assert current.elements[1].to_term(owner="test") == TermValue(
+        runtime_value
+    ).to_term(owner="test")
+    exits = outcome_to_exitset(boundary.desugar(ctx)).exits
+    assert len(exits) == 1 and isinstance(exits[0], Completed)
+
+
+def test_resource_actual_construction_refuses_foreign_occurrence_or_call_shape(
+    tmp_path,
+):
+    from dataclasses import replace
+    from sugar_lift_py_tests.context_manager_resolution import ContractRefProtocolError
+
+    tree, context = _attribute_exception_tree(
+        tmp_path,
+        manager="arbitrary.boundary((ValueError, arbitrary.MyError))",
+        body="pass",
+        implementation=_DOTTED_TUPLE_RESOURCE,
+    )
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    construction = reference.call_actual_sugars
+    manager = next(n for n in tree.nodes() if n.kind == "With").sugar().manager
+    foreign = replace(
+        construction.use_site, start_col=construction.use_site.start_col + 1
+    )
+    with pytest.raises(ContractRefProtocolError, match="different source occurrence"):
+        construction.bind(manager, use_site=foreign)
+    with pytest.raises(ContractRefProtocolError, match="original call shape"):
+        construction.bind(replace(manager, args=()), use_site=construction.use_site)
+    with pytest.raises(ContractRefProtocolError, match="defining source frame"):
+        replace(construction, source_call_frame=None)
