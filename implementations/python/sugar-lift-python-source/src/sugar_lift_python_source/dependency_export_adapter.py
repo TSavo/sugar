@@ -525,6 +525,86 @@ def _python_class_definition(
     return found[0] if len(found) == 1 else None
 
 
+def resolve_class_body_member(graph, binding_cid: str, resolved, member_name: str):
+    """Look up one method on an already-resolved class export.
+
+    ``from module import Class`` then ``Class.method`` names a FunctionDef in
+    that class body. It is not a nested module under ``module.Class``.
+    Inherited methods and class-body assignments stay outside-binding: only a
+    unique FunctionDef or AsyncFunctionDef on the class itself.
+    """
+    _bind()
+    if isinstance(resolved, PythonObjectResolutionGapV1):
+        return resolved
+    if not isinstance(resolved, ResolvedPythonObjectV1):
+        return _gap(
+            "target-outside-binding",
+            binding_cid,
+            graph,
+            getattr(resolved, "module_name", ""),
+            member_name,
+        )
+    if resolved.definition.kind != "class":
+        return _gap(
+            "target-outside-binding",
+            binding_cid,
+            graph,
+            resolved.module_name,
+            member_name,
+        )
+    module = graph.modules.get(resolved.module_name)
+    if module is None or module.source_cid != resolved.source_cid:
+        return _gap(
+            "target-outside-binding",
+            binding_cid,
+            graph,
+            resolved.module_name,
+            member_name,
+        )
+    tree = parsed_tree(module.source, module.source_seat)
+    class_def = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == resolved.definition.name
+            and node.lineno == resolved.definition.start_line
+            and node.col_offset == resolved.definition.start_col
+        ),
+        None,
+    )
+    if class_def is None:
+        return _gap(
+            "target-outside-binding",
+            binding_cid,
+            graph,
+            resolved.module_name,
+            member_name,
+        )
+    found = [
+        item
+        for item in class_def.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name == member_name
+    ]
+    if len(found) != 1:
+        return _gap(
+            "target-outside-binding",
+            binding_cid,
+            graph,
+            resolved.module_name,
+            member_name,
+        )
+    return ResolvedPythonObjectV1(
+        distribution_artifact_cid=resolved.distribution_artifact_cid,
+        import_binding_cid=binding_cid,
+        module_name=resolved.module_name,
+        source_cid=resolved.source_cid,
+        reexport_warrants=resolved.reexport_warrants,
+        definition=_definition(module, found[0]),
+    )
+
+
 def _callable_instance_call_method(
     body: list[ast.stmt], statement: ast.AST, exported_name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:

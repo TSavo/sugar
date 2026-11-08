@@ -977,15 +977,15 @@ def resolve_import_binding(
             suffix = requested[len(binding_prefix) :]
             nested_module = ".".join(binding_prefix)
             demand_kind = authenticated_use.demand.get("kind")
+            member_path_ok = (
+                demand_kind != "import-value-use-demand"
+                or list(authenticated_use.use.get("exportedMemberPath") or ())
+                == suffix
+            )
             if (
                 requested[: len(binding_prefix)] != binding_prefix
                 or len(suffix) != 1
-                or nested_module not in graph.modules
-                or (
-                    demand_kind == "import-value-use-demand"
-                    and list(authenticated_use.use.get("exportedMemberPath") or ())
-                    != suffix
-                )
+                or not member_path_ok
             ):
                 return _gap(
                     "target-outside-binding",
@@ -994,8 +994,33 @@ def resolve_import_binding(
                     module_name,
                     target_symbol,
                 )
-            module_name = nested_module
-            exported_name = suffix[0]
+            if nested_module in graph.modules:
+                module_name = nested_module
+                exported_name = suffix[0]
+            else:
+                class_result = _resolve_export(
+                    graph,
+                    binding_cid,
+                    module_name,
+                    bound[0],
+                    (),
+                    frozenset(),
+                    session=session_or_new(session),
+                )
+                if (
+                    isinstance(class_result, ResolvedPythonObjectV1)
+                    and class_result.definition.kind == "class"
+                ):
+                    return _resolve_class_body_member(
+                        graph, binding_cid, class_result, suffix[0]
+                    )
+                return _gap(
+                    "target-outside-binding",
+                    binding_cid,
+                    graph,
+                    module_name,
+                    target_symbol,
+                )
     elif requested[: len(base)] == base and len(requested) == len(base) + 1:
         exported_name = requested[-1]
     else:
@@ -1133,6 +1158,12 @@ def _resolve_export(*args, **kwargs):
     from .dependency_export_adapter import resolve_export
 
     return resolve_export(*args, **kwargs)
+
+
+def _resolve_class_body_member(*args, **kwargs):
+    from .dependency_export_adapter import resolve_class_body_member
+
+    return resolve_class_body_member(*args, **kwargs)
 
 
 def export_statement_coverage():
