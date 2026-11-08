@@ -186,8 +186,17 @@ class ClassDefinitionSugar(Sugar):
 
         for item in self.fields:
             append_field(item)
+        # The last same-name method is Python's live class binding. Overload
+        # stubs written as ``def __init__(...): ...`` precede the implementation
+        # (RaisesExc); the first ``__init__`` would construct through an
+        # ellipsis body and drop every field store.
         initializer = next(
-            (method for method in self.methods if method.name == "__init__"), None
+            (
+                method
+                for method in reversed(self.methods)
+                if method.name == "__init__"
+            ),
+            None,
         )
         return Complete(
             ClassDefinitionValue(
