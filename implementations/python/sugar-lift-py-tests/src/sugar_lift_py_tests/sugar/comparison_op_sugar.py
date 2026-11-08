@@ -163,7 +163,7 @@ def publish_undecided_membership_edges(left, right, site, op_kind: str, outcome)
 
 
 def publish_undecided_equality_edges(left, right, site, op_kind: str, outcome):
-    """Equality law: undecided ``__eq__`` / ``__ne__`` is a two-face partition."""
+    """Retain native equality outcomes; refuse unproven dispatch completion."""
     return _publish_undecided_dispatch_edges(
         left,
         right,
@@ -221,18 +221,31 @@ def _publish_undecided_dispatch_edges(
     *,
     law: CompareLaw,
 ):
-    """Shared dual-edge construction; partition key is law-scoped.
+    """Retain constructed native outcomes, not unproven dispatch completion.
 
-    Ordering, membership, and equality are not total over undecided runtime
-    types: Python may select a rich method that completes or raises. Emitting
-    only the solver atom invents completion; inventing ``TypeError`` invents an
-    exception identity. The producer therefore emits complementary completed
-    and halted edges without inventing an exception type.
+    An already-constructed Floor outcome owns its completion or exceptional
+    testimony, independently of whether operand runtime types are known here.
+    Preserve that outcome rather than replacing its exception identity/state.
 
-    Decided pairs fall through to the floor's ground construction (RaiseValue
-    TypeError or honest completion). Identity is not routed here.
+    A residual predicate alone does not prove that rich-method dispatch
+    completes: Python may select user code that raises an arbitrary exception.
+    Refuse that undecided case instead of inventing a TypeError or a nameless
+    exceptional face. Identity is not routed here.
     """
     if law is CompareLaw.IDENTITY or law is CompareLaw.CHAINING:
+        return outcome
+
+    from sugar_lift_py_tests.floor import PredicateValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    # Operand type uncertainty cannot revoke an already-constructed Floor
+    # outcome. In particular, native RaiseValue/ExitSet testimony already owns
+    # its exception type, occurrence, guards and pre-effect state. Only a bare
+    # predicate needs the unresolved-dispatch check below; inventing an exit
+    # for that predicate would still require native exception testimony.
+    if not isinstance(outcome, Complete) or not isinstance(
+        outcome.value, PredicateValue
+    ):
         return outcome
 
     denotes_left = getattr(left, "denotes_value", None)

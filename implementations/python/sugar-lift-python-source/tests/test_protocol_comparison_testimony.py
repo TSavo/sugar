@@ -1,0 +1,99 @@
+"""A comparison consumer must retain native Floor outcomes, not invent exits."""
+
+import pytest
+
+from sugar_lift_py_tests.canonicalizer import blake3_512_of
+from sugar_lift_py_tests.floor import (
+    PredicateValue,
+    RaiseValue,
+    StringValue,
+    SymbolicValue,
+)
+from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+from sugar_lift_py_tests.gap import ConstructionPanic
+from sugar_lift_py_tests.ir import atomic, make_var
+from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+    publish_undecided_comparison_edges,
+)
+from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+
+def _comparison(op):
+    operator = {"Eq": "==", "NotEq": "!=", "In": "in", "NotIn": "not in"}[op]
+    source = f'left {operator} "needle"\n'
+    tree = SourceFile(
+        (source, "native-comparison.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    return next(node for node in tree.nodes() if node.kind == "Compare").fragment
+
+
+@pytest.mark.parametrize("op", ["Eq", "NotEq", "In", "NotIn"])
+@pytest.mark.parametrize("exception", ["ValueError", "LookupError"])
+@pytest.mark.parametrize("shape", ["raise-value", "exit-set"])
+def test_native_comparison_exception_testimony_survives_undecided_operands(
+    op, exception, shape
+):
+    site = _comparison(op)
+    left, right = SymbolicValue(make_var("left")), StringValue("needle")
+    native = ground_exceptional_exit(
+        exception_name=exception, site=site, owner="NativeComparison"
+    )
+    assert isinstance(native, Complete) and isinstance(native.value, RaiseValue)
+    # This seam receives an already-constructed outcome from the native Floor.
+    # Operand undecidability must not erase its authenticated type/occurrence.
+    effect = native.value.effect
+    if shape == "exit-set":
+        state = object()
+        guard = atomic("native.comparison.raises", ())
+        native = ExitSet((Halted(guard, effect, state=state),))
+    result = publish_undecided_comparison_edges(left, right, site, op, native)
+    assert result is native
+    if shape == "exit-set":
+        assert result.exits[0].effect is effect
+        assert result.exits[0].guard is guard
+        assert result.exits[0].state is state
+    else:
+        assert result.value.effect is effect
+    assert effect.exception_type_coordinate is not None
+    assert effect.occurrence is not None
+    assert effect.exception_name == exception
+
+
+@pytest.mark.parametrize("op", ["Eq", "NotEq", "In", "NotIn"])
+def test_undecided_comparison_predicate_is_not_native_completion_testimony(op):
+    site = _comparison(op)
+    left, right = SymbolicValue(make_var("left")), StringValue("needle")
+    unproven = Complete(
+        PredicateValue(atomic("py.eq", (left.term, right.to_term(owner="right"))), site)
+    )
+    with pytest.raises(ConstructionPanic):
+        publish_undecided_comparison_edges(left, right, site, op, unproven)
+
+
+@pytest.mark.parametrize("operator", ["==", "!=", "in", "not in"])
+def test_comparison_sugar_preserves_native_raise_without_negating_or_retyping(operator):
+    source = f"left {operator} right\n"
+    tree = SourceFile(
+        (source, "comparison-consumer.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    comparison = next(node for node in tree.nodes() if node.kind == "Compare")
+    native = ground_exceptional_exit(
+        exception_name="LookupError", site=comparison.fragment, owner="NativeComparison"
+    )
+
+    class NativeOperand(SymbolicValue):
+        def equals(self, other, site):
+            return native
+
+        def contains(self, other, site):
+            return native
+
+    left = NativeOperand(make_var("left"))
+    right = NativeOperand(make_var("right"))
+    result = comparison.sugar().apply_reduced(left, right)
+    assert result is native
+    assert result.value.effect.exception_name == "LookupError"
