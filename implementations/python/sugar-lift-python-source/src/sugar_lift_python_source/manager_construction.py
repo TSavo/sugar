@@ -1510,7 +1510,9 @@ def _floor_tuple_construct_fields(
     """Project bodyless ``tuple(...)`` field stores to TupleValue when decidable.
 
     RaisesExc writes ``self.expected_exceptions = tuple(_parse_exc(e) for e in ...)``.
-    When the generator cannot yet project finite_elements (iterable still a
+    That store may remain a bodyless CallSiteValue or complete as a
+    TupleCoordinateValue whose source is the same generator. When the generator
+    cannot yet project finite_elements (iterable still a
     branch-result conditional) but the callsite supplied exactly one authenticated
     class actual, the source-visible non-tuple/non-None arm is exactly
     ``(actual,)`` after ``_parse_exc`` identity for BaseException types.
@@ -1637,13 +1639,20 @@ def _floor_one_tuple_callsite(
 ) -> FloorValue | None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.tuple_coordinate_value import TupleCoordinateValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-    if not isinstance(value, CallSiteValue) or value.target_name != "tuple":
+    arg = None
+    if isinstance(value, CallSiteValue) and value.target_name == "tuple":
+        if len(value.arg_values) != 1:
+            return None
+        arg = value.arg_values[0]
+    elif isinstance(value, TupleCoordinateValue) and value.index is None:
+        # Completed ``tuple(iterable)`` testimony carries the same generator
+        # as the bodyless CallSiteValue arm, without invented members.
+        arg = value.source
+    else:
         return None
-    if len(value.arg_values) != 1:
-        return None
-    arg = value.arg_values[0]
     if isinstance(arg, ComprehensionValue) and arg.finite_elements is not None:
         return TupleValue(tuple(arg.finite_elements))
     if isinstance(arg, TupleValue):
