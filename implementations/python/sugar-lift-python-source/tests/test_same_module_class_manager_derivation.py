@@ -237,6 +237,58 @@ def test_last_init_wins_over_ellipsis_overload_stub(tmp_path: Path):
     assert isinstance(ref.semantics.mode, ExpectsModeV1)
 
 
+def test_tuple_parse_generator_floors_expected_exceptions(tmp_path: Path):
+    """``tuple(self._parse_exc(e) for e in ...)`` is TupleCoordinateValue testimony.
+
+    With one class actual the source-visible non-tuple/non-None arm is
+    ``(actual,)`` after parse identity. Floor that coordinate to TupleValue
+    so ``self.expected_exceptions[0]`` can derive EffectBoundary.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+
+    source = textwrap.dedent("""\
+        class RaisesExc:
+            def __init__(self, expected_exception=None):
+                if isinstance(expected_exception, tuple):
+                    expected_exceptions = expected_exception
+                elif expected_exception is None:
+                    expected_exceptions = ()
+                else:
+                    expected_exceptions = (expected_exception,)
+                self.expected_exceptions = tuple(
+                    self._parse_exc(e, expected="a BaseException type")
+                    for e in expected_exceptions
+                )
+            def _parse_exc(self, exc, expected="a BaseException type"):
+                return exc
+            def __enter__(self):
+                return self
+            def __exit__(self, effect_type, effect, traceback):
+                if effect_type is None:
+                    raise RuntimeError()
+                return effect_type is self.expected_exceptions[0]
+        def use():
+            with RaisesExc(ValueError):
+                raise ValueError("nested")
+        """)
+    tree, context, path = _source_file(tmp_path, source)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    ref = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
+    assert isinstance(ref.semantics, EffectBoundarySemanticsV1), ref.semantics
+    assert isinstance(ref.semantics.mode, ExpectsModeV1)
+
+
 def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
     """ClassDef without __enter__/__exit__: gap row; With panics named."""
     source = textwrap.dedent("""\
