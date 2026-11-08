@@ -8955,47 +8955,62 @@ class With(Statement):
             if index == selector.parameter_index:
                 actual, actual_location = value, location
                 break
-        if not isinstance(actual, (Name, Attribute)):
-            return manager_sugar
-        identity = (
-            self.unit.exception_type_identity(actual)
-            if isinstance(actual, Name)
-            else self.unit.imported_exception_type_identity(actual)
-        )
-        if identity is None:
-            return manager_sugar
-        # Attribute import paths cannot re-enter AttributeSugar (the module
-        # receiver is SymbolicValue). Project the authenticated exception
-        # class floor from the import identity; Name paths keep their existing
-        # sugar and only wrap when a source ClassDef graph is available.
-        class_value = None
-        if isinstance(actual, Attribute):
-            from sugar_lift_py_tests.floor.exception_class_value import (
-                ExceptionClassValue,
+
+        def authenticate(node, sugar):
+            # The selected formal is classinfo. Preserve tuple construction and
+            # authenticate each member at its own source coordinate, rather
+            # than trying to evaluate a dotted member on a symbolic module.
+            from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
+
+            if isinstance(node, Tuple_) and isinstance(sugar, TupleSugar):
+                return replace(
+                    sugar,
+                    elements=tuple(
+                        authenticate(element, child)
+                        for element, child in zip(
+                            node.elts, sugar.elements, strict=True
+                        )
+                    ),
+                )
+            if not isinstance(node, (Name, Attribute)):
+                return sugar
+            identity = (
+                self.unit.exception_type_identity(node)
+                if isinstance(node, Name)
+                else self.unit.imported_exception_type_identity(node)
+            )
+            if identity is None:
+                return sugar
+            class_value = None
+            if isinstance(node, Attribute):
+                from sugar_lift_py_tests.floor.exception_class_value import (
+                    ExceptionClassValue,
+                )
+
+                qualified = getattr(identity.args[1], "value", None)
+                if isinstance(qualified, str) and qualified:
+                    class_value = ExceptionClassValue(qualified)
+            elif isinstance(node, Name):
+                try:
+                    class_value = self.unit.exception_class_value(node)
+                except SugarNotWritten:
+                    class_value = None
+            return AuthenticatedExceptionTypeSugar(
+                sugar, identity, site=node.fragment, class_value=class_value
             )
 
-            qualified = getattr(identity.args[1], "value", None)
-            if isinstance(qualified, str) and qualified:
-                class_value = ExceptionClassValue(qualified)
-        elif isinstance(actual, Name):
-            try:
-                class_value = self.unit.exception_class_value(actual)
-            except SugarNotWritten:
-                class_value = None
-        wrapped = AuthenticatedExceptionTypeSugar(
-            (
-                manager_sugar.args[actual_location[1]]
-                if actual_location[0] == "arg"
-                else next(
-                    sugar
-                    for name, sugar in manager_sugar.keywords
-                    if name == actual_location[1]
-                )
-            ),
-            identity,
-            site=actual.fragment,
-            class_value=class_value,
+        if actual_location is None:
+            return manager_sugar
+        actual_sugar = (
+            manager_sugar.args[actual_location[1]]
+            if actual_location[0] == "arg"
+            else next(
+                sugar
+                for name, sugar in manager_sugar.keywords
+                if name == actual_location[1]
+            )
         )
+        wrapped = authenticate(actual, actual_sugar)
         if actual_location[0] == "arg":
             args = list(manager_sugar.args)
             args[actual_location[1]] = wrapped

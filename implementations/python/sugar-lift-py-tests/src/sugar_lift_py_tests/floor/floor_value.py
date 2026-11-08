@@ -1403,6 +1403,14 @@ class FloorValue:
     def _runtime_bitwise_gap(self, other, site, owner, label):
         return self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
 
+    def match_raise_effect(self, effect):
+        """A scalar handler uses the shared authenticated identity/MRO law."""
+        from sugar_lift_py_tests.authenticated_exception_matching import (
+            _matches_single_raise_effect,
+        )
+
+        return _matches_single_raise_effect(effect, self)
+
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus

@@ -10,6 +10,14 @@ if TYPE_CHECKING:
 
 
 def matches_raise_effect(effect, expected) -> "MessageVerdict":
+    """Ask the expected floor for its handler semantics (single type or tuple)."""
+    match = getattr(expected, "match_raise_effect", None)
+    if match is not None:
+        return match(effect)
+    return _matches_single_raise_effect(effect, expected)
+
+
+def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
     """Match by constructed exception coordinates and authenticated ancestry.
 
     The codomain is three-valued, exactly like the message predicate below, and
