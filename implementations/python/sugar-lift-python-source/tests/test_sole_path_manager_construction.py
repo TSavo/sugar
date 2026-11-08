@@ -4984,7 +4984,8 @@ def _identity_and_message_protocol(tmp_path, expression, *, exit_face_id="messag
         actuals=(expected, pattern),
         call_site=call_site,
     )
-    return construct_manager_protocol(behavior, exit_face_id=exit_face_id)
+    protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
+    return behavior, protocol
 
 
 @pytest.mark.parametrize(
@@ -5004,7 +5005,7 @@ def test_boolop_deferred_rhs_is_not_forced_through_outcome_to_exitset(
     from sugar_lift_py_tests.gap import ConstructionPanic
     from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
 
-    protocol = _identity_and_message_protocol(tmp_path, expression)
+    _behavior, protocol = _identity_and_message_protocol(tmp_path, expression)
     outcome = protocol.exit_outcome()
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "attribute_named"
@@ -5032,3 +5033,19 @@ def test_boolop_deferred_rhs_is_not_forced_through_outcome_to_exitset(
     assert any(isinstance(face, Halted) for face in resolved_exits)
     with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
         outcome_to_exitset(outcome)
+
+
+
+def test_boolop_or_message_comparison_is_not_effect_boundary(tmp_path):
+    """Disjunction is not EffectBoundary's type-and-message conjunction."""
+    from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
+
+    behavior, protocol = _identity_and_message_protocol(
+        tmp_path,
+        "(effect_type is self.expected) or (effect.message == self.pattern)",
+    )
+    summary = derive_manager_summary(protocol, behavior=behavior)
+    assert not (
+        isinstance(summary, DerivedManagerSummaryV1)
+        and isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    ), summary

@@ -481,6 +481,13 @@ def derive_manager_summary(
                 for coordinate in exit_outcome.coordinates
             )
         ):
+            if behavior is not None:
+                boundary = _derive_effect_boundary_from_deferred_carrier(
+                    exit_outcome, protocol, behavior
+                )
+                if boundary is not None:
+                    signature = _signature_for_behavior(behavior, boundary)
+                    return _sealed_summary(protocol, boundary, signature)
             semantics = ProtocolResourceSemanticsV1(
                 EnterResultContractV1(PrimitiveSort("Value")),
                 ExitContractV1(ReturnTruthinessDispositionV1()),
@@ -621,6 +628,163 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         ),
         ExceptionInfoBindingV1(),
     )
+
+
+def _derive_effect_boundary_from_deferred_carrier(carrier, protocol, behavior):
+    """Derive an effect boundary from a short-circuited deferred message lookup.
+
+    The identity half is already a completed ``PredicateValue`` — identity is
+    total. The continuing half is a deferred ``effect.message`` lookup that
+    then compares by native ``==``. That comparison is not rewritten into a
+    total ``eq`` formula (payload ``__eq__`` can raise). The message formal is
+    the unique factory actual stored in the receiver field named by the
+    comparison's other operand.
+    """
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+
+    if (
+        carrier.demand.operator != "attribute_named"
+        or len(carrier.operands) < 2
+        or not isinstance(carrier.operands[1], StringValue)
+        or carrier.operands[1].value != "message"
+        or not carrier.coordinates
+        or not isinstance(carrier.coordinates[0], ExitValueCoordinate)
+        or carrier.coordinates[0].face_id != protocol.exit_face_id
+        or len(carrier.short_circuits) != 1
+    ):
+        return None
+
+    continuing_guard, stopped, _continuing_face, _stopped_face = carrier.short_circuits[0]
+    if (
+        len(stopped.exits) != 1
+        or not isinstance(stopped.exits[0], Completed)
+        or not isinstance(stopped.exits[0].value, PredicateValue)
+        or stopped.exits[0].value.formula != continuing_guard
+    ):
+        # And returns the identity predicate on the stopping face. Or returns
+        # that predicate under the complementary guard, which is a different
+        # theorem than EffectBoundary's type-and-message conjunction.
+        return None
+
+    actuals = tuple(behavior.formal_actual_values)
+    actual_terms = tuple(
+        value.to_term(owner=behavior.resolved_object_cid) for value in actuals
+    )
+    expected_index = _formal_index_for_coordinate(
+        continuing_guard, actual_terms, "python:exit_type"
+    )
+    if expected_index is None:
+        return None
+
+    equalities = [
+        item
+        for item in _closed_over_continuation_values(carrier)
+        if isinstance(item, EqualityOpSugar)
+    ]
+    if len(equalities) != 1:
+        return None
+    message_index = _message_pattern_formal_index(equalities[0], behavior, actual_terms)
+    if message_index is None or message_index == expected_index:
+        return None
+
+    from sugar_lift_py_tests.floor import BranchResultAuthentication
+
+    authentications = [
+        item
+        for obj in _closed_over_continuation_values(carrier)
+        for item in getattr(obj, "entries", ())
+        if isinstance(item, BranchResultAuthentication)
+    ]
+    halted = ()
+    if carrier.prefix_composition is not None:
+        resolved, _deferred, _continuation_count, _guard_count = (
+            carrier.prefix_composition
+        )
+        halted = tuple(face for face in resolved if isinstance(face, Halted))
+    absent_effect_halts = tuple(
+        face
+        for face in halted
+        if any(
+            _authentication_is_no_effect(item, protocol.exit_face_id)
+            and _formula_mentions_branch_slot(face.guard, item.slot.slot_id)
+            for item in authentications
+        )
+    )
+    if any(face not in absent_effect_halts for face in halted):
+        return None
+
+    return EffectBoundarySemanticsV1(
+        ExpectsModeV1() if absent_effect_halts else SuppressesModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(expected_index),
+        OptionalFormalArgumentProjectionV1(message_index),
+        ExceptionInfoBindingV1(),
+    )
+
+
+def _closed_over_continuation_values(carrier):
+    """The constructed objects a deferred carrier's continuations still hold."""
+    values = []
+    for step in carrier.continuations:
+        closure = getattr(step, "__closure__", None)
+        if not closure:
+            continue
+        values.extend(cell.cell_contents for cell in closure)
+    return values
+
+
+def _message_pattern_formal_index(equality, behavior, actual_terms):
+    from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+
+    sides = (equality.left, equality.right)
+    message_sides = [
+        side
+        for side in sides
+        if isinstance(side, AttributeSugar) and side.name == "message"
+    ]
+    other_sides = [side for side in sides if side not in message_sides]
+    if len(message_sides) != 1 or len(other_sides) != 1:
+        return None
+    field_name = _receiver_attribute_name(other_sides[0])
+    if field_name is None:
+        return None
+    value = _receiver_field_value(behavior, field_name)
+    if value is None:
+        return None
+    to_term = getattr(value, "to_term", None)
+    if not callable(to_term):
+        return None
+    term = to_term(owner=behavior.resolved_object_cid)
+    matches = [index for index, actual in enumerate(actual_terms) if actual == term]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _receiver_attribute_name(sugar):
+    from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+    from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
+        BindingCoordinateRefSugar,
+    )
+
+    if not isinstance(sugar, AttributeSugar):
+        return None
+    receiver = sugar.receiver
+    if not isinstance(receiver, BindingCoordinateRefSugar):
+        return None
+    if getattr(receiver.coordinate, "projection_path", None) != ("formal", 0):
+        return None
+    return sugar.name
+
+
+def _receiver_field_value(behavior, name):
+    fields = getattr(behavior.receiver_state, "fields", ())
+    matches = [
+        field.value for field in fields if getattr(field, "name", None) == name
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _guarded_literal_suppression_formula(exit_set):
