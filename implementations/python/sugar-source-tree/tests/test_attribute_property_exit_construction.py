@@ -27,7 +27,17 @@ def _identity(name: str):
     )
 
     identity, _mro = _builtin_exception_identity(name)
+    assert identity is not None, f"{name!r} is not a builtin exception identity"
     return identity
+
+
+def _import_identity(qualified: str):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const(qualified)],
+    )
 
 
 PANDAS_MANIFEST_CID = (
@@ -117,7 +127,9 @@ def test_property_getter_raise_keeps_imported_bare_exception_coordinate(
     halted = next(face for face in outcome.exits if isinstance(face, Halted))
     assert isinstance(halted.effect, RaiseEffect)
     assert halted.effect.exception_name == "CustomError"
-    assert halted.effect.exception_type_coordinate == _identity("CustomError")
+    assert halted.effect.exception_type_coordinate == _import_identity(
+        "provider.errors.CustomError"
+    )
     assert (
         isinstance(halted.effect.occurrence_id, str)
         and ":" in halted.effect.occurrence_id
@@ -198,9 +210,115 @@ def test_pandas_303_abstract_method_property_is_the_concrete_reproducer() -> Non
     effect = halted.effect
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "AbstractMethodError"
-    assert effect.exception_type_coordinate == _identity("AbstractMethodError")
+    assert effect.exception_type_coordinate == _import_identity(
+        "pandas.errors.AbstractMethodError"
+    )
     assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {effect.occurrence_id!r}"
     )
     assert effect.producer_node_owner == "Attribute"
+
+
+@pytest.mark.parametrize("name", ["ValueError", "KeyError", "RuntimeError"])
+@pytest.mark.parametrize("style", ["module_alias", "from_alias"])
+def test_imported_builtin_property_raise_keeps_language_identity_and_ancestry(
+    tmp_path, name, style
+):
+    declaration, operand = (
+        ("import builtins as errors\n", f"errors.{name}")
+        if style == "module_alias"
+        else (f"from builtins import {name} as ImportedError\n", "ImportedError")
+    )
+    tree = _tree(
+        tmp_path,
+        "import pytest\n" + declaration + "class Receiver:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        f"        raise {operand}('source getter')\n"
+        "def use():\n"
+        f"    with pytest.raises({name}):\n"
+        "        Receiver().value\n",
+    )
+    outcome = _body_attribute(tree).sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
+    assert len(halted) == 1
+    effect = halted[0].effect
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_type_coordinate == _identity(name)
+    assert effect.exception_type_coordinate != _import_identity(f"builtins.{name}")
+    assert effect.exception_type_coordinate != _identity("TypeError")
+    assert effect.exception_type_mro is not None
+    assert _identity(name) in effect.exception_type_mro
+    assert _identity("Exception") in effect.exception_type_mro
+    assert effect.producer_node_owner == "Attribute"
+
+
+def test_nonbuiltin_provider_with_builtin_suffix_keeps_its_own_identity(tmp_path):
+    tree = _tree(
+        tmp_path,
+        "import pytest\n"
+        "import foreign.builtins as errors\n"
+        "class Receiver:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        raise errors.ValueError('source getter')\n"
+        "def use():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        Receiver().value\n",
+    )
+    outcome = _body_attribute(tree).sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    effect = next(face.effect for face in outcome.exits if isinstance(face, Halted))
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_type_coordinate == _import_identity(
+        "foreign.builtins.ValueError"
+    )
+    assert effect.exception_type_coordinate != _identity("ValueError")
+    assert effect.exception_type_mro is None
+
+
+def test_unknown_builtin_member_cannot_authenticate_a_property_raise(tmp_path):
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
+    tree = _tree(
+        tmp_path,
+        "import pytest\n"
+        "import builtins as errors\n"
+        "class Receiver:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        raise errors.UnwrittenError('source getter')\n"
+        "def use():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        Receiver().value\n",
+    )
+    outcome = _body_attribute(tree).sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    effect = next(face.effect for face in outcome.exits if isinstance(face, Halted))
+    assert isinstance(effect, UndeterminedRaiseEffect)
+    assert not isinstance(effect, RaiseEffect)
+
+
+def test_shadowed_builtin_alias_cannot_authenticate_a_property_raise(tmp_path):
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
+    tree = _tree(
+        tmp_path,
+        "import pytest\n"
+        "import builtins as errors\n"
+        "errors = replacement\n"
+        "class Receiver:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        raise errors.ValueError('source getter')\n"
+        "def use():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        Receiver().value\n",
+    )
+    outcome = _body_attribute(tree).sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    effect = next(face.effect for face in outcome.exits if isinstance(face, Halted))
+    assert isinstance(effect, UndeterminedRaiseEffect)
+    assert not isinstance(effect, RaiseEffect)
