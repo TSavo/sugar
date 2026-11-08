@@ -425,6 +425,8 @@ def derive_manager_summary(
     This first arm proves ``NeverSuppresses`` iff every enter face completes
     and every exit face completes with exact Python ``False`` or ``None``.
     Symbolic truthiness remains loud; it is never interpreted by target name.
+    Exception-type operands likewise authenticate only operand identity: they
+    cannot replace an unconstructed enter or exit with Expects-Raise testimony.
     """
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.outcome import ExitSet
@@ -436,15 +438,6 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        # An Expects-Raise manager\'s __enter__ (pytest RaisesExc: self.excinfo
-        # = ExceptionInfo.for_later()) refuses on a library observation object
-        # the source-force-floor cannot resolve. That refusal is NOT evidence
-        # against the expects-raise contract: the call already authenticated
-        # the expected-type formal. Seal from the formals, exactly as the exit
-        # arm does -- the enter result is modelled by ExceptionInfoBindingV1.
-        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
-        if sealed is not None:
-            return sealed
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
@@ -453,9 +446,6 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
-        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
-        if sealed is not None:
-            return sealed
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
@@ -470,9 +460,6 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
-        if sealed is not None:
-            return sealed
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -481,9 +468,6 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
-        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
-        if sealed is not None:
-            return sealed
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -497,14 +481,10 @@ def derive_manager_summary(
     if boundary is not None:
         signature = _signature_for_behavior(behavior, boundary)
         return _sealed_summary(protocol, boundary, signature)
-    # Non-total exit ExitSet (residual Halted faces, empty exits): formals may
-    # still authenticate Expects/Raise. Soft sealing used to run only on
-    # ConstructionPanic/SugarNotWritten; apply the same formal projection here
-    # so message match formals seal OptionalFormalArgumentProjectionV1.
+    # A type operand is data, not evidence that this callee consumes it.
+    # Only the native exit theorem above can authenticate an effect boundary;
+    # unresolved/non-total protocol construction must remain a typed gap.
     if not exit_.exits or any(not isinstance(face, Completed) for face in exit_.exits):
-        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
-        if sealed is not None:
-            return sealed
         return DerivedManagerSummaryGapV1(
             "exit-may-halt", protocol.protocol_construction_cid, "__exit__ ExitSet"
         )
@@ -539,412 +519,6 @@ def _sealed_summary(protocol, semantics, signature):
         signature,
         cid_of_json(preimage),
     )
-
-
-def _factored_effect_boundary_summary(protocol, boundary_faces, behavior):
-    """Keep both message-pattern edges; do not seal a uniform summary."""
-    signature = _signature_for_factored_boundaries(behavior, boundary_faces)
-    return FactoredEffectBoundarySummaryV1(
-        protocol.protocol_construction_cid,
-        protocol.enter_frame_cid,
-        protocol.exit_frame_cid,
-        boundary_faces,
-        signature,
-    )
-
-
-class _FormalOnlyProtocolStub:
-    """Synthetic protocol identity for a formal-sealed EffectBoundary.
-
-    ``pytest.raises`` (and Expects-Raise peers) whose __enter__/__exit__ source
-    force-floor refuses on library observation objects (ExceptionInfo.for_later,
-    fill_unfilled) still carry the full contract on their authenticated
-    exception-type formal.  The effect-boundary consumer (WithEffectBoundarySugar)
-    reads only the semantics + manager operand, never the protocol, so we seal
-    with NO real protocol -- these deterministic coordinate-derived CIDs give the
-    summary a stable identity without inventing enter/exit theorem testimony.
-    """
-
-    __slots__ = ("protocol_construction_cid", "enter_frame_cid", "exit_frame_cid")
-
-    def __init__(self, coordinate):
-        base = str(getattr(coordinate, "cid", None) or coordinate)
-        self.protocol_construction_cid = f"formal-effect-boundary:{base}"
-        self.enter_frame_cid = f"formal-enter:{base}"
-        self.exit_frame_cid = f"formal-exit:{base}"
-
-
-def _try_formal_effect_boundary_ref(coordinate, behavior):
-    """Seal an EffectBoundary ref from the exception-type FORMAL, protocol-less.
-
-    Returns a SourceDerived/Factored ref when the manager's authenticated
-    exception-type formal decides an Expects-Raise contract, or None otherwise.
-    Fires only on refusal of the (contract-irrelevant) __enter__/__exit__ body;
-    keyed by formal role, never by spelling.
-    """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
-    from sugar_lift_py_tests.context_manager_resolution import (
-        FactoredSourceDerivedContextManagerRefV1,
-        SourceDerivedContextManagerRefV1,
-    )
-
-    if behavior is None:
-        return None
-    stub = _FormalOnlyProtocolStub(coordinate)
-    try:
-        soft = _soft_effect_boundary_from_exception_formals(
-            behavior, protocol_construction_cid=stub.protocol_construction_cid
-        )
-    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
-        return None
-    if soft is None or isinstance(soft, DerivedManagerSummaryGapV1):
-        return None
-    if isinstance(soft, ExitSet):
-        summary = _factored_effect_boundary_summary(stub, soft, behavior)
-        return FactoredSourceDerivedContextManagerRefV1(
-            coordinate,
-            summary.protocol_construction_cid,
-            summary.enter_testimony_cid,
-            summary.exit_testimony_cid,
-            summary.boundary_faces,
-            summary.import_signature,
-            None,
-        )
-    signature = _signature_for_behavior(behavior, soft)
-    summary = _sealed_summary(stub, soft, signature)
-    return SourceDerivedContextManagerRefV1(
-        coordinate, summary.summary_cid, summary.semantics, summary.import_signature, None
-    )
-
-
-def _effect_boundary_ref_from_call(coordinate, call):
-    """Seal an Expects-Raise EffectBoundary from the manager CALL alone.
-
-    Used at the frame-resolution refusal: constructing the RaisesExc instance
-    for the ``pytest.raises`` factory seats the WHOLE class span, so __enter__'s
-    ExceptionInfo.for_later (unreachable from the constructor) voids the factory
-    frame.  The contract is not the body -- it is the authenticated exception
-    -type argument at the call.  Build the minimal signature from the call's own
-    arg shape (each positional -> PositionalOrKeyword, each keyword -> KeywordOnly
-    named) so WithEffectBoundarySugar binds and projects the operands.  General,
-    formal-role-keyed (any manager called with an authenticated exception-type
-    argument), never by spelling.  Returns a ref, or None.
-    """
-    from sugar_source_tree.nodes import Attribute, Call, Name, Tuple_
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceDerivedContextManagerRefV1,
-    )
-
-    def _names_exception_type(node) -> bool:
-        if isinstance(node, Name):
-            return (
-                node.unit.exception_type_identity(node) is not None
-                or node.unit.imported_exception_type_identity(node) is not None
-            )
-        if isinstance(node, Attribute):
-            return node.unit.imported_exception_type_identity(node) is not None
-        return False
-
-    if not isinstance(call, Call):
-        return None
-    args = tuple(getattr(call, "args", ()) or ())
-    keywords = tuple(getattr(call, "keywords", ()) or ())
-    expected_index = None
-    for i, node in enumerate(args):
-        authenticated = _names_exception_type(node)
-        if not authenticated and isinstance(node, Tuple_):
-            # ``pytest.raises((ValueError, TypeError), ...)`` -- a tuple whose
-            # every element authenticates as an exception type is an authenticated
-            # expects-raise operand (one of these types).
-            elts = tuple(getattr(node, "elts", ()) or ())
-            authenticated = bool(elts) and all(
-                _names_exception_type(elt) for elt in elts
-            )
-        if authenticated:
-            expected_index = i
-            break
-    if expected_index is None:
-        return None
-    _MESSAGE = {"match", "message", "pattern", "msg"}
-    parameters = [
-        CallParameterV1(
-            f"arg{i}", PrimitiveSort("Value"), PositionalOrKeywordV1(), True, NoDefaultV1()
-        )
-        for i in range(len(args))
-    ]
-    message_operand = NoMessagePatternV1()
-    for j, kw in enumerate(keywords):
-        name = getattr(kw, "arg", None)
-        if name is None:
-            return None  # **kwargs spread: not a plain expects-raise call
-        parameters.append(
-            CallParameterV1(
-                name, PrimitiveSort("Value"), KeywordOnlyV1(), True, NoDefaultV1()
-            )
-        )
-        if name in _MESSAGE and isinstance(message_operand, NoMessagePatternV1):
-            message_operand = OptionalFormalArgumentProjectionV1(len(args) + j)
-    semantics = EffectBoundarySemanticsV1(
-        ExpectsModeV1(),
-        RaiseEffectKindV1(),
-        FormalArgumentProjectionV1(expected_index),
-        message_operand,
-        ExceptionInfoBindingV1(),
-    )
-    signature = ImportSignatureV2(tuple(parameters))
-    stub = _FormalOnlyProtocolStub(coordinate)
-    summary = _sealed_summary(stub, semantics, signature)
-    return SourceDerivedContextManagerRefV1(
-        coordinate, summary.summary_cid, summary.semantics, summary.import_signature, None
-    )
-
-
-def _construct_message_pattern_operand(
-    projected_match,
-    *,
-    site,
-    construct_message_obligation,
-):
-    """Construct the message obligation on the source-authorized match face.
-
-    ``match=None`` constructs ``NoMessagePatternV1`` without reading
-    ``.pattern``. A source-written string formal is already the pattern
-    obligation input — do not invent a ``.pattern`` attribute. Other non-None
-    faces project ``.pattern`` then construct the regex obligation. Multi-face
-    projections stay partitioned: each face keeps its own answer under its
-    own guard.
-    """
-    from sugar_lift_py_tests.floor import NoneValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-
-    return projected_match.and_then(
-        lambda match_value: (
-            Complete(NoMessagePatternV1())
-            if isinstance(match_value, NoneValue)
-            else (
-                construct_message_obligation(match_value)
-                if isinstance(match_value, StringValue)
-                else match_value.attribute("pattern", site).and_then(
-                    construct_message_obligation
-                )
-            )
-        )
-    )
-
-
-def _project_receiver_match(receiver, *, site):
-    """Project only source-written receiver faces that carry ``match``."""
-    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    if isinstance(receiver, ObjectValue):
-        if not any(field.name == "match" for field in receiver.fields):
-            return None
-        return receiver.attribute("match", site)
-    if not isinstance(receiver, ReceiverStatePartitionValue):
-        return None
-    projected = []
-    for face in receiver.exits.exits:
-        if not isinstance(face, Completed) or not isinstance(face.value, ObjectValue):
-            continue
-        if not any(field.name == "match" for field in face.value.fields):
-            continue
-        projected.extend(
-            ExitSet((face,))
-            .and_then(lambda value: value.attribute("match", site))
-            .exits
-        )
-    return ExitSet(tuple(projected)) if projected else None
-
-
-def _message_pattern_operand_faces(projected_operand):
-    """Uniform faces collapse; non-uniform faces stay as both ExitSet edges.
-
-    Identical completed answers may share one operand. Distinct answers —
-    ``NoMessagePatternV1`` vs a pattern obligation — remain guarded
-    alternatives. There is no gap and no silent pick-one summary.
-    """
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    projected = outcome_to_exitset(projected_operand)
-    completed = tuple(face for face in projected.exits if isinstance(face, Completed))
-    if not completed:
-        return None
-    if all(face.value == completed[0].value for face in completed):
-        return completed[0].value
-    return ExitSet(completed)
-
-
-def _effect_boundary_for_message_operand(expected_index, message_operand):
-    return EffectBoundarySemanticsV1(
-        ExpectsModeV1(),
-        RaiseEffectKindV1(),
-        FormalArgumentProjectionV1(expected_index),
-        message_operand,
-        ExceptionInfoBindingV1(),
-    )
-
-
-# Authenticated message-pattern formal names. Used only as the soft-seal
-# index when the call site supplied that formal — never as a manager spelling
-# admission rule for which class is a CM.
-_MESSAGE_FORMAL_NAMES = frozenset({"match", "message", "pattern", "msg"})
-
-
-def _try_soft_effect_boundary_summary(protocol, behavior):
-    """Apply formal soft-seal when exit theorem construction is incomplete.
-
-    Shared by ConstructionPanic / SugarNotWritten arms and by a returned
-    non-total ExitSet with residual Halted faces. Returns a sealed summary,
-    a factored dual-face summary, a soft gap, or None when formals do not
-    authenticate an expects-raise contract.
-    """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
-
-    try:
-        soft = _soft_effect_boundary_from_exception_formals(
-            behavior,
-            protocol_construction_cid=protocol.protocol_construction_cid,
-        )
-    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
-        # Soft projection of receiver match may still be unfinished; formals
-        # that already authenticated type+string seal without that projection.
-        return None
-    if soft is None:
-        return None
-    if isinstance(soft, DerivedManagerSummaryGapV1):
-        return soft
-    if isinstance(soft, ExitSet):
-        return _factored_effect_boundary_summary(protocol, soft, behavior)
-    signature = _signature_for_behavior(behavior, soft)
-    return _sealed_summary(protocol, soft, signature)
-
-
-def _soft_effect_boundary_from_exception_formals(
-    behavior,
-    *,
-    protocol_construction_cid,
-):
-    """Expects-mode EffectBoundary when exit body is undecided but formals decide.
-
-    Installed-source ``pytest.raises`` (and dual-mode peers) carry an
-    authenticated exception-type formal on the real call.  Full ``__exit__``
-    theorem construction may still refuse on undecided call-coordinate floors
-    (``not``, equality, subscript, f-string parts).  That refusal is not
-    evidence against the expects-raise contract: the call site already
-    authenticated the expected type operand.  Mint the same
-    ``EffectBoundarySemanticsV1(ExpectsModeV1, …)`` dual-mode factories seal
-    when their simpler exit bodies construct — without inventing a suppression
-    predicate or message pattern the formals do not state.
-
-    When receiver ``match`` faces disagree (None vs pattern), both EffectBoundary
-    edges are emitted under their face guards. They are never recombined into
-    one operand and never collapsed into a uniform sealed summary.
-    """
-    del protocol_construction_cid  # reserved for gap location; non-uniform is not a gap
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    if behavior is None:
-        return None
-    actuals = tuple(getattr(behavior, "formal_actual_values", ()) or ())
-    if not actuals:
-        return None
-    frame = getattr(behavior, "source_call_frame", None)
-    parameters = tuple(getattr(frame, "parameters", ()) or ())
-    expected_index = None
-    message_index = None
-    for index, value in enumerate(actuals):
-        identity = getattr(value, "exception_type_identity", None)
-        if callable(identity) and identity() is not None and expected_index is None:
-            expected_index = index
-            continue
-        # Optional match= / message formal after the type:
-        # 1. Ground StringValue (strongest)
-        # 2. Bound message formal by authenticated parameter name even when
-        #    the actual is still a Name/SymbolicValue at the use site
-        #    (``pattern = 'needle'; match=pattern``). Explicit None stays
-        #    NoMessagePattern.
-        if expected_index is not None and message_index is None:
-            from sugar_lift_py_tests.floor import NoneValue
-            from sugar_lift_py_tests.floor.string_value import StringValue
-
-            if isinstance(value, NoneValue):
-                continue
-            decided = getattr(value, "runtime_type_is_decided", None)
-            if callable(decided) and decided() and isinstance(value, StringValue):
-                message_index = index
-                continue
-            if index < len(parameters) and parameters[index] in _MESSAGE_FORMAL_NAMES:
-                message_index = index
-    if expected_index is None:
-        return None
-    message_operand = (
-        NoMessagePatternV1()
-        if message_index is None
-        else OptionalFormalArgumentProjectionV1(message_index)
-    )
-    site = behavior.formal_actual_bindings[expected_index].coordinate
-    projected_match = _project_receiver_match(behavior.receiver_state, site=site)
-    if projected_match is not None:
-        from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
-        from sugar_source_tree.panic import (
-            OpaqueSourceCallResolutionGap,
-            SugarNotWritten,
-        )
-
-        try:
-            projected_operand = _construct_message_pattern_operand(
-                projected_match,
-                site=site,
-                construct_message_obligation=lambda _pattern: Complete(message_operand),
-            )
-            resolved = _message_pattern_operand_faces(projected_operand)
-        except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
-            # Receiver match projection may still be undecided; formals already
-            # authenticated type + match index — seal from formals alone.
-            resolved = None
-        if resolved is None and message_index is None:
-            return None
-        if isinstance(resolved, ExitSet):
-            return ExitSet(
-                tuple(
-                    Completed(
-                        face.guard,
-                        _effect_boundary_for_message_operand(
-                            expected_index, face.value
-                        ),
-                        faces=face.faces,
-                        pending_contracts=face.pending_contracts,
-                    )
-                    for face in resolved.exits
-                    if isinstance(face, Completed)
-                )
-            )
-        if resolved is not None:
-            message_operand = resolved
-    return _effect_boundary_for_message_operand(expected_index, message_operand)
-
-
-def _signature_for_factored_boundaries(behavior, boundary_faces):
-    """Signature for factored edges: include the message formal if any face needs it."""
-    representative = None
-    for face in boundary_faces.exits:
-        if not isinstance(face, Completed):
-            continue
-        semantics = face.value
-        if not isinstance(semantics, EffectBoundarySemanticsV1):
-            continue
-        if not isinstance(semantics.message_pattern_operand, NoMessagePatternV1):
-            return _signature_for_behavior(behavior, semantics)
-        if representative is None:
-            representative = semantics
-    return _signature_for_behavior(behavior, representative)
 
 
 def _derive_effect_boundary(exit_set, protocol, behavior):
@@ -1621,15 +1195,8 @@ def populate_source_derived_resource_refs(
                 session=session,
             )
         except (SugarNotWritten, TypeError) as exc:
-            # An Expects-Raise manager (pytest.raises et al.) whose factory
-            # frame resolution refuses only because the class span seats an
-            # unreachable __enter__/__exit__ body value-use (ExceptionInfo
-            # .for_later) still carries its full contract on the authenticated
-            # exception-type argument.  Seal the effect boundary from the call.
-            ref = _effect_boundary_ref_from_call(coordinate, call)
-            if ref is not None:
-                context.source_derived_contract_refs[coordinate] = ref
-                continue
+            # Call operands authenticate their values, not the callee's
+            # enter/exit behavior. Preserve this construction refusal.
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1863,10 +1430,6 @@ def populate_source_derived_resource_refs(
                 session=session,
             )
         except (SugarNotWritten, TypeError) as exc:
-            ref = _effect_boundary_ref_from_call(coordinate, call)
-            if ref is not None:
-                context.source_derived_contract_refs[coordinate] = ref
-                continue
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1889,16 +1452,8 @@ def populate_source_derived_resource_refs(
         try:
             protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         except (SugarNotWritten, TypeError) as exc:
-            # Expects-Raise fallback: __enter__/__exit__ frame resolution refuses
-            # on pytest RaisesExc's library observation objects
-            # (ExceptionInfo.for_later / fill_unfilled) that the source
-            # force-floor cannot resolve.  That body is NOT the contract -- the
-            # authenticated exception-type formal is.  Seal the effect boundary
-            # from the formal (protocol-less) instead of a source-body-gap.
-            ref = _try_formal_effect_boundary_ref(coordinate, behavior)
-            if ref is not None:
-                context.source_derived_contract_refs[coordinate] = ref
-                continue
+            # Call operands authenticate their values, not the callee's
+            # enter/exit behavior. Preserve this construction refusal.
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -1909,10 +1464,6 @@ def populate_source_derived_resource_refs(
             )
             continue
         if not isinstance(protocol, ConstructedManagerProtocolV1):
-            ref = _try_formal_effect_boundary_ref(coordinate, behavior)
-            if ref is not None:
-                context.source_derived_contract_refs[coordinate] = ref
-                continue
             kind, detail = _gap_kind_and_detail(protocol)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
