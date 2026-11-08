@@ -70,6 +70,9 @@ def select_boolop_operand(
     on_continue,
 ):
     """Truth-test one already-evaluated operand and select its Python face."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
     from sugar_lift_py_tests.outcome import Complete, ExitSet, outcome_to_exitset
     from sugar_lift_py_tests.outcome.exit_set import (
         complement_guard,
@@ -121,18 +124,22 @@ def select_boolop_operand(
 
         rhs_guard = formula if op_kind == "And" else complement_guard(formula)
         rhs_face, stop_face = partition(("BoolOpSugar", str(site), index, op_kind))
-        rhs = outcome_to_exitset(on_continue()).guarded(rhs_guard, rhs_face)
+        continued = on_continue()
         stopped = ExitSet.completed(
             selected_operand, complement_guard(rhs_guard)
-        ).guarded(true_guard(), stop_face)
-        return rhs.union(stopped)
+        )
+        if isinstance(continued, NativeOperationExitCarrierV1):
+            return continued.short_circuit(
+                continuing_guard=rhs_guard,
+                stopped=stopped,
+                continuing_face=rhs_face,
+                stopped_face=stop_face,
+            )
+        rhs = outcome_to_exitset(continued).guarded(rhs_guard, rhs_face)
+        return rhs.union(stopped.guarded(true_guard(), stop_face))
 
     formal_coordinate = getattr(value, "formal_coordinate", None)
     if formal_coordinate is not None:
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
         tested = NativeOperationExitCarrierV1.mint(
             site=site,
             operator="boolop_truth",

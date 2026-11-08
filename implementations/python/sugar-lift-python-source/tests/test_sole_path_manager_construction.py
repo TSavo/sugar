@@ -4942,3 +4942,93 @@ def test_body_type_coordinate_defers_rich_compare_until_class_binding(
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
         outcome_to_exitset(outcome)
+
+
+def _identity_and_message_protocol(tmp_path, expression, *, exit_face_id="message-face"):
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    graph, resolved, expected, call_site = _resolved(
+        tmp_path,
+        "class ArbitraryBoundary:\n"
+        "    def __init__(self, expected, pattern):\n"
+        "        self.expected = expected\n"
+        "        self.pattern = pattern\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        f"        return {expression}\n"
+        "def make_guard(expected, pattern):\n"
+        "    return ArbitraryBoundary(expected, pattern)\n",
+    )
+    pattern_source = SourceFile(
+        ('"needle"\n', str(tmp_path / "pattern.py"), "blake3-512:" + ("91" * 64))
+    )
+    pattern_node = next(
+        node for node in pattern_source.nodes() if isinstance(node, Constant)
+    )
+    pattern_value = StringValue("needle")
+    pattern = ConstructedCallActualV1(
+        pattern_node,
+        pattern_value,
+        ConstructedValueTestimonyV1.mint(
+            pattern_node.fragment,
+            _term_content_cid(pattern_value.to_term(owner=resolved.cid)),
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(expected, pattern),
+        call_site=call_site,
+    )
+    return construct_manager_protocol(behavior, exit_face_id=exit_face_id)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "(effect_type is self.expected) and (effect.message == self.pattern)",
+        "(effect_type is self.expected) or (effect.message == self.pattern)",
+    ],
+)
+def test_boolop_deferred_rhs_is_not_forced_through_outcome_to_exitset(
+    tmp_path, expression
+):
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    protocol = _identity_and_message_protocol(tmp_path, expression)
+    outcome = protocol.exit_outcome()
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "attribute_named"
+    assert outcome.short_circuits
+    continuing_guard, stopped, _continuing_face, _stopped_face = (
+        outcome.short_circuits[0]
+    )
+
+    def mentions_identity(formula):
+        if getattr(formula, "name", None) == "identity":
+            return True
+        return any(
+            mentions_identity(operand)
+            for operand in getattr(formula, "operands", ())
+        )
+
+    assert mentions_identity(continuing_guard)
+    assert len(stopped.exits) == 1
+    assert isinstance(stopped.exits[0], Completed)
+    assert isinstance(stopped.exits[0].value, PredicateValue)
+    assert outcome.prefix_composition is not None
+    resolved_exits, _deferred, _continuation_count, _guard_count = (
+        outcome.prefix_composition
+    )
+    assert any(isinstance(face, Halted) for face in resolved_exits)
+    with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
+        outcome_to_exitset(outcome)
