@@ -460,6 +460,11 @@ class StringValue(GuardStableValue):
                     **runtime_effect_evidence("py.sequence_concat", other, site),
                 )
             )
+        if type(other) is OpaqueOpCallsite and other.callee == "join":
+            # "(" + ", ".join(ee.__name__ for ee in e) + ")" inside
+            # _exception_type_name's multi-name arm. str.join always returns
+            # str; name concat without inventing the joined text.
+            return CallSiteValue.named_string_concat(self, other, site)
         if type(other) is SymbolicValue:
             # str + symbolic: same native-operation ExitSet carrier as
             # SymbolicValue.add(StringValue). Do not re-enter as

@@ -1417,8 +1417,8 @@ class FloorValue:
 
         observed = type(self).__name__
         info = ConstructionGap(
-            owner=owner,
-            blame=observed,
+            owner=f"{observed}.to_term",
+            blame=owner,
             observed=observed,
             requested="project this floor value to a term",
             fix=f"write more Floor: implement {observed}.to_term",

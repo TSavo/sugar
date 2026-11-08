@@ -243,3 +243,41 @@ def test_backquote_joins_a_named_concat_without_inventing_the_string() -> None:
         ],
         symbol_kind="coordinate",
     )
+
+
+
+def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    join = OpaqueOpCallsite(
+        callee="join",
+        arg=StringValue(", "),
+        computed=None,
+        extra_args=(SymbolicValue(make_var("names")),),
+    )
+    prefix = StringValue("(")
+    site = "string-plus-join"
+    outcome = prefix.add(join, site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert not isinstance(outcome.value, StringValue)
+    assert outcome.value.target_name == "__add__"
+    assert outcome.value.term == ctor(
+        "call:__add__",
+        [
+            prefix.to_term(owner="CallSiteValue.named_string_concat"),
+            join.to_term(owner="CallSiteValue.named_string_concat"),
+        ],
+        symbol_kind="coordinate",
+    )
+
+    wrapped = outcome.value.add(StringValue(")"), "join-plus-suffix")
+    assert isinstance(wrapped, Complete)
+    assert isinstance(wrapped.value, CallSiteValue)
+    assert not isinstance(wrapped.value, StringValue)
+    assert getattr(wrapped.value.term, "name", None) == "call:__add__"
