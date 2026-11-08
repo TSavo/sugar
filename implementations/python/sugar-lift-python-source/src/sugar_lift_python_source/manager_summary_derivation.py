@@ -2195,6 +2195,40 @@ def _constructor_application_bindings(call, application, *, owner_cid: str, term
     return tuple(bindings)
 
 
+
+def _receiver_from_constructor_outcome(outcome):
+    """Project constructor application to the completed manager receiver.
+
+    ``ClassDefinitionValue.callable_application_with`` returns ``Complete``
+    when the initializer folds to one path. Once the body keeps an unfolded
+    branch or a validation halt (``if expected_exceptions == () ...: raise``),
+    the same construction is an ``ExitSet``. ``Complete`` unwraps through
+    ``.value``; ``ExitSet`` has no ``.value``, and reading it invented
+    ``non-manager-result: NoneType`` after the receiver was already
+    constructed. Validation Halted arms stay out of the manager the same way
+    protocol construction already filters them.
+    """
+    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+
+    if isinstance(outcome, Complete):
+        return outcome.value
+    if isinstance(outcome, ExitSet):
+        found = []
+        for exit_ in outcome.exits:
+            if not isinstance(exit_, Completed):
+                continue
+            value = exit_.value
+            if isinstance(value, Complete):
+                value = value.value
+            if isinstance(value, (ObjectValue, ReceiverStatePartitionValue)):
+                found.append(value)
+        if len(found) == 1:
+            return found[0]
+        return None
+    return getattr(outcome, "value", None)
+
+
 def _populate_same_module_class_manager_uses(source_file, context, uses) -> None:
     """Derive CM contracts for same-module ClassDef call managers.
 
@@ -2313,7 +2347,7 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             result_outcome = class_value.callable_application_with(
                 application_value, reduce_ctx
             )
-            result = getattr(result_outcome, "value", None)
+            result = _receiver_from_constructor_outcome(result_outcome)
             if isinstance(result, ObjectValue):
                 if getattr(result, "defining_class", None) is not class_value:
                     _install_local_derivation_gap(

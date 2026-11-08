@@ -341,6 +341,61 @@ def test_generic_subscript_base_derives_expected_exceptions(tmp_path: Path):
     assert isinstance(ref.semantics.mode, ExpectsModeV1)
 
 
+def test_constructor_validation_halt_still_derives_expected_exceptions(tmp_path: Path):
+    """A validation ``raise`` next to field stores is an ExitSet, not None.
+
+    RaisesExc's empty-args ``ValueError`` keeps constructor application as an
+    ExitSet whose completed face already holds the receiver. Reading
+    ``Complete.value`` on that ExitSet invented ``non-manager-result:
+    NoneType`` after ``super()`` and the isinstance wrap had run.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+
+    source = textwrap.dedent("""\
+        class AbstractRaises:
+            def __init__(self, match=None, check=None):
+                self.match = match
+                self.check = check
+        class RaisesExc(AbstractRaises[object]):
+            def __init__(self, expected_exception=None, match=None, check=None):
+                super().__init__(match=match, check=check)
+                if isinstance(expected_exception, tuple):
+                    expected_exceptions = expected_exception
+                elif expected_exception is None:
+                    expected_exceptions = ()
+                else:
+                    expected_exceptions = (expected_exception,)
+                if expected_exceptions == () and match is None and check is None:
+                    raise ValueError("Expected exception must be passed")
+                self.expected_exceptions = expected_exceptions
+            def __enter__(self):
+                return self
+            def __exit__(self, effect_type, effect, traceback):
+                if effect_type is None:
+                    raise RuntimeError()
+                return effect_type is self.expected_exceptions[0]
+        def use():
+            with RaisesExc(ValueError):
+                raise ValueError("nested")
+        """)
+    tree, context, path = _source_file(tmp_path, source)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    ref = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
+    assert isinstance(ref.semantics, EffectBoundarySemanticsV1), ref.semantics
+    assert isinstance(ref.semantics.mode, ExpectsModeV1)
+
+
 def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
     """ClassDef without __enter__/__exit__: gap row; With panics named."""
     source = textwrap.dedent("""\
