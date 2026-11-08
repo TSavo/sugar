@@ -189,6 +189,54 @@ def test_isinstance_tuple_wrap_derives_expected_exceptions(tmp_path: Path):
     assert isinstance(ref.semantics.mode, ExpectsModeV1)
 
 
+def test_last_init_wins_over_ellipsis_overload_stub(tmp_path: Path):
+    """Python's live ``__init__`` is the last same-name method, not an overload stub.
+
+    ``@overload`` / ``def __init__(...): ...`` precedes the implementation on
+    RaisesExc. Selecting the first ``__init__`` constructed through an ellipsis
+    body and left ``expected_exceptions`` unwritten.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+
+    source = textwrap.dedent("""\
+        class RaisesExc:
+            def __init__(self, expected_exception: type) -> None: ...
+            def __init__(self, expected_exception=None):
+                if isinstance(expected_exception, tuple):
+                    expected_exceptions = expected_exception
+                elif expected_exception is None:
+                    expected_exceptions = ()
+                else:
+                    expected_exceptions = (expected_exception,)
+                self.expected_exceptions = expected_exceptions
+            def __enter__(self):
+                return self
+            def __exit__(self, effect_type, effect, traceback):
+                if effect_type is None:
+                    raise RuntimeError()
+                return effect_type is self.expected_exceptions[0]
+        def use():
+            with RaisesExc(ValueError):
+                raise ValueError("nested")
+        """)
+    tree, context, path = _source_file(tmp_path, source)
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    ref = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
+    assert isinstance(ref.semantics, EffectBoundarySemanticsV1), ref.semantics
+    assert isinstance(ref.semantics.mode, ExpectsModeV1)
+
+
 def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
     """ClassDef without __enter__/__exit__: gap row; With panics named."""
     source = textwrap.dedent("""\
