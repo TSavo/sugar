@@ -1,8 +1,11 @@
 """f-strings: `f"pre {value} post"`.
 
 A JoinedStr is the CONCATENATION of its parts -- literal chunks (StringLiteral)
-and interpolations (FormattedValue). It folds them left with `add`, the same
-string concatenation `+` uses. A FormattedValue projects the Python reference's
+and interpolations (FormattedValue). Ground string parts fold left with `add`.
+A mix of a ground string and a named interpolation is ``python:fstring`` over
+the part terms: inventing the formatted string is dishonest, and
+``str + symbolic`` mints a deferred carrier that cannot travel through If
+guards. A FormattedValue projects the Python reference's
 opaque ``python:fstring_value(value, conversion, format_spec)`` coordinate.
 Conversion and format spec remain typed operands: absence is explicit ``None``
 and a present spec is a nested ``python:fstring`` coordinate. The coordinate
@@ -19,6 +22,41 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     require_constructed_term_sugar,
 )
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+
+
+def _concatenate_joined_parts(left, right, site):
+    """Name an unground join as an f-string coordinate, without inventing the string.
+
+    Ground string parts still concatenate through ``add``. A mix of a ground
+    string and a named interpolation currently mints
+    ``NativeOperationExitCarrierV1`` (``StringValue.add(SymbolicValue)``), and
+    that carrier cannot join through ``IfSugar.union``. RaisesExc writes
+    ``f"DID NOT RAISE {self.expected_exceptions[0].__name__}"`` inside
+    ``if len(...) == 1``. Emit ``python:fstring`` over the part terms instead.
+    """
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.ir import ctor
+
+    if type(left) is StringValue and type(right) is StringValue:
+        return left.add(right, site)
+    return Complete(
+        CallSiteValue(
+            target_name="__add__",
+            arg_values=(left, right),
+            parameters=(),
+            term=ctor(
+                "python:fstring",
+                [
+                    left.to_term(owner="JoinedStrSugar.desugar"),
+                    right.to_term(owner="JoinedStrSugar.desugar"),
+                ],
+                symbol_kind="coordinate",
+            ),
+            body=None,
+            site=site,
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -168,7 +206,7 @@ class JoinedStrSugar(ConstructedTermSugar):
         for part in self.parts[1:]:
             outcome = outcome.and_then(
                 lambda left, part=part: factored_operand(part.desugar(ctx)).and_then(
-                    lambda right: left.add(right, self.site)
+                    lambda right: _concatenate_joined_parts(left, right, self.site)
                 )
             )
         return outcome

@@ -270,7 +270,35 @@ class CallSiteValue(FloorValue):
         return self.exception_type_coordinate
 
     def attribute(self, name, site):
-        """Keep an unexecuted call result's member lookup a named third value."""
+        """Name ``__name__`` / ``__qualname__`` as a coordinate, without inventing the string.
+
+        An unexecuted call authenticates which call produced the receiver, not
+        its runtime type. Guessing AttributeError or inventing a concrete type
+        name is dishonest. RaisesExc's absent-effect diagnostic still reads
+        ``self.expected_exceptions[0].__name__`` after that lookup is named as
+        ``py.subscript``. The spelling is decidable: emit
+        ``attr:__name__(receiver)`` the same way a symbolic receiver names the
+        attribute and ``format_data_model`` names ``call:__format__`` without
+        inventing the formatted string. Other members stay a named third value.
+        """
+        if name in {"__name__", "__qualname__"}:
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                CallSiteValue(
+                    target_name=name,
+                    arg_values=(self,),
+                    parameters=(),
+                    term=ctor(
+                        f"attr:{name}",
+                        [self.to_term(owner=str(site))],
+                        symbol_kind="method-coordinate",
+                    ),
+                    body=None,
+                    site=site,
+                )
+            )
         return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
 
     def _identity(self) -> tuple:
