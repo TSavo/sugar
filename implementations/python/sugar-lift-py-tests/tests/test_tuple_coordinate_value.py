@@ -14,11 +14,15 @@ from sugar_lift_py_tests.floor import (
     ComprehensionValue,
     FloorValue,
     GuardedValue,
+    PredicateValue,
+    SymbolicValue,
     TermValue,
     TupleCoordinateValue,
 )
-from sugar_lift_py_tests.ir import _term_content_cid, atomic, ctor, make_var
+from sugar_lift_py_tests.ir import _term_content_cid, atomic, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_source_tree.nodes import Call, Subscript
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -269,6 +273,55 @@ def test_tuple_coordinate_member_name_is_a_coordinate_not_an_invented_string(
         [member.to_term(owner=str(site))],
         symbol_kind="method-coordinate",
     )
+
+
+def test_tuple_coordinate_type_test_is_a_predicate_not_an_invented_membership(
+    tmp_path: Path,
+) -> None:
+    call, subscript = _nodes(_tree(tmp_path, "type-test.py"))
+    ctx = _context("tuple-coordinate-type-test")
+    constructed = _value(call.sugar().desugar(ctx))
+    obj = SymbolicValue(make_var("exc"))
+    site = subscript.fragment
+
+    outcome = constructed.test_python_type(obj, site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, PredicateValue)
+    assert outcome.value.formula == atomic(
+        "adt.is_python_type",
+        [
+            obj.to_term(owner="native_type_tester"),
+            constructed.to_term(owner="TupleCoordinateValue.test_python_type"),
+        ],
+    )
+    assert constructed.source.finite_elements is None
+
+
+def test_tuple_coordinate_is_not_a_type_object(tmp_path: Path) -> None:
+    call, _subscript = _nodes(_tree(tmp_path, "isinstance-type.py"))
+    ctx = _context("tuple-coordinate-isinstance-type")
+    constructed = _value(call.sugar().desugar(ctx))
+
+    outcome = constructed.python_isinstance(
+        "type", ctor("python:type", [str_const("type")]), "site"
+    )
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+
+
+def test_tuple_coordinate_is_an_instance_of_tuple(tmp_path: Path) -> None:
+    call, _subscript = _nodes(_tree(tmp_path, "isinstance-tuple.py"))
+    ctx = _context("tuple-coordinate-isinstance-tuple")
+    constructed = _value(call.sugar().desugar(ctx))
+
+    outcome = constructed.python_isinstance(
+        "tuple", ctor("python:type", [str_const("tuple")]), "site"
+    )
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
 
 def test_shadowed_tuple_call_cannot_mint_tuple_coordinate(tmp_path: Path) -> None:
