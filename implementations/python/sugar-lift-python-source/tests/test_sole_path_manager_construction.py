@@ -691,6 +691,51 @@ def test_factory_nested_same_module_with_derives_before_frame_projection(tmp_pat
     assert fields["expected_exception"] is actual.value
 
 
+def test_factory_nested_formal_singleton_tuple_derives_installed_like_exit(tmp_path):
+    """A nested ``RaisesExc(expected_exception)`` stored as ``(expected,)`` derives.
+
+    The matching formula is ``exc_type is self.expected_exceptions[0]``. The
+    absent-effect diagnostic reads ``[0].__name__``. When the constructor
+    actual is the enclosing formal rather than a class, that attribute must
+    stand as a named coordinate so FormalArgumentProjection can seal; it
+    must not invent a concrete type name.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None):\n"
+        "        self.expected_exceptions = (expected_exception,)\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, exc_type, exc_val, exc_tb):\n"
+        "        if exc_type is None:\n"
+        "            if not self.expected_exceptions:\n"
+        "                raise RuntimeError('DID NOT RAISE any exception')\n"
+        "            if len(self.expected_exceptions) == 1:\n"
+        "                raise RuntimeError(self.expected_exceptions[0].__name__)\n"
+        "            raise RuntimeError('several')\n"
+        "        return exc_type is self.expected_exceptions[0]\n\n"
+        "def raises(expected_exception=None):\n"
+        "    with RaisesExc(expected_exception):\n"
+        "        raise ValueError('nested')\n"
+        "    return RaisesExc(expected_exception)\n"
+    )
+    graph, resolved, actual, call_site = _resolved_type_actual(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert "no context-manager derivation" not in detail, result
+    assert getattr(result, "kind", None) != "source-body-gap", result
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+
+
 def test_dual_mode_effect_boundary_installs_with_effect_boundary_sugar(tmp_path):
     """Vendor-neutral dual-mode factory populates EffectBoundary With sugar."""
     implementation = (

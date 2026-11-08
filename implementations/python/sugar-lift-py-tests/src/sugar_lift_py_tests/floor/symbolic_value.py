@@ -486,6 +486,35 @@ class SymbolicValue(FloorValue):
         )
 
     def attribute(self, name, site):
+        """Name ``__name__`` / ``__qualname__`` as a coordinate, without inventing the string.
+
+        RaisesExc's absent-effect diagnostic formats
+        ``self.expected_exceptions[0].__name__``. A class actual already
+        exposes the authenticated type name. When that element is the
+        constructor formal, guessing AttributeError or inventing a concrete
+        type name is dishonest. The spelling is still decidable: emit
+        ``attr:__name__(receiver)`` the same way ``format_data_model`` names
+        ``call:__format__`` without inventing the formatted string.
+        """
+        if name in {"__name__", "__qualname__"}:
+            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                CallSiteValue(
+                    target_name=name,
+                    arg_values=(self,),
+                    parameters=(),
+                    term=ctor(
+                        f"attr:{name}",
+                        [self.to_term(owner=str(site))],
+                        symbol_kind="method-coordinate",
+                    ),
+                    body=None,
+                    site=site,
+                )
+            )
         return self.undecided_attribute(name, site, owner="SymbolicValue.attribute")
 
     def contains(self, item, site):

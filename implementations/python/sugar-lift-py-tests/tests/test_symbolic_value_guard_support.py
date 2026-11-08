@@ -16,3 +16,35 @@ def test_guard_does_not_become_symbolic_value_content_identity() -> None:
     assert value.guarded(atomic("left", [])) is value.guarded(atomic("right", []))
     assert value.inv_contribution() == ()
     assert value.post_contribution() == ()
+
+
+def test_symbolic_name_attribute_is_a_coordinate_not_an_invented_string() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    value = SymbolicValue(make_var("expected"))
+    site = "symbolic-name-attr"
+    outcome = value.attribute("__name__", site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "__name__"
+    assert outcome.value.term == ctor(
+        "attr:__name__",
+        [value.to_term(owner=str(site))],
+        symbol_kind="method-coordinate",
+    )
+
+
+def test_symbolic_unknown_attribute_stays_undecided() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    value = SymbolicValue(make_var("expected"))
+    try:
+        value.attribute("not_a_data_model_name", "symbolic-unknown-attr")
+    except SugarNotWritten as exc:
+        assert exc.owner == "SymbolicValue.attribute"
+        assert "not_a_data_model_name" in (exc.observed or "")
+    else:
+        raise AssertionError("expected SymbolicValue.attribute to stay undecided")
