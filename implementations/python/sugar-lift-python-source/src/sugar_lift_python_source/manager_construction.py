@@ -1513,9 +1513,13 @@ def _floor_tuple_construct_fields(
     When the generator cannot yet project finite_elements (iterable still a
     branch-result conditional) but the callsite supplied exactly one authenticated
     class actual, the source-visible non-tuple/non-None arm is exactly
-    ``(actual,)`` after ``_parse_exc`` identity for BaseException types. Floor
-    that field so ``not self.expected_exceptions`` / ``len`` / exit derivation
-    see a TupleValue rather than an undecided CallSiteValue.
+    ``(actual,)`` after ``_parse_exc`` identity for BaseException types.
+
+    The same one-class arm is also the else of ``isinstance(..., tuple)`` /
+    ``is None`` before that parse, stored as a nested GuardedValue whose
+    leaves are the raw class, ``()``, and ``(actual,)``. Floor that field so
+    ``not self.expected_exceptions`` / ``len`` / ``[0]`` / exit derivation
+    see a TupleValue rather than indexing the empty None arm.
     """
     if isinstance(receiver, ObjectValue):
         return _floor_object_tuple_fields(receiver, actuals)
@@ -1556,6 +1560,8 @@ def _floor_object_tuple_fields(
     changed = False
     for name, value in list(fields_by_name.items()):
         floored = _floor_one_tuple_callsite(value, class_actuals)
+        if floored is None:
+            floored = _floor_one_guarded_tuple_wrap(value, class_actuals)
         if floored is not None:
             fields_by_name[name] = floored
             changed = True
@@ -1579,7 +1585,51 @@ def _floor_object_tuple_fields(
         obj.class_fields,
         obj.identity,
         obj.deferred_helper_fields,
+        obj.deleted_instance_fields,
+        obj.defining_class,
     )
+
+
+def _floor_one_guarded_tuple_wrap(
+    value: FloorValue, class_actuals: tuple[FloorValue, ...]
+) -> FloorValue | None:
+    """Select ``(actual,)`` from an isinstance/None wrap stored as GuardedValue.
+
+    For one authenticated class actual the wrap's leaves are the raw class
+    (isinstance-true), ``()`` (None), and ``(actual,)`` (else). Indexing the
+    joined GuardedValue would halt on the empty None arm; the source-visible
+    taken arm is the singleton tuple already present among the leaves.
+    """
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if len(class_actuals) != 1 or not isinstance(value, GuardedValue):
+        return None
+    actual = class_actuals[0]
+    leaves: list[FloorValue] = []
+
+    def walk(node: FloorValue) -> None:
+        if isinstance(node, GuardedValue):
+            walk(node.when_true)
+            walk(node.when_false)
+            return
+        leaves.append(node)
+
+    walk(value)
+    has_empty = any(
+        isinstance(leaf, TupleValue) and leaf.elements == () for leaf in leaves
+    )
+    singleton = next(
+        (
+            leaf
+            for leaf in leaves
+            if isinstance(leaf, TupleValue) and leaf.elements == (actual,)
+        ),
+        None,
+    )
+    if has_empty and singleton is not None:
+        return singleton
+    return None
 
 
 def _floor_one_tuple_callsite(

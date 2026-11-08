@@ -2209,16 +2209,23 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
     )
     from sugar_lift_py_tests.floor import ObjectValue
     from sugar_lift_py_tests.callable_application import CallableApplication
-    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.floor import (
+        ClassDefinitionValue,
+        ReceiverStatePartitionValue,
+    )
     from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal import builtin_name_temporal
     from sugar_source_tree.nodes import Call, ClassDef, Name
     from sugar_source_tree.panic import SugarNotWritten
 
     from .canonical import cid_of_json
-    from .manager_construction import ConstructedManagerBehaviorV1
+    from .manager_construction import (
+        ConstructedManagerBehaviorV1,
+        _floor_tuple_construct_fields,
+    )
     from .manager_protocol_construction import (
         ConstructedManagerProtocolV1,
+        _completed_object_receivers,
         construct_manager_protocol,
     )
 
@@ -2307,13 +2314,37 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 application_value, reduce_ctx
             )
             result = getattr(result_outcome, "value", None)
-            if result is not None and getattr(result, "defining_class", None) is not class_value:
+            if isinstance(result, ObjectValue):
+                if getattr(result, "defining_class", None) is not class_value:
+                    _install_local_derivation_gap(
+                        context,
+                        coordinate,
+                        target_symbol,
+                        "class-definition-provenance-mismatch",
+                        "constructed receiver is not owned by authenticated class_def",
+                    )
+                    continue
+            elif isinstance(result, ReceiverStatePartitionValue):
+                leaves = _completed_object_receivers(result)
+                if not leaves or any(
+                    getattr(leaf, "defining_class", None) is not class_value
+                    for leaf in leaves
+                ):
+                    _install_local_derivation_gap(
+                        context,
+                        coordinate,
+                        target_symbol,
+                        "class-definition-provenance-mismatch",
+                        "constructed receiver is not owned by authenticated class_def",
+                    )
+                    continue
+            else:
                 _install_local_derivation_gap(
                     context,
                     coordinate,
                     target_symbol,
-                    "class-definition-provenance-mismatch",
-                    "constructed receiver is not owned by authenticated class_def",
+                    "non-manager-result",
+                    type(result).__name__,
                 )
                 continue
         except (SugarNotWritten, TypeError) as exc:
@@ -2322,7 +2353,14 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 context, coordinate, target_symbol, kind, detail
             )
             continue
-        if not isinstance(result, ObjectValue):
+        result = _floor_tuple_construct_fields(
+            result, tuple(application_value.arguments)
+        )
+        if isinstance(result, ObjectValue):
+            receivers = (result,)
+        elif isinstance(result, ReceiverStatePartitionValue):
+            receivers = _completed_object_receivers(result)
+        else:
             _install_local_derivation_gap(
                 context,
                 coordinate,
@@ -2331,7 +2369,15 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 type(result).__name__,
             )
             continue
-        enter_method = next((m for m in result.methods if m.name == "__enter__"), None)
+        enter_method = next(
+            (
+                method
+                for receiver in receivers
+                for method in receiver.methods
+                if method.name == "__enter__"
+            ),
+            None,
+        )
         frame = (
             getattr(enter_method, "source_call_frame", None) if enter_method else None
         )
