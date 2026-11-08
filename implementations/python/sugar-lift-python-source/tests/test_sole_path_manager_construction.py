@@ -818,8 +818,8 @@ def test_unwritten_receiver_field_stays_typed_loud_across_method_lifetimes(
     with pytest.raises(ConstructionPanic) as raised:
         protocol.exit_outcome()
 
-    assert raised.value.info.owner == "attribute"
-    assert raised.value.info.observed == "ObjectValue"
+    assert raised.value.info.owner == "ObjectValue.attribute"
+    assert raised.value.info.observed == "ObjectValue.never_written"
 
 
 def test_constructor_partition_does_not_inherit_store_across_guarded_faces(
@@ -934,8 +934,8 @@ def test_resource_enter_partition_does_not_inherit_unacquired_state(tmp_path):
 
     with pytest.raises(ConstructionPanic) as raised:
         protocol.exit_outcome_for(unwritten)
-    assert raised.value.info.owner == "attribute"
-    assert raised.value.info.observed == "ObjectValue"
+    assert raised.value.info.owner == "ObjectValue.attribute"
+    assert raised.value.info.observed == "ObjectValue.acquired"
 
 
 def test_resource_enter_state_reaches_exit_without_second_enter(tmp_path):

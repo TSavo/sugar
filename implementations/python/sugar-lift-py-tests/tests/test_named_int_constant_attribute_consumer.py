@@ -5,7 +5,7 @@ from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 import pytest
 
 
@@ -60,5 +60,5 @@ def test_named_int_constant_foreign_member_stays_typed_loud() -> None:
         "re._constants._NamedIntConstant",
         (ObjectField("name", StringValue("SRE_FLAG_ASCII")),),
     )
-    with pytest.raises(SugarNotWritten, match="ObjectValue.attribute"):
+    with pytest.raises(ConstructionPanic, match="ObjectValue.attribute"):
         AttributeSugar(_ReceiverSugar(receiver), "foreign", _Site("foreign")).desugar()

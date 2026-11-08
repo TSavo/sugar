@@ -104,7 +104,7 @@ class ObjectValue(FloorValue):
     # Instance field names removed by an authenticated delattr.  Reading one
     # of these is AttributeError (delete readback), without inventing
     # AttributeError for unenrolled members of a partial construction
-    # (those stay undecided via deferred_helper_fields / undecided_attribute).
+    # (those require deferred-helper coordinates or a construction panic).
     deleted_instance_fields: tuple[str, ...] = dataclass_field(
         default=(), compare=False
     )
@@ -223,14 +223,25 @@ class ObjectValue(FloorValue):
             )
 
             return getattr_coordinate(self, name, owner=str(site))
-        # Missing field with no deferred helper: the receiver type/member set
-        # is only partially constructed. Stay on the Attribute producer law
-        # with an honest owner name — do not fall through to the generic
-        # FloorValue.attribute owner="attribute" panic, and do not invent
-        # AttributeError for a member table that is not source-complete.
-        # (Contrast: names in deleted_instance_fields above — those absences
-        # are delete-authenticated, not construction incompleteness.)
-        return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+        # This receiver already owns a constructed object-state floor. An
+        # unenrolled member is missing construction testimony, not an unknown
+        # receiver-type Sugar case. Without a field, helper deferral, or cited
+        # absence, neither completion nor AttributeError is justified. Keep
+        # that missing Floor arm outside ordinary Exception handlers, including
+        # on guarded states.
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="ObjectValue.attribute",
+            blame=site,
+            observed=f"{type(self).__name__}.{name}",
+            requested="a source-authenticated field projection or exceptional exit",
+            fix=(
+                "carry field construction, helper deferral, or authenticated "
+                "absence testimony for this receiver state to the attribute floor; "
+                "do not guess AttributeError or borrow another guard's fields"
+            ),
+        )
 
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
         """Return this receiver identity after one authenticated field store."""
