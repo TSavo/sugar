@@ -249,6 +249,28 @@ def test_tuple_coordinate_member_lookup_is_a_subscript_coordinate_not_an_invente
     assert constructed.source.finite_elements is None
 
 
+def test_tuple_coordinate_member_name_is_a_coordinate_not_an_invented_string(
+    tmp_path: Path,
+) -> None:
+    call, subscript = _nodes(_tree(tmp_path, "member-name.py"))
+    ctx = _context("tuple-coordinate-member-name")
+    constructed = _value(call.sugar().desugar(ctx))
+    index = TermValue(0)
+    site = subscript.fragment
+    member = _value(constructed.subscript(index, site))
+
+    outcome = member.attribute("__name__", site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "__name__"
+    assert outcome.value.term == ctor(
+        "attr:__name__",
+        [member.to_term(owner=str(site))],
+        symbol_kind="method-coordinate",
+    )
+
+
 def test_shadowed_tuple_call_cannot_mint_tuple_coordinate(tmp_path: Path) -> None:
     call, _ = _nodes(_tree(tmp_path, "shadowed.py"))
     ctx = _context("tuple-coordinate-shadow")
