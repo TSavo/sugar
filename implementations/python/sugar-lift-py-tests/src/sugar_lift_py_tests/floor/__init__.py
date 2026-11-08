@@ -75,6 +75,7 @@ from .runtime_class_value import RuntimeClassValue
 from .receiver_field_store_value import ReceiverFieldStoreValue
 from .receiver_owned_mutation_result import ReceiverOwnedMutationResult
 from .guarded_receiver_field_store_value import GuardedReceiverFieldStoreValue
+from .guarded_receiver_state_value import GuardedReceiverStateValue
 from .receiver_state_partition_value import ReceiverStatePartitionValue
 from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
@@ -158,6 +159,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ReceiverFieldStoreValue,
     ReceiverOwnedMutationResult,
     GuardedReceiverFieldStoreValue,
+    GuardedReceiverStateValue,
     ReceiverStatePartitionValue,
     ReturnValue,
     ScopeRebind,
@@ -247,6 +249,7 @@ __all__ = [
     "ReceiverFieldStoreValue",
     "ReceiverOwnedMutationResult",
     "GuardedReceiverFieldStoreValue",
+    "GuardedReceiverStateValue",
     "ReceiverStatePartitionValue",
     "OpaqueOpCallsite",
     "PredicateValue",

@@ -316,6 +316,7 @@ class ClassDefinitionValue(GuardStableValue):
     def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
         from sugar_lift_py_tests.floor import (
             GuardedReceiverFieldStoreValue,
+            GuardedReceiverStateValue,
             MappingObjectValue,
             ObjectField,
             ObjectMethodValue,
@@ -325,13 +326,16 @@ class ClassDefinitionValue(GuardStableValue):
         )
         from sugar_lift_py_tests.ir import (
             _term_content_cid,
-            and_,
             ctor,
-            not_,
             str_const,
         )
         from sugar_lift_py_tests.outcome import Completed, ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import partition, true_guard
+        from sugar_lift_py_tests.outcome.exit_set import (
+            _and_guards,
+            complement_guard,
+            partition,
+            true_guard,
+        )
 
         receiver_type = (
             MappingObjectValue if self._has_authenticated_dict_base() else ObjectValue
@@ -364,23 +368,38 @@ class ClassDefinitionValue(GuardStableValue):
             and block.statements[0].identity == receiver.identity
         ):
             return block.statements[0]
-        guarded_stores = tuple(
+        guarded_updates = tuple(
             statement
             for statement in block.statements
-            if isinstance(statement, GuardedReceiverFieldStoreValue)
+            if isinstance(
+                statement, (GuardedReceiverFieldStoreValue, GuardedReceiverStateValue)
+            )
         )
-        if guarded_stores:
-            states = [(true_guard(), (), frozenset())]
+        if guarded_updates:
+            # Completed snapshots retain the allocation's initial state on the
+            # unwritten face as well; no face gets another face's field table.
+            initial = (
+                (receiver,)
+                if any(
+                    isinstance(update, GuardedReceiverStateValue)
+                    for update in guarded_updates
+                )
+                else ()
+            )
+            states = [(true_guard(), initial, frozenset())]
             for statement in block.statements:
-                if isinstance(statement, ReceiverFieldStoreValue) and not isinstance(
-                    statement, GuardedReceiverFieldStoreValue
+                if isinstance(statement, ObjectValue) or (
+                    isinstance(statement, ReceiverFieldStoreValue)
+                    and not isinstance(statement, GuardedReceiverFieldStoreValue)
                 ):
                     states = [
                         (guard, (*stores, statement), faces)
                         for guard, stores, faces in states
                     ]
                     continue
-                if not isinstance(statement, GuardedReceiverFieldStoreValue):
+                if not isinstance(
+                    statement, (GuardedReceiverFieldStoreValue, GuardedReceiverStateValue)
+                ):
                     continue
                 store = statement
                 then_face, else_face = partition(
@@ -393,11 +412,15 @@ class ClassDefinitionValue(GuardStableValue):
                 for guard, stores, faces in states:
                     next_states.append(
                         (
-                            and_([guard, store.guard]),
+                            _and_guards(guard, store.guard),
                             (
                                 *stores,
-                                ReceiverFieldStoreValue(
-                                    store.receiver, store.attr, store.value
+                                (
+                                    store.receiver
+                                    if isinstance(store, GuardedReceiverStateValue)
+                                    else ReceiverFieldStoreValue(
+                                        store.receiver, store.attr, store.value
+                                    )
                                 ),
                             ),
                             faces | {then_face},
@@ -405,7 +428,7 @@ class ClassDefinitionValue(GuardStableValue):
                     )
                     next_states.append(
                         (
-                            and_([guard, not_(store.guard)]),
+                            _and_guards(guard, complement_guard(store.guard)),
                             stores,
                             faces | {else_face},
                         )
@@ -423,7 +446,28 @@ class ClassDefinitionValue(GuardStableValue):
             )
             return ReceiverStatePartitionValue(ExitSet(exits).normalize())
         fields: dict[str, object] = {}
+        snapshot = None
         for statement in block.statements:
+            if isinstance(statement, ObjectValue):
+                if (
+                    statement.identity != receiver.identity
+                    or getattr(statement.defining_class, "class_definition_cid", None)
+                    != self.class_definition_cid
+                ):
+                    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                    construction_panic_gap(
+                        owner="ClassDefinitionValue.construct_receiver_state",
+                        blame=receiver_coordinate_cid,
+                        observed="foreign constructed receiver snapshot",
+                        requested="the exact source-defined receiver being constructed",
+                        fix="retain the receiver coordinate and defining class across guarded state projection",
+                    )
+                # A snapshot replaces the whole prior state; unioning fields
+                # here would leak a sibling branch's stores into this face.
+                snapshot = statement
+                fields = {field.name: field.value for field in statement.fields}
+                continue
             if not isinstance(statement, ReceiverFieldStoreValue):
                 continue
             if statement.receiver.identity != receiver.identity:
@@ -438,6 +482,10 @@ class ClassDefinitionValue(GuardStableValue):
         ordered = tuple(
             ObjectField(name, value) for name, value in sorted(fields.items())
         )
+        if snapshot is not None:
+            from dataclasses import replace
+
+            return replace(snapshot, fields=ordered)
         identity_term = ctor(
             "python:constructed-object-state",
             [

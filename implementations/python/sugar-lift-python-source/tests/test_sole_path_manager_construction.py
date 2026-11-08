@@ -866,6 +866,16 @@ def test_constructor_partition_does_not_inherit_store_across_guarded_faces(
         if isinstance(face, Completed)
     }
     assert field_sets == {(), ("maybe_written",)}
+    assert (
+        len(
+            {
+                face.value.identity
+                for face in behavior.receiver_state.exits.exits
+                if isinstance(face, Completed)
+            }
+        )
+        == 1
+    )
 
     protocol = construct_manager_protocol(behavior, exit_face_id="partition-lying-face")
     assert isinstance(protocol, ConstructedManagerProtocolV1)
@@ -4091,3 +4101,77 @@ def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
         assert not (
             len(exits.exits) == 1 and type(exits.exits[0]).__name__ == "Completed"
         )
+
+
+@pytest.mark.parametrize(
+    "class_name, selector", [("First", "payload"), ("Other", "renamed")]
+)
+def test_constructor_snapshot_partition_keeps_each_branch_value(
+    tmp_path, class_name, selector
+):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        f"class {class_name}:\n"
+        "    def __init__(self, marker):\n"
+        "        self.prefix = marker\n"
+        "        if marker:\n"
+        f"            self.{selector} = 11\n"
+        "        else:\n"
+        f"            self.{selector} = 19\n\n"
+        "    def __enter__(self):\n"
+        f"        return self.{selector}\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_guard(marker):\n"
+        f"    return {class_name}(marker)\n",
+    )
+    from sugar_lift_py_tests.floor import (
+        ReceiverStatePartitionValue,
+        ReturnValue,
+        SymbolicValue,
+        TermValue,
+    )
+    from sugar_lift_py_tests.ir import _term_content_cid, make_var
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    symbolic = SymbolicValue(make_var("constructor-selector"))
+    actual = ConstructedCallActualV1(
+        actual.node,
+        symbolic,
+        ConstructedValueTestimonyV1.mint(
+            actual.node.fragment, _term_content_cid(symbolic.to_term(owner="test"))
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert isinstance(behavior.receiver_state, ReceiverStatePartitionValue)
+    completed = tuple(
+        face
+        for face in behavior.receiver_state.exits.exits
+        if isinstance(face, Completed)
+    )
+    assert len(completed) == 2
+    assert {face.value.attribute(selector, "test").value for face in completed} == {
+        TermValue(11),
+        TermValue(19),
+    }
+    assert all(
+        face.value.attribute("prefix", "test").value == symbolic for face in completed
+    )
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    by_value = {
+        face.value.attribute(selector, "test").value.value: face for face in completed
+    }
+    assert by_value[19].guard.kind == "not"
+    assert by_value[11].guard == complement_guard(by_value[19].guard)
+    protocol = construct_manager_protocol(behavior, exit_face_id="constructor-values")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+    entered = outcome_to_exitset(protocol.enter_resource_outcome()).exits
+    assert len(entered) == 2 and all(isinstance(face, Completed) for face in entered)
+    assert {face.value.enter_value.statements[-1] for face in entered} == {
+        ReturnValue(TermValue(11)),
+        ReturnValue(TermValue(19)),
+    }

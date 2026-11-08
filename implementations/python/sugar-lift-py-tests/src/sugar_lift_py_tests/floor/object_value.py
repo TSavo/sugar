@@ -243,6 +243,13 @@ class ObjectValue(FloorValue):
             ),
         )
 
+    def guarded(self, formula):
+        # A constructed state is not an unconditional field-store statement.
+        # Retain the branch restriction for the constructor's state projection.
+        from .guarded_receiver_state_value import GuardedReceiverStateValue
+
+        return GuardedReceiverStateValue(self, formula)
+
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
         """Return this receiver identity after one authenticated field store."""
         if any(
