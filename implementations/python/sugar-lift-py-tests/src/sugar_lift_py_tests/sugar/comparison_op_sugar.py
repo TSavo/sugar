@@ -378,6 +378,20 @@ class ComparisonOpSugar(ConstructedTermSugar):
 
     def _apply(self, left, right):
         if self.op_kind == "NotEq":
+            from sugar_lift_py_tests.floor.object_value import ObjectValue
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            if any(
+                isinstance(value, ObjectValue) and value.has_method("__ne__")
+                for value in (left, right)
+            ):
+                construction_panic_gap(
+                    owner="ComparisonOpSugar.NotEq",
+                    blame=self.site,
+                    observed="source __ne__ cannot be replaced by negated __eq__",
+                    requested="authenticated native __ne__ dispatch",
+                    fix="construct __ne__ method order and invoke its source frame",
+                )
             # Equality law: a != b is not (a == b); dual-edge then negate.
             deferred = defer_formal_native_operation(
                 left, right, self.site, operator="equals"

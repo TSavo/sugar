@@ -3950,3 +3950,337 @@ def test_exception_argument_cannot_turn_nonsuppressing_manager_into_assertion(
             for face in exits
         ), exits
     assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+
+
+
+def _deferred_exit_message_comparison(expression='effect.message == "needle"'):
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    source = expression + "\n"
+    tree = SourceFile(
+        (source, "deferred-exit.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    comparison = next(node for node in tree.nodes() if node.kind == "Compare")
+    coordinate = ExitValueCoordinate("actual-exit-face")
+    ctx = ReduceContext(
+        temporal=builtin_name_temporal().bind_value("effect", coordinate)
+    )
+    return coordinate, comparison.sugar().desugar(ctx), comparison.fragment
+
+
+@pytest.mark.parametrize("message", ["needle", "haystack"])
+def test_exit_attribute_comparison_waits_for_actual_receiver_fields(message):
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import ObjectField, ObjectValue, StringValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    coordinate, deferred, site = _deferred_exit_message_comparison()
+    assert isinstance(deferred, NativeOperationExitCarrierV1)
+    assert deferred.demand.operator == "attribute_named"
+    receiver = ObjectValue(
+        "Error",
+        (ObjectField("message", StringValue(message)),),
+        identity="raised-error",
+    )
+    result = deferred.discharge({coordinate.coordinate_cid: receiver})
+    expected = StringValue(message).equals(StringValue("needle"), site).value
+    assert result.exits
+    assert all(
+        isinstance(face, Completed) and face.value.formula == expected.formula
+        for face in result.exits
+    )
+
+
+@pytest.mark.parametrize(
+    "getter", ['return "needle"', 'return "haystack"', 'raise LookupError("getter")']
+)
+def test_deferred_exit_attribute_runs_authenticated_property_before_comparison(
+    tmp_path, getter
+):
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.effect import RaiseEffect
+
+    source = (
+        "class Payload:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, *args):\n"
+        "        return False\n"
+        "    @property\n"
+        "    def message(self):\n"
+        f"        {getter}\n"
+        "def make_guard(marker):\n"
+        "    return Payload(marker)\n"
+    )
+    native = {}
+    exec(source, native)
+    if getter.startswith("raise"):
+        with pytest.raises(LookupError, match="getter"):
+            native["Payload"](23).message == "needle"
+    else:
+        assert (native["Payload"](23).message == "needle") is (
+            getter == 'return "needle"'
+        )
+    graph, resolved, actual, call_site = _resolved(tmp_path, source)
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    coordinate, deferred, site = _deferred_exit_message_comparison()
+    assert isinstance(deferred, NativeOperationExitCarrierV1)
+    result = deferred.discharge({coordinate.coordinate_cid: behavior.receiver_state})
+    assert result.exits
+    if getter.startswith("raise"):
+        assert all(
+            isinstance(face, Halted)
+            and isinstance(face.effect, RaiseEffect)
+            and face.effect.exception_name == "LookupError"
+            for face in result.exits
+        )
+        assert all(
+            face.effect.exception_type_coordinate is not None
+            and face.effect.occurrence is not None
+            for face in result.exits
+        )
+    else:
+        from sugar_lift_py_tests.floor import StringValue
+
+        message = "needle" if getter == 'return "needle"' else "haystack"
+        expected = StringValue(message).equals(StringValue("needle"), site).value
+        assert all(
+            isinstance(face, Completed) and face.value.formula == expected.formula
+            for face in result.exits
+        )
+
+
+def test_deferred_exit_projection_cannot_be_consumed_as_a_completed_outcome():
+    from sugar_lift_py_tests.gap import ConstructionPanic, GapKind, GapLocus
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+    _, deferred, _ = _deferred_exit_message_comparison()
+    with pytest.raises(ConstructionPanic) as caught:
+        outcome_to_exitset(deferred)
+    assert caught.value.info.owner == "outcome_to_exitset"
+    assert caught.value.info.gap_kind is GapKind.FLOOR
+    assert caught.value.info.gap_locus is GapLocus.CONSTRUCTION
+
+
+def test_deferred_exit_projection_requires_its_own_actual_face():
+    from sugar_lift_py_tests.floor import ObjectField, ObjectValue, StringValue
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_source_tree.panic import SugarNotWritten
+
+    coordinate, deferred, _ = _deferred_exit_message_comparison()
+    wrong = ExitValueCoordinate("a-different-exit-face")
+    assert coordinate.coordinate_cid != wrong.coordinate_cid
+    receiver = ObjectValue(
+        "Error",
+        (ObjectField("message", StringValue("needle")),),
+        identity="another-error",
+    )
+    with pytest.raises(SugarNotWritten) as caught:
+        deferred.discharge({wrong.coordinate_cid: receiver})
+    assert caught.value.owner == "NativeOperationResolutionV1.project"
+
+
+def test_deferred_exit_projection_does_not_authenticate_unknown_message_equality():
+    from sugar_lift_py_tests.floor import ObjectField, ObjectValue, SymbolicValue
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.ir import make_var
+
+    coordinate, deferred, _ = _deferred_exit_message_comparison()
+    receiver = ObjectValue(
+        "Error",
+        (ObjectField("message", SymbolicValue(make_var("unknown-payload"))),),
+        identity="raised-error",
+    )
+    with pytest.raises(ConstructionPanic) as caught:
+        deferred.discharge({coordinate.coordinate_cid: receiver})
+    assert caught.value.info.owner == "ComparisonOpSugar.Eq"
+
+
+@pytest.mark.parametrize(
+    "eq_body", ["return True", "return False", 'raise LookupError("equality")']
+)
+@pytest.mark.parametrize("operator", ["==", "!="])
+def test_deferred_exit_payload_uses_authenticated_rich_equality(
+    tmp_path, eq_body, operator
+):
+    from sugar_lift_py_tests.floor import ObjectField, ObjectValue
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.effect import RaiseEffect
+
+    import operator as native_operator
+
+    compare = native_operator.eq if operator == "==" else native_operator.ne
+    payload_class, payload = _source_equality_payload(tmp_path, eq_body)
+    if eq_body.startswith("raise"):
+        with pytest.raises(LookupError, match="equality"):
+            compare(payload_class(23), "needle")
+    else:
+        assert compare(payload_class(23), "needle") is (
+            (eq_body == "return True") == (operator == "==")
+        )
+    coordinate, deferred, _ = _deferred_exit_message_comparison(
+        f'effect.message {operator} "needle"'
+    )
+    error = ObjectValue(
+        "Error", (ObjectField("message", payload),), identity="raised-error"
+    )
+    result = deferred.discharge({coordinate.coordinate_cid: error})
+    assert result.exits
+    if eq_body.startswith("raise"):
+        assert all(
+            isinstance(face, Halted)
+            and isinstance(face.effect, RaiseEffect)
+            and face.effect.exception_name == "LookupError"
+            for face in result.exits
+        )
+    else:
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        expected = (
+            TrueBoolLiteralSugar
+            if ((eq_body == "return True") == (operator == "=="))
+            else FalseBoolLiteralSugar
+        )
+        assert all(
+            isinstance(face, Completed) and isinstance(face.value, expected)
+            for face in result.exits
+        )
+
+
+def _source_equality_payload(tmp_path, eq_body, ne_body=None):
+    source = (
+        "class Payload:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, *args):\n"
+        "        return False\n"
+        "    def __eq__(self, other):\n"
+        f"        {eq_body}\n"
+        "def make_guard(marker):\n"
+        "    return Payload(marker)\n"
+    )
+    if ne_body is not None:
+        source = source.replace(
+            "def make_guard",
+            "    def __ne__(self, other):\n        " + ne_body + "\ndef make_guard",
+        )
+    native = {}
+    exec(source, native)
+    graph, resolved, actual, call_site = _resolved(tmp_path, source)
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    return native["Payload"], behavior.receiver_state
+
+
+@pytest.mark.parametrize(
+    "expression,eq_body,ne_body",
+    [
+        ('"needle" == effect.message', "return True", None),
+        ('effect.message == "needle"', 'return "not a boolean"', None),
+        ('effect.message == "needle"', "self.marker = 99\n        return True", None),
+        ('effect.message != "needle"', "return True", "return True"),
+    ],
+)
+def test_deferred_rich_equality_refuses_unconstructed_dispatch_faces(
+    tmp_path, expression, eq_body, ne_body
+):
+    from sugar_lift_py_tests.floor import ObjectField, ObjectValue
+    from sugar_lift_py_tests.gap import ConstructionPanic
+
+    _, payload = _source_equality_payload(tmp_path, eq_body, ne_body)
+    coordinate, deferred, _ = _deferred_exit_message_comparison(expression)
+    error = ObjectValue(
+        "Error", (ObjectField("message", payload),), identity="raised-error"
+    )
+    with pytest.raises(ConstructionPanic):
+        deferred.discharge({coordinate.coordinate_cid: error})
+
+
+@pytest.mark.parametrize("case", ["needle", "haystack", "raising-payload"])
+def test_source_manager_protocol_defers_exit_lookup_until_actual_value(tmp_path, case):
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        ObjectField,
+        ObjectValue,
+        ReturnValue,
+        StringValue,
+    )
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.effect import RaiseEffect
+
+    (tmp_path / "manager").mkdir()
+    (tmp_path / "payload").mkdir()
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path / "manager",
+        "class Resource:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        '        return effect.message == "needle"\n'
+        "def make_guard(marker):\n"
+        "    return Resource(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    protocol = construct_manager_protocol(
+        behavior, exit_face_id="deferred-protocol-face"
+    )
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+    deferred = protocol.exit_outcome()
+    assert isinstance(deferred, NativeOperationExitCarrierV1)
+    if case == "raising-payload":
+        _, payload = _source_equality_payload(
+            tmp_path / "payload", 'raise LookupError("equality")'
+        )
+    else:
+        payload = StringValue(case)
+    receiver = ObjectValue(
+        "Error", (ObjectField("message", payload),), identity="raised-error"
+    )
+    coordinate = ExitValueCoordinate(protocol.exit_face_id)
+    result = deferred.discharge({coordinate.coordinate_cid: receiver})
+    assert result.exits
+    if case == "raising-payload":
+        assert all(
+            isinstance(face, Halted)
+            and isinstance(face.effect, RaiseEffect)
+            and face.effect.exception_name == "LookupError"
+            for face in result.exits
+        )
+    else:
+        expected = StringValue(case).equals(StringValue("needle"), call_site).value
+        for face in result.exits:
+            assert isinstance(face, Completed)
+            assert isinstance(face.value, BlockValue)
+            assert isinstance(face.value.statements[-1], ReturnValue)
+            assert face.value.statements[-1].value.formula == expected.formula

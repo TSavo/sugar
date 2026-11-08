@@ -1295,14 +1295,6 @@ def outcome_to_exitset(outcome) -> ExitSet:
                 "absence of a halted edge as normal completion"
             ),
             gap_kind=GapKind.FLOOR,
-            decidability=FormalDemandUndischarged(
-                artifact=FormalDemandArtifact(
-                    carrier_type_name=type(outcome).__name__,
-                    demand_type_name=type(outcome.demand).__name__,
-                    site=str(outcome.demand.source_node),
-                )
-            ),
-            world={"formal_demand_undischarged": True},
         )
 
     construction_panic_gap(

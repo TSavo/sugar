@@ -92,17 +92,30 @@ class ExitValueCoordinate(FloorValue):
 
         return ctor("python:exit_value", [str_const(self.face_id)])
 
-    def attribute(self, name, site):
-        """Project an attribute from the real parametric exception value."""
-        del site
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
+    @property
+    def coordinate_cid(self):
+        """Authenticate discharge to this exact parametric exit-value slot."""
+        from sugar_lift_py_tests.ir import _term_content_cid
 
-        return Complete(
-            SymbolicValue(
-                ctor("py.getattr", [self.to_term(owner="exit"), str_const(name)])
-            )
+        return _term_content_cid(self.to_term(owner="exit value coordinate"))
+
+    def attribute(self, name, site):
+        """Defer lookup and its consumers until the real exit value is known.
+
+        An exit slot does not authenticate a field's existence, runtime type,
+        descriptor effects, or rich comparison dispatch. Preserve the native
+        lookup occurrence rather than minting a completed getattr term.
+        """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.floor.string_value import StringValue
+
+        return NativeOperationExitCarrierV1.mint(
+            site=site,
+            operator="attribute_named",
+            operands=(self, StringValue(name)),
+            coordinates=(self, None),
         )
 
 

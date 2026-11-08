@@ -1068,6 +1068,16 @@ class FloorValue:
         construction_panic(info)
 
     def equals(self, other, site):
+        from sugar_lift_py_tests.floor.object_value import ObjectValue
+
+        if isinstance(other, ObjectValue) and other.has_method("__eq__"):
+            return self._floor_gap(
+                owner="FloorValue.equals",
+                blame=site,
+                observed="reflected source equality method is not constructed",
+                requested="authenticated reflected/subclass equality dispatch",
+                fix="invoke the native reflected method before emitting equality",
+            )
         # Equality vocabulary is resolved here, once, from construction-time
         # sort testimony. Ill-sorted bare equality cannot leave this door.
         from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom

@@ -114,6 +114,10 @@ class ObjectValue(FloorValue):
         default=None, compare=False, repr=False
     )
 
+    def denotes_value(self) -> bool:
+        """A constructed receiver denotes a runtime object, not a pure slot."""
+        return True
+
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
             "__format__",
@@ -122,6 +126,92 @@ class ObjectValue(FloorValue):
             blame=str(site),
             ctx=ctx,
         )
+
+    def equals(self, other, site):
+        """Invoke an authenticated source ``__eq__`` when method order is known.
+
+        Different source classes require reflected/subclass dispatch testimony;
+        unconstructed return/NotImplemented behavior remains a typed refusal.
+        Never substitute object identity for a user-defined equality body.
+        """
+        if not self.has_method("__eq__"):
+            return super().equals(other, site)
+        same_class = (
+            isinstance(other, ObjectValue)
+            and getattr(self.defining_class, "class_definition_cid", None) is not None
+            and getattr(self.defining_class, "class_definition_cid", None)
+            == getattr(other.defining_class, "class_definition_cid", None)
+        )
+        if (isinstance(other, ObjectValue) and not same_class) or (
+            not isinstance(other, ObjectValue)
+            and (not other.denotes_value() or not other.runtime_type_is_decided())
+        ):
+            return self._floor_gap(
+                owner="ObjectValue.equals",
+                blame=site,
+                observed="source equality method order is not authenticated",
+                requested="same source class or an exact native right operand",
+                fix="derive reflected/subclass method order before rich equality",
+            )
+        method = next(
+            method for method in reversed(self.methods) if method.name == "__eq__"
+        )
+        if (
+            method.source_call_frame is None
+            or method.source_call_frame_cid is None
+            or method.descriptor_kind is not None
+            or method.source_call_frame_cid != method.source_call_frame.frame_cid
+        ):
+            return self._floor_gap(
+                owner="ObjectValue.equals",
+                blame=site,
+                observed="source equality frame or descriptor is not authenticated",
+                requested="the definition-owned ordinary __eq__ method frame",
+                fix="construct its exact frame/descriptor binding before invoking equality",
+            )
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+        def returned(value):
+            if isinstance(
+                value, (PredicateValue, TrueBoolLiteralSugar, FalseBoolLiteralSugar)
+            ) or (isinstance(value, TermValue) and type(value.value) is bool):
+                return Complete(value)
+            return self._floor_gap(
+                owner="ObjectValue.equals",
+                blame=site,
+                observed=f"source equality returned {type(value).__name__}",
+                requested="native boolean or authenticated exceptional outcome",
+                fix="construct non-boolean/NotImplemented result dispatch before accepting it",
+            )
+
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+        def completed(block):
+            # A scalar comparison cannot silently erase a completed callee's
+            # stores/effect prefix. Halted faces keep their original state via
+            # Outcome.and_then; richer normal-state transport is still a gap.
+            if (
+                not isinstance(block, BlockValue)
+                or len(block.statements) != 1
+                or not isinstance(block.statements[0], ReturnValue)
+            ):
+                return self._floor_gap(
+                    owner="ObjectValue.equals",
+                    blame=site,
+                    observed="source equality completion has untransported state or effects",
+                    requested="a sole native return, or explicit callee-state transport",
+                    fix="preserve the completed method prefix before extracting its scalar result",
+                )
+            return returned(block.statements[0].value)
+
+        return self.call_method_value(
+            "__eq__", (other,), owner="ObjectValue.equals", blame=site
+        ).and_then(lambda call: call.reduce_source_outcome().and_then(completed))
 
     def matrix_multiply(self, other, site):
         """``@`` on an object is the ``__matmul__`` data-model method.
