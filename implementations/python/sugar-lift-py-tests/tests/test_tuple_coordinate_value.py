@@ -223,6 +223,32 @@ def test_tuple_coordinate_length_keeps_receiver_and_use_sites_distinct(
         )
 
 
+def test_tuple_coordinate_member_lookup_is_a_subscript_coordinate_not_an_invented_member(
+    tmp_path: Path,
+) -> None:
+    call, subscript = _nodes(_tree(tmp_path, "member-lookup.py"))
+    ctx = _context("tuple-coordinate-member-lookup")
+    constructed = _value(call.sugar().desugar(ctx))
+    index = TermValue(0)
+    site = subscript.fragment
+
+    outcome = constructed.subscript(index, site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "__getitem__"
+    assert outcome.value.arg_values == (constructed, index)
+    assert outcome.value.term == ctor(
+        "py.subscript",
+        (
+            constructed.to_term(owner="TupleCoordinateValue.subscript"),
+            index.to_term(owner="TupleCoordinateValue.subscript"),
+        ),
+        symbol_kind="coordinate",
+    )
+    assert constructed.source.finite_elements is None
+
+
 def test_shadowed_tuple_call_cannot_mint_tuple_coordinate(tmp_path: Path) -> None:
     call, _ = _nodes(_tree(tmp_path, "shadowed.py"))
     ctx = _context("tuple-coordinate-shadow")
@@ -283,8 +309,6 @@ def test_tuple_coordinate_rejects_all_reminted_testimony(tmp_path: Path) -> None
         match="tuple slice coordinate does not authenticate receiver, index, and use occurrence",
     ):
         replace(sliced, coordinate_cid=cid_of_json({"reminted": True}))
-    with pytest.raises(SugarNotWritten):
-        constructed.subscript(TermValue(0), subscript.fragment)
 
 
 def test_guarded_tuple_slice_preserves_exact_occurrence_in_both_arms(

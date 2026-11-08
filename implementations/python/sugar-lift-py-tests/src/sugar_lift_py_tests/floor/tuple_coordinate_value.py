@@ -250,12 +250,31 @@ class TupleCoordinateValue(FloorValue):
         from sugar_source_tree.panic import SugarNotWritten
 
         if type(index) is not SliceValue:
-            raise SugarNotWritten(
-                blame=site,
-                owner="TupleCoordinateValue.subscript",
-                observed="member lookup without authenticated tuple members",
-                requested="SliceValue projection or finite tuple testimony",
-                fix="retain unknown tuple members; do not invent finite_elements",
+            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+            from sugar_lift_py_tests.ir import ctor
+
+            # Name the lookup without inventing the member. RaisesExc reads
+            # ``self.expected_exceptions[0]`` after a bodyless ``tuple(...)``
+            # writes this coordinate. Members stay unknown: emit
+            # ``py.subscript`` over the construction term the same way
+            # ``truth`` emits ``py.truthy`` and ``format_data_model`` names
+            # ``call:__format__`` without inventing the formatted string.
+            return Complete(
+                CallSiteValue(
+                    target_name="__getitem__",
+                    arg_values=(self, index),
+                    parameters=(),
+                    term=ctor(
+                        "py.subscript",
+                        (
+                            self.to_term(owner="TupleCoordinateValue.subscript"),
+                            index.to_term(owner="TupleCoordinateValue.subscript"),
+                        ),
+                        symbol_kind="coordinate",
+                    ),
+                    body=None,
+                    site=site,
+                )
             )
         if type(occurrence) is not SourceFragmentCoordinateV1:
             raise SugarNotWritten(
