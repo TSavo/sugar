@@ -4091,3 +4091,90 @@ def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
         assert not (
             len(exits.exits) == 1 and type(exits.exits[0]).__name__ == "Completed"
         )
+
+
+_DOTTED_TUPLE_RESOURCE = (
+    "class Boundary:\n"
+    "    def __init__(self, payload):\n"
+    "        self.payload = payload\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "    def __exit__(self, effect_type, effect, traceback):\n"
+    "        return False\n\n"
+    "def boundary(payload):\n"
+    "    return Boundary(payload)\n\n"
+    "class MyError(Exception):\n"
+    "    pass\n"
+)
+
+
+@pytest.mark.parametrize("parameter", ["payload", "expected"])
+@pytest.mark.parametrize("keyword", [False, True])
+def test_dotted_tuple_preconstruction_preserves_member_testimony_and_resource_contract(
+    tmp_path, parameter, keyword
+):
+    """Tuple members take the scalar construction door before frame binding."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+        ProtocolResourceSemanticsV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+    )
+    from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+        AuthenticatedExceptionTypeValue,
+    )
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithSourceResourceSugar,
+    )
+
+    argument = "(ValueError, arbitrary.MyError)"
+    if keyword:
+        argument = f"{parameter}={argument}"
+    tree, context = _attribute_exception_tree(
+        tmp_path,
+        manager=f"arbitrary.boundary({argument})",
+        body="pass",
+        implementation=_DOTTED_TUPLE_RESOURCE.replace("payload", parameter),
+    )
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1)
+    assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(
+        reference.semantics.exit.disposition, NeverSuppressesDispositionV1
+    )
+    # A type operand does not turn a nonsuppressing resource into Expects-Raise.
+    assert isinstance(
+        next(n for n in tree.nodes() if n.kind == "With").sugar(),
+        WithSourceResourceSugar,
+    )
+    projected = reference.protocol.receiver_state.attribute(
+        parameter, "tuple-preconstruction"
+    )
+    assert isinstance(projected, Complete)
+    assert isinstance(projected.value, TupleValue)
+    assert len(projected.value.elements) == 2
+    member = projected.value.elements[1]
+    assert isinstance(member, AuthenticatedExceptionTypeValue)
+    assert member.exception_type_identity() == ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const("arbitrary.manager.MyError")],
+    )
+    assert member.class_value is not None
+    assert member.exception_type_mro() is not None
+
+
+def test_dotted_tuple_preconstruction_keeps_missing_provider_member_loud(tmp_path):
+    from sugar_source_tree.panic import UnattributableRefusal
+
+    with pytest.raises(UnattributableRefusal) as caught:
+        _attribute_exception_tree(
+            tmp_path,
+            manager="arbitrary.boundary((ValueError, arbitrary.MissingError))",
+            body="pass",
+            implementation=_DOTTED_TUPLE_RESOURCE,
+        )
+    assert caught.value.owner == "provider_exception_type_construction"
