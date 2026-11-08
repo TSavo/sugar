@@ -2152,6 +2152,49 @@ def _populate_assigned_partition_manager_uses(
         )
 
 
+
+def _constructor_application_bindings(call, application, *, owner_cid: str, term_owner: str):
+    """Seal constructor actuals so effect-boundary derivation can project them.
+
+    ``_derive_effect_boundary`` matches the exit formula against
+    ``behavior.formal_actual_values``. Same-module ClassDef uses previously
+    left those empty, so an expects-raise ``__exit__`` collapsed to
+    ``exit-may-halt`` even when the constructor actual was a builtin like
+    ``ValueError``. Bindings must carry testimony of the same term CID
+    ``ConstructedManagerBehaviorV1`` checks against those values.
+    """
+    from sugar_lift_py_tests.ir import _term_content_cid
+    from sugar_source_tree.binding_provenance import (
+        BindingCoordinateV1,
+        ConstructedValueTestimonyV1,
+    )
+    from sugar_source_tree.binding_state import BindingEntryV1, BoundBindingStateV1
+    from sugar_source_tree.panic import SugarNotWritten
+
+    nodes = (*call.args, *(keyword.value for keyword in call.keywords))
+    values = tuple(application.arguments)
+    if len(nodes) != len(values):
+        return None
+    bindings = []
+    for index, (node, value) in enumerate(zip(nodes, values, strict=True)):
+        try:
+            term_cid = _term_content_cid(value.to_term(owner=term_owner))
+            testimony = ConstructedValueTestimonyV1.mint(node.fragment, term_cid)
+            coordinate = BindingCoordinateV1.mint(
+                owner_cid, node.fragment, ("constructor-actual", index)
+            )
+        except (SugarNotWritten, TypeError, ValueError):
+            return None
+        bindings.append(
+            BindingEntryV1(
+                coordinate=coordinate,
+                state=node,
+                sealed_state=BoundBindingStateV1(testimony),
+            )
+        )
+    return tuple(bindings)
+
+
 def _populate_same_module_class_manager_uses(source_file, context, uses) -> None:
     """Derive CM contracts for same-module ClassDef call managers.
 
@@ -2293,12 +2336,22 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             getattr(enter_method, "source_call_frame", None) if enter_method else None
         )
         frame_cid = getattr(frame, "frame_cid", None) or result.identity
+        actual_values = tuple(application_value.arguments)
+        bindings = _constructor_application_bindings(
+            call,
+            application_value,
+            owner_cid=class_def.fragment.seal().cid,
+            term_owner=target_symbol,
+        )
+        if bindings is None:
+            actual_values = ()
+            bindings = ()
         preimage = {
             "kind": "constructed-manager-behavior",
             "schemaVersion": "1",
             "resolvedObjectCid": target_symbol,
             "receiverStateCid": result.identity,
-            "formalActualBindings": [],
+            "formalActualBindings": [item.wire() for item in bindings],
             "sourceCallFrameCid": frame_cid,
             "factoryPrefixCids": [],
         }
@@ -2307,9 +2360,9 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             manager_construction_cid=cid_of_json(preimage),
             receiver_state=result,
             receiver_state_cid=result.identity,
-            formal_actual_bindings=(),
+            formal_actual_bindings=tuple(bindings),
             source_call_frame_cid=frame_cid,
-            formal_actual_values=(),
+            formal_actual_values=tuple(actual_values) if bindings else (),
             source_call_frame=frame,
             factory_prefix=(),
             factory_prefix_cids=(),
@@ -3534,6 +3587,47 @@ def _enter_exit_sites_from_class_def(class_def):
     return enter, exit_
 
 
+def _direct_with_call_uses(root) -> dict:
+    """Direct ``with Call(...)`` uses under ``root``.
+
+    This is the original enrollment route: a With/AsyncWith whose manager
+    expression is already a Call at the source occurrence. Projected
+    bare-Name managers (``with m:`` after substitute) are collected
+    separately; rewritten items that already carry a retained use-site
+    are skipped here so they cannot double-enroll.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_source_tree.nodes import AsyncWith, Call, With
+
+    uses = {}
+    for node in root.walk():
+        if not isinstance(node, (With, AsyncWith)):
+            continue
+        for item in node.items:
+            expr = item.context_expr
+            if not isinstance(expr, Call):
+                continue
+            if hasattr(item, "manager_use_site_start_line"):
+                continue
+            span = expr.line_col_span()
+            start_line, start_col, end_line, end_col = item._manager_use_site_span()
+            coordinate = SourceFragmentCoordinateV1(
+                expr.unit.source_cid,
+                start_line,
+                start_col,
+                end_line,
+                end_col,
+            )
+            uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
+                coordinate,
+                expr,
+                item._exit_face_id(),
+            )
+    return uses
+
+
 def _projected_manager_call_uses(source_file):
     """Project ordinary reaching assignments into context-manager call uses.
 
@@ -3549,7 +3643,8 @@ def _projected_manager_call_uses(source_file):
 
     manager_scope_types = (With, AsyncWith)
 
-    uses = {}
+    # Preserve the original direct-call route exactly.
+    uses = _direct_with_call_uses(source_file.root)
 
     def collect(root, *, projected_names: bool) -> None:
         for node in root.walk():
@@ -3592,8 +3687,6 @@ def _projected_manager_call_uses(source_file):
                     item._exit_face_id(),
                 )
 
-    # Preserve the original direct-call route exactly.
-    collect(source_file.root, projected_names=False)
 
     # Project frames that contain a bare-Name manager — single-item
     # ``with m:`` and multi-item ``with m, n:`` alike.  The multi-item

@@ -2280,6 +2280,40 @@ def _module_materialize_key(
     )
 
 
+def _publish_nested_same_module_manager_uses(function, context, source_file) -> None:
+    """Publish same-module ClassDef CM contracts for With sites in ``function``.
+
+    ``source_visible_call_frame`` sugars every body statement before any
+    path-sensitive reduce, including a nested ``with LocalClass(...)`` that
+    consumer populate never walked. Those sites use the same derivation
+    door as a consumer-file same-module constructor; publish them onto the
+    function unit's live construction context so the require door can read
+    a real contract rather than panicking as a missing derivation.
+
+    The captured ``context`` argument can go stale: a later SourceFile of
+    the same source CID replaces the interned unit's table, and With
+    looks up that live table. Write there, not to the captured object.
+    """
+    if function is None:
+        return
+    live_context = getattr(
+        getattr(function, "unit", None), "construction_context", None
+    )
+    if live_context is None:
+        live_context = context
+    if live_context is None:
+        return
+    from .manager_summary_derivation import (
+        _direct_with_call_uses,
+        _populate_same_module_class_manager_uses,
+    )
+
+    uses = _direct_with_call_uses(function)
+    if not uses:
+        return
+    _populate_same_module_class_manager_uses(source_file, live_context, uses)
+
+
 def _resolve_source_visible_frame_uncached(
     resolved: ResolvedPythonObjectV1,
     *,
@@ -2401,6 +2435,7 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
+        _publish_nested_same_module_manager_uses(target, context, source_file)
         frame = with_mutable_globals(target.source_visible_call_frame())
         if frame.parameters and frame.parameters[0] == "self":
             frame = replace(
@@ -2781,6 +2816,9 @@ def _resolve_source_visible_frame_uncached(
                     context=context,
                     dependency_graphs=dependency_graphs,
                 )
+            _publish_nested_same_module_manager_uses(
+                function, context, source_file
+            )
             frames[function.name] = with_mutable_globals(
                 function.source_visible_call_frame()
             )
@@ -2985,6 +3023,9 @@ def _construct_reachable_decorated_class_bindings(
     for definition in decorator_functions:
         frame = frames.get(definition.name)
         if frame is None:
+            _publish_nested_same_module_manager_uses(
+                definition, context, source_file
+            )
             frame = definition.source_visible_call_frame()
         elif frame.owner is not definition:
             from sugar_source_tree.panic import BackendDefect

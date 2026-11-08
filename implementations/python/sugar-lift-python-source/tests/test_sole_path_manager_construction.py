@@ -649,6 +649,48 @@ def test_raises_style_kwargs_return_attaches_constructor_body(tmp_path):
     assert fields["expected_exception"] is actual.value
 
 
+def test_factory_nested_same_module_with_derives_before_frame_projection(tmp_path):
+    """A callee nested ``with LocalClass()`` uses the same-module derivation door.
+
+    ``source_visible_call_frame`` sugars every body statement, including a
+    nested With that consumer populate never walked. The inner constructor
+    is a same-module ClassDef, so the factory frame must read a published
+    contract — not a missing-derivation panic and not a soft unresolved With.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected_exception\n\n"
+        "def raises(expected_exception=None):\n"
+        "    with RaisesExc(ValueError):\n"
+        "        raise ValueError('nested')\n"
+        "    return RaisesExc(expected_exception)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert "no context-manager derivation" not in detail, result
+    assert getattr(result, "kind", None) != "source-body-gap", result
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual.value
+
+
 def test_dual_mode_effect_boundary_installs_with_effect_boundary_sugar(tmp_path):
     """Vendor-neutral dual-mode factory populates EffectBoundary With sugar."""
     implementation = (
