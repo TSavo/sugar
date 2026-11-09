@@ -3742,12 +3742,119 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     return name_body(body)
 
 
-def _cited_opaque_nested_step_for(statement):
+def _generator_substitution_scope(frame) -> dict:
+    """The same formal scope used to emit this frame's generator steps.
+
+    After bind, that is the runtime BindingEntryV1 roster. Before bind, it is
+    the unspecialized BindingCoordinateRef for each formal. Does not invent
+    actuals or a default.
+    """
+    owner = getattr(frame, "owner", None)
+    parameters = tuple(getattr(frame, "parameters", ()) or ())
+    entries = tuple(getattr(frame, "runtime_entries", ()) or ())
+    if owner is not None and entries and len(entries) == len(parameters):
+        return dict(zip(parameters, entries, strict=True))
+    coordinates = tuple(getattr(frame, "formal_coordinates", ()) or ())
+    params = tuple(getattr(owner, "params", ()) or ()) if owner is not None else ()
+    if (
+        owner is not None
+        and coordinates
+        and len(coordinates) == len(params) == len(parameters)
+    ):
+        return {
+            param.name: owner._make_coordinate_ref(param, coordinate)
+            for param, coordinate in zip(params, coordinates, strict=True)
+        }
+    return {}
+
+
+def _cite_formals_in_if_guards(statements, scope):
+    """Rewrite ``if`` tests to cite bound formals, leaving ``for`` nodes intact.
+
+    Full body substitution would run For.substitute and can replace a
+    symbolic for with LoopRecurrenceStatement, which this namer does not
+    seat. Only If tests are substituted; nested Ifs inside try/for bodies
+    are rewritten the same way. Does not invent a default actual.
+    """
+    from sugar_source_tree.nodes import For, If, Try, While
+    from sugar_source_tree.shadow import rewrite
+
+    if not scope or not statements:
+        return statements
+
+    def rewrite_stmts(stmts):
+        if not stmts:
+            return stmts
+        out = []
+        changed = False
+        for stmt in stmts:
+            new = rewrite_stmt(stmt)
+            out.append(new)
+            if new is not stmt:
+                changed = True
+        return tuple(out) if changed else stmts
+
+    def rewrite_stmt(stmt):
+        if isinstance(stmt, If):
+            new_test = stmt.test.substitute(scope)
+            body = rewrite_stmts(stmt.body)
+            orelse = rewrite_stmts(stmt.orelse)
+            changes = {}
+            if new_test is not stmt.test:
+                changes["test"] = new_test
+            if body is not stmt.body:
+                changes["body"] = body
+            if orelse is not stmt.orelse:
+                changes["orelse"] = orelse
+            return rewrite(stmt, **changes) if changes else stmt
+        if isinstance(stmt, Try):
+            changes = {}
+            body = rewrite_stmts(stmt.body)
+            finalbody = rewrite_stmts(stmt.finalbody)
+            orelse = rewrite_stmts(stmt.orelse)
+            if body is not stmt.body:
+                changes["body"] = body
+            if finalbody is not stmt.finalbody:
+                changes["finalbody"] = finalbody
+            if orelse is not stmt.orelse:
+                changes["orelse"] = orelse
+            if stmt.handlers:
+                new_handlers = []
+                handlers_changed = False
+                for handler in stmt.handlers:
+                    handler_body = rewrite_stmts(handler.body)
+                    if handler_body is handler.body:
+                        new_handlers.append(handler)
+                    else:
+                        handlers_changed = True
+                        new_handlers.append(rewrite(handler, body=handler_body))
+                if handlers_changed:
+                    changes["handlers"] = tuple(new_handlers)
+            return rewrite(stmt, **changes) if changes else stmt
+        if isinstance(stmt, (For, While)):
+            changes = {}
+            body = rewrite_stmts(stmt.body)
+            orelse = rewrite_stmts(stmt.orelse)
+            if body is not stmt.body:
+                changes["body"] = body
+            if orelse is not stmt.orelse:
+                changes["orelse"] = orelse
+            return rewrite(stmt, **changes) if changes else stmt
+        return stmt
+
+    return rewrite_stmts(statements)
+
+
+def _cited_opaque_nested_step_for(statement, *, scope=None):
     """Name a top-level cited-opaque With as a generator step, or None.
 
-    Leaves the With opaque when the body is unnameable, the as-target is not
-    a simple Name, or the manager expression is not a constructed term.
-    Does not invent enter or exit testimony.
+    Cites formals in ``if`` guards through the frame's formal scope, so an
+    ``if expected_warning:`` is the bound formal rather than a free NameSugar.
+    Does not run For.substitute, which would rewrite a symbolic for into a
+    loop-recurrence the namer cannot seat. Leaves the With opaque when the
+    body is unnameable, the as-target is not a simple Name, or the manager
+    expression is not a constructed term. Does not invent enter or exit
+    testimony, a decided guard, or a default actual.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         OpaqueCitedContextManagerRefV1,
@@ -3767,7 +3874,10 @@ def _cited_opaque_nested_step_for(statement):
         PartitionedOpaqueCitedContextManagerRefV1,
     ):
         return None
-    body_steps = _nameable_nested_with_body_steps(statement.body)
+    body = statement.body
+    if scope:
+        body = _cite_formals_in_if_guards(statement.body, scope)
+    body_steps = _nameable_nested_with_body_steps(body)
     if body_steps is None:
         return None
     try:
@@ -3813,7 +3923,9 @@ def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
     with_stmts = [stmt for stmt in getattr(owner, "body", ()) or () if isinstance(stmt, With)]
     cited_by_cid = {}
     for stmt in with_stmts:
-        named = _cited_opaque_nested_step_for(stmt)
+        named = _cited_opaque_nested_step_for(
+            stmt, scope=_generator_substitution_scope(frame)
+        )
         if named is not None:
             cited_by_cid[stmt.fragment.seal().cid] = named
     src_by_cid = {}
