@@ -267,3 +267,35 @@ def test_nested_exit_with_unprojected_match_does_not_invent_no_message():
     )
     assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
 
+
+def test_none_func_formal_is_not_cited_by_exc_type_is_none():
+    """``func=None`` is not the expected type of ``if exc_type is None``."""
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
+        extra_actuals=(NoneValue(),),
+    )
+    formula = and_([not_(_no_effect_formula()), _matches_formula()])
+    assert (
+        derivation._formal_index_for_coordinate(
+            formula, _actual_terms(behavior), "python:exit_type"
+        )
+        is None
+    )
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
+    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
+
+    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
+
+
+def test_uncited_kwargs_match_is_not_no_message_pattern():
+    """A factory ``**kwargs`` pattern that was not cited is not omitted."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+
+    boom = StringValue("boom")
+    kwargs = DictValue(((StringValue("match"), boom),))
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
+        extra_actuals=(kwargs,),
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
