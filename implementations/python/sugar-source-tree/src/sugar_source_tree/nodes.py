@@ -7675,7 +7675,14 @@ class For(Statement):
         substitution) is a literal `int` -- a symbolic bound leaves the fold
         real, so it is not recognized here."""
         if iterable.kind in ("List", "Tuple"):
-            return list(iterable.elts)
+            elements = list(iterable.elts)
+            if any(For._is_ground_zero_division(self, element) for element in elements):
+                # A ground ZeroDivisionError is an effect, not a concrete
+                # element -- the same refusal _concrete_int already makes for
+                # a range bound. Unrolling would drop the raise when the
+                # target is unused.
+                return None
+            return elements
         if (
             iterable.kind == "Call"
             and iterable.func.kind == "Name"
@@ -7727,6 +7734,19 @@ class For(Statement):
                 "Mod": lambda: left % right,
             }.get(op, lambda: None)()
         return None
+
+
+    def _is_ground_zero_division(self, arg: "Expression") -> bool:
+        """A ground ``/``, ``//``, or ``%`` by zero is an effect, not an element.
+
+        ``_concrete_int`` already refuses ``//`` and ``%`` by zero as an int
+        (range bounds). A list or tuple display whose element is that same
+        ground ZeroDivisionError is not a concrete iterable.
+        """
+        if arg.kind != "BinOp" or arg.op.kind not in ("Div", "FloorDiv", "Mod"):
+            return False
+        right = For._concrete_int(self, arg.right)
+        return right == 0
 
     def _int_constant(self, value: int) -> "Node":
         """Synthesize an int `Constant` node bound to `value`, borrowing this
