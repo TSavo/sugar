@@ -53,12 +53,14 @@ Anything that does not shrink the worklist or run the final pass is off plan. Sa
 |---|---|---|
 | 2026-09-24 | `20cf4ede1` | Last board that completed (run 35993411797). 1421 files: 1197 constructed, 223 refused by name, 1 over the 300 s ceiling. 0 files missing, 0 functions unaccounted. |
 | 2026-11-09 | `67033f579` | Plan v2 written. No board has completed since 2026-09-24. The process-floor run (native crashes, bare exceptions, timeouts) last succeeded on 2026-07-26 (run 30203371734). |
+| 2026-11-09 | `5ed7a85fc` | A one-file run costs one file: the provisional demand door resolves one source at a time. `core/arrays/categorical.py` alone seals in 3.8 s; before, every run first derived the whole-corpus table (6+ minutes). |
+| 2026-11-09 | on `5ed7a85fc` | `pandas/core/groupby/generic.py` constructs. Alone it ends completed, 65 of 65 functions, 0 gaps, 0 construction panics, in 17 to 27 s. Cause of the ceiling: `FunctionDef._owns_yield` walked the constructed DAG as a tree (5.1 million visits for 197 statements). One-file measurement, not a board. |
 
 ### Worklist
 
 From the 2026-09-24 board. Refresh it on the next corpus pass.
 
-1. `pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.
+1. ~~`pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.~~ Closed 2026-11-09; the corpus pass confirms it.
 2. Native crashes and bare exceptions: not measured since 2026-07-26.
 
 ### Residue on that board
