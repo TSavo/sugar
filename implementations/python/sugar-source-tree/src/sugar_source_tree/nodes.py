@@ -13179,7 +13179,69 @@ class Name(Expression):
     def _construct_sugar(self):
         """A name constructs NameSugar with its identifier. A name is a leaf:
         nothing to build from children, only to look up against the temporal
-        scope when the body reduces (an unbound name panics there, loudly)."""
+        scope when the body reduces (an unbound name panics there, loudly).
+
+        A seated import value-use receipt for ``from re import Pattern``
+        constructs the same ImportMemberSugar Attribute uses for ``re.Pattern``.
+        A module-alias Name (``import re``) has no member path and stays a
+        NameSugar so we do not invent an empty-path import member.
+        """
+        span = self.line_col_span()
+        receipt = self.unit.import_value_use_resolution(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+        if type(receipt) is AuthenticatedImportUseV1:
+            receipt.revalidate()
+            site = receipt.use["useSite"]
+            if (
+                receipt.source_cid != self.unit.source_cid
+                or site.get("sourceCid") != self.unit.source_cid
+                or (
+                    site.get("startLine"),
+                    site.get("startCol"),
+                    site.get("endLine"),
+                    site.get("endCol"),
+                )
+                != (span.start_line, span.start_col, span.end_line, span.end_col)
+            ):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=self.fragment,
+                    owner="Name._construct_sugar",
+                    observed="import value-use receipt does not own this Name",
+                    requested="same-source exact Name occurrence testimony",
+                    fix="consume the receipt only at its producer-minted useSite",
+                )
+            from sugar_lift_py_tests.floor.import_member_value import (
+                _import_member_export_path,
+            )
+
+            if _import_member_export_path(receipt):
+                from sugar_lift_py_tests.sugar.import_member_sugar import (
+                    ImportMemberSugar,
+                )
+
+                qualified_name = receipt.target_symbol
+                if not qualified_name.startswith("python:"):
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        blame=self.fragment,
+                        owner="Name._construct_sugar",
+                        observed=f"target_symbol={qualified_name!r}",
+                        requested="authenticated python: import target symbol",
+                        fix="preserve the lexical receipt targetSymbol unchanged",
+                    )
+                qualified_name = qualified_name[len("python:") :]
+                return ImportMemberSugar(
+                    qualified_name=qualified_name,
+                    receipt=receipt,
+                    site=self.fragment,
+                )
+
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         return NameSugar(name=self.id, site=self.fragment)

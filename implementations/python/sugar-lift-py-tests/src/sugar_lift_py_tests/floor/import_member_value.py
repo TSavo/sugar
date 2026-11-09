@@ -48,7 +48,7 @@ class ImportMemberValue(FloorValue):
             or self.import_binding_cid != self.receipt.import_binding.cid
             or self.use_cid != self.receipt.use["cid"]
             or self.exported_member_path
-            != tuple(self.receipt.use["exportedMemberPath"])
+            != _import_member_export_path(self.receipt)
         ):
             raise ValueError("ImportMemberValue receipt authority mismatch")
 
@@ -59,6 +59,22 @@ class ImportMemberValue(FloorValue):
     def runtime_type_is_decided(self) -> bool:
         """Module export runtime type is not lift-time decided from the path alone."""
         return False
+
+    def test_python_type(self, value, site):
+        """Cite this export as the isinstance type operand.
+
+        The source used the import as classinfo. The type identity is the
+        authenticated qualified name (``re.Pattern``), not a free ``Pattern``
+        Var. A ground string answers False for any authenticated type other
+        than ``str``.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return value.python_isinstance(
+            self.qualified_name,
+            ctor("python:type", [str_const(self.qualified_name)]),
+            site,
+        )
 
     def to_term(self, *, owner: str):
         del owner
@@ -261,6 +277,29 @@ def _import_member_runtime_effect(
     )
 
 
+def _import_member_export_path(receipt) -> tuple[str, ...]:
+    """Member path from the use (``re.Pattern``) or the ImportFrom binding.
+
+    A Name use of ``from re import Pattern`` stores an empty
+    ``exportedMemberPath`` on the use; the binding already carries
+    ``exportedPath=["Pattern"]``. A module-alias Name (``import re``) has
+    an empty path on both and is not an import member.
+    """
+    use_path = tuple(receipt.use.get("exportedMemberPath") or ())
+    if use_path:
+        return use_path
+    value = receipt.import_binding.to_value()
+    target = value.get("target")
+    if not isinstance(target, dict):
+        return ()
+    path = target.get("exportedPath")
+    if not isinstance(path, list) or any(
+        not isinstance(part, str) or not part for part in path
+    ):
+        return ()
+    return tuple(path)
+
+
 def _mint_import_member_value(receipt):
     """Module-private producer door from exact lexical import testimony."""
     from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
@@ -269,7 +308,7 @@ def _mint_import_member_value(receipt):
         raise TypeError("ImportMemberValue requires exact authenticated receipt")
     receipt.revalidate()
     target = receipt.target_symbol
-    path = tuple(receipt.use["exportedMemberPath"])
+    path = _import_member_export_path(receipt)
     if not target.startswith("python:") or not path:
         raise ValueError("ImportMemberValue receipt has no imported member path")
     return ImportMemberValue(
