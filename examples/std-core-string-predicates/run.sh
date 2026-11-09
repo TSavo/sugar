@@ -320,4 +320,4 @@ PY
 
 echo "toolchain-detail: $RUSTC_VERBOSE"
 echo "std/core string predicate showcase self-check passed"
-printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"
+[ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "$SHOWCASE_SUBJECT_WITNESS"

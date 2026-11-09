@@ -338,6 +338,34 @@ fn witnesses_from_cargo_run(
     ))
 }
 
+/// Env vars through which an INVOKER's build policy -- not the subject's --
+/// reaches rustc. The repo `Makefile` exports `RUSTFLAGS=-D warnings` for
+/// sugar's own workspace build; inherited by the subject's `cargo test`, a mere
+/// dead-code lint in the subject aborts compilation (exit 101) before any test
+/// testimony exists, and an env `RUSTFLAGS` also silently REPLACES the subject's
+/// own `build.rustflags` config. This kit lifts test testimony; it does not
+/// enforce the invoker's lint policy on the subject. The subject's own policy
+/// (`#![deny(..)]`, `[lints]`, its `.cargo/config.toml`) still applies.
+const INVOKER_RUSTFLAGS_ENV: &[&str] = &[
+    "RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_BUILD_RUSTFLAGS",
+    "RUSTDOCFLAGS",
+];
+
+/// `cargo test <args>` in the subject's directory under the subject's OWN build
+/// policy: the invoker's rustflags carriers (`INVOKER_RUSTFLAGS_ENV`) are shed.
+/// Both the mint-time suite run and the verify-time single-test probe go through
+/// here so the two runs compile the subject identically.
+fn subject_cargo_test(project_dir: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("test").args(args).current_dir(project_dir);
+    for key in INVOKER_RUSTFLAGS_ENV {
+        cmd.env_remove(key);
+    }
+    cmd
+}
+
 /// Run the project's tests ONCE and content-address EACH test as its own witness.
 /// `--no-fail-fast` so a failing test does not suppress later test binaries (which
 /// would change the test SET and break bundle reproduction). stdout is parsed for
@@ -349,9 +377,7 @@ pub fn run_suite_witnesses(
 ) -> Result<Vec<Witness>, String> {
     let cc = code_cid(project_dir, code_files)?;
     let rc = runtime_cid();
-    let output = Command::new("cargo")
-        .args(["test", "--no-fail-fast", "--", "--test-threads=1"])
-        .current_dir(project_dir)
+    let output = subject_cargo_test(project_dir, &["--no-fail-fast", "--", "--test-threads=1"])
         .output()
         .map_err(|e| format!("spawn `cargo test`: {e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -717,9 +743,7 @@ pub fn run_one_test_witness(
 ) -> Result<Witness, String> {
     let cc = code_cid(project_dir, code_files)?;
     let rc = runtime_cid();
-    let output = Command::new("cargo")
-        .args(["test", test_id, "--", "--exact"])
-        .current_dir(project_dir)
+    let output = subject_cargo_test(project_dir, &[test_id, "--", "--exact"])
         .output()
         .map_err(|e| format!("spawn `cargo test {test_id} -- --exact`: {e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
