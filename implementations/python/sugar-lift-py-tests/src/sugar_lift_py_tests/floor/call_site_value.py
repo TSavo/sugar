@@ -1455,6 +1455,15 @@ class CallSiteValue(FloorValue):
             value = _project_authenticated_source_return(
                 complete_value(outcome, owner=owner)
             )
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+
+        if isinstance(value, BlockValue):
+            # A block is control-flow testimony, not a semantic value.
+            # ``matches()`` retains several GuardedReturns (early ``return False``
+            # arms and ``return self._check_check(...)``). Leave the projection
+            # absent so ``not self.matches(...)`` stands on CallSiteValue.truth
+            # instead of inventing one bool via BlockValue.truth.
+            return None
         if isinstance(value, CallSiteValue):
             return value._dig_floor_or_none(
                 reduce_ctx,
