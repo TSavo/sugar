@@ -758,14 +758,15 @@ def _provisional_resolution_events(
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         context_manager_resolution_outcome,
+        resolutions_for_source,
     )
 
     events: list[dict[str, Any]] = []
     for coordinate, resolution in sorted(
-        (getattr(contract_refs, "by_use_site", None) or {}).items()
+        resolutions_for_source(
+            getattr(contract_refs, "by_use_site", None), source_cid
+        ).items()
     ):
-        if getattr(coordinate, "source_cid", None) != source_cid:
-            continue
         events.append(
             {
                 "inputKey": coordinate.wire(),
