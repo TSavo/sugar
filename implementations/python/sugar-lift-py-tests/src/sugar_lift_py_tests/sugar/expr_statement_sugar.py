@@ -30,11 +30,6 @@ class ExprStatementSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.sugar.warning_observation_producer import (
-            project_warning_observation,
-        )
-
         # Reduce the value (effects propagate via and_then). A completed value
         # in statement position STATES nothing -- but it is not erased: it rides
         # as a record entry, contributing only what its own floor defaults give
@@ -52,10 +47,58 @@ class ExprStatementSugar(Sugar):
         # that does not authenticate keeps its ordinary call coordinate and the
         # boundary names it unresolved; it is never read as "no warning".
         return self.value.desugar(ctx).and_then(
-            lambda value: Complete(
-                BlockValue(
-                    (project_warning_observation(value) or value,),
-                    can_fall_through=True,
-                )
-            )
+            lambda value: self._record_statement_value(value, ctx)
         )
+
+    def _record_statement_value(self, value, ctx):
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.sugar.warning_observation_producer import (
+            project_warning_observation,
+        )
+
+        recorded = project_warning_observation(value) or value
+        # ``super().__init__(...)`` is a constructor call in statement
+        # position: it exists for its field stores, not as a value. Leaving
+        # the CallSiteValue unreduced dropped AbstractRaises.__init__ stores
+        # (``self._fail_reason: str | None = None``). Reducing the body
+        # alone is not enough: those stores update a nested temporal and
+        # ``__init__`` returns None, so the constructing receiver never
+        # sees them. Splice unguarded receiver-field stores from the
+        # completed body into this statement's record so the outer
+        # constructor block can apply them. Guarded stores stay in the
+        # nested ExitSet (the ``isinstance(match, str)`` arms) rather
+        # than being flattened onto one receiver. Keep the call
+        # coordinate so effect routing still sees the call.
+        if (
+            isinstance(value, CallSiteValue)
+            and value.body is not None
+            and (
+                value.target_name == "__init__"
+                or value.target_name.endswith(".__init__")
+            )
+        ):
+            from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
+                GuardedReceiverFieldStoreValue,
+            )
+            from sugar_lift_py_tests.floor.receiver_field_store_value import (
+                ReceiverFieldStoreValue,
+            )
+
+            def pack(result):
+                extras = ()
+                if isinstance(result, BlockValue):
+                    extras = tuple(
+                        statement
+                        for statement in result.statements
+                        if isinstance(statement, ReceiverFieldStoreValue)
+                        and not isinstance(
+                            statement, GuardedReceiverFieldStoreValue
+                        )
+                    )
+                return Complete(
+                    BlockValue((recorded, *extras), can_fall_through=True)
+                )
+
+            return value.reduce_source_outcome(ctx).and_then(pack)
+        return Complete(BlockValue((recorded,), can_fall_through=True))
