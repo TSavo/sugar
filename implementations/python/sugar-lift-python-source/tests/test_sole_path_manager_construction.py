@@ -3080,6 +3080,54 @@ def test_installed_pytest_raises_excinfo_type_is_the_raised_class(tmp_path):
     assert returned is builtin_name_temporal().value_if_bound("ValueError")
 
 
+def test_installed_pytest_raises_excinfo_value_is_the_raised_instance(tmp_path):
+    """``excinfo.value`` is the already-authenticated raised instance."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    consumer = (
+        "import pytest\n"
+        "def use_boundary():\n"
+        "    with pytest.raises(ValueError) as excinfo:\n"
+        '        raise ValueError("boom")\n'
+        "    return excinfo.value\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    pytest_distribution = importlib.metadata.distribution("pytest")
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({pytest_distribution.metadata["Name"]})
+        ),
+    )
+    fn = next(node for node in tree.nodes() if node.kind == "FunctionDef")
+    exits = outcome_to_exitset(fn.sugar().desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Completed)
+    record = exits[0].value.record
+    returned = next(
+        entry.value
+        for entry in record.statements
+        if isinstance(entry, ReturnValue)
+    )
+    assert isinstance(returned, CallSiteValue)
+    assert returned.target_name == "ValueError"
+    assert returned.arg_values == (StringValue("boom"),)
+
+
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
     """Real producer advances to its first still-opaque native transition.
 

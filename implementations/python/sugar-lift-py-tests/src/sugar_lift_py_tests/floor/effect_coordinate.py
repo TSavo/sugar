@@ -123,11 +123,13 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
 
     def attribute(self, name, site):
         if name == "value":
+            from sugar_lift_py_tests.floor.floor_value import FloorValue
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(
-                ObservedEffectValue(slot_id=self.slot_id, effect=self.effect, site=site)
-            )
+            raised = getattr(self.effect, "raised_value", None)
+            if isinstance(raised, FloorValue):
+                return Complete(raised)
+            return FloorValue.attribute(self, name, site)
         if name == "type":
             from sugar_lift_py_tests.outcome import Complete
 
