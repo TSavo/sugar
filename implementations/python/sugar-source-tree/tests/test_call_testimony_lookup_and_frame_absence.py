@@ -55,6 +55,26 @@ def test_lookup_field_is_excluded_from_testimony_and_plain_field_is_not() -> Non
         constructed_value_cid_v2(_Walked("x", {key: "frame"}))
 
 
+@dataclass(frozen=True)
+class _Authorized:
+    name: str
+    token: object = field(default=None, metadata={"testimony": "authority"})
+
+
+@dataclass(frozen=True)
+class _Unauthorized:
+    name: str
+    token: object = field(default=None)
+
+
+def test_authority_field_is_excluded_from_testimony_and_plain_object_is_not() -> None:
+    assert constructed_value_cid_v2(_Authorized("x", object())) == (
+        constructed_value_cid_v2(_Authorized("x", object()))
+    )
+    with pytest.raises(ConstructedValueCategoryGap, match="builtins.object"):
+        constructed_value_cid_v2(_Unauthorized("x", object()))
+
+
 def _class_constructor_call(tmp_path):
     path = tmp_path / "ctor.py"
     path.write_text(

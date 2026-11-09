@@ -429,3 +429,19 @@ def test_guarded_subscript_preserves_foreign_occurrence_refusal(
     assert raised.value.owner == "TupleCoordinateValue.subscript"
     assert raised.value.observed == "slice use occurrence outside tuple source"
     assert raised.value.requested == "same-source authenticated slice occurrence"
+
+
+def test_tuple_coordinate_omits_producer_authority_from_constructed_value(
+    tmp_path: Path,
+) -> None:
+    from sugar_source_tree.binding_state import _cv2_entries, constructed_value_cid_v2
+
+    call, _ = _nodes(_tree(tmp_path, "authority.py"))
+    constructed = _value(call.sugar().desugar(_context("tuple-coordinate-authority")))
+    assert isinstance(constructed, TupleCoordinateValue)
+    assert constructed_value_cid_v2(constructed).startswith("blake3-512:")
+    _semantic_type, entries = _cv2_entries(constructed)
+    names = [at for at, _child in entries]
+    assert "_producer_owner" not in names
+    assert "source" in names
+    assert "coordinate_cid" in names
