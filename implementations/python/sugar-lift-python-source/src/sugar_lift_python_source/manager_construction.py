@@ -2849,6 +2849,13 @@ def _resolve_source_visible_frame_uncached(
             if classification == "frame-bound-value":
                 # Bound HERE: a value, not a symbol.  The export door is never
                 # asked, because there is nothing for it to look up.
+                # An authenticated classmethod receiver is the bound class
+                # itself: after substitution ``return cls(...)`` is a
+                # computed call of that class, not higher-order dispatch of
+                # an unknown formal.  ``return helper()`` on an ordinary
+                # function stays parked (see the value-call-target twins).
+                if name == _classmethod_receiver_name(function):
+                    continue
                 blocked.append((call, name, "value-call-target"))
                 continue
             declined = external_opaque.get(name)
@@ -3596,6 +3603,25 @@ def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:
         and span.end_line == definition.end_line
         and span.end_col == definition.end_col
     )
+
+
+def _classmethod_receiver_name(function: FunctionDef) -> str | None:
+    """The first formal of an authenticated ``@classmethod``, or ``None``.
+
+    Calling that formal constructs the class bound as the receiver.  The
+    descriptor is authenticated the same way Call prepends the attribute
+    receiver: a single lexical ``classmethod`` decorator with no same-named
+    module binding.  A module-level ``return helper()`` has no class owner
+    and stays a value-call.
+    """
+    if not function.params:
+        return None
+    class_owner = function.unit.lexical_class_owner_for(function)
+    if class_owner is None:
+        return None
+    if class_owner._method_descriptor_kind(function) != "classmethod":
+        return None
+    return function.params[0].name
 
 
 def _classify_named_call_target(
