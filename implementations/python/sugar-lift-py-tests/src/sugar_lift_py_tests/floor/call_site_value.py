@@ -310,6 +310,15 @@ class CallSiteValue(FloorValue):
                     site=site,
                 )
             )
+        if name == "args" and self.exception_type_coordinate is not None:
+            # BaseException.args is the constructor's positional arguments.
+            # Only an authenticated exception instance has that field; an
+            # ordinary unexecuted call still has no runtime type, so .args
+            # stays a named third value rather than inventing a tuple.
+            from sugar_lift_py_tests.floor.tuple_value import TupleValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TupleValue(elements=self.arg_values))
         return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
 
     def _identity(self) -> tuple:

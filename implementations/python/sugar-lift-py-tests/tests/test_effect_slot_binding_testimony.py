@@ -310,6 +310,49 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
     assert caught.value.info.observed == "ObservedExceptionInfoValue"
 
 
+def test_exception_callsite_args_are_the_constructor_arguments() -> None:
+    """An authenticated exception instance projects ``.args`` as those actuals."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
+
+    boom = StringValue("boom")
+    identity = ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("ValueError")],
+    )
+    instance = CallSiteValue(
+        target_name="ValueError",
+        arg_values=(boom,),
+        parameters=(),
+        term=ctor("call:ValueError", [str_const("boom")]),
+        body=None,
+        exception_type_coordinate=identity,
+    )
+    projected = instance.attribute("args", site=None)
+    assert isinstance(projected, Complete)
+    assert projected.value == TupleValue(elements=(boom,))
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    site = SourceFragmentCoordinateV1("blake3-512:" + "a" * 128, 1, 0, 1, 6)
+    ordinary = CallSiteValue(
+        target_name="ValueError",
+        arg_values=(boom,),
+        parameters=(),
+        term=ctor("call:ValueError", [str_const("boom")]),
+        body=None,
+    )
+    with pytest.raises(SugarNotWritten) as caught:
+        ordinary.attribute("args", site=site)
+    assert "CallSiteValue.args" in caught.value.observed
+
+
 def test_no_process_identity_in_slot_fallback() -> None:
     """nodes._effect_slot_id must not call id(self) as a fallback."""
     import re
