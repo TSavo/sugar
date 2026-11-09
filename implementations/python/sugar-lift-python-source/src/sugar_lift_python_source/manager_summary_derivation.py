@@ -3582,6 +3582,8 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
 
     A handler-free try/finally whose cleanup is term-only (or ``pass``) composes
     as body steps plus FinallyStepV1, the same seating as a top-level generator.
+    A bare expression whose value is ConstructedTermSugar is TermStepV1, including
+    ``warnings.simplefilter(...)``; the term is not invented as a performed filter.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
@@ -3602,6 +3604,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         Return,
         Try,
         Yield,
+        YieldFrom,
     )
 
     def name_one(statement):
@@ -3614,6 +3617,21 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
             )
         if isinstance(statement, Expr) and isinstance(statement.value, Constant):
             return InertStepV1(statement.kind)
+        if (
+            isinstance(statement, Expr)
+            and not isinstance(statement.value, (Yield, YieldFrom))
+        ):
+            from sugar_lift_py_tests.generator_construction import TermStepV1
+            from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+            from sugar_source_tree.panic import SugarNotWritten
+
+            try:
+                value_sugar = statement.value.sugar()
+            except SugarNotWritten:
+                return None
+            if isinstance(value_sugar, ConstructedTermSugar):
+                return TermStepV1(value_sugar, statement.fragment.seal().cid)
+            return None
         if isinstance(statement, Pass):
             return InertStepV1(statement.kind)
         if (
