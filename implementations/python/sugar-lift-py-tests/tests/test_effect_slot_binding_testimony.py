@@ -272,13 +272,24 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
     assert typ.name == "ValueError"
     assert typ is builtin_name_temporal().value_if_bound("ValueError")
 
-    # .value stays the observed effect, not a newly invented instance.
-    value = observed.attribute("value", site=None)
-    from sugar_lift_py_tests.floor.effect_coordinate import ObservedEffectValue
+    # Without a raised instance, .value stays loud rather than substituting
+    # the observation wrapper for the exception.
+    with pytest.raises(ConstructionPanic) as caught:
+        observed.attribute("value", site=None)
+    assert caught.value.info.observed == "ObservedExceptionInfoValue"
 
+    from sugar_lift_py_tests.floor.string_value import StringValue
+
+    instance = StringValue("boom")
+    with_instance = ObservedExceptionInfoValue(
+        slot_id="S",
+        effect=RaiseEffect.for_builtin(
+            "ValueError", occurrence="route.py:3:0", raised_value=instance
+        ),
+    )
+    value = with_instance.attribute("value", site=None)
     assert isinstance(value, Complete)
-    assert isinstance(value.value, ObservedEffectValue)
-    assert value.value.effect is routed
+    assert value.value is instance
 
     with pytest.raises(ConstructionPanic) as caught:
         ExceptionInfoCoordinate(slot_id="S").attribute("type", site=None)
