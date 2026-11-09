@@ -640,12 +640,16 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "value": _generator_value_testimony(value.value, owner=owner),
         }
     if isinstance(value, GeneratorLoopBindingV1):
-        return {
+        payload = {
             "kind": "loop-binding",
             "coordinateCid": value.coordinate.cid,
-            "demandCid": value.demand_cid,
             "value": _generator_value_testimony(value.value, owner=owner),
         }
+        if value.demand_cid:
+            payload["demandCid"] = value.demand_cid
+        else:
+            payload["fragmentCid"] = value.fragment_cid
+        return payload
     if isinstance(value, NestedEnteredBindingV1):
         return {
             "kind": "nested-entered-binding",
@@ -910,10 +914,26 @@ class GeneratorAssignBindingV1:
 
 @dataclass(frozen=True)
 class GeneratorLoopBindingV1:
+    """One name bound by a ForStepV1 iteration.
+
+    An unpack target carries the unpack operation's ``demand_cid``. A bare
+    name target (projection path ``("target",)``) carries the for
+    fragment, not an invented unpack demand. Exactly one of those
+    authorities is present.
+    """
+
     coordinate: object
     value: object = field(compare=False, repr=False)
     occurrence: object = field(compare=False, repr=False)
-    demand_cid: str
+    demand_cid: str = ""
+    fragment_cid: str = ""
+
+    def __post_init__(self) -> None:
+        if bool(self.demand_cid) == bool(self.fragment_cid):
+            raise TypeError(
+                "GeneratorLoopBindingV1 requires exactly one of "
+                "demand_cid or fragment_cid"
+            )
 
 
 @dataclass(frozen=True)
@@ -1634,29 +1654,44 @@ class GeneratorConstructionV1:
         ):
             return self._gap(requested, f"next_with returned {type(outcome).__name__}")
 
-        unpack = PositionalUnpackOperation(
-            fixed_prefix=len(step.target_coordinates),
-            fixed_suffix=0,
-            has_star=False,
-            owner="GeneratorConstructionV1.ForStepV1.target",
-            blame=step.occurrence,
-        ).submit(outcome.value.value, self._guard_evaluation_context())
-        if isinstance(unpack, Incomplete):
-            return ExitSet.halted(unpack.effect, state=self)
-        if not isinstance(unpack, Complete) or not isinstance(
-            unpack.value, UnpackMemberRoster
+        if (
+            len(step.target_coordinates) == 1
+            and tuple(step.target_coordinates[0].projection_path) == ("target",)
         ):
-            return self._gap(
-                requested, f"target unpack returned {type(unpack).__name__}"
+            # Bare name: bind the iterated item, as LoopRecurrence already does.
+            # A 1-tuple target is ``("target", 0)`` and still unpacks.
+            bindings = (
+                GeneratorLoopBindingV1(
+                    step.target_coordinates[0],
+                    outcome.value.value,
+                    step.occurrence,
+                    fragment_cid=step.fragment_cid,
+                ),
             )
-        bindings = tuple(
-            GeneratorLoopBindingV1(
-                coordinate, member, unpack.value.occurrence, unpack.value.demand_cid
+        else:
+            unpack = PositionalUnpackOperation(
+                fixed_prefix=len(step.target_coordinates),
+                fixed_suffix=0,
+                has_star=False,
+                owner="GeneratorConstructionV1.ForStepV1.target",
+                blame=step.occurrence,
+            ).submit(outcome.value.value, self._guard_evaluation_context())
+            if isinstance(unpack, Incomplete):
+                return ExitSet.halted(unpack.effect, state=self)
+            if not isinstance(unpack, Complete) or not isinstance(
+                unpack.value, UnpackMemberRoster
+            ):
+                return self._gap(
+                    requested, f"target unpack returned {type(unpack).__name__}"
+                )
+            bindings = tuple(
+                GeneratorLoopBindingV1(
+                    coordinate, member, unpack.value.occurrence, unpack.value.demand_cid
+                )
+                for coordinate, member in zip(
+                    step.target_coordinates, unpack.value.members, strict=True
+                )
             )
-            for coordinate, member in zip(
-                step.target_coordinates, unpack.value.members, strict=True
-            )
-        )
         recurrence = replace(step, iterator=outcome.value.advanced)
         steps = (
             *self.steps[: self.cursor],
