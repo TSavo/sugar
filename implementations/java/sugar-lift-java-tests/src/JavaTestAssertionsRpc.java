@@ -65,7 +65,7 @@ import java.util.stream.*;
 public final class JavaTestAssertionsRpc {
 
     private static final String SURFACE = "java-test-assertions";
-    private static final String VERSION = "0.8.0"; // P6: jtreg error-sentinel lift (no name keys; method-ref + JLS constants)
+    private static final String VERSION = "0.9.0"; // sugar.enumerate: the one construction door (lift method retired on the wire)
 
     // ──────────────────────────────────────────────────────────────
     // Entry point: JSON-RPC 2.0 over stdin/stdout, one object per line.
@@ -86,6 +86,11 @@ public final class JavaTestAssertionsRpc {
                     case "sugar.plugin.kit_declaration" -> ok(id, kitDeclarationResult());
                     case "sugar.plugin.resolve_dependency_proofs" -> ok(id,
                             JavaDependencyProofResolver.resolveDependencyProofs(line));
+                    case "sugar.enumerate"              -> enumerate(id, line);
+                    // `lift` stays as the kit's own single-shot test door
+                    // (tests/run.sh drives it directly); it is no longer
+                    // advertised -- the CLI constructs only through
+                    // sugar.enumerate.
                     case "lift"                         -> ok(id, lift(line));
                     case "shutdown", "sugar.plugin.shutdown" -> ok(id, "null");
                     default -> error(id, -32601, "unknown method: " + method);
@@ -119,7 +124,7 @@ public final class JavaTestAssertionsRpc {
              + "{\"name\":\"initialize\",\"required\":true},"
              + "{\"name\":\"sugar.plugin.kit_declaration\",\"required\":true},"
              + "{\"name\":\"sugar.plugin.resolve_dependency_proofs\",\"required\":false},"
-             + "{\"name\":\"lift\",\"required\":true},"
+             + "{\"name\":\"sugar.enumerate\",\"required\":true},"
              + "{\"name\":\"shutdown\",\"required\":false}"
              + "]},"
              + "\"proofResolution\":{\"strategy\":\"maven\","
@@ -150,66 +155,7 @@ public final class JavaTestAssertionsRpc {
             return irDocument(ir, diagnostics, SourceAccounting.EMPTY);
         }
 
-        // Load assertion vocabularies per framework for this workspace.
-        // Each source dir in assertion_source_dirs is parsed separately;
-        // the resulting vocab is stored in a MultiFrameworkVocab keyed by
-        // the detected framework package (e.g. "org.junit", "org.testng").
-        MultiFrameworkVocab multiVocab = loadMultiVocab(compiler, root, diagnostics);
-
-        // G1: Load universe registry from vendor_source_dirs (implementation-contract pass).
-        // vendor_source_dirs in [java-test-assertions] config.toml points at vendor implementation
-        // source trees. The UniverseWalker walks static final byte[] encode tables and registers
-        // universe contracts (str.chars-in-set) per entry-point method name.
-        UniverseRegistry universeRegistry = UniverseWalker.loadRegistry(compiler, root, diagnostics);
-
-        // G2: Load numeric universe registry from vendor_source_dirs (numeric-universe-walk pass).
-        // The NumericUniverseWalker walks public static int-returning methods in vendored source
-        // and registers int32.eq-bv-expr universe contracts per method name.
-        // Supported shapes: ternary-with-comparison ((a < 0) ? -a : a) → abs BV expression.
-        NumericUniverseRegistry numericRegistry = NumericUniverseWalker.loadRegistry(compiler, root, diagnostics);
-
-        // Door 3: Load the @Pattern regex universe from vendor_source_dirs.
-        // The PatternUniverseWalker walks @Pattern(regexp="…") annotations on
-        // String-returning accessors and registers the verbatim regex literal per
-        // method name (only the regular subset; non-regular features refused by
-        // name). Consumed at the string-equality callsite as a str.in-regex row.
-        // Empty registry → byte-identical to before.
-        PatternUniverseRegistry patternRegistry = PatternUniverseWalker.loadRegistry(compiler, root, diagnostics);
-        // STRONG TIER (paper 26 seam): per-character block equations walked from
-        // the vendor encode body. Built once; consumed at string-literal callsites.
-        StrongUniverseRegistry strongRegistry = StrongUniverseWalker.loadRegistry(compiler, root, diagnostics);
-
-        // G4 (keystone): RecurrenceUniverseWalker — symbolic execution over a
-        // MUTABLE ARRAY with LITERAL-BOUNDED LOOP UNROLLING. Walks every vendor
-        // method carrying a loop-carried recurrence over a fixed-size buffer and
-        // either pins the per-step recurrence as bv32 FOL (diagnostic note prefixed
-        // "recurrence-walker:") or REFUSES BY NAME with the structural break located
-        // at the defeating AST node. ADDITIVE: emits diagnostics only — never alters
-        // the IR contract set or the discharge/check-sat path.
-        // The walker's diagnostics-only construction-site notes are unchanged; it
-        // ADDITIONALLY returns the value-pin registry (the closed crc-FOL for the
-        // canonical literal input, walked from update()/getValue()), consulted at
-        // the getValue() callsite below. Empty registry → no value-pin → byte-
-        // identical to before.
-        CrcValuePinRegistry crcValuePins = RecurrenceUniverseWalker.run(compiler, root, diagnostics);
-
-        // MT seeding value-pin (paper 26 — inter-procedural seed-state walk): walks the
-        // vendor's seed→state→draw pipeline for the canonical Nishimura seed and pins
-        // each draw position to the WALKED recurrence (the SSA `let`-chain FOL),
-        // consulted at the nextInt() callsite. Empty registry → byte-identical to before.
-        MtSeedPinRegistry mtSeedPins = MtSeedingWalker.run(compiler, root, diagnostics);
-
-        // G3: Load instance-universe — walks receiver classes in the WORKSPACE to pin
-        // construction-time facts: new Box(5).get() == 5 BY CONSTRUCTION (ctor→field→getter).
-        // Pure final-field-return-only tier; anything more complex is refused by name.
-        InstanceUniverse instanceUniverse = InstanceUniverse.load(compiler, root, diagnostics);
-
-        // P6: Load JLS-declared integer constants from platform-axioms.json.
-        // These are the ONLY non-walked constant bindings: ClassName.FIELD pairs
-        // whose values are established by the Java Language Specification (e.g.
-        // Integer.MIN_VALUE = -2147483648 per JLS §4.2.1). Any ClassName.FIELD
-        // pair absent from this table is REFUSED by name in the error-sentinel path.
-        JavaConstantTable javaConstants = JavaConstantTable.load(root, diagnostics);
+        WorkspaceRegistries registries = WorkspaceRegistries.load(compiler, root, diagnostics);
 
         for (String rel : files) {
             Path abs = root.resolve(rel).normalize();
@@ -217,23 +163,397 @@ public final class JavaTestAssertionsRpc {
                 diagnostics.add(diagnostic(rel, null, null, "cannot read file"));
                 continue;
             }
-            // PER-FILE ISOLATION (multi-file robustness): a single vendor file that
-            // throws during parse/walk (malformed source, unsupported syntax, an
-            // internal walker error) must NOT zero out the whole artifact. Mirror the
-            // rust coretests_sweep tolerance: skip-and-diagnose per file, keep the
-            // contracts already lifted from the other files. Without this, one bad
-            // file in a 229-file vendor test tree drops the entire artifact to GAP.
+            registries.liftFileIsolated(abs, rel, ir, diagnostics);
+        }
+
+        SourceAccounting sourceAccounting = SourceAccounting.fromContracts(root, ir, diagnostics);
+        return irDocument(ir, diagnostics, sourceAccounting);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // WorkspaceRegistries: every workspace-wide walk the per-file lift
+    // consults, built ONCE per workspace. Shared by the single-shot `lift`
+    // door and by sugar.enumerate (where the census and the per-file
+    // universe demands arrive as separate RPCs but must see the same
+    // registries the old single-shot lift saw).
+    // ──────────────────────────────────────────────────────────────
+
+    static final class WorkspaceRegistries {
+        final JavaCompiler compiler;
+        final Path root;
+        final MultiFrameworkVocab multiVocab;
+        final UniverseRegistry universeRegistry;
+        final NumericUniverseRegistry numericRegistry;
+        final PatternUniverseRegistry patternRegistry;
+        final StrongUniverseRegistry strongRegistry;
+        final CrcValuePinRegistry crcValuePins;
+        final MtSeedPinRegistry mtSeedPins;
+        final InstanceUniverse instanceUniverse;
+        final JavaConstantTable javaConstants;
+
+        private WorkspaceRegistries(
+                JavaCompiler compiler,
+                Path root,
+                MultiFrameworkVocab multiVocab,
+                UniverseRegistry universeRegistry,
+                NumericUniverseRegistry numericRegistry,
+                PatternUniverseRegistry patternRegistry,
+                StrongUniverseRegistry strongRegistry,
+                CrcValuePinRegistry crcValuePins,
+                MtSeedPinRegistry mtSeedPins,
+                InstanceUniverse instanceUniverse,
+                JavaConstantTable javaConstants) {
+            this.compiler = compiler;
+            this.root = root;
+            this.multiVocab = multiVocab;
+            this.universeRegistry = universeRegistry;
+            this.numericRegistry = numericRegistry;
+            this.patternRegistry = patternRegistry;
+            this.strongRegistry = strongRegistry;
+            this.crcValuePins = crcValuePins;
+            this.mtSeedPins = mtSeedPins;
+            this.instanceUniverse = instanceUniverse;
+            this.javaConstants = javaConstants;
+        }
+
+        /** Build every registry in the order the single-shot lift always did. */
+        static WorkspaceRegistries load(JavaCompiler compiler, Path root, List<String> diagnostics)
+                throws IOException {
+            // Load assertion vocabularies per framework for this workspace.
+            // Each source dir in assertion_source_dirs is parsed separately;
+            // the resulting vocab is stored in a MultiFrameworkVocab keyed by
+            // the detected framework package (e.g. "org.junit", "org.testng").
+            MultiFrameworkVocab multiVocab = loadMultiVocab(compiler, root, diagnostics);
+
+            // G1: Load universe registry from vendor_source_dirs (implementation-contract pass).
+            // vendor_source_dirs in [java-test-assertions] config.toml points at vendor implementation
+            // source trees. The UniverseWalker walks static final byte[] encode tables and registers
+            // universe contracts (str.chars-in-set) per entry-point method name.
+            UniverseRegistry universeRegistry = UniverseWalker.loadRegistry(compiler, root, diagnostics);
+
+            // G2: Load numeric universe registry from vendor_source_dirs (numeric-universe-walk pass).
+            // The NumericUniverseWalker walks public static int-returning methods in vendored source
+            // and registers int32.eq-bv-expr universe contracts per method name.
+            // Supported shapes: ternary-with-comparison ((a < 0) ? -a : a) → abs BV expression.
+            NumericUniverseRegistry numericRegistry = NumericUniverseWalker.loadRegistry(compiler, root, diagnostics);
+
+            // Door 3: Load the @Pattern regex universe from vendor_source_dirs.
+            // The PatternUniverseWalker walks @Pattern(regexp="…") annotations on
+            // String-returning accessors and registers the verbatim regex literal per
+            // method name (only the regular subset; non-regular features refused by
+            // name). Consumed at the string-equality callsite as a str.in-regex row.
+            // Empty registry → byte-identical to before.
+            PatternUniverseRegistry patternRegistry = PatternUniverseWalker.loadRegistry(compiler, root, diagnostics);
+            // STRONG TIER (paper 26 seam): per-character block equations walked from
+            // the vendor encode body. Built once; consumed at string-literal callsites.
+            StrongUniverseRegistry strongRegistry = StrongUniverseWalker.loadRegistry(compiler, root, diagnostics);
+
+            // G4 (keystone): RecurrenceUniverseWalker — symbolic execution over a
+            // MUTABLE ARRAY with LITERAL-BOUNDED LOOP UNROLLING. Walks every vendor
+            // method carrying a loop-carried recurrence over a fixed-size buffer and
+            // either pins the per-step recurrence as bv32 FOL (diagnostic note prefixed
+            // "recurrence-walker:") or REFUSES BY NAME with the structural break located
+            // at the defeating AST node. ADDITIVE: emits diagnostics only — never alters
+            // the IR contract set or the discharge/check-sat path.
+            // The walker's diagnostics-only construction-site notes are unchanged; it
+            // ADDITIONALLY returns the value-pin registry (the closed crc-FOL for the
+            // canonical literal input, walked from update()/getValue()), consulted at
+            // the getValue() callsite below. Empty registry → no value-pin → byte-
+            // identical to before.
+            CrcValuePinRegistry crcValuePins = RecurrenceUniverseWalker.run(compiler, root, diagnostics);
+
+            // MT seeding value-pin (paper 26 — inter-procedural seed-state walk): walks the
+            // vendor's seed→state→draw pipeline for the canonical Nishimura seed and pins
+            // each draw position to the WALKED recurrence (the SSA `let`-chain FOL),
+            // consulted at the nextInt() callsite. Empty registry → byte-identical to before.
+            MtSeedPinRegistry mtSeedPins = MtSeedingWalker.run(compiler, root, diagnostics);
+
+            // G3: Load instance-universe — walks receiver classes in the WORKSPACE to pin
+            // construction-time facts: new Box(5).get() == 5 BY CONSTRUCTION (ctor→field→getter).
+            // Pure final-field-return-only tier; anything more complex is refused by name.
+            InstanceUniverse instanceUniverse = InstanceUniverse.load(compiler, root, diagnostics);
+
+            // P6: Load JLS-declared integer constants from platform-axioms.json.
+            // These are the ONLY non-walked constant bindings: ClassName.FIELD pairs
+            // whose values are established by the Java Language Specification (e.g.
+            // Integer.MIN_VALUE = -2147483648 per JLS §4.2.1). Any ClassName.FIELD
+            // pair absent from this table is REFUSED by name in the error-sentinel path.
+            JavaConstantTable javaConstants = JavaConstantTable.load(root, diagnostics);
+
+            return new WorkspaceRegistries(compiler, root, multiVocab, universeRegistry, numericRegistry,
+                    patternRegistry, strongRegistry, crcValuePins, mtSeedPins, instanceUniverse, javaConstants);
+        }
+
+        /**
+         * Lift ONE file against these registries, appending its contract rows to
+         * {@code ir} and its named gaps to {@code diagnostics}.
+         *
+         * PER-FILE ISOLATION (multi-file robustness): a single vendor file that
+         * throws during parse/walk (malformed source, unsupported syntax, an
+         * internal walker error) must NOT zero out the whole artifact. Mirror the
+         * rust coretests_sweep tolerance: skip-and-diagnose per file, keep the
+         * contracts already lifted from the other files. Without this, one bad
+         * file in a 229-file vendor test tree drops the entire artifact to GAP.
+         */
+        void liftFileIsolated(Path abs, String rel, List<String> ir, List<String> diagnostics) {
             try {
-                liftFile(compiler, root, abs, rel, multiVocab, universeRegistry, numericRegistry, patternRegistry, strongRegistry, crcValuePins, mtSeedPins, instanceUniverse, javaConstants, ir, diagnostics);
+                liftFile(compiler, root, abs, rel, multiVocab, universeRegistry, numericRegistry,
+                        patternRegistry, strongRegistry, crcValuePins, mtSeedPins, instanceUniverse,
+                        javaConstants, ir, diagnostics);
             } catch (Exception e) {
                 diagnostics.add(diagnostic(rel, null, null,
                     "per-file lift skipped (isolated): "
                     + (e.getMessage() == null ? e.toString() : e.getMessage())));
             }
         }
+    }
 
-        SourceAccounting sourceAccounting = SourceAccounting.fromContracts(root, ir, diagnostics);
-        return irDocument(ir, diagnostics, sourceAccounting);
+    // ──────────────────────────────────────────────────────────────
+    // sugar.enumerate: the ONE construction door of lift-plugin-json-rpc-v1
+    // (protocol/specs/2026-07-08-enumeration-protocol.md). lift and mint are
+    // enumeration clients -- the CLI never sends method `lift` any more
+    // (sugar-cli lift_plugin.rs `dispatch_lift_path`). It folds, in order,
+    //
+    //   level=source_files                  -> one node per *.java file under
+    //                                          workspace_root: the sealed census
+    //                                          {memento: <file memento>, audit: null, payload: null}
+    //   level=parameter-contract-link-units -> {"rows": []} (this kit links none)
+    //   level=universe, at=<file memento>   -> one node per IR contract row of
+    //                                          that file ({memento, audit: <row>,
+    //                                          payload: null}); one gap per
+    //                                          lift-gap diagnostic ({memento, reason})
+    //
+    // into the very ir-document the retired single-shot `lift` answered with
+    // (sugar-compiler tree.rs `fold_enumerate_source_tree`): the audit rows
+    // become `ir`, the gaps become `diagnostics` {path, reason, item}.
+    //
+    // Request wire (serde `preserve_order`, so keys arrive in this order):
+    //   {"level": "...", "at": <memento|null>, "seek": bool,
+    //    "workspace_root": "<abs path>", "options": {...}}
+    // Result wire: {"nodes": [...], "gaps": [...]} or {"rows": [...]}.
+    // An unowned level is a JSON-RPC error (-32602), never an empty census:
+    // answering a level this kit does not serve with zero nodes would be a
+    // false zero.
+    //
+    // Workspace-wide registries are built once per census (on the first
+    // universe demand) and reused across the per-file demands, so every
+    // file sees exactly the registries the single-shot lift gave it.
+    // ──────────────────────────────────────────────────────────────
+
+    private static final String MEMENTO_KIND = "source-memento";
+    private static final Map<String, PreparedWorkspace> PREPARED_WORKSPACES = new HashMap<>();
+
+    /** The sealed source_files census of one workspace plus its lazily built registries. */
+    static final class PreparedWorkspace {
+        final Path root;
+        /** Census members in enumeration (sorted) order. */
+        final List<String> files;
+        /** rel path -> blake3-512 CID of the bytes sealed at census time. */
+        final Map<String, String> sealedCids;
+        /** Files whose universe demand has already been answered. */
+        final Set<String> served = new HashSet<>();
+        /** Registry-load diagnostics routed to a census file not yet served. */
+        final Map<String, List<String>> deferredDiagnostics = new HashMap<>();
+        WorkspaceRegistries registries;
+
+        PreparedWorkspace(Path root, List<String> files, Map<String, String> sealedCids) {
+            this.root = root;
+            this.files = List.copyOf(files);
+            this.sealedCids = Map.copyOf(sealedCids);
+        }
+    }
+
+    private static String enumerate(String id, String requestJson) throws IOException {
+        String level = jsonString(requestJson, "level").orElse("");
+        Path root = Path.of(jsonString(requestJson, "workspace_root").orElse("."))
+                .toAbsolutePath().normalize();
+        try {
+            root = root.toRealPath();
+        } catch (IOException ignored) {
+            // keep the normalized absolute path when it does not resolve
+        }
+        Optional<String> at = jsonObject(requestJson, "at");
+        boolean seek = jsonBool(requestJson, "seek", false);
+
+        switch (level) {
+            case "parameter-contract-link-units":
+                return ok(id, "{\"rows\":[]}");
+            case "source_files":
+                return ok(id, enumerateSourceFiles(root, at, seek));
+            case "universe":
+                return ok(id, enumerateUniverse(root, at));
+            default:
+                return error(id, -32602,
+                        "sugar.enumerate: level '" + level + "' is not served by surface '" + SURFACE
+                        + "'; answering an unowned level with an empty census would be a false zero");
+        }
+    }
+
+    /** source_files: walk the workspace, seal each member's bytes, and remember the census. */
+    private static String enumerateSourceFiles(Path root, Optional<String> at, boolean seek)
+            throws IOException {
+        List<String> files = enumerateJavaFiles(root, List.of("."));
+        Map<String, String> sealedCids = new LinkedHashMap<>();
+        List<String> nodes = new ArrayList<>();
+        List<String> gaps = new ArrayList<>();
+        for (String rel : files) {
+            Path abs = root.resolve(rel).normalize();
+            byte[] bytes;
+            try {
+                bytes = Files.readAllBytes(abs);
+            } catch (IOException e) {
+                gaps.add(gap(fileMemento(rel, null, null),
+                        "cannot read file: " + (e.getMessage() == null ? e.toString() : e.getMessage())));
+                continue;
+            }
+            String cid = JavaJunitWitnessRpc.blake3_512Of(bytes);
+            sealedCids.put(rel, cid);
+            String memento = fileMemento(rel, cid, null);
+            if (seek && at.isPresent() && !mementoMatches(rel, cid, at.get())) continue;
+            nodes.add(node(memento, null));
+        }
+        // Seal the census: every later universe demand must name one of these
+        // members at exactly these bytes. A fresh census forgets the old one.
+        PREPARED_WORKSPACES.put(root.toString(),
+                new PreparedWorkspace(root, new ArrayList<>(sealedCids.keySet()), sealedCids));
+        return enumerateResult(nodes, gaps);
+    }
+
+    /** universe: lift exactly the census member named by `at`, registries shared across the census. */
+    private static String enumerateUniverse(Path root, Optional<String> at) {
+        if (at.isEmpty()) {
+            return enumerateResult(List.of(),
+                    List.of(gap(null, "sugar.enumerate level='universe' requires at.file")));
+        }
+        String atJson = at.get();
+        Optional<String> relOpt = jsonString(atJson, "file").filter(s -> !s.isEmpty());
+        if (relOpt.isEmpty()) {
+            return enumerateResult(List.of(),
+                    List.of(gap(atJson, "sugar.enumerate level='universe' requires at.file")));
+        }
+        String rel = relOpt.get();
+        PreparedWorkspace prepared = PREPARED_WORKSPACES.get(root.toString());
+        if (prepared == null) {
+            return enumerateResult(List.of(), List.of(gap(atJson,
+                    SURFACE + " universe requires a prepared source_files census for this workspace")));
+        }
+        String sealedCid = prepared.sealedCids.get(rel);
+        if (sealedCid == null) {
+            return enumerateResult(List.of(), List.of(gap(atJson,
+                    SURFACE + " source '" + rel + "' is not a member of the sealed source_files census")));
+        }
+        if (!mementoMatches(rel, sealedCid, atJson)) {
+            return enumerateResult(List.of(), List.of(gap(atJson,
+                    SURFACE + " source '" + rel + "' does not match the sealed source_files identity")));
+        }
+        Path abs = root.resolve(rel).normalize();
+        String sealedMemento = fileMemento(rel, sealedCid, null);
+        try {
+            if (!JavaJunitWitnessRpc.blake3_512Of(Files.readAllBytes(abs)).equals(sealedCid)) {
+                return enumerateResult(List.of(), List.of(gap(sealedMemento,
+                        SURFACE + " source '" + rel + "' changed since the source_files census was sealed")));
+            }
+        } catch (IOException e) {
+            return enumerateResult(List.of(), List.of(gap(sealedMemento,
+                    "cannot read file: " + (e.getMessage() == null ? e.toString() : e.getMessage()))));
+        }
+
+        List<String> ir = new ArrayList<>();
+        List<String> diagnostics = new ArrayList<>();
+        List<String> deferred = prepared.deferredDiagnostics.remove(rel);
+        if (deferred != null) diagnostics.addAll(deferred);
+
+        if (prepared.registries == null) {
+            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+            if (compiler == null) {
+                prepared.served.add(rel);
+                diagnostics.add(diagnostic("<kit>", "<kit>", "<kit>",
+                        "no JavaCompiler available (not running under a JDK)"));
+                return enumerateResult(List.of(), gapsFromDiagnostics(rel, sealedCid, diagnostics));
+            }
+            // Workspace-wide walks run once. Their diagnostics name vendor /
+            // workspace files; route each to the census member it names when
+            // that member is still to come, else surface it on this demand so
+            // nothing the single-shot lift reported is dropped.
+            List<String> registryDiagnostics = new ArrayList<>();
+            try {
+                prepared.registries = WorkspaceRegistries.load(compiler, root, registryDiagnostics);
+            } catch (IOException e) {
+                prepared.served.add(rel);
+                diagnostics.addAll(registryDiagnostics);
+                diagnostics.add(diagnostic("<kit>", "<kit>", "<kit>",
+                        "workspace registries unavailable: "
+                        + (e.getMessage() == null ? e.toString() : e.getMessage())));
+                return enumerateResult(List.of(), gapsFromDiagnostics(rel, sealedCid, diagnostics));
+            }
+            for (String d : registryDiagnostics) {
+                String path = jsonString(d, "path").orElse("");
+                if (!path.equals(rel) && prepared.sealedCids.containsKey(path) && !prepared.served.contains(path)) {
+                    prepared.deferredDiagnostics.computeIfAbsent(path, k -> new ArrayList<>()).add(d);
+                } else {
+                    diagnostics.add(d);
+                }
+            }
+        }
+        prepared.served.add(rel);
+        prepared.registries.liftFileIsolated(abs, rel, ir, diagnostics);
+
+        List<String> nodes = new ArrayList<>(ir.size());
+        for (String row : ir) nodes.add(node(sealedMemento, row));
+        return enumerateResult(nodes, gapsFromDiagnostics(rel, sealedCid, diagnostics));
+    }
+
+    /**
+     * One gap per lift-gap diagnostic. The fold reads {@code memento.function_name}
+     * back as the diagnostic's {@code item} and {@code reason} as its reason, so the
+     * ir-document mint sees carries {path, reason, item} exactly as the single-shot
+     * lift's {@code diagnostic(path, item, detail, reason)} rows did.
+     */
+    private static List<String> gapsFromDiagnostics(String rel, String sealedCid, List<String> diagnostics) {
+        List<String> gaps = new ArrayList<>(diagnostics.size());
+        for (String d : diagnostics) {
+            String path = jsonString(d, "path").orElse(rel);
+            String item = jsonString(d, "item").orElse(null);
+            String reason = jsonString(d, "reason").orElse(d);
+            String cid = path.equals(rel) ? sealedCid : null;
+            gaps.add(gap(fileMemento(path.isEmpty() ? rel : path, cid, item), reason));
+        }
+        return gaps;
+    }
+
+    /** A degenerate (whole-file) source memento; `function_name` carries a gap's item when set. */
+    private static String fileMemento(String rel, String sourceCid, String functionName) {
+        return "{\"kind\":\"" + MEMENTO_KIND + "\""
+             + ",\"file\":\"" + esc(rel) + "\""
+             + ",\"function_name\":\"" + esc(functionName == null ? "" : functionName) + "\""
+             + ",\"span\":null"
+             + ",\"param_names\":[]"
+             + ",\"source_cid\":" + (sourceCid == null ? "null" : "\"" + esc(sourceCid) + "\"")
+             + ",\"template_cid\":null}";
+    }
+
+    /** `at` names this member iff the file matches and, when `at` carries a CID, the CID matches. */
+    private static boolean mementoMatches(String rel, String cid, String atJson) {
+        if (!rel.equals(jsonString(atJson, "file").orElse(null))) return false;
+        Optional<String> requested = jsonString(atJson, "source_cid");
+        if (requested.isEmpty()) requested = jsonString(atJson, "sourceCid");
+        return requested.isEmpty() || requested.get().equals(cid);
+    }
+
+    private static String node(String mementoJson, String auditJson) {
+        return "{\"memento\":" + mementoJson
+             + ",\"audit\":" + (auditJson == null ? "null" : auditJson)
+             + ",\"payload\":null}";
+    }
+
+    private static String gap(String mementoJson, String reason) {
+        return "{\"memento\":" + (mementoJson == null ? "null" : mementoJson)
+             + ",\"reason\":\"" + esc(reason) + "\"}";
+    }
+
+    private static String enumerateResult(List<String> nodes, List<String> gaps) {
+        return "{\"nodes\":[" + String.join(",", nodes) + "]"
+             + ",\"gaps\":[" + String.join(",", gaps) + "]}";
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -6432,6 +6752,32 @@ public final class JavaTestAssertionsRpc {
             else { out.append(ch); }
         }
         return Optional.empty();
+    }
+
+    /** The raw JSON text of the object value under {@code key}; empty for null/absent/non-object. */
+    private static Optional<String> jsonObject(String json, String key) {
+        int keyPos = json.indexOf("\"" + key + "\"");
+        if (keyPos < 0) return Optional.empty();
+        int colon = json.indexOf(':', keyPos + key.length() + 2);
+        if (colon < 0) return Optional.empty();
+        int i = colon + 1;
+        while (i < json.length() && Character.isWhitespace(json.charAt(i))) i++;
+        if (i >= json.length() || json.charAt(i) != '{') return Optional.empty();
+        int end = matchingBracket(json, i, '{', '}');
+        if (end < 0) return Optional.empty();
+        return Optional.of(json.substring(i, end + 1));
+    }
+
+    private static boolean jsonBool(String json, String key, boolean fallback) {
+        int keyPos = json.indexOf("\"" + key + "\"");
+        if (keyPos < 0) return fallback;
+        int colon = json.indexOf(':', keyPos + key.length() + 2);
+        if (colon < 0) return fallback;
+        int i = colon + 1;
+        while (i < json.length() && Character.isWhitespace(json.charAt(i))) i++;
+        if (json.startsWith("true", i)) return true;
+        if (json.startsWith("false", i)) return false;
+        return fallback;
     }
 
     private static int jsonInt(String json, String key, int fallback) {

@@ -2878,10 +2878,18 @@ PY
 # ──────────────────────────────────────────────────────────────
 
 # Helper: collect recurrence-walker diagnostics from a lift over a fixture.
+#
+# The recurrence fixtures unroll per-step FOL, so one lift result runs past
+# Linux's 128 KiB single-argument limit (MAX_ARG_STRLEN): passing it as argv
+# dies with "Argument list too long". Hand it over through a temp file written
+# by the printf builtin, which has no such limit.
 recurrence_diags() {
-  python3 - "$1" <<'PY'
+  local result_file
+  result_file="$(mktemp)"
+  printf '%s' "$1" > "$result_file"
+  python3 - "$result_file" <<'PY'
 import sys, json
-lines = sys.argv[1].strip().split('\n')
+lines = open(sys.argv[1], encoding="utf-8").read().strip().split('\n')
 result = next(json.loads(l)["result"] for l in lines if l.strip() and json.loads(l).get("id") == 2)
 diags = result["diagnostics"]
 rec = [d for d in diags if "recurrence-walker" in d.get("reason","")]
@@ -2891,6 +2899,7 @@ out = {"ir": len(result["ir"]), "unrolled": [d["reason"] for d in unrolled],
        "refusals": [{"item": d.get("item",""), "reason": d["reason"]} for d in refusals]}
 print(json.dumps(out))
 PY
+  rm -f "$result_file"
 }
 
 echo
