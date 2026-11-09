@@ -600,10 +600,18 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         formula, actual_terms, "python:exit_type"
     )
     if expected_index is None:
+        expected_index = _formal_index_for_matches_expected(
+            formula, behavior, actual_terms
+        )
+    if expected_index is None:
         return None
     message_index = _formal_index_for_coordinate(
         formula, actual_terms, "python:exit_value"
     )
+    if message_index is None:
+        message_index = _formal_index_for_matches_message(
+            formula, behavior, actual_terms
+        )
     absent_effect_halts = tuple(
         face
         for face in exit_set.exits
@@ -615,10 +623,28 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         )
     )
     halted = tuple(face for face in exit_set.exits if isinstance(face, Halted))
-    if any(face not in absent_effect_halts for face in halted):
+    match_failed_halts = tuple(
+        face
+        for face in halted
+        if _halt_complements_true_return(face, exit_set)
+    )
+    if any(
+        face not in absent_effect_halts and face not in match_failed_halts
+        for face in halted
+    ):
         # A source-visible exit failure is not evidence that matching effects
         # are consumed.  It remains a protocol-construction gap until its own
-        # outgoing face is represented by the summary schema.
+        # outgoing face is represented by the summary schema.  The complement
+        # of a completed ``return True`` face is that same partition's
+        # match-failed halt, not a foreign failure.
+        return None
+    if not absent_effect_halts and _completed_faces_have_bodyless_free_calls(
+        exit_set
+    ):
+        # A bodyless free-function call on a completed face (pytest's
+        # ``fail("DID NOT RAISE ...")`` today) is unresolved halt testimony.
+        # Sealing SuppressesMode here would invent that the manager does not
+        # require an exception.
         return None
     expects = bool(absent_effect_halts)
     return EffectBoundarySemanticsV1(
@@ -1055,6 +1081,124 @@ def _exact_bool_literal(value: object) -> bool | None:
     if isinstance(value, TermValue) and type(value.value) is bool:
         return value.value
     return None
+
+
+def _peel_double_negation(formula):
+    from sugar_lift_py_tests.ir import _Connective
+
+    while (
+        isinstance(formula, _Connective)
+        and formula.kind == "not"
+        and len(formula.operands) == 1
+    ):
+        inner = formula.operands[0]
+        if (
+            isinstance(inner, _Connective)
+            and inner.kind == "not"
+            and len(inner.operands) == 1
+        ):
+            formula = inner.operands[0]
+            continue
+        break
+    return formula
+
+
+def _matches_call_of_exit_value(formula):
+    """``py.truthy(call:*.matches(..., python:exit_value))`` after even nots."""
+    from sugar_lift_py_tests.ir import _Atomic, _Ctor
+
+    formula = _peel_double_negation(formula)
+    if (
+        not isinstance(formula, _Atomic)
+        or formula.name != "py.truthy"
+        or len(formula.args) != 1
+    ):
+        return None
+    call = formula.args[0]
+    if not isinstance(call, _Ctor):
+        return None
+    if call.name != "call:matches" and not call.name.endswith(".matches"):
+        return None
+    if not any(_term_contains_ctor(arg, "python:exit_value") for arg in call.args):
+        return None
+    return call
+
+
+def _term_contains_term(haystack, needle):
+    if haystack == needle:
+        return True
+    args = getattr(haystack, "args", None) or getattr(haystack, "operands", None)
+    if not args:
+        return False
+    return any(_term_contains_term(arg, needle) for arg in args)
+
+
+def _formal_index_cited_by_field(behavior, field_name, actual_terms):
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    field = _receiver_field_value(behavior, field_name)
+    if field is None or isinstance(field, NoneValue):
+        return None
+    haystack = field.to_term(owner=behavior.resolved_object_cid)
+    candidates = {
+        index
+        for index, term in enumerate(actual_terms)
+        if _term_contains_term(haystack, term)
+    }
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _formal_index_for_matches_expected(formula, behavior, actual_terms):
+    if _matches_call_of_exit_value(formula) is None:
+        return None
+    return _formal_index_cited_by_field(
+        behavior, "expected_exceptions", actual_terms
+    )
+
+
+def _formal_index_for_matches_message(formula, behavior, actual_terms):
+    if _matches_call_of_exit_value(formula) is None:
+        return None
+    return _formal_index_cited_by_field(behavior, "match", actual_terms)
+
+
+def _halt_complements_true_return(face, exit_set):
+    """True when ``face`` is the complement of the unique ``return True`` arm."""
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    if not isinstance(face, Halted):
+        return False
+    true_guards = []
+    for other in exit_set.exits:
+        if not isinstance(other, Completed):
+            continue
+        block = other.value
+        if not isinstance(block, BlockValue) or not block.statements:
+            continue
+        last = block.statements[-1]
+        if isinstance(last, ReturnValue) and _exact_bool_literal(last.value) is True:
+            true_guards.append(other.guard)
+    if len(true_guards) != 1:
+        return False
+    return face.guard == complement_guard(true_guards[0])
+
+
+def _completed_faces_have_bodyless_free_calls(exit_set):
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    for face in exit_set.exits:
+        if not isinstance(face, Completed):
+            continue
+        statements = getattr(getattr(face, "value", None), "statements", ())
+        for statement in statements:
+            if (
+                isinstance(statement, CallSiteValue)
+                and statement.body is None
+                and getattr(statement, "runtime_dispatch_receiver", None) is None
+            ):
+                return True
+    return False
 
 
 def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):
