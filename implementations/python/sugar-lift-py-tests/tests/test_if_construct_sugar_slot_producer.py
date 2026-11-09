@@ -283,3 +283,41 @@ def test_ground_true_if_does_not_authenticate_an_unused_slot() -> None:
         if isinstance(entry, BranchResultAuthentication)
     )
     assert authentications == ()
+
+
+
+def test_ground_false_if_records_branch_result_for_the_phi() -> None:
+    """A folded ``if False`` still tells the assignment phi which arm lived.
+
+    Substitute emits ``x = <then> if <BranchResultRef> else <else>`` after the
+    if. The if itself no longer publishes BranchResultAuthentication when the
+    condition is ground (#7487). Recording the folded bool on the reduce
+    context lets the phi drop the dead arm instead of evaluating it.
+    """
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.sugar.branch_result_ref_sugar import BranchResultRefSugar
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+
+    branch = next(
+        node
+        for node in _tree("if False:\n    pass\n").nodes()
+        if isinstance(node, If)
+    )
+    ctx = ReduceContext.root(owner="test")
+    sugar = branch.sugar()
+    outcome = sugar.desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    authentications = tuple(
+        entry
+        for entry in outcome.value.unconditional_entries
+        if isinstance(entry, BranchResultAuthentication)
+    )
+    assert authentications == ()
+    bound = ctx.ground_branch_results[sugar.branch_slot.slot_id]
+    assert isinstance(bound, FalseBoolLiteralSugar)
+    resolved = BranchResultRefSugar(
+        slot=sugar.branch_slot, site=branch.fragment
+    ).desugar(ctx)
+    assert isinstance(resolved, Complete)
+    assert isinstance(resolved.value, FalseBoolLiteralSugar)

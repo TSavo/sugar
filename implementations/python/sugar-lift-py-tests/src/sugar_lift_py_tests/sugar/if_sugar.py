@@ -262,6 +262,25 @@ class IfSugar(Sugar):
             if observed_formula in (false_guard(), true_guard())
             else (authentication,)
         )
+        if (
+            ctx is not None
+            and observed_formula in (false_guard(), true_guard())
+            and self.branch_slot is not None
+        ):
+            table = getattr(ctx, "ground_branch_results", None)
+            if isinstance(table, dict):
+                from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                    FalseBoolLiteralSugar,
+                )
+                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                    TrueBoolLiteralSugar,
+                )
+
+                table[self.branch_slot.slot_id] = (
+                    TrueBoolLiteralSugar(site=self.site)
+                    if observed_formula == true_guard()
+                    else FalseBoolLiteralSugar(site=self.site)
+                )
         return Complete(
             GuardedFaces(
                 guard=formula,
