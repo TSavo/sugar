@@ -70,12 +70,20 @@ class ExprStatementSugar(Sugar):
         # nested ExitSet (the ``isinstance(match, str)`` arms) rather
         # than being flattened onto one receiver. Keep the call
         # coordinate so effect routing still sees the call.
+        #
+        # A bodyful free-function call (``runtime_dispatch_receiver``
+        # absent) is the same kind of statement: it exists for its
+        # effect. Leaving ``fail("DID NOT RAISE")`` as an unreduced
+        # CallSiteValue leaked those calls into a completed ``__exit__``
+        # face even after ``_Fail.__call__`` was seated. Method calls
+        # other than ``__init__`` keep their receiver and stay nested.
         if (
             isinstance(value, CallSiteValue)
             and value.body is not None
             and (
                 value.target_name == "__init__"
                 or value.target_name.endswith(".__init__")
+                or value.runtime_dispatch_receiver is None
             )
         ):
             from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (

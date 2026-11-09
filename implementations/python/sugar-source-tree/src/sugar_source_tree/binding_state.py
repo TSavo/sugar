@@ -780,6 +780,10 @@ class ConstructionTestimonyReporterV1:
                 resolved_definition = _callee_definition_by_name_in_its_unit(
                     definition
                 )
+                if resolved_definition is None:
+                    resolved_definition = (
+                        _callee_nested_call_method_by_seal(definition)
+                    )
             span = node.line_col_span()
             call_occurrence = SourceFragmentCoordinateV1(
                 node.unit.source_cid,
@@ -881,6 +885,35 @@ class ConstructionTestimonyReporterV1:
 
     def projected_snapshots_for(self, statement: Node):
         return self._trace_builder.projected_snapshots_for(statement, self)
+
+
+def _callee_nested_call_method_by_seal(definition: object):
+    """Re-find ``Class.__call__`` from the callee unit's sealed fragment.
+
+    Callable-instance exports (``name = Class()``) resolve to a nested
+    ``__call__`` method. That name is not a module-scope binding, so
+    ``_callee_definition_by_name_in_its_unit`` correctly answers nothing.
+    The independent authority is still the callee's own source text: the
+    unique FunctionDef in that unit whose fragment seal matches. This is
+    not a name scan of nested definitions.
+    """
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+
+    if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        return None
+    if definition.name != "__call__":
+        return None
+    unit = getattr(definition, "unit", None)
+    if unit is None:
+        return None
+    seal = definition.fragment.seal()
+    found = [
+        node
+        for node in getattr(unit, "function_nodes", ()) or ()
+        if isinstance(node, (FunctionDef, AsyncFunctionDef))
+        and node.fragment.seal() == seal
+    ]
+    return found[0] if len(found) == 1 else None
 
 
 def _callee_definition_by_name_in_its_unit(definition: object):
