@@ -3349,6 +3349,71 @@ def test_installed_cited_opaque_nested_with_try_finally_pass_yields_open_enter_r
     )
 
 
+def test_installed_cited_opaque_nested_with_simplefilter_is_term_step(tmp_path):
+    """``warnings.simplefilter(...)`` in a nameable cited-opaque body is TermStepV1.
+
+    The term is the constructed call, not an invented filter application.
+    Enter still keeps both open faces, and ``w`` is still the enter-result
+    coordinate when the term completes.
+    """
+    from sugar_lift_py_tests.effect import ContextManagerEnterRuntimeEffect
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        TermStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        warnings.simplefilter(\"always\")\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            pass\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    terms = [item for item in step.body_steps if isinstance(item, TermStepV1)]
+    assert len(terms) == 1
+    assert isinstance(terms[0].term, ConstructedTermSugar)
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    assert any(isinstance(item, FinallyStepV1) for item in step.body_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    # The completed-enter face may yield or halt at the uncited simplefilter
+    # term; either is honest. Inventing that the filter ran is not.
+    yielded = completed[0].value
+    if isinstance(yielded, YieldEffect):
+        assert isinstance(yielded.value, OpaqueManagerProtocolCoordinate)
+        assert yielded.value.symbol == "python:cm_enter_result"
+
+
 def test_installed_cited_opaque_nested_with_except_handler_stays_opaque(tmp_path):
     """An except-handler inside cited-opaque catch_warnings stays a loud With."""
     from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
