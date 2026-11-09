@@ -1253,6 +1253,12 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_assign(resolved_value):
+                from sugar_lift_py_tests.floor import RaiseValue
+
+                if isinstance(resolved_value, RaiseValue):
+                    return self._fold_pending_cited_opaque_exits(
+                        ExitSet.halted(resolved_value.effect, state=self)
+                    )
                 binding = GeneratorAssignBindingV1(
                     step.name, resolved_value, step.fragment_cid
                 )
