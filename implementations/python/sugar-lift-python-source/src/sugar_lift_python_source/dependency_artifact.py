@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from email.parser import BytesParser
 import importlib.machinery
 import importlib.metadata
-import logging
-import os
 from pathlib import Path, PurePosixPath
 import sys
 import sysconfig
@@ -32,13 +30,6 @@ class DependencyArtifactConstructionError(DependencyArtifactAuthenticationError)
     """A graph allocation bypassed its authenticated input constructor."""
 
 
-class DependencyArtifactCacheInputError(DependencyArtifactAuthenticationError):
-    """A disk seat does not encode dependency graph constructor inputs."""
-
-
-_LOG = logging.getLogger(__name__)
-_DEPENDENCY_ARTIFACT_CACHE_SCHEMA = "dep-graph-v4"
-
 # The authenticated-graph memo is CONTENT-ADDRESSED, and that is the whole
 # reason it may be process-global (#6266's distinction, applied here).
 #
@@ -51,9 +42,13 @@ _DEPENDENCY_ARTIFACT_CACHE_SCHEMA = "dep-graph-v4"
 # It was keyed by dist-info PATH, and that shipped a CID that did not address
 # its bytes: authenticate -> edit the installed source -> authenticate returned
 # the first graph, reporting an artifact CID for content that no longer existed
-# on disk.  The neighbouring disk cache stat'ed ``RECORD``, which is not touched
-# when an installed ``.py`` file is edited, so it served the same stale graph
-# across processes.  Both are now keyed by the artifact CID.
+# on disk.  It is now keyed by the artifact CID.
+#
+# There is no disk twin.  Every authentication reads and hashes the recorded
+# bytes and constructs the graph from them before any memo is consulted, so the
+# answer is already in hand; a disk seat could only hand the same bytes back to
+# be constructed a second time.  It did exactly that: a fresh process parsed
+# every recorded module twice.
 #
 # The VALUE is legitimately shareable here, which is why this is a registry and
 # not a session: ``DependencyArtifactGraph`` is a frozen dataclass over a tuple
@@ -85,177 +80,6 @@ def _require_parseable_module_source(
         raise DependencyArtifactAuthenticationError(
             f"recorded Python module {module_name} is not parseable UTF-8 source"
         ) from exc
-
-
-def _cache_root() -> Path:
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "sugar"
-
-
-def _artifact_disk_cache_path(artifact_cid: str) -> Path:
-    """On-disk seat for one authenticated graph, addressed by its own CID.
-
-    The seat is a pure function of the artifact CID, so a changed installed byte
-    changes the CID, which changes the seat: a stale hit has no filename to live
-    at. The seat this replaced was a digest over ``RECORD``'s ``(mtime, size)``,
-    which does not move when an installed ``.py`` file is edited.
-    """
-    digest = artifact_cid.removeprefix("blake3-512:")[:32]
-    return _cache_root() / "dependency-artifact-graphs" / f"{digest}.pkl"
-
-
-def _load_authenticate_disk_cache(
-    artifact_cid: str,
-) -> "DependencyArtifactGraph | None":
-    path = _artifact_disk_cache_path(artifact_cid)
-    if not path.is_file():
-        return None
-    try:
-        import pickle
-
-        with path.open("rb") as stream:
-            payload = pickle.load(stream)
-        inputs = _decode_dependency_artifact_cache_inputs(payload)
-        graph = DependencyArtifactGraph._construct_from_authenticated_inputs(inputs)
-    except Exception as exc:
-        _refuse_authenticate_disk_cache(
-            artifact_cid=artifact_cid,
-            path=path,
-            reason=f"{type(exc).__name__}: {exc}",
-        )
-        return None
-    # Construction re-derived the CID from the retained inputs. Pin that it is
-    # the CID that was ASKED for, so a payload parked at a wrong seat cannot
-    # answer a question it does not address.
-    if graph.distribution_artifact_cid != artifact_cid:
-        _refuse_authenticate_disk_cache(
-            artifact_cid=artifact_cid,
-            path=path,
-            reason=(
-                "parked artifact CID mismatch: "
-                f"payload={graph.distribution_artifact_cid}"
-            ),
-        )
-        return None
-    return graph
-
-
-def _decode_dependency_artifact_cache_inputs(
-    payload: object,
-) -> "_DistributionGraphInputs":
-    """Construct distribution inputs from the cache's primitive wire form."""
-    if not isinstance(payload, dict) or set(payload) != {"schema", "files"}:
-        raise DependencyArtifactCacheInputError(
-            "dependency artifact cache input has an invalid key set"
-        )
-    if payload["schema"] != _DEPENDENCY_ARTIFACT_CACHE_SCHEMA:
-        raise DependencyArtifactCacheInputError(
-            "disk cache schema mismatch: "
-            f"expected={_DEPENDENCY_ARTIFACT_CACHE_SCHEMA} "
-            f"actual={payload['schema']}"
-        )
-    rows = payload["files"]
-    if not isinstance(rows, list):
-        raise DependencyArtifactCacheInputError(
-            "dependency artifact cache files must be a list"
-        )
-    located: list[tuple[AuthenticatedArtifactFileV1, str]] = []
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict) or set(row) != {
-            "source_seat",
-            "content_cid",
-            "content",
-        }:
-            raise DependencyArtifactCacheInputError(
-                f"dependency artifact cache file {index} has an invalid key set"
-            )
-        source_seat = row["source_seat"]
-        content_cid = row["content_cid"]
-        content = row["content"]
-        if not isinstance(source_seat, str) or not source_seat:
-            raise DependencyArtifactCacheInputError(
-                f"dependency artifact cache file {index} has an invalid source seat"
-            )
-        if not isinstance(content_cid, str) or not content_cid.startswith(
-            "blake3-512:"
-        ):
-            raise DependencyArtifactCacheInputError(
-                f"dependency artifact cache file {index} has an invalid content CID"
-            )
-        if not isinstance(content, bytes):
-            raise DependencyArtifactCacheInputError(
-                f"dependency artifact cache file {index} has non-byte content"
-            )
-        located.append(
-            (
-                AuthenticatedArtifactFileV1(
-                    source_seat=source_seat,
-                    content_cid=content_cid,
-                    content=content,
-                ),
-                source_seat,
-            )
-        )
-    return _DistributionGraphInputs(tuple(located))
-
-
-def _refuse_authenticate_disk_cache(
-    *,
-    artifact_cid: str,
-    path: Path,
-    reason: str,
-) -> None:
-    """Make one rejected cache seat visible, then make it absent."""
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        invalidated = False
-    else:
-        invalidated = not path.exists()
-    _LOG.warning(
-        "dependency-artifact-cache-refused " "artifact_cid=%s reason=%s invalidated=%s",
-        artifact_cid,
-        reason,
-        invalidated,
-    )
-
-
-def _store_authenticate_disk_cache(
-    graph: "DependencyArtifactGraph",
-) -> None:
-    path = _artifact_disk_cache_path(graph.distribution_artifact_cid)
-    try:
-        import pickle
-        import tempfile
-
-        payload = {
-            # v4 persists constructor INPUTS only. Identity, kind, CID, and
-            # module projection are re-derived through graph construction.
-            "schema": _DEPENDENCY_ARTIFACT_CACHE_SCHEMA,
-            "files": [
-                {
-                    "source_seat": item.source_seat,
-                    "content_cid": item.content_cid,
-                    "content": item.content,
-                }
-                for item in graph.files
-            ],
-        }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(path.parent), prefix=".auth-", suffix=".pkl"
-        )
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
-            Path(tmp_name).replace(path)
-        except Exception:
-            try:
-                Path(tmp_name).unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-    except Exception:
-        return
 
 
 @dataclass(frozen=True)
@@ -769,20 +593,13 @@ class DependencyArtifactGraph:
         constructed = cls._construct_from_authenticated_inputs(
             _DistributionGraphInputs(tuple(located))
         )
-        artifact_cid = constructed.distribution_artifact_cid
-        if _AUTHENTICATE_CACHE_ENABLED:
-            cached = _AUTHENTICATE_GRAPH_CACHE.get(artifact_cid)
-            if cached is not None:
-                return cached
-            disk = _load_authenticate_disk_cache(artifact_cid)
-            if disk is not None:
-                _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = disk
-                return disk
-        graph = constructed
-        if _AUTHENTICATE_CACHE_ENABLED:
-            _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = graph
-            _store_authenticate_disk_cache(graph)
-        return graph
+        if not _AUTHENTICATE_CACHE_ENABLED:
+            return constructed
+        # The graph constructed from the bytes just read IS the answer. The
+        # memo only lets an unchanged installation answer with one object.
+        return _AUTHENTICATE_GRAPH_CACHE.setdefault(
+            constructed.distribution_artifact_cid, constructed
+        )
 
     @classmethod
     def authenticate_stdlib_module(cls, module_name: str) -> "DependencyArtifactGraph":

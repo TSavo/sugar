@@ -10,13 +10,19 @@ keyed by a digest over ``RECORD``'s ``(mtime, size)`` -- which does not move whe
 an installed ``.py`` file is edited. Both served a graph reporting an artifact
 CID for content that no longer existed on disk.
 
-The repair is not a better invalidation check. It is the key: both memos are now
+The repair is not a better invalidation check. It is the key: the memo is now
 keyed by the ``distribution_artifact_cid``, which is a pure function of exactly
 the bytes the graph authenticates. Stale is not detected, it is
 UNREPRESENTABLE -- a changed byte changes the key, and a changed key is a miss.
 That is also why this registry may be process-global where #6266's projection
 memos could not be: the key is the complete key, and the value is frozen
 content, not a node bound to somebody's live construction context.
+
+The disk twin is gone. Every authentication reads the recorded bytes and
+constructs the graph from them before any memo is consulted, so a disk seat
+could only hand the same bytes back to be constructed again: a fresh process
+parsed every recorded module twice, and a seat holding other bytes under an
+authentic content CID was served. Twin 5 pins both.
 
 Every twin carries a bite: a discrimination arm that reproduces the OLD
 path-keyed shape and shows it answering wrongly on the same input, so no
@@ -145,11 +151,13 @@ def _uncached(
 
 @pytest.fixture(autouse=True)
 def _isolated_memos(tmp_path, monkeypatch):
-    """Give each twin its own disk seat and a cold in-memory table.
+    """Give each twin its own cache home and a cold in-memory table.
 
     Not a scrub of shared authority -- the in-memory table is content-addressed
     and could legitimately survive. It is isolation of the MEASUREMENT: a twin
-    about cold-vs-warm cannot be read if a previous twin warmed it.
+    about cold-vs-warm cannot be read if a previous twin warmed it. The cache
+    home is the twin's own so that "nothing is written there" and "nothing
+    parked there answers" are both checkable.
     """
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(da, "_AUTHENTICATE_GRAPH_CACHE", {})
@@ -386,68 +394,94 @@ def test_cache_disablement_never_writes_a_memo_that_answers_later(tmp_path):
     root = tmp_path / "project"
     distribution = _install(root, implementation_source=_IMPL_A)
 
-    graph = _uncached(distribution)
+    _uncached(distribution)
 
     assert da._AUTHENTICATE_GRAPH_CACHE == {}
-    assert not da._artifact_disk_cache_path(graph.distribution_artifact_cid).exists()
+    assert not (tmp_path / "xdg").exists()
 
 
-def test_bite_the_disk_seat_is_addressed_by_the_artifact_cid(tmp_path):
-    """Bite for twin 5 and the second offender: the RECORD-stat seat is gone.
+def _old_disk_seat(tmp_path: Path, artifact_cid: str) -> Path:
+    """Where the deleted disk twin kept the graph for ``artifact_cid``."""
+    digest = artifact_cid.removeprefix("blake3-512:")[:32]
+    return tmp_path / "xdg" / "sugar" / "dependency-artifact-graphs" / f"{digest}.pkl"
 
-    A dist-info ``RECORD`` is not rewritten when an installed module is edited,
-    so a seat digested from its stat served the stale graph across PROCESSES --
-    the same defect, one layer down. The seat now moves with the content.
+
+def test_a_cold_process_table_parses_each_recorded_module_once(tmp_path, monkeypatch):
+    """Truthful: one authentication costs one construction, and no disk seat.
+
+    The disk twin made the second process pay twice: construct from the bytes
+    just read, then load the seat and construct the same bytes again.
     """
-    root = tmp_path / "project"
-    distribution = _install(root, implementation_source=_IMPL_A)
-    graph = DependencyArtifactGraph.authenticate(distribution)
-    seat = da._artifact_disk_cache_path(graph.distribution_artifact_cid)
-    assert seat.is_file()
-    record = root / "example_dist-1.0.dist-info" / "RECORD"
-    record_stat = record.stat()
-
-    _mutate(root, _IMPL_B)
-    mutated = DependencyArtifactGraph.authenticate(
-        importlib.metadata.Distribution.at(distribution._path)
-    )
-    moved = da._artifact_disk_cache_path(mutated.distribution_artifact_cid)
-
-    # RECORD did not move -- the old key could not have noticed. The seat did.
-    assert record.stat().st_mtime_ns == record_stat.st_mtime_ns
-    assert record.stat().st_size == record_stat.st_size
-    assert moved != seat
-    assert seat.is_file() and moved.is_file()
-
-    # And the old seat still answers only the question it addresses.
-    assert (
-        da._load_authenticate_disk_cache(
-            graph.distribution_artifact_cid
-        ).distribution_artifact_cid
-        == graph.distribution_artifact_cid
-    )
-    assert da._load_authenticate_disk_cache("blake3-512:" + "0" * 128) is None
-
-
-def test_disk_memo_survives_a_cold_process_table(tmp_path):
-    """The cross-process half of the cheap path, keyed by content."""
     root = tmp_path / "project"
     distribution = _install(root, implementation_source=_IMPL_A)
     warm = DependencyArtifactGraph.authenticate(distribution)
 
-    # Simulate a new process: every process-local table is empty; only the
-    # content-addressed disk seat remains.
+    parsed: list[str] = []
+    real_gate = da._require_parseable_module_source
+
+    def counted_gate(source, *, path, module_name):
+        parsed.append(module_name)
+        return real_gate(source, path=path, module_name=module_name)
+
+    monkeypatch.setattr(da, "_require_parseable_module_source", counted_gate)
+    # A new process: every process-local table is empty.
     da._AUTHENTICATE_GRAPH_CACHE.clear()
     da._TOP_LEVEL_GRAPH_CACHE.clear()
-    from_disk = DependencyArtifactGraph.authenticate(
+    cold = DependencyArtifactGraph.authenticate(
         importlib.metadata.Distribution.at(distribution._path)
     )
 
-    assert from_disk is not warm
-    assert _observable(from_disk) == _observable(warm)
+    assert sorted(parsed) == ["example_pkg", "example_pkg.implementation"]
+    assert cold is not warm
+    assert _observable(cold) == _observable(warm)
+    assert not (tmp_path / "xdg").exists()
 
 
-# -- twin 6: cache seats retain inputs; the constructor owns graph fields ------
+def test_bytes_parked_at_the_old_disk_seat_do_not_answer(tmp_path):
+    """Lying: a seat holding other bytes under an authentic content CID.
+
+    The disk twin re-derived the artifact CID from each row's recorded
+    ``content_cid`` and never hashed the row's bytes, so this seat was served:
+    the graph reported the installed artifact's CID and carried source that is
+    not installed. Nothing reads the seat now.
+    """
+    root = tmp_path / "project"
+    distribution = _install(root, implementation_source=_IMPL_A)
+    truth = _uncached(distribution)
+    seat = _old_disk_seat(tmp_path, truth.distribution_artifact_cid)
+    seat.parent.mkdir(parents=True)
+    with seat.open("wb") as stream:
+        pickle.dump(
+            {
+                "schema": "dep-graph-v4",
+                "files": [
+                    {
+                        "source_seat": item.source_seat,
+                        "content_cid": item.content_cid,
+                        "content": (
+                            _IMPL_B.encode()
+                            if item.source_seat == "example_pkg/implementation.py"
+                            else item.content
+                        ),
+                    }
+                    for item in truth.files
+                ],
+            },
+            stream,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+
+    served = DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(distribution._path)
+    )
+
+    assert served.distribution_artifact_cid == truth.distribution_artifact_cid
+    assert served.modules["example_pkg.implementation"].source == _on_disk(root)
+    assert _on_disk(root) == _IMPL_A
+    assert _observable(served) == _observable(truth)
+
+
+# -- twin 6: the constructor owns graph fields --------------------------------
 
 
 def test_graph_fields_cannot_directly_construct_an_incoherent_pair(tmp_path):
@@ -466,154 +500,6 @@ def test_graph_fields_cannot_directly_construct_an_incoherent_pair(tmp_path):
         )
 
     assert type(refused.value).__name__ == "DependencyArtifactConstructionError"
-
-
-def test_disk_cache_persists_only_primitive_constructor_inputs(tmp_path):
-    """A cache seat has no authority to remember a graph's derived fields."""
-    distribution = _install(tmp_path / "project", implementation_source=_IMPL_A)
-    graph = DependencyArtifactGraph.authenticate(distribution)
-    seat = da._artifact_disk_cache_path(graph.distribution_artifact_cid)
-
-    with seat.open("rb") as stream:
-        payload = pickle.load(stream)
-
-    assert set(payload) == {"schema", "files"}
-    assert payload["schema"] == "dep-graph-v4"
-    assert payload["files"]
-    assert all(
-        set(row) == {"source_seat", "content_cid", "content"}
-        and isinstance(row["source_seat"], str)
-        and isinstance(row["content_cid"], str)
-        and isinstance(row["content"], bytes)
-        for row in payload["files"]
-    )
-
-
-def test_coherent_disk_graph_is_served_without_refusal(tmp_path, monkeypatch, caplog):
-    """Authenticated content identity selects and rehydrates primitive inputs."""
-    root = tmp_path / "project"
-    distribution = _install(root, implementation_source=_IMPL_A)
-    warm = DependencyArtifactGraph.authenticate(distribution)
-    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
-
-    da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._TOP_LEVEL_GRAPH_CACHE.clear()
-
-    real_read = DependencyArtifactGraph._read_recorded_installation
-    reads = 0
-
-    def counted_real_read(selected_distribution):
-        nonlocal reads
-        reads += 1
-        return real_read(selected_distribution)
-
-    monkeypatch.setattr(
-        DependencyArtifactGraph,
-        "_read_recorded_installation",
-        staticmethod(counted_real_read),
-    )
-    served = DependencyArtifactGraph.authenticate(
-        importlib.metadata.Distribution.at(distribution._path)
-    )
-
-    assert _observable(served) == _observable(warm)
-    assert reads == 1
-    assert seat.is_file()
-    assert "dependency-artifact-cache-refused" not in caplog.text
-
-
-def test_unconstructible_cache_inputs_miss_and_execute_authenticated_rebuild(
-    tmp_path, monkeypatch, caplog
-):
-    """Constructor refusal means absent; intake executes and never returns empty."""
-    root = tmp_path / "project"
-    distribution = _install(root, implementation_source=_IMPL_A)
-    warm = DependencyArtifactGraph.authenticate(distribution)
-    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
-    primitive_files = [
-        {
-            "source_seat": item.source_seat,
-            "content_cid": item.content_cid,
-            "content": item.content,
-        }
-        for item in warm.files
-        if not item.source_seat.endswith(".dist-info/METADATA")
-    ]
-    with seat.open("wb") as stream:
-        pickle.dump(
-            {
-                "schema": "dep-graph-v4",
-                "files": primitive_files,
-            },
-            stream,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-
-    real_read = DependencyArtifactGraph._read_recorded_installation
-    reads = 0
-
-    def counted_real_read(selected_distribution):
-        nonlocal reads
-        reads += 1
-        return real_read(selected_distribution)
-
-    monkeypatch.setattr(
-        DependencyArtifactGraph,
-        "_read_recorded_installation",
-        staticmethod(counted_real_read),
-    )
-    da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._TOP_LEVEL_GRAPH_CACHE.clear()
-
-    served = DependencyArtifactGraph.authenticate(
-        importlib.metadata.Distribution.at(distribution._path)
-    )
-
-    assert served.artifact_kind == "distribution"
-    assert served.distribution_name == warm.distribution_name
-    assert served.distribution_artifact_cid == warm.distribution_artifact_cid
-    assert served.files
-    assert served.modules
-    assert reads == 1
-    assert "dependency-artifact-cache-refused" in caplog.text
-    assert warm.distribution_artifact_cid in caplog.text
-    assert "DependencyArtifactAuthenticationError" in caplog.text
-    assert "distribution graph must retain one METADATA preimage" in caplog.text
-    assert "invalidated=True" in caplog.text
-    assert seat.is_file()
-    with seat.open("rb") as stream:
-        replacement = pickle.load(stream)
-    assert set(replacement) == {"schema", "files"}
-    assert replacement["schema"] == "dep-graph-v4"
-
-
-def test_previous_cache_schema_is_refused_invalidated_and_rebuilt(tmp_path, caplog):
-    """A byte-authentic v3 seat cannot answer the relationship-aware v4 reader."""
-    root = tmp_path / "project"
-    distribution = _install(root, implementation_source=_IMPL_A)
-    warm = DependencyArtifactGraph.authenticate(distribution)
-    seat = da._artifact_disk_cache_path(warm.distribution_artifact_cid)
-    with seat.open("rb") as stream:
-        payload = pickle.load(stream)
-    assert payload["schema"] == da._DEPENDENCY_ARTIFACT_CACHE_SCHEMA
-    payload["schema"] = "dep-graph-v3"
-    with seat.open("wb") as stream:
-        pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
-
-    da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._TOP_LEVEL_GRAPH_CACHE.clear()
-    rebuilt = DependencyArtifactGraph.authenticate(
-        importlib.metadata.Distribution.at(distribution._path)
-    )
-
-    assert _observable(rebuilt) == _observable(warm)
-    assert "dependency-artifact-cache-refused" in caplog.text
-    assert warm.distribution_artifact_cid in caplog.text
-    assert "disk cache schema mismatch" in caplog.text
-    assert seat.is_file()
-    with seat.open("rb") as stream:
-        replacement = pickle.load(stream)
-    assert replacement["schema"] == "dep-graph-v4"
 
 
 # -- twin 7: the value is not mutable, so a writer cannot leak -----------------
