@@ -2501,6 +2501,8 @@ def _resolve_source_visible_frame_uncached(
                 frame,
                 parameters=frame.parameters[1:],
                 formal_coordinates=frame.formal_coordinates[1:],
+                formal_declaration_sites=frame.formal_declaration_sites[1:],
+                formal_projection_paths=frame.formal_projection_paths[1:],
                 parameter_kinds=frame.parameter_kinds[1:],
                 default_sugars=frame.default_sugars[1:],
                 default_nodes=frame.default_nodes[1:],
@@ -2786,6 +2788,29 @@ def _resolve_source_visible_frame_uncached(
                         resolution_kind=kind,
                     ),
                 )
+
+    # Module-level functions install resolved free-name callees in the
+    # pending loop below. Methods of reachable classes used to resolve the
+    # same names into ``external_frames`` and then drop them, so a method
+    # calling an imported ``name = Class()`` callable (pytest ``fail``) was
+    # carried as a bodyless CallSiteValue. Seat function frames — including
+    # nested ``Class.__call__`` — before constructor-sugar reads those
+    # method bodies. Class constructor frames stay out: a reachable-name
+    # filter can hide a same-module class, the export door then answers
+    # with a zero-parameter constructor, and seating that onto
+    # ``ObservationSlot("label")`` invents an unconsumed actual.
+    for definition in (target,) + tuple(definitions):
+        for scanned in _scanned_definitions(definition):
+            frame_binders = _frame_bound_names(scanned)
+            for call in _local_named_calls(scanned):
+                if call.func.id in frame_binders:
+                    continue
+                nested = external_frames.get(call.func.id)
+                owner = getattr(nested, "owner", None)
+                if nested is not None and isinstance(
+                    owner, (FunctionDef, AsyncFunctionDef)
+                ):
+                    _install_source_call_frame(context, call, nested)
 
     frames: dict[str, object] = {}
     reaching_classes: dict[str, ClassDef] = {}
