@@ -576,15 +576,9 @@ pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutco
         .iter()
         .map(|cr| {
             let mut report = sugar_verifier::types::Report::default();
-            sugar_verifier::report::add_consistency_with_verification(
-                &cr.contract_cid,
-                &cr.property_name,
-                cr.verdict,
-                &cr.reason,
-                cr.verification.as_ref().map(|v| v.to_json()),
-                cr.locus.clone(),
-                &mut report,
-            );
+            // Whole-value door: carries the producer's typed verify effect (#7349)
+            // so the LSP row cannot omit it the way a field-by-field call could.
+            sugar_verifier::report::add_consistency_result(cr, &mut report);
             sugar_verifier::report::row_to_json(&report.rows[0])
         })
         .collect();
