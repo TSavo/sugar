@@ -1522,10 +1522,16 @@ class GeneratorConstructionV1:
         )
 
         def transition_yield(resolved_value):
+            from sugar_lift_py_tests.floor import RaiseValue
+
+            if isinstance(resolved_value, RaiseValue):
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(resolved_value.effect, state=self)
+                )
             return YieldEffect(resolved_value, resume_coordinate, machine)
 
         def continue_yield(resolved_value):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import Complete, ExitSet
             from sugar_source_tree.panic import SugarNotWritten
 
             result = transition_yield(resolved_value)
@@ -1540,6 +1546,8 @@ class GeneratorConstructionV1:
                         "normalization"
                     ),
                 )
+            if isinstance(result, ExitSet):
+                return result
             return Complete(result)
 
         from sugar_lift_py_tests.caller_parameter_contract import (
