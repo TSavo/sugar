@@ -3507,14 +3507,14 @@ def _finally_term_step_for_nested_with(finalbody):
     """
     from sugar_lift_py_tests.generator_construction import FinallyStepV1
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-    from sugar_source_tree.nodes import Assert, Expr, For, Pass, Raise, While, Yield
+    from sugar_source_tree.nodes import Assert, Expr, For, Import, Pass, Raise, While, Yield
     from sugar_source_tree.panic import SugarNotWritten
 
     terms = []
     for item in finalbody:
         if isinstance(item, Pass):
             continue
-        if isinstance(item, (Assert, For, Raise, While)):
+        if isinstance(item, (Assert, For, Import, Raise, While)):
             return None
         if isinstance(item, Expr) and isinstance(item.value, Yield):
             return None
@@ -3596,8 +3596,11 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     top-level generator already names; transition desugars the RaiseSugar
     and halts with the effect. An ``assert`` that does not own a yield is
     AssertStepV1, the same step a top-level generator names; ``assert True``
+    advances and continues. An ``import`` that does not own a yield is
+    ImportStepV1, the same step a top-level generator names; ``import math``
     advances and continues. This does not invent items, warning testimony,
-    a bound on ``while True``, or that a cleanup raise was suppressed.
+    a bound on ``while True``, a loaded module, or that a cleanup raise was
+    suppressed.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
@@ -3605,6 +3608,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         AssertStepV1,
         ForStepV1,
         IfStepV1,
+        ImportStepV1,
         InertStepV1,
         RaiseStepV1,
         ReturnStepV1,
@@ -3620,6 +3624,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         For,
         FunctionDef,
         If,
+        Import,
         List,
         Name,
         Tuple_,
@@ -3668,6 +3673,28 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
                 assert_sugar=assert_sugar,
                 assert_cid=statement.fragment.seal().cid,
                 assert_coordinate=SourceFragmentCoordinateV1(
+                    statement.unit.source_cid,
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                ),
+                occurrence=statement.fragment,
+            )
+        if isinstance(statement, Import) and not FunctionDef._owns_yield((statement,)):
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+            from sugar_source_tree.panic import SugarNotWritten
+
+            try:
+                import_sugar = statement.sugar()
+            except SugarNotWritten:
+                return None
+            span = statement.line_col_span()
+            return ImportStepV1(
+                import_sugar=import_sugar,
+                coordinate=SourceFragmentCoordinateV1(
                     statement.unit.source_cid,
                     span.start_line,
                     span.start_col,
