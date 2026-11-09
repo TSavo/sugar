@@ -138,3 +138,56 @@ def test_imported_class_classmethod_projects_an_ordinary_source_call_frame(
     frame, target = projected
     assert target.name == "for_later"
     assert frame.parameters == ("cls",)
+
+
+
+def test_classmethod_attribute_call_binds_the_class_as_cls() -> None:
+    """``Holder.for_later()`` binds the class to the implicit cls formal.
+
+    A seated classmethod frame includes ``cls``. The attribute receiver is
+    that actual; without it, bind_node_actuals raises missing required formal 0.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "class Holder:\n"
+        "    @classmethod\n"
+        "    def for_later(cls):\n"
+        "        return None\n"
+        "ready = Holder.for_later()\n"
+    )
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, "classmethod-cls.py", blake3_512_of(source.encode())),
+        construction_context=context,
+    )
+    holder = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "Holder"
+    )
+    method = next(
+        node
+        for node in holder.body
+        if isinstance(node, FunctionDef) and node.name == "for_later"
+    )
+    call = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call)
+        and isinstance(node.func, Attribute)
+        and node.func.attr == "for_later"
+    )
+    context.source_call_frames[call.source_occurrence()] = (
+        method.source_visible_call_frame()
+    )
+    try:
+        sugar = call.sugar()
+    except SourceCallBindingGap as exc:
+        raise AssertionError(exc) from exc
+    assert sugar is not None
