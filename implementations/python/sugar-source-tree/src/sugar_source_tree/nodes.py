@@ -11823,11 +11823,27 @@ class Call(Expression):
                 raise SourceCallBindingGap(
                     "spread keyword requires typed variadic projection"
                 )
+            bind_args = self.args
+            if source_call_resolution is None:
+                frame_owner = getattr(source_call_frame, "owner", None)
+                class_owner = (
+                    frame_owner.unit.lexical_class_owner_for(frame_owner)
+                    if isinstance(frame_owner, FunctionDef)
+                    else None
+                )
+                if (
+                    isinstance(self.func, Attribute)
+                    and class_owner is not None
+                    and class_owner._method_descriptor_kind(frame_owner)
+                    == "classmethod"
+                ):
+                    # ExceptionInfo.for_later() supplies the class as cls.
+                    bind_args = (self.func.value,) + tuple(self.args)
             bound_frame = (
                 source_call_frame
                 if source_call_resolution is not None
                 else source_call_frame.bind_node_actuals(
-                    self.args,
+                    bind_args,
                     tuple(
                         (keyword.arg, keyword.value)
                         for keyword in self.keywords
