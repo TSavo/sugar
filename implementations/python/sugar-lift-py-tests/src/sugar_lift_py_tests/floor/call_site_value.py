@@ -226,8 +226,16 @@ class CallSiteValue(FloorValue):
         return projected
 
     def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
-        """Project the completion retained by the sole producer reduction."""
+        """Project the completion retained by the sole producer reduction.
+
+        Matches ``project_operation_receiver``: a unique authenticated return
+        is exposed; a multi-exit ``BlockValue`` stays this CallSiteValue so
+        the call remains the semantic value.  ``backquote(_exception_type_name(
+        expected_type))`` must not invent one string for both remaining
+        returns (the singleton ``__name__`` arm and the join-names arm).
+        """
         del ctx
+        from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -254,7 +262,10 @@ class CallSiteValue(FloorValue):
                 callsite=self,
                 observed="retained source completion value is not FloorValue",
             )
-        return Complete(_project_authenticated_source_return(retained.value))
+        projected = _project_authenticated_source_return(retained.value)
+        if isinstance(projected, BlockValue):
+            return Complete(self)
+        return Complete(projected)
 
     def runtime_type_is_decided(self) -> bool:
         """Undecided: no citation fixes an unexecuted call's result type.
@@ -972,13 +983,49 @@ class CallSiteValue(FloorValue):
         ``type(x).__name__`` / ``__qualname__`` always return ``str``. A named
         string concat (``call:__add__`` or ``python:fstring``) does too, so
         ``backquote`` can join ``"`" + name + "`"`` without inventing text.
+
+        A retained source body whose every return face already names a string
+        does too: ``_exception_type_name`` of an unfloored tuple still has both
+        the singleton ``__name__`` arm and the join-names arm, but both are
+        string coordinates. Do not invent which arm returns.
         """
         if self.target_name in {"__name__", "__qualname__"}:
             return True
         from sugar_lift_py_tests.ir import _Ctor
 
         term = self.term
-        return type(term) is _Ctor and term.name in {"call:__add__", "python:fstring"}
+        if type(term) is _Ctor and term.name in {"call:__add__", "python:fstring"}:
+            return True
+        return self._retained_completion_names_a_string()
+
+    def _retained_completion_names_a_string(self) -> bool:
+        retained = self._retained_source_completion
+        if type(retained) is not _RetainedSourceCompletionV1:
+            return False
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.floor.string_value import StringValue
+
+        def face_names_a_string(face) -> bool:
+            if type(face) is StringValue:
+                return True
+            if type(face) is CallSiteValue:
+                return face.names_a_string()
+            if type(face) is OpaqueOpCallsite and face.callee == "join":
+                return True
+            return False
+
+        value = retained.value
+        if not isinstance(value, BlockValue):
+            return face_names_a_string(value)
+        faces = tuple(
+            statement.value
+            for statement in value.statements
+            if isinstance(statement, (ReturnValue, GuardedReturn))
+        )
+        return bool(faces) and all(face_names_a_string(face) for face in faces)
 
     @staticmethod
     def named_string_concat(left, right, site):
