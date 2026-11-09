@@ -435,6 +435,7 @@ def derive_manager_summary(
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.outcome import ExitSet
 
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
     from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
 
     try:
@@ -447,7 +448,7 @@ def derive_manager_summary(
             protocol.protocol_construction_cid,
             f"{owner}:{observed}",
         )
-    except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
+    except (OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
         return DerivedManagerSummaryGapV1(
@@ -509,7 +510,7 @@ def derive_manager_summary(
             protocol.protocol_construction_cid,
             f"{owner}:{observed}",
         )
-    except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
+    except (OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
         return DerivedManagerSummaryGapV1(
@@ -912,12 +913,13 @@ def _derive_boundary_for_receiver(protocol, behavior, receiver):
     )
     from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
     from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
 
     specialized = replace(protocol, receiver_state=receiver)
     try:
         exit_outcome = specialized.exit_outcome()
-    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap):
         return None
     if (
         isinstance(exit_outcome, NativeOperationExitCarrierV1)
@@ -936,7 +938,7 @@ def _derive_boundary_for_receiver(protocol, behavior, receiver):
         )
     try:
         exit_ = outcome_to_exitset(exit_outcome)
-    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap):
         return None
     return _derive_effect_boundary(exit_, specialized, behavior)
 

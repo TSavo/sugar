@@ -5256,6 +5256,33 @@ def test_deferred_protocol_admission_rejects_a_foreign_exit_slot(tmp_path, monke
     assert summary.kind == "exit-may-halt"
 
 
+def test_source_call_binding_gap_during_exit_is_exit_may_halt(tmp_path, monkeypatch):
+    """A foreign native coordinate during exit is a leftover, not an uncaught raise."""
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+    graph, resolved, actual, site = _resolved(
+        tmp_path,
+        _DEFERRED_BODY_MESSAGE_RESOURCE.replace(
+            "def boundary(pattern):", "def make_guard(pattern):"
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="owned-exit-face")
+
+    def boom(self, ctx=None):
+        raise SourceCallBindingGap(
+            "native formal coordinate roster contains a foreign coordinate type"
+        )
+
+    monkeypatch.setattr(ConstructedManagerProtocolV1, "exit_outcome", boom)
+    summary = derive_manager_summary(protocol, behavior=behavior)
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    assert summary.kind == "exit-may-halt"
+    assert "foreign coordinate type" in summary.detail
+
+
 @pytest.mark.parametrize(
     "eq_body", ["return True", 'raise LookupError("exception equality")']
 )
@@ -5493,6 +5520,39 @@ def test_ifexp_deferred_message_lookup_is_not_forced_through_outcome_to_exitset(
     assert outcome.demand.operator == "attribute_named"
     assert outcome.operands[1] == StringValue("message")
     assert outcome.short_circuits
+    with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
+        outcome_to_exitset(outcome)
+
+
+def test_spread_deferred_message_lookup_is_not_forced_through_outcome_to_exitset():
+    """``[effect.message, *rest]`` keeps the deferred lookup."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.floor import StringValue, TupleValue
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    source = "[effect.message, *rest]\n"
+    tree = SourceFile(
+        (source, "spread-deferred-exit.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    display = next(node for node in tree.nodes() if node.kind == "List")
+    coordinate = ExitValueCoordinate("spread-message-face")
+    ctx = ReduceContext(
+        temporal=builtin_name_temporal()
+        .bind_value("effect", coordinate)
+        .bind_value("rest", TupleValue(()))
+    )
+    outcome = display.sugar().desugar(ctx)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "attribute_named"
+    assert outcome.operands[1] == StringValue("message")
     with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
         outcome_to_exitset(outcome)
 
