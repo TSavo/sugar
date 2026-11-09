@@ -2164,6 +2164,18 @@ class GeneratorConstructionV1:
                 return ExitSet.completed(result)
             if isinstance(result, ExitSet):
                 return result
+            if isinstance(result, GeneratorTransitionGapV1):
+                # A cleanup step that cannot transition stays a typed leftover,
+                # not a construction panic that hides the inner observed gap.
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner=result.owner,
+                    blame=step,
+                    observed=result.observed,
+                    requested=result.requested,
+                    fix=result.fix,
+                )
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
             construction_panic_gap(
