@@ -3507,14 +3507,14 @@ def _finally_term_step_for_nested_with(finalbody):
     """
     from sugar_lift_py_tests.generator_construction import FinallyStepV1
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-    from sugar_source_tree.nodes import Expr, For, Pass, Raise, While, Yield
+    from sugar_source_tree.nodes import Assert, Expr, For, Pass, Raise, While, Yield
     from sugar_source_tree.panic import SugarNotWritten
 
     terms = []
     for item in finalbody:
         if isinstance(item, Pass):
             continue
-        if isinstance(item, (For, Raise, While)):
+        if isinstance(item, (Assert, For, Raise, While)):
             return None
         if isinstance(item, Expr) and isinstance(item.value, Yield):
             return None
@@ -3594,12 +3594,15 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     skips the body and continues; an undecided guard stays a typed gap.
     A ``raise`` that does not own a yield is RaiseStepV1, the same step a
     top-level generator already names; transition desugars the RaiseSugar
-    and halts with the effect. This does not invent items, warning testimony,
+    and halts with the effect. An ``assert`` that does not own a yield is
+    AssertStepV1, the same step a top-level generator names; ``assert True``
+    advances and continues. This does not invent items, warning testimony,
     a bound on ``while True``, or that a cleanup raise was suppressed.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
         AssignStepV1,
+        AssertStepV1,
         ForStepV1,
         IfStepV1,
         InertStepV1,
@@ -3610,6 +3613,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     )
     from sugar_source_tree.nodes import (
         AnnAssign,
+        Assert,
         Assign,
         Constant,
         Expr,
@@ -3649,6 +3653,29 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
             if not isinstance(raise_sugar, RaiseSugar):
                 return None
             return RaiseStepV1(raise_sugar, statement.fragment.seal().cid)
+        if isinstance(statement, Assert) and not FunctionDef._owns_yield((statement,)):
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+            from sugar_source_tree.panic import SugarNotWritten
+
+            try:
+                assert_sugar = statement.sugar()
+            except SugarNotWritten:
+                return None
+            span = statement.line_col_span()
+            return AssertStepV1(
+                assert_sugar=assert_sugar,
+                assert_cid=statement.fragment.seal().cid,
+                assert_coordinate=SourceFragmentCoordinateV1(
+                    statement.unit.source_cid,
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                ),
+                occurrence=statement.fragment,
+            )
         if isinstance(statement, Expr) and isinstance(statement.value, Constant):
             return InertStepV1(statement.kind)
         if (
