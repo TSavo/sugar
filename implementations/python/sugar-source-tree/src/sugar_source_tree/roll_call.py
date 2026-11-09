@@ -22,7 +22,7 @@ so it is testable from a ``CollectingReporter`` you fill by hand, no lift.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 
@@ -62,29 +62,47 @@ class MinorityReport:
     the collected roll."""
 
     reporter: object  # a reporter.CollectingReporter
+    # roll name -> (the roll list read, how many of its answers are indexed,
+    # the index). The view's own bookkeeping: not part of its identity.
+    _indexed: dict = field(default_factory=dict, compare=False, repr=False)
 
-    def _by_coordinate(self, nodes) -> dict[tuple, RosterEntry]:
-        # The lazy tree registers a logical source node many times. Equal source
-        # text may share a CID at distinct loci, so the roll-call identity keeps
-        # the authenticated source coordinate alongside that content identity.
-        out: dict[tuple, RosterEntry] = {}
-        for n in nodes:
-            e = roster_entry_for(n)
+    def _by_coordinate(self, roll: str) -> dict[tuple, RosterEntry]:
+        """The named roll (``registered`` or ``present``), keyed by coordinate.
+
+        The lazy tree registers a logical source node many times. Equal source
+        text may share a CID at distinct loci, so the roll-call identity keeps
+        the authenticated source coordinate alongside that content identity.
+
+        A roll is an append-only log: the reporter only ever appends. Each
+        answer on it is read once. A later question reads only what was
+        appended since the last one; every reader of ``roster``, ``present``
+        and ``minority`` used to re-derive the whole roll, entry by entry. A
+        roll that was replaced or shortened is not the log that was indexed,
+        and is read again from its first answer.
+        """
+        nodes = getattr(self.reporter, roll)
+        source, consumed, out = self._indexed.get(roll, (None, 0, {}))
+        if source is not nodes or len(nodes) < consumed:
+            consumed, out = 0, {}
+        # ``len`` is re-read each step: an answer appended while this question
+        # is being answered belongs to this question, as it always did.
+        while consumed < len(nodes):
+            e = roster_entry_for(nodes[consumed])
+            consumed += 1
             key = (e.file, e.start_line, e.start_col, e.kind, e.cid)
             out.setdefault(key, e)
+        self._indexed[roll] = (nodes, consumed, out)
         return out
 
     @property
     def roster(self) -> tuple[RosterEntry, ...]:
-        return tuple(self._by_coordinate(self.reporter.registered).values())
+        return tuple(self._by_coordinate("registered").values())
 
     @property
     def present(self) -> tuple[RosterEntry, ...]:
-        present = set(self._by_coordinate(self.reporter.present))
+        present = self._by_coordinate("present")
         return tuple(
-            e
-            for e in self.roster
-            if (e.file, e.start_line, e.start_col, e.kind, e.cid) in present
+            e for key, e in self._by_coordinate("registered").items() if key in present
         )
 
     @property
@@ -92,11 +110,11 @@ class MinorityReport:
         """registered \\ present -- roster CIDs that never discharged a present
         answer. The absent never report themselves; the roster computes them by
         difference (deduped on the CID, the one stable identity)."""
-        present = set(self._by_coordinate(self.reporter.present))
+        present = self._by_coordinate("present")
         return tuple(
             e
-            for e in self.roster
-            if (e.file, e.start_line, e.start_col, e.kind, e.cid) not in present
+            for key, e in self._by_coordinate("registered").items()
+            if key not in present
         )
 
     @property
