@@ -3577,7 +3577,7 @@ def _compose_finally_for_nested_with(body_steps, cleanup_step):
     return tuple(composed)
 
 
-def _nameable_nested_with_body_steps(body) -> tuple | None:
+def _nameable_nested_with_body_steps(body, *, scope=None) -> tuple | None:
     """Name With-body steps under the merged pre-yield law (Assign/If/Yield peers).
 
     A handler-free try/finally whose cleanup is term-only (or ``pass``) composes
@@ -3605,7 +3605,9 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     step a top-level generator already names. A ``yield from`` whose
     iterable is a constructed term is YieldFromStepV1, the same step a
     top-level generator already names; ``yield from (1,)`` delegates the
-    item through already-written iter/next. This does not invent
+    item through already-written iter/next. A nested cited-opaque With
+    is NestedCitedOpaqueManagerStepV1, the same step this namer already
+    seats at the generator top level. This does not invent
     items, warning testimony, a bound on ``while True``, a loaded module,
     that the attribute was stored, or that a cleanup raise was suppressed.
     Returns None when any statement is unnameable — keeps the nested With loud.
@@ -3645,6 +3647,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         Return,
         Try,
         While,
+        With,
         Yield,
         YieldFrom,
         generator_for_module_cid,
@@ -3871,6 +3874,8 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
                 ),
                 occurrence=statement.fragment,
             )
+        if isinstance(statement, With):
+            return _cited_opaque_nested_step_for(statement, scope=scope)
         if isinstance(statement, If):
             then_b = name_body(statement.body)
             else_b = name_body(statement.orelse)
@@ -4060,7 +4065,7 @@ def _cited_opaque_nested_step_for(statement, *, scope=None):
     body = statement.body
     if scope:
         body = _cite_formals_in_if_guards(statement.body, scope)
-    body_steps = _nameable_nested_with_body_steps(body)
+    body_steps = _nameable_nested_with_body_steps(body, scope=scope)
     if body_steps is None:
         return None
     try:
