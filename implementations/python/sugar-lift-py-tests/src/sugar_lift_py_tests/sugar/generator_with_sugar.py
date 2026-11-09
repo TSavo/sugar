@@ -56,53 +56,9 @@ class GeneratorWithSugar(Sugar):
                     "manager did not construct GeneratorConstructionV1",
                     "opaque generator transition",
                 )
-            entered = machine.resume()
-            if isinstance(entered, GeneratorTerminationV1):
-                # Never-yield / premature-return at enter: Python's manager
-                # protocol raises. Type and message come from the observed
-                # vendor conversion (generator_entry_refusal), not a transcribed
-                # string and not a SugarNotWritten refusal of a real outcome.
-                routed.append(
-                    self._entry_refusal_exit(
-                        manager_exit,
-                        entered,
-                    )
-                )
-                continue
-            if isinstance(entered, GeneratorTransitionGapV1):
-                self._loud(entered.observed, "opaque generator transition")
-            if not isinstance(entered, YieldEffect):
-                self._loud(type(entered).__name__, "opaque generator transition")
-
-            body_es = reduce_block_to_exitset(self.body, ctx).guarded(
-                manager_exit.guard
+            routed.append(
+                self._consume_enter_outcome(machine.resume(), manager_exit, ctx)
             )
-            exits = []
-            for body_exit in body_es.exits:
-                if isinstance(body_exit, Halted):
-                    thrown = entered.machine.throw(body_exit.effect).guarded(
-                        body_exit.guard
-                    )
-                    exits.extend(thrown.exits)
-                    continue
-                after = entered.machine.resume()
-                if isinstance(after, ExitSet):
-                    exits.extend(after.guarded(body_exit.guard).exits)
-                    continue
-                if isinstance(after, YieldEffect):
-                    self._loud("generator yielded during exit", "second yield")
-                if isinstance(after, GeneratorTransitionGapV1):
-                    self._loud(after.observed, "opaque generator transition")
-                if not isinstance(after, GeneratorTerminationV1):
-                    self._loud(type(after).__name__, "opaque generator transition")
-                exits.append(Completed(body_exit.guard, body_exit.value))
-            result = ExitSet(tuple(exits)).normalize()
-            facts = ()
-            if self.enter_slot_id is not None:
-                facts = EnterResultBinding(self.enter_slot_id, entered.value).to_facts(
-                    site=self.site
-                )
-            routed.append(prepend_facts_to_exitset(result, facts))
 
         if not routed:
             return exitset_to_outcome(ExitSet(()))
@@ -110,6 +66,70 @@ class GeneratorWithSugar(Sugar):
         for part in routed[1:]:
             result = result.union(part)
         return exitset_to_outcome(result)
+
+    def _consume_enter_outcome(self, entered, manager_exit, ctx):
+        """Route first-resume of a generator manager, including open enter faces."""
+        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+        from sugar_lift_py_tests.outcome.resource_bindings import (
+            EnterResultBinding,
+            prepend_facts_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        if isinstance(entered, ExitSet):
+            parts = []
+            for face in entered.exits:
+                if isinstance(face, Halted):
+                    parts.append(ExitSet((face,)).guarded(manager_exit.guard))
+                    continue
+                if isinstance(face, Completed):
+                    parts.append(
+                        self._consume_enter_outcome(
+                            face.value, manager_exit, ctx
+                        ).guarded(face.guard)
+                    )
+                    continue
+                self._loud(type(face).__name__, "opaque generator transition")
+            if not parts:
+                return ExitSet(())
+            result = parts[0]
+            for part in parts[1:]:
+                result = result.union(part)
+            return result
+        if isinstance(entered, GeneratorTerminationV1):
+            return self._entry_refusal_exit(manager_exit, entered)
+        if isinstance(entered, GeneratorTransitionGapV1):
+            self._loud(entered.observed, "opaque generator transition")
+        if not isinstance(entered, YieldEffect):
+            self._loud(type(entered).__name__, "opaque generator transition")
+
+        body_es = reduce_block_to_exitset(self.body, ctx).guarded(manager_exit.guard)
+        exits = []
+        for body_exit in body_es.exits:
+            if isinstance(body_exit, Halted):
+                thrown = entered.machine.throw(body_exit.effect).guarded(body_exit.guard)
+                exits.extend(thrown.exits)
+                continue
+            after = entered.machine.resume()
+            if isinstance(after, ExitSet):
+                exits.extend(after.guarded(body_exit.guard).exits)
+                continue
+            if isinstance(after, YieldEffect):
+                self._loud("generator yielded during exit", "second yield")
+            if isinstance(after, GeneratorTransitionGapV1):
+                self._loud(after.observed, "opaque generator transition")
+            if not isinstance(after, GeneratorTerminationV1):
+                self._loud(type(after).__name__, "opaque generator transition")
+            exits.append(Completed(body_exit.guard, body_exit.value))
+        result = ExitSet(tuple(exits)).normalize()
+        facts = ()
+        if self.enter_slot_id is not None:
+            facts = EnterResultBinding(self.enter_slot_id, entered.value).to_facts(
+                site=self.site
+            )
+        return prepend_facts_to_exitset(result, facts)
 
     @staticmethod
     def _entry_refusal_exit(manager_exit, termination: GeneratorTerminationV1):

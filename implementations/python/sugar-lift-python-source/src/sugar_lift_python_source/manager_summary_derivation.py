@@ -2252,6 +2252,63 @@ def populate_source_derived_resource_refs(
     # publication door as import-backed ClassDef CMs. Uncovered uses stay empty
     # for With.require (L3d) to panic.
     _populate_same_module_class_manager_uses(source_file, context, uses)
+    _rewrite_installed_generator_frames(context)
+
+
+def _rewrite_installed_generator_frames(context) -> None:
+    """Rewrite seated generator frames after contract refs are published.
+
+    ``_publish_generator_backed_resource_contract`` only rewrites a
+    protocol-backing copy, and only when decorator coordinates exist. A bare
+    generator (pandas ``assert_produces_warning``, a local ``yield`` manager)
+    is consumed from ``source_call_frames``. Apply the cited-opaque rewrite
+    to those live frames once the manager-source refs are seated.
+
+    ``bind_node_actuals`` re-emits steps from the FunctionDef, which would
+    drop the rewrite; wrap those frames so bind reapplies it.
+    """
+    frames = getattr(context, "source_call_frames", None)
+    if not frames:
+        return
+    for coordinate, frame in list(frames.items()):
+        if getattr(frame, "generator_steps", None) is None:
+            continue
+        rewritten = _frame_with_nested_manager_steps(frame, ())
+        frames[coordinate] = _as_rewriting_generator_frame(rewritten)
+
+
+def _rewriting_generator_frame_class():
+    from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+
+    cached = getattr(_rewriting_generator_frame_class, "_cls", None)
+    if cached is not None:
+        return cached
+
+    class _GeneratorFrameWithCitedOpaqueRewriteV1(SourceVisibleCallFrameV1):
+        """A source-visible frame that reapplies cited-opaque With rewrite after bind."""
+
+        def bind_node_actuals(self, *args, **kwargs):
+            bound = super().bind_node_actuals(*args, **kwargs)
+            rewritten = _frame_with_nested_manager_steps(bound, ())
+            return _as_rewriting_generator_frame(rewritten)
+
+    _rewriting_generator_frame_class._cls = _GeneratorFrameWithCitedOpaqueRewriteV1
+    return _GeneratorFrameWithCitedOpaqueRewriteV1
+
+
+def _as_rewriting_generator_frame(frame):
+    """Keep a bind hook on a live source-visible generator frame."""
+    from dataclasses import fields
+
+    from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+
+    cls = _rewriting_generator_frame_class()
+    if isinstance(frame, cls):
+        return frame
+    if not isinstance(frame, SourceVisibleCallFrameV1):
+        return frame
+    values = {item.name: getattr(frame, item.name) for item in fields(frame) if item.init}
+    return cls(**values)
 
 
 def _enclosing_function(source_file, node):
@@ -3522,11 +3579,61 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     return name_body(body)
 
 
+def _cited_opaque_nested_step_for(statement):
+    """Name a top-level cited-opaque With as a generator step, or None.
+
+    Leaves the With opaque when the body is unnameable, the as-target is not
+    a simple Name, or the manager expression is not a constructed term.
+    Does not invent enter or exit testimony.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueCitedContextManagerRefV1,
+        PartitionedOpaqueCitedContextManagerRefV1,
+    )
+    from sugar_lift_py_tests.generator_construction import NestedCitedOpaqueManagerStepV1
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_source_tree.nodes import Name
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if len(statement.items) != 1:
+        return None
+    item = statement.items[0]
+    ref = statement._prebound_manager_resolution(item)
+    if type(ref) not in (
+        OpaqueCitedContextManagerRefV1,
+        PartitionedOpaqueCitedContextManagerRefV1,
+    ):
+        return None
+    body_steps = _nameable_nested_with_body_steps(statement.body)
+    if body_steps is None:
+        return None
+    try:
+        manager_sugar = item.context_expr.sugar()
+    except SugarNotWritten:
+        return None
+    if not isinstance(manager_sugar, ConstructedTermSugar):
+        return None
+    optional = item.optional_vars
+    if optional is not None and not isinstance(optional, Name):
+        return None
+    fragment_cid = statement.fragment.seal().cid
+    occurrence_cid = item.context_expr.fragment.seal().cid
+    return NestedCitedOpaqueManagerStepV1(
+        manager=manager_sugar,
+        contract_ref=ref,
+        body_steps=body_steps,
+        fragment_cid=fragment_cid,
+        occurrence_cid=occurrence_cid,
+        site=statement.fragment,
+        as_name=None if optional is None else optional.id,
+    )
+
+
 def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
-    """Rewrite Opaque With steps to NestedManagerStepV1 when layers resolve.
+    """Rewrite Opaque With steps when a nested layer or cited-opaque With resolves.
 
     Producer-owned: does not edit nodes.py emission. Leaves the frame unchanged
-    when there are no nested layers or no Opaque With to rewrite.
+    when there is nothing to rewrite.
     """
     from types import SimpleNamespace
 
@@ -3534,46 +3641,81 @@ def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
         NestedManagerStepV1,
         OpaqueStepV1,
     )
+    from sugar_source_tree.nodes import With
 
-    if not nested_layers:
-        return frame
     steps = getattr(frame, "generator_steps", None)
     if not steps:
         return frame
-    rewritten = []
-    layer_idx = 0
-    for step in steps:
-        if (
-            isinstance(step, OpaqueStepV1)
-            and step.observed == "With"
-            and layer_idx < len(nested_layers)
-        ):
-            layer = nested_layers[layer_idx]
-            layer_idx += 1
-            nested_protocol = layer.nested_protocol
-            if nested_protocol is None:
-                rewritten.append(step)
-                continue
-            occurrence_cid = layer.occurrence.get("cid") or layer.cid
-            body_steps = getattr(layer, "body_steps", ()) or ()
-            rewritten.append(
-                NestedManagerStepV1(
-                    nested_protocol=nested_protocol,
-                    body_steps=body_steps,
-                    fragment_cid=occurrence_cid,
-                    occurrence_cid=occurrence_cid,
-                )
-            )
-            continue
-        rewritten.append(step)
-    if layer_idx == 0:
+    owner = getattr(frame, "owner", None)
+    with_stmts = [stmt for stmt in getattr(owner, "body", ()) or () if isinstance(stmt, With)]
+    cited_by_cid = {}
+    for stmt in with_stmts:
+        named = _cited_opaque_nested_step_for(stmt)
+        if named is not None:
+            cited_by_cid[stmt.fragment.seal().cid] = named
+    src_by_cid = {}
+    src_order = []
+    for layer in nested_layers:
+        occurrence = getattr(layer, "occurrence", None) or {}
+        with_cid = occurrence.get("withCid") if isinstance(occurrence, dict) else None
+        if with_cid:
+            src_by_cid[with_cid] = layer
+        src_order.append(layer)
+    if not cited_by_cid and not nested_layers:
         return frame
+    rewritten = []
+    src_idx = 0
+    with_idx = 0
+    rewrote = False
+    for step in steps:
+        if not (isinstance(step, OpaqueStepV1) and step.observed == "With"):
+            rewritten.append(step)
+            continue
+        stmt = with_stmts[with_idx] if with_idx < len(with_stmts) else None
+        with_idx += 1
+        cid = stmt.fragment.seal().cid if stmt is not None else None
+        cited = cited_by_cid.get(cid)
+        if cited is not None:
+            rewritten.append(cited)
+            rewrote = True
+            continue
+        layer = src_by_cid.get(cid)
+        if layer is None and cid not in src_by_cid and src_idx < len(src_order):
+            layer = src_order[src_idx]
+            src_idx += 1
+        elif layer is not None:
+            src_idx += 1
+        if layer is None or getattr(layer, "nested_protocol", None) is None:
+            rewritten.append(step)
+            continue
+        occurrence_cid = layer.occurrence.get("cid") or layer.cid
+        body_steps = getattr(layer, "body_steps", ()) or ()
+        rewritten.append(
+            NestedManagerStepV1(
+                nested_protocol=layer.nested_protocol,
+                body_steps=body_steps,
+                fragment_cid=occurrence_cid,
+                occurrence_cid=occurrence_cid,
+            )
+        )
+        rewrote = True
+    if not rewrote:
+        return frame
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+
+    if isinstance(frame, SourceVisibleCallFrameV1):
+        # Keep the live frame type: SimpleNamespace has no bind_node_actuals,
+        # and installed generator Withs consume this object as the source frame.
+        return replace(frame, generator_steps=tuple(rewritten))
     return SimpleNamespace(
         frame_cid=frame.frame_cid,
         generator_steps=tuple(rewritten),
         runtime_entries=tuple(getattr(frame, "runtime_entries", ()) or ()),
         parameters=tuple(getattr(frame, "parameters", ()) or ()),
         definition_site=getattr(frame, "definition_site", None),
+        owner=owner,
     )
 
 

@@ -3176,33 +3176,132 @@ def test_installed_pytest_raises_excinfo_value_args_are_the_constructor_argument
     assert returned == TupleValue(elements=(StringValue("boom"),))
 
 
+def _installed_generator_with(tmp_path, source: str, consumer: str):
+    distribution = _distribution(tmp_path, source)
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
+    )
+    return next(node for node in tree.nodes() if node.kind == "With").sugar()
+
+
+def test_installed_cited_opaque_nested_with_yields_open_enter_result(tmp_path):
+    """A nameable ``with warnings.catch_warnings() as w: yield w`` keeps both enter faces.
+
+    Enter is not invented as success, and ``w`` is the open enter-result
+    coordinate, not a fabricated warning list.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        yield w\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    assert any(
+        isinstance(step, NestedCitedOpaqueManagerStepV1) for step in machine.steps
+    )
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
+def test_installed_cited_opaque_nested_with_unnameable_body_stays_opaque(tmp_path):
+    """A try/finally body inside cited-opaque catch_warnings stays a loud With."""
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_source_tree.panic import SugarNotWritten
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            pass\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    with pytest.raises(SugarNotWritten) as caught:
+        boundary.desugar()
+    assert caught.value.owner == "GeneratorWithSugar.desugar"
+    assert caught.value.observed == "opaque generator transition: With carrying a suspension"
+
+
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
-    """Real producer advances to its first still-opaque native transition.
+    """The docstring and ``__tracebackhide__ = True`` assign are already stepped.
 
-    The imported generator frame comes only from authenticated pandas source,
-    and construction names its first unconsumable step instead of inventing
-    warning testimony or collapsing the site to
-    ``non-manager-result:BlockValue``.
-
-    ``assert_produces_warning`` has a THREE-statement body::
-
-        0  Expr    (a ``Constant`` -- the docstring)
-        1  Assign  (``__tracebackhide__ = True``)
-        2  With    (the warning capture)
-
-    Statement 0 owes nothing -- no effect, no binding, no suspension -- so it
-    is stepped as an ``InertStepV1`` and is not the answer. Statement 1 is,
-    because a binding is real work the machine cannot yet perform.
-
-    This test previously asserted ``With``, which is statement TWO PAST where
-    the machine can reach; it was born red and never passed. ``With`` is the
-    KNOWN REMAINING DISTANCE, not a defect in this arm: naming it requires
-    stepping ``__tracebackhide__ = True``, and a binding step needs an
-    authenticated binding record that ``binding_state`` does not yet hold.
-    That is its own mechanism and its own PR.
-
-    Still a tooth: remove ``InertStepV1`` and the docstring blocks first, so
-    this node reports ``Expr`` and goes red.
+    The leftover is the nested ``with warnings.catch_warnings(...) as w`` that
+    owns the yield — a cited-opaque manager whose body still holds a
+    try/finally the step vocabulary cannot yet name. Construction must keep
+    that With opaque and loud, not invent warning testimony or collapse the
+    site to ``non-manager-result:BlockValue``.
     """
     consumer = (
         "import pandas._testing as tm\n"
@@ -3240,7 +3339,7 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
     with pytest.raises(SugarNotWritten) as caught:
         boundary.desugar()
     assert caught.value.owner == "GeneratorWithSugar.desugar"
-    assert caught.value.observed == "opaque generator transition: Assign"
+    assert caught.value.observed == "opaque generator transition: With carrying a suspension"
 
 
 def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
