@@ -543,3 +543,35 @@ fn a_project_with_no_sealable_code_file_has_no_anchor() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------- SUBJECT CARGO ENV -------
+
+#[test]
+fn subject_cargo_test_sheds_the_invokers_rustflags() {
+    let subject = std::path::Path::new("/subject");
+
+    let cmd = subject_cargo_test(subject, &["--no-fail-fast", "--", "--test-threads=1"]);
+
+    assert_eq!(cmd.get_program(), "cargo");
+    let args: Vec<&str> = cmd.get_args().map(|a| a.to_str().unwrap()).collect();
+    assert_eq!(args, ["test", "--no-fail-fast", "--", "--test-threads=1"]);
+    assert_eq!(cmd.get_current_dir(), Some(subject));
+    // Every invoker-side rustflags carrier is REMOVED (value None), never set:
+    // the subject compiles under its own build policy, not `make`'s.
+    let removed: Vec<&str> = cmd
+        .get_envs()
+        .filter(|(_, value)| value.is_none())
+        .map(|(key, _)| key.to_str().unwrap())
+        .collect();
+    for key in INVOKER_RUSTFLAGS_ENV {
+        assert!(
+            removed.contains(key),
+            "{key} must be shed from the subject's cargo env"
+        );
+    }
+    assert!(removed.contains(&"RUSTFLAGS"));
+    assert!(
+        cmd.get_envs().all(|(_, value)| value.is_none()),
+        "the kit sets no env of its own"
+    );
+}
