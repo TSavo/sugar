@@ -3600,14 +3600,17 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     ImportStepV1, the same step a top-level generator names; ``import math``
     advances and continues. A ``from ... import ...`` that does not own a
     yield is ImportFromStepV1, the same step a top-level generator names;
-    ``from math import sqrt`` advances and continues. This does not invent
+    ``from math import sqrt`` advances and continues. An attribute
+    assignment ``holder.hidden = True`` is AttributeAssignStepV1, the same
+    step a top-level generator already names. This does not invent
     items, warning testimony, a bound on ``while True``, a loaded module,
-    or that a cleanup raise was suppressed.
+    that the attribute was stored, or that a cleanup raise was suppressed.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
         AssignStepV1,
         AssertStepV1,
+        AttributeAssignStepV1,
         ForStepV1,
         IfStepV1,
         ImportFromStepV1,
@@ -3622,6 +3625,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         AnnAssign,
         Assert,
         Assign,
+        Attribute,
         Constant,
         Expr,
         For,
@@ -3757,6 +3761,28 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
                 statement.targets[0].id,
                 statement.value.sugar(),
                 statement.fragment.seal().cid,
+            )
+        if (
+            isinstance(statement, Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], Attribute)
+            and not FunctionDef._owns_yield((statement,))
+        ):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            target = statement.targets[0]
+            try:
+                receiver = target.value.sugar()
+                value = statement.value.sugar()
+            except SugarNotWritten:
+                return None
+            return AttributeAssignStepV1(
+                receiver=receiver,
+                attr=target.attr,
+                value=value,
+                fragment_cid=statement.fragment.seal().cid,
+                target_cid=target.fragment.seal().cid,
+                occurrence=target.fragment,
             )
         if (
             isinstance(statement, AnnAssign)
