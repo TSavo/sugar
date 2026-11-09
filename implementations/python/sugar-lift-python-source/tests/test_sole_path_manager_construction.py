@@ -3938,9 +3938,11 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
     decides True. The nested
     ``if isinstance(expected_warning, tuple) and must_find_all_warnings:``
     cites the already-written class law and decides False. The leftover is
-    the else-arm source-visible ``_assert_caught_expected_warnings`` call in
-    finally cleanup: allocate has no reduction context, so the call stays
-    loud rather than inventing the helper body, a warning list, or zip items.
+    the else-arm ``_assert_caught_expected_warnings`` body iterating ``w``:
+    ``w`` is the open enter result, not a warning list, so the loop stays
+    ``LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate``.
+    Construction must keep that loud, not invent iter_with, a warning list,
+    or zip items.
     """
     consumer = (
         "import pandas._testing as tm\n"
@@ -3979,7 +3981,7 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
         boundary.desugar()
     assert caught.value.owner == "GeneratorConstructionV1.transition"
     assert caught.value.observed == (
-        "source-visible call under a temporal-only reduction context"
+        "LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate"
     )
     assert caught.value.requested == "finally cleanup"
 
