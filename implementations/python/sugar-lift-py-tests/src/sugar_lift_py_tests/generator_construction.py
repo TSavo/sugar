@@ -546,6 +546,55 @@ class NestedManagerExitStepV1:
     occurrence_cid: str
 
 
+@dataclass(frozen=True)
+class NestedCitedOpaqueManagerStepV1:
+    """Nested ``with`` over a cited-opaque manager, not a source-defined generator.
+
+    Python's ``with`` law holds: enter is attempted; the body runs only if
+    enter completed; exit runs over every outgoing body edge. The manager's
+    own enter and exit stay open per-occurrence coordinates — the same law
+    as ``WithOpaqueCitedManagerSugar``. This step does not invent that
+    ``__enter__`` completed, and does not invent what it projected.
+    """
+
+    manager: ConstructedTermSugar
+    contract_ref: object = field(compare=False, repr=False)
+    body_steps: tuple
+    fragment_cid: str
+    occurrence_cid: str
+    site: object = field(compare=False)
+    as_name: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(
+            self.manager, owner="NestedCitedOpaqueManagerStepV1.manager"
+        )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            OpaqueCitedContextManagerRefV1,
+            PartitionedOpaqueCitedContextManagerRefV1,
+        )
+
+        if type(self.contract_ref) not in (
+            OpaqueCitedContextManagerRefV1,
+            PartitionedOpaqueCitedContextManagerRefV1,
+        ):
+            raise ValueError(
+                "NestedCitedOpaqueManagerStepV1 requires an authenticated "
+                "OpaqueCitedContextManagerRefV1; a cited manager is never "
+                "inferred from the absence of a contract"
+            )
+
+
+@dataclass(frozen=True)
+class NestedCitedOpaqueExitStepV1:
+    """Exit the cited-opaque manager entered by NestedCitedOpaqueManagerStepV1."""
+
+    occurrence_cid: str
+    contract_ref: object = field(compare=False, repr=False)
+    manager_value: object = field(compare=False, repr=False)
+    site: object = field(compare=False)
+
+
 GeneratorStepV1 = (
     YieldStepV1
     | YieldFromStepV1
@@ -567,6 +616,8 @@ GeneratorStepV1 = (
     | IfStepV1
     | NestedManagerStepV1
     | NestedManagerExitStepV1
+    | NestedCitedOpaqueManagerStepV1
+    | NestedCitedOpaqueExitStepV1
 )
 
 
@@ -600,6 +651,13 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "occurrenceCid": value.occurrence_cid,
             "nestedProtocolConstructionCid": value.nested_protocol_construction_cid,
             "nestedEntryCid": value.nested_entry_cid,
+        }
+    if isinstance(value, NestedCitedOpaqueEnteredBindingV1):
+        return {
+            "kind": "nested-cited-opaque-entered-binding",
+            "occurrenceCid": value.occurrence_cid,
+            "targetName": getattr(value.contract_ref, "target_name", ""),
+            "asName": value.as_name,
         }
     # Sealed BindingEntryV1: require producer-minted ConstructedValueTestimonyV1.
     # Consumer never fabricates testimony; unsealed entries refuse here.
@@ -812,6 +870,23 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "nested-manager-exit",
             "occurrenceCid": step.occurrence_cid,
         }
+    if isinstance(step, NestedCitedOpaqueManagerStepV1):
+        return {
+            "kind": "nested-cited-opaque-manager",
+            "fragmentCid": step.fragment_cid,
+            "occurrenceCid": step.occurrence_cid,
+            "targetName": getattr(step.contract_ref, "target_name", ""),
+            "asName": step.as_name,
+            "manager": _generator_value_testimony(step.manager, owner=owner),
+            "bodySteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.body_steps
+            ],
+        }
+    if isinstance(step, NestedCitedOpaqueExitStepV1):
+        return {
+            "kind": "nested-cited-opaque-exit",
+            "occurrenceCid": step.occurrence_cid,
+        }
     raise TypeError(
         f"{owner} cannot content-address step of type {type(step).__name__}"
     )
@@ -838,6 +913,17 @@ class GeneratorLoopBindingV1:
     value: object = field(compare=False, repr=False)
     occurrence: object = field(compare=False, repr=False)
     demand_cid: str
+
+
+@dataclass(frozen=True)
+class NestedCitedOpaqueEnteredBindingV1:
+    """Cited-opaque manager entered while executing NestedCitedOpaqueManagerStepV1."""
+
+    occurrence_cid: str
+    as_name: str | None
+    contract_ref: object = field(compare=False, repr=False)
+    manager_value: object = field(compare=False, repr=False)
+    site: object = field(compare=False)
 
 
 @dataclass(frozen=True)
@@ -1085,6 +1171,14 @@ class GeneratorConstructionV1:
                 return ExitSet.halted(effect, state=after)
             return incoming
         if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], NestedCitedOpaqueExitStepV1
+        ):
+            step = self.steps[self.cursor]
+            incoming = ExitSet.halted(effect, state=replace(self, cursor=self.cursor + 1))
+            return self._exit_nested_cited_opaque(
+                step, requested="throw", incoming=incoming
+            )
+        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
             step = self.steps[self.cursor]
@@ -1101,6 +1195,12 @@ class GeneratorConstructionV1:
                 return after.close()
             if isinstance(after, GeneratorTransitionGapV1):
                 return after
+        if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], NestedCitedOpaqueExitStepV1
+        ):
+            return self._exit_nested_cited_opaque(
+                self.steps[self.cursor], requested="close"
+            )
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
@@ -1274,6 +1374,10 @@ class GeneratorConstructionV1:
             if isinstance(after, GeneratorTransitionGapV1):
                 return after
             return after._transition(requested)
+        if isinstance(step, NestedCitedOpaqueManagerStepV1):
+            return self._transition_nested_cited_opaque(step, requested)
+        if isinstance(step, NestedCitedOpaqueExitStepV1):
+            return self._exit_nested_cited_opaque(step, requested=requested)
         if isinstance(step, FinallyStepV1):
             if step.cleanup_steps:
                 return self._gap(
@@ -1602,6 +1706,126 @@ class GeneratorConstructionV1:
             # cursor stays at first body step (same index as NestedManagerStep)
         )
         return machine._transition(requested)
+
+    def _transition_nested_cited_opaque(
+        self, step: NestedCitedOpaqueManagerStepV1, requested: str
+    ):
+        """Enter a cited-opaque nested with: both enter faces stay open."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+        from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
+            WithOpaqueCitedManagerSugar,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        manager_value = self._reduce_value(step.manager, requested)
+        if isinstance(manager_value, GeneratorTransitionGapV1):
+            return manager_value
+
+        def continue_with_manager(resolved_manager):
+            law = WithOpaqueCitedManagerSugar(
+                manager=step.manager,
+                body=(),
+                contract_ref=step.contract_ref,
+                site=step.site,
+            )
+            enter_es = law._enter_exitset(resolved_manager)
+
+            def continue_enter(enter_value):
+                binding = NestedCitedOpaqueEnteredBindingV1(
+                    occurrence_cid=step.occurrence_cid,
+                    as_name=step.as_name,
+                    contract_ref=step.contract_ref,
+                    manager_value=resolved_manager,
+                    site=step.site,
+                )
+                bindings = [binding]
+                if step.as_name is not None:
+                    bindings.append(
+                        GeneratorAssignBindingV1(
+                            step.as_name, enter_value, step.fragment_cid
+                        )
+                    )
+                steps = (
+                    *self.steps[: self.cursor],
+                    *step.body_steps,
+                    NestedCitedOpaqueExitStepV1(
+                        occurrence_cid=step.occurrence_cid,
+                        contract_ref=step.contract_ref,
+                        manager_value=resolved_manager,
+                        site=step.site,
+                    ),
+                    *self.steps[self.cursor + 1 :],
+                )
+                machine = replace(
+                    self,
+                    steps=steps,
+                    binding_state=(*self.binding_state, *bindings),
+                )
+                result = machine._transition(requested)
+                if isinstance(result, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=step,
+                        observed=result.observed,
+                        requested=result.requested,
+                        fix=(
+                            "implement that next transition before deferred "
+                            "normalization"
+                        ),
+                    )
+                if isinstance(
+                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
+                ):
+                    return result
+                return Complete(result)
+
+            return enter_es.and_then(continue_enter)
+
+        if isinstance(manager_value, NativeOperationExitCarrierV1):
+            return manager_value.and_then(continue_with_manager)
+        if isinstance(manager_value, (Incomplete, ExitSet)):
+            return outcome_to_exitset(manager_value).and_then(continue_with_manager)
+        return continue_with_manager(manager_value)
+
+    def _exit_nested_cited_opaque(
+        self,
+        step: NestedCitedOpaqueExitStepV1,
+        *,
+        requested: str,
+        incoming: ExitSet | None = None,
+    ):
+        """Apply open cited-opaque exit over the continuation or a thrown effect."""
+        from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
+            WithOpaqueCitedManagerSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        law = WithOpaqueCitedManagerSugar(
+            manager=TrueBoolLiteralSugar(site=step.site),
+            body=(),
+            contract_ref=step.contract_ref,
+            site=step.site,
+        )
+        exit_es = law._exit_exitset(step.manager_value)
+        if incoming is not None:
+            return incoming.and_exit_truthiness(exit_es, site=step.site)
+        advanced = replace(self, cursor=self.cursor + 1)
+        if requested == "close":
+            continued = advanced.close()
+        else:
+            continued = advanced._transition(requested)
+        if isinstance(continued, GeneratorTransitionGapV1):
+            return continued
+        if isinstance(continued, ExitSet):
+            body_es = continued
+        else:
+            body_es = ExitSet.completed(continued)
+        return body_es.and_exit_truthiness(exit_es, site=step.site)
 
     def _exit_nested_manager(self, step: NestedManagerExitStepV1, *, requested: str):
         """Exit the nested layer for this occurrence; advance past the exit step."""
