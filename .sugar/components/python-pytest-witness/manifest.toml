@@ -3,6 +3,8 @@
 name = "python-pytest-witness"
 version = "0.1.0"
 protocol_version = "sugar-component/1"
+# Only started when the workspace census shows Python evidence.
+languages = ["python"]
 command = [
     "/usr/bin/env",
     "PYTHONPATH=implementations/python/sugar-lift-py-pytest-witness/src:implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src",

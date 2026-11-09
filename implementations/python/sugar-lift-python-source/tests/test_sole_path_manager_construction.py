@@ -3826,15 +3826,195 @@ def test_installed_cited_opaque_nested_with_builtin_class_if_in_finally(tmp_path
     )
 
 
+def test_installed_cited_opaque_nested_with_isinstance_tuple_if_in_finally(tmp_path):
+    """A finally ``if isinstance(expected, tuple):`` cites the class law.
+
+    ``make_guard(FutureWarning)`` binds the language-owned class.
+    ``isinstance`` of that class and ``tuple`` is already False, so the else
+    arm is named and enter stays open. Does not invent a class floor or a
+    tuple decision when the classinfo is not the language-owned tuple.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        AssignStepV1,
+        FinallyStepV1,
+        IfStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard(expected):\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            if isinstance(expected, tuple):\n"
+            "                leftover = 1\n"
+            "            else:\n"
+            "                named = 1\n"
+        ),
+        (
+            "import arbitrary\n"
+            "def use():\n"
+            "    with arbitrary.make_guard(FutureWarning):\n"
+            "        pass\n"
+        ),
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    expected = builtin_name_temporal().value_if_bound("FutureWarning")
+    assert any(binding.floor_value is expected for binding in machine.formal_floor_bindings)
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    branch = next(item for item in cleanup.cleanup_steps if isinstance(item, IfStepV1))
+    assert any(
+        isinstance(item, AssignStepV1) and item.name == "leftover"
+        for item in branch.then_steps
+    )
+    assert any(
+        isinstance(item, AssignStepV1) and item.name == "named"
+        for item in branch.else_steps
+    )
+    from sugar_lift_py_tests.outcome import Complete as _Complete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    truth = machine._guard_truth(branch.guard)
+    assert isinstance(truth, _Complete)
+    assert isinstance(truth.value, FalseBoolLiteralSugar)
+    assert machine._decide_guard(truth.value) is False
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
+def test_installed_cited_opaque_nested_with_term_only_helper_iterates_enter_result(tmp_path):
+    """A term-only finally ``consume(w)`` stays loud on the enter result.
+
+    The call is a TermStepV1 in finally cleanup and reduces already-written
+    prefix, but ``for item in xs`` over ``python:cm_enter_result`` has no
+    iter_with. Enter stays open. Does not invent a warning list or iter_with.
+    """
+    from sugar_lift_py_tests.effect import ContextManagerEnterRuntimeEffect
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        TermStepV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_source_tree.panic import SugarNotWritten
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def consume(xs):\n"
+            "    for item in xs:\n"
+            "        leftover = 1\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            consume(w)\n"
+        ),
+        (
+            "import arbitrary\n"
+            "def use():\n"
+            "    with arbitrary.make_guard():\n"
+            "        pass\n"
+        ),
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    assert any(isinstance(item, TermStepV1) for item in cleanup.cleanup_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    with pytest.raises(SugarNotWritten) as caught:
+        boundary.desugar()
+    assert caught.value.owner == "GeneratorConstructionV1.transition"
+    assert caught.value.observed == (
+        "LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate"
+    )
+    assert caught.value.requested == "finally cleanup"
+
+
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
     """The cited-opaque catch_warnings With is now named, including its for.
 
-    ``if expected_warning:`` now cites the language-owned FutureWarning class
-    and decides True. The leftover is the nested
-    ``if isinstance(expected_warning, tuple) and must_find_all_warnings:`` in
-    finally cleanup: that guard is not a decided truth, so branch transition
-    stays ``If carrying a suspension``. Construction must keep that loud, not
-    invent isinstance, warning testimony, or zip items.
+    ``if expected_warning:`` cites the language-owned FutureWarning class and
+    decides True. The nested
+    ``if isinstance(expected_warning, tuple) and must_find_all_warnings:``
+    cites the already-written class law and decides False. The leftover is
+    the else-arm ``_assert_caught_expected_warnings`` body iterating ``w``:
+    ``w`` is the open enter result, not a warning list, so the loop stays
+    ``LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate``.
+    Construction must keep that loud, not invent iter_with, a warning list,
+    or zip items.
     """
     consumer = (
         "import pandas._testing as tm\n"
@@ -3872,7 +4052,9 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
     with pytest.raises(SugarNotWritten) as caught:
         boundary.desugar()
     assert caught.value.owner == "GeneratorConstructionV1.transition"
-    assert caught.value.observed == "If carrying a suspension"
+    assert caught.value.observed == (
+        "LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate"
+    )
     assert caught.value.requested == "finally cleanup"
 
 
