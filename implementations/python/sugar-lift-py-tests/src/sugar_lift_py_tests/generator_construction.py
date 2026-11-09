@@ -1384,6 +1384,7 @@ class GeneratorConstructionV1:
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
         if isinstance(step, TermStepV1):
+            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.gap.panic import ConstructionPanic
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_source_tree.panic import SugarNotWritten
@@ -1397,6 +1398,10 @@ class GeneratorConstructionV1:
                 return self._gap(
                     requested,
                     f"{info.owner} requested {info.requested} on {info.observed}",
+                )
+            if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.value.effect, state=self)
                 )
             if isinstance(outcome, Incomplete):
                 return self._fold_pending_cited_opaque_exits(
