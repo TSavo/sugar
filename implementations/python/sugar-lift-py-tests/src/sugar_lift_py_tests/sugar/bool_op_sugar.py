@@ -98,6 +98,16 @@ def select_boolop_operand(
         if isinstance(truth_value, FalseBoolLiteralSugar):
             return false_guard()
         if isinstance(truth_value, PredicateValue):
+            from sugar_lift_py_tests.sugar.if_sugar import _ground_atomic_truth
+
+            # Same door IfSugar already uses: `=("b", "^")` is a decided
+            # constant atom, not a symbolic split. Leaving it raw forces
+            # later `and` operands (including is_fully_escaped) to run.
+            ground = _ground_atomic_truth(truth_value.formula)
+            if ground is True:
+                return true_guard()
+            if ground is False:
+                return false_guard()
             return truth_value.formula
 
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
