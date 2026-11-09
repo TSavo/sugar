@@ -51,11 +51,26 @@ Anything that does not shrink the worklist or run the final pass is off plan. Sa
 
 | Date | Commit | Event |
 |---|---|---|
-| 2026-11-09 | `67033f579` | Plan v2 written. Worklist not known: the board workflow last succeeded on 2026-09-24 (run 35993411797) and has not completed since. |
+| 2026-09-24 | `20cf4ede1` | Last board that completed (run 35993411797). 1421 files: 1197 constructed, 223 refused by name, 1 over the 300 s ceiling. 0 files missing, 0 functions unaccounted. |
+| 2026-11-09 | `67033f579` | Plan v2 written. No board has completed since 2026-09-24. The process-floor run (native crashes, bare exceptions, timeouts) last succeeded on 2026-07-26 (run 30203371734). |
 
 ### Worklist
 
-*(not known until one corpus pass completes on current `main`)*
+From the 2026-09-24 board. Refresh it on the next corpus pass.
+
+1. `pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.
+2. Native crashes and bare exceptions: not measured since 2026-07-26.
+
+### Residue on that board
+
+Named refusals. These are not worklist.
+
+| Files | Refusing owner |
+|---|---|
+| 218 | `With._construct_sugar` ("no contract ref: runtime-selected") |
+| 3 | `SymbolicValue.attribute` |
+| 1 | `roll_call.discharge` |
+| 1 | `BuiltinSemanticCallable.python.super` |
 
 ## What changed from plan v1
 
