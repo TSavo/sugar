@@ -495,3 +495,110 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
     assert "truthy" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 
+
+def _multi_return_block_method_callsite():
+    """A source-backed method whose reduced body is an unprojectable block.
+
+    ``RaisesExc.matches`` retains several GuardedReturns (early ``return False``
+    arms and ``return self._check_check(...)``), not one authenticated return.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import atomic, ctor
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    block = BlockValue(
+        statements=(
+            GuardedReturn(
+                guards=(atomic("type_mismatch", []),),
+                value=PredicateValue(atomic("false", []), "false-arm"),
+            ),
+            GuardedReturn(
+                guards=(atomic("check_check", []),),
+                value=CallSiteValue(
+                    target_name="RaisesExc._check_check",
+                    arg_values=(),
+                    parameters=(),
+                    term=ctor("call:RaisesExc._check_check", ()),
+                    body=None,
+                    site="check-check",
+                ),
+            ),
+        ),
+        fall_through=(),
+        can_fall_through=False,
+    )
+
+    @dataclass
+    class _Body(ConstructedTermSugar):
+        value: FloorValue
+
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+        def to_term(self, *, owner: str):
+            del owner
+            return ctor("test:multi-return-block", ())
+
+    return CallSiteValue(
+        target_name="RaisesExc.matches",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:RaisesExc.matches", ()),
+        body=SugarBody(_Body(block), SugarRole.CONTROL_FLOW_BODY),
+        site="multi-return-matches",
+        source_call_frame_cid="blake3-512:" + "7" * 128,
+    )
+
+
+def test_dig_leaves_a_multi_return_block_absent() -> None:
+    callsite = _multi_return_block_method_callsite()
+    dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
+    assert dug is None
+
+
+def test_not_of_a_multi_return_block_stands_on_the_call() -> None:
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
+
+    callsite = _multi_return_block_method_callsite()
+
+    @dataclass
+    class _Yield(ConstructedTermSugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+        def to_term(self, *, owner: str):
+            return self.value.to_term(owner=owner)
+
+    outcome = UnaryOpSugar("Not", _Yield(callsite), "not-multi-return").desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, PredicateValue)
+    negated = outcome.value.formula
+    assert "truthy" in str(negated)
+    assert "call:RaisesExc.matches" in str(negated)
+
