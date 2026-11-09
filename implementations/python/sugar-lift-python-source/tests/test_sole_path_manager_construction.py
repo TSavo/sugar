@@ -3931,6 +3931,78 @@ def test_installed_cited_opaque_nested_with_isinstance_tuple_if_in_finally(tmp_p
     )
 
 
+def test_installed_cited_opaque_nested_with_term_only_helper_iterates_enter_result(tmp_path):
+    """A term-only finally ``consume(w)`` stays loud on the enter result.
+
+    The call is a TermStepV1 in finally cleanup and reduces already-written
+    prefix, but ``for item in xs`` over ``python:cm_enter_result`` has no
+    iter_with. Enter stays open. Does not invent a warning list or iter_with.
+    """
+    from sugar_lift_py_tests.effect import ContextManagerEnterRuntimeEffect
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        TermStepV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_source_tree.panic import SugarNotWritten
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def consume(xs):\n"
+            "    for item in xs:\n"
+            "        leftover = 1\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            consume(w)\n"
+        ),
+        (
+            "import arbitrary\n"
+            "def use():\n"
+            "    with arbitrary.make_guard():\n"
+            "        pass\n"
+        ),
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    assert any(isinstance(item, TermStepV1) for item in cleanup.cleanup_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    with pytest.raises(SugarNotWritten) as caught:
+        boundary.desugar()
+    assert caught.value.owner == "GeneratorConstructionV1.transition"
+    assert caught.value.observed == (
+        "LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate"
+    )
+    assert caught.value.requested == "finally cleanup"
+
+
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
     """The cited-opaque catch_warnings With is now named, including its for.
 
