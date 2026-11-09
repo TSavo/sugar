@@ -191,3 +191,68 @@ def test_classmethod_attribute_call_binds_the_class_as_cls() -> None:
     except SourceCallBindingGap as exc:
         raise AssertionError(exc) from exc
     assert sugar is not None
+
+
+
+def test_nested_classmethod_is_re_found_by_its_unit_seal() -> None:
+    """A classmethod is not a module-scope binding; its unit seal still finds it.
+
+    ``_callee_definition_by_name_in_its_unit`` correctly answers nothing for
+    ``Holder.for_later``. Testimony used to stop there unless the nested
+    method was named ``__call__``, leaving ``resolved-not-a-functiondef``.
+    """
+    from sugar_source_tree.binding_state import (
+        _callee_definition_by_name_in_its_unit,
+        _callee_nested_call_method_by_seal,
+    )
+    from sugar_source_tree.nodes import ClassDef, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "class Holder:\n"
+        "    @classmethod\n"
+        "    def for_later(cls):\n"
+        "        return None\n"
+    )
+    tree = SourceFile(
+        (source, "nested-classmethod-seal.py", blake3_512_of(source.encode()))
+    )
+    holder = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "Holder"
+    )
+    method = next(
+        node
+        for node in holder.body
+        if isinstance(node, FunctionDef) and node.name == "for_later"
+    )
+    assert _callee_definition_by_name_in_its_unit(method) is None
+    assert _callee_nested_call_method_by_seal(method) is method
+
+
+def test_nested_dunder_call_is_still_re_found_by_its_unit_seal() -> None:
+    """Callable-instance ``Class.__call__`` stays findable by the same seal."""
+    from sugar_source_tree.binding_state import _callee_nested_call_method_by_seal
+    from sugar_source_tree.nodes import ClassDef, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "class Fail:\n"
+        "    def __call__(self, reason=''):\n"
+        "        return reason\n"
+    )
+    tree = SourceFile(
+        (source, "nested-dunder-call-seal.py", blake3_512_of(source.encode()))
+    )
+    fail = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "Fail"
+    )
+    method = next(
+        node
+        for node in fail.body
+        if isinstance(node, FunctionDef) and node.name == "__call__"
+    )
+    assert _callee_nested_call_method_by_seal(method) is method
