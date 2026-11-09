@@ -1311,7 +1311,9 @@ class GeneratorConstructionV1:
                 site=step.occurrence,
             ).desugar(self._guard_evaluation_context())
             if isinstance(outcome, Incomplete):
-                return ExitSet.halted(outcome.effect, state=self)
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.effect, state=self)
+                )
             if not isinstance(outcome, Complete):
                 return self._gap(
                     requested, f"attribute store returned {type(outcome).__name__}"
@@ -1323,7 +1325,9 @@ class GeneratorConstructionV1:
 
             outcome = step.assert_sugar.desugar(self._guard_evaluation_context())
             if isinstance(outcome, Incomplete):
-                return ExitSet.halted(outcome.effect, state=self)
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.effect, state=self)
+                )
             if not isinstance(outcome, Complete):
                 return self._gap(requested, f"assert returned {type(outcome).__name__}")
             machine = replace(self, cursor=self.cursor + 1)
@@ -1351,7 +1355,9 @@ class GeneratorConstructionV1:
 
             guard_outcome = self._guard_truth(step.guard)
             if isinstance(guard_outcome, Incomplete):
-                return ExitSet.halted(guard_outcome.effect, state=self)
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(guard_outcome.effect, state=self)
+                )
             if not isinstance(guard_outcome, Complete):
                 return self._gap(requested, "While guard is not ground")
             decided = self._decide_guard(guard_outcome.value)
@@ -1388,7 +1394,9 @@ class GeneratorConstructionV1:
                     f"{info.owner} requested {info.requested} on {info.observed}",
                 )
             if isinstance(outcome, Incomplete):
-                return ExitSet.halted(outcome.effect, state=self)
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.effect, state=self)
+                )
             if not isinstance(outcome, Complete):
                 return self._gap(requested, type(outcome).__name__)
             machine = replace(self, cursor=self.cursor + 1)
@@ -1872,9 +1880,11 @@ class GeneratorConstructionV1:
 
 
     def _fold_pending_cited_opaque_exits(self, outgoing):
-        """Apply already-written cited-opaque exit over a body return or raise.
+        """Apply already-written cited-opaque exit over an outgoing body edge.
 
-        Python's with law runs ``__exit__`` on every outgoing body edge.
+        Python's with law runs ``__exit__`` on every outgoing body edge,
+        including a return, a raise, or a body halt such as a failed
+        attribute store.
         ``_compose_finally_for_nested_with`` seats cleanup before a return
         or raise and also on fall-through, so the remaining steps after
         that terminal include a finally copy and then

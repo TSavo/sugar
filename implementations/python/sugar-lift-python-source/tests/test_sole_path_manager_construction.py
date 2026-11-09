@@ -4461,6 +4461,103 @@ def test_installed_cited_opaque_nested_with_body_raise_still_exits(tmp_path):
     )
 
 
+def test_installed_cited_opaque_nested_with_body_attribute_assign_still_exits(tmp_path):
+    """A try-body attribute store halt still runs the already-written exit.
+
+    First resume still yields the open enter result. Desugar cites the
+    already-written ``None.setattr`` AttributeError and both open enter
+    and exit faces. This does not invent that the attribute was stored
+    or that exit swallowed the raise.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+        RaiseEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        AssignStepV1,
+        AttributeAssignStepV1,
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "            holder = None\n"
+            "            holder.hidden = True\n"
+            "        finally:\n"
+            "            leftover = 1\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    assert any(isinstance(item, AssignStepV1) and item.name == "holder" for item in step.body_steps)
+    store = next(
+        item for item in step.body_steps if isinstance(item, AttributeAssignStepV1)
+    )
+    assert store.attr == "hidden"
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    assert any(
+        isinstance(item, AssignStepV1) and item.name == "leftover"
+        for item in cleanup.cleanup_steps
+    )
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    assert constructed.value.can_fall_through is False
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    raised = next(effect for effect in effects if isinstance(effect, RaiseEffect))
+    assert raised.exception_name == "AttributeError"
+    assert raised.producer_node_owner == "NoneValue.setattr"
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
 def test_installed_cited_opaque_nested_with_structured_finally_while(tmp_path):
     """A finally ``while False`` is WhileStepV1 cleanup.
 
