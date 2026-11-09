@@ -1418,6 +1418,8 @@ class GeneratorConstructionV1:
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
                 )
+            if isinstance(outcome, ExitSet):
+                return self._fold_pending_cited_opaque_exits(outcome)
             if not isinstance(outcome, Complete):
                 return self._gap(requested, type(outcome).__name__)
             machine = replace(self, cursor=self.cursor + 1)
