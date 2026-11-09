@@ -341,6 +341,12 @@ def reduce_block_to_exitset(
                 # Retain the ordinary statement projection as a continuation;
                 # discharge will feed its Completed face through this exact
                 # block seam, while its Halted face bypasses the tail.
+                # Enroll this block's reducer state only once. A callee that
+                # already enrolled at the lookup (stringify_exception at
+                # exc.message) keeps that inner state; this caller omits a
+                # second conflicting enrollment and only appends project.
+                if outcome.pre_effect_state is not None:
+                    return outcome.and_then(project)
                 return outcome.and_then(
                     project,
                     pre_effect_state=ReducerPreEffectStateV1._from_reducer(state),
