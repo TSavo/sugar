@@ -5598,6 +5598,45 @@ def test_helper_lookup_of_bound_exit_value_is_not_a_foreign_formal(tmp_path):
     )
 
 
+def test_caller_reduce_block_omits_a_second_pre_effect_state(tmp_path):
+    """A caller statement that sees a callee's already-enrolled lookup
+    must not overwrite that inner reducer state."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.gap import ConstructionPanic
+
+    source = (
+        "class Resource:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, kind, effect, stack):\n"
+        "        if stringify(effect):\n"
+        "            return True\n"
+        "        return False\n"
+        "def stringify(exc):\n"
+        "    return exc.message\n"
+        "def make_guard(pattern):\n"
+        "    return Resource()\n"
+    )
+    graph, resolved, actual, site = _resolved(tmp_path, source)
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="owned-exit-face")
+    try:
+        outcome = protocol.exit_outcome()
+    except ConstructionPanic as exc:
+        raise AssertionError(
+            "caller overwrite of an already-enrolled lookup state"
+        ) from exc
+    assert isinstance(outcome, NativeOperationExitCarrierV1), outcome
+    assert outcome.demand.operator == "attribute_named"
+    assert outcome.operands[1] == StringValue("message")
+    assert outcome.pre_effect_state is not None
+
+
 def test_boolop_or_message_comparison_is_not_effect_boundary(tmp_path):
     """Disjunction is not EffectBoundary's type-and-message conjunction."""
     from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
