@@ -3637,6 +3637,102 @@ def test_installed_cited_opaque_nested_with_for_orelse_stays_opaque(tmp_path):
     assert caught.value.observed == "opaque generator transition: With carrying a suspension"
 
 
+def test_installed_cited_opaque_nested_with_formal_if_in_finally(tmp_path):
+    """A finally ``if flag:`` cites the bound formal's truth, not a free name.
+
+    ``make_guard(True)`` and ``make_guard(False)`` both keep the open enter
+    faces. The True arm names the assign; the False arm does not invent that
+    it ran. Does not invent a default when the formal is bound.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        AssignStepV1,
+        FinallyStepV1,
+        IfStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    source = (
+        "import warnings\n"
+        "def make_guard(flag):\n"
+        "    with warnings.catch_warnings(record=True) as w:\n"
+        "        try:\n"
+        "            yield w\n"
+        "        finally:\n"
+        "            if flag:\n"
+        "                leftover = 1\n"
+    )
+
+    def check(root, consumer):
+        root.mkdir()
+        boundary = _installed_generator_with(root, source, consumer)
+        assert isinstance(boundary, GeneratorWithSugar)
+        machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+        step = next(
+            item
+            for item in machine.steps
+            if isinstance(item, NestedCitedOpaqueManagerStepV1)
+        )
+        cleanup = next(
+            item for item in step.body_steps if isinstance(item, FinallyStepV1)
+        )
+        branch = next(item for item in cleanup.cleanup_steps if isinstance(item, IfStepV1))
+        has_assign = any(
+            isinstance(item, AssignStepV1) and item.name == "leftover"
+            for item in branch.then_steps
+        )
+        assert has_assign is True
+        entered = machine.resume()
+        faces = list(entered.exits)
+        halted = [face for face in faces if isinstance(face, Halted)]
+        completed = [face for face in faces if isinstance(face, Completed)]
+        assert len(halted) == 1
+        assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+        assert "warnings.catch_warnings" in halted[0].effect.reason
+        assert len(completed) == 1
+        assert isinstance(completed[0].value, YieldEffect)
+        assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+        assert completed[0].value.value.symbol == "python:cm_enter_result"
+        constructed = boundary.desugar()
+        assert isinstance(constructed, Complete)
+        assert isinstance(constructed.value, BlockValue)
+        effects = [
+            statement.effect
+            for statement in constructed.value.statements
+            if isinstance(statement, Incomplete)
+        ]
+        assert any(
+            isinstance(effect, ContextManagerEnterRuntimeEffect)
+            and "warnings.catch_warnings" in effect.reason
+            for effect in effects
+        )
+        assert any(
+            isinstance(effect, ContextManagerExitRuntimeEffect)
+            and "warnings.catch_warnings" in effect.reason
+            for effect in effects
+        )
+
+    check(
+        tmp_path / "truthy",
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard(True):\n        pass\n",
+    )
+    check(
+        tmp_path / "falsy",
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard(False):\n        pass\n",
+    )
+
+
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
     """The cited-opaque catch_warnings With is now named, including its for.
 
