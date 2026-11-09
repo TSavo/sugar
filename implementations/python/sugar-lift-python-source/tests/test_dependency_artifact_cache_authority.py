@@ -431,9 +431,14 @@ def test_a_cold_process_table_parses_each_recorded_module_once(tmp_path, monkeyp
         importlib.metadata.Distribution.at(distribution._path)
     )
 
+    # Authentication parses nothing: a module is parsed when it is read.
+    assert parsed == []
+    first_read = _observable(cold)
+    assert _observable(cold) == first_read
+    # Every module was read twice and parsed once.
     assert sorted(parsed) == ["example_pkg", "example_pkg.implementation"]
     assert cold is not warm
-    assert _observable(cold) == _observable(warm)
+    assert first_read == _observable(warm)
     assert not (tmp_path / "xdg").exists()
 
 

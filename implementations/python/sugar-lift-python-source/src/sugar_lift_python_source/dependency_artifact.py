@@ -14,7 +14,6 @@ import importlib.metadata
 from pathlib import Path, PurePosixPath
 import sys
 import sysconfig
-from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 from .canonical import blake3_512_of, cid_of_json
@@ -52,9 +51,9 @@ class DependencyArtifactConstructionError(DependencyArtifactAuthenticationError)
 #
 # The VALUE is legitimately shareable here, which is why this is a registry and
 # not a session: ``DependencyArtifactGraph`` is a frozen dataclass over a tuple
-# of frozen files and a ``MappingProxyType``, holding bytes and str only.  It
-# owns no live construction context, so no caller can write into a served graph
-# and have that write reach another authentication.  (Contrast
+# of frozen files and a read-only module mapping, holding bytes and str only.
+# It owns no live construction context, so no caller can write into a served
+# graph and have that write reach another authentication.  (Contrast
 # ``resolution_session``: those memo VALUES were bound to a mutable
 # ``TreeConstructionContextV1``, which is why they needed an owner.)
 _AUTHENTICATE_GRAPH_CACHE: dict[str, "DependencyArtifactGraph"] = {}
@@ -80,6 +79,51 @@ def _require_parseable_module_source(
         raise DependencyArtifactAuthenticationError(
             f"recorded Python module {module_name} is not parseable UTF-8 source"
         ) from exc
+
+
+class _ParseGatedModules(Mapping[str, "AuthenticatedModuleSourceV1"]):
+    """A graph's modules. A module's source passes the parse gate when read.
+
+    The gate used to run over every recorded module while the graph was being
+    constructed: 1,463 compiles for pandas, in every process, before the first
+    question was asked -- and a run over one file asks about a few dozen
+    modules. Which bytes are installed is established by content address alone
+    and is unchanged; the gate decides only whether one module's source may be
+    handed to a reader, so it runs for the module a reader asks for.
+
+    No reader is handed unparseable source: ``[]``, ``get``, ``in``, ``items``
+    and ``values`` all pass through ``__getitem__``, and a module that fails
+    the gate is refused by name on every read. A module that passed is not
+    parsed again. Names and length need no source and run no gate.
+    """
+
+    __slots__ = ("_seated", "_diagnostic_paths", "_admitted")
+
+    def __init__(
+        self,
+        seated: dict[str, "AuthenticatedModuleSourceV1"],
+        diagnostic_paths: dict[str, str],
+    ) -> None:
+        self._seated = seated
+        self._diagnostic_paths = diagnostic_paths
+        self._admitted: set[str] = set()
+
+    def __getitem__(self, module_name: str) -> "AuthenticatedModuleSourceV1":
+        module = self._seated[module_name]
+        if module_name not in self._admitted:
+            _require_parseable_module_source(
+                module.source,
+                path=self._diagnostic_paths[module_name],
+                module_name=module_name,
+            )
+            self._admitted.add(module_name)
+        return module
+
+    def __iter__(self):
+        return iter(self._seated)
+
+    def __len__(self) -> int:
+        return len(self._seated)
 
 
 @dataclass(frozen=True)
@@ -439,6 +483,7 @@ class DependencyArtifactGraph:
             )
 
         modules: dict[str, AuthenticatedModuleSourceV1] = {}
+        diagnostic_paths: dict[str, str] = {}
         for item, diagnostic_path in located:
             relative = PurePosixPath(item.source_seat)
             module_name = _module_name(relative)
@@ -450,9 +495,7 @@ class DependencyArtifactGraph:
                 raise DependencyArtifactAuthenticationError(
                     f"recorded Python module {module_name} is not parseable UTF-8 source"
                 ) from exc
-            _require_parseable_module_source(
-                source, path=diagnostic_path, module_name=module_name
-            )
+            # The parse gate runs when this module is read: _ParseGatedModules.
             seated = modules.get(module_name)
             if seated is not None:
                 # PEP 484: ``x.pyi`` is the STUB FOR ``x.py`` -- ONE module with
@@ -486,6 +529,7 @@ class DependencyArtifactGraph:
                 source_cid=item.content_cid,
                 source=source,
             )
+            diagnostic_paths[module_name] = diagnostic_path
 
         if isinstance(inputs, _DistributionGraphInputs):
             metadata_files = [
@@ -540,7 +584,9 @@ class DependencyArtifactGraph:
         object.__setattr__(graph, "distribution_version", distribution_version)
         object.__setattr__(graph, "distribution_artifact_cid", artifact_cid)
         object.__setattr__(graph, "files", files)
-        object.__setattr__(graph, "modules", MappingProxyType(modules))
+        object.__setattr__(
+            graph, "modules", _ParseGatedModules(modules, diagnostic_paths)
+        )
         return graph
 
     @staticmethod
