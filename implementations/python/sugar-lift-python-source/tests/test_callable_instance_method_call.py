@@ -21,11 +21,12 @@ from sugar_lift_python_source.manager_construction import (
     _ExternalCallTargetGap,
     _call_coordinate,
     _local_named_calls,
+    _publish_nested_same_module_manager_uses,
     _resolve_external_call_frame,
     resolve_source_visible_frame,
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
-from sugar_source_tree.nodes import FunctionDef
+from sugar_source_tree.nodes import ClassDef, FunctionDef
 
 
 _FAIL_ASSIGN = """class _Fail:
@@ -54,6 +55,48 @@ class RaisesExc:
 """
 
 
+_NESTED_FAIL_FACTORY = """from arbitrary.support import fail
+
+
+class RaisesExc:
+    def __init__(self, expected=None):
+        self.expected_exceptions = expected
+        self.match = None
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type=None, exc_val=None, exc_tb=None):
+        if exc_type is None:
+            fail("DID NOT RAISE")
+        return exc_type is self.expected_exceptions
+
+
+def factory(expected=None):
+    with RaisesExc(ValueError):
+        raise ValueError("nested")
+    return RaisesExc(expected)
+"""
+
+
+def _resolved_export(root: Path, *, manager_source: str, support_source: str, exported: str):
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(
+            root,
+            manager_source=manager_source,
+            support_source=support_source,
+            exported=exported,
+        )
+    )
+    consumer = f"from arbitrary.manager import {exported}\n{exported}()\n"
+    path = root / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(root, path, consumer, source_cid)
+    session = _session_enrolling_graph(graph)
+    resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    return graph, resolved, session
+
+
 def _session_enrolling_graph(graph):
     name = graph.distribution_name
     if not name:
@@ -67,11 +110,13 @@ def resolve_import_binding(*args, graph, session=None, **kwargs):
     return _resolve_import_binding(*args, graph=graph, session=session, **kwargs)
 
 
-def _distribution(root: Path, *, manager_source: str, support_source: str):
+def _distribution(
+    root: Path, *, manager_source: str, support_source: str, exported: str = "RaisesExc"
+):
     package = root / "arbitrary"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(
-        "from arbitrary.manager import RaisesExc\n", encoding="utf-8"
+        f"from arbitrary.manager import {exported}\n", encoding="utf-8"
     )
     (package / "manager.py").write_text(manager_source, encoding="utf-8")
     (package / "support.py").write_text(support_source, encoding="utf-8")
@@ -161,3 +206,57 @@ def test_method_fail_statement_halts_through_call(tmp_path, support_source):
         assert isinstance(outcome, Halted)
         return
     assert any(isinstance(face, Halted) for face in exits)
+
+
+def test_nested_imported_fail_publishes_on_rebound_live_context(tmp_path):
+    """A rebound unit table still seats imported fail() before nested derive."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+
+    graph, resolved, session = _resolved_export(
+        tmp_path,
+        manager_source=_NESTED_FAIL_FACTORY,
+        support_source=_FAIL_ASSIGN,
+        exported="factory",
+    )
+    _frame, target = resolve_source_visible_frame(
+        resolved, graph=graph, session=session
+    )
+    stale = target.unit.construction_context
+    live = TreeConstructionContextV1.for_source_call_construction()
+    object.__setattr__(target.unit, "construction_context", live)
+    _publish_nested_same_module_manager_uses(
+        target,
+        stale,
+        None,
+        resolved=resolved,
+        graph=graph,
+        session=session,
+    )
+    raises_exc = next(
+        item
+        for item in (target.unit.module_direct_bindings or {}).get("RaisesExc", ())
+        if isinstance(item, ClassDef)
+    )
+    exit_fn = next(
+        item
+        for item in raises_exc.body
+        if isinstance(item, FunctionDef) and item.name == "__exit__"
+    )
+    fail_call = next(call for call in _local_named_calls(exit_fn) if call.func.id == "fail")
+    seated = live.source_call_frames.get(_call_coordinate(fail_call))
+    assert seated is not None
+    assert seated.parameters[0] == "reason"
+    reference = next(
+        value
+        for value in live.source_derived_contract_refs.values()
+        if isinstance(value, SourceDerivedContextManagerRefV1)
+    )
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(reference.semantics.mode, ExpectsModeV1)
