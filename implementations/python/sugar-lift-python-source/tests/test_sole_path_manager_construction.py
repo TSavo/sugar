@@ -2998,7 +2998,11 @@ def test_installed_pytest_raises_empty_body_is_expectation_not_met(tmp_path):
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     tmp_path,
 ):
-    from sugar_source_tree.panic import SugarNotWritten
+    """Function-form ``pytest.raises(ValueError, int, "bad")`` is not a CM."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+    )
+    from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -3007,23 +3011,23 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     )
 
     assert len(context.source_derived_contract_refs) == 1
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, ContextManagerResolutionGapV1)
+    assert reference.kind == "source-body-contract-error"
+    assert "does not fit authenticated signature" in reference.detail
     with_node = next(node for node in tree.nodes() if node.kind == "With")
-    with pytest.raises(SugarNotWritten) as caught:
+    with pytest.raises(ContextManagerResolutionConstructionGap) as caught:
         with_node.sugar()
 
-    # Legacy multi-actual form still refuses; residual names the same exit-face
-    # unary floor rather than inventing EffectBoundary by spelling.
-    assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
-    assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
-        caught.value.observed
+    assert caught.value.kind == "source-body-contract-error"
+    assert "does not fit authenticated signature" in caught.value.observed
+    site = caught.value.args[0]
+    assert (site.start_line, site.start_col, site.end_line, site.end_col) == (
+        3,
+        9,
+        3,
+        46,
     )
-    assert "ExitSet with 4 arms" not in caught.value.observed
-    assert (
-        caught.value.coordinate.start_line,
-        caught.value.coordinate.start_col,
-        caught.value.coordinate.end_line,
-        caught.value.coordinate.end_col,
-    ) == (3, 9, 3, 46)
 
 
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):

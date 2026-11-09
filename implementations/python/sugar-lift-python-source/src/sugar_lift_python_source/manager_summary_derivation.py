@@ -2128,6 +2128,10 @@ def populate_source_derived_resource_refs(
                 context, coordinate, receipt, "incomplete-call-actuals"
             )
             continue
+        from sugar_lift_py_tests.context_manager_contract import (
+            ContextManagerContractError,
+        )
+
         try:
             behavior = construct_manager_behavior(
                 resolved,
@@ -2137,7 +2141,7 @@ def populate_source_derived_resource_refs(
                 call_site=call.fragment,
                 session=session,
             )
-        except (SugarNotWritten, TypeError) as exc:
+        except (SugarNotWritten, TypeError, ContextManagerContractError) as exc:
             kind, detail = _populate_body_defect_kind_detail(exc)
             _install_derivation_gap(
                 context,
@@ -4264,9 +4268,15 @@ def _populate_body_defect_kind_detail(exc: BaseException) -> tuple[str, str]:
     TypeError → ``source-body-type-error`` (#7062 second costume: construction
     require_* / IfExpSugar post_init failure that used to abort the open and
     bank functionsTotal=0).
+    ContextManagerContractError → ``source-body-contract-error`` (a factory
+    body that is not a context manager, such as pytest.raises function form,
+    must stay a typed gap rather than abort populate).
 
     Callers must catch only these named classes — never bare ``except``.
     """
+    from sugar_lift_py_tests.context_manager_contract import (
+        ContextManagerContractError,
+    )
     from sugar_source_tree.panic import SugarNotWritten
 
     if isinstance(exc, SugarNotWritten):
@@ -4274,9 +4284,12 @@ def _populate_body_defect_kind_detail(exc: BaseException) -> tuple[str, str]:
         return "source-body-gap", str(observed)
     if isinstance(exc, TypeError):
         return "source-body-type-error", f"TypeError: {exc}"
+    if isinstance(exc, ContextManagerContractError):
+        return "source-body-contract-error", str(exc)
     raise TypeError(
         f"_populate_body_defect_kind_detail got unexpected {type(exc).__name__}; "
-        f"callers must catch only SugarNotWritten and TypeError"
+        f"callers must catch only SugarNotWritten, TypeError, and "
+        f"ContextManagerContractError"
     ) from exc
 
 
