@@ -12,7 +12,19 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.object_field import ObjectField
-from sugar_lift_py_tests.ir import atomic, ctor, make_var, not_, str_const
+from sugar_lift_py_tests.context_manager_contract import (
+    EffectBoundarySemanticsV1,
+    ExpectsModeV1,
+    FormalArgumentProjectionV1,
+    OptionalFormalArgumentProjectionV1,
+)
+from sugar_lift_py_tests.floor.branch_result_coordinate import (
+    BranchResultAuthentication,
+    branch_result_guard,
+)
+from sugar_lift_py_tests.floor.string_value import StringValue
+from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, str_const
+from sugar_source_tree.binding_state import BranchResultSlot
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import complement_guard
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -156,3 +168,102 @@ def test_method_callsite_on_a_completed_face_is_not_a_free_fail():
     assert not derivation._completed_faces_have_bodyless_free_calls(
         ExitSet((completed,))
     )
+
+
+def _no_effect_formula(exit_face_id="exit-face"):
+    return atomic(
+        "identity",
+        [
+            ctor("python:exit_type", [str_const(exit_face_id)]),
+            ctor("None", []),
+        ],
+    )
+
+
+def _nested_did_not_raise_exit(*, match_value=None, extra_actuals=()):
+    slot = BranchResultSlot("branch-result:exc-type-is-none")
+    absent = branch_result_guard(slot, "if-exc-type-is-none")
+    matches = _matches_formula()
+    fail_halt = Halted(
+        absent,
+        RaiseEffect.for_builtin("RuntimeError", blame="support.py:3"),
+    )
+    match_halt = Halted(
+        and_([not_(absent), not_(matches)]),
+        RaiseEffect.for_builtin("AssertionError", blame="raises.py:711"),
+    )
+    completed = Completed(
+        and_([not_(absent), matches]),
+        BlockValue(
+            (
+                BranchResultAuthentication(slot, _no_effect_formula(), "if-exc-type-is-none"),
+                ReturnValue(TrueBoolLiteralSugar(site="return-true")),
+            ),
+            can_fall_through=False,
+        ),
+    )
+    return (
+        _behavior(match=match_value, extra_actuals=extra_actuals),
+        SimpleNamespace(exit_face_id="exit-face"),
+        ExitSet((fail_halt, match_halt, completed)),
+        fail_halt,
+        match_halt,
+    )
+
+
+def test_matches_formula_inside_and_still_cites_expected():
+    behavior = _behavior()
+    formula = and_([not_(_no_effect_formula()), _matches_formula()])
+    assert (
+        derivation._formal_index_for_matches_expected(
+            formula, behavior, _actual_terms(behavior)
+        )
+        == 0
+    )
+
+
+def test_nested_not_matches_halt_shares_prefix_with_true_return():
+    _behavior_unused, _protocol, exit_set, fail_halt, match_halt = (
+        _nested_did_not_raise_exit()
+    )
+    assert not derivation._halt_complements_true_return(fail_halt, exit_set)
+    assert not derivation._halt_complements_true_return(match_halt, exit_set)
+    assert not derivation._halt_negates_matches_conjunct_of_true_return(
+        fail_halt, exit_set
+    )
+    assert derivation._halt_negates_matches_conjunct_of_true_return(
+        match_halt, exit_set
+    )
+
+
+def test_nested_exit_with_match_formal_seals_expects_and_message():
+    boom = StringValue("boom")
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
+        match_value=boom,
+        extra_actuals=(boom,),
+    )
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert isinstance(result.mode, ExpectsModeV1)
+    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
+    assert result.message_pattern_operand == OptionalFormalArgumentProjectionV1(1)
+
+
+def test_nested_exit_with_seeded_none_match_seals_expects_without_message():
+    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
+
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit()
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert isinstance(result.mode, ExpectsModeV1)
+    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
+    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
+
+
+def test_nested_exit_with_unprojected_match_does_not_invent_no_message():
+    boom = StringValue("boom")
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
+        match_value=boom,
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
