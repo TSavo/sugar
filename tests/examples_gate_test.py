@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import io
 import json
 import pathlib
 import sys
@@ -125,6 +126,117 @@ class ExamplesGateComparisonTest(unittest.TestCase):
             "PROMOTED_RED examples/demo/run.sh expected known-shape observed GREEN",
             examples_gate.LAST_DIFF_TEXT,
         )
+
+
+class CoreGateSelectionTest(unittest.TestCase):
+    def test_listed_fixture_names_the_whole_gate(self) -> None:
+        fixture = {
+            "selection": "listed",
+            "examples": [
+                {"name": "examples/zeta/run.sh", "expected": "GREEN"},
+                {"name": "examples/alpha/run.sh", "expected": "GREEN"},
+            ],
+        }
+        self.assertEqual(
+            examples_gate.listed_scripts(fixture),
+            ["examples/alpha/run.sh", "examples/zeta/run.sh"],
+        )
+
+    def test_fixture_without_selection_runs_every_discovered_script(self) -> None:
+        fixture = {"examples": [{"name": "examples/demo/run.sh", "expected": "GREEN"}]}
+        self.assertIsNone(examples_gate.listed_scripts(fixture))
+
+    def test_listed_run_ignores_unlisted_examples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            for name in ("gated", "ungated"):
+                (root / "examples" / name).mkdir(parents=True)
+                (root / "examples" / name / "run.sh").write_text(
+                    "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+                )
+            summary = examples_gate.run_all(
+                root=root,
+                log_dir=root / "logs",
+                timeout_seconds=30,
+                nice=0,
+                suite="smoke",
+                output=sys.stdout,
+                scripts=["examples/gated/run.sh"],
+            )
+        self.assertEqual(
+            [row["name"] for row in summary["examples"]], ["examples/gated/run.sh"]
+        )
+
+    def test_jobs_run_examples_at_once_and_keep_listed_order(self) -> None:
+        # Each example waits for every other example's start marker. Run one
+        # at a time, none could ever see the others and all would exit 1.
+        names = ["one", "two", "three"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            for name in names:
+                (root / "examples" / name).mkdir(parents=True)
+                (root / "examples" / name / "run.sh").write_text(
+                    "#!/usr/bin/env bash\n"
+                    f"touch started-{name}\n"
+                    "for _ in $(seq 1 200); do\n"
+                    "  [ -e started-one ] && [ -e started-two ] && [ -e started-three ]"
+                    " && exit 0\n"
+                    "  sleep 0.05\n"
+                    "done\n"
+                    "exit 1\n",
+                    encoding="utf-8",
+                )
+            scripts = [f"examples/{name}/run.sh" for name in names]
+            summary = examples_gate.run_all(
+                root=root,
+                log_dir=root / "logs",
+                timeout_seconds=30,
+                nice=0,
+                suite="smoke",
+                output=io.StringIO(),
+                scripts=scripts,
+                jobs=3,
+            )
+        self.assertEqual([row["name"] for row in summary["examples"]], scripts)
+        self.assertEqual([row["rc"] for row in summary["examples"]], [0, 0, 0])
+
+    def test_skipped_example_is_red_not_green(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "examples" / "demo").mkdir(parents=True)
+            (root / "examples" / "demo" / "run.sh").write_text(
+                '#!/usr/bin/env bash\necho "SKIP: no z3 on PATH"\nexit 0\n',
+                encoding="utf-8",
+            )
+            row = examples_gate.run_script(
+                root=root,
+                script="examples/demo/run.sh",
+                index=1,
+                total=1,
+                log_dir=root / "logs",
+                timeout_seconds=30,
+                nice=0,
+                output=sys.stdout,
+            )
+        self.assertEqual(row["verdict"], "NAMED_RED")
+        self.assertEqual(row["failure_shape"], "skipped/precondition-missing")
+
+    def test_checked_in_smoke_fixture_is_a_core_gate_with_no_expected_reds(self) -> None:
+        fixture = json.loads(
+            (ROOT / "docs" / "audits" / "examples_gate_expectations.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(fixture.get("selection"), "listed")
+        rows = fixture["examples"]
+        self.assertTrue(rows, "the core gate must gate at least one example")
+        for row in rows:
+            self.assertEqual(
+                row.get("expected"), "GREEN", f"{row.get('name')} is not GREEN"
+            )
+            self.assertTrue(
+                (ROOT / row["name"]).is_file(), f"{row['name']} does not exist"
+            )
 
 
 class RunnerEnvClassificationTest(unittest.TestCase):

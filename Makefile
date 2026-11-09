@@ -471,7 +471,9 @@ EXAMPLES_GATE_SUMMARY ?= .out/examples-gate-summary.json
 EXAMPLES_GATE_EXTENDED_SUMMARY ?= .out/examples-gate-extended-summary.json
 EXAMPLES_GATE_LOG_DIR ?= .out/examples-gate-logs
 EXAMPLES_GATE_EXTENDED_LOG_DIR ?= .out/examples-gate-extended-logs
-EXAMPLES_GATE_TIMEOUT_SECONDS ?= 3600
+# Per-example budget. Every gated example runs in about a minute once the
+# Rust binaries exist; the budget only has to cover a cold compile.
+EXAMPLES_GATE_TIMEOUT_SECONDS ?= 900
 EXAMPLES_GATE_EXTENDED_TIMEOUT_SECONDS ?= 3600
 EXAMPLES_GATE_NICE ?= 10
 

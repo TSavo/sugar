@@ -16,7 +16,7 @@ jobs:
   examples-gate:
     name: examples smoke gate
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 180
+    timeout-minutes: 60
 
     steps:
       - name: Checkout

@@ -14,7 +14,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-BIN="$("$REPO/bin/sugarbin" --profile release)"
+BIN="$("$REPO/bin/sugarbin" --profile debug)"
 
 VENV="${PANDAS_WITNESS_VENV:-/tmp/pandas-witness-venv}"
 if [ ! -x "$VENV/bin/python" ]; then

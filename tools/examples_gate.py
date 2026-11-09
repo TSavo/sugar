@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Sequential examples gate with a ratcheted green/named-red fixture."""
+"""Examples gate: run the listed examples in parallel against a fixture."""
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -303,6 +305,25 @@ def discover_scripts(root: pathlib.Path, *, suite: str = "smoke") -> list[str]:
     return []
 
 
+def listed_scripts(expectations: dict[str, object]) -> list[str] | None:
+    """Scripts the gate runs when the fixture declares `"selection": "listed"`.
+
+    A listed fixture is the whole gate: only its rows run, in sorted order.
+    An example that is not listed is not gated; it enters the gate by a
+    deliberate fixture row, never by appearing under examples/. Returns None
+    for a fixture without the declaration (every discovered script runs).
+    """
+    if expectations.get("selection") != "listed":
+        return None
+    return sorted(_rows_by_name(expectations, source="expectations"))
+
+
+# An example that exits 0 after printing a SKIP line did no work. The gate
+# counts it red: a skipped example has not passed.
+SKIP_LINE = re.compile(r"^SKIP\b", re.MULTILINE)
+SKIPPED_SHAPE = "skipped/precondition-missing"
+
+
 def _excerpt(text: str, max_lines: int = 20) -> str:
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return "\n".join(lines[-max_lines:])
@@ -369,7 +390,11 @@ def run_script(
                 log.write(exc.output)
     seconds = time.monotonic() - start
     log_text = log_path.read_text(encoding="utf-8", errors="replace")
-    if rc == 0:
+    if rc == 0 and SKIP_LINE.search(log_text):
+        verdict = "NAMED_RED"
+        shape = SKIPPED_SHAPE
+        excerpt = _excerpt(log_text)
+    elif rc == 0:
         verdict = "GREEN"
         shape = None
         excerpt = ""
@@ -405,10 +430,15 @@ def run_all(
     nice: int,
     suite: str,
     output: TextIO,
+    scripts: list[str] | None = None,
+    jobs: int = 1,
 ) -> dict[str, object]:
-    scripts = discover_scripts(root, suite=suite)
-    rows = [
-        run_script(
+    if scripts is None:
+        scripts = discover_scripts(root, suite=suite)
+
+    def run_one(indexed: tuple[int, str]) -> dict[str, object]:
+        index, script = indexed
+        return run_script(
             root=root,
             script=script,
             index=index,
@@ -418,8 +448,16 @@ def run_all(
             nice=nice,
             output=output,
         )
-        for index, script in enumerate(scripts, start=1)
-    ]
+
+    indexed_scripts = list(enumerate(scripts, start=1))
+    workers = max(1, min(jobs, len(indexed_scripts) or 1))
+    if workers == 1:
+        rows = [run_one(item) for item in indexed_scripts]
+    else:
+        # Examples are independent processes; the gate's wall time is the
+        # slowest example, not the sum. Rows keep the listed order.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            rows = list(pool.map(run_one, indexed_scripts))
     return {
         "version": 1,
         "suite": suite,
@@ -599,6 +637,10 @@ def write_summary(path: pathlib.Path, data: dict[str, object]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def default_jobs() -> int:
+    return max(1, min(16, os.cpu_count() or 1))
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path.cwd())
@@ -622,6 +664,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     parser.add_argument("--nice", type=int, default=10)
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=default_jobs(),
+        help="examples to run at once (default: one per CPU, at most 16)",
+    )
+    parser.add_argument(
         "--write-expectations",
         action="store_true",
         help=(
@@ -638,6 +686,9 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root.resolve()
     summary_path = args.summary_json
     if args.from_summary is None:
+        scripts = None
+        if not args.write_expectations and args.expectations.exists():
+            scripts = listed_scripts(_load_json(args.expectations))
         summary = run_all(
             root=root,
             log_dir=args.log_dir,
@@ -645,6 +696,8 @@ def main(argv: list[str] | None = None) -> int:
             nice=args.nice,
             suite=args.suite,
             output=sys.stdout,
+            scripts=scripts,
+            jobs=args.jobs,
         )
         write_summary(summary_path, summary)
     else:

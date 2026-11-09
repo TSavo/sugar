@@ -36,7 +36,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
 BIN_DIR="$RUST/target/debug"
-SUGAR="$("$REPO/bin/sugarbin" --profile release)"
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: java-crc32-valuepin — THE VALUE-PIN RUNG over OpenJDK CRC32C (jdk-21+35), GPLv2+CE."
