@@ -384,8 +384,9 @@ class FinallyStepV1:
 class ForStepV1:
     """Authenticated source construction for one generator ``for`` step.
 
-    Transition remains a separate loud gap until the generator machine owns
-    iterator advancement and authenticated StopIteration routing.
+    Transition uses IteratorOperation / NextOperation and accepts only
+    authenticated StopIteration at this occurrence; it does not invent
+    iterator items.
     """
 
     iterable: ConstructedTermSugar
@@ -1402,12 +1403,6 @@ class GeneratorConstructionV1:
             return machine._transition(requested)
         if isinstance(step, IfStepV1):
             return self._transition_branch(step, requested)
-        if isinstance(step, ForStepV1):
-            return self._gap(
-                requested,
-                "ForStepV1 requires iter_with/next_with transition and "
-                "authenticated StopIteration routing",
-            )
         if isinstance(step, ReturnStepV1):
             value = self._reduce_value(step.value, requested)
             if isinstance(value, GeneratorTransitionGapV1):

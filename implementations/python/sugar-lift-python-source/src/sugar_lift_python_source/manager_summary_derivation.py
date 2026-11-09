@@ -3584,10 +3584,16 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     as body steps plus FinallyStepV1, the same seating as a top-level generator.
     A bare expression whose value is ConstructedTermSugar is TermStepV1, including
     ``warnings.simplefilter(...)``; the term is not invented as a performed filter.
+    A ``for`` without ``orelse`` or an owned yield, whose target is a tuple or
+    list, is ForStepV1, using the same target-coordinate minting as a top-level
+    generator. Transition already unpacks that target through iter/next and
+    authenticated StopIteration; a bare name target stays unnameable until
+    bind-without-unpack exists. This does not invent items or warning testimony.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
         AssignStepV1,
+        ForStepV1,
         IfStepV1,
         InertStepV1,
         ReturnStepV1,
@@ -3598,13 +3604,19 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         Assign,
         Constant,
         Expr,
+        For,
+        FunctionDef,
         If,
+        List,
         Name,
+        Tuple_,
         Pass,
         Return,
         Try,
         Yield,
         YieldFrom,
+        generator_for_module_cid,
+        generator_for_target_coordinates,
     )
 
     def name_one(statement):
@@ -3653,6 +3665,35 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
                 statement.target.id,
                 statement.value.sugar(),
                 statement.fragment.seal().cid,
+            )
+        if (
+            isinstance(statement, For)
+            and not statement.orelse
+            and not FunctionDef._owns_yield((statement,))
+            and isinstance(statement.target, (Tuple_, List))
+        ):
+            from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+            from sugar_source_tree.panic import SugarNotWritten
+
+            body_steps = name_body(statement.body)
+            target_coordinates = generator_for_target_coordinates(statement)
+            try:
+                iterable = statement.iter.sugar()
+            except SugarNotWritten:
+                return None
+            if (
+                body_steps is None
+                or target_coordinates is None
+                or not isinstance(iterable, ConstructedTermSugar)
+            ):
+                return None
+            return ForStepV1(
+                iterable=iterable,
+                target_coordinates=target_coordinates,
+                body_steps=body_steps,
+                module_cid=generator_for_module_cid(statement),
+                fragment_cid=statement.fragment.seal().cid,
+                occurrence=statement.fragment,
             )
         if isinstance(statement, If):
             then_b = name_body(statement.body)

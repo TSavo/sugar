@@ -3523,14 +3523,127 @@ def test_installed_cited_opaque_nested_with_structured_finally_assign(tmp_path):
     )
 
 
-def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
-    """The docstring and ``__tracebackhide__ = True`` assign are already stepped.
+def test_installed_cited_opaque_nested_with_structured_finally_for(tmp_path):
+    """A finally for is ForStepV1 cleanup, using existing iter/next transition.
 
-    The leftover is the nested ``with warnings.catch_warnings(...) as w`` that
-    owns the yield — a cited-opaque manager whose body still holds a
-    try/finally the step vocabulary cannot yet name. Construction must keep
-    that With opaque and loud, not invent warning testimony or collapse the
-    site to ``non-manager-result:BlockValue``.
+    The loop is seated, not invented as performed items. Enter still keeps
+    both open faces, and ``w`` is still the enter-result coordinate.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        AssignStepV1,
+        FinallyStepV1,
+        ForStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            for leftover, other in ((1, 2),):\n"
+            "                seen = leftover\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    loop = next(item for item in cleanup.cleanup_steps if isinstance(item, ForStepV1))
+    assert len(loop.target_coordinates) == 2
+    assert any(
+        isinstance(item, AssignStepV1) and item.name == "seen"
+        for item in loop.body_steps
+    )
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
+def test_installed_cited_opaque_nested_with_for_orelse_stays_opaque(tmp_path):
+    """A for-else is outside ForStepV1, so the cited-opaque With stays loud."""
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_source_tree.panic import SugarNotWritten
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            for leftover in (1,):\n"
+            "                seen = leftover\n"
+            "            else:\n"
+            "                seen = 0\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    with pytest.raises(SugarNotWritten) as caught:
+        boundary.desugar()
+    assert caught.value.owner == "GeneratorWithSugar.desugar"
+    assert caught.value.observed == "opaque generator transition: With carrying a suspension"
+
+
+def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
+    """The cited-opaque catch_warnings With is now named, including its for.
+
+    The leftover is the ``if expected_warning:`` in finally cleanup: the guard
+    is not a decided truth, so branch transition stays ``If carrying a
+    suspension``. Construction must keep that loud, not invent warning
+    testimony or a decided expected_warning.
     """
     consumer = (
         "import pandas._testing as tm\n"
@@ -3567,8 +3680,9 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
     assert isinstance(boundary, GeneratorWithSugar)
     with pytest.raises(SugarNotWritten) as caught:
         boundary.desugar()
-    assert caught.value.owner == "GeneratorWithSugar.desugar"
-    assert caught.value.observed == "opaque generator transition: With carrying a suspension"
+    assert caught.value.owner == "GeneratorConstructionV1.transition"
+    assert caught.value.observed == "If carrying a suspension"
+    assert caught.value.requested == "finally cleanup"
 
 
 def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
