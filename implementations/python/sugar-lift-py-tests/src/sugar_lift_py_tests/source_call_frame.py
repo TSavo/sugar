@@ -303,6 +303,16 @@ class BoundSourceCallActualsV1:
             raise SourceCallBindingGap(
                 "native projection requires a native operation carrier"
             )
+        from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+
+        if any(
+            isinstance(coordinate, ExitValueCoordinate)
+            for coordinate in carrier.coordinates
+        ):
+            # The callee body already substituted the formal with the outer
+            # exit value before the lookup. This frame cannot treat that
+            # coordinate as one of its formals.
+            return carrier
         projected = {}
         for demanded_cid, stored_coordinate in zip(
             carrier.demand.operand_coordinate_cids,

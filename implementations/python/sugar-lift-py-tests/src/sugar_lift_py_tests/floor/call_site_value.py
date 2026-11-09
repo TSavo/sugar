@@ -1693,17 +1693,10 @@ class CallSiteValue(FloorValue):
             else:
                 actuals = self.bound_native_actuals_by_coordinate
             if actuals is None:
-                if not isinstance(outcome, NativeOperationExitCarrierV1):
-                    return outcome
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="CallSiteValue.project_producer_outcome",
-                    blame=self.target_name,
-                    observed="late native carrier lacks bound source testimony",
-                    requested="the producer-owned source bind result",
-                    fix="retain the carrier at its producer boundary",
-                )
+                # A discharged ExitSet returns here. A still-pending carrier
+                # names an outer exit value this frame already substituted
+                # and cannot discharge as a formal.
+                return outcome
             outcome = outcome.discharge(actuals)
         exits = outcome_to_exitset(outcome)
         return ExitSet(
