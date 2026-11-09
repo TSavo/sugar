@@ -118,9 +118,36 @@ class ClassConstructorBodySugar(Sugar):
             receiver = value.construct_receiver_state_from_block(
                 None, self.receiver_coordinate_cid
             )
-            initializer_ctx = ctx.with_temporal(
-                ctx.temporal.bind_value(self.receiver_coordinate_cid, receiver)
+            # Constructor CallSiteValue formals omit ``self`` — they are the
+            # class-call arguments. Zero-argument ``super()`` still needs the
+            # PEP 3135 ``__class__`` cell and the bound first formal.
+            # ``ClassDefinitionValue`` already carries both when ``__init__``
+            # is invoked as a method; this door is the class call
+            # ``RaisesExc(...)`` used by a factory ``return``.
+            temporal = ctx.temporal.bind_value(
+                self.receiver_coordinate_cid, receiver
             )
+            from sugar_lift_py_tests.floor.class_definition_value import (
+                ClassDefinitionValue,
+            )
+
+            if isinstance(value, ClassDefinitionValue):
+                temporal = temporal.bind_value(
+                    "__class__",
+                    value,
+                    blame=f"{value.class_name}.__init__",
+                )
+            if temporal.value_if_bound("self") is None:
+                temporal = temporal.bind_value(
+                    "self",
+                    receiver,
+                    blame=(
+                        f"{value.class_name}.__init__"
+                        if isinstance(value, ClassDefinitionValue)
+                        else "ClassConstructorBodySugar.receiver"
+                    ),
+                )
+            initializer_ctx = ctx.with_temporal(temporal)
             outcome = self.initializer_body.desugar(initializer_ctx)
             if isinstance(outcome, Incomplete):
                 return outcome

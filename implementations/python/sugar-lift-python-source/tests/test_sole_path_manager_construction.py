@@ -722,6 +722,84 @@ def test_raises_style_kwargs_return_stores_match_from_factory_keyword(tmp_path):
     assert fields["match"] == match_value
 
 
+def test_factory_kwargs_return_applies_super_init_field_stores(tmp_path):
+    """Factory ``return CM(x, **kwargs)`` runs ``super().__init__`` field stores."""
+    implementation = (
+        "class AbstractRaises:\n"
+        "    def __init__(self, match=None, check=None):\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "        self._fail_reason = None\n"
+        "class RaisesExc(AbstractRaises[object]):\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        super().__init__(match=match, check=check)\n"
+        "        self.expected_exceptions = expected_exception\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(tmp_path, implementation, exported="raises")
+    )
+    consumer = 'import arbitrary\narbitrary.raises(23, match="boom")\n'
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(tmp_path, path, consumer, source_cid)
+    resolved = resolve_import_binding(receipts[0], graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    source_file = SourceFile((consumer, str(path), source_cid))
+    call = next(item for item in source_file.nodes() if isinstance(item, Call))
+    literal = next(item for item in call.args if isinstance(item, Constant))
+    keyword = next(item for item in call.keywords if item.arg == "match")
+    from sugar_lift_py_tests.floor import NoneValue, StringValue
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    exception_actual = TermValue(23)
+    match_value = StringValue("boom")
+    result = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(
+            ConstructedCallActualV1(
+                literal,
+                exception_actual,
+                ConstructedValueTestimonyV1.mint(
+                    literal.fragment,
+                    _term_content_cid(exception_actual.to_term(owner="test")),
+                ),
+            ),
+        ),
+        keyword_actuals=(
+            (
+                "match",
+                ConstructedCallActualV1(
+                    keyword.value,
+                    match_value,
+                    ConstructedValueTestimonyV1.mint(
+                        keyword.value.fragment,
+                        _term_content_cid(match_value.to_term(owner="test")),
+                    ),
+                ),
+            ),
+        ),
+        call_site=call.fragment,
+    )
+    detail = getattr(result, "detail", None) or ""
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exceptions"] is exception_actual
+    assert fields["match"] == match_value
+    assert isinstance(fields["_fail_reason"], NoneValue)
+
+
 def test_factory_kwargs_match_cites_variadic_keyword_entry(tmp_path):
     """Factory ``raises(x, match="boom")`` cites match as a ``**kwargs`` entry."""
     implementation = (
