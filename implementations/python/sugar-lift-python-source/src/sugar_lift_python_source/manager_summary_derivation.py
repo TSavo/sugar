@@ -29,6 +29,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     RaiseEffectKindV1,
     ReturnTruthinessDispositionV1,
     SuppressesModeV1,
+    VariadicKeywordEntryProjectionV1,
     VariadicKeywordV1,
     VariadicPositionalV1,
     semantics_to_value,
@@ -649,26 +650,26 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         return None
     from sugar_lift_py_tests.floor.none_value import NoneValue
 
+    if message_index is not None:
+        message_pattern = OptionalFormalArgumentProjectionV1(message_index)
+    else:
+        message_pattern = _keyword_entry_cited_by_field(behavior, "match")
     match_field = _receiver_field_value(behavior, "match")
     if (
-        message_index is None
+        message_pattern is None
         and match_field is not None
         and not isinstance(match_field, NoneValue)
     ):
-        # A stored non-None match that is not a unique factory formal is
-        # an unprojected pattern, not NoMessagePattern. Seeded match=None
-        # still projects as an omitted message.
+        # A stored non-None match that is not a unique factory formal or
+        # **kwargs entry is an unprojected pattern, not NoMessagePattern.
+        # Seeded match=None still projects as an omitted message.
         return None
     expects = bool(absent_effect_halts)
     return EffectBoundarySemanticsV1(
         ExpectsModeV1() if expects else SuppressesModeV1(),
         RaiseEffectKindV1(),
         FormalArgumentProjectionV1(expected_index),
-        (
-            NoMessagePatternV1()
-            if message_index is None
-            else OptionalFormalArgumentProjectionV1(message_index)
-        ),
+        NoMessagePatternV1() if message_pattern is None else message_pattern,
         ExceptionInfoBindingV1(),
     )
 
@@ -743,8 +744,21 @@ def _derive_effect_boundary_from_deferred_carrier(
     message_index = _message_pattern_formal_index(
         equalities[0], behavior, actual_terms, receiver=receiver
     )
-    if message_index is None or message_index == expected_index:
+    if message_index == expected_index:
         return None
+    if message_index is not None:
+        message_pattern = OptionalFormalArgumentProjectionV1(message_index)
+    else:
+        field_name = _message_comparison_receiver_field(equalities[0])
+        message_pattern = (
+            _keyword_entry_cited_by_field(
+                behavior, field_name, receiver=receiver
+            )
+            if field_name
+            else None
+        )
+        if message_pattern is None:
+            return None
     if len(carrier.short_circuits) == 2:
         field_name = _message_comparison_receiver_field(equalities[0])
         field_value = _receiver_field_value(behavior, field_name, receiver=receiver)
@@ -783,7 +797,7 @@ def _derive_effect_boundary_from_deferred_carrier(
         ExpectsModeV1() if absent_effect_halts else SuppressesModeV1(),
         RaiseEffectKindV1(),
         FormalArgumentProjectionV1(expected_index),
-        OptionalFormalArgumentProjectionV1(message_index),
+        message_pattern,
         ExceptionInfoBindingV1(),
     )
 
@@ -1164,6 +1178,43 @@ def _term_contains_term(haystack, needle):
     if not args:
         return False
     return any(_term_contains_term(arg, needle) for arg in args)
+
+
+def _keyword_entry_cited_by_field(behavior, field_name, receiver=None):
+    """Cite a stored field that arrived as a unique ``**kwargs`` entry.
+
+    Factory ``raises(expected, *args, **kwargs)`` does not name ``match``.
+    The pattern is the unique dict entry whose string key is the field name
+    and whose value is the stored field. That is a variadic keyword entry,
+    not a named formal and not NoMessagePattern.
+    """
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+
+    if not field_name:
+        return None
+    field = _receiver_field_value(behavior, field_name, receiver=receiver)
+    if field is None or isinstance(field, NoneValue):
+        return None
+    candidates = []
+    for index, actual in enumerate(behavior.formal_actual_values):
+        if type(actual) is not DictValue:
+            continue
+        matching = [
+            key.value
+            for key, value in actual.entries
+            if type(key) is StringValue
+            and key.value == field_name
+            and value == field
+        ]
+        if len(matching) > 1:
+            return None
+        if len(matching) == 1:
+            candidates.append(
+                VariadicKeywordEntryProjectionV1(index, matching[0])
+            )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _formal_index_cited_by_field(behavior, field_name, actual_terms):

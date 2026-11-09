@@ -722,6 +722,69 @@ def test_raises_style_kwargs_return_stores_match_from_factory_keyword(tmp_path):
     assert fields["match"] == match_value
 
 
+def test_factory_kwargs_match_cites_variadic_keyword_entry(tmp_path):
+    """Factory ``raises(x, match="boom")`` cites match as a ``**kwargs`` entry."""
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        self.expected_exceptions = expected_exception\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return (effect_type is self.expected_exceptions) and (\n"
+        "            effect.message == self.match\n"
+        "        )\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="raises")
+    consumer = (
+        "import arbitrary\n"
+        "def use_raises():\n"
+        '    with arbitrary.raises(ValueError, match="boom"):\n'
+        "        raise ValueError(\"boom\")\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        VariadicKeywordEntryProjectionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({distribution.metadata["Name"]})
+        ),
+    )
+    assert context.source_derived_contract_refs, context.source_derived_gaps
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1), reference.semantics
+    assert isinstance(reference.semantics.mode, ExpectsModeV1)
+    assert reference.semantics.message_pattern_operand == (
+        VariadicKeywordEntryProjectionV1(2, "match")
+    )
+
+
 def test_factory_nested_same_module_with_derives_before_frame_projection(tmp_path):
     """A callee nested ``with LocalClass()`` uses the same-module derivation door.
 
