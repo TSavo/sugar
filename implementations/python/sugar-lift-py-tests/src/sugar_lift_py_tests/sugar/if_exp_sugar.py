@@ -171,6 +171,39 @@ class IfExpSugar(ConstructedTermSugar):
             return else_out.demanded_under(not_formula).and_then(
                 lambda value: self._join_arms(formula, then_out, Complete(value))
             )
+
+        # A deferred native-operation arm is not an ExitSet. Forcing it through
+        # outcome_to_exitset panics; BoolOp already keeps that carrier beside
+        # the already-decided face via short_circuit. The same law applies
+        # here: evaluate the deferred arm only on its face, and keep the
+        # completed peer as the stopping face. Do not evaluate exc.message
+        # on the path that wrote str(exc). Both-deferred arms stay loud.
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        then_deferred = isinstance(then_out, NativeOperationExitCarrierV1)
+        else_deferred = isinstance(else_out, NativeOperationExitCarrierV1)
+        if then_deferred ^ else_deferred:
+            from sugar_lift_py_tests.outcome.exit_set import (
+                outcome_to_exitset,
+                partition as _partition,
+            )
+
+            then_face, else_face = _partition(("IfExpSugar", self.site, formula))
+            if then_deferred:
+                return then_out.short_circuit(
+                    continuing_guard=formula,
+                    stopped=outcome_to_exitset(else_out),
+                    continuing_face=then_face,
+                    stopped_face=else_face,
+                )
+            return else_out.short_circuit(
+                continuing_guard=not_formula,
+                stopped=outcome_to_exitset(then_out),
+                continuing_face=else_face,
+                stopped_face=then_face,
+            )
         return self._join_arms(formula, then_out, else_out)
 
     def _join_arms(self, formula, then_out, else_out) -> Outcome:
