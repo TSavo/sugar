@@ -348,6 +348,15 @@ class CallSiteSugar(ConstructedTermSugar):
                     fix=("enroll producer-owned closure actuals before body reduction"),
                 )
         if self.contract_resolution_gap is not None:
+            # Off-population is "we know exactly which callee this is, and we
+            # have decided not to look inside it". Raising here would abort an
+            # enrolled constructor that stores ``re.compile(match)`` as a
+            # field. Missing or value-bound callees stay a typed resolution
+            # gap so a factory ``return Path(...)`` cannot become a manager.
+            if str(self.contract_resolution_gap).startswith(
+                "call-target-off-population"
+            ):
+                return self._collect(self.args, (), ctx)
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
             raise OpaqueSourceCallResolutionGap(
