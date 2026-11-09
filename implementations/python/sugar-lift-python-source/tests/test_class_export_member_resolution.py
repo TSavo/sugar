@@ -190,7 +190,13 @@ def test_classmethod_attribute_call_binds_the_class_as_cls() -> None:
         sugar = call.sugar()
     except SourceCallBindingGap as exc:
         raise AssertionError(exc) from exc
-    assert sugar is not None
+    assert len(sugar.args) == 1
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        sugar.desugar()
+    except SugarNotWritten as exc:
+        raise AssertionError(exc) from exc
 
 
 
