@@ -938,7 +938,31 @@ def main() -> int:
             "content-addressed artifact for shards to load"
         ),
     )
+    parser.add_argument(
+        "--slice",
+        default=None,
+        metavar="I/K",
+        help=(
+            "measure seat I of K over CORPUS: every K-th file in manifest "
+            "order, banked in the checkpoint; never a board. K processes, one "
+            "per seat, each with its own checkpoint, measure the whole "
+            "manifest with no plan and no demand table; join their "
+            "checkpoints and seal with --aggregate-only."
+        ),
+    )
     args = parser.parse_args()
+    corpus_slice: tuple[int, int] | None = None
+    if args.slice is not None:
+        from pandas_census_checkpoint import CheckpointError, parse_slice
+
+        if args.plan_json is not None or args.shard_index is not None:
+            parser.error("--slice does not combine with --plan-json/--shard-index")
+        if args.aggregate_only:
+            parser.error("--slice measures; --aggregate-only seals the joined seats")
+        try:
+            corpus_slice = parse_slice(args.slice)
+        except CheckpointError as refuse:
+            parser.error(str(refuse))
     if args.shard_index is not None and args.plan_json is None:
         parser.error("--shard-index requires --plan-json")
     if args.plan_json is not None and args.shard_index is None:
@@ -1399,6 +1423,17 @@ def main() -> int:
         f"total={len(file_names)} already_done={len(file_names) - len(pending)} "
         f"pending={len(pending)} path={checkpoint_path.resolve()}"
     )
+    if corpus_slice is not None:
+        # The journal above is this seat's own: what it lacks of the manifest
+        # is mostly other seats' work. From here on ``pending`` is this
+        # seat's share only.
+        seat = set(checkpoint.slice_files(*corpus_slice))
+        pending = [file for file in pending if file in seat]
+        _narrate(
+            f"RECENSUS SLICE seat={corpus_slice[0]}/{corpus_slice[1]} "
+            f"seat_files={len(seat)} seat_pending={len(pending)} "
+            f"manifest={len(file_names)} manifestCid={checkpoint.manifest_cid}"
+        )
     if args.aggregate_only:
         if pending:
             _narrate(
@@ -1957,6 +1992,21 @@ def main() -> int:
                         "mode=batch-end-of-lift degraded=shelf-stale-next-plan"
                     )
             progress_stream.close()
+
+    if corpus_slice is not None:
+        # A seat banks rows. It states no board: the other seats' files are
+        # not missing, they are someone else's, and only the joined journal
+        # can say which enrolled files never reached a terminal.
+        banked = set(checkpoint.slice_files(*corpus_slice)) - set(
+            checkpoint.pending_files()
+        )
+        seat_size = len(checkpoint.slice_files(*corpus_slice))
+        _narrate(
+            f"RECENSUS SLICE BANKED seat={corpus_slice[0]}/{corpus_slice[1]} "
+            f"rows={len(banked)}/{seat_size} checkpoint={checkpoint_path.resolve()} "
+            "— not a board"
+        )
+        return 0 if len(banked) == seat_size else 2
 
     # Tripwire: the lift loop must never rebind `families` to a row dict.
     if not isinstance(families, Counter):

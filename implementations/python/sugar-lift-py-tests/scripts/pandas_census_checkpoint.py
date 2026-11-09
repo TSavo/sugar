@@ -17,6 +17,23 @@ class CheckpointError(ValueError):
     """The durable journal does not conserve the declared corpus."""
 
 
+def parse_slice(text: str) -> tuple[int, int]:
+    """``"I/K"`` -> ``(I, K)``: seat ``I`` of ``K`` equal seats over a manifest."""
+    index_text, separator, count_text = text.partition("/")
+    if (
+        separator != "/"
+        or not index_text.isascii()
+        or not count_text.isascii()
+        or not index_text.isdigit()
+        or not count_text.isdigit()
+    ):
+        raise CheckpointError(f"slice must be I/K with 0 <= I < K, got {text!r}")
+    index, count = int(index_text), int(count_text)
+    if not 0 <= index < count:
+        raise CheckpointError(f"slice must be I/K with 0 <= I < K, got {text!r}")
+    return index, count
+
+
 class Checkpoint:
     def __init__(self, *, floor: str, files: Sequence[str], path: Path) -> None:
         ordered = tuple(sorted(str(file) for file in files))
@@ -73,6 +90,19 @@ class Checkpoint:
 
     def pending_files(self) -> tuple[str, ...]:
         return tuple(file for file in self.files if file not in self._by_file)
+
+    def slice_files(self, index: int, count: int) -> tuple[str, ...]:
+        """Seat ``index`` of ``count``: every ``count``-th file in manifest order.
+
+        The seats partition the manifest. Each seat's rows are bound to the
+        WHOLE manifest's CID, so the journals of all ``count`` seats, joined,
+        are one complete journal of that manifest and nothing else is.
+        """
+        if not 0 <= index < count:
+            raise CheckpointError(
+                f"slice must be I/K with 0 <= I < K, got {index}/{count}"
+            )
+        return self.files[index::count]
 
     def append(self, file: str, result: Mapping[str, Any]) -> dict[str, Any]:
         if file in self._by_file:
