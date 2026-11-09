@@ -252,6 +252,16 @@ class IfSugar(Sugar):
         elif else_branch_exits and not then_branch_exits:
             continuation_guard = formula
 
+        # A ground condition never uses the branch-result slot as the arm
+        # guard (formula is already true_guard/false_guard). Authenticating
+        # that unused slot would inject BranchResultAuthentication into every
+        # folded `if not args:` factory prefix, and prefix CIDs cannot project
+        # that testimony. Symbolic splits still publish the slot authentication.
+        unconditional_entries = (
+            ()
+            if observed_formula in (false_guard(), true_guard())
+            else (authentication,)
+        )
         return Complete(
             GuardedFaces(
                 guard=formula,
@@ -262,6 +272,6 @@ class IfSugar(Sugar):
                 guarded_bindings=(),
                 can_fall_through=can_fall_through,
                 continuation_guard=continuation_guard,
-                unconditional_entries=(authentication,),
+                unconditional_entries=unconditional_entries,
             )
         )
