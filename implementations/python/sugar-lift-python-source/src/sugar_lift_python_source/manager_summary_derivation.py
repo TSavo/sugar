@@ -3502,8 +3502,8 @@ def _finally_term_step_for_nested_with(finalbody):
     """Name a handler-free finally suite as term payloads, or None.
 
     ``pass`` is skipped. Structured cleanup (assign, for, raise, a yield)
-    stays unnameable so the containing With remains loud — FinallyStepV1
-    still gaps non-empty cleanup_steps at transition.
+    stays unnameable here so ``name_body`` can seat it as cleanup_steps, or
+    the containing With stays loud.
     """
     from sugar_lift_py_tests.generator_construction import FinallyStepV1
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -3713,15 +3713,22 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
             and statement.finalbody
         ):
             body_steps = name_body(statement.body)
-            cleanup = _finally_term_step_for_nested_with(statement.finalbody)
-            if cleanup is None:
-                cleanup_steps = name_body(statement.finalbody)
-                if cleanup_steps is not None:
-                    from sugar_lift_py_tests.generator_construction import (
-                        FinallyStepV1,
-                    )
+            from sugar_lift_py_tests.generator_construction import FinallyStepV1
 
-                    cleanup = FinallyStepV1((), cleanup_steps=cleanup_steps)
+            finalbody = tuple(
+                item
+                for item in statement.finalbody
+                if not isinstance(item, Pass)
+            )
+            cleanup_steps = name_body(finalbody)
+            if cleanup_steps is not None:
+                # Term-only calls and structured cleanup share the sub-machine.
+                # The statements path can complete a CallSiteValue without
+                # reducing a source-visible body. ``pass`` is skipped so a
+                # pass-only finally stays empty cleanup, not an Inert step.
+                cleanup = FinallyStepV1((), cleanup_steps=cleanup_steps)
+            else:
+                cleanup = _finally_term_step_for_nested_with(statement.finalbody)
             if body_steps is None or cleanup is None:
                 return None
             return _compose_finally_for_nested_with(body_steps, cleanup)
