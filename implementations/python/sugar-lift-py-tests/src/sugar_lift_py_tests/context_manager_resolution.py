@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .canonicalizer import blake3_512_of, encode_jcs
 from .context_manager_contract import (
@@ -834,11 +834,12 @@ def effective_context_manager_resolutions_for_source(
     context: object, *, source_cid: str
 ) -> dict[SourceFragmentCoordinateV1, object]:
     """Project the exact resolution table consumed by With for one source."""
-    effective: dict[SourceFragmentCoordinateV1, object] = {}
-    refs = getattr(context, "contract_refs", None)
-    for coordinate, resolution in (getattr(refs, "by_use_site", None) or {}).items():
-        if getattr(coordinate, "source_cid", None) == source_cid:
-            effective[coordinate] = resolution
+    effective: dict[SourceFragmentCoordinateV1, object] = dict(
+        resolutions_for_source(
+            getattr(getattr(context, "contract_refs", None), "by_use_site", None),
+            source_cid,
+        )
+    )
     for coordinate, resolution in (
         getattr(context, "source_derived_contract_refs", None) or {}
     ).items():
@@ -960,6 +961,66 @@ class FactoredSourceDerivedContextManagerRefV1:
     def shared_binding(self):
         """Binding declaration shared by every message-pattern face."""
         return self._shared_authority_field("binding")
+
+
+class PerSourceResolutionsV1(Mapping):
+    """A ``by_use_site`` table derived one source at a time, on first demand.
+
+    A With use-site's resolution is a function of its own source file, so a
+    lookup pays for that file and no other. Iteration and ``len`` are
+    whole-corpus questions and derive every source; a reader that wants one
+    source's rows asks ``for_source``.
+    """
+
+    def __init__(
+        self,
+        source_cids: Callable[[], Iterable[str]],
+        derive: Callable[[str], Mapping["SourceFragmentCoordinateV1", object]],
+    ) -> None:
+        self._source_cids = source_cids
+        self._derive = derive
+        self._by_source: dict[str, Mapping[SourceFragmentCoordinateV1, object]] = {}
+
+    def for_source(
+        self, source_cid: str
+    ) -> Mapping["SourceFragmentCoordinateV1", object]:
+        derived = self._by_source.get(source_cid)
+        if derived is None:
+            derived = MappingProxyType(dict(self._derive(source_cid)))
+            self._by_source[source_cid] = derived
+        return derived
+
+    def derived_source_cids(self) -> tuple[str, ...]:
+        """Sources whose rows have been derived so far (cost testimony)."""
+        return tuple(self._by_source)
+
+    def __getitem__(self, use_site):
+        source_cid = getattr(use_site, "source_cid", None)
+        if not isinstance(source_cid, str):
+            raise KeyError(use_site)
+        return self.for_source(source_cid)[use_site]
+
+    def __iter__(self):
+        for source_cid in self._source_cids():
+            yield from self.for_source(source_cid)
+
+    def __len__(self) -> int:
+        return sum(len(self.for_source(cid)) for cid in self._source_cids())
+
+
+def resolutions_for_source(
+    by_use_site: object, source_cid: str
+) -> Mapping["SourceFragmentCoordinateV1", object]:
+    """The rows of one source, without asking a per-source table for the corpus."""
+    if isinstance(by_use_site, PerSourceResolutionsV1):
+        return by_use_site.for_source(source_cid)
+    if not by_use_site:
+        return {}
+    return {
+        coordinate: resolution
+        for coordinate, resolution in by_use_site.items()
+        if getattr(coordinate, "source_cid", None) == source_cid
+    }
 
 
 @dataclass(frozen=True)

@@ -100,7 +100,6 @@ import os
 import platform
 import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -1300,11 +1299,38 @@ def main() -> int:
             f"contentCid={demand_table_cid} rows={len(prebuilt.rows)} "
             f"(zero corpus walk)"
         )
-    else:
-        # Demand-table walk can take minutes with only a BEGIN/END pair — that
-        # is blind by construction. Alive heartbeats every ≤30s hit the job log.
+    elif args.write_demand_table is None:
+        # No table was asked for and none was supplied: resolve each source's
+        # demands when that source is measured. Opening the door hashes the
+        # corpus for module identities and parses nothing, so a one-file run
+        # costs one file's derivation, not the corpus's.
+        from sugar_lift_py_tests.lift_rpc import (
+            provisional_contract_refs_from_demands,
+        )
+
+        contract_refs = _phase_call(
+            "demand_table_derivation",
+            lambda: provisional_contract_refs_from_demands(workspace_root),
+        )
+        demand_table_cid = contract_refs.table_cid
+        # The meaning key is a function of the inputs, not of derived rows, so
+        # the board states the same semantic identity a minted table carries.
+        from sugar_lift_py_tests.prebuilt_demand_table import (
+            semantic_identity_for_corpus,
+        )
+
+        demand_table_identity = semantic_identity_for_corpus(
+            workspace_root
+        ).as_dict()
         _narrate(
-            f"RECENSUS DEMAND_TABLE deriving provisional refs from "
+            "RECENSUS DEMAND_TABLE per-source door open "
+            f"(identityCid={demand_table_cid}; zero corpus parse)"
+        )
+    else:
+        # Minting the whole table is a corpus walk and is only done when the
+        # caller explicitly asks for the artifact (--write-demand-table).
+        _narrate(
+            f"RECENSUS DEMAND_TABLE minting whole table from "
             f"workspace_root={workspace_root}"
         )
 
@@ -1323,18 +1349,7 @@ def main() -> int:
             table = mint_prebuilt_demand_table(
                 authenticated_corpus,
             )
-            write_path = args.write_demand_table
-            if write_path is None and args.out_dir is not None:
-                # Default artifact next to board outputs so shards can find it.
-                write_path = Path(args.out_dir) / "provisional-demand-table.json"
-            temporary_path = None
-            if write_path is None:
-                handle = tempfile.NamedTemporaryFile(
-                    prefix="python-demand-table-", suffix=".json", delete=False
-                )
-                temporary_path = Path(handle.name)
-                handle.close()
-                write_path = temporary_path
+            write_path = Path(args.write_demand_table)
             write_prebuilt_demand_table(table, write_path)
             _narrate(
                 f"RECENSUS DEMAND_TABLE wrote path={write_path} "
@@ -1354,8 +1369,6 @@ def main() -> int:
                     "RECENSUS DEMAND_TABLE CAS publication refused after "
                     f"successful derivation; continuing locally: {refuse}"
                 )
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
             refs = install_prebuilt_demand_table(table, root=workspace_root)
             return refs, table.content_cid, table.semantic_identity.as_dict()
 

@@ -117,12 +117,24 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     identical source coordinate.  This pass owns only the structural fact that
     a typed WithItem exists; it never reconstructs imports from spellings.
     """
+    from sugar_source_tree.tree import SourceTree
+
+    return _context_manager_rows_for_paths(SourceTree(root).paths())
+
+
+def _context_manager_rows_for_paths(paths) -> List[Dict[str, Any]]:
+    """The typed With occurrences of exactly these files, in the order given.
+
+    A With row is a function of its own file. The corpus pass above and the
+    per-source door below both come through here, so a one-file question and
+    a whole-corpus question cannot disagree about a row.
+    """
     from sugar_lift_python_source.source_oracle import SourceUnavailable
     from sugar_source_tree.nodes import AsyncWith, With
-    from sugar_source_tree.tree import SourceFile, SourceTree
+    from sugar_source_tree.tree import SourceFile
 
     rows: List[Dict[str, Any]] = []
-    for path in SourceTree(root).paths():
+    for path in paths:
         try:
             source_file = SourceFile.from_path(path)
         except SourceUnavailable:
@@ -167,13 +179,30 @@ def provisional_contract_refs_from_demand_rows(
     """
     from types import MappingProxyType
 
+    from sugar_lift_py_tests.context_manager_resolution import ResolvedContractRefsV1
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    resolutions, cm_rows = _context_manager_resolutions_from_demand_rows(rows)
+    if table_cid is None:
+        table_cid = cid_of_json(
+            {"kind": "provisional-demand-table-rows", "rows": cm_rows}
+        )
+    if catalog_cid is None:
+        catalog_cid = table_cid
+    return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(resolutions))
+
+
+def _context_manager_resolutions_from_demand_rows(rows):
+    """Typed gap resolution per With demand row, plus the rows that produced them.
+
+    The one projection from demand rows to construction refs: the whole-table
+    door and the per-source door both use it.
+    """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
-        ResolvedContractRefsV1,
         SourceFragmentCoordinateV1,
         _hash_json,
     )
-    from sugar_lift_python_source.canonical import cid_of_json
 
     resolutions = {}
     cm_rows = []
@@ -193,13 +222,92 @@ def provisional_contract_refs_from_demand_rows(
             row.get("gapKind") or "runtime-selected",
             (),
         )
-    if table_cid is None:
-        table_cid = cid_of_json(
-            {"kind": "provisional-demand-table-rows", "rows": cm_rows}
+    return resolutions, cm_rows
+
+
+class _PerSourceDemandRows:
+    """Demand rows for one source CID at a time; never the corpus's rows.
+
+    Opening this reads and content-addresses the enrolled files (the import
+    join needs every module's identity) and parses nothing. Rows for a source
+    are derived by the same call/With passes and the same join the whole-table
+    door runs, restricted to the files carrying that source CID -- every row's
+    use site names its own source CID, so the restriction is exact. Files with
+    identical bytes share one source CID and are derived together, in tree
+    order, exactly as the whole-table join meets them.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self._units_by_source_cid: Dict[str, list] | None = None
+        self._module_identities: Dict[str, Dict[str, Any]] | None = None
+
+    def _open(self) -> Dict[str, list]:
+        if self._units_by_source_cid is None:
+            units = _corpus_source_units(self.root)
+            grouped: Dict[str, list] = {}
+            for unit in units:
+                grouped.setdefault(unit[2], []).append(unit)
+            self._module_identities = _module_identities_for_units(self.root, units)
+            self._units_by_source_cid = grouped
+        return self._units_by_source_cid
+
+    def source_cids(self) -> tuple[str, ...]:
+        return tuple(self._open())
+
+    def identity_cid(self) -> str:
+        """Content address of what every row here is a function of."""
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        grouped = self._open()
+        return cid_of_json(
+            {
+                "kind": "per-source-provisional-demand-table",
+                "sources": [
+                    {
+                        "path": path.relative_to(self.root).as_posix(),
+                        "sourceCid": source_cid,
+                    }
+                    for source_cid, units in grouped.items()
+                    for path, _source, _cid in units
+                ],
+            }
         )
-    if catalog_cid is None:
-        catalog_cid = table_cid
-    return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(resolutions))
+
+    def rows_for_source(self, source_cid: str) -> List[Dict[str, Any]]:
+        units = self._open().get(source_cid, ())
+        assert self._module_identities is not None
+        return _join_call_identity_into_with_demands(
+            _call_contract_rows_for_units(self.root, units, self._module_identities),
+            _context_manager_rows_for_paths([path for path, _source, _cid in units]),
+        )
+
+
+def per_source_provisional_contract_refs(root: Path):
+    """Provisional With-demand refs whose rows are derived per source, on demand.
+
+    Same resolutions as ``provisional_contract_refs_from_demand_rows`` over the
+    whole-corpus table, at the cost of the sources actually asked about.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        PerSourceResolutionsV1,
+        ResolvedContractRefsV1,
+    )
+
+    demands = _PerSourceDemandRows(root)
+
+    def derive(source_cid: str):
+        resolutions, _cm_rows = _context_manager_resolutions_from_demand_rows(
+            demands.rows_for_source(source_cid)
+        )
+        return resolutions
+
+    table_cid = demands.identity_cid()
+    return ResolvedContractRefsV1(
+        table_cid,
+        table_cid,
+        PerSourceResolutionsV1(demands.source_cids, derive),
+    )
 
 
 def provisional_contract_refs_from_demands(root: Path):
@@ -216,18 +324,15 @@ def provisional_contract_refs_from_demands(root: Path):
     win via ``populate_source_derived_resource_refs`` after the context is
     installed — derived takes precedence over this provisional gap table.
 
-    Process-memoized by resolved root: the walk is O(corpus), not O(file). A
-    second open of the same workspace root must not re-scan every module.
-    Prefer ``install_provisional_contract_refs`` / prebuilt load for cold
-    shard processes so the walk is not paid again.
+    Rows are derived per source on first demand: asking about one file costs
+    that file, not the corpus. Process-memoized by resolved root so a second
+    open reuses the sources already derived.
     """
     key = str(Path(root).resolve())
     cached = _PROVISIONAL_CONTRACT_REFS_BY_ROOT.get(key)
     if cached is not None:
         return cached
-    refs = provisional_contract_refs_from_demand_rows(
-        _preconstruction_demand_rows(root)
-    )
+    refs = per_source_provisional_contract_refs(Path(root))
     _PROVISIONAL_CONTRACT_REFS_BY_ROOT[key] = refs
     return refs
 
@@ -491,15 +596,17 @@ def _record_populate_path_residual(source_file, error: BaseException) -> None:
 
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll imported plain calls by their source-authenticated use sites."""
-    from sugar_lift_py_tests.import_binding import (
-        authenticated_import_uses,
-        authenticated_module_exports,
-        module_name_for_path,
+    units = _corpus_source_units(root)
+    return _call_contract_rows_for_units(
+        root, units, _module_identities_for_units(root, units)
     )
+
+
+def _corpus_source_units(root: Path) -> list:
+    """``(path, source, source_cid)`` per readable enrolled file, in tree order."""
     from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
     from sugar_source_tree.tree import SourceTree
 
-    rows: List[Dict[str, Any]] = []
     units = []
     for path in SourceTree(root).paths():
         try:
@@ -507,7 +614,14 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         except SourceUnavailable:
             continue
         units.append((path, source, source_cid))
-    module_identities = {
+    return units
+
+
+def _module_identities_for_units(root: Path, units) -> Dict[str, Dict[str, Any]]:
+    """Module name -> authenticated module identity for the whole corpus."""
+    from sugar_lift_py_tests.import_binding import module_name_for_path
+
+    return {
         module_name_for_path(root, path): {
             "kind": "authenticated-python-module",
             "schemaVersion": "1",
@@ -516,6 +630,18 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         }
         for path, _source, source_cid in units
     }
+
+
+def _call_contract_rows_for_units(
+    root: Path, units, module_identities
+) -> List[Dict[str, Any]]:
+    """Call demands and exports of exactly these units, against corpus identities."""
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_uses,
+        authenticated_module_exports,
+    )
+
+    rows: List[Dict[str, Any]] = []
     for path, source, source_cid in units:
         enrolled, _outcomes = authenticated_import_uses(
             root, path, source, source_cid, module_identities
@@ -675,17 +801,25 @@ def _preconstruction_demand_rows(root: Path) -> List[Dict[str, Any]]:
     same use site.
 
     Each call is one corpus walk (counted by ``preconstruction_walk_count``).
-    Cold shards must load a prebuilt table instead of re-entering this door.
+    Only a caller that needs the whole table as an artifact comes here; a
+    question about some files goes through ``_PerSourceDemandRows``.
     """
     global _PRECONSTRUCTION_WALK_COUNT
     _PRECONSTRUCTION_WALK_COUNT += 1
-    call_rows = _call_contract_demand_rows(root)
+    return _join_call_identity_into_with_demands(
+        _call_contract_demand_rows(root), _context_manager_demand_rows(root)
+    )
+
+
+def _join_call_identity_into_with_demands(
+    call_rows: List[Dict[str, Any]], cm_rows: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """The join itself, over whichever files the two row lists cover."""
     calls_by_site = {
         json.dumps(row["useSite"], sort_keys=True): row
         for row in call_rows
         if row.get("kind") == "call-contract-demand"
     }
-    cm_rows = _context_manager_demand_rows(root)
     cm_sites = set()
     for row in cm_rows:
         site = json.dumps(row["useSite"], sort_keys=True)

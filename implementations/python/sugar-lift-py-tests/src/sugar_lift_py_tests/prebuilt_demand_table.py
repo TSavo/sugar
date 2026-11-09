@@ -1,9 +1,10 @@
 """Prebuilt provisional demand table: derive once per content, load in shards.
 
-Law: ``provisional_contract_refs_from_demands`` walks every enrolled ``*.py``
-(O(corpus)). Process memo (#7087) amortizes within one process; k=8 still
-pays the walk eight times because each shard is a cold process and the cost
-is invisible to LPT (per-process startup, not per-file).
+Law: minting the WHOLE table walks every enrolled ``*.py`` (O(corpus)), so it
+is done only when the artifact itself is asked for. A process that was handed
+no table does not mint one: ``provisional_contract_refs_from_demands`` opens
+the per-source door, which derives one source's rows when that source is
+asked about, so a one-file run costs one file.
 
 Shape:
   - plan / first process DERIVES the table once and content-addresses it
@@ -171,6 +172,27 @@ def content_cid_for_preimage(preimage: Mapping[str, Any]) -> str:
     return blake3_512_of(serialize_prebuilt_demand_table(preimage))
 
 
+def semantic_identity_for_corpus(
+    root: Path,
+    *,
+    source_root: Path | None = None,
+    config: Mapping[str, object] | None = None,
+):
+    """The meaning key of the demand table this corpus and producer yield.
+
+    One door for mint, validation, and a run that resolves per source: the key
+    is a function of the inputs (corpus bytes, producer source, parser,
+    config), so it is stated without deriving a single row.
+    """
+    root = Path(root)
+    return demand_table_identity(
+        root,
+        sorted(root.rglob("*.py")),
+        source_root=source_root or Path(__file__).resolve().parents[1],
+        config=config,
+    )
+
+
 def validate_prebuilt_demand_table(
     table: PrebuiltDemandTableV1,
     corpus: AuthenticatedPandasCorpus,
@@ -189,12 +211,8 @@ def validate_prebuilt_demand_table(
             f"demand table payload contentCid mismatch: "
             f"presented={table.content_cid!r} recomputed={payload_cid!r}"
         )
-    root = corpus.root
-    expected_identity = demand_table_identity(
-        root,
-        sorted(root.rglob("*.py")),
-        source_root=source_root or Path(__file__).resolve().parents[1],
-        config=config,
+    expected_identity = semantic_identity_for_corpus(
+        corpus.root, source_root=source_root, config=config
     )
     if table.semantic_identity != expected_identity:
         raise DemandTableSemanticIdentityMismatch(
@@ -221,11 +239,7 @@ def mint_prebuilt_demand_table(
         aggregate_hash=corpus.manifest_cid,
     )
     rows = tuple(_preconstruction_demand_rows(corpus.root))
-    semantic_identity = demand_table_identity(
-        corpus.root,
-        sorted(corpus.root.rglob("*.py")),
-        source_root=Path(__file__).resolve().parents[1],
-    )
+    semantic_identity = semantic_identity_for_corpus(corpus.root)
     table = PrebuiltDemandTableV1(
         content_cid="",
         corpus_pin=pin,
