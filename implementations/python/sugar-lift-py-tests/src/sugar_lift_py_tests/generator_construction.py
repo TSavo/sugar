@@ -1351,6 +1351,7 @@ class GeneratorConstructionV1:
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
         if isinstance(step, TermStepV1):
+            from sugar_lift_py_tests.gap.panic import ConstructionPanic
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_source_tree.panic import SugarNotWritten
 
@@ -1358,6 +1359,12 @@ class GeneratorConstructionV1:
                 outcome = step.term.desugar(self._guard_evaluation_context())
             except SugarNotWritten as exc:
                 return self._gap(requested, str(exc.observed))
+            except ConstructionPanic as exc:
+                info = exc.info
+                return self._gap(
+                    requested,
+                    f"{info.owner} requested {info.requested} on {info.observed}",
+                )
             if isinstance(outcome, Incomplete):
                 return ExitSet.halted(outcome.effect, state=self)
             if not isinstance(outcome, Complete):
@@ -2030,9 +2037,13 @@ class GeneratorConstructionV1:
         so a guard like ``isinstance(expected, tuple)`` can use the already
         written ClassValue law rather than treating ``isinstance`` and
         ``tuple`` as free names.  Formal floors overlay those builtins and
-        win on a shadowed spelling.  BindingCoordinateRefSugar.desugar remains
-        the sole consumer door for formals.
+        win on a shadowed spelling.  The binder-only shell is a
+        ``ReduceContext.root`` with that temporal, so a cleanup term can
+        reduce already-written prefix rather than stalling as a temporal-only
+        shell.  BindingCoordinateRefSugar.desugar remains the sole consumer
+        door for formals.
         """
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
         from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
 
         base = self.reduction_context
@@ -2050,7 +2061,9 @@ class GeneratorConstructionV1:
                 temporal = temporal.bind_value(item.coordinate.cid, item.value)
 
         if base is None:
-            return _BinderOnlyReduceCtx(temporal)
+            return ReduceContext.root(
+                owner="GeneratorConstructionV1.guard"
+            ).with_temporal(temporal)
         return base.with_temporal(temporal)
 
     def _guard_truth(self, guard: object):
