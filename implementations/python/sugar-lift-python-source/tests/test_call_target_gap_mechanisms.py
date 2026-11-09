@@ -260,6 +260,18 @@ def test_callee_outside_the_artifact_is_coverage_not_a_defect(tmp_path):
     assert gap.observed == "call-target-source-absent:unbound_helper"
 
 
+def test_missing_module_cast_is_still_source_absent(tmp_path):
+    """A missing ``cast`` import stays coverage-absent; it is not typing.cast."""
+    gap = _opaque_gap(
+        tmp_path,
+        "from missing_mod import cast\n"
+        "def make_guard(expected):\n"
+        "    return cast(object, expected)\n",
+    )
+
+    assert gap.observed == "call-target-source-absent:cast"
+
+
 def test_in_artifact_callee_carries_nested_refusal_to_nested_consumer(tmp_path):
     """The callee resolves; its reached opaque child names its own consumer.
 

@@ -880,6 +880,50 @@ def test_factory_kwargs_return_applies_super_init_stores_after_string_match_bran
     assert isinstance(fields["_fail_reason"], NoneValue)
 
 
+def test_typing_cast_returns_the_value_argument(tmp_path):
+    """``from typing import cast; cast(T, value)`` returns value unchanged."""
+    implementation = (
+        "from typing import cast\n"
+        "class RaisesExc:\n"
+        "    def __init__(self):\n"
+        '        self.payload = cast(object, "boom")\n'
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises():\n"
+        "    return RaisesExc()\n"
+    )
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(tmp_path, implementation, exported="raises")
+    )
+    consumer = "import arbitrary\narbitrary.raises()\n"
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(tmp_path, path, consumer, source_cid)
+    resolved = resolve_import_binding(receipts[0], graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    source_file = SourceFile((consumer, str(path), source_cid))
+    call = next(item for item in source_file.nodes() if isinstance(item, Call))
+    from sugar_lift_py_tests.floor import StringValue
+
+    result = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(),
+        keyword_actuals=(),
+        call_site=call.fragment,
+    )
+    detail = getattr(result, "detail", None) or ""
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["payload"] == StringValue("boom")
+
+
 def test_factory_kwargs_match_cites_variadic_keyword_entry(tmp_path):
     """Factory ``raises(x, match="boom")`` cites match as a ``**kwargs`` entry."""
     implementation = (
