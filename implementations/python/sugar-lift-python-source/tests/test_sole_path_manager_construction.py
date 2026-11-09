@@ -649,6 +649,79 @@ def test_raises_style_kwargs_return_attaches_constructor_body(tmp_path):
     assert fields["expected_exception"] is actual.value
 
 
+def test_raises_style_kwargs_return_stores_match_from_factory_keyword(tmp_path):
+    """Factory ``raises(x, match="boom")`` stores match via ``return CM(x, **kwargs)``."""
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(tmp_path, implementation, exported="raises")
+    )
+    consumer = 'import arbitrary\narbitrary.raises(23, match="boom")\n'
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(tmp_path, path, consumer, source_cid)
+    resolved = resolve_import_binding(receipts[0], graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    source_file = SourceFile((consumer, str(path), source_cid))
+    call = next(item for item in source_file.nodes() if isinstance(item, Call))
+    literal = next(item for item in call.args if isinstance(item, Constant))
+    keyword = next(item for item in call.keywords if item.arg == "match")
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    exception_actual = TermValue(23)
+    match_value = StringValue("boom")
+    result = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(
+            ConstructedCallActualV1(
+                literal,
+                exception_actual,
+                ConstructedValueTestimonyV1.mint(
+                    literal.fragment,
+                    _term_content_cid(exception_actual.to_term(owner="test")),
+                ),
+            ),
+        ),
+        keyword_actuals=(
+            (
+                "match",
+                ConstructedCallActualV1(
+                    keyword.value,
+                    match_value,
+                    ConstructedValueTestimonyV1.mint(
+                        keyword.value.fragment,
+                        _term_content_cid(match_value.to_term(owner="test")),
+                    ),
+                ),
+            ),
+        ),
+        call_site=call.fragment,
+    )
+    detail = getattr(result, "detail", None) or ""
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is exception_actual
+    assert fields["match"] == match_value
+
+
 def test_factory_nested_same_module_with_derives_before_frame_projection(tmp_path):
     """A callee nested ``with LocalClass()`` uses the same-module derivation door.
 

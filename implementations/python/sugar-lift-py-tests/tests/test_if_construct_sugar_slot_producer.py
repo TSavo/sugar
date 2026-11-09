@@ -259,3 +259,27 @@ def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> N
         )
         assert len(authentications) == 1
         assert authentications[0].slot == slot
+
+
+def test_ground_true_if_does_not_authenticate_an_unused_slot() -> None:
+    """A folded ``if True`` does not publish BranchResultAuthentication.
+
+    Ground conditions already guard the selected arm with true_guard/false_guard
+    rather than the branch-result slot. Authenticating that unused slot would
+    inject term-less testimony into every folded factory ``if not args:``.
+    """
+    branch = next(
+        node
+        for node in _tree("if True:\n    pass\n").nodes()
+        if isinstance(node, If)
+    )
+
+    outcome = branch.sugar().desugar(None)
+
+    assert isinstance(outcome, Complete)
+    authentications = tuple(
+        entry
+        for entry in outcome.value.unconditional_entries
+        if isinstance(entry, BranchResultAuthentication)
+    )
+    assert authentications == ()
