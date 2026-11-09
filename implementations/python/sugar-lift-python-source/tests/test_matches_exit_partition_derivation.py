@@ -342,8 +342,11 @@ def test_field_lookup_does_not_invent_a_field_from_two_partition_faces():
     assert derivation._receiver_field_value(behavior, "match") is None
 
 
-def test_uncited_compile_match_on_true_guard_partition_is_not_no_message_pattern():
-    """Seeing compile(boom) on the unique leaf does not cite kwargs ``"boom"``."""
+def test_compile_argument_cites_kwargs_match_without_equating_compile_to_the_string():
+    """``compile("boom")`` cites the kwargs string; it is not itself that string."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        VariadicKeywordEntryProjectionV1,
+    )
     from sugar_lift_py_tests.floor.dict_value import DictValue
     from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
     from sugar_lift_py_tests.outcome.exit_set import true_guard
@@ -359,5 +362,26 @@ def test_uncited_compile_match_on_true_guard_partition_is_not_no_message_pattern
         exits=ExitSet((Completed(true_guard(), behavior.receiver_state),))
     )
     assert derivation._receiver_field_value(behavior, "match") == compile_match
+    assert compile_match != boom
+    cited = derivation._keyword_entry_cited_by_field(behavior, "match")
+    assert cited == VariadicKeywordEntryProjectionV1(1, "match")
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert isinstance(result.mode, ExpectsModeV1)
+    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
+    assert result.message_pattern_operand == VariadicKeywordEntryProjectionV1(1, "match")
+
+
+def test_compile_of_a_different_string_does_not_cite_kwargs_match():
+    """A compile argument that is not the kwargs string is still uncited."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+
+    compile_match = _compile_match("other")
+    kwargs = DictValue(((StringValue("match"), StringValue("boom")),))
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
+        match_value=compile_match,
+        extra_actuals=(kwargs,),
+    )
+    assert derivation._keyword_entry_cited_by_field(behavior, "match") is None
     assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
 
