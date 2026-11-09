@@ -1305,6 +1305,7 @@ class GeneratorConstructionV1:
                 return outcome_to_exitset(value).and_then(continue_assign)
             return transition_assign(value)
         if isinstance(step, AttributeAssignStepV1):
+            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,
@@ -1316,6 +1317,10 @@ class GeneratorConstructionV1:
                 attr=step.attr,
                 site=step.occurrence,
             ).desugar(self._guard_evaluation_context())
+            if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.value.effect, state=self)
+                )
             if isinstance(outcome, Incomplete):
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
