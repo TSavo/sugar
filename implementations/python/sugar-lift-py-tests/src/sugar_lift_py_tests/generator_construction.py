@@ -1321,9 +1321,14 @@ class GeneratorConstructionV1:
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, AssertStepV1):
+            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             outcome = step.assert_sugar.desugar(self._guard_evaluation_context())
+            if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.value.effect, state=self)
+                )
             if isinstance(outcome, Incomplete):
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
