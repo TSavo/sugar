@@ -3507,7 +3507,7 @@ def _finally_term_step_for_nested_with(finalbody):
     """
     from sugar_lift_py_tests.generator_construction import FinallyStepV1
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-    from sugar_source_tree.nodes import Assert, Expr, For, Import, ImportFrom, Pass, Raise, While, Yield
+    from sugar_source_tree.nodes import Assert, Expr, For, Import, ImportFrom, Pass, Raise, While, Yield, YieldFrom
     from sugar_source_tree.panic import SugarNotWritten
 
     terms = []
@@ -3516,7 +3516,7 @@ def _finally_term_step_for_nested_with(finalbody):
             continue
         if isinstance(item, (Assert, For, Import, ImportFrom, Raise, While)):
             return None
-        if isinstance(item, Expr) and isinstance(item.value, Yield):
+        if isinstance(item, Expr) and isinstance(item.value, (Yield, YieldFrom)):
             return None
         if isinstance(item, Expr):
             try:
@@ -3602,7 +3602,10 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     yield is ImportFromStepV1, the same step a top-level generator names;
     ``from math import sqrt`` advances and continues. An attribute
     assignment ``holder.hidden = True`` is AttributeAssignStepV1, the same
-    step a top-level generator already names. This does not invent
+    step a top-level generator already names. A ``yield from`` whose
+    iterable is a constructed term is YieldFromStepV1, the same step a
+    top-level generator already names; ``yield from (1,)`` delegates the
+    item through already-written iter/next. This does not invent
     items, warning testimony, a bound on ``while True``, a loaded module,
     that the attribute was stored, or that a cleanup raise was suppressed.
     Returns None when any statement is unnameable — keeps the nested With loud.
@@ -3619,6 +3622,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         RaiseStepV1,
         ReturnStepV1,
         WhileStepV1,
+        YieldFromStepV1,
         YieldStepV1,
     )
     from sugar_source_tree.nodes import (
@@ -3651,6 +3655,18 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         if isinstance(statement, Expr) and isinstance(statement.value, Yield):
             value = statement.value.value
             return YieldStepV1(None if value is None else value.sugar())
+        if isinstance(statement, Expr) and isinstance(statement.value, YieldFrom):
+            from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+            from sugar_source_tree.panic import SugarNotWritten
+
+            occurrence = statement.value.fragment
+            try:
+                iterable = statement.value.value.sugar()
+            except SugarNotWritten:
+                return None
+            if not isinstance(iterable, ConstructedTermSugar):
+                return None
+            return YieldFromStepV1(iterable, occurrence, occurrence.seal().cid)
         if isinstance(statement, Return):
             return ReturnStepV1(
                 None if statement.value is None else statement.value.sugar()
