@@ -3698,6 +3698,86 @@ def test_installed_cited_opaque_nested_with_structured_finally_for_bare_name(tmp
 
 
 
+
+def test_installed_cited_opaque_nested_with_structured_finally_assert(tmp_path):
+    """A finally ``assert True`` is AssertStepV1 cleanup.
+
+    The already-written true-assert law advances and continues. Enter
+    still keeps both open faces.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        AssertStepV1,
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            assert True\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    assert any(isinstance(item, AssertStepV1) for item in cleanup.cleanup_steps)
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
 def test_installed_cited_opaque_nested_with_structured_finally_raise(tmp_path):
     """A finally ``raise ValueError("boom")`` is RaiseStepV1 cleanup.
 
