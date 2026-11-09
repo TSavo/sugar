@@ -248,6 +248,57 @@ def test_function_universe_threads_observed_effect_binding_into_next_statement()
     assert read.effect is routed
 
 
+def test_observed_exception_info_type_is_the_language_class() -> None:
+    """``excinfo.type`` cites the raise effect's already-authenticated type."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.floor.builtin_exception_class_value import (
+        BuiltinExceptionClassValue,
+    )
+    from sugar_lift_py_tests.floor.effect_coordinate import (
+        ExceptionInfoCoordinate,
+        ObservedExceptionInfoValue,
+    )
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+
+    routed = RaiseEffect.for_builtin("ValueError", occurrence="route.py:3:0")
+    observed = ObservedExceptionInfoValue(slot_id="S", effect=routed)
+    projected = observed.attribute("type", site=None)
+    assert isinstance(projected, Complete)
+    typ = projected.value
+    assert isinstance(typ, BuiltinExceptionClassValue)
+    assert typ.name == "ValueError"
+    assert typ is builtin_name_temporal().value_if_bound("ValueError")
+
+    # .value stays the observed effect, not a newly invented instance.
+    value = observed.attribute("value", site=None)
+    from sugar_lift_py_tests.floor.effect_coordinate import ObservedEffectValue
+
+    assert isinstance(value, Complete)
+    assert isinstance(value.value, ObservedEffectValue)
+    assert value.value.effect is routed
+
+    with pytest.raises(ConstructionPanic) as caught:
+        ExceptionInfoCoordinate(slot_id="S").attribute("type", site=None)
+    assert caught.value.info.observed == "ExceptionInfoCoordinate"
+
+    foreign = RaiseEffect(
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity",
+            [str_const("mypkg"), str_const("Oops")],
+        ),
+        occurrence="foreign.py:1:0",
+        exception_name="Oops",
+    )
+    with pytest.raises(ConstructionPanic) as caught:
+        ObservedExceptionInfoValue(slot_id="S", effect=foreign).attribute(
+            "type", site=None
+        )
+    assert caught.value.info.observed == "ObservedExceptionInfoValue"
+
+
 def test_no_process_identity_in_slot_fallback() -> None:
     """nodes._effect_slot_id must not call id(self) as a fallback."""
     import re

@@ -85,6 +85,36 @@ class ObservedEffectValue(EffectCoordinate):
         return super().attribute(name, site)
 
 
+def _language_exception_class_for_coordinate(coordinate):
+    """The language-owned class named by a builtins exception-type coordinate.
+
+    Looks up the same BuiltinExceptionClassValue the builtin temporal already
+    bound. Does not mint a second copy, and does not invent a class from a
+    non-builtin or unnamed coordinate.
+    """
+    if getattr(coordinate, "name", None) != "python:exception_type_identity":
+        return None
+    args = getattr(coordinate, "args", ())
+    if len(args) != 2:
+        return None
+    module = getattr(args[0], "value", None)
+    name = getattr(args[1], "value", None)
+    if module != "builtins" or not isinstance(name, str):
+        return None
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        BUILTIN_EXCEPTION_NAMES,
+        builtin_name_temporal,
+    )
+
+    if name not in BUILTIN_EXCEPTION_NAMES:
+        return None
+    typ = builtin_name_temporal().value_if_bound(name)
+    identity = getattr(typ, "exception_type_identity", None)
+    if typ is None or identity is None or identity() != coordinate:
+        return None
+    return typ
+
+
 @dataclass(frozen=True)
 class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
     """Authenticated assertion-manager observation that outlives its block."""
@@ -98,4 +128,12 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
             return Complete(
                 ObservedEffectValue(slot_id=self.slot_id, effect=self.effect, site=site)
             )
+        if name == "type":
+            from sugar_lift_py_tests.outcome import Complete
+
+            typ = _language_exception_class_for_coordinate(
+                getattr(self.effect, "exception_type_coordinate", None)
+            )
+            if typ is not None:
+                return Complete(typ)
         return super().attribute(name, site)
