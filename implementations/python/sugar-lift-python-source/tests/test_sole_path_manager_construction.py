@@ -3697,6 +3697,87 @@ def test_installed_cited_opaque_nested_with_structured_finally_for_bare_name(tmp
 
 
 
+
+def test_installed_cited_opaque_nested_with_structured_finally_raise(tmp_path):
+    """A finally ``raise ValueError("boom")`` is RaiseStepV1 cleanup.
+
+    First resume still yields the open enter result. Desugar cites the
+    authenticated ValueError raise and the still-open enter face. This
+    does not invent that exit swallowed the raise.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        RaiseEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.generator_construction import (
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        RaiseStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            '            raise ValueError("boom")\n'
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    assert any(isinstance(item, RaiseStepV1) for item in cleanup.cleanup_steps)
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    assert constructed.value.can_fall_through is False
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    raised = next(effect for effect in effects if isinstance(effect, RaiseEffect))
+    assert raised.exception_name == "ValueError"
+    assert raised.raised_value.arg_values == (StringValue(value="boom"),)
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
 def test_installed_cited_opaque_nested_with_structured_finally_while(tmp_path):
     """A finally ``while False`` is WhileStepV1 cleanup.
 

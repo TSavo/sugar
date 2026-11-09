@@ -3592,7 +3592,10 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     guard is a constructed term and whose body is nameable, is WhileStepV1,
     the same step the top-level generator namer already seats. A false guard
     skips the body and continues; an undecided guard stays a typed gap.
-    This does not invent items, warning testimony, or a bound on ``while True``.
+    A ``raise`` that does not own a yield is RaiseStepV1, the same step a
+    top-level generator already names; transition desugars the RaiseSugar
+    and halts with the effect. This does not invent items, warning testimony,
+    a bound on ``while True``, or that a cleanup raise was suppressed.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
@@ -3600,6 +3603,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         ForStepV1,
         IfStepV1,
         InertStepV1,
+        RaiseStepV1,
         ReturnStepV1,
         WhileStepV1,
         YieldStepV1,
@@ -3616,6 +3620,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         Name,
         Tuple_,
         Pass,
+        Raise,
         Return,
         Try,
         While,
@@ -3633,6 +3638,17 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
             return ReturnStepV1(
                 None if statement.value is None else statement.value.sugar()
             )
+        if isinstance(statement, Raise) and not FunctionDef._owns_yield((statement,)):
+            from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+            from sugar_source_tree.panic import SugarNotWritten
+
+            try:
+                raise_sugar = statement.sugar()
+            except SugarNotWritten:
+                return None
+            if not isinstance(raise_sugar, RaiseSugar):
+                return None
+            return RaiseStepV1(raise_sugar, statement.fragment.seal().cid)
         if isinstance(statement, Expr) and isinstance(statement.value, Constant):
             return InertStepV1(statement.kind)
         if (
