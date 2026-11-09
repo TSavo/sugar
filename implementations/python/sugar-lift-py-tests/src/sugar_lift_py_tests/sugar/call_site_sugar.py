@@ -371,9 +371,10 @@ class CallSiteSugar(ConstructedTermSugar):
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         if remaining:
             head, *rest = remaining
-            return head.desugar(ctx).and_then(
+            actual_ctx = _actual_reduce_context(ctx)
+            return head.desugar(actual_ctx).and_then(
                 lambda value: value.project_operation_receiver_outcome(
-                    ctx, owner="CallSiteSugar positional actual"
+                    actual_ctx, owner="CallSiteSugar positional actual"
                 ).and_then(
                     lambda actual: self._collect(
                         tuple(rest), accumulated + (actual,), ctx
@@ -387,9 +388,10 @@ class CallSiteSugar(ConstructedTermSugar):
     ) -> Outcome:
         if remaining:
             (name, sugar), *rest = remaining
-            return sugar.desugar(ctx).and_then(
+            actual_ctx = _actual_reduce_context(ctx)
+            return sugar.desugar(actual_ctx).and_then(
                 lambda value: value.project_operation_receiver_outcome(
-                    ctx, owner="CallSiteSugar keyword actual"
+                    actual_ctx, owner="CallSiteSugar keyword actual"
                 ).and_then(
                     lambda actual: self._collect_kwargs(
                         tuple(rest),
@@ -729,6 +731,21 @@ class CallSiteSugar(ConstructedTermSugar):
                 term, reference.contract_cid, reference.member_cid, callsite
             )
         )
+
+
+
+def _actual_reduce_context(ctx):
+    """Reduce call actuals under the builtin floor when the caller passed none.
+
+    TemporalContext.empty() already is builtin_name_temporal. A language-owned
+    name such as FutureWarning must cite that class, not a free SymbolicValue.
+    Does not replace the caller's context for later body or machine reduction.
+    """
+    if ctx is not None:
+        return ctx
+    from sugar_lift_py_tests.context import ReduceContext
+
+    return ReduceContext.root(owner="CallSiteSugar.desugar")
 
 
 def _with_frame_mutable_globals(ctx, frame):
