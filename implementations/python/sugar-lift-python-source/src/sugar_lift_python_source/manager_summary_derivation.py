@@ -664,6 +664,12 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         # **kwargs entry is an unprojected pattern, not NoMessagePattern.
         # Seeded match=None still projects as an omitted message.
         return None
+    if message_pattern is None:
+        supplied = _keyword_supplied_value(behavior, "match")
+        if supplied is not None and not isinstance(supplied, NoneValue):
+            # Factory **kwargs carried a pattern that was not cited. A
+            # stored None after a wiped compile is not match=None.
+            return None
     expects = bool(absent_effect_halts)
     return EffectBoundarySemanticsV1(
         ExpectsModeV1() if expects else SuppressesModeV1(),
@@ -1180,6 +1186,29 @@ def _term_contains_term(haystack, needle):
     return any(_term_contains_term(arg, needle) for arg in args)
 
 
+def _keyword_supplied_value(behavior, field_name):
+    """The unique ``**kwargs`` value stored under ``field_name``, if any."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+
+    if not field_name:
+        return None
+    candidates = []
+    for actual in behavior.formal_actual_values:
+        if type(actual) is not DictValue:
+            continue
+        matching = [
+            value
+            for key, value in actual.entries
+            if type(key) is StringValue and key.value == field_name
+        ]
+        if len(matching) > 1:
+            return None
+        if len(matching) == 1:
+            candidates.append(matching[0])
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _keyword_entry_cited_by_field(behavior, field_name, receiver=None):
     """Cite a stored field that arrived as a unique ``**kwargs`` entry.
 
@@ -1384,8 +1413,19 @@ def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):
             continue
         for index, term in enumerate(actual_terms):
             if term in current.args:
+                # ``exc_type is None`` compares against the language
+                # singleton, not a factory formal that happens to be None
+                # (``func=None``).
+                if _term_is_none_singleton(term):
+                    continue
                 candidates.add(index)
     return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _term_is_none_singleton(term):
+    from sugar_lift_py_tests.ir import _Ctor
+
+    return isinstance(term, _Ctor) and term.name == "None" and not term.args
 
 
 def _term_contains_ctor(term, name):
