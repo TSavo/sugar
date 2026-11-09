@@ -1,9 +1,16 @@
+# Finish line
+
+Done for this project is defined in `docs/path-forward.md`. Read it before
+starting any work. Work that does not shrink its worklist is off plan: say
+OFF-PLAN before starting it. Do not infer the goal from recent commits or
+from what is currently green.
+
 # context-mode — MANDATORY routing rules (when available)
 
 **Applicability gate:** these rules apply ONLY when context-mode MCP tools
 (`mcp__*context-mode*__ctx_*`) are actually available in the session. The
 context-mode server is machine-local configuration, not checked into this
-repo — in a fresh clone or any session without it, IGNORE this file entirely
+repo — in a fresh clone or any session without it, IGNORE this section entirely
 and use the standard tools (Bash, Read, Grep, WebFetch) normally; nothing is
 blocked. Do not report ctx_* tools as missing capabilities.
 
