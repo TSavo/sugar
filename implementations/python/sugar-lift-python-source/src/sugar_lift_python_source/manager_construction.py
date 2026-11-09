@@ -2985,6 +2985,13 @@ def _resolve_source_visible_frame_uncached(
         frames[item.name] = item.source_visible_constructor_frame()
 
     pending = [item for item in definitions if isinstance(item, FunctionDef)]
+    # A class-method target is found above among methods of module-level
+    # classes, but it is not itself a module-level FunctionDef. Without
+    # seating it here, frames.get(target.name) stays empty and the door
+    # reports definition-missing "ordinary source call frame" for an
+    # in-artifact method such as ExceptionInfo.for_later.
+    if isinstance(target, FunctionDef) and target not in pending:
+        pending.append(target)
     while pending:
         progressed = False
         for function in tuple(pending):
