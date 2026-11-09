@@ -1471,6 +1471,12 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_return(resolved_value):
+                from sugar_lift_py_tests.floor import RaiseValue
+
+                if isinstance(resolved_value, RaiseValue):
+                    return self._fold_pending_cited_opaque_exits(
+                        ExitSet.halted(resolved_value.effect, state=self)
+                    )
                 return self._fold_pending_cited_opaque_exits(
                     GeneratorTerminationV1(resolved_value, self.binding_state)
                 )
