@@ -1546,9 +1546,17 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.operations import IteratorOperation
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
+        from sugar_lift_py_tests.floor import RaiseValue
+
         iterable = step.iterable.desugar(self._guard_evaluation_context())
+        if isinstance(iterable, Complete) and isinstance(iterable.value, RaiseValue):
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(iterable.value.effect, state=self)
+            )
         if isinstance(iterable, Incomplete):
-            return ExitSet.halted(iterable.effect, state=self)
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(iterable.effect, state=self)
+            )
         if not isinstance(iterable, Complete):
             return self._gap(requested, type(iterable).__name__)
         iterator = IteratorOperation(
@@ -1556,7 +1564,9 @@ class GeneratorConstructionV1:
             blame=step.occurrence,
         ).submit(iterable.value, self._guard_evaluation_context())
         if isinstance(iterator, Incomplete):
-            return ExitSet.halted(iterator.effect, state=self)
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(iterator.effect, state=self)
+            )
         if not isinstance(iterator, Complete):
             return self._gap(requested, type(iterator).__name__)
         runtime = _ForIteratorStepV1(
@@ -1577,9 +1587,17 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.operations import IteratorOperation
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
+        from sugar_lift_py_tests.floor import RaiseValue
+
         iterable = step.iterable.desugar(self._guard_evaluation_context())
+        if isinstance(iterable, Complete) and isinstance(iterable.value, RaiseValue):
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(iterable.value.effect, state=self)
+            )
         if isinstance(iterable, Incomplete):
-            return ExitSet.halted(iterable.effect, state=self)
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(iterable.effect, state=self)
+            )
         if not isinstance(iterable, Complete):
             return self._gap(requested, type(iterable).__name__)
         iterator = IteratorOperation(
@@ -1587,7 +1605,9 @@ class GeneratorConstructionV1:
             blame=step.occurrence,
         ).submit(iterable.value, self._guard_evaluation_context())
         if isinstance(iterator, Incomplete):
-            return ExitSet.halted(iterator.effect, state=self)
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(iterator.effect, state=self)
+            )
         if not isinstance(iterator, Complete):
             return self._gap(requested, type(iterator).__name__)
         runtime = _YieldFromIteratorStepV1(
