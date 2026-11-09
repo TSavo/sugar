@@ -11651,6 +11651,28 @@ class Call(Expression):
             # so there is nothing here to choose between.
             obligation = context.opaque_source_call_obligations.get(coordinate)
             if obligation is not None:
+                if (
+                    obligation.resolution_kind == "call-target-source-absent"
+                    and isinstance(self.func, Name)
+                    and len(self.args) == 2
+                    and not self.keywords
+                ):
+                    span = self.func.line_col_span()
+                    # typing.cast(typ, val) returns val unchanged
+                    # (https://docs.python.org/3/library/typing.html#typing.cast).
+                    # Keyed by the authenticated import target, not the
+                    # spelling ``cast``: a missing ``from foo import cast``
+                    # stays source-absent.
+                    if self.unit.import_bound_name_target(
+                        (
+                            span.start_line,
+                            span.start_col,
+                            span.end_line,
+                            span.end_col,
+                        )
+                    ) == "python:typing.cast":
+                        self.func.discharge_by_substitution()
+                        return self.args[1].sugar()
                 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
                 return CallSiteSugar(
