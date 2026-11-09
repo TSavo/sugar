@@ -2408,6 +2408,65 @@ def _populate_assigned_partition_manager_uses(
 
 
 
+
+def _constructor_application_from_spread(call_sugar, reduce_ctx):
+    """Project typed ``**`` actuals on a local constructor into one application.
+
+    ``SpreadCallSugar`` has no ``.args``/``.keywords`` surface.  Its enrolled
+    constructor frame already expands a constructed DictValue through
+    ``bind_actuals``; the bound roster is the constructor application.
+    """
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
+
+    outcome = call_sugar.desugar(reduce_ctx)
+    value = getattr(outcome, "value", None)
+    bound = getattr(value, "bound_source_actuals", None)
+    if not isinstance(value, CallSiteValue) or bound is None:
+        raise SugarNotWritten(
+            owner="_populate_same_module_class_manager_uses.collect_application",
+            blame=getattr(call_sugar, "site", None),
+            observed=(
+                type(outcome).__name__
+                if value is None
+                else type(value).__name__
+            ),
+            requested="a spread constructor application with bound actuals",
+            fix="project typed ** actuals onto the constructor frame or keep the call loud",
+        )
+    frame = call_sugar.source_call_frame
+    parameters = tuple(getattr(frame, "parameters", ()))
+    kinds = tuple(getattr(frame, "parameter_kinds", ()))
+    positional = []
+    keyword_names = []
+    keyword_values = []
+    for index, actual in enumerate(bound.actuals):
+        kind = kinds[index] if index < len(kinds) else "positional_or_keyword"
+        name = parameters[index] if index < len(parameters) else None
+        if kind in {"keyword_only"} and name:
+            keyword_names.append(name)
+            keyword_values.append(actual)
+        elif kind in {"positional_only", "positional_or_keyword"} and not keyword_names:
+            positional.append(actual)
+        elif kind in {"positional_or_keyword", "keyword_only"} and name:
+            keyword_names.append(name)
+            keyword_values.append(actual)
+        elif kind in {"vararg", "kwarg"}:
+            continue
+        else:
+            positional.append(actual)
+    return Complete(
+        CallableApplication(
+            tuple(positional + keyword_values),
+            tuple(keyword_names),
+            call_sugar.site,
+            call_occurrence=getattr(call_sugar, "call_occurrence", None),
+        )
+    )
+
+
 def _constructor_application_bindings(call, application, *, owner_cid: str, term_owner: str):
     """Seal constructor actuals so effect-boundary derivation can project them.
 
@@ -2429,6 +2488,28 @@ def _constructor_application_bindings(call, application, *, owner_cid: str, term
     nodes = (*call.args, *(keyword.value for keyword in call.keywords))
     values = tuple(application.arguments)
     if len(nodes) != len(values):
+        if any(getattr(keyword, "arg", None) is None for keyword in call.keywords):
+            # Typed ``**`` expansion binds more formals than there are
+            # syntactic nodes.  Seal each actual against the constructor call
+            # fragment rather than inventing a source node per expanded key.
+            bindings = []
+            for index, value in enumerate(values):
+                try:
+                    term_cid = _term_content_cid(value.to_term(owner=term_owner))
+                    testimony = ConstructedValueTestimonyV1.mint(call.fragment, term_cid)
+                    coordinate = BindingCoordinateV1.mint(
+                        owner_cid, call.fragment, ("constructor-actual", index)
+                    )
+                except (SugarNotWritten, TypeError, ValueError):
+                    return None
+                bindings.append(
+                    BindingEntryV1(
+                        coordinate=coordinate,
+                        state=call,
+                        sealed_state=BoundBindingStateV1(testimony),
+                    )
+                )
+            return tuple(bindings)
         return None
     bindings = []
     for index, (node, value) in enumerate(zip(nodes, values, strict=True)):
@@ -2522,6 +2603,11 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
 
     def collect_application(call_sugar):
         """Collect authenticated call actuals without re-entering Call.sugar()."""
+        from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
+
+        if isinstance(call_sugar, SpreadCallSugar):
+            return _constructor_application_from_spread(call_sugar, reduce_ctx)
+
         if not (hasattr(call_sugar, "args") and hasattr(call_sugar, "keywords")):
             # A spread/starred manager call (``with LocalClass(*args): ...``)
             # constructs a SpreadCallSugar with no positional/keyword actual
