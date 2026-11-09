@@ -2913,16 +2913,7 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
     return tree, context
 
 
-def test_installed_pytest_raises_truthful_route_cites_kwargs_match(
-    tmp_path,
-):
-    """Installed ``pytest.raises(ValueError, match="boom")`` cites the pattern.
-
-    The stored field is ``re.compile("boom")``, not the string itself. The
-    unique compile argument is the factory ``**kwargs`` entry. Construction
-    of the with-boundary carries that contract; binding the consumer
-    actuals onto the factory signature is a later door.
-    """
+def _installed_pytest_raises_boundary(tmp_path, manager_call, body):
     from sugar_lift_py_tests.context_manager_contract import (
         EffectBoundarySemanticsV1,
         ExpectsModeV1,
@@ -2936,12 +2927,7 @@ def test_installed_pytest_raises_truthful_route_cites_kwargs_match(
         WithEffectBoundarySugar,
     )
 
-    tree, context = _installed_pytest_boundary(
-        tmp_path,
-        'pytest.raises(ValueError, match="boom")',
-        'raise ValueError("boom")',
-    )
-
+    tree, context = _installed_pytest_boundary(tmp_path, manager_call, body)
     assert len(context.source_derived_contract_refs) == 1
     reference = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
@@ -2955,6 +2941,58 @@ def test_installed_pytest_raises_truthful_route_cites_kwargs_match(
     boundary = with_node.sugar()
     assert isinstance(boundary, WithEffectBoundarySugar)
     assert boundary.semantics == reference.semantics
+    return boundary
+
+
+def test_installed_pytest_raises_truthful_route_cites_kwargs_match(
+    tmp_path,
+):
+    """Installed ``pytest.raises(ValueError, match="boom")`` absorbs a match."""
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    boundary = _installed_pytest_raises_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, match="boom")',
+        'raise ValueError("boom")',
+    )
+    exits = outcome_to_exitset(boundary.desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Completed)
+    assert exits[0].guard == true_guard()
+
+
+def test_installed_pytest_raises_wrong_message_is_not_absorbed(tmp_path):
+    """A ValueError whose text is not the cited pattern stays a raise halt."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    boundary = _installed_pytest_raises_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, match="boom")',
+        'raise ValueError("other")',
+    )
+    exits = outcome_to_exitset(boundary.desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Halted)
+    assert isinstance(exits[0].effect, RaiseEffect)
+    assert exits[0].effect.exception_name == "ValueError"
+
+
+def test_installed_pytest_raises_empty_body_is_expectation_not_met(tmp_path):
+    """A body that does not raise is ExpectationNotMet, not a completed with."""
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    boundary = _installed_pytest_raises_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, match="boom")',
+        "pass",
+    )
+    exits = outcome_to_exitset(boundary.desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Halted)
+    assert isinstance(exits[0].effect, ExpectationNotMetEffect)
 
 
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
