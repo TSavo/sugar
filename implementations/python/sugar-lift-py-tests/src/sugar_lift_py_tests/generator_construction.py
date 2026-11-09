@@ -1379,12 +1379,8 @@ class GeneratorConstructionV1:
         if isinstance(step, NestedCitedOpaqueExitStepV1):
             return self._exit_nested_cited_opaque(step, requested=requested)
         if isinstance(step, FinallyStepV1):
-            if step.cleanup_steps:
-                return self._gap(
-                    requested,
-                    "FinallyStepV1 structured cleanup steps require generator "
-                    "cleanup transition composition",
-                )
+            # Structured cleanup_steps already reduce through a sub-machine in
+            # _reduce_finally; do not leave a gap that hides that composition.
             cleanup = self._reduce_finally(step)
             from sugar_lift_py_tests.outcome import Completed, Halted
 

@@ -3439,10 +3439,31 @@ def test_installed_cited_opaque_nested_with_except_handler_stays_opaque(tmp_path
     assert caught.value.observed == "opaque generator transition: With carrying a suspension"
 
 
-def test_installed_cited_opaque_nested_with_unnameable_finally_stays_opaque(tmp_path):
-    """A structured finally assign is not a term payload, so the With stays loud."""
+def test_installed_cited_opaque_nested_with_structured_finally_assign(tmp_path):
+    """A finally assign is structured cleanup_steps, not a term payload.
+
+    The assign is named, not invented as a performed store beyond AssignStepV1.
+    Enter still keeps both open faces, and ``w`` is still the enter-result
+    coordinate.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        AssignStepV1,
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
     from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
-    from sugar_source_tree.panic import SugarNotWritten
 
     boundary = _installed_generator_with(
         tmp_path,
@@ -3458,10 +3479,48 @@ def test_installed_cited_opaque_nested_with_unnameable_finally_stays_opaque(tmp_
         "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
     )
     assert isinstance(boundary, GeneratorWithSugar)
-    with pytest.raises(SugarNotWritten) as caught:
-        boundary.desugar()
-    assert caught.value.owner == "GeneratorWithSugar.desugar"
-    assert caught.value.observed == "opaque generator transition: With carrying a suspension"
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    cleanup = next(item for item in step.body_steps if isinstance(item, FinallyStepV1))
+    assert cleanup.statements == ()
+    assert any(
+        isinstance(item, AssignStepV1) and item.name == "leftover"
+        for item in cleanup.cleanup_steps
+    )
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
 
 
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):

@@ -3673,6 +3673,14 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         ):
             body_steps = name_body(statement.body)
             cleanup = _finally_term_step_for_nested_with(statement.finalbody)
+            if cleanup is None:
+                cleanup_steps = name_body(statement.finalbody)
+                if cleanup_steps is not None:
+                    from sugar_lift_py_tests.generator_construction import (
+                        FinallyStepV1,
+                    )
+
+                    cleanup = FinallyStepV1((), cleanup_steps=cleanup_steps)
             if body_steps is None or cleanup is None:
                 return None
             return _compose_finally_for_nested_with(body_steps, cleanup)
