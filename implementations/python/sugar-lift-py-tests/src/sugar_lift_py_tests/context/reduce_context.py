@@ -38,6 +38,11 @@ class ReduceContext:
     external_bridge_sink: ExternalBridgeSink | None = None
     in_flight_effects: tuple[tuple[str, object], ...] = ()
     observed_effects: tuple[tuple[str, object], ...] = ()
+    # Ground ifs fold with true_guard/false_guard and no longer publish
+    # BranchResultAuthentication (#7487). The assignment phi after the if
+    # still reads a BranchResultRef of that slot; record the folded bool
+    # here so the phi can drop the dead arm without inventing BRA.to_term.
+    ground_branch_results: dict = field(default_factory=dict)
 
     @classmethod
     def root(
@@ -71,6 +76,7 @@ class ReduceContext:
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
             in_flight_effects=getattr(source, "in_flight_effects", ()),
             observed_effects=getattr(source, "observed_effects", ()),
+            ground_branch_results=getattr(source, "ground_branch_results", {}),
         )
 
     def record_operation(
@@ -109,6 +115,7 @@ class ReduceContext:
             external_bridge_sink=self.external_bridge_sink,
             in_flight_effects=self.in_flight_effects,
             observed_effects=self.observed_effects,
+            ground_branch_results=self.ground_branch_results,
         )
 
     def with_in_flight_effect(self, slot_id: str, effect: object) -> "ReduceContext":
@@ -128,6 +135,7 @@ class ReduceContext:
             external_bridge_sink=self.external_bridge_sink,
             in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),
             observed_effects=self.observed_effects,
+            ground_branch_results=self.ground_branch_results,
         )
 
     def in_flight_effect_for(self, slot_id: str):
