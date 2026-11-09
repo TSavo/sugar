@@ -84,7 +84,12 @@ class TupleCoordinateValue(FloorValue):
     use_occurrence: SourceFragmentCoordinateV1 | None = None
     use_occurrence_cid: str | None = None
     parent_coordinate_cid: str | None = None
-    _producer_owner: object = field(default=None, compare=False, repr=False)
+    _producer_owner: object = field(
+        default=None,
+        compare=False,
+        repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     @classmethod
     def _from_builtin_construct(

@@ -1738,12 +1738,17 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
             # would authenticate whatever happened to be seated in the table
             # at testimony time -- and refuse on its non-string keys (8
             # CallSiteSugar rows on the 2026-09-05 board).
+            # A field declared ``metadata={"testimony": "authority"}`` is a
+            # private producer token (an ``object()`` sentinel that refuses
+            # unauthorized construction). Walking it would refuse on
+            # unclassified ``builtins.object`` without naming any semantic
+            # content -- TupleCoordinateValue._producer_owner is the first.
             return (
                 _cv2_type_tag(value),
                 [
                     (field.name, getattr(value, field.name))
                     for field in fields(value)
-                    if field.metadata.get("testimony") != "lookup"
+                    if field.metadata.get("testimony") not in ("lookup", "authority")
                 ],
             )
         raise ConstructedValueCategoryGap(
