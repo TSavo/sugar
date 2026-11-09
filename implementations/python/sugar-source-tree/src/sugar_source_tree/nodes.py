@@ -11882,7 +11882,7 @@ class Call(Expression):
             bound_frame = replace(bound_frame, owner=projected_definition)
             return CallSiteSugar(
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
-                args=tuple(a.sugar() for a in self.args),
+                args=tuple(a.sugar() for a in bind_args),
                 site=self.fragment,
                 call_occurrence=coordinate,
                 keywords=keyword_sugars,
