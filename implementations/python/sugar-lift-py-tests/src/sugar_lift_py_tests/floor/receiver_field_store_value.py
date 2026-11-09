@@ -12,6 +12,14 @@ class ReceiverFieldStoreValue(FloorValue):
     value: FloorValue
 
     def guarded(self, formula):
+        from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+        # A store stamped with truth is still unconditional. Folded
+        # ``if isinstance(match, str):`` re-stamps the tail with
+        # true_guard; wrapping that as a branch hid ``_fail_reason``
+        # from the super().__init__ splice.
+        if _is_true(formula):
+            return self
         from .guarded_receiver_field_store_value import (
             GuardedReceiverFieldStoreValue,
         )

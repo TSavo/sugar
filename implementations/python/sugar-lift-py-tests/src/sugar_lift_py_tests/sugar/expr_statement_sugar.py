@@ -66,10 +66,13 @@ class ExprStatementSugar(Sugar):
         # ``__init__`` returns None, so the constructing receiver never
         # sees them. Splice unguarded receiver-field stores from the
         # completed body into this statement's record so the outer
-        # constructor block can apply them. Guarded stores stay in the
-        # nested ExitSet (the ``isinstance(match, str)`` arms) rather
-        # than being flattened onto one receiver. Keep the call
-        # coordinate so effect routing still sees the call.
+        # constructor block can apply them. A store whose guard is
+        # truth — including a nested empty-and — is unconditional: a
+        # folded ``isinstance(match, str)`` still stamps the tail with
+        # true_guard, and that is not a branch. Real branch stores stay
+        # in the nested ExitSet rather than being flattened onto one
+        # receiver. Keep the call coordinate so effect routing still
+        # sees the call.
         #
         # A bodyful free-function call (``runtime_dispatch_receiver``
         # absent) is the same kind of statement: it exists for its
@@ -93,16 +96,42 @@ class ExprStatementSugar(Sugar):
                 ReceiverFieldStoreValue,
             )
 
+            def _store_guard_is_unconditional(guard):
+                from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+                if _is_true(guard):
+                    return True
+                if getattr(guard, "kind", None) == "and":
+                    operands = getattr(guard, "operands", ())
+                    return all(
+                        _store_guard_is_unconditional(operand)
+                        for operand in operands
+                    )
+                return False
+
+            def _unconditional_field_store(statement):
+                if isinstance(statement, GuardedReceiverFieldStoreValue):
+                    if _store_guard_is_unconditional(statement.guard):
+                        return ReceiverFieldStoreValue(
+                            statement.receiver,
+                            statement.attr,
+                            statement.value,
+                        )
+                    return None
+                if isinstance(statement, ReceiverFieldStoreValue):
+                    return statement
+                return None
+
             def pack(result):
                 extras = ()
                 if isinstance(result, BlockValue):
                     extras = tuple(
-                        statement
-                        for statement in result.statements
-                        if isinstance(statement, ReceiverFieldStoreValue)
-                        and not isinstance(
-                            statement, GuardedReceiverFieldStoreValue
+                        store
+                        for store in (
+                            _unconditional_field_store(statement)
+                            for statement in result.statements
                         )
+                        if store is not None
                     )
                 return Complete(
                     BlockValue((recorded, *extras), can_fall_through=True)
