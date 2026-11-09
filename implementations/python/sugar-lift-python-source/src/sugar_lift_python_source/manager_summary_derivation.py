@@ -627,6 +627,7 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         face
         for face in halted
         if _halt_complements_true_return(face, exit_set)
+        or _halt_negates_matches_conjunct_of_true_return(face, exit_set)
     )
     if any(
         face not in absent_effect_halts and face not in match_failed_halts
@@ -645,6 +646,18 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         # ``fail("DID NOT RAISE ...")`` today) is unresolved halt testimony.
         # Sealing SuppressesMode here would invent that the manager does not
         # require an exception.
+        return None
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    match_field = _receiver_field_value(behavior, "match")
+    if (
+        message_index is None
+        and match_field is not None
+        and not isinstance(match_field, NoneValue)
+    ):
+        # A stored non-None match that is not a unique factory formal is
+        # an unprojected pattern, not NoMessagePattern. Seeded match=None
+        # still projects as an omitted message.
         return None
     expects = bool(absent_effect_halts)
     return EffectBoundarySemanticsV1(
@@ -1103,7 +1116,7 @@ def _peel_double_negation(formula):
     return formula
 
 
-def _matches_call_of_exit_value(formula):
+def _direct_matches_call_of_exit_value(formula):
     """``py.truthy(call:*.matches(..., python:exit_value))`` after even nots."""
     from sugar_lift_py_tests.ir import _Atomic, _Ctor
 
@@ -1122,6 +1135,26 @@ def _matches_call_of_exit_value(formula):
     if not any(_term_contains_ctor(arg, "python:exit_value") for arg in call.args):
         return None
     return call
+
+
+def _matches_call_of_exit_value(formula):
+    """A matches() citation, including the unique matches() conjunct of an ``and``.
+
+    Nested ``if exc_type is None`` / ``if not matches()`` / ``return True``
+    produces ``not (exc_type is None) and matches()`` as the True-return
+    formula. Several distinct matches() calls stay unclassified.
+    """
+    from sugar_lift_py_tests.ir import _Connective
+
+    formula = _peel_double_negation(formula)
+    if isinstance(formula, _Connective) and formula.kind == "and":
+        found = []
+        for operand in formula.operands:
+            call = _matches_call_of_exit_value(operand)
+            if call is not None and call not in found:
+                found.append(call)
+        return found[0] if len(found) == 1 else None
+    return _direct_matches_call_of_exit_value(formula)
 
 
 def _term_contains_term(haystack, needle):
@@ -1162,13 +1195,7 @@ def _formal_index_for_matches_message(formula, behavior, actual_terms):
     return _formal_index_cited_by_field(behavior, "match", actual_terms)
 
 
-def _halt_complements_true_return(face, exit_set):
-    """True when ``face`` is the complement of the unique ``return True`` arm."""
-    from sugar_lift_py_tests.outcome import Halted
-    from sugar_lift_py_tests.outcome.exit_set import complement_guard
-
-    if not isinstance(face, Halted):
-        return False
+def _true_return_guards(exit_set):
     true_guards = []
     for other in exit_set.exits:
         if not isinstance(other, Completed):
@@ -1179,9 +1206,93 @@ def _halt_complements_true_return(face, exit_set):
         last = block.statements[-1]
         if isinstance(last, ReturnValue) and _exact_bool_literal(last.value) is True:
             true_guards.append(other.guard)
+    return true_guards
+
+
+def _conjuncts(formula):
+    from sugar_lift_py_tests.ir import _Connective
+
+    formula = _peel_double_negation(formula)
+    if isinstance(formula, _Connective) and formula.kind == "and":
+        items = []
+        for operand in formula.operands:
+            items.extend(_conjuncts(operand))
+        return items
+    return [formula]
+
+
+def _matches_conjunct_polarity(formula):
+    """``pos`` if formula is matches(); ``neg`` if it is not matches()."""
+    from sugar_lift_py_tests.ir import _Connective
+
+    formula = _peel_double_negation(formula)
+    if _direct_matches_call_of_exit_value(formula) is not None:
+        return "pos"
+    if (
+        isinstance(formula, _Connective)
+        and formula.kind == "not"
+        and len(formula.operands) == 1
+        and _direct_matches_call_of_exit_value(
+            _peel_double_negation(formula.operands[0])
+        )
+        is not None
+    ):
+        return "neg"
+    return None
+
+
+def _halt_complements_true_return(face, exit_set):
+    """True when ``face`` is the complement of the unique ``return True`` arm."""
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    if not isinstance(face, Halted):
+        return False
+    true_guards = _true_return_guards(exit_set)
     if len(true_guards) != 1:
         return False
     return face.guard == complement_guard(true_guards[0])
+
+
+def _halt_negates_matches_conjunct_of_true_return(face, exit_set):
+    """True when halt and the unique return-True arm share every conjunct
+    except a matches() / not-matches() pair.
+
+    Nested ``if exc_type is None: fail(); if not matches(): raise; return True``
+    produces halt guard ``not A and not matches()`` and True guard
+    ``not A and matches()``. Those are not global complements
+    (``A or not matches()``), but they are the same partition's match-failed
+    halt.
+    """
+    from sugar_lift_py_tests.outcome import Halted
+
+    if not isinstance(face, Halted):
+        return False
+    true_guards = _true_return_guards(exit_set)
+    if len(true_guards) != 1:
+        return False
+    true_parts = _conjuncts(true_guards[0])
+    halt_parts = _conjuncts(face.guard)
+    if (
+        sum(1 for part in true_parts if _matches_conjunct_polarity(part) == "pos")
+        != 1
+        or sum(1 for part in halt_parts if _matches_conjunct_polarity(part) == "neg")
+        != 1
+    ):
+        return False
+    true_rest = [
+        part for part in true_parts if _matches_conjunct_polarity(part) != "pos"
+    ]
+    halt_rest = [
+        part for part in halt_parts if _matches_conjunct_polarity(part) != "neg"
+    ]
+    unused = list(halt_rest)
+    for item in true_rest:
+        try:
+            unused.remove(item)
+        except ValueError:
+            return False
+    return not unused
 
 
 def _completed_faces_have_bodyless_free_calls(exit_set):
