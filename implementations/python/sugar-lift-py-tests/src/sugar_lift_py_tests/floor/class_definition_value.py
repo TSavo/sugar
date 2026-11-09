@@ -463,10 +463,16 @@ class ClassDefinitionValue(GuardStableValue):
                         requested="the exact source-defined receiver being constructed",
                         fix="retain the receiver coordinate and defining class across guarded state projection",
                     )
-                # A snapshot replaces the whole prior state; unioning fields
-                # here would leak a sibling branch's stores into this face.
+                # A snapshot replaces fields it actually recorded. Earlier
+                # extras this snapshot omits stay; they are this face's
+                # already-applied writes, not a sibling branch. Unioning a
+                # field the snapshot names would leak a sibling value.
                 snapshot = statement
-                fields = {field.name: field.value for field in statement.fields}
+                incoming = {field.name: field.value for field in statement.fields}
+                for name, value in fields.items():
+                    if name not in incoming:
+                        incoming[name] = value
+                fields = incoming
                 continue
             if not isinstance(statement, ReceiverFieldStoreValue):
                 continue
