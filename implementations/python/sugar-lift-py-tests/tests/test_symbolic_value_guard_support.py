@@ -281,3 +281,127 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     assert isinstance(wrapped.value, CallSiteValue)
     assert not isinstance(wrapped.value, StringValue)
     assert getattr(wrapped.value.term, "name", None) == "call:__add__"
+
+
+def _dual_arm_helper_callsite(*, name_faces: bool):
+    """Retained multi-exit helper, like ``_exception_type_name`` of a tuple.
+
+    When ``name_faces`` is true, both remaining returns name strings (the
+    singleton ``__name__`` arm and a named concat). Otherwise both return
+    integers, so the helper must not claim to name a string.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, ctor
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    if name_faces:
+        left = _name_attribute_callsite()
+        right_outcome = left.add(StringValue("()"), "dual-arm-concat")
+        assert isinstance(right_outcome, Complete)
+        right = right_outcome.value
+    else:
+        left = TermValue(1)
+        right = TermValue(2)
+    block = BlockValue(
+        statements=(
+            GuardedReturn(guards=(atomic("len_eq_1", []),), value=left),
+            GuardedReturn(guards=(atomic("len_ne_1", []),), value=right),
+        ),
+        fall_through=(),
+        can_fall_through=False,
+    )
+
+    @dataclass
+    class _Body(ConstructedTermSugar):
+        value: FloorValue
+
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+        def to_term(self, *, owner: str):
+            del owner
+            return ctor("test:dual-arm-helper", ())
+
+    callsite = CallSiteValue(
+        target_name="python:resolved-source-call:dual-arm-helper",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:python:resolved-source-call:dual-arm-helper", ()),
+        body=SugarBody(_Body(block), SugarRole.CONTROL_FLOW_BODY),
+        site="dual-arm-helper",
+        source_call_frame_cid="blake3-512:" + "7" * 128,
+    )
+    produced = callsite.producer_outcome(None)
+    assert isinstance(produced, Complete)
+    assert isinstance(produced.value, CallSiteValue)
+    return produced.value
+
+
+def test_multi_exit_string_helper_stays_the_callsite_not_the_block() -> None:
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    helper = _dual_arm_helper_callsite(name_faces=True)
+    projected = helper.project_operation_receiver_outcome(
+        None, owner="CallSiteSugar positional actual"
+    )
+
+    assert isinstance(projected, Complete)
+    assert projected.value is helper
+    assert isinstance(projected.value, CallSiteValue)
+    assert not isinstance(projected.value, BlockValue)
+    assert helper.to_term(owner="backquote") == helper.term
+
+
+def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_invented_string() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    helper = _dual_arm_helper_callsite(name_faces=True)
+    prefix = StringValue("`")
+    site = "string-plus-dual-arm-helper"
+    outcome = prefix.add(helper, site)
+
+    assert helper.names_a_string()
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert not isinstance(outcome.value, StringValue)
+    assert outcome.value.target_name == "__add__"
+    assert outcome.value.term == ctor(
+        "call:__add__",
+        [
+            prefix.to_term(owner="CallSiteValue.named_string_concat"),
+            helper.to_term(owner="CallSiteValue.named_string_concat"),
+        ],
+        symbol_kind="coordinate",
+    )
+
+    wrapped = outcome.value.add(StringValue("`"), "dual-arm-plus-suffix")
+    assert isinstance(wrapped, Complete)
+    assert isinstance(wrapped.value, CallSiteValue)
+    assert not isinstance(wrapped.value, StringValue)
+    assert getattr(wrapped.value.term, "name", None) == "call:__add__"
+
+
+def test_multi_exit_non_string_helper_does_not_name_a_string() -> None:
+    helper = _dual_arm_helper_callsite(name_faces=False)
+    assert not helper.names_a_string()
+
