@@ -20,6 +20,7 @@ sys.path.insert(0, str(SCRIPTS))
 from pandas_census_checkpoint import (
     Checkpoint,
     CheckpointError,
+    parse_slice,
     run_pending,
 )  # noqa: E402
 
@@ -129,3 +130,78 @@ def test_checkpoint_rejects_foreign_manifest_duplicate_and_malformed_rows(
     path.write_text("{not json}\n", encoding="utf-8")
     with pytest.raises(CheckpointError, match="malformed"):
         Checkpoint(floor="planted", files=("a.py",), path=path)
+
+
+_MANIFEST = tuple(f"pkg/m{n:02d}.py" for n in range(11))
+_SEATS = 4
+
+
+def _seat_journal(tmp_path: Path, index: int) -> Path:
+    """One seat's process: its own journal over the WHOLE manifest."""
+    path = tmp_path / f"seat-{index}.jsonl"
+    seat = Checkpoint(floor="planted", files=_MANIFEST, path=path)
+    for file in seat.slice_files(index, _SEATS):
+        seat.append(file, {"category": "completed"})
+    return path
+
+
+def test_seats_partition_the_manifest_and_join_into_one_complete_journal(
+    tmp_path: Path,
+) -> None:
+    whole = Checkpoint(floor="planted", files=_MANIFEST, path=tmp_path / "none.jsonl")
+    seats = [whole.slice_files(index, _SEATS) for index in range(_SEATS)]
+    assert sorted(file for seat in seats for file in seat) == sorted(_MANIFEST)
+    assert sum(len(seat) for seat in seats) == len(_MANIFEST)
+
+    joined = tmp_path / "joined.jsonl"
+    joined.write_text(
+        "".join(
+            _seat_journal(tmp_path, index).read_text(encoding="utf-8")
+            for index in range(_SEATS)
+        ),
+        encoding="utf-8",
+    )
+    complete = Checkpoint(floor="planted", files=_MANIFEST, path=joined)
+    assert complete.pending_files() == ()
+    assert sorted(row["file"] for row in complete.rows()) == sorted(_MANIFEST)
+
+
+def test_one_seat_alone_is_not_the_manifest_and_a_foreign_seat_does_not_join(
+    tmp_path: Path,
+) -> None:
+    # One seat's journal leaves every other seat's files pending: it cannot
+    # be read as a finished walk.
+    alone = Checkpoint(
+        floor="planted", files=_MANIFEST, path=_seat_journal(tmp_path, 0)
+    )
+    assert set(alone.pending_files()) == set(_MANIFEST) - set(
+        alone.slice_files(0, _SEATS)
+    )
+
+    # A row measured against one file's manifest names the same file, but it
+    # is not a row of this manifest and does not join it.
+    foreign = tmp_path / "foreign.jsonl"
+    Checkpoint(floor="planted", files=(_MANIFEST[1],), path=foreign).append(
+        _MANIFEST[1], {"category": "completed"}
+    )
+    with pytest.raises(CheckpointError, match="manifest CID"):
+        Checkpoint(floor="planted", files=_MANIFEST, path=foreign)
+
+    # The same seat joined twice answers one file twice.
+    twice = tmp_path / "twice.jsonl"
+    twice.write_text(
+        _seat_journal(tmp_path, 1).read_text(encoding="utf-8") * 2, encoding="utf-8"
+    )
+    with pytest.raises(CheckpointError, match="duplicate"):
+        Checkpoint(floor="planted", files=_MANIFEST, path=twice)
+
+
+def test_slice_spec_names_a_seat_or_is_refused(tmp_path: Path) -> None:
+    assert parse_slice("0/24") == (0, 24)
+    assert parse_slice("23/24") == (23, 24)
+    for lie in ("24/24", "-1/3", "x", "1/", "/3", "1/0", "1/2/3", "1.0/3", " 1/3"):
+        with pytest.raises(CheckpointError, match="slice must be I/K"):
+            parse_slice(lie)
+    whole = Checkpoint(floor="planted", files=_MANIFEST, path=tmp_path / "none.jsonl")
+    with pytest.raises(CheckpointError, match="slice must be I/K"):
+        whole.slice_files(4, 4)
