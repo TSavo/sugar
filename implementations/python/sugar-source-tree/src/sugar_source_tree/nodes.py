@@ -4645,27 +4645,29 @@ class FunctionDef(Statement):
         boundary's refusal only surfaced later if the body happened to be
         forced. One constructor recognized and the other not is what let a
         suspension escape as an ordinary value.
-        """
 
-        def visit(node) -> bool:
-            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
-                return False
+        The constructed graph is a DAG (see ``walk``): a substituted body
+        shares subgraphs across statements. Each node object is asked once.
+        Walking the DAG as a tree re-asked every shared subgraph once per
+        path, which is exponential in sharing depth.
+        """
+        seen: set[int] = set()
+        stack: list = list(reversed(tuple(body)))
+        while stack:
+            node = stack.pop()
             if isinstance(node, (Yield, YieldFrom)):
                 return True
-            for field in getattr(node, "_child_fields", ()):
-                value = getattr(node, field)
-                if isinstance(value, Node) and visit(value):
-                    return True
-                if isinstance(value, tuple) and any(
-                    visit(item) for item in value if isinstance(item, Node)
-                ):
-                    return True
-            return False
-
-        return any(
-            isinstance(statement, (Yield, YieldFrom)) or visit(statement)
-            for statement in body
-        )
+            if not isinstance(node, Node):
+                continue
+            # A nested callable owns its own boundary; it is not this body's.
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+                continue
+            nid = id(node)
+            if nid in seen:
+                continue
+            seen.add(nid)
+            stack.extend(child for _name, _index, child in node._child_edges())
+        return False
 
     def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
         from .backend import Leaf, materialize
