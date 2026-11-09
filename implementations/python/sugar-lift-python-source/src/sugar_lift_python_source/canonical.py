@@ -147,7 +147,65 @@ def blake3_512_of(data: bytes) -> str:
     return BLAKE3_512_PREFIX + digest.hex()
 
 
+# One pass for the documents that need no decision.
+#
+# ``encode_jcs(_json_to_value(value))`` is the specification: it allocates one
+# frozen ``Value`` per JSON node and then walks that tree a second time. Every
+# CID in the lifter is taken through it, so on one large file that was 1.1
+# million allocations and 1.1 million encode calls for 55 thousand documents.
+#
+# The interpreter's own encoder writes the same bytes for the documents where
+# the two cannot differ, and those are named exactly:
+#
+#   * every node is EXACTLY ``None``, ``bool``, ``int``, ``str``, ``list`` or
+#     ``dict`` and every key is exactly ``str`` -- no subclass, no tuple, no
+#     float, no coerced key. Anything else is not decided here: it goes to the
+#     specification, which encodes it or refuses it as it always did;
+#   * no string needed an escape. The two encoders escape the same characters
+#     (``"``, ``\`` and the C0 controls) but spell five controls differently
+#     (``\n`` against ``\u000a``). Every escape either one writes contains a
+#     backslash and nothing else does, so text without a backslash holds no
+#     escape, and both wrote every string raw. Text with one is encoded again
+#     by the specification.
+_ONE_PASS_ENCODE = json.JSONEncoder(
+    ensure_ascii=False,
+    check_circular=False,
+    sort_keys=True,
+    separators=(",", ":"),
+).encode
+
+
+def _is_exact_document(value: Any) -> bool:
+    """Whether every node of ``value`` is an exact JSON builtin."""
+    kind = type(value)
+    if kind is str or kind is int or kind is bool or value is None:
+        return True
+    if kind is list:
+        for item in value:
+            kind = type(item)
+            if kind is str or kind is int or kind is bool or item is None:
+                continue
+            if not _is_exact_document(item):
+                return False
+        return True
+    if kind is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                return False
+            kind = type(item)
+            if kind is str or kind is int or kind is bool or item is None:
+                continue
+            if not _is_exact_document(item):
+                return False
+        return True
+    return False
+
+
 def canonical_json_bytes(value: Any) -> bytes:
+    if _is_exact_document(value):
+        text = _ONE_PASS_ENCODE(value)
+        if "\\" not in text:
+            return text.encode("utf-8")
     return encode_jcs(_json_to_value(value)).encode("utf-8")
 
 
