@@ -1387,7 +1387,7 @@ class CallSiteValue(FloorValue):
             return self if preserve_opaque_leaf else None
         if len(self.parameters) != len(self.arg_values):
             return None
-        from sugar_lift_py_tests.outcome import Incomplete, complete_value
+        from sugar_lift_py_tests.outcome import ExitSet, Incomplete, complete_value
 
         reduce_ctx = _ctx_with_curried_args(
             ctx,
@@ -1444,6 +1444,13 @@ class CallSiteValue(FloorValue):
             if isinstance(outcome, Incomplete):
                 if incomplete_outcome is not None:
                     incomplete_outcome.append(outcome)
+                return None
+            if isinstance(outcome, ExitSet):
+                # complete_value's written law: multi-arm store/control
+                # outcomes cannot force_floor to a single value; leave the
+                # projection absent. ``not self.matches(...)`` then stands on
+                # CallSiteValue.truth (py.truthy of the call) instead of
+                # inventing one bool for two completed predicate returns.
                 return None
             value = _project_authenticated_source_return(
                 complete_value(outcome, owner=owner)

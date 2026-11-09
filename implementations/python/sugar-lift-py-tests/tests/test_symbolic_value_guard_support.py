@@ -405,3 +405,93 @@ def test_multi_exit_non_string_helper_does_not_name_a_string() -> None:
     helper = _dual_arm_helper_callsite(name_faces=False)
     assert not helper.names_a_string()
 
+
+def _two_arm_method_callsite():
+    """A source-backed method whose body reduces to two completed faces.
+
+    ``RaisesExc._check_type`` / ``matches`` partitions on the constructor wrap
+    and both arms return predicates; dig must not invent one bool.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import atomic, ctor
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    @dataclass
+    class _Body(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return ExitSet(
+                (
+                    Completed(atomic("then", []), PredicateValue(atomic("ok", []), "then")),
+                    Completed(
+                        atomic("else_face", []),
+                        PredicateValue(atomic("no", []), "else"),
+                    ),
+                )
+            )
+
+        def to_term(self, *, owner: str):
+            del owner
+            return ctor("test:two-arm-method", ())
+
+    return CallSiteValue(
+        target_name="RaisesExc.matches",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:RaisesExc.matches", ()),
+        body=SugarBody(_Body(), SugarRole.CONTROL_FLOW_BODY),
+        site="two-arm-matches",
+        source_call_frame_cid="blake3-512:" + "7" * 128,
+    )
+
+
+def test_dig_leaves_a_two_arm_method_body_absent() -> None:
+    callsite = _two_arm_method_callsite()
+    dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
+    assert dug is None
+
+
+def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
+
+    callsite = _two_arm_method_callsite()
+
+    @dataclass
+    class _Yield(ConstructedTermSugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+        def to_term(self, *, owner: str):
+            return self.value.to_term(owner=owner)
+
+    outcome = UnaryOpSugar("Not", _Yield(callsite), "not-two-arm").desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, PredicateValue)
+    negated = outcome.value.formula
+    assert "truthy" in str(negated)
+    assert "call:RaisesExc.matches" in str(negated)
+
