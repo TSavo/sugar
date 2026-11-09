@@ -86,7 +86,7 @@ class WithEffectBoundarySugar(Sugar):
                     requested="one real call occurrence with authenticated formal binding",
                     fix="keep computed or opaque managers loud",
                 )
-            fixed = _bind_real_actuals(
+            fixed, keyword_actuals = _bind_real_actuals(
                 self.contract_ref.import_signature,
                 manager_value,
             )
@@ -100,7 +100,7 @@ class WithEffectBoundarySugar(Sugar):
                     semantics.expected_type_operand,
                     fixed_actuals=fixed,
                     variadic_positional_actuals={},
-                    variadic_keyword_actuals={},
+                    variadic_keyword_actuals=keyword_actuals,
                 )
                 pattern = None
                 if not isinstance(
@@ -110,7 +110,7 @@ class WithEffectBoundarySugar(Sugar):
                         semantics.message_pattern_operand,
                         fixed_actuals=fixed,
                         variadic_positional_actuals={},
-                        variadic_keyword_actuals={},
+                        variadic_keyword_actuals=keyword_actuals,
                     )
                 # Factored faces tighten the manager guard; single-face keeps
                 # the manager exit as-is so true-guard identity is preserved.
@@ -261,12 +261,29 @@ def _route_raise_boundary(body_es, *, boundary_exit_es, disposition):
     return routed.union(ExitSet(tuple(outside)))
 
 
+@dataclass(frozen=True)
+class _KeywordValueEntry:
+    """An already-constructed keyword actual, not a source Sugar occurrence."""
+
+    keyword: str
+    value: object
+
+
+@dataclass(frozen=True)
+class _KeywordValuePack:
+    """Pack leftover keywords under a unique ``**kwargs`` formal."""
+
+    formal_index: int
+    entries: tuple[_KeywordValueEntry, ...]
+
+
 def _bind_real_actuals(signature, manager_value):
     from sugar_lift_py_tests.context_manager_contract import (
         ContextManagerContractError,
         KeywordOnlyV1,
         PositionalOnlyV1,
         PositionalOrKeywordV1,
+        VariadicKeywordV1,
     )
 
     keyword_count = len(manager_value.keyword_names)
@@ -291,7 +308,15 @@ def _bind_real_actuals(signature, manager_value):
     if len(keywords) != keyword_count:
         raise ContextManagerContractError("duplicate keyword actual binding")
     fixed = {}
+    keyword_formal = None
     for index, parameter in enumerate(signature.parameters):
+        if isinstance(parameter.passing, VariadicKeywordV1):
+            if keyword_formal is not None:
+                raise ContextManagerContractError(
+                    "at most one variadic keyword parameter"
+                )
+            keyword_formal = index
+            continue
         value = None
         present = False
         if positional and isinstance(
@@ -310,11 +335,20 @@ def _bind_real_actuals(signature, manager_value):
             fixed[index] = value
         elif parameter.required:
             raise ContextManagerContractError("required formal actual is absent")
+    keyword_actuals = {}
+    if keyword_formal is not None:
+        keyword_actuals[keyword_formal] = _KeywordValuePack(
+            keyword_formal,
+            tuple(
+                _KeywordValueEntry(name, value) for name, value in keywords.items()
+            ),
+        )
+        keywords.clear()
     if positional or keywords:
         raise ContextManagerContractError(
             "call actual does not fit authenticated signature"
         )
-    return fixed
+    return fixed, keyword_actuals
 
 
 def _unresolved_producer_coordinates(entries):
