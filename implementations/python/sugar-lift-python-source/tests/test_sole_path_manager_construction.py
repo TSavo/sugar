@@ -3030,6 +3030,56 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     )
 
 
+def test_installed_pytest_raises_excinfo_type_is_the_raised_class(tmp_path):
+    """``as excinfo`` later projects ``.type`` as the language-owned class."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor.builtin_exception_class_value import (
+        BuiltinExceptionClassValue,
+    )
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+
+    consumer = (
+        "import pytest\n"
+        "def use_boundary():\n"
+        "    with pytest.raises(ValueError) as excinfo:\n"
+        '        raise ValueError("boom")\n'
+        "    return excinfo.type\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    pytest_distribution = importlib.metadata.distribution("pytest")
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        session=SourceResolutionSession(
+            enrolled_distributions=frozenset({pytest_distribution.metadata["Name"]})
+        ),
+    )
+    fn = next(node for node in tree.nodes() if node.kind == "FunctionDef")
+    exits = outcome_to_exitset(fn.sugar().desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Completed)
+    record = exits[0].value.record
+    returned = next(
+        entry.value
+        for entry in record.statements
+        if isinstance(entry, ReturnValue)
+    )
+    assert isinstance(returned, BuiltinExceptionClassValue)
+    assert returned.name == "ValueError"
+    assert returned is builtin_name_temporal().value_if_bound("ValueError")
+
+
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
     """Real producer advances to its first still-opaque native transition.
 
