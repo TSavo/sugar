@@ -92,3 +92,70 @@ def test_super_refuses_absent_base_method() -> None:
             blame="super-greet",
             ctx=context,
         )
+
+
+_ANNOTATED = (
+    "class Base:\n"
+    "    def __init__(self, match=None):\n"
+    "        self.match = match\n"
+    "        self._fail_reason: str | None = None\n"
+    "        self._nested: bool = False\n"
+    "        self.is_baseexception = False\n"
+    "\n"
+    "class Derived(Base):\n"
+    "    def __init__(self, match=None):\n"
+    "        super().__init__(match=match)\n"
+    "        self.expected_exceptions = ()\n"
+)
+
+
+def test_super_init_statement_applies_annotated_field_stores() -> None:
+    """``super().__init__(...)`` in statement position must run Base stores.
+
+    AbstractRaises writes ``self._fail_reason: str | None = None`` in
+    ``__init__``. Leaving the super CallSiteValue unreduced dropped that
+    annotated store, so ``raise AssertionError(self._fail_reason)`` later
+    panicked as ObjectValue.attribute. The stores have to land on the
+    constructing receiver, not only fire against a nested temporal.
+    """
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    context, (_base, derived) = _constructed(_ANNOTATED)
+    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+    projected = receiver.call_method_value(
+        "__init__",
+        (),
+        owner="test",
+        blame="derived-init",
+        ctx=context,
+        keywords=(("match", NoneValue()),),
+    )
+    assert isinstance(projected, Complete)
+    call = projected.value
+    assert isinstance(call, CallSiteValue)
+    reduced = call.reduce_source_outcome(context)
+    if isinstance(reduced, ExitSet):
+        completed = [
+            face.value
+            for face in reduced.exits
+            if type(face).__name__ == "Completed"
+        ]
+        assert completed, reduced
+        block = completed[-1]
+    else:
+        assert isinstance(reduced, Complete)
+        block = reduced.value
+    if not isinstance(block, BlockValue):
+        block = BlockValue((block,), can_fall_through=True)
+    built = derived.construct_receiver_state_from_block(block, "receiver")
+    assert isinstance(built, ObjectValue)
+    field_names = {field.name for field in built.fields}
+    assert "match" in field_names
+    assert "_fail_reason" in field_names
+    assert "_nested" in field_names
+    assert "is_baseexception" in field_names
+    assert "expected_exceptions" in field_names
+
