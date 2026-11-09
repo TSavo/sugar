@@ -176,6 +176,23 @@ class ComputedCallSugar(ConstructedTermSugar):
                     bound_source_actuals=bound_source_actuals,
                 )
             )
+        from sugar_lift_py_tests.floor import ClassDefinitionValue
+
+        if isinstance(callee, ClassDefinitionValue):
+            from sugar_lift_py_tests.callable_application import CallableApplication
+
+            # A computed callee that reduced to a source class is constructor
+            # application (``cls(None)`` after a classmethod binds cls).  Other
+            # computed callees stay a dig cue; this does not invent calling an
+            # import member or an unknown formal.
+            return callee.callable_application_with(
+                CallableApplication(
+                    positional + tuple(value for _, value in kw_values),
+                    tuple(name for name, _ in kw_values),
+                    self.site,
+                ),
+                ctx,
+            )
         return Complete(
             CallSiteValue(
                 target_name="py.call",
