@@ -3507,14 +3507,14 @@ def _finally_term_step_for_nested_with(finalbody):
     """
     from sugar_lift_py_tests.generator_construction import FinallyStepV1
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-    from sugar_source_tree.nodes import Expr, For, Pass, Raise, Yield
+    from sugar_source_tree.nodes import Expr, For, Pass, Raise, While, Yield
     from sugar_source_tree.panic import SugarNotWritten
 
     terms = []
     for item in finalbody:
         if isinstance(item, Pass):
             continue
-        if isinstance(item, (For, Raise)):
+        if isinstance(item, (For, Raise, While)):
             return None
         if isinstance(item, Expr) and isinstance(item.value, Yield):
             return None
@@ -3588,7 +3588,11 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
     name, a tuple, or a list, is ForStepV1, using the same target-coordinate
     minting as a top-level generator. A bare name binds the iterated item;
     a tuple or list target still unpacks through iter/next and authenticated
-    StopIteration. This does not invent items or warning testimony.
+    StopIteration. A ``while`` without ``orelse`` or an owned yield, whose
+    guard is a constructed term and whose body is nameable, is WhileStepV1,
+    the same step the top-level generator namer already seats. A false guard
+    skips the body and continues; an undecided guard stays a typed gap.
+    This does not invent items, warning testimony, or a bound on ``while True``.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
@@ -3597,6 +3601,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         IfStepV1,
         InertStepV1,
         ReturnStepV1,
+        WhileStepV1,
         YieldStepV1,
     )
     from sugar_source_tree.nodes import (
@@ -3613,6 +3618,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         Pass,
         Return,
         Try,
+        While,
         Yield,
         YieldFrom,
         generator_for_module_cid,
@@ -3693,6 +3699,38 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
                 body_steps=body_steps,
                 module_cid=generator_for_module_cid(statement),
                 fragment_cid=statement.fragment.seal().cid,
+                occurrence=statement.fragment,
+            )
+        if (
+            isinstance(statement, While)
+            and not statement.orelse
+            and not FunctionDef._owns_yield((statement,))
+        ):
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+            from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+            from sugar_source_tree.panic import SugarNotWritten
+
+            body_steps = name_body(statement.body)
+            try:
+                guard = statement.test.sugar()
+            except SugarNotWritten:
+                return None
+            if body_steps is None or not isinstance(guard, ConstructedTermSugar):
+                return None
+            span = statement.line_col_span()
+            return WhileStepV1(
+                guard=guard,
+                body_steps=body_steps,
+                fragment_cid=statement.fragment.seal().cid,
+                coordinate=SourceFragmentCoordinateV1(
+                    statement.unit.source_cid,
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                ),
                 occurrence=statement.fragment,
             )
         if isinstance(statement, If):
