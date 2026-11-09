@@ -104,3 +104,37 @@ def test_imported_class_absent_member_stays_outside_binding(tmp_path: Path):
     assert result.kind == "target-outside-binding"
     assert result.exported_name == "absent"
     assert result.module_name == "absent_member_package.holder"
+
+
+
+def test_imported_class_classmethod_projects_an_ordinary_source_call_frame(
+    tmp_path: Path,
+) -> None:
+    """An imported Class.method export has an ordinary source call frame.
+
+    Resolving the binding is not enough: RaisesExc.__enter__ calls
+    ``ExceptionInfo.for_later()``, which needs the method's frame, not a
+    definition-missing gap after the coordinate was already found.
+    """
+    from sugar_lift_python_source.manager_construction import (
+        ManagerConstructionGapV1,
+        resolve_source_visible_frame,
+    )
+
+    graph, receipts = _graph(tmp_path, "holder_frame_package")
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({graph.distribution_name})
+    )
+    resolved = resolve_import_binding(
+        _receipt(receipts, ["for_later"]), graph=graph, session=session
+    )
+    assert isinstance(resolved, ResolvedPythonObjectV1), resolved
+
+    projected = resolve_source_visible_frame(
+        resolved, graph=graph, session=session
+    )
+
+    assert not isinstance(projected, ManagerConstructionGapV1), projected
+    frame, target = projected
+    assert target.name == "for_later"
+    assert frame.parameters == ("cls",)
