@@ -661,6 +661,24 @@ class CallSiteSugar(ConstructedTermSugar):
                 pending,
                 carrier_actuals=callsite.bound_native_actuals_by_coordinate,
             )
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if (
+            ctx is not None
+            and not isinstance(ctx, ReduceContext)
+            and callsite.body is not None
+        ):
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                blame=self.site,
+                observed="source-visible call under a temporal-only reduction context",
+                requested="a ReduceContext that can record the call",
+                fix=(
+                    "keep the call loud until allocate carries a reduction "
+                    "context; do not invent the callee body"
+                ),
+            )
         produced = callsite.producer_outcome(
             ctx,
             carrier_actuals=callsite.bound_native_actuals_by_coordinate,
