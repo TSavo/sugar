@@ -2339,7 +2339,90 @@ def _module_materialize_key(
     )
 
 
-def _publish_nested_same_module_manager_uses(function, context, source_file) -> None:
+def _mirror_source_call_frames(
+    source: TreeConstructionContextV1 | None,
+    dest: TreeConstructionContextV1 | None,
+) -> None:
+    """Copy seated source-call frames onto a later live table.
+
+    SourceFile intern rebinds ``unit.construction_context`` when another
+    open of the same CID provides a new table. Seating that wrote to the
+    captured table must appear on the live one before constructor-sugar
+    or ``__exit__`` derivation reads a method body.
+    """
+    if source is None or dest is None or source is dest:
+        return
+    from sugar_source_tree.panic import BackendDefect
+
+    for coordinate, frame in source.source_call_frames.items():
+        owner_node = getattr(frame, "owner", None)
+        blame = getattr(owner_node, "fragment", None) or coordinate
+        if coordinate in dest.opaque_source_call_obligations:
+            raise BackendDefect(
+                blame=blame,
+                owner="manager_construction._mirror_source_call_frames",
+                observed="frame/obligation collision",
+                requested="one source-call classification at the exact coordinate",
+                fix="keep authenticated frames and opaque obligations disjoint",
+            )
+        existing = dest.source_call_frames.get(coordinate)
+        if existing is None:
+            dest.source_call_frames[coordinate] = frame
+        elif existing != frame:
+            raise BackendDefect(
+                blame=blame,
+                owner="manager_construction._mirror_source_call_frames",
+                observed="conflicting source-call frame",
+                requested="byte-identical duplicate frame testimony",
+                fix="resolve the conflicting authenticated source frame",
+            )
+
+
+def _seat_imported_callable_frames_on_definition(
+    definition: Node,
+    context: TreeConstructionContextV1,
+    *,
+    resolved: ResolvedPythonObjectV1,
+    graph: DependencyArtifactGraph,
+    session: SourceResolutionSession,
+) -> None:
+    """Seat imported callable-instance frames for methods of ``definition``.
+
+    Same owner-is-FunctionDef rule as the reachable-class seating loop: a
+    nested ``Class.__call__`` (pytest ``fail``) is an ordinary function
+    frame. Class constructor frames stay unseated.
+    """
+    if context is None or resolved is None or graph is None or session is None:
+        return
+    for scanned in _scanned_definitions(definition):
+        binders = _frame_bound_names(scanned)
+        for call in _local_named_calls(scanned):
+            if call.func.id in binders:
+                continue
+            nested = _resolve_external_call_frame(
+                call.func.id, resolved=resolved, graph=graph, session=session
+            )
+            if isinstance(nested, _ExternalCallTargetGap):
+                continue
+            owner = getattr(nested, "owner", None)
+            if isinstance(owner, (FunctionDef, AsyncFunctionDef)):
+                live = getattr(
+                    getattr(call, "unit", None), "construction_context", None
+                ) or context
+                _install_source_call_frame(live, call, nested)
+                if live is not context:
+                    _install_source_call_frame(context, call, nested)
+
+
+def _publish_nested_same_module_manager_uses(
+    function,
+    context,
+    source_file,
+    *,
+    resolved=None,
+    graph=None,
+    session=None,
+) -> None:
     """Publish same-module ClassDef CM contracts for With sites in ``function``.
 
     ``source_visible_call_frame`` sugars every body statement before any
@@ -2352,6 +2435,11 @@ def _publish_nested_same_module_manager_uses(function, context, source_file) -> 
     The captured ``context`` argument can go stale: a later SourceFile of
     the same source CID replaces the interned unit's table, and With
     looks up that live table. Write there, not to the captured object.
+
+    Imported callable-instance seating has the same stale-table hazard.
+    Refresh those frames onto the live table before deriving the nested
+    ClassDef, so ``fail()`` Halts instead of remaining a bodyless
+    CallSiteValue on the completed ``__exit__`` face.
     """
     if function is None:
         return
@@ -2362,6 +2450,7 @@ def _publish_nested_same_module_manager_uses(function, context, source_file) -> 
         live_context = context
     if live_context is None:
         return
+    _mirror_source_call_frames(context, live_context)
     from .manager_summary_derivation import (
         _direct_with_call_uses,
         _populate_same_module_class_manager_uses,
@@ -2370,6 +2459,30 @@ def _publish_nested_same_module_manager_uses(function, context, source_file) -> 
     uses = _direct_with_call_uses(function)
     if not uses:
         return
+    if resolved is not None and graph is not None and session is not None:
+        seen: set[str] = set()
+        for _key, (_coordinate, call, _exit_face_id) in uses.items():
+            if not isinstance(call, Call) or not isinstance(call.func, Name):
+                continue
+            binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
+            if len(binds) != 1 or not isinstance(binds[0], ClassDef):
+                continue
+            class_def = binds[0]
+            marker = class_def.fragment.seal().cid
+            if marker in seen:
+                continue
+            seen.add(marker)
+            _seat_imported_callable_frames_on_definition(
+                class_def,
+                live_context,
+                resolved=resolved,
+                graph=graph,
+                session=session,
+            )
+    live_context = getattr(
+        getattr(function, "unit", None), "construction_context", None
+    ) or live_context
+    _mirror_source_call_frames(context, live_context)
     _populate_same_module_class_manager_uses(source_file, live_context, uses)
 
 
@@ -2494,7 +2607,14 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
-        _publish_nested_same_module_manager_uses(target, context, source_file)
+        _publish_nested_same_module_manager_uses(
+            target,
+            context,
+            source_file,
+            resolved=resolved,
+            graph=graph,
+            session=session,
+        )
         frame = with_mutable_globals(target.source_visible_call_frame())
         if frame.parameters and frame.parameters[0] == "self":
             frame = replace(
@@ -2812,6 +2932,11 @@ def _resolve_source_visible_frame_uncached(
                 ):
                     _install_source_call_frame(context, call, nested)
 
+    _mirror_source_call_frames(
+        context,
+        getattr(getattr(source_file, "unit", None), "construction_context", None),
+    )
+
     frames: dict[str, object] = {}
     reaching_classes: dict[str, ClassDef] = {}
     from sugar_source_tree.panic import SugarNotWritten
@@ -2852,6 +2977,10 @@ def _resolve_source_visible_frame_uncached(
             session=session,
             context=context,
             dependency_graphs=dependency_graphs,
+        )
+        _mirror_source_call_frames(
+            context,
+            getattr(getattr(source_file, "unit", None), "construction_context", None),
         )
         frames[item.name] = item.source_visible_constructor_frame()
 
@@ -2901,7 +3030,12 @@ def _resolve_source_visible_frame_uncached(
                     dependency_graphs=dependency_graphs,
                 )
             _publish_nested_same_module_manager_uses(
-                function, context, source_file
+                function,
+                context,
+                source_file,
+                resolved=resolved,
+                graph=graph,
+                session=session,
             )
             frames[function.name] = with_mutable_globals(
                 function.source_visible_call_frame()
