@@ -165,3 +165,46 @@ def test_symbolic_or_true_is_true() -> None:
     assert any(
         isinstance(value, TrueBoolLiteralSugar) for value in _completed_values(outcome)
     )
+
+
+
+def test_ground_string_inequality_and_does_not_evaluate_later_operand() -> None:
+    """``"b" == "^" and later`` stops; later is not reduced.
+
+    String equality stays a PredicateValue atom rather than a folded bool.
+    BoolOp must still treat a constant ``=("b", "^")`` as false the way
+    IfSugar already does, so a later operand is not evaluated.
+    """
+    from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+
+    site = _Site()
+
+    @dataclass(frozen=True)
+    class _Unevaluated(ConstructedTermSugar):
+        site: object
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            raise AssertionError("later operand must not be evaluated")
+
+        def to_term(self, *, owner: str):
+            del owner
+            raise AssertionError("later operand must not be evaluated")
+
+    outcome = _bool_op(
+        "And",
+        EqualityOpSugar(
+            left=StringLiteralSugar(value="b", site=site),
+            right=StringLiteralSugar(value="^", site=site),
+            site=site,
+        ),
+        _Unevaluated(site=site),
+    )
+    assert isinstance(outcome, Complete)
+    assert not any(
+        isinstance(value, TrueBoolLiteralSugar) for value in _completed_values(outcome)
+    )
