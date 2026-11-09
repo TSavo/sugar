@@ -268,4 +268,4 @@ echo
 echo "==================== SELF-CHECK PASSED ===================="
 echo "good/ : serde_json exact vendor rows load clean and refuse-not-green under current discharge law."
 echo "bad/  : contradictory serde_json row refuses in consistency and witness axes."
-printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"
+[ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "$SHOWCASE_SUBJECT_WITNESS"

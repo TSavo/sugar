@@ -398,9 +398,14 @@ def test_makefile_routes_full_roster_through_scope_owner() -> None:
 def test_every_active_showcase_testifies_subject_completion() -> None:
     roster = showcase_scope.makefile_showcase_roster(MAKEFILE)
     retirements = showcase_scope.load_manifest(MANIFEST, roster)
+    # Testify ONLY when the scope owner asked for testimony (it always sets
+    # SHOWCASE_SUBJECT_WITNESS); a half-set env still fails loudly on the
+    # subject id. Outside the harness (examples gate, a developer's shell)
+    # there is nobody to testify to, and a passing script must exit 0.
     marker = (
+        '[ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || '
         "printf '%s\\n' \"${SHOWCASE_SUBJECT_ID:?}\" > "
-        "\"${SHOWCASE_SUBJECT_WITNESS:?}\""
+        '"$SHOWCASE_SUBJECT_WITNESS"'
     )
     active = [path for path in roster if path not in retirements]
 
@@ -415,8 +420,9 @@ def test_python_urlsafe_real_skip_cannot_testify_subject_completion() -> None:
     good = "run_twin good discharged"
     bad = "run_twin bad refused"
     witness = (
+        '[ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || '
         "printf '%s\\n' \"${SHOWCASE_SUBJECT_ID:?}\" > "
-        "\"${SHOWCASE_SUBJECT_WITNESS:?}\""
+        '"$SHOWCASE_SUBJECT_WITNESS"'
     )
 
     assert text.index(skip) < text.index(good) < text.index(bad) < text.index(witness)

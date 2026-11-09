@@ -312,4 +312,4 @@ run_suite bad REFUSE REFUSE
 
 echo
 echo "== base64 0.22.1 showcase: PASS =="
-printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "${SHOWCASE_SUBJECT_WITNESS:?}"
+[ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "$SHOWCASE_SUBJECT_WITNESS"
