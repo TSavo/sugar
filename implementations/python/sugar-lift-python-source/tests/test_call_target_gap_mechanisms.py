@@ -44,6 +44,7 @@ import pytest
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 from sugar_lift_py_tests.ir import _term_content_cid
+from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactGraph,
@@ -314,6 +315,84 @@ def test_resolved_outer_callee_does_not_relabel_the_nested_gap(tmp_path):
 
     assert absent.observed == "call-target-source-absent:unbound_helper"
     assert defect.observed == "call-target-source-absent:absent_from_artifact"
+
+
+_UNBINDABLE_CALLEE = (
+    "class Marker:\n"
+    "    pass\n"
+    "\n"
+    "def build_slot(label):\n"
+    "    return Marker(label)\n"
+)
+
+
+def test_callee_whose_inner_call_cannot_bind_is_an_unresolved_export(tmp_path):
+    """POSITIVE: a binding gap inside a callee parks that callee, by name.
+
+    ``Marker`` defines no ``__init__`` of its own, so its source frame has no
+    formal to receive ``label``: projecting ``build_slot`` raises
+    ``SourceCallBindingGap``.  That is the door authenticating an object in
+    this artifact and failing to project its frame -- the same condition a
+    ``SugarNotWritten`` body is, and it ends in the same named kind at the
+    call that reached it.  It used to leave as a bare ``ValueError`` and take
+    the whole enclosing file's enumeration with it.
+    """
+    gap = _opaque_gap(
+        tmp_path,
+        "from arbitrary.support import build_slot\n"
+        "\n"
+        "def make_guard(expected):\n"
+        "    return build_slot(expected)\n",
+        support=_UNBINDABLE_CALLEE,
+    )
+
+    assert gap.observed == "call-target-export-unresolved:build_slot"
+
+
+def test_callee_whose_inner_call_binds_is_not_parked(tmp_path):
+    """NEGATIVE FACE: same call text, a class that takes the argument.
+
+    The only difference from the positive twin is that ``Marker`` declares the
+    formal.  If this route were parked too, the kind would be reading the
+    callee's shape rather than a failed binding.
+    """
+    result = _construct(
+        tmp_path,
+        "from arbitrary.support import build_slot\n"
+        "\n"
+        "def make_guard(expected):\n"
+        "    return build_slot(expected)\n",
+        support=(
+            "class Marker:\n"
+            "    def __init__(self, label):\n"
+            "        self.label = 7\n"
+            "\n"
+            "def build_slot(label):\n"
+            "    return Marker(label)\n"
+        ),
+    )
+
+    assert isinstance(result, ConstructedManagerBehaviorV1), result
+
+
+def test_binding_gap_in_the_outer_target_itself_stays_loud(tmp_path):
+    """LYING TWIN: the entry door does not park its own target's defect.
+
+    Here the unbindable call sits in ``make_guard`` -- the definition being
+    constructed, not a callee it reaches.  There is no outer frame to preserve
+    and no call site to park an obligation at, so reporting an unresolved
+    export would name a callee that does not exist.  The gap leaves under its
+    own class.
+    """
+    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
+        _construct(
+            tmp_path,
+            "class Marker:\n"
+            "    pass\n"
+            "\n"
+            "def make_guard(expected):\n"
+            "    return Marker(expected)\n",
+        )
 
 
 # --------------------------------------------------------------------------

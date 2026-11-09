@@ -2783,10 +2783,12 @@ def _resolve_source_visible_frame_uncached(
                 dependency_graphs=dependency_graphs,
                 session=session,
             )
-        except (SugarNotWritten, TypeError) as exc:
-            # Imported callee body is incomplete or construction TypeError'd:
-            # park the obligation, do not erase the outer authenticated target
-            # frame (same law as populate SNW — TypeError is the second costume).
+        except (SugarNotWritten, TypeError, SourceCallBindingGap) as exc:
+            # Imported callee body is incomplete, construction TypeError'd, or
+            # a call inside it could not bind its actuals: park the obligation,
+            # do not erase the outer authenticated target frame (same law as
+            # populate SNW — TypeError is the second costume, the binding gap
+            # the third).
             _install_opaque_call_obligation(
                 context,
                 call,
@@ -3474,9 +3476,11 @@ def _resolve_external_call_frame(
 
     try:
         projected = resolve_source_visible_frame(callee, graph=graph, session=session)
-    except (SugarNotWritten, TypeError):
+    except (SugarNotWritten, TypeError, SourceCallBindingGap):
         # Callee body is incomplete (e.g. Compare leg gap inside a method of a
-        # class this target only *names*) or construction TypeError'd.  Park the
+        # class this target only *names*), construction TypeError'd, or a call
+        # inside it could not bind its actuals (a class with no ``__init__`` of
+        # its own called with an argument).  Park the
         # free-name obligation; do not erase the outer authenticated target
         # frame.  When that broken definition IS the outer target,
         # resolve_source_visible_frame is the entry door and the panic stays
