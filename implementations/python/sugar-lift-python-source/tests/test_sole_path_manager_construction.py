@@ -3269,8 +3269,113 @@ def test_installed_cited_opaque_nested_with_yields_open_enter_result(tmp_path):
     )
 
 
-def test_installed_cited_opaque_nested_with_unnameable_body_stays_opaque(tmp_path):
-    """A try/finally body inside cited-opaque catch_warnings stays a loud With."""
+def test_installed_cited_opaque_nested_with_try_finally_pass_yields_open_enter_result(tmp_path):
+    """A handler-free ``try: yield w; finally: pass`` composes FinallyStepV1.
+
+    Cleanup is empty terms, not invented success. Enter still keeps both
+    open faces, and ``w`` is still the open enter-result coordinate.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        FinallyStepV1,
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        finally:\n"
+            "            pass\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    step = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
+    assert any(
+        isinstance(item, FinallyStepV1) and item.statements == () and item.cleanup_steps == ()
+        for item in step.body_steps
+    )
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    assert len(halted) == 1
+    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
+    assert "warnings.catch_warnings" in halted[0].effect.reason
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert any(
+        isinstance(effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+    assert any(
+        isinstance(effect, ContextManagerExitRuntimeEffect)
+        and "warnings.catch_warnings" in effect.reason
+        for effect in effects
+    )
+
+
+def test_installed_cited_opaque_nested_with_except_handler_stays_opaque(tmp_path):
+    """An except-handler inside cited-opaque catch_warnings stays a loud With."""
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_source_tree.panic import SugarNotWritten
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        try:\n"
+            "            yield w\n"
+            "        except Exception:\n"
+            "            pass\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    with pytest.raises(SugarNotWritten) as caught:
+        boundary.desugar()
+    assert caught.value.owner == "GeneratorWithSugar.desugar"
+    assert caught.value.observed == "opaque generator transition: With carrying a suspension"
+
+
+def test_installed_cited_opaque_nested_with_unnameable_finally_stays_opaque(tmp_path):
+    """A structured finally assign is not a term payload, so the With stays loud."""
     from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -3283,7 +3388,7 @@ def test_installed_cited_opaque_nested_with_unnameable_body_stays_opaque(tmp_pat
             "        try:\n"
             "            yield w\n"
             "        finally:\n"
-            "            pass\n"
+            "            leftover = 1\n"
         ),
         "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
     )
