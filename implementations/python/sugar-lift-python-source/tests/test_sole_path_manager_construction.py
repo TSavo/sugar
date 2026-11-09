@@ -3703,6 +3703,98 @@ def test_installed_cited_opaque_nested_with_structured_finally_for_bare_name(tmp
 
 
 
+
+def test_installed_cited_opaque_with_inside_cited_opaque_with(tmp_path):
+    """An inner cited-opaque With is the already-written nested step.
+
+    First resume cites both open enter faces and yields the inner enter
+    result. Desugar also cites both exits. This does not invent a warning
+    list or enter success.
+    """
+    from sugar_lift_py_tests.effect import (
+        ContextManagerEnterRuntimeEffect,
+        ContextManagerExitRuntimeEffect,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
+        OpaqueManagerProtocolCoordinate,
+    )
+    from sugar_lift_py_tests.generator_construction import (
+        NestedCitedOpaqueManagerStepV1,
+        YieldEffect,
+        YieldStepV1,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    boundary = _installed_generator_with(
+        tmp_path,
+        (
+            "import warnings\n"
+            "def make_guard():\n"
+            "    with warnings.catch_warnings(record=True) as w:\n"
+            "        with warnings.catch_warnings(record=True) as inner:\n"
+            "            yield inner\n"
+        ),
+        "import arbitrary\ndef use():\n    with arbitrary.make_guard():\n        pass\n",
+    )
+    assert isinstance(boundary, GeneratorWithSugar)
+    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
+    outer = next(
+        item
+        for item in machine.steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    )
+    inner_steps = [
+        item
+        for item in outer.body_steps
+        if isinstance(item, NestedCitedOpaqueManagerStepV1)
+    ]
+    assert len(inner_steps) == 1
+    assert inner_steps[0].as_name == "inner"
+    assert any(isinstance(item, YieldStepV1) for item in inner_steps[0].body_steps)
+    entered = machine.resume()
+    faces = list(entered.exits)
+    halted = [face for face in faces if isinstance(face, Halted)]
+    completed = [face for face in faces if isinstance(face, Completed)]
+    enter_effects = [
+        face.effect
+        for face in halted
+        if isinstance(face.effect, ContextManagerEnterRuntimeEffect)
+        and "warnings.catch_warnings" in face.effect.reason
+    ]
+    assert len(enter_effects) == 2
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, YieldEffect)
+    assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
+    assert completed[0].value.value.symbol == "python:cm_enter_result"
+    constructed = boundary.desugar()
+    assert isinstance(constructed, Complete)
+    assert isinstance(constructed.value, BlockValue)
+    effects = [
+        statement.effect
+        for statement in constructed.value.statements
+        if isinstance(statement, Incomplete)
+    ]
+    assert (
+        sum(
+            isinstance(effect, ContextManagerEnterRuntimeEffect)
+            and "warnings.catch_warnings" in effect.reason
+            for effect in effects
+        )
+        == 2
+    )
+    assert (
+        sum(
+            isinstance(effect, ContextManagerExitRuntimeEffect)
+            and "warnings.catch_warnings" in effect.reason
+            for effect in effects
+        )
+        == 2
+    )
+
+
 def test_installed_cited_opaque_nested_with_yield_from_tuple(tmp_path):
     """A nested ``yield from (1,)`` is YieldFromStepV1 cleanup-adjacent body.
 
