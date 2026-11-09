@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Sequential examples gate with a ratcheted green/named-red fixture."""
+"""Examples gate: run the listed examples in parallel against a fixture."""
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -429,11 +431,14 @@ def run_all(
     suite: str,
     output: TextIO,
     scripts: list[str] | None = None,
+    jobs: int = 1,
 ) -> dict[str, object]:
     if scripts is None:
         scripts = discover_scripts(root, suite=suite)
-    rows = [
-        run_script(
+
+    def run_one(indexed: tuple[int, str]) -> dict[str, object]:
+        index, script = indexed
+        return run_script(
             root=root,
             script=script,
             index=index,
@@ -443,8 +448,16 @@ def run_all(
             nice=nice,
             output=output,
         )
-        for index, script in enumerate(scripts, start=1)
-    ]
+
+    indexed_scripts = list(enumerate(scripts, start=1))
+    workers = max(1, min(jobs, len(indexed_scripts) or 1))
+    if workers == 1:
+        rows = [run_one(item) for item in indexed_scripts]
+    else:
+        # Examples are independent processes; the gate's wall time is the
+        # slowest example, not the sum. Rows keep the listed order.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            rows = list(pool.map(run_one, indexed_scripts))
     return {
         "version": 1,
         "suite": suite,
@@ -624,6 +637,10 @@ def write_summary(path: pathlib.Path, data: dict[str, object]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def default_jobs() -> int:
+    return max(1, min(16, os.cpu_count() or 1))
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path.cwd())
@@ -646,6 +663,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--suite", choices=("smoke", "extended"), default="smoke")
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     parser.add_argument("--nice", type=int, default=10)
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=default_jobs(),
+        help="examples to run at once (default: one per CPU, at most 16)",
+    )
     parser.add_argument(
         "--write-expectations",
         action="store_true",
@@ -674,6 +697,7 @@ def main(argv: list[str] | None = None) -> int:
             suite=args.suite,
             output=sys.stdout,
             scripts=scripts,
+            jobs=args.jobs,
         )
         write_summary(summary_path, summary)
     else:

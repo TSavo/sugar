@@ -28,15 +28,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
-if [ -n "${JAVA_FORALL_SHOWCASE_TARGET_DIR:-}" ]; then
-  TARGET_DIR="$JAVA_FORALL_SHOWCASE_TARGET_DIR"
-elif [ "${CI:-0}" = "1" ]; then
-  TARGET_DIR="$HERE/.target"
-else
-  TARGET_DIR="$RUST/target"
-fi
-BIN_DIR="$TARGET_DIR/debug"
-SUGAR="$BIN_DIR/sugar"
+# bin/sugarbin serves the CLI built from exactly this source tree (keyed by
+# source stamp), so the showcase never compiles the CLI for itself.
+SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+BIN_DIR="$(dirname "$SUGAR")"
 KIT_JAVA="$(which java)"
 
 echo "SCOPE: Phase 3 Java-native lifter: bounded for-loop → forall x. (0<=x<3 => g(x)==1)."
@@ -44,16 +39,7 @@ echo "SCOPE: GOOD is the universal alone (consistent); BAD adds the in-range con
 echo "SCOPE: BAD contradiction detected via engine ambient-forall rule (cross-contract, zero kit code)."
 
 echo
-echo "== build the sugar CLI =="
-if [ "${JAVA_FORALL_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  # GitHub restores target dirs after checkout; force this showcase to use the
-  # verifier from the current source tree, not a stale cached sugar binary. In
-  # CI, use an isolated target dir outside the restored workspace target cache.
-  CARGO_TARGET_DIR="$TARGET_DIR" cargo clean --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-verifier -p sugar-cli >/dev/null 2>&1 || true
-  CARGO_TARGET_DIR="$TARGET_DIR" cargo build --manifest-path "$RUST/Cargo.toml" \
-    -p sugar-cli --bin sugar >/dev/null
-fi
+echo "== resolve the sugar CLI via sugarbin =="
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
 
 echo

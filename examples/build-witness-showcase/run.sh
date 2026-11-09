@@ -3,7 +3,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-BIN="$("$REPO/bin/sugarbin" --profile release)"
+BIN="$("$REPO/bin/sugarbin" --profile debug)"
 VENV="${BUILD_WITNESS_VENV:-/tmp/build-witness-venv}"
 
 if [ ! -x "$VENV/bin/python" ]; then

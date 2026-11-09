@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import io
 import json
 import pathlib
 import sys
@@ -165,6 +166,39 @@ class CoreGateSelectionTest(unittest.TestCase):
         self.assertEqual(
             [row["name"] for row in summary["examples"]], ["examples/gated/run.sh"]
         )
+
+    def test_jobs_run_examples_at_once_and_keep_listed_order(self) -> None:
+        # Each example waits for every other example's start marker. Run one
+        # at a time, none could ever see the others and all would exit 1.
+        names = ["one", "two", "three"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            for name in names:
+                (root / "examples" / name).mkdir(parents=True)
+                (root / "examples" / name / "run.sh").write_text(
+                    "#!/usr/bin/env bash\n"
+                    f"touch started-{name}\n"
+                    "for _ in $(seq 1 200); do\n"
+                    "  [ -e started-one ] && [ -e started-two ] && [ -e started-three ]"
+                    " && exit 0\n"
+                    "  sleep 0.05\n"
+                    "done\n"
+                    "exit 1\n",
+                    encoding="utf-8",
+                )
+            scripts = [f"examples/{name}/run.sh" for name in names]
+            summary = examples_gate.run_all(
+                root=root,
+                log_dir=root / "logs",
+                timeout_seconds=30,
+                nice=0,
+                suite="smoke",
+                output=io.StringIO(),
+                scripts=scripts,
+                jobs=3,
+            )
+        self.assertEqual([row["name"] for row in summary["examples"]], scripts)
+        self.assertEqual([row["rc"] for row in summary["examples"]], [0, 0, 0])
 
     def test_skipped_example_is_red_not_green(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
