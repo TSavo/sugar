@@ -3498,9 +3498,90 @@ def _resolve_nested_generator_function(
     return None
 
 
+def _finally_term_step_for_nested_with(finalbody):
+    """Name a handler-free finally suite as term payloads, or None.
+
+    ``pass`` is skipped. Structured cleanup (assign, for, raise, a yield)
+    stays unnameable so the containing With remains loud — FinallyStepV1
+    still gaps non-empty cleanup_steps at transition.
+    """
+    from sugar_lift_py_tests.generator_construction import FinallyStepV1
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_source_tree.nodes import Expr, For, Pass, Raise, Yield
+    from sugar_source_tree.panic import SugarNotWritten
+
+    terms = []
+    for item in finalbody:
+        if isinstance(item, Pass):
+            continue
+        if isinstance(item, (For, Raise)):
+            return None
+        if isinstance(item, Expr) and isinstance(item.value, Yield):
+            return None
+        if isinstance(item, Expr):
+            try:
+                value_sugar = item.value.sugar()
+            except SugarNotWritten:
+                return None
+            if isinstance(value_sugar, ConstructedTermSugar):
+                terms.append(value_sugar)
+                continue
+            return None
+        try:
+            sugar = item.sugar()
+        except SugarNotWritten:
+            return None
+        if isinstance(sugar, ConstructedTermSugar):
+            terms.append(sugar)
+            continue
+        return None
+    return FinallyStepV1(tuple(terms))
+
+
+def _compose_finally_for_nested_with(body_steps, cleanup_step):
+    """Seat cleanup before every terminal face and on fall-through."""
+    from sugar_lift_py_tests.generator_construction import (
+        IfStepV1,
+        RaiseStepV1,
+        ReturnStepV1,
+    )
+
+    def compose_exits(branch):
+        composed = []
+        for step in branch:
+            if isinstance(step, IfStepV1):
+                step = IfStepV1(
+                    step.guard,
+                    compose_exits(step.then_steps),
+                    compose_exits(step.else_steps),
+                    step.fragment_cid,
+                )
+            if isinstance(step, (ReturnStepV1, RaiseStepV1)):
+                composed.append(cleanup_step)
+            composed.append(step)
+        return tuple(composed)
+
+    composed = []
+    for step in body_steps:
+        if isinstance(step, IfStepV1):
+            step = IfStepV1(
+                step.guard,
+                compose_exits(step.then_steps),
+                compose_exits(step.else_steps),
+                step.fragment_cid,
+            )
+        if isinstance(step, (ReturnStepV1, RaiseStepV1)):
+            composed.append(cleanup_step)
+        composed.append(step)
+    composed.append(cleanup_step)
+    return tuple(composed)
+
+
 def _nameable_nested_with_body_steps(body) -> tuple | None:
     """Name With-body steps under the merged pre-yield law (Assign/If/Yield peers).
 
+    A handler-free try/finally whose cleanup is term-only (or ``pass``) composes
+    as body steps plus FinallyStepV1, the same seating as a top-level generator.
     Returns None when any statement is unnameable — keeps the nested With loud.
     """
     from sugar_lift_py_tests.generator_construction import (
@@ -3519,6 +3600,7 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
         Name,
         Pass,
         Return,
+        Try,
         Yield,
     )
 
@@ -3565,6 +3647,17 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
                 else_b,
                 statement.fragment.seal().cid,
             )
+        if (
+            isinstance(statement, Try)
+            and not statement.handlers
+            and not statement.orelse
+            and statement.finalbody
+        ):
+            body_steps = name_body(statement.body)
+            cleanup = _finally_term_step_for_nested_with(statement.finalbody)
+            if body_steps is None or cleanup is None:
+                return None
+            return _compose_finally_for_nested_with(body_steps, cleanup)
         return None
 
     def name_body(stmts):
@@ -3573,7 +3666,10 @@ def _nameable_nested_with_body_steps(body) -> tuple | None:
             named = name_one(s)
             if named is None:
                 return None
-            out.append(named)
+            if isinstance(named, tuple):
+                out.extend(named)
+            else:
+                out.append(named)
         return tuple(out)
 
     return name_body(body)
