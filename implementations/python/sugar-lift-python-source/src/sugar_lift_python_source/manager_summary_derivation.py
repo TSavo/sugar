@@ -866,9 +866,35 @@ def _receiver_attribute_name(sugar):
     return sugar.name
 
 
+def _unconditional_partition_leaf(state):
+    """A one-face true-guard partition is already the constructed receiver.
+
+    Field lookup must not invent a unique field from a multi-face or
+    symbolically-guarded partition: those leaves are still branch-local.
+    """
+    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    from .manager_protocol_construction import _completed_receiver_exits
+
+    if not isinstance(state, ReceiverStatePartitionValue):
+        return None
+    completed = [
+        face
+        for face in _completed_receiver_exits(state).exits
+        if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
+    ]
+    if len(completed) != 1 or completed[0].guard != true_guard():
+        return None
+    return completed[0].value
+
+
 def _receiver_field_value(behavior, name, receiver=None):
     state = behavior.receiver_state if receiver is None else receiver
     fields = getattr(state, "fields", ())
+    if not fields:
+        leaf = _unconditional_partition_leaf(state)
+        fields = getattr(leaf, "fields", ()) if leaf is not None else ()
     matches = [
         field.value for field in fields if getattr(field, "name", None) == name
     ]

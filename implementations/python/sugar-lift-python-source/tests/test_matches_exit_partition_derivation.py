@@ -299,3 +299,65 @@ def test_uncited_kwargs_match_is_not_no_message_pattern():
     )
     assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
 
+
+def _compile_match(pattern="boom"):
+    return CallSiteValue(
+        target_name="python:unresolved-source-call",
+        arg_values=(StringValue(pattern),),
+        parameters=(),
+        term=ctor("python:unresolved-source-call", (str_const(pattern),)),
+        body=None,
+    )
+
+
+def test_field_lookup_reads_a_unique_true_guard_partition_leaf():
+    """A one-face true-guard partition is the constructed receiver, not a wrapper."""
+    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    compile_match = _compile_match()
+    behavior = _behavior(match=compile_match)
+    behavior.receiver_state = ReceiverStatePartitionValue(
+        exits=ExitSet((Completed(true_guard(), behavior.receiver_state),))
+    )
+    assert derivation._receiver_field_value(behavior, "match") == compile_match
+
+
+def test_field_lookup_does_not_invent_a_field_from_two_partition_faces():
+    """Two completed leaves are still branch-local; there is no unique field."""
+    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    none_face = _behavior(match=NoneValue()).receiver_state
+    boom_face = _behavior(match=StringValue("boom")).receiver_state
+    behavior = _behavior()
+    behavior.receiver_state = ReceiverStatePartitionValue(
+        exits=ExitSet(
+            (
+                Completed(atomic("match-none", []), none_face),
+                Completed(atomic("match-boom", []), boom_face),
+            )
+        )
+    )
+    assert derivation._receiver_field_value(behavior, "match") is None
+
+
+def test_uncited_compile_match_on_true_guard_partition_is_not_no_message_pattern():
+    """Seeing compile(boom) on the unique leaf does not cite kwargs ``"boom"``."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    boom = StringValue("boom")
+    compile_match = _compile_match()
+    kwargs = DictValue(((StringValue("match"), boom),))
+    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
+        match_value=compile_match,
+        extra_actuals=(kwargs,),
+    )
+    behavior.receiver_state = ReceiverStatePartitionValue(
+        exits=ExitSet((Completed(true_guard(), behavior.receiver_state),))
+    )
+    assert derivation._receiver_field_value(behavior, "match") == compile_match
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
