@@ -51,7 +51,10 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         true_guard,
     )
 
-    from sugar_lift_py_tests.caller_parameter_contract import merge_demands
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+        merge_demands,
+    )
     from sugar_lift_py_tests.floor.single_outcome_law import (
         pending_demand,
         rewrap_pending,
@@ -62,7 +65,18 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
     halted: list = []
     pending = None
 
-    for sugar in sugars:
+    for index, sugar in enumerate(sugars):
+        # A deferred native-operation operand is not an ExitSet. Forcing it
+        # through outcome_to_exitset panics; IfExp and BoolOp already keep
+        # that carrier until discharge. The remaining operands and finish
+        # wait via and_then so the list does not invent a completed message.
+        desugared = sugar.desugar(ctx)
+        if isinstance(desugared, NativeOperationExitCarrierV1):
+            already = tuple(values)
+            remaining = sugars[index + 1 :]
+            return desugared.and_then(
+                lambda value: _collect(remaining, ctx, already + (value,), finish)
+            )
         # An operand that owes a parameter contract (`[*p[0]]`, `[*xs, p[0]]`
         # for a formal `p`) WRAPS its value rather than being one, and the exit
         # algebra has no arm for a value carried together with an undischarged
@@ -72,7 +86,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         #
         # The operand hoists at `true_guard`: a spread display has no guard of
         # its own, and the prefix guard already rides on the arms below.
-        entry, operand = pending_demand(sugar.desugar(ctx), true_guard())
+        entry, operand = pending_demand(desugared, true_guard())
         if entry is not None:
             pending = (
                 entry
