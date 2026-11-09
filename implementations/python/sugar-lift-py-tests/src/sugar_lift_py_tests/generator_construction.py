@@ -2106,7 +2106,9 @@ class GeneratorConstructionV1:
         else:
             projected = guard_outcome
         if isinstance(guard_outcome, Incomplete):
-            return ExitSet.halted(guard_outcome.effect, state=self)
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(guard_outcome.effect, state=self)
+            )
         if isinstance(projected, ExitSet):
             return NativeOperationExitCarrierV1.compose_prefix(
                 projected, _transition_projected_truth
