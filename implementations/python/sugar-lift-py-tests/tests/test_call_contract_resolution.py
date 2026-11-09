@@ -186,6 +186,23 @@ def test_unresolved_or_non_structural_reference_stays_loud():
         ).desugar(None)
 
 
+def test_off_population_call_desugars_to_a_callsite_not_a_gap():
+    """stdlib ``re.compile(match)`` stays a coordinate, not a factory abort."""
+    from sugar_lift_py_tests.floor import CallSiteValue, StringValue
+    from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+
+    sugar = CallSiteSugar(
+        target_name="python:unresolved-source-call",
+        args=(StringLiteralSugar("boom", site="raises.py:377"),),
+        site="raises.py:377",
+        contract_resolution_gap="call-target-off-population:python:re.compile",
+    )
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.arg_values == (StringValue("boom"),)
+
+
 def test_fabricated_or_unauthenticated_reference_fails_decode():
     wire = {
         "kind": "resolved-call-contract-refs",
