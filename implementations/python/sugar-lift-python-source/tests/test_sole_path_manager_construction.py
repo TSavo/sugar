@@ -5461,6 +5461,41 @@ def test_boolop_deferred_rhs_is_not_forced_through_outcome_to_exitset(
         outcome_to_exitset(outcome)
 
 
+def test_ifexp_deferred_message_lookup_is_not_forced_through_outcome_to_exitset():
+    """``effect.message if cond else str(effect)`` keeps the deferred lookup."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.gap import ConstructionPanic
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    source = "effect.message if cond else str(effect)\n"
+    tree = SourceFile(
+        (source, "ifexp-deferred-exit.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    ifexp = next(node for node in tree.nodes() if node.kind == "IfExp")
+    coordinate = ExitValueCoordinate("ifexp-message-face")
+    ctx = ReduceContext(
+        temporal=builtin_name_temporal()
+        .bind_value("effect", coordinate)
+        .bind_value("cond", PredicateValue(atomic("python:group_test", [])))
+    )
+    outcome = ifexp.sugar().desugar(ctx)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "attribute_named"
+    assert outcome.operands[1] == StringValue("message")
+    assert outcome.short_circuits
+    with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
+        outcome_to_exitset(outcome)
+
 
 def test_boolop_or_message_comparison_is_not_effect_boundary(tmp_path):
     """Disjunction is not EffectBoundary's type-and-message conjunction."""
