@@ -104,10 +104,23 @@ class ClassDefinitionSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor import ObjectField
 
+        from sugar_source_tree.panic import SugarNotWritten
+
         class_fields = []
         base_values = []
         for base in self.base_sugars:
-            outcome = base.desugar(ctx)
+            try:
+                outcome = base.desugar(ctx)
+            except SugarNotWritten as exc:
+                # A from-import name such as ``typing.Generic`` is now an
+                # ImportMemberValue. ``Generic[T]`` subscripts that member
+                # with a type variable and refuses; the class model already
+                # omits every floor that is not a known class. Do not abort
+                # construction for that refuse, and do not invent a Generic
+                # specialization.
+                if getattr(exc, "owner", None) != "ImportMemberValue.subscript":
+                    raise
+                continue
             from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
 
             if isinstance(outcome, Complete) and isinstance(

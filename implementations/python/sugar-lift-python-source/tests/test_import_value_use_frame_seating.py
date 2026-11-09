@@ -632,3 +632,118 @@ def test_import_member_testimony_canonicalizes_only_its_authenticated_token(
             foreign,
             source_cid=foreign_file.unit.source_cid,
         )
+
+
+
+def test_from_import_name_constructs_member_and_rejects_a_ground_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``from re import Pattern`` sugars as the member; a string is not that type."""
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.import_binding import (
+        AuthenticatedImportUseV1,
+        authenticated_import_value_use_receipts,
+    )
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+    from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
+    from sugar_lift_python_source.manager_construction import (
+        _seat_import_value_use_receipts,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_source_tree.nodes import Name
+
+    source = (
+        "from re import Pattern\n"
+        "def selected(value):\n"
+        "    return isinstance(value, Pattern)\n"
+    )
+    path, source_file, context = _consumer(tmp_path, source)
+    function = next(
+        node for node in source_file.nodes() if isinstance(node, FunctionDef)
+    )
+    pattern = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Name) and node.id == "Pattern"
+    )
+    receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_file.unit.source_cid, module_identities={}
+    )
+    receipt = next(row for row in receipts if row.target_symbol == "python:re.Pattern")
+    module = AuthenticatedModuleSourceV1(
+        module_name="consumer",
+        source_seat="consumer.py",
+        source_cid=source_file.unit.source_cid,
+        source=source,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=function,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+        context=context,
+        dependency_graphs={},
+    )
+    span = pattern.line_col_span()
+    span_key = (span.start_line, span.start_col, span.end_line, span.end_col)
+    seated = source_file.unit.import_value_use_resolution(span_key)
+
+    assert type(seated) is AuthenticatedImportUseV1
+    assert seated.use["cid"] == receipt.use["cid"]
+    assert seated.target_symbol == "python:re.Pattern"
+    sugar = pattern.sugar()
+    assert isinstance(sugar, ImportMemberSugar)
+    assert sugar.qualified_name == "re.Pattern"
+    member = sugar.desugar(context).value
+    outcome = member.test_python_type(StringValue("boom"), pattern.fragment)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+
+
+
+def test_imported_generic_base_does_not_abort_class_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``class Box(Generic[T])`` still constructs after Generic is an import member."""
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
+    from sugar_lift_python_source.manager_construction import (
+        _seat_import_value_use_receipts,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_source_tree.nodes import ClassDef
+
+    source = (
+        "from typing import Generic\n"
+        "class Box(Generic[T]):\n"
+        "    value = 1\n"
+    )
+    path, source_file, context = _consumer(tmp_path, source)
+    class_def = next(node for node in source_file.nodes() if isinstance(node, ClassDef))
+    authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_file.unit.source_cid, module_identities={}
+    )
+    module = AuthenticatedModuleSourceV1(
+        module_name="consumer",
+        source_seat="consumer.py",
+        source_cid=source_file.unit.source_cid,
+        source=source,
+    )
+    monkeypatch.chdir(tmp_path)
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=class_def,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+        context=context,
+        dependency_graphs={},
+    )
+    outcome = class_def.sugar().desugar(context)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, ClassDefinitionValue)
