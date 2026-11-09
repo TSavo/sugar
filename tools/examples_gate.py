@@ -303,6 +303,25 @@ def discover_scripts(root: pathlib.Path, *, suite: str = "smoke") -> list[str]:
     return []
 
 
+def listed_scripts(expectations: dict[str, object]) -> list[str] | None:
+    """Scripts the gate runs when the fixture declares `"selection": "listed"`.
+
+    A listed fixture is the whole gate: only its rows run, in sorted order.
+    An example that is not listed is not gated; it enters the gate by a
+    deliberate fixture row, never by appearing under examples/. Returns None
+    for a fixture without the declaration (every discovered script runs).
+    """
+    if expectations.get("selection") != "listed":
+        return None
+    return sorted(_rows_by_name(expectations, source="expectations"))
+
+
+# An example that exits 0 after printing a SKIP line did no work. The gate
+# counts it red: a skipped example has not passed.
+SKIP_LINE = re.compile(r"^SKIP\b", re.MULTILINE)
+SKIPPED_SHAPE = "skipped/precondition-missing"
+
+
 def _excerpt(text: str, max_lines: int = 20) -> str:
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return "\n".join(lines[-max_lines:])
@@ -369,7 +388,11 @@ def run_script(
                 log.write(exc.output)
     seconds = time.monotonic() - start
     log_text = log_path.read_text(encoding="utf-8", errors="replace")
-    if rc == 0:
+    if rc == 0 and SKIP_LINE.search(log_text):
+        verdict = "NAMED_RED"
+        shape = SKIPPED_SHAPE
+        excerpt = _excerpt(log_text)
+    elif rc == 0:
         verdict = "GREEN"
         shape = None
         excerpt = ""
@@ -405,8 +428,10 @@ def run_all(
     nice: int,
     suite: str,
     output: TextIO,
+    scripts: list[str] | None = None,
 ) -> dict[str, object]:
-    scripts = discover_scripts(root, suite=suite)
+    if scripts is None:
+        scripts = discover_scripts(root, suite=suite)
     rows = [
         run_script(
             root=root,
@@ -638,6 +663,9 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root.resolve()
     summary_path = args.summary_json
     if args.from_summary is None:
+        scripts = None
+        if not args.write_expectations and args.expectations.exists():
+            scripts = listed_scripts(_load_json(args.expectations))
         summary = run_all(
             root=root,
             log_dir=args.log_dir,
@@ -645,6 +673,7 @@ def main(argv: list[str] | None = None) -> int:
             nice=args.nice,
             suite=args.suite,
             output=sys.stdout,
+            scripts=scripts,
         )
         write_summary(summary_path, summary)
     else:
