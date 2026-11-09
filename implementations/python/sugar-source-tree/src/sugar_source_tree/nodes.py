@@ -4020,6 +4020,49 @@ class Module(Node):
                 )
 
 
+
+def generator_for_module_cid(statement):
+    """Authenticate module identity separately from content/span CID."""
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    return cid_of_json(
+        {
+            "kind": "generator-for-module",
+            "schemaVersion": "1",
+            "filename": statement.unit.filename,
+            "sourceCid": statement.unit.source_cid,
+        }
+    )
+
+
+def generator_for_target_coordinates(statement):
+    """Mint one authenticated coordinate per lexical target leaf."""
+    from .binding_state import mint_binding_coordinate_v1
+
+    scope_owner_cid = generator_for_module_cid(statement)
+
+    def collect(target, path):
+        if isinstance(target, Name):
+            return (
+                mint_binding_coordinate_v1(
+                    scope_owner_cid=scope_owner_cid,
+                    binding_site=target.fragment,
+                    projection_path=("target", *path),
+                ),
+            )
+        if isinstance(target, (Tuple_, List)):
+            coordinates = []
+            for index, child in enumerate(target.elts):
+                nested = collect(child, (*path, index))
+                if nested is None:
+                    return None
+                coordinates.extend(nested)
+            return tuple(coordinates) if coordinates else None
+        return None
+
+    return collect(statement.target, ())
+
+
 class FunctionDef(Statement):
     name: str
     params: Tuple[Param, ...]
@@ -4484,46 +4527,6 @@ class FunctionDef(Statement):
                     continue
                 return None
             return tuple(collected)
-
-        def generator_for_target_coordinates(statement):
-            """Mint one authenticated coordinate per lexical target leaf."""
-            from .binding_state import mint_binding_coordinate_v1
-
-            scope_owner_cid = generator_for_module_cid(statement)
-
-            def collect(target, path):
-                if isinstance(target, Name):
-                    return (
-                        mint_binding_coordinate_v1(
-                            scope_owner_cid=scope_owner_cid,
-                            binding_site=target.fragment,
-                            projection_path=("target", *path),
-                        ),
-                    )
-                if isinstance(target, (Tuple_, List)):
-                    coordinates = []
-                    for index, child in enumerate(target.elts):
-                        nested = collect(child, (*path, index))
-                        if nested is None:
-                            return None
-                        coordinates.extend(nested)
-                    return tuple(coordinates) if coordinates else None
-                return None
-
-            return collect(statement.target, ())
-
-        def generator_for_module_cid(statement):
-            """Authenticate module identity separately from content/span CID."""
-            from sugar_lift_python_source.canonical import cid_of_json
-
-            return cid_of_json(
-                {
-                    "kind": "generator-for-module",
-                    "schemaVersion": "1",
-                    "filename": statement.unit.filename,
-                    "sourceCid": statement.unit.source_cid,
-                }
-            )
 
         def compose_finally(body_steps, cleanup_step):
             """Seat cleanup before every terminal face and on fall-through."""
