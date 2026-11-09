@@ -496,6 +496,103 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
     assert "call:RaisesExc.matches" in str(negated)
 
 
+def _deferred_lookup_method_callsite():
+    """A source-backed method whose body is an undischarged ``exc.message`` lookup."""
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    source = "effect.message\n"
+    tree = SourceFile(
+        (source, "deferred-lookup.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    site = next(node for node in tree.nodes() if node.kind == "Attribute").fragment
+    coordinate = ExitValueCoordinate("not-message-face")
+
+    @dataclass
+    class _Body(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="attribute_named",
+                operands=(coordinate, StringValue("message")),
+                coordinates=(coordinate, None),
+            )
+
+        def to_term(self, *, owner: str):
+            del owner
+            return ctor("test:deferred-lookup-method", ())
+
+    return CallSiteValue(
+        target_name="stringify",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:stringify", ()),
+        body=SugarBody(_Body(), SugarRole.CONTROL_FLOW_BODY),
+        site="deferred-lookup",
+        source_call_frame_cid="blake3-512:" + "8" * 128,
+    )
+
+
+def test_dig_leaves_a_deferred_lookup_method_body_absent() -> None:
+    callsite = _deferred_lookup_method_callsite()
+    dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
+    assert dug is None
+
+
+def test_not_of_a_deferred_lookup_method_body_stands_on_the_call() -> None:
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
+
+    callsite = _deferred_lookup_method_callsite()
+
+    @dataclass
+    class _Yield(ConstructedTermSugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return None
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+        def to_term(self, *, owner: str):
+            return self.value.to_term(owner=owner)
+
+    outcome = UnaryOpSugar("Not", _Yield(callsite), "not-deferred-lookup").desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, PredicateValue)
+    negated = outcome.value.formula
+    assert "truthy" in str(negated)
+    assert "call:stringify" in str(negated)
+
+
 def _multi_return_block_method_callsite():
     """A source-backed method whose reduced body is an unprojectable block.
 

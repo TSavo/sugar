@@ -1452,6 +1452,12 @@ class CallSiteValue(FloorValue):
                 # CallSiteValue.truth (py.truthy of the call) instead of
                 # inventing one bool for two completed predicate returns.
                 return None
+            if isinstance(outcome, NativeOperationExitCarrierV1):
+                # An undischarged lookup is not a completed floor value.
+                # Forcing it through complete_value panics; leave the
+                # projection absent so ``not self.matches(...)`` stands on
+                # the call instead of inventing a bool for exc.message.
+                return None
             value = _project_authenticated_source_return(
                 complete_value(outcome, owner=owner)
             )
