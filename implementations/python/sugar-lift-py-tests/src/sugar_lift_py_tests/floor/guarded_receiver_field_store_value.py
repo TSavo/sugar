@@ -12,13 +12,16 @@ class GuardedReceiverFieldStoreValue(ReceiverFieldStoreValue):
     guard: Formula
 
     def guarded(self, formula):
-        from sugar_lift_py_tests.ir import and_
+        from sugar_lift_py_tests.outcome.exit_set import _and_guards, _is_true
 
+        combined = _and_guards(formula, self.guard)
+        if _is_true(combined):
+            return ReceiverFieldStoreValue(self.receiver, self.attr, self.value)
         return GuardedReceiverFieldStoreValue(
             self.receiver,
             self.attr,
             self.value,
-            and_([formula, self.guard]),
+            combined,
         )
 
     def to_term(self, *, owner: str):
