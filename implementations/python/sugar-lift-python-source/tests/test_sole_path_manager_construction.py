@@ -878,6 +878,7 @@ def test_factory_kwargs_return_applies_super_init_stores_after_string_match_bran
     fields = {field.name: field.value for field in result.receiver_state.fields}
     assert fields["expected_exceptions"] is exception_actual
     assert isinstance(fields["_fail_reason"], NoneValue)
+    assert fields["match"] == match_value
 
 
 def test_typing_cast_returns_the_value_argument(tmp_path):
