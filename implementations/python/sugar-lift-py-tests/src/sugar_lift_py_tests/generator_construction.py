@@ -1366,7 +1366,9 @@ class GeneratorConstructionV1:
 
             outcome = step.raise_sugar.desugar(self._guard_evaluation_context())
             if isinstance(outcome, Incomplete):
-                return ExitSet.halted(outcome.effect, state=self)
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(outcome.effect, state=self)
+                )
             return self._gap(
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
@@ -1440,10 +1442,12 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_return(resolved_value):
-                return GeneratorTerminationV1(resolved_value, self.binding_state)
+                return self._fold_pending_cited_opaque_exits(
+                    GeneratorTerminationV1(resolved_value, self.binding_state)
+                )
 
             def continue_return(resolved_value):
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import Complete, ExitSet
                 from sugar_source_tree.panic import SugarNotWritten
 
                 result = transition_return(resolved_value)
@@ -1458,6 +1462,8 @@ class GeneratorConstructionV1:
                             "normalization"
                         ),
                     )
+                if isinstance(result, ExitSet):
+                    return result
                 return Complete(result)
 
             from sugar_lift_py_tests.caller_parameter_contract import (
@@ -1863,6 +1869,46 @@ class GeneratorConstructionV1:
         else:
             body_es = ExitSet.completed(continued)
         return body_es.and_exit_truthiness(exit_es, site=step.site)
+
+
+    def _fold_pending_cited_opaque_exits(self, outgoing):
+        """Apply already-written cited-opaque exit over a body return or raise.
+
+        Python's with law runs ``__exit__`` on every outgoing body edge.
+        ``_compose_finally_for_nested_with`` seats cleanup before a return
+        or raise and also on fall-through, so the remaining steps after
+        that terminal include a finally copy and then
+        ``NestedCitedOpaqueExitStepV1``. A return or raise must not skip
+        that exit. This reuses ``_exit_nested_cited_opaque(..., incoming=)``,
+        the same fold ``throw`` already applies when the cursor is already
+        on the exit step. It does not invent that exit swallowed the
+        termination. Cleanup that itself halts still returns before this
+        fold, so a finally raise keeps the still-open enter face.
+        """
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        pending = []
+        for step in self.steps[self.cursor + 1 :]:
+            if isinstance(step, (FinallyStepV1, InertStepV1)):
+                continue
+            if isinstance(step, NestedCitedOpaqueExitStepV1):
+                pending.append(step)
+                continue
+            break
+        if not pending:
+            return outgoing
+        if isinstance(outgoing, ExitSet):
+            incoming = outgoing
+        else:
+            incoming = ExitSet.completed(outgoing)
+        result = incoming
+        for step in pending:
+            result = self._exit_nested_cited_opaque(
+                step,
+                requested="pending cited-opaque exit",
+                incoming=result,
+            )
+        return result
 
     def _exit_nested_manager(self, step: NestedManagerExitStepV1, *, requested: str):
         """Exit the nested layer for this occurrence; advance past the exit step."""
