@@ -160,6 +160,9 @@ struct ComponentRegistration {
     protocol_version: String,
     command: Vec<String>,
     working_dir: Option<PathBuf>,
+    /// Languages this component can claim, from the manifest's `languages`.
+    /// Empty means undeclared: the component is asked about every workspace.
+    languages: Vec<String>,
     source: PathBuf,
     source_cid: String,
 }
@@ -181,6 +184,8 @@ struct ComponentManifest {
     command: Vec<String>,
     #[serde(default)]
     working_dir: Option<PathBuf>,
+    #[serde(default)]
+    languages: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -300,6 +305,14 @@ pub fn plan_workspace_with_options(
         "component plan discovery complete"
     );
     for component in components {
+        if component_has_no_census_evidence(&component, &census_languages) {
+            debug!(
+                component = component.name,
+                declared = ?component.languages,
+                "component not started: no census evidence for its declared languages"
+            );
+            continue;
+        }
         match request_component_plan(&component, &project_root, &plan.census, intent) {
             ComponentPlanOutcome::Claimed { result, languages } => {
                 info!(
@@ -960,9 +973,31 @@ fn parse_component_manifest(path: &Path) -> Result<ComponentRegistration, String
                 manifest_dir.join(dir)
             }
         }),
+        languages: manifest
+            .languages
+            .iter()
+            .map(|language| normalize_language(language))
+            .filter(|language| !language.is_empty())
+            .collect(),
         source: path.to_path_buf(),
         source_cid,
     })
+}
+
+/// A component that declares its languages is only started when the census
+/// holds evidence for one of them. Starting a kit costs a process launch and a
+/// handshake (about a second for the Python kits); paying that on every CLI
+/// call so the kit can decline a workspace the census already shows it cannot
+/// claim was most of the wall time of every non-Python `sugar` invocation.
+fn component_has_no_census_evidence(
+    component: &ComponentRegistration,
+    census_languages: &BTreeSet<String>,
+) -> bool {
+    !component.languages.is_empty()
+        && !component
+            .languages
+            .iter()
+            .any(|language| census_languages.contains(language))
 }
 
 fn request_component_plan(
@@ -2448,6 +2483,7 @@ done
             protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
             command: vec!["does-not-run".to_string()],
             working_dir: None,
+            languages: Vec::new(),
             source: PathBuf::from("manifest.toml"),
             source_cid: blake3_512_of(b"test-component"),
         };
@@ -2485,6 +2521,7 @@ done
             protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
             command: vec!["does-not-run".to_string()],
             working_dir: None,
+            languages: Vec::new(),
             source: PathBuf::from("manifest.toml"),
             source_cid: blake3_512_of(b"walk-component"),
         };
@@ -2531,6 +2568,7 @@ done
             protocol_version: COMPONENT_PROTOCOL_VERSION.to_string(),
             command: vec!["does-not-run".to_string()],
             working_dir: None,
+            languages: Vec::new(),
             source: PathBuf::from("manifest.toml"),
             source_cid: blake3_512_of(b"compiler-component"),
         };
@@ -2845,6 +2883,69 @@ done
     /// #3747 instrument: a missing component binary is not enrolled — Warning,
     /// never Error — so prove can still emit consistency rows via the compilers
     /// that *are* built (examples-gate ships only sugar-ir-smt-lib).
+    fn plan_with_unspawnable_python_component(project: &Path) -> ComponentPlan {
+        let root = tempfile::tempdir().unwrap();
+        let component_dir = root.path().join("python");
+        std::fs::create_dir_all(&component_dir).unwrap();
+        std::fs::write(
+            component_dir.join("manifest.toml"),
+            r#"name = "python"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = ["./definitely-not-installed-python-kit"]
+languages = ["Python"]
+"#,
+        )
+        .unwrap();
+        let component_path = std::env::join_paths([root.path()]).unwrap();
+
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", project.join("home"));
+        let _sugar_home = EnvGuard::remove("SUGAR_HOME");
+        let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
+        let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
+
+        plan_workspace_with_options(
+            project,
+            PlanIntent::Prove,
+            ComponentPlanOptions {
+                allow_failed_components: false,
+            },
+        )
+    }
+
+    #[test]
+    fn component_is_not_started_without_census_evidence_for_its_languages() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("notes.txt"), "no python here\n").unwrap();
+
+        let plan = plan_with_unspawnable_python_component(project.path());
+
+        // The component's command cannot spawn. Had the planner started it,
+        // the spawn failure would be recorded as a diagnostic naming it.
+        assert!(
+            plan.diagnostics.iter().all(|d| !d.message.contains("python")),
+            "a component declaring languages=[python] must not be started for a workspace \
+             with no Python evidence: {:?}",
+            plan.diagnostics
+        );
+    }
+
+    #[test]
+    fn component_is_started_when_census_holds_its_language() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("mod.py"), "x = 1\n").unwrap();
+
+        let plan = plan_with_unspawnable_python_component(project.path());
+
+        assert!(
+            plan.diagnostics.iter().any(|d| d.message.contains("python")),
+            "a component declaring languages=[python] must be asked about a workspace \
+             that holds a .py file: {:?}",
+            plan.diagnostics
+        );
+    }
+
     #[test]
     fn missing_component_binary_is_warning_not_error() {
         let project = tempfile::tempdir().unwrap();

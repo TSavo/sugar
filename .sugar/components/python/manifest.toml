@@ -3,6 +3,8 @@
 name = "python"
 version = "0.1.0"
 protocol_version = "sugar-component/1"
+# Only started when the workspace census shows Python evidence.
+languages = ["python"]
 # sugar_lift_py_tests imports sugar_lift_python_source at load (source_fragment);
 # both package src trees must be on PYTHONPATH or initialize dies before handshake.
 command = [
