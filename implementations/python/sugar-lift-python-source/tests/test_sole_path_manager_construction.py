@@ -5557,6 +5557,47 @@ def test_spread_deferred_message_lookup_is_not_forced_through_outcome_to_exitset
         outcome_to_exitset(outcome)
 
 
+def test_helper_lookup_of_bound_exit_value_is_not_a_foreign_formal(tmp_path):
+    """A helper that looks up ``exc.message`` after binding the exit value
+    must not treat that ``ExitValueCoordinate`` as one of its formals."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+    source = (
+        "class Resource:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, kind, effect, stack):\n"
+        "        return stringify(effect)\n"
+        "def stringify(exc):\n"
+        "    return exc.message\n"
+        "def make_guard(pattern):\n"
+        "    return Resource()\n"
+    )
+    graph, resolved, actual, site = _resolved(tmp_path, source)
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="owned-exit-face")
+    try:
+        outcome = protocol.exit_outcome()
+    except SourceCallBindingGap as exc:
+        raise AssertionError(
+            "already-substituted exit value was treated as a callee formal"
+        ) from exc
+    assert isinstance(outcome, NativeOperationExitCarrierV1), outcome
+    assert outcome.demand.operator == "attribute_named"
+    assert outcome.operands[1] == StringValue("message")
+    assert any(
+        isinstance(coordinate, ExitValueCoordinate)
+        for coordinate in outcome.coordinates
+    )
+
+
 def test_boolop_or_message_comparison_is_not_effect_boundary(tmp_path):
     """Disjunction is not EffectBoundary's type-and-message conjunction."""
     from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
