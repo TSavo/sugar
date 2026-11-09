@@ -2913,10 +2913,28 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
     return tree, context
 
 
-def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
+def test_installed_pytest_raises_truthful_route_cites_kwargs_match(
     tmp_path,
 ):
-    from sugar_source_tree.panic import SugarNotWritten
+    """Installed ``pytest.raises(ValueError, match="boom")`` cites the pattern.
+
+    The stored field is ``re.compile("boom")``, not the string itself. The
+    unique compile argument is the factory ``**kwargs`` entry. Construction
+    of the with-boundary carries that contract; binding the consumer
+    actuals onto the factory signature is a later door.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        VariadicKeywordEntryProjectionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
 
     tree, context = _installed_pytest_boundary(
         tmp_path,
@@ -2925,24 +2943,18 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     )
 
     assert len(context.source_derived_contract_refs) == 1
-    with_node = next(node for node in tree.nodes() if node.kind == "With")
-    with pytest.raises(SugarNotWritten) as caught:
-        with_node.sugar()
-
-    # Dual-mode RaisesExc constructs through enter; exit residual is stage-keyed
-    # unary ``not`` over an unfloored CallSiteValue field (not the drained
-    # SymbolicValue+CallSiteValue f-string dead-end).
-    assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
-    assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
-        caught.value.observed
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(reference.semantics.mode, ExpectsModeV1)
+    assert reference.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
+    assert reference.semantics.message_pattern_operand == (
+        VariadicKeywordEntryProjectionV1(3, "match")
     )
-    assert "ExitSet with 3 arms" not in caught.value.observed
-    assert (
-        caught.value.coordinate.start_line,
-        caught.value.coordinate.start_col,
-        caught.value.coordinate.end_line,
-        caught.value.coordinate.end_col,
-    ) == (3, 9, 3, 48)
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    boundary = with_node.sugar()
+    assert isinstance(boundary, WithEffectBoundarySugar)
+    assert boundary.semantics == reference.semantics
 
 
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(

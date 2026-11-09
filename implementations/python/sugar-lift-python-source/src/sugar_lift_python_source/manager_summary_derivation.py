@@ -1242,8 +1242,11 @@ def _keyword_entry_cited_by_field(behavior, field_name, receiver=None):
 
     Factory ``raises(expected, *args, **kwargs)`` does not name ``match``.
     The pattern is the unique dict entry whose string key is the field name
-    and whose value is the stored field. That is a variadic keyword entry,
-    not a named formal and not NoMessagePattern.
+    and whose value is the stored field, or whose term is uniquely contained
+    in the stored field (the unique string argument of ``re.compile(match)``
+    is still that kwargs entry; the compile call is not itself the string).
+    That is a variadic keyword entry, not a named formal and not
+    NoMessagePattern.
     """
     from sugar_lift_py_tests.floor.dict_value import DictValue
     from sugar_lift_py_tests.floor.none_value import NoneValue
@@ -1254,6 +1257,7 @@ def _keyword_entry_cited_by_field(behavior, field_name, receiver=None):
     field = _receiver_field_value(behavior, field_name, receiver=receiver)
     if field is None or isinstance(field, NoneValue):
         return None
+    field_term = field.to_term(owner=behavior.resolved_object_cid)
     candidates = []
     for index, actual in enumerate(behavior.formal_actual_values):
         if type(actual) is not DictValue:
@@ -1263,7 +1267,13 @@ def _keyword_entry_cited_by_field(behavior, field_name, receiver=None):
             for key, value in actual.entries
             if type(key) is StringValue
             and key.value == field_name
-            and value == field
+            and (
+                value == field
+                or _term_contains_term(
+                    field_term,
+                    value.to_term(owner=behavior.resolved_object_cid),
+                )
+            )
         ]
         if len(matching) > 1:
             return None
