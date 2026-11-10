@@ -71,6 +71,7 @@ from .binding_state import (
     branch_result_slot,
     join_binding_state,
     try_route_site,
+    try_edge_slot,
     try_route_slot,
     unwrap_binding_state,
 )
@@ -10067,6 +10068,151 @@ class Raise(Statement):
         )
 
 
+def _occurrence_keys_of(fragment):
+    """The spellings a raise occurrence at ``fragment`` is keyed by: the
+    fragment itself and its ``file:line:col`` locus (``RaiseSugar``)."""
+    keys = {str(fragment)}
+    filename = getattr(fragment, "filename", None)
+    line = getattr(fragment, "line", None)
+    col = getattr(fragment, "col", None)
+    if filename is not None and line is not None and col is not None:
+        keys.add(f"{filename}:{line}:{col}")
+    return keys
+
+
+class _HaltEdgeState(dict):
+    """One body halt edge's state: a binding map that also knows which body
+    statement (``edge``) it leaves from, so disagreeing edges are joined over
+    that statement's ``try-edge`` slot instead of falling back to the pre-try
+    state."""
+
+    def __init__(self, entries, *, edge, join=None):
+        super().__init__(entries)
+        self.edge = edge
+        self.join = join
+
+
+class _HaltEdgeJoin:
+    """Joins the states body halt edges carry into one handler/``finally``."""
+
+    def __init__(self, try_node, scope, site_id):
+        self.try_node = try_node
+        self.scope = scope
+        self.site_id = site_id
+        self.minted = False
+        self.edges: dict = {}
+
+    def carry(self, state):
+        edge = getattr(state, "edge", None)
+        if edge is None:
+            return state
+        self.edges.setdefault(edge, None)
+        return _HaltEdgeState(state, edge=edge, join=self)
+
+    def arm_halt_state(self, handler, index, handler_net, scope):
+        """The state a halt raised inside arm ``index`` carries to ``finally``."""
+        changed = [
+            name
+            for name, entry in handler_net.items()
+            if name != handler.name and scope.get(name) is not entry
+        ]
+        state = dict(handler_net)
+        if changed:
+            from .container_mutation import _havoc
+            from .shadow import occurrence_tags_of
+
+            tags = occurrence_tags_of(handler)
+            binding = {name: _havoc(handler, name, tags) for name in changed}
+            state.update(handler._binding_entries(binding, scope))
+        edge = f"arm{index}"
+        self.edges.setdefault(edge, None)
+        return _HaltEdgeState(state, edge=edge, join=self)
+
+    def _value(self, state, name):
+        if name in state:
+            return state[name]
+        return _explicit_state(name, self.scope)
+
+    def _joined(self, name, edge_states, fallback):
+        """``s0 if edge0 else (s1 if edge1 else ... fallback)``, or _MISSING."""
+        by_edge = []
+        seen = set()
+        for state in edge_states:
+            edge = getattr(state, "edge", None)
+            if edge in seen:
+                continue
+            seen.add(edge)
+            by_edge.append((edge, self._value(state, name)))
+        if fallback is _MISSING:
+            if not by_edge:
+                return _MISSING
+            *by_edge, (_edge, fallback) = by_edge
+        if fallback is _MISSING or any(v is _MISSING for _e, v in by_edge):
+            return _MISSING
+        if all(v is fallback or v == fallback for _e, v in by_edge):
+            return fallback
+        joined = fallback
+        for edge, value in reversed(by_edge):
+            if edge is None:
+                return _MISSING
+            joined = join_binding_state(
+                slot=try_edge_slot(self.site_id, edge),
+                when_true=value,
+                when_false=joined,
+                make_ifexp=self.try_node._make_ifexp,
+            )
+            self.minted = True
+        return joined
+
+    def disagreement(self, states, agreed):
+        names = set().union(*(state.keys() for state in states)) - set(agreed)
+        out = {}
+        for name in _ordered_binding_keys(names):
+            joined = self._joined(name, states, _MISSING)
+            if joined is not _MISSING:
+                out[name] = joined
+        return out
+
+    def finally_state(self, escaping):
+        """What ``finally`` sees under a halt: the escaping edges joined."""
+        if not escaping:
+            return {}
+        names = set().union(*(state.keys() for state in escaping))
+        out = {}
+        for name in _ordered_binding_keys(names):
+            joined = self._joined(name, escaping, _MISSING)
+            if joined is not _MISSING:
+                out[name] = joined
+        return out
+
+    def edge_keys(self):
+        """``(slot id, occurrence keys)`` per body statement that is an edge."""
+        body = self.try_node.body
+        keys = []
+        for edge in sorted((e for e in self.edges if e is not None), key=str):
+            if isinstance(edge, str):
+                # An arm's own halt: no body statement holds it, so a body halt
+                # decides it false and nothing decides it true.
+                keys.append((try_edge_slot(self.site_id, edge).slot_id, ()))
+                continue
+            if edge >= len(body):
+                continue
+            statement = body[edge]
+            keys.append(
+                (
+                    try_edge_slot(self.site_id, edge).slot_id,
+                    tuple(
+                        sorted(
+                            key
+                            for node in statement.walk()
+                            for key in _occurrence_keys_of(node.fragment)
+                        )
+                    ),
+                )
+            )
+        return tuple(keys)
+
+
 class Try(Statement):
     body: Tuple[Statement, ...]
     handlers: Tuple[ExceptHandler, ...]
@@ -10090,13 +10236,24 @@ class Try(Statement):
             return self if not changed else rewrite(self, **changed)
 
         changed = {}
+        site_id = getattr(self, "try_route_site_id", None)
+        retained_site = site_id is not None
+        if not retained_site:
+            site_id = try_route_site(self)
         body_edge_states: list = []
         new_body, d, body_net = self._substitute_body_tracked(
             self.body, scope, edge_states=body_edge_states
         )
         if d:
             changed["body"] = new_body
+        # The state the body leaves with closes the last statement's interval,
+        # so each statement's halt edge can see what that statement changed.
+        body_edge_states.append((None, {**scope, **body_net}))
+        join = _HaltEdgeJoin(self, scope, site_id)
         halt_edges = self._body_halt_edges(body_edge_states, scope)
+        halt_edges = [
+            (identity, mro, join.carry(state)) for identity, mro, state in halt_edges
+        ]
         routed = self._route_halt_edges(halt_edges)
         body_state = {**scope, **body_net}
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, body_state)
@@ -10163,30 +10320,77 @@ class Try(Statement):
             ):
                 completion_routes.append((handler_index, handler_net))
 
-        site_id = getattr(self, "try_route_site_id", None)
-        retained_site = site_id is not None
-        if not retained_site:
-            site_id = try_route_site(self)
         merged, minted = self._merge_completion_nets(
             scope, completion_routes, site_id=site_id
         )
         final_scope = {**scope, **merged}
+        if self.finalbody:
+            # ``finally`` also runs on every body halt no arm surely catches,
+            # beginning from that halt's own state -- never the pre-try state.
+            escaping = [
+                state
+                for identity, mro, state in halt_edges
+                if not any(
+                    self._handler_surely_matches(handler, identity, mro)
+                    for handler in self.handlers
+                )
+            ]
+            # An arm may itself raise (or re-raise) after its own stores: that
+            # halt reaches ``finally`` with every name the arm changed unknown.
+            for handler_index, (handler, handler_net) in enumerate(
+                zip(self.handlers, handler_nets)
+            ):
+                if handler_index not in routed:
+                    continue
+                arm_state = join.arm_halt_state(
+                    handler, handler_index, handler_net, scope
+                )
+                if arm_state is not None:
+                    escaping.append(arm_state)
+            halted_entries = join.finally_state(escaping)
+        else:
+            halted_entries = {}
         new_finalbody, d, final_net = self._substitute_body_tracked(
             self.finalbody, final_scope
         )
         if d:
             changed["finalbody"] = new_finalbody
         merged = {**merged, **final_net}
+        # A halt reaches ``finally`` with its own state, not the completion
+        # join: the same clause is substituted once more for the halted faces
+        # (``TrySugar`` reduces it for every incoming halt).  The tail after
+        # the try runs only on completion, so ``merged`` keeps the completion
+        # threading.
+        finalbody_halted = None
+        if any(
+            final_scope.get(name) is not entry for name, entry in halted_entries.items()
+        ):
+            finalbody_halted, _d = self._substitute_body(
+                self.finalbody, {**final_scope, **halted_entries}
+            )
 
-        if minted and not retained_site:
-            node = self._rewrite_with_route_site(changed, site_id)
+        edge_keys = join.edge_keys() if join.minted else ()
+        if (
+            (minted and not retained_site)
+            or (edge_keys and edge_keys != getattr(self, "try_edge_keys", ()))
+            or finalbody_halted is not None
+        ):
+            node = self._rewrite_with_route_site(
+                changed,
+                site_id if not retained_site else None,
+                edge_keys,
+                finalbody_halted,
+            )
         else:
             node = self if not changed else rewrite(self, **changed)
         return _Splice((node,), merged) if merged else node
 
-    def _rewrite_with_route_site(self, changed, site_id):
+    def _rewrite_with_route_site(
+        self, changed, site_id, edge_keys=(), finalbody_halted=None
+    ):
         """Carry the route-slot address onto the rewritten try so its sugar
-        confirms the same slots the joined bindings read."""
+        confirms the same slots the joined bindings read; ``edge_keys`` lets it
+        ground the halt-edge slots a handler's or ``finally``'s state reads."""
         from .backend import Leaf, materialize
         from .shadow import rewrite
 
@@ -10194,12 +10398,34 @@ class Try(Statement):
         desc = rewritten.ref.describe()
         from .shadow import ShadowNode
 
+        extra = []
+        slots = tuple(
+            slot
+            for slot in desc.slots
+            if slot[0] not in ("try_edge_keys", "try_finalbody_halted")
+        )
+        if site_id is not None:
+            extra.append(("try_route_site_id", Leaf(site_id)))
+        if edge_keys:
+            if getattr(self, "try_route_site_id", None) is None and site_id is None:
+                extra.append(("try_route_site_id", Leaf(try_route_site(self))))
+            extra.append(("try_edge_keys", Leaf(edge_keys)))
+        if finalbody_halted is not None:
+            from .backend import Children
+            from .shadow import _handle_of
+
+            extra.append(
+                (
+                    "try_finalbody_halted",
+                    Children(tuple(_handle_of(stmt) for stmt in finalbody_halted)),
+                )
+            )
         return materialize(
             self.unit,
             ShadowNode(
                 desc.kind,
                 desc.raw_span or self.span,
-                (*desc.slots, ("try_route_site_id", Leaf(site_id))),
+                (*slots, *extra),
             ),
             self.reporter,
             self.control_context,
@@ -10247,15 +10473,79 @@ class Try(Statement):
         block-local net at that occurrence -- what an exit leaving *here*
         carries.  ``exception_identity is None`` means the occurrence is not
         type-testified (an opaque step), so every handler may receive it."""
+        from .container_mutation import cited_call_cannot_halt
+
         edges = []
-        for statement, pre_statement_scope in edge_states:
+        for index, (statement, pre_statement_scope) in enumerate(edge_states):
+            if statement is None:
+                continue
+            if cited_call_cannot_halt(statement, pre_statement_scope):
+                continue
             net = {
                 name: state
                 for name, state in pre_statement_scope.items()
                 if scope.get(name) is not state
             }
+            post = (
+                edge_states[index + 1][1] if index + 1 < len(edge_states) else None
+            )
+            net = self._mid_statement_state(statement, pre_statement_scope, post, net)
+            net = _HaltEdgeState(net, edge=index)
             edges.extend(self._statement_halt_edges(statement, net))
         return edges
+
+    #: States a statement's completion binds to an object some code it ran may
+    #: have changed (``container_mutation.havoc_after``): that code may change
+    #: it and THEN raise, so a halt at the statement cannot claim the old one.
+    _MID_STATEMENT_MUTATION_KINDS = frozenset(
+        {"ReceiverAfterCall", "SourceCallActualAfter", "OpaqueObjectStateV1"}
+    )
+    _COMPOUND_KINDS = frozenset(
+        {
+            "For",
+            "AsyncFor",
+            "While",
+            "With",
+            "AsyncWith",
+            "If",
+            "Try",
+            "TryStar",
+            "Match",
+        }
+    )
+
+    def _mid_statement_state(self, statement, pre, post, net):
+        """The state a halt INSIDE ``statement`` carries.
+
+        A simple statement binds its own targets only once it completes, so a
+        halt in it carries the state it began with -- except an object code it
+        ran may have changed before raising.  A compound statement may halt
+        after any of its inner stores: every name it changes is unknown at its
+        halt, never the state it began with."""
+        if post is None:
+            return net
+        compound = getattr(statement, "kind", None) in self._COMPOUND_KINDS
+        changed = []
+        for name, before in pre.items():
+            after = post.get(name, _MISSING)
+            if after is _MISSING or after is before:
+                continue
+            if isinstance(unwrap_binding_state(before), UnboundBinding):
+                continue
+            if compound or (
+                getattr(unwrap_binding_state(after), "kind", None)
+                in self._MID_STATEMENT_MUTATION_KINDS
+            ):
+                changed.append(name)
+        if not changed:
+            return net
+        from .container_mutation import _havoc
+        from .shadow import occurrence_tags_of
+
+        tags = occurrence_tags_of(statement)
+        binding = {name: _havoc(statement, name, tags) for name in changed}
+        binding = statement._binding_entries(binding, pre)
+        return {**net, **binding}
 
     def _statement_halt_edges(self, statement, net):
         """The halted exits ONE statement contributes, all carrying ``net`` --
@@ -10332,7 +10622,7 @@ class Try(Statement):
         if not states:
             return {}
         first, rest = states[0], states[1:]
-        return {
+        agreed = {
             name: entry
             for name, entry in first.items()
             if all(
@@ -10340,6 +10630,12 @@ class Try(Statement):
                 for other in rest
             )
         }
+        join = getattr(first, "join", None)
+        if join is None:
+            return agreed
+        # A name the edges DISAGREE on is not the pre-try state: it is the
+        # state of whichever edge raised, joined over that edge's slot.
+        return {**agreed, **join.disagreement(states, agreed)}
 
     def _handler_matches(self, handler, exception_identity, exception_mro) -> bool:
         if handler.type_ is None:
@@ -10491,6 +10787,9 @@ class Try(Statement):
                 orelse=tuple(stmt.sugar() for stmt in self.orelse),
                 finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
                 site=self.fragment,
+                route_site=getattr(self, "try_route_site_id", None),
+                edge_keys=getattr(self, "try_edge_keys", ()) or (),
+                finalbody_halted=self._finalbody_halted_sugar(),
             )
 
         handler_specs = self._authenticated_handler_specs()
@@ -10503,7 +10802,16 @@ class Try(Statement):
             finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
             site=self.fragment,
             route_site=getattr(self, "try_route_site_id", None),
+            edge_keys=getattr(self, "try_edge_keys", ()) or (),
+            finalbody_halted=self._finalbody_halted_sugar(),
         )
+
+    def _finalbody_halted_sugar(self):
+        """``finally`` as substituted for the halted faces, or None."""
+        halted = getattr(self, "try_finalbody_halted", None)
+        if halted is None:
+            return None
+        return tuple(stmt.sugar() for stmt in halted)
 
     def _authenticated_handler_specs(self):
         """``(type Sugar|None, body sugars, slot id)`` per arm, or None.

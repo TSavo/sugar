@@ -34,6 +34,14 @@ class TrySugar(Sugar):
     #: try's routes (``Try._merge_completion_nets``); ``None`` when no binding
     #: depends on the route, so no slot is confirmed.
     route_site: object = None
+    #: ``((slot id, occurrence keys), ...)``: one ``try-edge`` slot per body
+    #: statement a handler's or ``finally``'s joined state reads
+    #: (``Try._incoming_halt_state``).  A routed halt grounds them from its
+    #: own occurrence (``_ground_edges``).
+    edge_keys: tuple = ()
+    #: ``finally`` substituted under the state a halt carries into it
+    #: (``Try.substitute``); None when that is the completion state.
+    finalbody_halted: object = None
 
     @classmethod
     def witnesses(cls):
@@ -74,6 +82,7 @@ class TrySugar(Sugar):
             promote_raise_halts,
         )
 
+        arm_effects: list = []
         pre_finally = _route_handlers_over_exits(
             promote_raise_halts(body_es),
             self.handlers,
@@ -81,6 +90,8 @@ class TrySugar(Sugar):
             site=self.site,
             ctx=ctx,
             route_site=self.route_site,
+            edge_keys=self.edge_keys,
+            arm_effects=arm_effects,
         )
 
         if not self.finalbody:
@@ -91,6 +102,10 @@ class TrySugar(Sugar):
             self.finalbody,
             ctx=ctx,
             site=self.site,
+            edge_keys=self.edge_keys,
+            body_effects=_body_halt_effects(body_es) if self.edge_keys else (),
+            arm_effects=tuple(arm_effects),
+            finalbody_halted=self.finalbody_halted,
         )
         return _try_outcome(after)
 
@@ -132,7 +147,75 @@ def _finally_restores(value: object) -> bool:
     return True
 
 
-def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
+def _occurrence_key(effect):
+    occurrence = getattr(effect, "occurrence", None)
+    value = getattr(occurrence, "value", occurrence)
+    return value if isinstance(value, str) else None
+
+
+def _body_halt_effects(body_es) -> tuple:
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    return tuple(
+        exit_.effect for exit_ in body_es.exits if isinstance(exit_, Halted)
+    )
+
+
+def _ground_edges(ctx, edge_keys, effect):
+    """A context in which the ``try-edge`` slots say which body statement raised
+    ``effect`` (``None``: the halt did not come from the body -- every edge
+    false).  A body halt whose occurrence no edge statement holds (it was raised
+    inside a callee) leaves them undecided."""
+    if not edge_keys or ctx is None:
+        return ctx
+    table = getattr(ctx, "ground_branch_results", None)
+    if not isinstance(table, dict):
+        return ctx
+    from dataclasses import is_dataclass, replace
+
+    if not is_dataclass(ctx):
+        return ctx
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    if effect is None:
+        hit = None
+    else:
+        key = _occurrence_key(effect)
+        if key is not None and "@" in key:
+            # An occurrence path (an unrolled iteration, a callee frame)
+            # qualifies the site; the site is what a body statement holds.
+            key = key.split("@", 1)[0]
+        hits = [slot for slot, keys in edge_keys if key is not None and key in keys]
+        if len(hits) != 1:
+            return ctx
+        (hit,) = hits
+    decided = {
+        slot: (
+            TrueBoolLiteralSugar(site=None)
+            if slot == hit
+            else FalseBoolLiteralSugar(site=None)
+        )
+        for slot, _keys in edge_keys
+    }
+    return replace(ctx, ground_branch_results={**table, **decided})
+
+
+def _and_finally_with_raise_context(
+    pre_finally,
+    finalbody,
+    *,
+    ctx,
+    site,
+    edge_keys=(),
+    body_effects=(),
+    arm_effects=(),
+    finalbody_halted=None,
+):
     """try/finally over ExitSet, retaining body raise as implicit context.
 
     Mirrors ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
@@ -160,8 +243,11 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
         reduce_block_to_exitset,
     )
 
-    # Shared fall-through cleanup (no body exception active).
-    neutral_cleanup = reduce_block_to_exitset(finalbody, ctx)
+    # Shared fall-through cleanup (no body exception active): no body halt
+    # edge reached ``finally``.
+    neutral_cleanup = reduce_block_to_exitset(
+        finalbody, _ground_edges(ctx, edge_keys, None)
+    )
     # Slot for bind/resolve when reducing finally over a body halt.
     site_key = getattr(site, "filename", None) or repr(site)
     site_line = getattr(site, "line", "")
@@ -170,10 +256,22 @@ def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
     exits: list = []
     for incoming in pre_finally.exits:
         if isinstance(incoming, Halted) and isinstance(incoming.effect, RaiseEffect):
-            finally_ctx = bind_in_flight_effect(
-                ctx, finally_slot, incoming.effect, blame=site
+            # Only a body halt that left untouched by every arm says which
+            # body statement raised; a halt an arm raised (or re-raised) after
+            # its own stores leaves the edges undecided.
+            edge_ctx = (
+                _ground_edges(ctx, edge_keys, incoming.effect)
+                if any(incoming.effect is effect for effect in body_effects)
+                and not any(incoming.effect is effect for effect in arm_effects)
+                else ctx
             )
-            cleanup_es = reduce_block_to_exitset(finalbody, finally_ctx)
+            finally_ctx = bind_in_flight_effect(
+                edge_ctx, finally_slot, incoming.effect, blame=site
+            )
+            cleanup_es = reduce_block_to_exitset(
+                finalbody if finalbody_halted is None else finalbody_halted,
+                finally_ctx,
+            )
         else:
             cleanup_es = neutral_cleanup
 
@@ -405,6 +503,8 @@ def _route_handlers_over_exits(
     site,
     ctx=None,
     route_site=None,
+    edge_keys=(),
+    arm_effects=None,
 ):
     """Route each Halted raise through the first matching handler.
 
@@ -425,9 +525,22 @@ def _route_handlers_over_exits(
     for exit_ in body_es.exits:
         if isinstance(exit_, Halted):
             for arm, part in _route_one_halt(
-                exit_, handlers, site=site, ctx=ctx, with_arms=True
+                exit_,
+                handlers,
+                site=site,
+                ctx=ctx,
+                with_arms=True,
+                edge_keys=edge_keys,
             ):
                 if arm is not None:
+                    if arm_effects is not None:
+                        # Whatever an arm halts with -- a re-raise of this very
+                        # effect included -- left after the arm's own stores.
+                        arm_effects.extend(
+                            halted.effect
+                            for halted in part.exits
+                            if isinstance(halted, Halted)
+                        )
                     facts = _route_confirmation(route_site, count, arm, site)
                     if facts:
                         part = _ground_route_on_faces(
@@ -480,7 +593,9 @@ def _route_handlers_over_exits(
     return result
 
 
-def _route_one_halt(exit_, handlers: tuple, *, site, ctx, with_arms=False) -> list:
+def _route_one_halt(
+    exit_, handlers: tuple, *, site, ctx, with_arms=False, edge_keys=()
+) -> list:
     """Route ONE halted body exit through the handler list, in source order.
 
     Walks the arms carrying a residual: the exit as it still stands after every
@@ -512,7 +627,12 @@ def _route_one_halt(exit_, handlers: tuple, *, site, ctx, with_arms=False) -> li
         # a reconstructed E(). Observed must be installed BEFORE the body
         # reduces; prepending facts after the fact cannot authenticate a read
         # that already desugared to a pure coordinate.
-        handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect, blame=site)
+        handler_ctx = bind_in_flight_effect(
+            _ground_edges(ctx, edge_keys, exit_.effect),
+            slot_id,
+            exit_.effect,
+            blame=site,
+        )
         if slot_id is not None:
             observer = getattr(handler_ctx, "with_observed_effect", None)
             if observer is not None:
