@@ -62,13 +62,12 @@ def _is_split_by_retained_type_test(exits) -> bool:
         for face in exits.exits
         if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
     ]
-    # The function universe records the caught return as ``implies(atom,
-    # return)``; the escaping halt carries the complement as its guard.
+    # The caught return is the try's own completed face, guarded by the
+    # retained type test; the escaping halt carries the complement.
     return (
         len(completed) == 1
         and len(halted) == 1
-        and "InvValue(formula=_Connective(kind='implies', operands=(_Atomic("
-        "name='adt.is_python_type'" in repr(completed[0].value)
+        and getattr(completed[0].guard, "name", None) == "adt.is_python_type"
         and getattr(halted[0].guard, "kind", None) == "not"
         and "adt.is_python_type" in repr(halted[0].guard)
     )

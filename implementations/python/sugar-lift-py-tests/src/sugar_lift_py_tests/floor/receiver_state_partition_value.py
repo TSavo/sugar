@@ -23,12 +23,20 @@ class ReceiverStatePartitionValue(FloorValue):
             elif isinstance(face, Halted):
                 from sugar_lift_py_tests.effect import RaiseEffect
 
+                from sugar_lift_py_tests.effect.raise_effect import (
+                    UndeterminedRaiseEffect,
+                )
+
                 if isinstance(face.effect, RaiseEffect):
                     from sugar_lift_py_tests.floor.raise_value import (
                         _exceptional_exit_term,
                     )
 
                     payload = _exceptional_exit_term(face.effect)
+                elif isinstance(face.effect, UndeterminedRaiseEffect):
+                    # A may-raise operation's halt: the subject is the one
+                    # exception object it threw, never a named class.
+                    payload = _undetermined_raise_term(face.effect, owner=owner)
                 else:
                     payload = face.effect.to_term(owner=owner)
                 kind = "halted"
@@ -72,3 +80,25 @@ class ReceiverStatePartitionValue(FloorValue):
         return _term_content_cid(
             self.to_term(owner="ReceiverStatePartitionValue.identity")
         )
+
+
+def _undetermined_raise_term(effect, *, owner: str):
+    """Name an undetermined halt by the exception object it threw."""
+    from sugar_lift_py_tests.ir import ctor
+
+    subject = effect.exception_value
+    if subject is None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=getattr(effect, "blame", None) or owner,
+            owner="ReceiverStatePartitionValue.to_term",
+            observed="undetermined halt with no exception subject",
+            requested="an UndeterminedRaiseEffect keyed on its occurrence",
+            fix="carry the occurrence so the thrown object can be named",
+        )
+    return ctor(
+        "python:undetermined-raise",
+        [subject.to_term(owner=owner)],
+        symbol_kind="coordinate",
+    )
