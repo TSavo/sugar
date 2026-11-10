@@ -106,6 +106,20 @@ def predicate_formula(value, site):
     return formula
 
 
+def _is_linear(exits) -> bool:
+    """One unguarded completed face: nothing a flattening could merge."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    return (
+        len(exits.exits) == 1
+        and isinstance(exits.exits[0], Completed)
+        and exits.exits[0].guard == true_guard()
+        and not exits.exits[0].faces
+        and not exits.exits[0].pending_contracts
+    )
+
+
 @dataclass(frozen=True)
 class IfSugar(Sugar):
     """`if <test>: <then> [else: <else>]`, constructed by `If.sugar()` with the
@@ -141,6 +155,28 @@ class IfSugar(Sugar):
         if not isinstance(cond, Complete):
             return cond
         return self._desugar_condition(cond.value, ctx)
+
+    def _ground_branch_result(self, ctx, observed_formula) -> None:
+        """A ground condition decides this if's branch-result slot."""
+        from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+        if ctx is None or self.branch_slot is None:
+            return
+        table = getattr(ctx, "ground_branch_results", None)
+        if not isinstance(table, dict):
+            return
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        table[self.branch_slot.slot_id] = (
+            TrueBoolLiteralSugar(site=self.site)
+            if observed_formula == true_guard()
+            else FalseBoolLiteralSugar(site=self.site)
+        )
 
     def _desugar_condition(self, condition, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
@@ -195,12 +231,29 @@ class IfSugar(Sugar):
         # Default FloorValue.extend_scope is identity.
         branch_ctx = condition.extend_scope(ctx)
 
-        if observed_formula == false_guard():
-            then_exits = ExitSet(())
-            else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
-        elif observed_formula == true_guard():
-            then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
-            else_exits = ExitSet(())
+        if observed_formula in (false_guard(), true_guard()):
+            selected = reduce_block_to_exitset(
+                self.then_body
+                if observed_formula == true_guard()
+                else self.else_body,
+                branch_ctx,
+            )
+            self._ground_branch_result(ctx, observed_formula)
+            if isinstance(selected, ExitSet) and not _is_linear(selected):
+                # A ground condition selects ONE suite: the if is that suite.
+                # Its faces are handed back as they are -- each with its own
+                # temporal record -- never flattened into one completed face
+                # whose entries are merely guarded.  Flattening put a store
+                # made only after a call completed beside a completed face
+                # under ``true``, so the constructor forked an impossible
+                # companion that completed WITHOUT the store where the call
+                # in fact raised.
+                return selected
+            then_exits, else_exits = (
+                (selected, ExitSet(()))
+                if observed_formula == true_guard()
+                else (ExitSet(()), selected)
+            )
         else:
             then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
             else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
@@ -262,25 +315,6 @@ class IfSugar(Sugar):
             if observed_formula in (false_guard(), true_guard())
             else (authentication,)
         )
-        if (
-            ctx is not None
-            and observed_formula in (false_guard(), true_guard())
-            and self.branch_slot is not None
-        ):
-            table = getattr(ctx, "ground_branch_results", None)
-            if isinstance(table, dict):
-                from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                    FalseBoolLiteralSugar,
-                )
-                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                    TrueBoolLiteralSugar,
-                )
-
-                table[self.branch_slot.slot_id] = (
-                    TrueBoolLiteralSugar(site=self.site)
-                    if observed_formula == true_guard()
-                    else FalseBoolLiteralSugar(site=self.site)
-                )
         return Complete(
             GuardedFaces(
                 guard=formula,

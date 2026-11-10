@@ -309,6 +309,57 @@ def _route_confirmation(route_site, handler_count, arm, site):
     )
 
 
+def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
+    """Decide the route slots on each completed face of ONE route.
+
+    A face that left the try by handler ``arm`` (or by the body, ``arm is
+    None``) knows which route it took: the code after the try, reduced under
+    that face, reads the joined binding as that route's own value.  The
+    decision rides on the face's own reduction context -- a copy of the
+    ground table -- so no other route's face sees it."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+    from sugar_source_tree.binding_state import try_route_slot
+
+    decided = {
+        try_route_slot(route_site, index).slot_id: (
+            TrueBoolLiteralSugar(site=site)
+            if index == arm
+            else FalseBoolLiteralSugar(site=site)
+        )
+        for index in range(handler_count)
+    }
+    out = []
+    for exit_ in exits.exits:
+        state = getattr(exit_, "value", None)
+        context = getattr(state, "context", None)
+        table = getattr(context, "ground_branch_results", None)
+        if (
+            isinstance(exit_, Completed)
+            and isinstance(state, _ReducedBlock)
+            and isinstance(table, dict)
+        ):
+            exit_ = replace(
+                exit_,
+                value=replace(
+                    state,
+                    context=replace(
+                        context, ground_branch_results={**table, **decided}
+                    ),
+                ),
+            )
+        out.append(exit_)
+    return ExitSet(tuple(out))
+
+
 def _ground_decided_route(routed, route_site, handler_count, ctx, site):
     """Ground the route slots when every completed outcome took one route.
 
@@ -379,13 +430,21 @@ def _route_handlers_over_exits(
                 if arm is not None:
                     facts = _route_confirmation(route_site, count, arm, site)
                     if facts:
-                        part = _prepend_facts(part, facts)
+                        part = _ground_route_on_faces(
+                            _prepend_facts(part, facts), route_site, count, arm, site
+                        )
                     routed.append((arm, part))
                 parts.append(part)
             continue
         body_facts = _route_confirmation(route_site, count, None, site)
         if body_facts:
-            exit_ = _prepend_facts(ExitSet((exit_,)), body_facts).exits[0]
+            exit_ = _ground_route_on_faces(
+                _prepend_facts(ExitSet((exit_,)), body_facts),
+                route_site,
+                count,
+                None,
+                site,
+            ).exits[0]
 
         if orelse:
             else_es = reduce_block_to_exitset(orelse, ctx)
@@ -513,18 +572,18 @@ def _prepend_facts(exits, facts: tuple):
             out.append(exit_)
             continue
         state = exit_.value
+        # ``replace`` keeps the arm's partition testimony and pending
+        # obligations; rebuilding ``Completed`` from guard and value alone
+        # dropped both.
         if isinstance(state, _ReducedBlock):
             out.append(
-                Completed(
-                    exit_.guard,
-                    replace(state, entries=(*facts, *state.entries)),
-                )
+                replace(exit_, value=replace(state, entries=(*facts, *state.entries)))
             )
         else:
             out.append(
-                Completed(
-                    exit_.guard,
-                    _ReducedBlock(
+                replace(
+                    exit_,
+                    value=_ReducedBlock(
                         entries=(*facts, state) if state is not None else facts,
                         can_fall_through=True,
                         fall_through=(),

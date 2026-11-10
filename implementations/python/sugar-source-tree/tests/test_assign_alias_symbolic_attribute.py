@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -69,56 +69,40 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
         "    return constructed_value\n"
     )
     outcome = function.sugar().desugar()
-    assert isinstance(outcome, Complete)
-    record = outcome.value.record.statements
-    stores = [
-        entry
-        for entry in record
-        if isinstance(entry, Incomplete)
-        and isinstance(entry.effect, AttributeStoreRuntimeEffect)
-    ]
 
-    # The store is guarded by `predicate` AND it is itself fallible, so the one
-    # occurrence has TWO faces: it completed, or it halted. `IfSugar` reduces the
-    # branch body to exits and absorbs each one as guarded red testimony, so both
-    # faces reach the record -- carrying the same effect under complementary
-    # conditions over the store's own outcome coordinate.
-    assert len(stores) == 2, [s.branch_conditions for s in stores]
-    assert {s.effect for s in stores} == {
-        stores[0].effect
-    }, "both faces are the SAME store occurrence, not two stores"
+    # The store is fallible, so the one occurrence has TWO faces: it completed,
+    # or it halted.  The decided ``if`` hands back its suite's own faces, so the
+    # halted face is a real halt -- the function does NOT go on to return there
+    # -- and only the completed face carries the return.
+    assert isinstance(outcome, ExitSet)
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert len(completed) == 1 and len(halted) == 1, outcome.exits
 
     def cites_store_outcome(term):
         if getattr(term, "name", None) == "python:store_completed":
             return True
         return any(cites_store_outcome(a) for a in getattr(term, "args", ()) or ())
 
-    def mentions_store_outcome(formula, negated):
-        found = []
+    def store_atom(formula):
+        return getattr(formula, "name", None) == "py.truthy" and any(
+            cites_store_outcome(a) for a in formula.args
+        )
 
-        def walk(node, under_not):
-            kind = getattr(node, "kind", None)
-            if kind == "not":
-                for operand in node.operands:
-                    walk(operand, not under_not)
-                return
-            if kind is not None:
-                for operand in node.operands:
-                    walk(operand, under_not)
-                return
-            # an atomic formula: check its argument terms
-            if any(cites_store_outcome(a) for a in getattr(node, "args", ()) or ()):
-                found.append(under_not)
+    (done,) = completed
+    (stopped,) = halted
+    assert store_atom(done.guard), "the completed face holds where the store COMPLETED"
+    assert getattr(stopped.guard, "kind", None) == "not"
+    assert store_atom(stopped.guard.operands[0]), "the halted face holds where the store HALTED"
 
-        walk(formula, False)
-        return negated in found
-
-    conditions = [s.branch_conditions for s in stores]
-    assert all(len(c) == 1 for c in conditions), conditions
-    assert any(
-        mentions_store_outcome(c[0], False) for c in conditions
-    ), "one face must hold where the store COMPLETED"
-    assert any(
-        mentions_store_outcome(c[0], True) for c in conditions
-    ), "the complementary face must hold where the store HALTED"
+    record = done.value.record.statements
+    stores = [
+        entry
+        for entry in record
+        if isinstance(entry, Incomplete)
+        and isinstance(entry.effect, AttributeStoreRuntimeEffect)
+    ]
+    assert len(stores) == 1
+    assert isinstance(stopped.effect, AttributeStoreRuntimeEffect)
+    assert stopped.effect == stores[0].effect, "both faces are the SAME store occurrence"
     assert any(type(entry).__name__ == "ReturnValue" for entry in record)

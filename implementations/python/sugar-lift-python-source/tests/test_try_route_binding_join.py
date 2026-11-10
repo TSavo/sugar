@@ -83,6 +83,10 @@ class _Lift:
                 name = type(entry).__name__
                 if name == "ReturnValue":
                     self.returns.append((face.guard, entry.value))
+                elif name == "GuardedReturn":
+                    self.returns.append(
+                        (and_([face.guard, *entry.guards]), entry.value)
+                    )
                 elif name == "Incomplete":
                     self.halts.append(
                         (and_([face.guard, *entry.branch_conditions]), entry.effect)
