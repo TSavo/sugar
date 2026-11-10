@@ -1286,7 +1286,7 @@ def test_competing_static_binds_stay_ambiguous(tmp_path: Path) -> None:
         name="amb-pkg",
         files={
             "amb_pkg/__init__.py": (
-                "flag = True\n"
+                "flag = unknown\n"
                 "if flag:\n"
                 "    def build(value):\n"
                 "        return value\n"
@@ -1322,3 +1322,240 @@ def test_getattr_stays_dynamic(tmp_path: Path) -> None:
     )
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "dynamic-export"
+
+
+def test_decided_if_takes_the_live_arm(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="live-if-pkg",
+        files={
+            "live_if_pkg/__init__.py": (
+                "flag = True\n"
+                "if flag:\n"
+                "    from live_if_pkg.implementation import build\n"
+                "else:\n"
+                "    def build(value):\n"
+                "        return value + 1\n"
+            ),
+            "live_if_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import live_if_pkg\nlive_if_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "live_if_pkg.implementation"
+    assert result.definition.name == "build"
+
+
+def test_nameerror_default_takes_the_else_arm(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="setup-pkg",
+        files={
+            "setup_pkg/__init__.py": (
+                "try:\n"
+                "    __SETUP__\n"
+                "except NameError:\n"
+                "    __SETUP__ = False\n"
+                "if __SETUP__:\n"
+                "    def build(value):\n"
+                "        return 'setup'\n"
+                "else:\n"
+                "    from setup_pkg.implementation import build\n"
+            ),
+            "setup_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import setup_pkg\nsetup_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "setup_pkg.implementation"
+
+
+def test_prebound_setup_flag_keeps_the_setup_arm(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="prebound-setup-pkg",
+        files={
+            "prebound_setup_pkg/__init__.py": (
+                "__SETUP__ = True\n"
+                "try:\n"
+                "    __SETUP__\n"
+                "except NameError:\n"
+                "    __SETUP__ = False\n"
+                "if __SETUP__:\n"
+                "    def build(value):\n"
+                "        return 'setup'\n"
+                "else:\n"
+                "    from prebound_setup_pkg.implementation import build\n"
+            ),
+            "prebound_setup_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import prebound_setup_pkg\nprebound_setup_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "prebound_setup_pkg"
+    assert result.definition.name == "build"
+
+
+def test_two_stars_one_publisher_resolves(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="one-star-pkg",
+        files={
+            "one_star_pkg/__init__.py": (
+                "from one_star_pkg.first import *\n"
+                "from one_star_pkg.second import *\n"
+            ),
+            "one_star_pkg/first.py": (
+                "def build(value):\n    return value\n"
+                "__all__ = ['build']\n"
+            ),
+            "one_star_pkg/second.py": (
+                "def other(value):\n    return value\n"
+                "__all__ = ['other']\n"
+            ),
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import one_star_pkg\none_star_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "one_star_pkg.first"
+
+
+def test_all_extended_from_another_module_publishes(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="extend-all-pkg",
+        files={
+            "extend_all_pkg/__init__.py": (
+                "from . import source\n"
+                "from .source import *\n"
+                "__all__ = []\n"
+                "__all__ += source.__all__\n"
+            ),
+            "extend_all_pkg/source.py": (
+                "def build(value):\n    return value\n"
+                "__all__ = ['build']\n"
+            ),
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import extend_all_pkg\nextend_all_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "extend_all_pkg.source"
+
+
+def test_extend_all_helper_unions_target_all(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="helper-all-pkg",
+        files={
+            "helper_all_pkg/__init__.py": (
+                "from . import source\n"
+                "from .source import *\n"
+                "__all__ = []\n"
+                "def extend_all(module):\n"
+                "    existing = set(__all__)\n"
+                "    mall = module.__all__\n"
+                "    for a in mall:\n"
+                "        if a not in existing:\n"
+                "            __all__.append(a)\n"
+                "extend_all(source)\n"
+            ),
+            "helper_all_pkg/source.py": (
+                "class Resource:\n"
+                "    def __enter__(self):\n"
+                "        return self\n"
+                "    def __exit__(self, *exc):\n"
+                "        pass\n"
+                "__all__ = ['Resource']\n"
+            ),
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import helper_all_pkg\nhelper_all_pkg.Resource()\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "helper_all_pkg.source"
+    assert result.definition.name == "Resource"
+
+
+def test_named_extend_all_that_does_more_stays_dynamic(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="lying-helper-pkg",
+        files={
+            "lying_helper_pkg/__init__.py": "from lying_helper_pkg.child import *\n",
+            "lying_helper_pkg/child.py": (
+                "from . import source\n"
+                "__all__ = []\n"
+                "def extend_all(module):\n"
+                "    __all__.append('build')\n"
+                "extend_all(source)\n"
+            ),
+            "lying_helper_pkg/source.py": (
+                "def build(value):\n    return value\n"
+                "__all__ = ['build']\n"
+            ),
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import lying_helper_pkg\nlying_helper_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_prefix_try_abort_and_finite_for_still_resolves(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="abort-prefix-pkg",
+        files={
+            "abort_prefix_pkg/__init__.py": (
+                "import os\n"
+                "env_added = []\n"
+                "for key in ['OPENBLAS_MAIN_FREE']:\n"
+                "    if key not in os.environ:\n"
+                "        env_added.append(key)\n"
+                "try:\n"
+                "    from . import sibling\n"
+                "except ImportError:\n"
+                "    raise\n"
+                "finally:\n"
+                "    for key in env_added:\n"
+                "        pass\n"
+                "from .sibling import helper\n"
+            ),
+            "abort_prefix_pkg/sibling.py": "def helper():\n    return 1\n",
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import abort_prefix_pkg\nabort_prefix_pkg.helper()\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "abort_prefix_pkg.sibling"
+    assert result.definition.name == "helper"
+
+
+def test_while_true_prefix_does_not_license_a_later_bind() -> None:
+    from sugar_lift_python_source.dependency_export_adapter import (
+        _prefix_reaches_locus_or_aborts,
+    )
+
+    tree = ast.parse("while True:\n    pass\ndef helper():\n    return 1\n")
+    assert _prefix_reaches_locus_or_aborts(tree.body, tree.body[1]) is False
