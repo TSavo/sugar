@@ -99,6 +99,14 @@ def try_route_site(try_node: Node) -> str:
     return f"try-route:{memento.source_cid}@{memento.start}:{memento.end}#{memento.cid}"
 
 
+def try_edge_slot(site_id: str, edge: int) -> BranchResultSlot:
+    """Body halt edge ``edge``'s slot: true exactly when the exception a
+    handler (or ``finally``) received was raised by body statement ``edge``.
+    ``TrySugar`` grounds it from the routed halt's own occurrence; a halt it
+    cannot place leaves it an undecided coordinate."""
+    return BranchResultSlot(f"{site_id}:edge:{edge}")
+
+
 def try_route_slot(site_id: str, arm: int) -> BranchResultSlot:
     """Handler ``arm``'s route slot: true exactly when that handler ran and the
     try left by its completion.  The reducer confirms it on every routed

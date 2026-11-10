@@ -1279,3 +1279,48 @@ def decided_identity(left, right) -> Optional[bool]:
     if _ref(left_root) is _ref(right_root):
         return None
     return False
+# A cited mutation that cannot raise.
+#
+# ``r.append(x)`` on a decided list stores and completes: CPython's
+# ``list.append`` has no exceptional exit for any operand (MemoryError aside,
+# which no lift models).  A statement that is only such a call contributes no
+# halt edge to an enclosing ``try`` -- an edge there would carry the state
+# BEFORE the store into the handler as though the append could have raised.
+# Only methods whose operands are never inspected are listed; an operand
+# that is hashed, compared or iterated can run code and raise.
+_NEVER_RAISING_METHODS = {
+    "list": frozenset({"append", "clear", "reverse", "copy"}),
+    "dict": frozenset({"clear", "copy"}),
+    "set": frozenset({"clear", "copy"}),
+}
+
+
+def cited_call_cannot_halt(statement, scope) -> bool:
+    """``statement`` is ``name.method(operand?)`` on a decided container whose
+    cited method never raises, over an operand whose evaluation cannot."""
+    from .binding_state import UnboundBinding
+    from .nodes import Attribute, Call, Constant, Expr, Name
+
+    if not isinstance(statement, Expr):
+        return False
+    call = statement.value
+    if not isinstance(call, Call) or call.keywords:
+        return False
+    func = call.func
+    if not isinstance(func, Attribute) or not isinstance(func.value, Name):
+        return False
+    if func.value.id not in scope:
+        return False
+    kind = decided_container_kind(_state(scope[func.value.id]))
+    if kind is None or func.attr not in _NEVER_RAISING_METHODS[kind]:
+        return False
+    if func.attr != "append":
+        return not call.args
+    if len(call.args) != 1:
+        return False
+    (operand,) = call.args
+    if isinstance(operand, Constant):
+        return True
+    return isinstance(operand, Name) and operand.id in scope and not isinstance(
+        _state(scope[operand.id]), UnboundBinding
+    )
