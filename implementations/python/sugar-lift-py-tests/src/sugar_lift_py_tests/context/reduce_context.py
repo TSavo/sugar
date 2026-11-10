@@ -50,6 +50,11 @@ class ReduceContext:
     # re-evaluate the RHS (which would raise again, outside whatever try/with
     # enclosed the assignment). See ``sugar/assigned_value.py``.
     assigned_values: tuple[tuple[object, object], ...] = ()
+    # Names a live loop body (``LoopRecurrenceSugar``'s per-item recurrence,
+    # read through the temporal rather than substituted) rebinds: an
+    # assignment to one rebinds it in the temporal and records its RHS value,
+    # so the next statement and the next item read the stored value.
+    live_loop_names: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def root(
@@ -85,6 +90,7 @@ class ReduceContext:
             observed_effects=getattr(source, "observed_effects", ()),
             ground_branch_results=getattr(source, "ground_branch_results", {}),
             assigned_values=getattr(source, "assigned_values", ()),
+            live_loop_names=getattr(source, "live_loop_names", frozenset()),
         )
 
     def record_operation(
@@ -125,6 +131,7 @@ class ReduceContext:
             observed_effects=self.observed_effects,
             ground_branch_results=self.ground_branch_results,
             assigned_values=self.assigned_values,
+            live_loop_names=self.live_loop_names,
         )
 
     def with_in_flight_effect(self, slot_id: str, effect: object) -> "ReduceContext":
@@ -146,6 +153,7 @@ class ReduceContext:
             observed_effects=self.observed_effects,
             ground_branch_results=self.ground_branch_results,
             assigned_values=self.assigned_values,
+            live_loop_names=self.live_loop_names,
         )
 
     def in_flight_effect_for(self, slot_id: str):

@@ -55,7 +55,9 @@ class AssignSugar(Sugar):
             evaluate_assignment_values,
         )
 
-        return evaluate_assignment_values((self.value,), ctx)
+        return evaluate_assignment_values(
+            (self.value,), ctx, bind=((self.name, 0),)
+        )
 
 
 @dataclass(frozen=True)
@@ -96,9 +98,12 @@ class MultiAssignSugar(Sugar):
             evaluate_assignment_values,
         )
 
-        return evaluate_assignment_values(
-            _distinct_in_order(value for _name, value in self.bindings), ctx
+        values = _distinct_in_order(value for _name, value in self.bindings)
+        bind = tuple(
+            (name, next(i for i, v in enumerate(values) if v is value))
+            for name, value in self.bindings
         )
+        return evaluate_assignment_values(values, ctx, bind=bind)
 
 
 @dataclass(frozen=True)
@@ -127,7 +132,11 @@ class ChainedAssignSugar(Sugar):
         )
 
         if not self.stores:
-            return evaluate_assignment_values((self.value,), ctx)
+            return evaluate_assignment_values(
+                (self.value,),
+                ctx,
+                bind=tuple((name, 0) for name in _chained_names(self.bindings)),
+            )
 
         def stores(active, completed):
             # The RHS was evaluated once, above; each store consumes that one
@@ -416,3 +425,10 @@ def _source_start(sugar):
     site = getattr(sugar, "site", None)
     span = getattr(site, "span", None)
     return getattr(span, "start", 0)
+
+
+def _chained_names(bindings):
+    """The lexical names a chained assignment binds (``x = y = e``)."""
+    return tuple(
+        binding if isinstance(binding, str) else binding[0] for binding in bindings
+    )
