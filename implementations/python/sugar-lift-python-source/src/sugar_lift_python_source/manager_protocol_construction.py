@@ -387,13 +387,16 @@ def _receiver_state_after_enter(
     )
     if not observed_stores:
         return receiver
-    if not exits or len(completed) != len(exits):
+    # __exit__ runs only after __enter__ returned: a halted enter face leaves
+    # the With as itself and never reaches exit, so the post-enter state is
+    # projected from the completed faces alone.
+    if not completed:
         raise SugarNotWritten(
             blame=blame,
             owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
-            observed="non-completed __enter__ face",
-            requested="total completed enter testimony before __exit__",
-            fix="derive exit state only after every authenticated enter face completes",
+            observed="no completed __enter__ face",
+            requested="a completed enter face before __exit__",
+            fix="derive exit state only from an authenticated enter face that completes",
         )
     projected_faces = []
     for face in completed:

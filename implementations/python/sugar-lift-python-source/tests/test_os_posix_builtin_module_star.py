@@ -12,8 +12,16 @@ from sugar_lift_python_source.dependency_export_adapter import (
     _builtin_module_star_names,
     _decided_if_test,
 )
-from sugar_lift_py_tests.context_manager_resolution import ContextManagerResolutionGapV1
-from sugar_source_tree.nodes import With
+from sugar_lift_py_tests.context_manager_contract import (
+    NeverSuppressesDispositionV1,
+    SourceEnterFacesCompletionV1,
+    SourceExitFacesCompletionV1,
+)
+from sugar_lift_py_tests.context_manager_resolution import SourceDerivedContextManagerRefV1
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
+from sugar_source_tree.nodes import FunctionDef, With
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
 
@@ -57,14 +65,50 @@ def test_builtin_module_star_publishes_its_runtime_public_names() -> None:
 
 
 @pytest.mark.skipif("posix" not in sys.builtin_module_names, reason="posix host")
-def test_contextlib_chdir_enter_may_halt_through_posix_c_calls(tmp_path: Path) -> None:
+def test_contextlib_chdir_constructs_with_posix_c_call_faces(tmp_path: Path) -> None:
     src = 'import contextlib\ndef f():\n    with contextlib.chdir("/tmp"):\n        pass\n'
     source_file = _open(_corpus(tmp_path, src))
     refs = source_file.root.unit.construction_context.source_derived_contract_refs
     (ref,) = refs.values()
-    # os.getcwd()/os.chdir() are posix C calls that may raise (OSError), so
-    # chdir is not sealed as a total resource.
-    assert type(ref) is ContextManagerResolutionGapV1
-    assert ref.kind == "enter-may-halt"
-    assert ref.detail == "__enter__ ExitSet"
-    assert any(isinstance(node, With) for node in source_file.nodes())
+    assert type(ref) is SourceDerivedContextManagerRefV1
+    assert isinstance(ref.semantics.enter.completion, SourceEnterFacesCompletionV1)
+    assert isinstance(ref.semantics.exit.completion, SourceExitFacesCompletionV1)
+    assert isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
+    with_node = next(node for node in source_file.nodes() if isinstance(node, With))
+    assert type(with_node.sugar()) is WithSourceResourceSugar
+    func = next(
+        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
+    )
+    exits = outcome_to_exitset(func.sugar().desugar()).exits
+    assert any(isinstance(face, Completed) for face in exits)
+    halted = [face for face in exits if isinstance(face, Halted)]
+    # os.getcwd() and os.chdir(path) in __enter__, os.chdir(pop()) in __exit__:
+    # each posix call may raise OSError and leaves the With as itself.
+    assert len({face.effect.occurrence for face in halted}) == 3
+    assert all(isinstance(face.effect, UndeterminedRaiseEffect) for face in halted)
+    owners = {face.effect.producer_node_owner for face in halted}
+    assert owners == {
+        "LanguageOwnedCExtensionCallableValue:posix.getcwd",
+        "LanguageOwnedCExtensionCallableValue:posix.chdir",
+    }
+
+
+def test_enter_completion_round_trips_through_contract_json() -> None:
+    from sugar_lift_py_tests.context_manager_contract import (
+        EnterResultContractV1,
+        ExitContractV1,
+        ProtocolResourceSemanticsV1,
+        _decode_protocol_resource,
+        semantics_to_value,
+    )
+    from sugar_lift_py_tests.canonicalizer import encode_jcs
+    from sugar_lift_py_tests.ir import PrimitiveSort
+    import json
+
+    semantics = ProtocolResourceSemanticsV1(
+        EnterResultContractV1(PrimitiveSort("Value"), SourceEnterFacesCompletionV1()),
+        ExitContractV1(NeverSuppressesDispositionV1()),
+    )
+    raw = json.loads(encode_jcs(semantics_to_value(semantics)))
+    assert raw["enter"]["completion"] == {"kind": "source-enter-faces"}
+    assert _decode_protocol_resource(raw) == semantics
