@@ -418,9 +418,15 @@ def _generator_distribution(root: Path, source: str, *, exported: str = "acquire
 def test_truthful_local_two_assigned_generators_construct_and_desugar(
     tmp_path: Path,
 ) -> None:
-    """Truthful twin: two bare Names that reach generator calls both construct."""
+    """Truthful twin: two bare Names that reach generator-manager calls both construct.
+
+    ``acquire`` is a ``@contextlib.contextmanager`` generator: a bare generator
+    object is not a manager (``with g():`` raises TypeError).
+    """
     distribution = _generator_distribution(
-        tmp_path, "def acquire():\n    yield\n", exported="acquire"
+        tmp_path,
+        "import contextlib\n@contextlib.contextmanager\ndef acquire():\n    yield\n",
+        exported="acquire",
     )
     consumer = (
         "import arbitrary\n"

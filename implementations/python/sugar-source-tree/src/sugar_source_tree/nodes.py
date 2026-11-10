@@ -8648,6 +8648,22 @@ class With(Statement):
             return None
         return frame
 
+    def _generator_manager_is_bare_generator_object(self, item: WithItem) -> bool:
+        """True when the head calls an authenticated, undecorated generator function.
+
+        The seated frame is the callee's own authenticated FunctionDef body.
+        With no decorator between the definition and the binding, calling it
+        returns the generator object itself -- never a wrapper -- so the head's
+        value is decided: a generator, which has no ``__enter__``. A decorated
+        callee is not decided here: its call returns whatever the decorator
+        returned.
+        """
+        frame = self._generator_manager_frame(item)
+        if frame is None:
+            return False
+        owner = getattr(frame, "owner", None)
+        return isinstance(owner, FunctionDef) and not owner.decorators
+
     def _generator_manager_sugar(self, item: WithItem):
         if self._generator_manager_frame(item) is None:
             return None
@@ -8966,8 +8982,17 @@ class With(Statement):
         generator_manager = self._generator_manager_sugar(item)
         if generator_manager is not None and published_generator_resource is None:
             from sugar_lift_py_tests.sugar.generator_with_sugar import (
+                GeneratorObjectWithSugar,
                 GeneratorWithSugar,
             )
+
+            if self._generator_manager_is_bare_generator_object(item):
+                # An undecorated generator function returns a generator
+                # object, which is not a context manager: the With raises
+                # TypeError after the call, before enter and body.
+                return GeneratorObjectWithSugar(
+                    manager=generator_manager, site=self.fragment
+                )
 
             enter_slot = (
                 f"{item._manager_slot_id()}#enter_result"
