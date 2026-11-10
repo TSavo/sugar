@@ -51,6 +51,7 @@ from sugar_lift_python_source.dependency_artifact import (
     ResolvedPythonObjectV1,
     resolve_import_binding as _resolve_import_binding,
 )
+from sugar_lift_python_source import manager_construction
 from sugar_lift_python_source.manager_construction import (
     CALL_TARGET_GAP_KINDS,
     ConstructedCallActualV1,
@@ -530,6 +531,148 @@ def test_memoized_callee_still_counts_toward_the_closure(tmp_path):
     assert refused.kind == "call-closure-over-bound"
     # The refusal is the root's alone: the callee that fit is still served.
     assert resolve_source_visible_frame(inner, graph=graph, session=session) == warm
+
+
+# --------------------------------------------------------------------------
+# dependency seats -- which tops a session has seated so far decides nothing
+# --------------------------------------------------------------------------
+
+
+def _elsewhere_graph(root: Path, flag: int) -> DependencyArtifactGraph:
+    """A second authenticated distribution, top level ``elsewhere``."""
+    package = root / "elsewhere"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(f"FLAG = {flag}\n", encoding="utf-8")
+    metadata = root / "elsewhere_dist-1.0.dist-info"
+    metadata.mkdir(parents=True)
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: elsewhere-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for name in (
+            "elsewhere/__init__.py",
+            "elsewhere_dist-1.0.dist-info/METADATA",
+            "elsewhere_dist-1.0.dist-info/RECORD",
+        ):
+            writer.writerow((name, "", ""))
+    return DependencyArtifactGraph.authenticate(
+        importlib.metadata.Distribution.at(metadata)
+    )
+
+
+def _seat_fixture(tmp_path: Path, monkeypatch, body: str):
+    """``arbitrary.make_guard`` with ``body``; counts real frame projections."""
+    manager = f"import elsewhere\n\ndef make_guard(expected):\n    {body}\n"
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(tmp_path / "own", {"manager": manager})
+    )
+    resolved = _resolved_definition(
+        tmp_path, graph, "import arbitrary\narbitrary.make_guard(23)\n", "outer"
+    )
+    session = _session_enrolling_graph(graph)
+    projected: list[str] = []
+    project = manager_construction._resolve_source_visible_frame_uncached
+
+    def counted(resolved, **kwargs):
+        projected.append(resolved.definition.name)
+        return project(resolved, **kwargs)
+
+    monkeypatch.setattr(
+        manager_construction, "_resolve_source_visible_frame_uncached", counted
+    )
+
+    def ask(held=None):
+        # A real caller seeds its roster from the session's seats.
+        roster = dict(session.dependency_graphs) if held is None else held
+        return resolve_source_visible_frame(
+            resolved, graph=graph, session=session, dependency_graphs=roster
+        )
+
+    return session, ask, projected
+
+
+def test_frame_and_module_are_built_once_however_many_tops_get_seated(
+    tmp_path, monkeypatch
+):
+    """TRUTHFUL TWIN: a top seated later, that the definition never reads.
+
+    The memo keys named every top the session had authenticated so far.  That
+    roster grows as doors ask for tops, so each new top forgot every projected
+    frame and every materialized module: ``pandas.io.stata.StataReader`` was
+    projected six times in one open of ``tests/io/test_stata.py``, the pandas
+    megamodules materialized nine.  ``make_guard`` reads nothing of
+    ``elsewhere``; seating it changes nothing ``make_guard`` means.
+    """
+    session, ask, projected = _seat_fixture(tmp_path, monkeypatch, "return 7")
+
+    cold = ask()
+    session.dependency_graphs["elsewhere"] = _elsewhere_graph(tmp_path / "e", 7)
+    warm = ask()
+
+    assert not isinstance(cold, ManagerConstructionGapV1), cold
+    assert warm == cold
+    assert projected == ["make_guard"]
+    assert len(session.module_materializations) == 1
+
+
+def test_row_built_without_a_top_is_rebuilt_once_that_top_is_seated(
+    tmp_path, monkeypatch
+):
+    """LYING TWIN: the definition DOES read the top that is seated later.
+
+    The import value-use door answers a top with no seat with the bare
+    receipt.  A row built on that answer is served only while it is still the
+    answer: once ``elsewhere`` is seated the frame is projected again, once,
+    against the module already materialized.
+    """
+    session, ask, projected = _seat_fixture(
+        tmp_path, monkeypatch, "return elsewhere.FLAG"
+    )
+
+    ask()
+    ask()
+    assert projected == ["make_guard"], "an unchanged session reads the memo"
+
+    session.dependency_graphs["elsewhere"] = _elsewhere_graph(tmp_path / "e", 7)
+    ask()
+    assert projected == ["make_guard"] * 2, (
+        "a row built while 'elsewhere' had no seat was served after it was seated"
+    )
+    ask()
+    assert projected == ["make_guard"] * 2, "the rebuilt row reads no unseated top"
+    assert len(session.module_materializations) == 1
+
+
+def test_row_is_not_served_across_two_artifacts_of_one_top(tmp_path, monkeypatch):
+    """LYING TWIN: one top, two artifacts -- that IS a different question.
+
+    Dropping the roster from the key must not drop the artifact.  An asker
+    holding ``elsewhere`` at another artifact than the session's seat gets its
+    own row, and after the session's seat itself moves, rows built before the
+    move answer nobody.
+    """
+    session, ask, projected = _seat_fixture(tmp_path, monkeypatch, "return 7")
+    first = _elsewhere_graph(tmp_path / "e1", 7)
+    second = _elsewhere_graph(tmp_path / "e2", 8)
+    assert first.distribution_artifact_cid != second.distribution_artifact_cid
+
+    session.dependency_graphs["elsewhere"] = first
+    ask()
+    assert projected == ["make_guard"]
+
+    ask({"elsewhere": second})
+    assert projected == ["make_guard"] * 2, (
+        "a row built against one artifact of 'elsewhere' answered an asker "
+        "holding another"
+    )
+
+    session.dependency_graphs["elsewhere"] = second
+    ask()
+    assert projected == ["make_guard"] * 3, (
+        "a row built before the session's seat moved was served after it"
+    )
 
 
 # --------------------------------------------------------------------------
