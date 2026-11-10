@@ -293,13 +293,25 @@ class IfSugar(Sugar):
 
         then_deferred = isinstance(then_exits, NativeOperationExitCarrierV1)
         else_deferred = isinstance(else_exits, NativeOperationExitCarrierV1)
+        if then_deferred and else_deferred:
+            # Both suites hold a formal native operation (``b = 1 // x`` /
+            # ``b = 2 // x``). Each suite's exits exist only once caller
+            # actuals discharge its own demand. The join waits for both: the
+            # then carrier's discharge hands its faces to a step that returns
+            # the else carrier, which the same discharge (the same caller
+            # actuals) resolves before the ordinary union runs. Neither demand
+            # is merged into the other and neither suite is decided early.
+            return then_exits.after_discharge(
+                lambda then_discharged: else_exits.after_discharge(
+                    lambda else_discharged: join(then_discharged, else_discharged)
+                )
+            )
         if then_deferred ^ else_deferred:
             # One suite holds a formal native operation (``message =
             # exc.message`` evaluated at its assignment): its exits exist only
             # once caller actuals discharge it. The join waits for that
             # discharge and then is the ordinary union -- the deferred suite's
             # faces under its polarity, the decided peer under the other.
-            # Both deferred stays loud (two demands under one join).
             if then_deferred:
                 return then_exits.after_discharge(
                     lambda discharged: join(discharged, else_exits)
