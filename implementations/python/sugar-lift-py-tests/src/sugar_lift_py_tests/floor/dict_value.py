@@ -49,17 +49,28 @@ class DictValue(GuardStableValue):
         )
 
     def length(self, site):
-        del site
+        # Keys whose equality is undecided may have collapsed into one.
+        from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete
 
+        if not decided_distinct(tuple(key for key, _value in self.entries)):
+            from sugar_lift_py_tests.floor.set_value import undecided_length
+
+            return undecided_length(self, site)
         return Complete(TermValue(len(self.entries)))
 
     def iter_with(self, operation, ctx):
-        """``iter(dict)`` traverses authenticated keys in insertion order."""
-        del operation, ctx
+        """``iter(dict)`` traverses authenticated keys in insertion order --
+        once those keys are decidedly distinct; otherwise which keys survive
+        is undecided and the traversal stays a construction gap."""
         from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
+        from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.outcome import Complete
+
+        if not decided_distinct(tuple(key for key, _value in self.entries)):
+            return super().iter_with(operation, ctx)
+        del operation, ctx
 
         return Complete(
             ListIteratorValue(tuple(key for key, _value in self.entries), index=0)

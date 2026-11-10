@@ -130,6 +130,18 @@ def decided_unhashable(value) -> bool:
     return False
 
 
+def decided_distinct(members) -> bool:
+    """Every pair of ``members`` decidedly unequal under ``is``-or-``==``: the
+    count CPython's hash table keeps is then ``len(members)``.  A pair the
+    floor does not decide leaves the count undecided -- a construction that
+    could not collapse it must not count it as two."""
+    for index, left in enumerate(members):
+        for right in members[index + 1 :]:
+            if member_equal(left, right) is not False:
+                return False
+    return True
+
+
 def position(needle, members):
     """Index of the first member matching ``needle``: int, -1 (none), None
     (an earlier member's equality is undecided), or NotImplemented."""
