@@ -87,6 +87,13 @@ class UnprojectedSourceCallV1:
     ``python:source_call.completes(module, name, site)`` and halts with an
     ``UndeterminedRaiseEffect`` under its complement. It never names what the
     callee does.
+
+    A ``class`` callee is a construction: ``type.__call__`` runs the class's
+    own (or an inherited) ``__new__``/``__init__``, none of which is projected
+    here, so it is the same two-faced law under its own atom
+    ``python:source_construction.completes(module, name, site)`` and owner
+    ``UnprojectedSourceConstruction:<module>.<name>``. Exception classes are no
+    exception: constructing one runs its ``__init__`` before any ``raise``.
     """
 
     module_name: str
@@ -100,15 +107,21 @@ class UnprojectedSourceCallV1:
         from .ir import atomic, ctor, str_const
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
 
+        noun = "source_construction" if self.definition_kind == "class" else "source_call"
         call = ctor(
-            "python:source_call",
+            f"python:{noun}",
             (
                 str_const(self.module_name),
                 str_const(self.definition_name),
                 str_const(str(site)),
             ),
         )
-        completes = atomic("python:source_call.completes", [call])
+        completes = atomic(f"python:{noun}.completes", [call])
+        owner = (
+            "UnprojectedSourceConstruction"
+            if self.definition_kind == "class"
+            else "UnprojectedSourceCall"
+        )
         return ExitSet(
             (
                 Completed(completes, callsite),
@@ -118,8 +131,7 @@ class UnprojectedSourceCallV1:
                         blame=str(site) if site is not None else None,
                         occurrence=str(site) if site is not None else None,
                         producer_node_owner=(
-                            "UnprojectedSourceCall"
-                            f":{self.module_name}.{self.definition_name}"
+                            f"{owner}:{self.module_name}.{self.definition_name}"
                         ),
                     ),
                     None,

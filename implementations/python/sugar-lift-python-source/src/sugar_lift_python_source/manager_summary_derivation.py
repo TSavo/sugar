@@ -2377,14 +2377,15 @@ def _floor_language_owned_module_calls(
             if session.enabled:
                 session.dependency_graphs[top_level] = graph
         imported = resolve_import_binding(receipt, graph=graph, session=session)
-        if (
-            isinstance(imported, ResolvedPythonObjectV1)
-            and imported.definition.kind == "function"
+        if isinstance(imported, ResolvedPythonObjectV1) and imported.definition.kind in (
+            "function",
+            "class",
         ):
-            # Source-defined callee: its body is never projected at this
-            # module's own call, so the call is not total. Seat the may-raise
-            # testimony at the exact Call span; a call that does carry a
-            # projected body at construction ignores it.
+            # Source-defined callee (a function, or a class whose construction
+            # runs its unprojected __new__/__init__): its body is never
+            # projected at this module's own call, so the call is not total.
+            # Seat the may-raise testimony at the exact Call span; a call that
+            # does carry a projected body at construction ignores it.
             from sugar_lift_py_tests.source_call_resolution import (
                 UnprojectedSourceCallV1,
             )
@@ -2399,7 +2400,6 @@ def _floor_language_owned_module_calls(
             )
             continue
         if isinstance(imported, ResolvedPythonObjectV1):
-            # A source-defined class: construction is a separate law.
             continue
         # The value receipt at the exact callee occurrence (same binding,
         # same target symbol, same start, inside this Call) carries the

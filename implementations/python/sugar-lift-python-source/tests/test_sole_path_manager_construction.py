@@ -8003,6 +8003,35 @@ def test_attribute_exception_class_path_constructs_effect_boundary(tmp_path):
     assert isinstance(sugar, WithEffectBoundarySugar)
 
 
+def _construction_halts(exits):
+    """Split off ``arbitrary.MyError(...)``'s own may-raise construction arm.
+
+    Constructing a source-defined class runs its unprojected ``__init__``, so
+    ``raise arbitrary.MyError("boom")`` first halts with an
+    ``UndeterminedRaiseEffect`` under the complement of
+    ``python:source_construction.completes``; the boundary sees the raise only
+    on the completing arm. Returns (construction halts, the remaining faces).
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
+
+    construction = [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted)
+        and isinstance(face.effect, UndeterminedRaiseEffect)
+        and (face.effect.producer_node_owner or "").startswith(
+            "UnprojectedSourceConstruction:"
+        )
+    ]
+    rest = [face for face in exits.exits if face not in construction]
+    assert len(construction) == 1
+    assert "python:source_construction.completes" in repr(construction[0].guard)
+    for face in rest:
+        assert "python:source_construction.completes" in repr(face.guard)
+    return construction, rest
+
+
 def test_attribute_exception_class_path_consumes_matching_raise(tmp_path):
     """Attribute expected type and Attribute raise share one import identity."""
     from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
@@ -8015,8 +8044,9 @@ def test_attribute_exception_class_path_consumes_matching_raise(tmp_path):
     exits = outcome_to_exitset(
         next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
     )
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
+    _construction, rest = _construction_halts(exits)
+    assert len(rest) == 1
+    assert isinstance(rest[0], Completed)
 
 
 def test_attribute_exception_class_path_restores_wrong_raise(tmp_path):
@@ -8057,8 +8087,9 @@ def test_attribute_exception_class_with_match_consumes_and_misses(tmp_path):
     exits = outcome_to_exitset(
         next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
     )
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
+    _construction, rest = _construction_halts(exits)
+    assert len(rest) == 1
+    assert isinstance(rest[0], Completed)
 
     tree, _context = _attribute_exception_tree(
         tmp_path / "match-miss",
@@ -8069,8 +8100,9 @@ def test_attribute_exception_class_with_match_consumes_and_misses(tmp_path):
     exits = outcome_to_exitset(
         next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
     )
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Halted)
+    _construction, rest = _construction_halts(exits)
+    assert len(rest) == 1
+    assert isinstance(rest[0], Halted)
 
 
 def test_attribute_exception_class_as_binding_projects_consumed_effect(tmp_path):
@@ -8086,8 +8118,9 @@ def test_attribute_exception_class_as_binding_projects_consumed_effect(tmp_path)
     exits = outcome_to_exitset(
         next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
     )
-    assert len(exits.exits) == 1
-    face = exits.exits[0]
+    _construction, rest = _construction_halts(exits)
+    assert len(rest) == 1
+    face = rest[0]
     assert isinstance(face, Completed)
     assert len(_effect_binding_facts(face)) == 3
 
