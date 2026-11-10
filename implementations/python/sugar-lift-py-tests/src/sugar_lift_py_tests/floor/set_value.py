@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class SetValue(FloorValue):
+class SetValue(GuardStableValue):
     """A set of reduced floor values, in construction order.
 
     The sugar reduces each element; the floor holds what those reductions were.

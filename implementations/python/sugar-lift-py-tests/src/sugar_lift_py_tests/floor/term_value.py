@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class TermValue(FloorValue):
+class TermValue(GuardStableValue):
     # Python numeric literals share one floor value implementation, but retain
     # their calculus sort: int -> Int and float -> Real. There is no Number sort.
     value: int | float
