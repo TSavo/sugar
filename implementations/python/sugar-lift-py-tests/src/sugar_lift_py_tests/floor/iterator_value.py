@@ -91,6 +91,17 @@ class ListIteratorValue(FloorValue):
             exception_name="TypeError", site=site, owner="ListIteratorValue.delitem"
         )
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """An iterator is iterable; consuming it here advances the very object
+        any other name holds, which is not threaded, so its members stay an
+        undecided RHS -- never ``TypeError``."""
+        del ctx
+        from sugar_lift_py_tests.floor.comprehension_value import (
+            _undecided_slice_rhs,
+        )
+
+        return _undecided_slice_rhs(operation, self)
+
     def next_with(self, operation, ctx):
         del ctx
         from sugar_lift_py_tests.outcome import Complete
@@ -147,6 +158,17 @@ class TupleIteratorValue(FloorValue):
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TupleIteratorValue.delitem"
         )
+
+    def slice_assign_iterable_with(self, operation, ctx):
+        """An iterator is iterable; consuming it here advances the very object
+        any other name holds, which is not threaded, so its members stay an
+        undecided RHS -- never ``TypeError``."""
+        del ctx
+        from sugar_lift_py_tests.floor.comprehension_value import (
+            _undecided_slice_rhs,
+        )
+
+        return _undecided_slice_rhs(operation, self)
 
     def next_with(self, operation, ctx):
         del ctx
