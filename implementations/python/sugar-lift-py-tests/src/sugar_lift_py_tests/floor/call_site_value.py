@@ -1952,7 +1952,7 @@ def _ctx_with_curried_args(
     return result
 
 
-def _opaque_subscript_faces(outcome, site):
+def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"):
     """``opaque()[k]`` may raise: complete only under an opaque partition atom.
 
     The receiver is a call result with no projected body, so its runtime type
@@ -1992,7 +1992,7 @@ def _opaque_subscript_faces(outcome, site):
                 UndeterminedRaiseEffect(
                     blame=str(site) if site is not None else None,
                     occurrence=str(site) if site is not None else None,
-                    producer_node_owner="CallSiteValue.subscript",
+                    producer_node_owner=producer,
                 ),
                 None,
             ),

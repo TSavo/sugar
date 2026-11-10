@@ -231,7 +231,13 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
 
 @dataclass(frozen=True)
 class LanguageOwnedCExtensionResultValue(FloorValue):
-    """An opaque result of a C-extension call with no authenticated body."""
+    """An opaque result of a C-extension call with no authenticated body.
+
+    The term is keyed on the call site, exactly like the call's own
+    ``python:c_extension.call(module, name, site)`` completion atom: two calls
+    of the same C function return results nobody testified to be equal, so
+    their terms are never forced to agree.
+    """
 
     module_name: str
     exported_name: str
@@ -243,5 +249,43 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
         del owner
         return ctor(
             "python:c_extension.result",
-            (str_const(self.module_name), str_const(self.exported_name)),
+            (
+                str_const(self.module_name),
+                str_const(self.exported_name),
+                str_const(str(self.site)),
+            ),
+        )
+
+    def guarded(self, formula):
+        """An opaque C result rides under a guard unchanged.
+
+        Like ``CallSiteValue``: the site-keyed result term is the value. It is
+        not a return or an inv that becomes an implication, and it states no
+        fact; the enclosing ExitSet (whose Completed face already sits under
+        ``python:c_extension.call_completes``) owns the control guard. A bare
+        C call as an expression statement inside ``try`` reaches this.
+        """
+        del formula
+        return self
+
+    def subscript_with(self, operation, ctx):
+        """``c_call()[k]`` may raise: the #7587 opaque-subscript law.
+
+        Nothing testified to the result's runtime type or ``__getitem__``. A
+        symbolic ``py.subscript`` over this result's term completes only under
+        ``python:subscript.completes(python:subscript(<term>, <site>))``, keyed
+        on the exact subscript site; the complement halts with an
+        ``UndeterminedRaiseEffect``. No exception class or member is invented.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        outcome = operation.submit(
+            SymbolicValue(self.to_term(owner=f"{operation.owner} C result subscript")),
+            ctx,
+        )
+        return _opaque_subscript_faces(
+            outcome,
+            getattr(operation, "blame", None),
+            producer="LanguageOwnedCExtensionResultValue.subscript",
         )
