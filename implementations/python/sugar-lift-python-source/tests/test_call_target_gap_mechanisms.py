@@ -55,10 +55,15 @@ from sugar_lift_python_source.manager_construction import (
     CALL_TARGET_GAP_KINDS,
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
+    ManagerConstructionGapV1,
     _frame_bound_names,
     construct_manager_behavior as _construct_manager_behavior,
+    resolve_source_visible_frame,
 )
-from sugar_lift_python_source.resolution_session import SourceResolutionSession
+from sugar_lift_python_source.resolution_session import (
+    SOURCE_CALL_CLOSURE_FRAME_BOUND,
+    SourceResolutionSession,
+)
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.nodes import Call, Constant, FunctionDef
 from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
@@ -326,7 +331,29 @@ _UNBINDABLE_CALLEE = (
 )
 
 
-def test_callee_whose_inner_call_cannot_bind_is_an_unresolved_export(tmp_path):
+@pytest.mark.parametrize(
+    ("manager_source", "observed"),
+    [
+        (
+            "from arbitrary.support import build_slot\n"
+            "\n"
+            "def make_guard(expected):\n"
+            "    return build_slot(expected)\n",
+            "call-target-export-unresolved:build_slot",
+        ),
+        (
+            "from arbitrary import support\n"
+            "\n"
+            "def make_guard(expected):\n"
+            "    return support.build_slot(expected)\n",
+            "call-target-export-unresolved:python:arbitrary.support.build_slot",
+        ),
+    ],
+    ids=["free-name-call", "module-attribute-call"],
+)
+def test_callee_whose_inner_call_cannot_bind_is_an_unresolved_export(
+    tmp_path, manager_source, observed
+):
     """POSITIVE: a binding gap inside a callee parks that callee, by name.
 
     ``Marker`` defines no ``__init__`` of its own, so its source frame has no
@@ -336,17 +363,13 @@ def test_callee_whose_inner_call_cannot_bind_is_an_unresolved_export(tmp_path):
     ``SugarNotWritten`` body is, and it ends in the same named kind at the
     call that reached it.  It used to leave as a bare ``ValueError`` and take
     the whole enclosing file's enumeration with it.
-    """
-    gap = _opaque_gap(
-        tmp_path,
-        "from arbitrary.support import build_slot\n"
-        "\n"
-        "def make_guard(expected):\n"
-        "    return build_slot(expected)\n",
-        support=_UNBINDABLE_CALLEE,
-    )
 
-    assert gap.observed == "call-target-export-unresolved:build_slot"
+    Both doors that follow a call into another definition park it: the free
+    name and the attribute of an imported module.
+    """
+    gap = _opaque_gap(tmp_path, manager_source, support=_UNBINDABLE_CALLEE)
+
+    assert gap.observed == observed
 
 
 def test_callee_whose_inner_call_binds_is_not_parked(tmp_path):
@@ -393,6 +416,116 @@ def test_binding_gap_in_the_outer_target_itself_stays_loud(tmp_path):
             "def make_guard(expected):\n"
             "    return Marker(expected)\n",
         )
+
+
+# --------------------------------------------------------------------------
+# call-closure-over-bound -- the definition reaches too many others to project
+# --------------------------------------------------------------------------
+
+
+def _call_chain(length: int) -> tuple[str, dict[str, str]]:
+    """``make_guard`` calling ``length`` definitions in a line, one per module.
+
+    ``make_guard`` -> ``step1`` -> ... -> ``step<length>``, so the call closure
+    of ``make_guard`` is ``length + 1`` definitions.  One module each: calls
+    inside one module ride the caller's frame and are not what is bounded.
+    """
+    modules = {}
+    for index in range(1, length):
+        modules[f"link{index}"] = (
+            f"from arbitrary.link{index + 1} import step{index + 1}\n"
+            "\n"
+            f"def step{index}(label):\n"
+            f"    return step{index + 1}(label)\n"
+        )
+    modules[f"link{length}"] = (
+        "class Marker:\n"
+        "    def __init__(self, label):\n"
+        "        self.label = 7\n"
+        "\n"
+        f"def step{length}(label):\n"
+        "    return Marker(label)\n"
+    )
+    manager = (
+        "from arbitrary.link1 import step1\n"
+        "\n"
+        "def make_guard(expected):\n"
+        "    return step1(expected)\n"
+    )
+    return manager, modules
+
+
+def test_call_closure_one_past_the_bound_is_refused_by_name(tmp_path):
+    """POSITIVE: one definition too many and the root is refused, by name.
+
+    Projection follows source calls eagerly, and theirs.  Unbounded, that walk
+    is the whole reachable call graph -- minutes for one entry point, and the
+    file never reaches a terminal.  The refusal is counted in definitions, so
+    it is the same on every machine: no clock decides it.
+    """
+    manager, modules = _call_chain(SOURCE_CALL_CLOSURE_FRAME_BOUND)
+
+    result = _construct(tmp_path, manager, **modules)
+
+    assert isinstance(result, ManagerConstructionGapV1), result
+    assert result.kind == "call-closure-over-bound"
+    assert str(SOURCE_CALL_CLOSURE_FRAME_BOUND) in result.detail
+
+
+def test_call_closure_at_the_bound_constructs(tmp_path):
+    """LYING TWIN: the same chain one link shorter fits, and constructs.
+
+    If this were refused too, the kind would be naming "calls something that
+    calls something" rather than a closure past the bound.
+    """
+    manager, modules = _call_chain(SOURCE_CALL_CLOSURE_FRAME_BOUND - 1)
+
+    result = _construct(tmp_path, manager, **modules)
+
+    assert isinstance(result, ConstructedManagerBehaviorV1), result
+
+
+def _resolved_definition(root: Path, graph, consumer: str, name: str):
+    path = root / f"{name}.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(root, path, consumer, source_cid)
+    session = _session_enrolling_graph(graph)
+    resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
+    assert isinstance(resolved, ResolvedPythonObjectV1), resolved
+    return resolved
+
+
+def test_memoized_callee_still_counts_toward_the_closure(tmp_path):
+    """A warm session cannot make an over-bound closure fit.
+
+    ``step2`` is projected first, on its own: its closure is under the bound,
+    so it constructs and is memoized.  ``make_guard`` then reaches it through
+    ``step1``.  Only two definitions are projected fresh, but ``make_guard``
+    still reaches one more than the bound, and is refused exactly as it is in
+    a cold session.  If a memo hit counted as one definition, the verdict on
+    ``make_guard`` would depend on what the session had seen before it.
+    """
+    manager, modules = _call_chain(SOURCE_CALL_CLOSURE_FRAME_BOUND)
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(tmp_path, {"manager": manager, **modules})
+    )
+    inner = _resolved_definition(
+        tmp_path, graph, "from arbitrary.link2 import step2\nstep2(23)\n", "inner"
+    )
+    outer = _resolved_definition(
+        tmp_path, graph, "import arbitrary\narbitrary.make_guard(23)\n", "outer"
+    )
+    session = _session_enrolling_graph(graph)
+
+    warm = resolve_source_visible_frame(inner, graph=graph, session=session)
+    refused = resolve_source_visible_frame(outer, graph=graph, session=session)
+
+    assert not isinstance(warm, ManagerConstructionGapV1), warm
+    assert isinstance(refused, ManagerConstructionGapV1), refused
+    assert refused.kind == "call-closure-over-bound"
+    # The refusal is the root's alone: the callee that fit is still served.
+    assert resolve_source_visible_frame(inner, graph=graph, session=session) == warm
 
 
 # --------------------------------------------------------------------------

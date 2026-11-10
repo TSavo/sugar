@@ -57,6 +57,7 @@ class SourceCallPreconstructionGapV1:
         "call-target-off-population",
         "non-manager-result",
         "call-binding",
+        "call-closure-over-bound",
         "dynamic-call-target",
     ]
     use_site: SourceFragmentCoordinateV1
