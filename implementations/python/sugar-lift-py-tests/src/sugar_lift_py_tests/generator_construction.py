@@ -627,6 +627,27 @@ class NestedCitedOpaqueExitStepV1:
     site: object = field(compare=False)
 
 
+# Statements that may follow a halting statement inside a flattened nested
+# with body and are skipped by that halt. Handler and other-manager exit steps
+# are deliberately absent: a halt does not skip past them to a later exit.
+_BODY_REMAINDER_STEPS = (
+    YieldStepV1,
+    YieldFromStepV1,
+    TermStepV1,
+    AssignStepV1,
+    AttributeAssignStepV1,
+    AssertStepV1,
+    ImportStepV1,
+    ImportFromStepV1,
+    IfStepV1,
+    ForStepV1,
+    WhileStepV1,
+    ReturnStepV1,
+    RaiseStepV1,
+    OpaqueStepV1,
+)
+
+
 GeneratorStepV1 = (
     YieldStepV1
     | YieldFromStepV1
@@ -1598,7 +1619,7 @@ class GeneratorConstructionV1:
                     ExitSet.halted(outcome.effect, state=self)
                 )
             if isinstance(outcome, ExitSet):
-                return self._fold_pending_cited_opaque_exits(outcome)
+                return self._transition_term_exitset(step, outcome, requested)
             if not isinstance(outcome, Complete):
                 return self._gap(requested, type(outcome).__name__)
             machine = replace(self, cursor=self.cursor + 1)
@@ -2157,6 +2178,65 @@ class GeneratorConstructionV1:
         return result.normalize()
 
 
+    def _transition_term_exitset(self, step, outcome, requested: str):
+        """An expression statement whose value is two-faced (may complete or raise).
+
+        A halted face leaves the machine HERE: its pre-halt state is this
+        machine, and an already-written cited-opaque exit folds over it. A
+        completed face discards the value and the machine advances past the
+        statement under that face's guard. Returning the call's own ExitSet
+        would hand its value (a call result) to the consumer as if it were the
+        machine's next transition.
+        """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+        from sugar_lift_py_tests.outcome.exit_set import Halted
+        from sugar_source_tree.panic import SugarNotWritten
+
+        halted = tuple(
+            replace(face, state=self)
+            for face in outcome.exits
+            if isinstance(face, Halted)
+        )
+        completed = tuple(face for face in outcome.exits if not isinstance(face, Halted))
+        parts = []
+        if halted:
+            folded = self._fold_pending_cited_opaque_exits(ExitSet(halted))
+            parts.append(
+                folded if isinstance(folded, ExitSet) else outcome_to_exitset(folded)
+            )
+        if completed:
+            machine = replace(self, cursor=self.cursor + 1)
+
+            def continue_term(_value):
+                result = machine._transition(requested)
+                if isinstance(result, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=step,
+                        observed=result.observed,
+                        requested=result.requested,
+                        fix=(
+                            "implement that next transition before deferred "
+                            "normalization"
+                        ),
+                    )
+                if isinstance(
+                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
+                ):
+                    return result
+                return Complete(result)
+
+            parts.append(ExitSet(completed).and_then(continue_term))
+        if not parts:
+            return ExitSet(())
+        result = parts[0]
+        for part in parts[1:]:
+            result = result.union(part)
+        return result
+
     def _fold_pending_cited_opaque_exits(self, outgoing):
         """Apply already-written cited-opaque exit over an outgoing body edge.
 
@@ -2187,6 +2267,13 @@ class GeneratorConstructionV1:
             if isinstance(step, NestedCitedOpaqueExitStepV1):
                 pending.append(step)
                 last = index
+                continue
+            if not pending and isinstance(step, _BODY_REMAINDER_STEPS):
+                # The rest of the flattened with body (a later statement, a
+                # yield not yet reached): a halt leaves the body, so it never
+                # runs, and the enclosing exit still does. Only a flattened
+                # body is spliced before its exit step, so that exit encloses
+                # this cursor.
                 continue
             break
         if not pending:

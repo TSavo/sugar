@@ -72,11 +72,29 @@ class WithEffectBoundarySugar(Sugar):
                 )
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        construction_halts, construction_guard = self._construction_faces()
         routed = []
         for manager_exit in manager_es.exits:
             if isinstance(manager_exit, Halted):
                 routed.append(ExitSet((manager_exit,)))
                 continue
+            # Python evaluates the context expression first. A constructor
+            # halt leaves the With as itself: nothing was entered, so neither
+            # the body nor __exit__ runs and the boundary never sees it.
+            for halt in construction_halts:
+                routed.append(
+                    ExitSet(
+                        (
+                            replace_exit_guard(
+                                halt, _and_guard(manager_exit.guard, halt.guard)
+                            ),
+                        )
+                    )
+                )
+            if construction_guard is not None:
+                manager_exit = replace_exit_guard(
+                    manager_exit, _and_guard(manager_exit.guard, construction_guard)
+                )
             manager_value = manager_exit.value
             if not isinstance(manager_value, CallSiteValue):
                 raise SugarNotWritten(
@@ -172,6 +190,61 @@ class WithEffectBoundarySugar(Sugar):
         for part in routed[1:]:
             result = result.union(part)
         return result
+
+    def _construction_faces(self):
+        """``(halts, completed_guard)`` of the manager's own construction.
+
+        Factored faces already carry each completed construction guard; their
+        construction halts ride as Halted boundary faces. A sealed boundary
+        names them by ``SourceConstructorFacesCompletionV1`` and they are read
+        from the source-derived protocol's receiver partition, the same
+        testimony the boundary was sealed over. ``completed_guard`` is ``None``
+        when construction is total.
+        """
+        from sugar_lift_py_tests.context_manager_contract import (
+            SourceConstructorFacesCompletionV1,
+        )
+        from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
+        from sugar_lift_py_tests.outcome.exit_set import Halted, _or_guards
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.boundary_faces is not None:
+            halts = tuple(
+                face for face in self.boundary_faces.exits if isinstance(face, Halted)
+            )
+            if any(face.effect is None for face in halts):
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="WithEffectBoundarySugar.construction",
+                    observed="factored construction halt without a typed effect",
+                    requested="every constructor halt as its own typed effect",
+                    fix="keep untyped construction halts loud; never drop them",
+                )
+            return halts, None
+        if not isinstance(
+            getattr(self.semantics, "construction", None),
+            SourceConstructorFacesCompletionV1,
+        ):
+            return (), None
+        state = getattr(getattr(self.contract_ref, "protocol", None), "receiver_state", None)
+        faces = (
+            state.constructor_faces()
+            if isinstance(state, ReceiverStatePartitionValue)
+            else None
+        )
+        if faces is None or not faces[0] or not faces[1]:
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="WithEffectBoundarySugar.construction",
+                observed="constructor-faces boundary without typed construction faces",
+                requested="the source-derived receiver partition the boundary sealed",
+                fix="seal constructor-faces only over a typed receiver partition",
+            )
+        halts, completed = faces
+        guard = completed[0].guard
+        for face in completed[1:]:
+            guard = _or_guards(guard, face.guard)
+        return halts, guard
 
     def _semantics_faces(self):
         from sugar_lift_py_tests.context_manager_contract import (
@@ -696,3 +769,9 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
         # the original halt without inventing any warning effect.
         exits.append(face)
     return ExitSet(tuple(exits)).normalize()
+
+
+def _and_guard(left, right):
+    from sugar_lift_py_tests.outcome.exit_set import _and_guards
+
+    return _and_guards(left, right)

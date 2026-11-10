@@ -138,3 +138,47 @@ class UnprojectedSourceCallV1:
                 ),
             )
         ).normalize()
+
+
+@dataclass(frozen=True)
+class OffPopulationSourceCallV1:
+    """An authenticated callee cited off the enrolled population, called here.
+
+    ``call-target-off-population`` means the export door authenticated the
+    callee's defining source (stdlib or an unenrolled distribution) and the
+    population membrane declined to project it. Its body is real Python that
+    was not looked at, so the call may raise anything: it completes only under
+    ``python:off_population_call.completes(python:off_population_call(target,
+    site))`` and halts with an ``UndeterminedRaiseEffect`` (owner
+    ``OffPopulationCall:<target>``) under the complement -- the #7585 law for a
+    consumer's unprojected call, applied where the call sits inside an
+    enrolled dependency body. Completing it totally would claim the callee
+    never raises. It never names what the callee does.
+    """
+
+    target_name: str
+
+    def faces(self, callsite, site):
+        from .effect.raise_effect import UndeterminedRaiseEffect
+        from .ir import atomic, ctor, str_const
+        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+
+        call = ctor(
+            "python:off_population_call",
+            (str_const(self.target_name), str_const(str(site))),
+        )
+        completes = atomic("python:off_population_call.completes", [call])
+        return ExitSet(
+            (
+                Completed(completes, callsite),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(
+                        blame=str(site) if site is not None else None,
+                        occurrence=str(site) if site is not None else None,
+                        producer_node_owner=f"OffPopulationCall:{self.target_name}",
+                    ),
+                    None,
+                ),
+            )
+        ).normalize()

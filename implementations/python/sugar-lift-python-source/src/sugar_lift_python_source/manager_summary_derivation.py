@@ -28,6 +28,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
     ReturnTruthinessDispositionV1,
+    SourceConstructorFacesCompletionV1,
     SourceEnterFacesCompletionV1,
     SourceExitFacesCompletionV1,
     SuppressesModeV1,
@@ -484,8 +485,14 @@ def derive_manager_summary(
         # each enter halt leaves the With as its own effect before body/exit.
         enter_completion = SourceEnterFacesCompletionV1()
     # An effect-boundary theorem has no enter-completion field, so it cannot
-    # carry enter halts; only the protocol-resource arm below may.
-    if behavior is not None and not enter_halted:
+    # carry enter halts; only the protocol-resource arm below may. It may
+    # carry construction halts: those leave the With before anything is
+    # entered, so the boundary is sealed over completed construction alone.
+    construction_halts = _construction_halts(protocol)
+    boundary_door = (
+        behavior is not None and not enter_halted and construction_halts is not None
+    )
+    if boundary_door:
         factored = _derive_factored_effect_boundary(protocol, behavior)
         if factored is not None:
             return factored
@@ -512,11 +519,12 @@ def derive_manager_summary(
                 for coordinate in exit_outcome.coordinates
             )
         ):
-            if behavior is not None:
+            if boundary_door:
                 boundary = _derive_effect_boundary_from_deferred_carrier(
                     exit_outcome, protocol, behavior
                 )
                 if boundary is not None:
+                    boundary = _with_construction_faces(boundary, construction_halts)
                     signature = _signature_for_behavior(behavior, boundary)
                     return _sealed_summary(protocol, boundary, signature)
             semantics = ProtocolResourceSemanticsV1(
@@ -544,11 +552,10 @@ def derive_manager_summary(
             f"{owner}:{observed}",
         )
     boundary = (
-        _derive_effect_boundary(exit_, protocol, behavior)
-        if behavior is not None and not enter_halted
-        else None
+        _derive_effect_boundary(exit_, protocol, behavior) if boundary_door else None
     )
     if boundary is not None:
+        boundary = _with_construction_faces(boundary, construction_halts)
         signature = _signature_for_behavior(behavior, boundary)
         return _sealed_summary(protocol, boundary, signature)
     # A type operand is data, not evidence that this callee consumes it.
@@ -584,6 +591,29 @@ def derive_manager_summary(
     )
     signature = _signature_for_behavior(behavior, semantics)
     return _sealed_summary(protocol, semantics, signature)
+
+
+def _construction_halts(protocol):
+    """Typed halts of the manager's own construction; ``None`` if any is untyped.
+
+    Construction is the With's context expression: it runs before anything
+    is entered. Each typed halt leaves the With as itself, so a boundary may
+    be sealed over the completed construction faces alone. An untyped halt
+    cannot leave as itself and closes the boundary door.
+    """
+    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
+
+    state = getattr(protocol, "receiver_state", None)
+    if not isinstance(state, ReceiverStatePartitionValue):
+        return ()
+    faces = state.constructor_faces()
+    return None if faces is None else faces[0]
+
+
+def _with_construction_faces(boundary, construction_halts):
+    if not construction_halts:
+        return boundary
+    return replace(boundary, construction=SourceConstructorFacesCompletionV1())
 
 
 def _sealed_summary(protocol, semantics, signature):
@@ -924,8 +954,15 @@ def _unconditional_partition_leaf(state):
         for face in _completed_receiver_exits(state).exits
         if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
     ]
-    if len(completed) != 1 or completed[0].guard != true_guard():
+    if len(completed) != 1:
         return None
+    if completed[0].guard != true_guard():
+        # The one completed receiver is unconditional where the manager
+        # exists when every other construction face is a typed halt: those
+        # leave the With before anything reads a field.
+        faces = state.constructor_faces()
+        if faces is None or not faces[0]:
+            return None
     return completed[0].value
 
 
@@ -1062,11 +1099,16 @@ def _derive_factored_effect_boundary(protocol, behavior):
     ):
         return None
     pattern_semantics = pattern_faces[0].value
+    halts = _construction_halts(protocol)
+    if halts is None:
+        return None
+    # Construction halts ride beside the guarded boundary faces: each leaves
+    # the With as itself before any boundary is entered.
     return FactoredEffectBoundarySummaryV1(
         protocol.protocol_construction_cid,
         protocol.enter_frame_cid,
         protocol.exit_frame_cid,
-        ExitSet(tuple(derived)),
+        ExitSet((*derived, *halts)),
         _signature_for_behavior(behavior, pattern_semantics),
     )
 

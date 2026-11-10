@@ -187,8 +187,17 @@ def test_unresolved_or_non_structural_reference_stays_loud():
 
 
 def test_off_population_call_desugars_to_a_callsite_not_a_gap():
-    """stdlib ``re.compile(match)`` stays a coordinate, not a factory abort."""
+    """stdlib ``re.compile(match)`` stays a coordinate, not a factory abort.
+
+    Its body was never looked at, so the call is two-faced: the coordinate
+    completes only under ``python:off_population_call.completes`` and the
+    complement halts with an ``UndeterminedRaiseEffect``. A total completion
+    would claim ``re.compile`` never raises.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import CallSiteValue, StringValue
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
     from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 
     sugar = CallSiteSugar(
@@ -198,9 +207,15 @@ def test_off_population_call_desugars_to_a_callsite_not_a_gap():
         contract_resolution_gap="call-target-off-population:python:re.compile",
     )
     outcome = sugar.desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.arg_values == (StringValue("boom"),)
+    assert isinstance(outcome, ExitSet)
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halt,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert isinstance(done.value, CallSiteValue)
+    assert done.value.arg_values == (StringValue("boom"),)
+    assert done.guard.name == "python:off_population_call.completes"
+    assert halt.guard == complement_guard(done.guard)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "OffPopulationCall:python:re.compile"
 
 
 def test_fabricated_or_unauthenticated_reference_fails_decode():

@@ -106,6 +106,21 @@ def _unprojected_source_call(sugar):
     return calls.get(key)
 
 
+_OFF_POPULATION = "call-target-off-population:"
+
+
+def _off_population_source_call(sugar):
+    """The may-raise testimony for a call cited off the enrolled population."""
+    gap = sugar.contract_resolution_gap
+    if not isinstance(gap, str) or not gap.startswith(_OFF_POPULATION):
+        return None
+    if _language_owned_call_floor(sugar) is not None:
+        return None
+    from sugar_lift_py_tests.source_call_resolution import OffPopulationSourceCallV1
+
+    return OffPopulationSourceCallV1(gap[len(_OFF_POPULATION) :])
+
+
 @dataclass(frozen=True)
 class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
@@ -782,6 +797,8 @@ class CallSiteSugar(ConstructedTermSugar):
             )
         if callsite.body is None:
             unprojected = _unprojected_source_call(self)
+            if unprojected is None:
+                unprojected = _off_population_source_call(self)
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         produced = callsite.producer_outcome(

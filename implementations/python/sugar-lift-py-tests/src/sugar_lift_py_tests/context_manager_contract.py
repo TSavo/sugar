@@ -143,6 +143,23 @@ class SourceEnterFacesCompletionV1:
 
 
 @dataclass(frozen=True)
+class SourceConstructorFacesCompletionV1:
+    """The manager's own construction may halt; each halt is the With's own exit.
+
+    This is not totality. Python evaluates the With's context expression
+    before anything is entered, so a constructor that raises (a native call in
+    ``__init__`` that may raise, a validation ``raise``) leaves the With as
+    itself: ``__enter__`` never runs, the body never runs, ``__exit__`` never
+    runs. It admits only a source-derived protocol whose construction kept
+    every constructor halt as a typed effect in its receiver partition; the
+    boundary itself is sealed from the completed construction faces alone.
+    Nothing is folded into completion.
+    """
+
+    kind: str = "source-constructor-faces"
+
+
+@dataclass(frozen=True)
 class LanguageOwnedCCallFacesCompletionV1:
     """A C-owned ``__enter__``/``__exit__`` call has two faces, never one.
 
@@ -448,6 +465,11 @@ class EffectBoundarySemanticsV1:
     binding: NoBindingV1 | ExceptionInfoBindingV1 | WarningObservationBindingV1
     kind: str = "effect-boundary"
     schema_version: str = "1"
+    # Absent (total) unless the manager's construction may halt; a total
+    # construction encodes exactly as before, so its CIDs never move.
+    construction: TotalCompletionV1 | SourceConstructorFacesCompletionV1 = (
+        TotalCompletionV1()
+    )
 
 
 ContextManagerSemanticsV1 = ProtocolResourceSemanticsV1 | EffectBoundarySemanticsV1
@@ -757,6 +779,16 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
             message_value = vobj([("kind", vstr("none"))])
         else:
             message_value = _selector_to_value(message)
+        if isinstance(semantics.construction, TotalCompletionV1):
+            construction = ()
+        elif isinstance(semantics.construction, SourceConstructorFacesCompletionV1):
+            construction = (
+                ("construction", vobj([("kind", vstr("source-constructor-faces"))])),
+            )
+        else:
+            raise ContextManagerContractError(
+                "unsupported effect-boundary construction testimony"
+            )
         return vobj(
             [
                 ("kind", vstr("effect-boundary")),
@@ -773,6 +805,7 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
                     ),
                 ),
                 ("binding", vobj([("kind", vstr(binding))])),
+                *construction,
             ]
         )
     raise ContextManagerContractError("unknown context-manager semantics variant")
@@ -1222,11 +1255,18 @@ def _selector_parameter(selector, signature: ImportSignatureV2) -> CallParameter
 def _decode_effect_boundary(
     raw: Any, signature: ImportSignatureV2
 ) -> EffectBoundarySemanticsV1:
-    if (
-        set(raw) != {"kind", "schemaVersion", "mode", "matcher", "binding"}
-        or raw["schemaVersion"] != "1"
-    ):
+    base = {"kind", "schemaVersion", "mode", "matcher", "binding"}
+    if set(raw) not in (base, base | {"construction"}) or raw["schemaVersion"] != "1":
         raise ContextManagerContractError("malformed effect-boundary semantics")
+    construction = TotalCompletionV1()
+    if "construction" in raw:
+        # Total construction is encoded by absence; only the typed halt
+        # testimony may appear, so one theorem has one encoding.
+        if raw["construction"] != {"kind": "source-constructor-faces"}:
+            raise ContextManagerContractError(
+                "unknown effect-boundary construction testimony"
+            )
+        construction = SourceConstructorFacesCompletionV1()
     matcher = raw["matcher"]
     if not isinstance(matcher, dict) or set(matcher) != {
         "effectKind",
@@ -1290,7 +1330,9 @@ def _decode_effect_boundary(
             raise ContextManagerContractError(
                 "variadic message selector requires a Value pack"
             )
-    return EffectBoundarySemanticsV1(mode, effect_kind, expected, message, binding)
+    return EffectBoundarySemanticsV1(
+        mode, effect_kind, expected, message, binding, construction=construction
+    )
 
 
 def decode_context_manager_semantics_v1(
