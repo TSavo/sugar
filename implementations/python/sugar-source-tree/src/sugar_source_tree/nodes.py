@@ -70,6 +70,8 @@ from .binding_state import (
     binding_state_read_node,
     branch_result_slot,
     join_binding_state,
+    try_route_site,
+    try_route_slot,
     unwrap_binding_state,
 )
 
@@ -169,14 +171,6 @@ def _explicit_state(name: str, state):
     if name in state:
         return unwrap_binding_state(state[name])
     return _MISSING
-
-
-@dataclass(frozen=True)
-class _ConditionalRaiseRoute:
-    slot: BranchResultSlot
-    raised_on_true: bool
-    exception_identity: object | None
-    exception_mro: tuple | None
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
@@ -10004,28 +9998,29 @@ class Try(Statement):
             changed["handlers"] = tuple(new_handlers)
 
         unconditional = self._unconditional_raise_testimony(self.body)
-        conditional = self._conditional_raise(self.body)
-        completion_nets = []
+        # A completion route is one way the try can leave by falling through:
+        # the body (then ``else``) completed, or handler ``k`` received a
+        # routed halt edge and its own body completed.  Which handlers can
+        # receive an edge is exactly what ``_route_halt_edges`` already
+        # decided -- every edge, untyped ones reaching every arm -- never a
+        # guess from one testified raise.
+        completion_routes = []
         if unconditional is None:
-            completion_nets.append(body_completion)
-        for handler, handler_net in zip(self.handlers, handler_nets):
-            if unconditional is not None:
-                include = self._handler_matches(handler, *unconditional)
-            elif conditional is not None:
-                include = self._handler_matches(
-                    handler,
-                    conditional.exception_identity,
-                    conditional.exception_mro,
-                )
-            else:
-                include = True
-            if include and self._block_has_completed_fallthrough(handler.body):
-                completion_nets.append(handler_net)
+            completion_routes.append((None, body_completion))
+        for handler_index, (handler, handler_net) in enumerate(
+            zip(self.handlers, handler_nets)
+        ):
+            if handler_index in routed and self._block_has_completed_fallthrough(
+                handler.body
+            ):
+                completion_routes.append((handler_index, handler_net))
 
-        merged = self._merge_completion_nets(
-            scope,
-            completion_nets,
-            conditional_route=conditional,
+        site_id = getattr(self, "try_route_site_id", None)
+        retained_site = site_id is not None
+        if not retained_site:
+            site_id = try_route_site(self)
+        merged, minted = self._merge_completion_nets(
+            scope, completion_routes, site_id=site_id
         )
         final_scope = {**scope, **merged}
         new_finalbody, d, final_net = self._substitute_body_tracked(
@@ -10035,8 +10030,32 @@ class Try(Statement):
             changed["finalbody"] = new_finalbody
         merged = {**merged, **final_net}
 
-        node = self if not changed else rewrite(self, **changed)
+        if minted and not retained_site:
+            node = self._rewrite_with_route_site(changed, site_id)
+        else:
+            node = self if not changed else rewrite(self, **changed)
         return _Splice((node,), merged) if merged else node
+
+    def _rewrite_with_route_site(self, changed, site_id):
+        """Carry the route-slot address onto the rewritten try so its sugar
+        confirms the same slots the joined bindings read."""
+        from .backend import Leaf, materialize
+        from .shadow import rewrite
+
+        rewritten = rewrite(self, **changed) if changed else self
+        desc = rewritten.ref.describe()
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                desc.kind,
+                desc.raw_span or self.span,
+                (*desc.slots, ("try_route_site_id", Leaf(site_id))),
+            ),
+            self.reporter,
+            self.control_context,
+        )
 
     #: Node classes whose evaluation cannot itself raise.  A statement built
     #: only from these leaves the block by completing -- it contributes no
@@ -10220,28 +10239,6 @@ class Try(Statement):
             # The first ordinary statement can complete, so continue scanning.
         return None
 
-    def _conditional_raise(self, statements):
-        for statement in statements:
-            if not isinstance(statement, If):
-                continue
-            left = self._unconditional_raise_testimony(statement.body)
-            right = self._unconditional_raise_testimony(statement.orelse)
-            if left is not None and right is None:
-                return _ConditionalRaiseRoute(
-                    slot=branch_result_slot(statement.test),
-                    raised_on_true=True,
-                    exception_identity=left[0],
-                    exception_mro=left[1],
-                )
-            if right is not None and left is None:
-                return _ConditionalRaiseRoute(
-                    slot=branch_result_slot(statement.test),
-                    raised_on_true=False,
-                    exception_identity=right[0],
-                    exception_mro=right[1],
-                )
-        return None
-
     def _block_has_completed_fallthrough(self, statements) -> bool:
         """Whether one source path reaches the statement after this block.
 
@@ -10263,43 +10260,57 @@ class Try(Statement):
                     return False
         return True
 
-    def _merge_completion_nets(
-        self,
-        scope,
-        nets,
-        *,
-        conditional_route,
-    ) -> BindingMap:
-        if not nets:
-            return {}
-        if len(nets) == 1:
-            return dict(nets[0])
-        names = set().union(*(net.keys() for net in nets))
+    def _merge_completion_nets(self, scope, routes, *, site_id):
+        """Join each name over the routes the try can complete by.
+
+        THE LAW: a name whose state depends on which route left the try is
+        joined exactly like an ``if``'s branch result -- an if-expression over
+        the handler's ``try-route`` slot, nested in handler order, with the
+        body route as the innermost fallback.  Never dropped, never read from
+        the pre-try state: a route that did not assign the name carries the
+        state it arrived with (``UnboundBinding`` for a local not yet bound,
+        whose read then halts with ``UnboundLocalError`` under that route).
+        ``TrySugar`` confirms the slots on every routed outcome.
+
+        Returns ``(merged, minted)``; ``minted`` says a route slot was read."""
+        if not routes:
+            return {}, False
+        if len(routes) == 1:
+            return dict(routes[0][1]), False
+        names = set().union(*(net.keys() for _arm, net in routes))
         merged: BindingMap = {}
+        minted = False
         for name in _ordered_binding_keys(names):
-            states = [net.get(name, _explicit_state(name, scope)) for net in nets]
-            if any(state is _MISSING for state in states):
+            states = [
+                (arm, net.get(name, _explicit_state(name, scope)))
+                for arm, net in routes
+            ]
+            if any(state is _MISSING for _arm, state in states):
+                # No incoming binding at all (a module/global name): the same
+                # refusal ``If`` keeps -- the later read stays unresolved.
                 continue
-            if all(state is states[0] or state == states[0] for state in states[1:]):
-                merged[name] = states[0]
+            first = states[0][1]
+            if all(state is first or state == first for _arm, state in states[1:]):
+                merged[name] = first
                 continue
-            if conditional_route is not None and len(states) == 2:
-                body_state, handler_state = states
-                when_true, when_false = (
-                    (handler_state, body_state)
-                    if conditional_route.raised_on_true
-                    else (body_state, handler_state)
-                )
-                merged[name] = join_binding_state(
-                    slot=conditional_route.slot,
-                    when_true=when_true,
-                    when_false=when_false,
+            # Handler routes in source order, the body route (when it can
+            # complete) innermost: ``h0 if route0 else (h1 if route1 else
+            # body)``.  Without a completing body the last handler is the
+            # fallback -- it is the only route left once the others are false.
+            ordered = [entry for entry in states if entry[0] is not None] + [
+                entry for entry in states if entry[0] is None
+            ]
+            joined = ordered[-1][1]
+            for arm, state in reversed(ordered[:-1]):
+                joined = join_binding_state(
+                    slot=try_route_slot(site_id, arm),
+                    when_true=state,
+                    when_false=joined,
                     make_ifexp=self._make_ifexp,
                 )
-                continue
-            if all(isinstance(state, UnboundBinding) for state in states):
-                merged[name] = states[0]
-        return merged
+                minted = True
+            merged[name] = joined
+        return merged, minted
 
     def _make_ifexp(self, test, body, orelse):
         return If._make_ifexp(self, test, body, orelse)
@@ -10343,6 +10354,7 @@ class Try(Statement):
             orelse=tuple(stmt.sugar() for stmt in self.orelse),
             finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
             site=self.fragment,
+            route_site=getattr(self, "try_route_site_id", None),
         )
 
     def _authenticated_handler_specs(self):
@@ -11308,7 +11320,16 @@ class IfExp(Expression):
             body=body,
             orelse=orelse,
             site=self.fragment,
-            branch_slot=branch_result_slot(self.test),
+            # A phi's test already IS a slot (an ``if``'s branch result or a
+            # ``try``'s route): the expression is guarded by that slot itself,
+            # the one its owner confirms.  Minting a second slot from the
+            # reference's span left the joined value under a coordinate
+            # nothing authenticates.
+            branch_slot=(
+                BranchResultSlot(self.test.slot_id)
+                if isinstance(self.test, BranchResultRef)
+                else branch_result_slot(self.test)
+            ),
         )
 
 
