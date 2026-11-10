@@ -2329,11 +2329,21 @@ def resolve_source_visible_frame(
             # are unfinished, not wrong: they are not memoized, so a later
             # root that fits can still project them.
             raise
+        # The refusal names the crime, the owner, the illegal shape and the
+        # replacement, from facts of the definition alone: no count of what
+        # the walk happened to reach, so the words are the same on every run.
         result = ManagerConstructionGapV1(
             "call-closure-over-bound",
             resolved.cid,
-            "source call closure exceeds "
-            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions",
+            f"{definition.kind} {resolved.module_name}.{definition.name} "
+            f"(line {definition.start_line}): source call closure exceeds "
+            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions; "
+            "owner: resolve_source_visible_frame, which projects every "
+            "source call of a definition, and theirs, before the definition "
+            "itself; illegal shape: one eager projection spanning more than "
+            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions; replacement: "
+            "project each callee frame on demand at its own call site, so "
+            "no projection owns its whole closure",
         )
     finally:
         session.frame_active.discard(cache_key)

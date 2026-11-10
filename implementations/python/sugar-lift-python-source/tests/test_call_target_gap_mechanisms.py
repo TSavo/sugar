@@ -470,6 +470,10 @@ def test_call_closure_one_past_the_bound_is_refused_by_name(tmp_path):
     assert isinstance(result, ManagerConstructionGapV1), result
     assert result.kind == "call-closure-over-bound"
     assert str(SOURCE_CALL_CLOSURE_FRAME_BOUND) in result.detail
+    # The refusal says who refused, what shape was illegal, and what replaces
+    # it -- not only that a number was exceeded.
+    for part in ("owner: ", "illegal shape: ", "replacement: "):
+        assert part in result.detail, result.detail
 
 
 def test_call_closure_at_the_bound_constructs(tmp_path):
