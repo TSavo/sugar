@@ -22,6 +22,9 @@ class ReceiverStatePartitionValue(FloorValue):
                 kind = "completed"
             elif isinstance(face, Halted):
                 from sugar_lift_py_tests.effect import RaiseEffect
+                from sugar_lift_py_tests.effect.raise_effect import (
+                    UndeterminedRaiseEffect,
+                )
 
                 from sugar_lift_py_tests.effect.raise_effect import (
                     UndeterminedRaiseEffect,
