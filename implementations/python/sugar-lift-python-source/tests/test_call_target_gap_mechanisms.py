@@ -791,3 +791,73 @@ def test_scanned_definitions_reaches_methods_and_nothing_else(tmp_path):
 
     assert tuple(d.name for d in _scanned_definitions(klass)) == ("first", "second")
     assert tuple(d.name for d in _scanned_definitions(function)) == ("loose",)
+
+
+# --------------------------------------------------------------------------
+# A reachable class's import receipts are seated before ANY class sugar
+#
+# A subclass builds its local base's sugar.  A Name sugar built over an
+# imported coordinate that is not seated yet is a free name for the life of
+# the node, so the base's ``isinstance(x, Pattern)`` used to halt on a free
+# ``Pattern`` unless the module happened to be rebuilt after seating.
+# --------------------------------------------------------------------------
+
+
+_BASE_READS_IMPORTED_TYPE = (
+    "from re import Pattern\n"
+    "\n"
+    "\n"
+    "class Base:\n"
+    "    def __init__(self, expected):\n"
+    "        self.is_pattern = isinstance(expected, Pattern)\n"
+    "\n"
+    "\n"
+    "class Guard(Base):\n"
+    "    def __init__(self, expected):\n"
+    "        super().__init__(expected)\n"
+    "\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "\n"
+    "    def __exit__(self, *exc):\n"
+    "        return False\n"
+    "\n"
+    "\n"
+    "def make_guard(expected):\n"
+    "    return Guard(expected)\n"
+)
+
+
+def test_base_class_import_member_is_cited_on_the_first_build(tmp_path):
+    """POSITIVE: one build decides ``isinstance(23, re.Pattern)``.
+
+    The base class reads the imported ``Pattern``; the subclass is the one
+    constructed.  The receiver completes with the field decided, not halted
+    on a free ``Pattern``.
+    """
+    built = _construct(tmp_path, _BASE_READS_IMPORTED_TYPE)
+
+    state = built.receiver_state
+    assert type(state).__name__ == "ObjectValue", state
+    assert state.class_name == "Guard"
+    assert {f.name: type(f.value).__name__ for f in state.fields} == {
+        "is_pattern": "FalseBoolLiteralSugar"
+    }
+    assert "_Var(name='Pattern')" not in repr(built)
+
+
+def test_module_bound_spelling_is_not_cited_as_the_import_member(tmp_path):
+    """LYING TWIN: the same spelling bound by the module itself is no import.
+
+    Nothing authenticates a module-level ``Pattern`` as ``re.Pattern``, so the
+    type operand stays the dynamic boundary and no decided field appears.
+    """
+    local = _BASE_READS_IMPORTED_TYPE.replace(
+        "from re import Pattern\n", "class Pattern:\n    pass\n"
+    )
+    built = _construct(tmp_path, local)
+
+    state = built.receiver_state
+    assert type(state).__name__ == "ReceiverStatePartitionValue", state
+    assert "DynamicTypeOperandRuntimeEffect" in repr(state)
+    assert "re.Pattern" not in repr(built)
