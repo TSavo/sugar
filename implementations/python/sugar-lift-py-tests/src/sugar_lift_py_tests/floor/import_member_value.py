@@ -143,6 +143,13 @@ class ImportMemberValue(FloorValue):
         "re.fullmatch": "python.re.fullmatch",
     }
 
+    #: Authenticated callables the language defines as returning their one
+    #: positional operand: ``typing.final(f)`` tries ``f.__final__ = True``,
+    #: swallows the failure, and returns ``f``.  Keyed on the authenticated
+    #: ``qualified_name``, never the spelling.  The ``__final__`` marker is
+    #: not carried on the returned floor.
+    _RETURNS_ITS_OPERAND = frozenset({"typing.final"})
+
     def callable_application_with(self, operation: Any, ctx: object):
         """Call-through-import: a recognized C-floor semantic when the call is
         DECIDABLE, else the ordinary boundary effect.
@@ -153,6 +160,14 @@ class ImportMemberValue(FloorValue):
         friends) have language-owned semantics; when THIS authenticated member
         is one of them and its operands are concrete, decide it here.
         """
+        if (
+            self.qualified_name in self._RETURNS_ITS_OPERAND
+            and not operation.keyword_names
+            and len(operation.arguments) == 1
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(operation.arguments[0])
         operation_name = self._C_FLOOR_SEMANTIC_OPERATIONS.get(self.qualified_name)
         if operation_name is not None:
             decided = self._decide_c_floor_semantic(operation_name, operation, ctx)
