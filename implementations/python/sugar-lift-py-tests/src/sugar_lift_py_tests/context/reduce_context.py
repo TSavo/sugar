@@ -43,6 +43,13 @@ class ReduceContext:
     # still reads a BranchResultRef of that slot; record the folded bool
     # here so the phi can drop the dead arm without inventing BRA.to_term.
     ground_branch_results: dict = field(default_factory=dict)
+    # Assignment statements already evaluated, in statement order: each row is
+    # ``(rhs key, completed value)``. Python evaluates an assignment's RHS at
+    # the statement; substitution still inlines the RHS sugar at every later
+    # read, and such a read must see the completed face's value, never
+    # re-evaluate the RHS (which would raise again, outside whatever try/with
+    # enclosed the assignment). See ``sugar/assigned_value.py``.
+    assigned_values: tuple[tuple[object, object], ...] = ()
 
     @classmethod
     def root(
@@ -77,6 +84,7 @@ class ReduceContext:
             in_flight_effects=getattr(source, "in_flight_effects", ()),
             observed_effects=getattr(source, "observed_effects", ()),
             ground_branch_results=getattr(source, "ground_branch_results", {}),
+            assigned_values=getattr(source, "assigned_values", ()),
         )
 
     def record_operation(
@@ -116,6 +124,7 @@ class ReduceContext:
             in_flight_effects=self.in_flight_effects,
             observed_effects=self.observed_effects,
             ground_branch_results=self.ground_branch_results,
+            assigned_values=self.assigned_values,
         )
 
     def with_in_flight_effect(self, slot_id: str, effect: object) -> "ReduceContext":
@@ -136,6 +145,7 @@ class ReduceContext:
             in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),
             observed_effects=self.observed_effects,
             ground_branch_results=self.ground_branch_results,
+            assigned_values=self.assigned_values,
         )
 
     def in_flight_effect_for(self, slot_id: str):
@@ -156,3 +166,26 @@ class ReduceContext:
             if candidate_slot == slot_id:
                 return effect
         return None
+
+    def with_assigned_value(self, key: object, value: object) -> "ReduceContext":
+        from dataclasses import replace
+
+        return replace(
+            self,
+            assigned_values=(
+                *(row for row in self.assigned_values if row[0] != key),
+                (key, value),
+            ),
+        )
+
+    def without_assigned_value(self, key: object) -> "ReduceContext":
+        if not any(row[0] == key for row in self.assigned_values):
+            return self
+        from dataclasses import replace
+
+        return replace(
+            self,
+            assigned_values=tuple(
+                row for row in self.assigned_values if row[0] != key
+            ),
+        )

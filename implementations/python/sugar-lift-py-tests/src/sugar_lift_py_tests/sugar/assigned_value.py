@@ -1,0 +1,161 @@
+"""An assignment evaluates its RHS at the statement; later reads see its value.
+
+Substitution threads ``x = <rhs>`` by inlining the RHS sugar at every later
+read of ``x``. Python does not: it evaluates the RHS once, at the assignment
+statement, inside whatever ``try``/``with`` encloses it and in statement order.
+So ``try: x = textwrap.dedent('a') except ValueError: x = 'h'; return x`` may
+take the handler, and ``x = may_raise(); return 3`` may raise even though
+``x`` is never read.
+
+The law has two halves, and this module owns both:
+
+- **The statement evaluates.** ``evaluate_assignment_values`` desugars each RHS
+  at the assignment, in Python's evaluation order. Its halt faces leave HERE,
+  as the statement's own exits; only its completed faces continue, each with
+  ``ctx.assigned_values`` extended by ``(rhs key, completed value)``.
+- **A read never re-evaluates.** ``Sugar.desugar`` of a sugar whose key is
+  recorded answers ``Complete(<completed value>)``: the value from the face the
+  statement completed under, never a second evaluation that could raise again.
+  The completed face's guard already rides the path that reaches the read, so
+  each effect is counted once.
+
+A RHS that reduces to one plain ``Complete`` cannot halt; its reads keep the
+substitution they always had (re-reducing a total RHS denotes the same value).
+"""
+
+from __future__ import annotations
+
+_MISS = object()
+
+
+def assigned_key(sugar) -> object | None:
+    """The occurrence key of one RHS sugar: its type and source fragment.
+
+    Substitution shares the RHS node, but a read may sit in a different
+    construction coordinate and so hold a different sugar object for it; the
+    occurrence (type + exact fragment) is what both name. A sugar without a
+    source fragment has no occurrence to key and is never recorded; the
+    statement's own targets still receive its one completed value directly.
+    """
+    site = getattr(sugar, "site", None)
+    if site is None or not hasattr(site, "span") or not hasattr(site, "unit"):
+        return None
+    try:
+        hash(site)
+    except TypeError:
+        return None
+    return (type(sugar), site)
+
+
+def recorded_value(ctx, sugar):
+    """The completed value an earlier assignment recorded for ``sugar``, or _MISS."""
+    rows = getattr(ctx, "assigned_values", None)
+    if not rows:
+        return _MISS
+    key = assigned_key(sugar)
+    if key is None:
+        return _MISS
+    for candidate, value in reversed(rows):
+        if candidate == key:
+            return value
+    return _MISS
+
+
+def evaluate_assignment_values(values, ctx, tail=None):
+    """Evaluate ``values`` (RHS sugars, in evaluation order) at the statement.
+
+    Returns the statement's outcome: every halt face of every RHS, in order
+    (a later RHS never runs on an earlier one's halt), and one completed
+    ``_ReducedBlock`` per completed path whose context records each RHS's
+    completed value. ``tail(ctx, completed)``, if given, runs after the last
+    RHS (store targets) with ``completed`` the completed value of each RHS, in
+    ``values`` order, so a target consumes the one evaluation instead of a
+    second; its outcome replaces the empty completed block.
+    """
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    if ctx is None:
+        ctx = ReduceContext.root(owner="evaluate_assignment_values")
+
+    def finish(active, completed):
+        if tail is not None:
+            return tail(active, completed)
+        if active is ctx:
+            # Nothing recorded: the statement contributes nothing, as before.
+            return Complete(BlockValue((), can_fall_through=True))
+        return ExitSet.completed(_ReducedBlock((), True, (), (), active))
+
+    def step(index, active, completed=()):
+        if index == len(values):
+            return finish(active, completed)
+        sugar = values[index]
+        key = assigned_key(sugar)
+        # The statement's own evaluation is never answered from the record:
+        # a loop re-reducing this statement evaluates its RHS again.
+        own_ctx = active if key is None else active.without_assigned_value(key)
+        outcome = sugar.desugar(own_ctx)
+        if isinstance(outcome, Incomplete):
+            return outcome
+        if isinstance(outcome, Complete):
+            follow = outcome.follow()
+            if not follow.continues:
+                # A raise carried as control-flow data (``RaiseValue``): the
+                # statement halts here and no later RHS or target runs. It is
+                # handed back as-is so an enclosing ``try`` routes it.
+                return outcome
+            if _carries_halts(outcome):
+                if len(values) == 1 and tail is None:
+                    # A linear view with a conditional halt: the block reducer
+                    # splits it into the statement's halt and its continuation.
+                    # Its completed value has no single face to record, so a
+                    # read keeps substitution.
+                    return outcome
+                # Beside other members or targets the halt has no seam to
+                # leave by here; refuse rather than drop it or run the rest
+                # on a path where it fired.
+                from sugar_lift_py_tests.gap.info import GapKind
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="evaluate_assignment_values",
+                    blame=getattr(sugar, "site", None),
+                    observed=(
+                        "an assignment RHS member reduced to one linear value "
+                        "carrying a conditional halt beside other members or "
+                        "store targets"
+                    ),
+                    requested="the member's halt and completed faces as an ExitSet",
+                    fix=(
+                        "split the linear halt into Halted/Completed faces before "
+                        "sequencing later members and targets"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                )
+            return step(index + 1, active, (*completed, outcome.value))
+        if key is None:
+            # No occurrence to record: the statement still halts here, and a
+            # read keeps substitution (it was never answered from a record).
+            return outcome.and_then(
+                lambda value: step(index + 1, active, (*completed, value))
+            )
+        return outcome.and_then(
+            lambda value: step(
+                index + 1,
+                active.with_assigned_value(key, value),
+                (*completed, value),
+            )
+        )
+
+    return step(0, ctx)
+
+
+def _carries_halts(outcome) -> bool:
+    """A continuing ``Complete`` whose linear view holds a conditional halt."""
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    if outcome.follow().halt_guard is not None:
+        return True
+    return any(isinstance(entry, Incomplete) for entry in outcome.contribution())

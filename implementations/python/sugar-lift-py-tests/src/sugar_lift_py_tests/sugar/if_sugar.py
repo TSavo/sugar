@@ -22,6 +22,8 @@ consumes.
 
 from __future__ import annotations
 
+import functools
+
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -276,6 +278,53 @@ class IfSugar(Sugar):
         # which stops being legible once these guards are conjoined with a
         # prefix or merged with a sibling arm.
         then_face, else_face = _partition(("IfSugar", self.site, formula))
+        join = functools.partial(
+            self._join_branches,
+            formula=formula,
+            not_formula=not_formula,
+            then_face=then_face,
+            else_face=else_face,
+            observed_formula=observed_formula,
+            authentication=authentication,
+        )
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        then_deferred = isinstance(then_exits, NativeOperationExitCarrierV1)
+        else_deferred = isinstance(else_exits, NativeOperationExitCarrierV1)
+        if then_deferred ^ else_deferred:
+            # One suite holds a formal native operation (``message =
+            # exc.message`` evaluated at its assignment): its exits exist only
+            # once caller actuals discharge it. The join waits for that
+            # discharge and then is the ordinary union -- the deferred suite's
+            # faces under its polarity, the decided peer under the other.
+            # Both deferred stays loud (two demands under one join).
+            if then_deferred:
+                return then_exits.after_discharge(
+                    lambda discharged: join(discharged, else_exits)
+                )
+            return else_exits.after_discharge(
+                lambda discharged: join(then_exits, discharged)
+            )
+        return join(then_exits, else_exits)
+
+    def _join_branches(
+        self,
+        then_exits,
+        else_exits,
+        *,
+        formula,
+        not_formula,
+        then_face,
+        else_face,
+        observed_formula,
+        authentication,
+    ) -> Outcome:
+        from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+        from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+
         exits = then_exits.guarded(formula, then_face).union(
             else_exits.guarded(not_formula, else_face)
         )
