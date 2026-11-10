@@ -90,7 +90,73 @@ def exit_disposition_effect(disposition: object, incoming: object):
         return None
 
     verdict = _resource_verdict(disposition, incoming.effect)
+    if isinstance(verdict, _RetainedSuppression):
+        # The contract suppresses a type set; the body raise's type is the one
+        # the may-raise operation threw, which nobody testified to. Under the
+        # obligation the exit suppresses, under its complement the halt stands.
+        return RetainedObligation(
+            obligation=verdict.obligation, held=None, failed=incoming.effect
+        )
     return None if verdict == "suppress" else incoming.effect
+
+
+@dataclass(frozen=True)
+class _RetainedSuppression:
+    """A suppress-set verdict over an undetermined raise: the open type test."""
+
+    obligation: object
+
+
+@dataclass(frozen=True)
+class _SuppressedTypeOperand:
+    """One suppressed exception type, as the shared matcher's handler operand."""
+
+    identity: object
+
+    def exception_type_identity(self):
+        return self.identity
+
+
+def _undetermined_suppression_verdict(effect, coordinates, *, owner: str):
+    """Split an undetermined raise on the contract's own type tests.
+
+    ``__exit__(type(e), e, tb)`` tests ``issubclass(type(e), T)`` for each
+    suppressed ``T`` -- ``contextlib.suppress`` and every cited exit
+    disposition state exactly that. The raised object is the
+    ``UndeterminedExceptionValue`` the operation threw, so each test is the
+    same ``adt.is_python_type(e, T)`` atom ``except T`` retains (#7590,
+    #7591), asked of the one matcher -- which also owns the loud refusal for
+    a raise with no term to state the test over. A decided hit suppresses;
+    the open tests leave as one disjunction; all decided misses restore.
+    """
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
+        MatchRetained,
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.ir import or_
+    from sugar_source_tree.panic import SugarNotWritten
+
+    retained = []
+    for coordinate in sorted(coordinates, key=repr):
+        verdict = matches_raise_effect(effect, _SuppressedTypeOperand(coordinate))
+        if isinstance(verdict, MatchDecided):
+            if verdict.value:
+                return "suppress"
+            continue
+        if isinstance(verdict, MatchRetained):
+            retained.append(verdict.obligation)
+            continue
+        raise SugarNotWritten(
+            blame=getattr(effect, "occurrence_id", None) or owner,
+            owner=owner,
+            observed=f"matcher verdict species {type(verdict).__name__} has no arm",
+            requested="MatchDecided | MatchRetained",
+            fix=f"write suppression arm for {type(verdict).__name__}",
+        )
+    if not retained:
+        return "restore"
+    return _RetainedSuppression(retained[0] if len(retained) == 1 else or_(retained))
 
 
 def _boundary_halted_edge(disposition, incoming):
@@ -171,7 +237,7 @@ def _authenticate(disposition: object) -> None:
     _resource_verdict(disposition, None)
 
 
-def _resource_verdict(disposition: object, effect: object) -> str:
+def _resource_verdict(disposition: object, effect: object):
     """Decide suppress / restore / open for a body halt after the exit completed."""
     from sugar_lift_py_tests.context_manager_contract import (
         NeverSuppresses,
@@ -261,10 +327,20 @@ def _exit_suppression_contract_verdict(disposition, effect) -> str:
     owner = "exit_disposition.ExitSuppressionContract"
     if effect is None:
         return "restore"
-    coordinate = _require_exception_type_coordinate(effect, owner=owner)
     if not disposition.exception_type_coordinates:
         return "restore"
+    if _is_undetermined(effect):
+        return _undetermined_suppression_verdict(
+            effect, disposition.exception_type_coordinates, owner=owner
+        )
+    coordinate = _require_exception_type_coordinate(effect, owner=owner)
     return "suppress" if disposition.suppresses_coordinate(coordinate) else "restore"
+
+
+def _is_undetermined(effect) -> bool:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    return isinstance(effect, UndeterminedRaiseEffect)
 
 
 def _suppresses_verdict(disposition, effect) -> str:
@@ -297,7 +373,6 @@ def _suppresses_verdict(disposition, effect) -> str:
         )
     if effect is None:
         return "restore"
-    coordinate = _require_exception_type_coordinate(effect, owner=owner)
     matcher_identity, _ = _builtin_exception_identity(matcher_name)
     if matcher_identity is None:
         raise SugarNotWritten(
@@ -307,4 +382,9 @@ def _suppresses_verdict(disposition, effect) -> str:
             requested="a language-owned exception type with python:exception_type_identity",
             fix="use a builtin exception type or an AuthenticatedRaiseMatcher coordinate path",
         )
+    if _is_undetermined(effect):
+        return _undetermined_suppression_verdict(
+            effect, frozenset((matcher_identity,)), owner=owner
+        )
+    coordinate = _require_exception_type_coordinate(effect, owner=owner)
     return "suppress" if coordinate == matcher_identity else "restore"
