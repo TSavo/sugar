@@ -126,6 +126,13 @@ class WithSourceResourceSugar(Sugar):
                         # An exception (a leaf or a group) is suppressed by a
                         # true exit result; loop control and return are not
                         # exceptions, so the exit result is ignored for them.
+                        # A RuntimeEffect is not an exception either: it is the
+                        # lift's boundary at an operation whose dispatch exists
+                        # only at runtime (it may complete or raise anything).
+                        # Every exception Python raises from a decided operation
+                        # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
+                        # takes the truth split; handing a boundary to exit as a
+                        # raise would invent one, so it stays the With's residue.
                         if isinstance(body_face, Halted) and not isinstance(
                             body_face.effect, (RaiseEffect, GroupedRaiseEffect)
                         ):

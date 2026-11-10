@@ -90,11 +90,19 @@ def promote_raise_halts(exits):
                 # A Halted face carries the state that existed before its
                 # effect.  Keeping the raise entry in that state lets a later
                 # enclosing reducer promote the already-consumed edge again.
+                # That prefix reached the raise, so it falls through to it: the
+                # block's own "never falls through" verdict is about the raise,
+                # not about the state before it.  A handler that consumes the
+                # effect (``__exit__`` returning true, ``suppress``) continues
+                # after its statement from this state, exactly as the reducer's
+                # other halted arms carry a falling-through prefix.
                 promoted.append(
                     Halted(
                         guard,
                         entry.effect,
-                        replace(state, entries=tuple(prefix)),
+                        replace(
+                            state, entries=tuple(prefix), can_fall_through=True
+                        ),
                     )
                 )
             else:

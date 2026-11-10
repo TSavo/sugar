@@ -6238,7 +6238,10 @@ def test_installed_cited_opaque_nested_with_body_helper_for_divzero_still_exits(
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    # The opaque exit may suppress the helper's raise: under the truth of its
+    # open result the inner With completes and the generator runs on, so the
+    # block falls through on that arm (the raise is re-raised under falsity).
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -6334,7 +6337,10 @@ def test_installed_cited_opaque_nested_with_body_helper_for_raising_tuple_still_
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    # The opaque exit may suppress the helper's raise: under the truth of its
+    # open result the inner With completes and the generator runs on, so the
+    # block falls through on that arm (the raise is re-raised under falsity).
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -7674,22 +7680,30 @@ def test_boundary_as_binding_never_reifies_a_nonmatching_halt(tmp_path):
     assert _effect_slot_facts(face) == ()
 
 
+_CHAINED_BODY = (
+    "try:\n"
+    "    raise ImportError('inner')\n"
+    "except ImportError:\n"
+    "    raise ValueError('cannot convert')"
+)
+
+
 def test_boundary_as_binding_projects_authenticated_exception_context(tmp_path):
-    """Truthful chained twin: `.value.__context__` is the handled occurrence."""
+    """Truthful chained twin: the consumed raise carries its handled context.
+
+    The boundary consumes the handler's raise, so the statement after the With
+    runs (it was once dropped because the halted prefix claimed it never fell
+    through). The context testimony rides the completed face.
+    """
+    from sugar_lift_py_tests.floor import ReturnValue, TermValue
     from sugar_lift_py_tests.outcome import Completed
 
     exits = _route_boundary_with_binding(
-        tmp_path,
-        body=(
-            "try:\n"
-            "    raise ImportError('inner')\n"
-            "except ImportError:\n"
-            "    raise ValueError('cannot convert')"
-        ),
-        following="assert isinstance(info.value.__context__, ImportError)",
+        tmp_path, body=_CHAINED_BODY, following="return 7"
     )
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
+    assert ReturnValue(TermValue(7)) in completed[0].value.entries
     face = completed[0]
     assert len(_effect_binding_facts(face)) == 3
     context_facts = tuple(
@@ -7723,13 +7737,8 @@ def test_boundary_context_binding_composes_with_variable_message_predicate(tmp_p
         implementation=implementation,
         prefix="pattern = 'cannot convert'\n",
         manager="arbitrary.boundary(ValueError, match=pattern)",
-        body=(
-            "try:\n"
-            "    raise ImportError('inner')\n"
-            "except ImportError:\n"
-            "    raise ValueError('cannot convert')"
-        ),
-        following="assert isinstance(info.value.__context__, ImportError)",
+        body=_CHAINED_BODY,
+        following="return 7",
     )
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
@@ -7737,6 +7746,23 @@ def test_boundary_context_binding_composes_with_variable_message_predicate(tmp_p
         "effect_slot_context" in str(entry.formula)
         for entry in _effect_slot_facts(completed[0])
     )
+
+
+def test_boundary_as_binding_context_read_after_the_with_stays_loud(tmp_path):
+    """Reading `.value.__context__` after the With reaches the raised value.
+
+    That value is the handler's ``ValueError(...)`` call, whose chaining is not
+    projected yet, so the read refuses instead of inventing ``ImportError``.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten) as caught:
+        _route_boundary_with_binding(
+            tmp_path,
+            body=_CHAINED_BODY,
+            following="assert isinstance(info.value.__context__, ImportError)",
+        )
+    assert "__context__" in str(caught.value)
 
 
 def test_boundary_as_binding_refuses_missing_exception_context(tmp_path):

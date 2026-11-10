@@ -124,7 +124,11 @@ def _route_body_face(body_face, exit_es, disposition, site):
     ``ReturnTruthiness`` is the same law ``WithSourceResourceSugar`` applies:
     an exception (a leaf or a group) is suppressed only under the truth of the
     exit result and re-raised under its falsity; loop control and return are
-    not exceptions, so the exit result does not decide them.
+    not exceptions, so the exit result does not decide them. Neither is a
+    ``RuntimeEffect``: it marks an operation whose dispatch exists only at
+    runtime and may complete or raise. Decided runtime raises (``1/0``,
+    ``{}[k]``) are ``RaiseEffect`` and take the truth split; a boundary stays
+    the With's own residue rather than an invented raise handed to exit.
     """
     from sugar_lift_py_tests.context_manager_contract import (
         NeverSuppressesDispositionV1,
