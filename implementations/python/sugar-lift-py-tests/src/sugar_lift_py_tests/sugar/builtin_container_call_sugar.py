@@ -81,6 +81,17 @@ def _opaque_pair(kind, method, site):
     ).normalize()
 
 
+def _operands(pending, done, ctx):
+    """Evaluate ``pending`` operand sugars in order, after ``done``."""
+    if not pending:
+        return Complete(done)
+    return (
+        pending[0]
+        .desugar(ctx)
+        .and_then(lambda value: _operands(pending[1:], (*done, value), ctx))
+    )
+
+
 @dataclass(frozen=True)
 class BuiltinContainerCallSugar(ConstructedTermSugar):
     """``receiver.<method>(*args)`` on a decided list/dict/set: ``(post, result)``."""
@@ -134,13 +145,7 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
         )
 
     def _operands(self, pending, done, ctx):
-        if not pending:
-            return Complete(done)
-        return (
-            pending[0]
-            .desugar(ctx)
-            .and_then(lambda value: self._operands(pending[1:], (*done, value), ctx))
-        )
+        return _operands(pending, done, ctx)
 
     def _apply(self, receiver, operands):
         from sugar_lift_py_tests.floor import builtin_container_method as law
@@ -260,3 +265,283 @@ class ContainerMutationStatementSugar(Sugar):
             return ExitSet.completed(_ReducedBlock(entries, True, (), (), active))
 
         return evaluate_assignment_values(self.evaluated, ctx, tail=record)
+
+
+def _unknown_after(site, label):
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
+    return SymbolicValue(
+        ctor(
+            "python:receiver_after_call",
+            (str_const(occurrence_key(site)), str_const(label)),
+        )
+    )
+
+
+@dataclass(frozen=True)
+class PathContainerCallSugar(ConstructedTermSugar):
+    """``<path>.<method>(*args)``: ``(receiver after, result)`` of one call.
+
+    The receiver (the object the path evaluates to) is evaluated once. A
+    decided list/dict/set receiver takes the cited CPython mutation; any other
+    receiver takes the ordinary call (``fallback``), which reads the receiver
+    from this one evaluation, and leaves the receiver's contents unknown."""
+
+    receiver: Sugar
+    method: str
+    args: tuple
+    fallback: Sugar
+    site: object = dataclass_field(compare=False)
+    evaluation_token: object = dataclass_field(default=None, compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return _not_verdict(
+            cls,
+            "TupleValue",
+            "the pair is consumed by the path's after-call projections",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:path-container-call",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.method),
+                self.receiver.to_term(owner=owner),
+                *(arg.to_term(owner=owner) for arg in self.args),
+            ),
+            symbol_kind="coordinate",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.context import ReduceContext
+        from sugar_lift_py_tests.floor import builtin_container_method as law
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+
+        key = assigned_key(self.receiver)
+        unknown = _unknown_after(self.site, "receiver")
+
+        def ordinary(call_ctx):
+            return self.fallback.desugar(call_ctx).and_then(
+                lambda result: Complete(TupleValue((unknown, result)))
+            )
+
+        outcome = self.receiver.desugar(ctx)
+        if key is None and type(outcome) is not Complete:
+            # No occurrence to answer a second read from: the ordinary call
+            # is the one evaluation.
+            return ordinary(ctx)
+
+        def on_receiver(receiver):
+            kind = law.container_kind(receiver)
+            if kind is not None and self.method in law.MUTATING_METHODS[kind]:
+                return _operands(self.args, (), ctx).and_then(
+                    lambda operands: law.apply(
+                        kind, self.method, receiver, operands, self.site
+                    )
+                    or _opaque_pair(kind, self.method, self.site)
+                )
+            if key is None:
+                return ordinary(ctx)
+            base = ctx if ctx is not None else ReduceContext.root(
+                owner="PathContainerCallSugar"
+            )
+            return ordinary(base.with_assigned_value(key, receiver))
+
+        return outcome.and_then(on_receiver)
+
+
+def _may_present(value, kind, depth=0) -> bool:
+    """Whether a decided read through ``value`` could present a ``kind``
+    container's contents: it is one, or a decided container/object holds one.
+
+    An opaque value (a call result, a symbolic value) presents nothing decided
+    -- every read through it is itself unknown -- so it cannot show stale
+    contents of the object a call changed."""
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.floor.set_value import SetValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if depth > 32:
+        return True
+    if law.container_kind(value) == kind:
+        return True
+    if type(value) in (ListValue, TupleValue, SetValue):
+        return any(_may_present(e, kind, depth + 1) for e in value.elements)
+    if type(value) is DictValue:
+        return any(
+            _may_present(k, kind, depth + 1) or _may_present(v, kind, depth + 1)
+            for k, v in value.entries
+        )
+    if type(value) is ObjectValue:
+        return any(
+            _may_present(field.value, kind, depth + 1)
+            for field in (*value.fields, *value.class_fields)
+        )
+    faces = [
+        getattr(value, name)
+        for name in ("when_true", "when_false")
+        if hasattr(value, name)
+    ]
+    return any(_may_present(face, kind, depth + 1) for face in faces)
+
+
+def _floor_key(key):
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    if type(key) is int:
+        return TermValue(key)
+    if type(key) is str:
+        return StringValue(key)
+    return None
+
+
+def _replace_path(value, steps, post, check_shared):
+    """``value`` with the member at ``steps`` replaced by ``post``, or None.
+
+    Every step must be a plain instance field or a decided item, and the
+    member there must be the same kind of container ``post`` is. With
+    ``check_shared``, no other member along the path may present a decided
+    container of that kind (it could be the very object the call changed, and
+    would show its old contents)."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.object_field import ObjectField
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    (kind, key), rest = steps[0], steps[1:]
+    target = law.container_kind(post)
+
+    def descend(child):
+        if rest:
+            return _replace_path(child, rest, post, check_shared)
+        if law.container_kind(child) != law.container_kind(post):
+            return None
+        return post
+
+    if kind == "attr":
+        if type(value) is not ObjectValue or value.deferred_helper_fields:
+            return None
+        if not value.authenticates_plain_attribute_store(key):
+            return None
+        positions = [i for i, field in enumerate(value.fields) if field.name == key]
+        if not positions:
+            return None
+        position = positions[-1]
+        if check_shared and any(
+            _may_present(field.value, target)
+            for field in (*value.fields, *value.class_fields)
+            if field.name != key
+        ):
+            return None
+        child = descend(value.fields[position].value)
+        if child is None:
+            return None
+        fields = list(value.fields)
+        fields[position] = ObjectField(key, child)
+        return replace(value, fields=tuple(fields))
+    if kind != "item":
+        return None
+    if type(value) is DictValue:
+        floor_key = _floor_key(key)
+        if floor_key is None:
+            return None
+        entries = tuple(value.entries)
+        position = law._find_key(entries, floor_key)
+        if position is None or position < 0:
+            return None
+        if check_shared and any(
+            _may_present(entry_value, target)
+            for index, (_k, entry_value) in enumerate(entries)
+            if index != position
+        ):
+            return None
+        child = descend(entries[position][1])
+        if child is None:
+            return None
+        updated = list(entries)
+        updated[position] = (entries[position][0], child)
+        return DictValue(tuple(updated))
+    if type(value) in (ListValue, TupleValue) and type(key) is int:
+        elements = tuple(value.elements)
+        if not -len(elements) <= key < len(elements):
+            return None
+        position = key % len(elements)
+        if check_shared and any(
+            _may_present(element, target)
+            for index, element in enumerate(elements)
+            if index != position
+        ):
+            return None
+        child = descend(elements[position])
+        if child is None:
+            return None
+        updated = list(elements)
+        updated[position] = child
+        return type(value)(tuple(updated))
+    return None
+
+
+@dataclass(frozen=True)
+class PathAfterCallSugar(ConstructedTermSugar):
+    """A path's root (``mode='root'``) or its object (``'inner'``) after a call."""
+
+    call: Sugar
+    root: Sugar
+    steps: tuple
+    mode: str
+    unshared: bool
+    site: object = dataclass_field(compare=False)
+    evaluation_token: object = dataclass_field(default=None, compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return _not_verdict(
+            cls, "FloorValue", "projects the one evaluated path mutation"
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:path-after-call",
+            (self.call.to_term(owner=owner), str_const(self.mode)),
+            symbol_kind="coordinate",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor import builtin_container_method as law
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        unknown = Complete(_unknown_after(self.site, self.mode))
+        called = self.call.desugar(ctx)
+        if type(called) is not Complete:
+            return unknown
+        pair = called.value
+        if type(pair) is not TupleValue or len(pair.elements) != 2:
+            return unknown
+        post = pair.elements[0]
+        if law.container_kind(post) is None:
+            return unknown
+        rooted = self.root.desugar(ctx)
+        if type(rooted) is not Complete:
+            return unknown
+        check_shared = self.mode == "root" and not self.unshared
+        updated = _replace_path(rooted.value, tuple(self.steps), post, check_shared)
+        if updated is None:
+            return unknown
+        return Complete(post if self.mode == "inner" else updated)

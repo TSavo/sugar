@@ -6624,7 +6624,7 @@ class Assign(Statement):
             or any(isinstance(arg, Starred) for arg in call.args)
         ):
             return None
-        return mutation_statement(
+        mutation = mutation_statement(
             self,
             scope,
             call_site=call,
@@ -6632,6 +6632,13 @@ class Assign(Statement):
             method=call.func.attr,
             args=tuple(arg.substitute(scope) for arg in call.args),
             target_name=target.id,
+        )
+        if mutation is not None:
+            return mutation
+        from .container_mutation import path_mutation_statement
+
+        return path_mutation_statement(
+            self, scope, call=call.substitute(scope), target_name=target.id
         )
 
     def _mapping_pop_assignment(self, scope):
@@ -10751,6 +10758,11 @@ class Expr(Statement):
         mutation = self._builtin_container_mutation(scope)
         if mutation is not None:
             return mutation
+        from .container_mutation import path_mutation_statement
+
+        mutation = path_mutation_statement(self, scope, call=rewritten.value)
+        if mutation is not None:
+            return mutation
         state = self._dict_setdefault_append_state(scope)
         statement_kind = "DictSetDefaultAppendStatement"
         if state is None:
@@ -13820,6 +13832,68 @@ class BuiltinContainerCall(Expression):
             kind=self.container_kind,
             site=self.fragment,
             value_first=self.value_first,
+            evaluation_token=self.token,
+        )
+
+
+class PathContainerCall(Expression):
+    """One mutating-named call on a receiver reached through a path."""
+
+    receiver: Expression
+    args: Tuple[Expression, ...]
+    method: str
+    fallback: Expression
+    token: int
+    _child_fields = ("receiver", "args", "fallback")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            PathContainerCallSugar,
+        )
+
+        return PathContainerCallSugar(
+            receiver=self.receiver.sugar(),
+            method=self.method,
+            args=tuple(arg.sugar() for arg in self.args),
+            fallback=self.fallback.sugar(),
+            site=self.fragment,
+            evaluation_token=self.token,
+        )
+
+
+class PathAfterCall(Expression):
+    """A path's root (``mode='root'``) or its object (``'inner'``) after a call."""
+
+    call: Expression
+    root: Expression
+    steps: tuple
+    mode: str
+    label: str
+    unshared: bool
+    token: int
+    inner: Optional[Expression]
+    _child_fields = ("call", "root", "inner")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            PathAfterCallSugar,
+        )
+
+        return PathAfterCallSugar(
+            call=self.call.sugar(),
+            root=self.root.sugar(),
+            steps=self.steps,
+            mode=self.mode,
+            unshared=self.unshared,
+            site=self.fragment,
             evaluation_token=self.token,
         )
 
