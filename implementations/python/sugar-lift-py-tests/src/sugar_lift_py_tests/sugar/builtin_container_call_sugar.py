@@ -545,3 +545,51 @@ class PathAfterCallSugar(ConstructedTermSugar):
         if updated is None:
             return unknown
         return Complete(post if self.mode == "inner" else updated)
+
+
+@dataclass(frozen=True)
+class SourceCallActualAfterSugar(ConstructedTermSugar):
+    """An actual after a source helper's cited stores: their one total value.
+
+    The state re-reads the actual and the helper's cited mutations of it. It
+    is kept only when it evaluates to one plain completed value; anything
+    that could halt, or that the law left undecided, is an unknown minted at
+    the call -- never the pre-call contents and never a second halt."""
+
+    state: Sugar
+    label: str
+    site: object = dataclass_field(compare=False)
+    evaluation_token: object = dataclass_field(default=None, compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return _not_verdict(
+            cls, "FloorValue", "the actual's post-state names no claim of its own"
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:source-call-actual-after",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.label),
+                self.state.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.floor_value import FloorValue
+        from sugar_lift_py_tests.sugar.assigned_value import _carries_halts
+
+        outcome = self.state.desugar(ctx)
+        if (
+            isinstance(outcome, Complete)
+            and outcome.follow().continues
+            and not _carries_halts(outcome)
+            and isinstance(outcome.value, FloorValue)
+        ):
+            return outcome
+        return Complete(_unknown_after(self.site, self.label))
