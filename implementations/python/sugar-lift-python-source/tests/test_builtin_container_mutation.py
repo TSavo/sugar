@@ -212,8 +212,13 @@ def test_a_pure_builtin_does_not_change_its_argument(tmp_path):
 
 
 def test_an_undecided_receiver_stays_opaque_and_is_unknown_after(tmp_path):
+    # The formal's method waits for the caller's actual (the ``method_call``
+    # carrier); once a list is supplied, ``x`` is unknown after the call.
+    from test_formal_method_call_defers import _carrier, _discharge
+
     source = "def f(x):\n    x.append(1)\n    return x\n"
-    value = _only_return(tmp_path, source)
+    exits = _discharge(_carrier(tmp_path, source), ListValue(()))
+    (value,) = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
     assert _is_unknown_after_call(value, "x")
 
 

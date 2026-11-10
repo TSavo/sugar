@@ -615,7 +615,27 @@ def _project_bitwise_invert(value, site):
     return value.bitwise_invert(site)
 
 
+def _project_method_call(receiver, name, keyword_names, *operands_and_site):
+    """``receiver.<name>(*args, **kwargs)`` re-dispatched on resolved actuals.
+
+    ``name`` is a StringValue; ``keyword_names`` a TupleValue of StringValues
+    naming the trailing operands that are keyword actuals.  The receiver's
+    actual selects the method exactly as MethodCallSugar does (a floor's
+    method body, the container law, or the #7616 two faces); an actual that
+    is still a formal defers again to its own caller."""
+    from sugar_lift_py_tests.sugar.method_call_sugar import dispatch_method_call
+
+    *operands, site = operands_and_site
+    names = tuple(element.value for element in keyword_names.elements)
+    split = len(operands) - len(names)
+    positional = tuple(operands[:split])
+    kw_values = tuple(zip(names, operands[split:]))
+    return dispatch_method_call(name.value, receiver, positional, kw_values, site, None)
+
+
 _NATIVE_OPERATION_PROJECTORS = {
+    # Receiver-selected method call (formal receiver or operand).
+    "method_call": _project_method_call,
     # Unary / adapter Floor methods.
     "truth": lambda value, site: value.truth(site),
     "boolop_truth": lambda value, site: value.boolop_truth(site),
@@ -672,10 +692,20 @@ _NATIVE_OPERATION_PROJECTORS = {
 
 
 def _native_operation_projector_arity(projector) -> int:
-    """Operand count named by an explicit projector (site is always last)."""
+    """Operand count named by an explicit projector (site is always last).
+
+    A projector whose trailing parameter is variadic (``method_call``'s
+    arguments, then the site) names its minimum: the fixed operands."""
     import inspect
 
     return len(inspect.signature(projector).parameters) - 1
+
+
+def _native_operation_projector_is_variadic(projector) -> bool:
+    import inspect
+
+    parameters = tuple(inspect.signature(projector).parameters.values())
+    return bool(parameters) and parameters[-1].kind is inspect.Parameter.VAR_POSITIONAL
 
 
 def _conjoin_guards(guards):
@@ -1022,7 +1052,11 @@ class NativeOperationExitCarrierV1:
             )
 
         expected_arity = _native_operation_projector_arity(projector)
-        if len(actual_operands) != expected_arity:
+        if (
+            len(actual_operands) < expected_arity
+            if _native_operation_projector_is_variadic(projector)
+            else len(actual_operands) != expected_arity
+        ):
             return undischarged(
                 "native operation arity is unavailable for projector "
                 f"{self.demand.operator!r} "

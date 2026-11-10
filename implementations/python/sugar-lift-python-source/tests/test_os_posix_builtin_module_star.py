@@ -83,13 +83,16 @@ def test_contextlib_chdir_constructs_with_posix_c_call_faces(tmp_path: Path) -> 
     assert any(isinstance(face, Completed) for face in exits)
     halted = [face for face in exits if isinstance(face, Halted)]
     # os.getcwd() and os.chdir(path) in __enter__, os.chdir(pop()) in __exit__:
-    # each posix call may raise OSError and leaves the With as itself.
-    assert len({face.effect.occurrence for face in halted}) == 3
+    # each posix call may raise OSError and leaves the With as itself. The
+    # pop reads ``self._old_cwd`` through ``self``, whose contents at the exit
+    # are not testified there, so it is two-faced too.
+    assert len({face.effect.occurrence for face in halted}) == 4
     assert all(isinstance(face.effect, UndeterminedRaiseEffect) for face in halted)
     owners = {face.effect.producer_node_owner for face in halted}
     assert owners == {
         "LanguageOwnedCExtensionCallableValue:posix.getcwd",
         "LanguageOwnedCExtensionCallableValue:posix.chdir",
+        "BuiltinMethodCall:list.pop",
     }
 
 

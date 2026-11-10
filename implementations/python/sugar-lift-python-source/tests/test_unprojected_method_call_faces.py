@@ -11,8 +11,8 @@ the value ``python:call_result(<call term>, <occurrence>)``, and halts with an
 ``UndeterminedRaiseEffect`` (owner ``UnprojectedMethodCall:<name>``) under the
 complement.
 
-A symbolic receiver (a formal, a place a call may have changed) or an operand
-bound to a formal stays the coordinate: the caller's actuals discharge it.
+A formal receiver or operand defers to the caller's actual through the
+``method_call`` carrier; a place a call may have changed stays the coordinate.
 """
 
 from __future__ import annotations
@@ -84,9 +84,11 @@ def test_a_str_method_may_refuse_by_value(tmp_path):
 
 
 def test_a_formal_receiver_waits_for_the_caller(tmp_path):
-    # The caller's actual selects the method; this frame mints no face.
-    _returns, halts = _split(tmp_path, "def f(y):\n    return y.foo()\n")
-    assert "UnprojectedMethodCall:foo" not in _owners(halts)
+    # The caller's actual selects the method; this frame mints no face, and
+    # the undischarged ``method_call`` carrier is never a completion.
+    from test_formal_method_call_defers import _carrier
+
+    _carrier(tmp_path, "def f(y):\n    return y.foo()\n")
 
 
 def test_a_source_method_is_not_this_law(tmp_path):

@@ -90,8 +90,14 @@ def test_two_appended_displays_are_not_one_object(tmp_path):
 
 def test_a_formal_after_its_own_mutation_is_itself(tmp_path):
     # A formal is the caller's object: its identity with itself stays one term.
+    # The formal's method waits for the caller's actual (``method_call``).
+    from test_assignment_evaluates_rhs import _rows
+    from test_formal_method_call_defers import _carrier, _discharge
+    from sugar_lift_py_tests.floor import ListValue
+
     source = "def f(a):\n    a.append(1)\n    return a is a\n"
-    value = _only_return(tmp_path, source)
+    exits = _discharge(_carrier(tmp_path, source), ListValue(()))
+    (value,) = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
     assert type(value) is PredicateValue
     left, right = value.formula.args
     assert left == right
