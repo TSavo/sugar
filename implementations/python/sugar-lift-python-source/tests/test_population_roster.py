@@ -48,7 +48,7 @@ from sugar_source_tree.reporter import CollectingReporter
 
 def test_roster_is_the_corpus_plus_declared_extras(monkeypatch) -> None:
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
-    assert STANDING_EXTRA_POPULATIONS == frozenset({"cpython-stdlib:contextlib"})
+    assert STANDING_EXTRA_POPULATIONS == frozenset({"cpython-stdlib:contextlib", "numpy"})
     assert enrolled_population_roster("pandas") == frozenset(
         {"pandas"} | STANDING_EXTRA_POPULATIONS
     )

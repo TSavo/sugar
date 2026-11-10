@@ -1557,7 +1557,16 @@ def _signature_for_behavior(behavior, semantics):
             raw = json.loads(
                 encode_jcs(term_to_value(outcome.value.to_term(owner=name)))
             )
-            default = LiteralDefaultV1(raw)
+            from sugar_lift_py_tests.context_manager_contract import (
+                ConstructedDefaultV1,
+                ContextManagerContractError,
+                LiteralDefaultV1,
+            )
+
+            try:
+                default = LiteralDefaultV1(raw)
+            except ContextManagerContractError:
+                default = ConstructedDefaultV1(raw)
             if raw.get("kind") == "const":
                 sort = PrimitiveSort(raw["sort"]["name"])
         parameters.append(

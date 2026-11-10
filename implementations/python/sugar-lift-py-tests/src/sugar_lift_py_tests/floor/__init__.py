@@ -67,6 +67,14 @@ from .complex_value import ComplexValue
 from .ellipsis_value import EllipsisValue
 from .entered_manager_state_value import EnteredManagerStateValue
 from .language_owned_io_resource import LanguageOwnedIoResourceValue
+from .language_owned_contextvar import (
+    LanguageOwnedCExtensionCallableValue,
+    LanguageOwnedCExtensionResultValue,
+    LanguageOwnedContextVarMethodValue,
+    LanguageOwnedContextVarToken,
+    LanguageOwnedContextVarType,
+    LanguageOwnedContextVarValue,
+)
 from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
@@ -129,6 +137,12 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ExceptionValue,
     EnteredManagerStateValue,
     LanguageOwnedIoResourceValue,
+    LanguageOwnedCExtensionCallableValue,
+    LanguageOwnedCExtensionResultValue,
+    LanguageOwnedContextVarMethodValue,
+    LanguageOwnedContextVarToken,
+    LanguageOwnedContextVarType,
+    LanguageOwnedContextVarValue,
     ExceptionClassValue,
     LocalExceptionClassValue,
     FunctionCallable,
@@ -242,6 +256,12 @@ __all__ = [
     "EllipsisValue",
     "EnteredManagerStateValue",
     "LanguageOwnedIoResourceValue",
+    "LanguageOwnedCExtensionCallableValue",
+    "LanguageOwnedCExtensionResultValue",
+    "LanguageOwnedContextVarMethodValue",
+    "LanguageOwnedContextVarToken",
+    "LanguageOwnedContextVarType",
+    "LanguageOwnedContextVarValue",
     "NoneValue",
     "ObjectField",
     "ObjectMethodValue",

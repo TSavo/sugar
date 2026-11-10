@@ -276,6 +276,25 @@ class LiteralDefaultV1:
 
 
 @dataclass(frozen=True)
+class ConstructedDefaultV1:
+    """A formal default that constructed, but is not a literal constant.
+
+    ``errstate(call=_Unspecified)`` is a module-level sentinel instance,
+    not None or a typed const. The default is recorded as its constructed
+    term; this does not invent literal equality with that sentinel.
+    """
+
+    value: Any
+    kind: str = "constructed-default"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, dict) or "kind" not in self.value:
+            raise ContextManagerContractError(
+                "constructed default must be an exact constructed term"
+            )
+
+
+@dataclass(frozen=True)
 class CallParameterV1:
     name: str
     sort: Sort
@@ -287,7 +306,7 @@ class CallParameterV1:
         | VariadicKeywordV1
     )
     required: bool
-    default: NoDefaultV1 | LiteralDefaultV1
+    default: NoDefaultV1 | LiteralDefaultV1 | ConstructedDefaultV1
 
     def __post_init__(self) -> None:
         _validate_call_parameter_v1(self)
@@ -895,6 +914,17 @@ def import_signature_to_value(signature: ImportSignatureV2):
                     ("value", _json_value(parameter.default.value)),
                 ]
             )
+        elif isinstance(parameter.default, ConstructedDefaultV1):
+            if not isinstance(parameter.default.value, dict) or "kind" not in parameter.default.value:
+                raise ContextManagerContractError(
+                    "constructed default must be an exact constructed term"
+                )
+            default = vobj(
+                [
+                    ("kind", vstr("constructed-default")),
+                    ("value", _json_value(parameter.default.value)),
+                ]
+            )
         else:
             raise ContextManagerContractError("unknown authenticated default")
         rows.append(
@@ -952,6 +982,11 @@ def decode_import_signature_v2(raw: Any) -> ImportSignatureV2:
             "value",
         }:
             default = LiteralDefaultV1(raw_default["value"])
+        elif raw_default.get("kind") == "constructed-default" and set(raw_default) == {
+            "kind",
+            "value",
+        }:
+            default = ConstructedDefaultV1(raw_default["value"])
         else:
             raise ContextManagerContractError(
                 "unknown or malformed authenticated default"
