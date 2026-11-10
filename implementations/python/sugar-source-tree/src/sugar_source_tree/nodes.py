@@ -1965,6 +1965,58 @@ class SourceUnit:
             )
         )
 
+    @staticmethod
+    def source_class_admits_source_constructor_frame(
+        definition: "ClassDef",
+    ) -> bool:
+        """Whether this class call may carry its source constructor frame.
+
+        Ordinary classes already pass through default-attribute behavior.
+        A subclass that inherits an authenticated local initializer may also
+        carry that frame when the subclass itself has no constructor hooks
+        and the initializer's defining class already has default-attribute
+        behavior. Unauthenticated or computed bases stay outside this door.
+        """
+        if SourceUnit.source_class_has_authenticated_default_attribute_behavior(
+            definition
+        ):
+            return True
+        if not isinstance(definition, ClassDef):
+            return False
+        if definition._source_initializer() is None:
+            return False
+        if definition.keywords or definition.decorators or definition.type_params:
+            return False
+        forbidden_methods = {
+            "__new__",
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+            "__getitem__",
+            "__setitem__",
+            "__delitem__",
+        }
+        if any(
+            isinstance(member, FunctionDef)
+            and (
+                member.name in forbidden_methods
+                or (
+                    member.decorators
+                    and definition._method_descriptor_kind(member) is None
+                )
+            )
+            for member in definition.body
+        ):
+            return False
+        owner = definition._source_initializer_class()
+        return (
+            owner is not None
+            and SourceUnit.source_class_has_authenticated_default_attribute_behavior(
+                owner
+            )
+        )
+
     def construction_generation(self, node: "Node") -> int:
         """The source-authenticated generation of this exact occurrence.
 
@@ -5692,6 +5744,62 @@ class ClassDef(Statement):
             site=self.fragment,
         )
 
+
+    def _source_initializer_class(self) -> "ClassDef | None":
+        """The class that wrote the inherited or own source ``__init__``."""
+        seen: set[int] = set()
+
+        def owner_of(definition: "ClassDef") -> "ClassDef | None":
+            if id(definition) in seen:
+                return None
+            seen.add(id(definition))
+            own = next(
+                (
+                    item
+                    for item in reversed(definition.body)
+                    if isinstance(item, FunctionDef) and item.name == "__init__"
+                ),
+                None,
+            )
+            if own is not None:
+                return definition
+            for base in definition.bases:
+                name = None
+                if isinstance(base, Name):
+                    name = base.id
+                elif isinstance(base, Subscript) and isinstance(base.value, Name):
+                    name = base.value.id
+                else:
+                    return None
+                bindings = (definition.unit.module_direct_bindings or {}).get(name, ())
+                if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+                    return None
+                found = owner_of(bindings[0])
+                if found is not None:
+                    return found
+            return None
+
+        return owner_of(self)
+
+    def _source_initializer(self) -> "FunctionDef | None":
+        """This class's ``__init__``, or the first authenticated local base's.
+
+        Ordinary classes with no source initializer still inherit
+        ``object.__init__`` (zero formals). Unauthenticated, computed, or
+        attributed bases are not a source initializer.
+        """
+        owner = self._source_initializer_class()
+        if owner is None:
+            return None
+        return next(
+            (
+                item
+                for item in reversed(owner.body)
+                if isinstance(item, FunctionDef) and item.name == "__init__"
+            ),
+            None,
+        )
+
     def source_visible_constructor_frame(self):
         """The class call projected through its already-constructed definition."""
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -5703,14 +5811,7 @@ class ClassDef(Statement):
         )
         from sugar_source_tree.binding_provenance import BindingCoordinateV1
 
-        initializer = next(
-            (
-                item
-                for item in reversed(self.body)
-                if isinstance(item, FunctionDef) and item.name == "__init__"
-            ),
-            None,
-        )
+        initializer = self._source_initializer()
         new_shape = self._authenticated_new_constructor_shape()
         constructor = (
             initializer
@@ -5878,14 +5979,7 @@ class ClassDef(Statement):
         from sugar_source_tree.binding_provenance import BindingCoordinateV1
         from sugar_source_tree.binding_state import BindingEntryV1
 
-        initializer = next(
-            (
-                item
-                for item in reversed(self.body)
-                if isinstance(item, FunctionDef) and item.name == "__init__"
-            ),
-            None,
-        )
+        initializer = self._source_initializer()
         initializer_body = None
         receiver_coordinate_cid = None
         if initializer is not None:
@@ -12275,7 +12369,7 @@ class Call(Expression):
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
-                and self.unit.source_class_has_authenticated_default_attribute_behavior(
+                and self.unit.source_class_admits_source_constructor_frame(
                     definition
                 )
             ):
@@ -12521,7 +12615,7 @@ class Call(Expression):
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
-                and self.unit.source_class_has_authenticated_default_attribute_behavior(
+                and self.unit.source_class_admits_source_constructor_frame(
                     definition
                 )
             ):

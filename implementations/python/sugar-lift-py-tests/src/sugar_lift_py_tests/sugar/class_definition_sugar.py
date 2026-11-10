@@ -23,6 +23,30 @@ class ConstructedClassConditionalFieldsV1:
     when_false: tuple[object, ...] = ()
 
 
+def _inherited_source_initializer(bases):
+    """The first authenticated source ``__init__`` on a local base class.
+
+    Unauthenticated or builtin bases are not a source initializer.
+    """
+    for base in bases:
+        if not isinstance(base, ClassDefinitionValue):
+            return None
+        own = next(
+            (
+                method
+                for method in reversed(base.methods)
+                if method.name == "__init__"
+            ),
+            None,
+        )
+        if own is not None:
+            return own
+        found = _inherited_source_initializer(base.base_classes)
+        if found is not None:
+            return found
+    return None
+
+
 @dataclass(frozen=True)
 class ClassDefinitionSugar(Sugar):
     class_name: str
@@ -211,6 +235,8 @@ class ClassDefinitionSugar(Sugar):
             ),
             None,
         )
+        if initializer is None:
+            initializer = _inherited_source_initializer(tuple(base_values))
         return Complete(
             ClassDefinitionValue(
                 self.class_name,
