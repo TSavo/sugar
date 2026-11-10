@@ -78,6 +78,18 @@ PURE_BUILTINS = frozenset(
     }
 )
 
+# Pure builtins that invoke no dunder of their operands: ``isinstance(c, C)``
+# reads ``type(c)``; ``id``/``type``/``callable`` read the object header.
+NO_DUNDER_BUILTINS = frozenset({"callable", "id", "isinstance", "issubclass", "type"})
+
+
+def runs_operand_code(call, scope) -> bool:
+    """Whether ``call`` may run code that can change its operands' objects:
+    anything but a cited pure builtin over operands whose dunders are builtin."""
+    from .nodes import Call
+
+    return isinstance(call, Call) and not _is_pure_call(call, scope)
+
 
 def decided_container_kind(node) -> Optional[str]:
     """``list``/``dict``/``set`` when ``node`` builds (or is the post-state of) one."""
@@ -391,7 +403,14 @@ def _is_pure_call(call, scope) -> bool:
         # ``sorted(r, key=f)``: ``f`` runs and may reach the argument.
         return False
     if isinstance(func, Name):
-        return func.id in PURE_BUILTINS and func.id not in scope
+        # ``print(c)``/``sum([c])``/``sorted(c)`` run ``c``'s ``__str__``/
+        # ``__radd__``/``__iter__``/``__lt__``: pure only when every operand
+        # is a decided builtin all the way down, so no dunder is user code.
+        if func.id not in PURE_BUILTINS or func.id in scope:
+            return False
+        if func.id in NO_DUNDER_BUILTINS:
+            return True
+        return all(builtin_typed(arg, scope) for arg in call.args)
     if isinstance(func, Attribute):
         if isinstance(func.value, Constant):
             return True
@@ -539,6 +558,92 @@ def _exposed(root, bound_refs):
         if decided_container_kind(node) is not None and _ref(node) in bound_refs:
             found.append(node)
     return found
+
+
+# Builtins whose result is always a value of an immutable builtin type, whatever
+# the operand's dunder returns (CPython checks ``__str__``/``__len__``/... results).
+_IMMUTABLE_RESULT_BUILTINS = frozenset(
+    {
+        "bool",
+        "chr",
+        "format",
+        "hash",
+        "id",
+        "isinstance",
+        "issubclass",
+        "len",
+        "ord",
+        "repr",
+        "str",
+    }
+)
+# Builtins that build a builtin container (or iterator) of the operand's items.
+_BUILTIN_CONSTRUCTORS = frozenset(
+    {
+        "bytes",
+        "complex",
+        "dict",
+        "float",
+        "frozenset",
+        "int",
+        "list",
+        "range",
+        "set",
+        "sorted",
+        "tuple",
+    }
+)
+
+
+def builtin_typed(node, scope, depth=0) -> bool:
+    """Whether ``node`` is a decided builtin value all the way down: every
+    object it is or holds has a builtin type, so no dunder a builtin invokes on
+    it is user code."""
+    from .nodes import (
+        BuiltinContainerCall,
+        BuiltinContainerProjection,
+        Call,
+        Constant,
+        Dict,
+        List,
+        Name,
+        Set,
+        Starred,
+        Tuple_,
+    )
+
+    if depth > 32:
+        return False
+    if isinstance(node, Constant):
+        return True
+    if isinstance(node, (List, Tuple_, Set)):
+        return all(builtin_typed(e, scope, depth + 1) for e in node.elts)
+    if isinstance(node, Dict):
+        return all(
+            k is not None and builtin_typed(k, scope, depth + 1)
+            for k in node.keys
+        ) and all(builtin_typed(v, scope, depth + 1) for v in node.values)
+    if isinstance(node, Starred):
+        return builtin_typed(node.value, scope, depth + 1)
+    if isinstance(node, BuiltinContainerProjection):
+        return builtin_typed(node.call, scope, depth + 1)
+    if isinstance(node, BuiltinContainerCall):
+        return builtin_typed(node.receiver, scope, depth + 1) and all(
+            builtin_typed(a, scope, depth + 1) for a in node.args
+        )
+    if getattr(node, "kind", None) == "OpaqueObjectStateV1":
+        return builtin_typed(node.base, scope, depth + 1)
+    if (
+        isinstance(node, Call)
+        and isinstance(node.func, Name)
+        and node.func.id not in scope
+        and not node.keywords
+    ):
+        if node.func.id in _IMMUTABLE_RESULT_BUILTINS:
+            return True
+        if node.func.id in _BUILTIN_CONSTRUCTORS:
+            return all(builtin_typed(a, scope, depth + 1) for a in node.args)
+    return False
 
 
 def _rebind(statement, pre_scope, scope, targets):

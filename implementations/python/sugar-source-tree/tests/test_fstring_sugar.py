@@ -23,7 +23,22 @@ def _fn(src):
 
 
 def _post_term(src):
-    return _fn(src).sugar().desugar().value.post().args[1]
+    outcome = _fn(src).sugar().desugar()
+    if not hasattr(outcome, "exits"):
+        return outcome.value.post().args[1]
+    # ``f"{x}"`` on a formal runs ``type(x).__format__`` (``!r``/``!s``/``!a``
+    # its ``__repr__``/``__str__`` first), which may be user code: the return
+    # completes only under the opaque dunder-call atom and halts undetermined
+    # under its complement. Read the term off that one completed face.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
+    (halted,) = [e for e in outcome.exits if isinstance(e, Halted)]
+    assert completed.guard.name == "python:builtin_dunder_call.completes"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "BuiltinDunderCall:format"
+    return completed.value.post().args[1]
 
 
 def _formatted_value(src):

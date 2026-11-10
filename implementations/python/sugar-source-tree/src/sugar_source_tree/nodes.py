@@ -3185,11 +3185,27 @@ class Node(Typed):
             for entry in scope.values()
         ):
             return scope
+        from .container_mutation import runs_operand_code
+
+        # Only a call that may run code holding the object can change it: a
+        # cited pure builtin over builtin-typed operands leaves it as it was.
         exposed = {
             state.object_identity_cid
             for call in self.walk()
-            if isinstance(call, Call)
+            if isinstance(call, Call) and runs_operand_code(call, scope)
             for state in call.exposed_object_places()
+        }
+        # ``f'{c}'`` runs ``c.__format__`` (and ``!s``/``!r`` its
+        # ``__str__``/``__repr__``): user code unless ``c`` is builtin-typed.
+        from .container_mutation import builtin_typed
+
+        exposed |= {
+            node.object_identity_cid
+            for formatted in self.walk()
+            if isinstance(formatted, FormattedValue)
+            and not builtin_typed(formatted.value, scope)
+            for node in formatted.value.walk()
+            if isinstance(node, ObjectPlaceStateV1)
         }
         if not exposed:
             return scope
@@ -13227,6 +13243,17 @@ class ObjectPlaceStateV1(Expression):
 
     def _construct_sugar(self):
         self.validate_identity()
+        if self.invalidated_by_opaque_call:
+            # A call that may have run code holding this object came between
+            # its construction and this read: its fields are unknown, never
+            # the constructed (pre-call) value.
+            from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+                ReceiverAfterCallSugar,
+            )
+
+            return ReceiverAfterCallSugar(
+                label=f"object:{self.object_identity_cid}", site=self.fragment
+            )
         from sugar_lift_py_tests.sugar.constructed_object_place_sugar import (
             ConstructedObjectPlaceSugar,
         )

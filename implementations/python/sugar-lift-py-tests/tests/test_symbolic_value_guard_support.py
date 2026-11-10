@@ -88,7 +88,6 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
     from sugar_source_tree.tree import SourceFile
 
@@ -107,9 +106,20 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     )
     outcome = joined.sugar().desugar(ctx)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert getattr(outcome.value.term, "name", None) == "python:fstring"
+    # ``unknown.__name__`` is not a decided builtin, so formatting it runs a
+    # ``__format__`` that may be user code: the f-string completes only under
+    # the opaque dunder-call atom and halts undetermined under its complement.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet), outcome
+    (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
+    (halted,) = [e for e in outcome.exits if isinstance(e, Halted)]
+    assert completed.guard.name == "python:builtin_dunder_call.completes"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "BuiltinDunderCall:format"
+    assert isinstance(completed.value, CallSiteValue)
+    assert getattr(completed.value.term, "name", None) == "python:fstring"
 
 
 def test_type_call_result_is_a_type_object() -> None:

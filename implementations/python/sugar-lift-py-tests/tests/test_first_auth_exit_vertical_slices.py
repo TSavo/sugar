@@ -104,8 +104,10 @@ def _without_pytest_raises_construction_halts(exits):
     ``pytest.raises(...)`` before anything is entered, so each such halt is the
     With's own face: the body never runs and ``__exit__`` never runs. pytest's
     ``except re.error`` route reaches ``fail(...)`` (``Failed``); any other
-    exception propagates undetermined. Every remaining face is reached only
-    where that call completed.
+    exception propagates undetermined. Formatting that ``re.error`` into
+    ``fail``'s message (``f"...{re_error}"``) runs its class's ``__format__``,
+    which the lift does not know is CPython's own, so it may raise too. Every
+    remaining face is reached only where that call completed.
     """
     from sugar_lift_py_tests.outcome import Halted
 
@@ -125,6 +127,7 @@ def _without_pytest_raises_construction_halts(exits):
     )
     assert kinds == [
         ("RaiseEffect", "Failed"),
+        ("UndeterminedRaiseEffect", "BuiltinDunderCall:format"),
         ("UndeterminedRaiseEffect", "OffPopulationCall:python:re.compile"),
     ], kinds
     (failed,) = [face for face in construction if face.effect.exception_name == "Failed"]

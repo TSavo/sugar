@@ -127,20 +127,24 @@ def test_a_construction_halt_never_enters_the_body_or_the_exit(tmp_path, body):
         for face in faces
         if _negates_off_population_call(face.guard, "python:re.compile")
     ]
-    # Exactly pytest's two construction outcomes, whatever the body does:
-    # ``except re.error`` reaches ``fail(...)``; anything else propagates.
+    # Exactly pytest's construction outcomes, whatever the body does:
+    # ``except re.error`` reaches ``fail(...)`` -- after formatting the
+    # ``re.error`` into its message, which runs a ``__format__`` the lift does
+    # not know is CPython's own and so may raise; anything else propagates.
     assert all(isinstance(face, Halted) for face in construction)
     (failed,) = [
         face
         for face in construction
         if isinstance(face.effect, RaiseEffect) and face.effect.exception_name == "Failed"
     ]
-    (other,) = [
-        face for face in construction if isinstance(face.effect, UndeterminedRaiseEffect)
-    ]
-    assert len(construction) == 2
+    others = sorted(
+        face.effect.producer_node_owner
+        for face in construction
+        if isinstance(face.effect, UndeterminedRaiseEffect)
+    )
+    assert len(construction) == 3
     assert "re.error" in repr(failed.guard)
-    assert other.effect.producer_node_owner == "OffPopulationCall:python:re.compile"
+    assert others == ["BuiltinDunderCall:format", "OffPopulationCall:python:re.compile"]
     # Neither halt carries a body effect or an expectation verdict: nothing
     # was entered.
     body_faces = [face for face in faces if all(face is not c for c in construction)]
