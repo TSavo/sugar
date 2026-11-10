@@ -1200,3 +1200,82 @@ def _untouched(name, pre_scope, scope, havocked) -> bool:
     if name not in scope or name not in pre_scope:
         return name not in scope
     return scope[name] is pre_scope[name] and havocked.get(name) is scope[name]
+
+
+# ---------------------------------------------------------------------------
+# ``is`` between decided containers: object identity, never value equality.
+#
+# A display or a builtin ``list()``/``dict()``/``set()`` call builds a new
+# object each time it is evaluated, so two different creation nodes are two
+# objects; a post-state (a recorded mutation projection or a helper's actual
+# after its body) is the object it mutated.  Only operands whose evaluation
+# runs no code are decided here: the comparison then reads nothing it would
+# not read anyway.
+_IDENTITY_LEAF_KINDS = frozenset({"Constant", "FormalRef", "BindingCoordinateRef"})
+_IDENTITY_STATE_KINDS = frozenset(
+    {"BuiltinContainerProjection", "SourceCallActualAfter", "OpaqueObjectStateV1"}
+)
+
+
+def _identity_root(node):
+    """The creation node (or formal) whose object ``node`` denotes, else None."""
+    kind = getattr(node, "kind", None)
+    if kind == "BuiltinContainerProjection":
+        return _identity_root(node.call.receiver) if node.index == 0 else None
+    if kind == "SourceCallActualAfter":
+        return _identity_root(node.state)
+    if kind == "OpaqueObjectStateV1":
+        return _identity_root(node.base)
+    if kind in _FORMAL_KINDS:
+        return node
+    if decided_container_kind(node) is not None:
+        return node
+    return None
+
+
+def _runs_no_code(node) -> bool:
+    """Evaluating ``node`` (a decided container operand) calls nothing."""
+    kind = getattr(node, "kind", None)
+    if kind in _IDENTITY_STATE_KINDS:
+        # Answered from the evaluation its statement already recorded.
+        return True
+    if kind in _IDENTITY_LEAF_KINDS:
+        return True
+    if kind == "Call":
+        return decided_container_kind(node) is not None and not node.args
+    if kind in ("List", "Tuple", "Set"):
+        return all(_runs_no_code(element) for element in node.elts)
+    if kind == "Dict":
+        # A dict display hashes its keys: only constants are decided here.
+        return all(
+            key is not None and getattr(key, "kind", None) == "Constant"
+            for key in node.keys
+        ) and all(_runs_no_code(value) for value in node.values)
+    return False
+
+
+def decided_identity(left, right) -> Optional[bool]:
+    """``left is right`` when both denote decided containers, else None.
+
+    Two different creation sites are two objects: False.  One creation site
+    does not decide: an unrolled loop or a re-entered body evaluates it more
+    than once, and each evaluation is another object, which a node cannot
+    tell apart -- that comparison stays with the reduced values.  A formal may
+    be any caller object: it decides only against its own coordinate."""
+    if decided_container_kind(left) is None or decided_container_kind(right) is None:
+        return None
+    if not (_runs_no_code(left) and _runs_no_code(right)):
+        return None
+    left_root = _identity_root(left)
+    right_root = _identity_root(right)
+    if left_root is None or right_root is None:
+        return None
+    if _is_formal(left_root) or _is_formal(right_root):
+        if _is_formal(left_root) and _is_formal(right_root) and same_object(
+            left_root, right_root
+        ):
+            return True
+        return None
+    if _ref(left_root) is _ref(right_root):
+        return None
+    return False
