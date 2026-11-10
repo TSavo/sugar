@@ -153,7 +153,7 @@ class ConstructedManagerProtocolV1:
         unreachable normal/exceptional branches must not perform field lookups.
         """
         from sugar_lift_py_tests.outcome import Completed, Halted
-        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.floor import FloorValue, NoneValue
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
@@ -211,6 +211,36 @@ class ConstructedManagerProtocolV1:
                     effect.exception_type_coordinate, effect.exception_type_mro
                 ),
                 value,
+                ExitTracebackCoordinate(self.exit_face_id, None),
+            )
+        elif isinstance(body_face, Halted) and isinstance(
+            body_face.effect, GroupedRaiseEffect
+        ):
+            from sugar_lift_py_tests.floor.grouped_exception_value import (
+                GroupedExceptionValue,
+            )
+            from sugar_lift_py_tests.ir import ctor, str_const
+
+            effect = body_face.effect
+            # BaseExceptionGroup(...) natively becomes ExceptionGroup when every
+            # leaf is an Exception, so only the ExceptionGroup coordinate states
+            # the instance's real class.
+            if effect.exception_type_coordinate != ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const("ExceptionGroup")],
+            ) or effect.exception_type_mro is None:
+                construction_panic_gap(
+                    owner="ManagerProtocol.exit_outcome_for_body",
+                    blame=self.exit_face_id,
+                    observed="exception group without builtins.ExceptionGroup testimony",
+                    requested="an authenticated builtins.ExceptionGroup body raise",
+                    fix="authenticate the group's native class before exit inputs",
+                )
+            args = (
+                RaisedExitTypeValue(
+                    effect.exception_type_coordinate, effect.exception_type_mro
+                ),
+                GroupedExceptionValue(effect, self.exit_face_id),
                 ExitTracebackCoordinate(self.exit_face_id, None),
             )
         else:

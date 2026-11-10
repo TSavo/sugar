@@ -137,6 +137,24 @@ class RaiseSugar(Sugar):
             )
 
         def after_exception(raised_value):
+            from sugar_lift_py_tests.floor.grouped_exception_value import (
+                GroupedExceptionValue,
+            )
+
+            if isinstance(raised_value, GroupedExceptionValue):
+                # Re-raising an authenticated group object raises that same
+                # group tree; its leaves keep their RaiseEffect identity.
+                if self.cause is not None or self.in_flight_slot is not None:
+                    from sugar_source_tree.panic import SugarNotWritten
+
+                    raise SugarNotWritten(
+                        blame=self.site,
+                        owner="RaiseSugar.desugar",
+                        observed="group re-raise with a cause or in-flight context",
+                        requested="group __cause__/__context__ semantics",
+                        fix="keep group chaining loud",
+                    )
+                return Incomplete(raised_value.effect)
             if self.cause is None:
                 return halt(raised_value)
             return self.cause.desugar(ctx).and_then(
