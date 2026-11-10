@@ -505,9 +505,16 @@ def test_unpack_does_not_borrow_the_standalone_store_construction_path(
     )
     assert isinstance(unpack, UnpackStoreAssignSugar)
     assert isinstance(unpack.stores[0], SubscriptStoreEffectSugar)
-    # Standalone single-target store is a different sugar root.
+    # Standalone single-target store is a different sugar root: on a decided
+    # list it is the cited ``list.__setitem__`` mutation of the object.
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        ContainerMutationStatementSugar,
+    )
+
     single = _function_sugar(
         tmp_path, "def f():\n    a = [0]\n    a[0] = 2\n    return a\n", "single"
     )
-    assert any(isinstance(s, SubscriptStoreEffectSugar) for s in single.statements)
+    assert any(
+        isinstance(s, ContainerMutationStatementSugar) for s in single.statements
+    )
     assert not any(isinstance(s, UnpackStoreAssignSugar) for s in single.statements)
