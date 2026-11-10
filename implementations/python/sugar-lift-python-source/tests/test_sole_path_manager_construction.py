@@ -7360,6 +7360,35 @@ def _guarded_literal_boundary(tmp_path, *, exit_body: str):
     return derive_manager_summary(protocol, behavior=behavior)
 
 
+def _assert_source_exit_faces_resource_not_boundary(summary, disposition):
+    """A guarded exit halt is carried as the exit's own face, never a boundary.
+
+    The exit may halt, so the resource is not total; it seals only as
+    ``source-exit-faces``, which With honours by re-running the exit frame per
+    body face. No Expects/Suppresses theorem is minted from the True face.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        NeverSuppressesDispositionV1,
+        ProtocolResourceSemanticsV1,
+        ReturnTruthinessDispositionV1,
+        SourceExitFacesCompletionV1,
+    )
+    from sugar_lift_python_source.manager_summary_derivation import (
+        DerivedManagerSummaryV1,
+    )
+
+    disposition = {
+        "never": NeverSuppressesDispositionV1,
+        "truth": ReturnTruthinessDispositionV1,
+    }[disposition]
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert not isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(summary.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(summary.semantics.exit.completion, SourceExitFacesCompletionV1)
+    assert isinstance(summary.semantics.exit.disposition, disposition)
+
+
 def test_guarded_literal_exit_derives_expects_raise_boundary(tmp_path):
     summary = _guarded_literal_boundary(
         tmp_path,
@@ -7406,7 +7435,7 @@ def test_guarded_literal_exit_without_absent_effect_halt_derives_suppresses(tmp_
     assert summary.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
 
 
-def test_guarded_literal_exit_with_opaque_completed_face_stays_gap(tmp_path):
+def test_guarded_literal_exit_with_opaque_completed_face_is_not_a_boundary(tmp_path):
     """Discrimination: one non-literal completed face admits NOTHING.
 
     `return self.expected` is neither exact True nor exact False, so the
@@ -7423,11 +7452,12 @@ def test_guarded_literal_exit_with_opaque_completed_face_stays_gap(tmp_path):
             "        return self.expected\n"
         ),
     )
-    assert isinstance(summary, DerivedManagerSummaryGapV1)
-    assert summary.kind == "exit-may-halt"
+    _assert_source_exit_faces_resource_not_boundary(
+        summary, "truth"
+    )
 
 
-def test_guarded_literal_exit_with_no_true_face_stays_gap(tmp_path):
+def test_guarded_literal_exit_with_no_true_face_is_not_a_boundary(tmp_path):
     """An all-False exit names no suppression predicate, so nothing is derived.
 
     Teeth note: perturbing the explicit empty-disjunction refusal in
@@ -7446,11 +7476,12 @@ def test_guarded_literal_exit_with_no_true_face_stays_gap(tmp_path):
             "        return False\n"
         ),
     )
-    assert isinstance(summary, DerivedManagerSummaryGapV1)
-    assert summary.kind == "exit-may-halt"
+    _assert_source_exit_faces_resource_not_boundary(
+        summary, "never"
+    )
 
 
-def test_guarded_literal_exit_without_type_coordinate_stays_gap(tmp_path):
+def test_guarded_literal_exit_without_type_coordinate_is_not_a_boundary(tmp_path):
     """Discrimination: a guard that never tests the exit-type coordinate.
 
     No formal index is resolvable, so no expected-type operand exists and
@@ -7466,7 +7497,9 @@ def test_guarded_literal_exit_without_type_coordinate_stays_gap(tmp_path):
             "        return False\n"
         ),
     )
-    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    _assert_source_exit_faces_resource_not_boundary(
+        summary, "truth"
+    )
 
 
 # --- Effect boundary consumes an ANCESTOR match, not only exact identity -----

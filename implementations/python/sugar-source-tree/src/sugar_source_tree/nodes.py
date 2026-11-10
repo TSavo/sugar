@@ -8588,6 +8588,7 @@ class With(Statement):
             NeverSuppressesDispositionV1,
             ReturnTruthinessDispositionV1,
             ProtocolResourceSemanticsV1,
+            SourceExitFacesCompletionV1,
             TotalCompletionV1,
         )
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -8687,7 +8688,13 @@ class With(Statement):
             and semantics.enter.projection == "enter-result"
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
-            and isinstance(semantics.exit.completion, TotalCompletionV1)
+            and (
+                isinstance(semantics.exit.completion, TotalCompletionV1)
+                or (
+                    isinstance(semantics.exit.completion, SourceExitFacesCompletionV1)
+                    and isinstance(resolution, SourceDerivedContextManagerRefV1)
+                )
+            )
             and isinstance(
                 semantics.exit.disposition,
                 (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),

@@ -28,7 +28,9 @@ from sugar_lift_py_tests.context_manager_contract import (
     ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
     ReturnTruthinessDispositionV1,
+    SourceExitFacesCompletionV1,
     SuppressesModeV1,
+    TotalCompletionV1,
     VariadicKeywordEntryProjectionV1,
     VariadicKeywordV1,
     VariadicPositionalV1,
@@ -39,7 +41,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
     resolve_branch_result_guards as _resolve_branch_result_guards,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Complete, Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Complete, Completed, Halted, outcome_to_exitset
 
 from .canonical import cid_of_json
 from .manager_protocol_construction import (
@@ -529,18 +531,33 @@ def derive_manager_summary(
     # A type operand is data, not evidence that this callee consumes it.
     # Only the native exit theorem above can authenticate an effect boundary;
     # unresolved/non-total protocol construction must remain a typed gap.
-    if not exit_.exits or any(not isinstance(face, Completed) for face in exit_.exits):
+    if not exit_.exits:
         return DerivedManagerSummaryGapV1(
             "exit-may-halt", protocol.protocol_construction_cid, "__exit__ ExitSet"
         )
+    completed = tuple(face for face in exit_.exits if isinstance(face, Completed))
+    halted = tuple(face for face in exit_.exits if not isinstance(face, Completed))
+    completion = TotalCompletionV1()
+    if halted:
+        # An exit that may raise is not a total resource. It is admitted only
+        # for the real source protocol: With re-runs this same exit frame per
+        # body face, and every exit halt supersedes that body exit as its own
+        # typed effect. A face without a typed effect stays the gap.
+        if not isinstance(protocol, ConstructedManagerProtocolV1) or any(
+            not isinstance(face, Halted) or face.effect is None for face in halted
+        ):
+            return DerivedManagerSummaryGapV1(
+                "exit-may-halt", protocol.protocol_construction_cid, "__exit__ ExitSet"
+            )
+        completion = SourceExitFacesCompletionV1()
     disposition = (
         NeverSuppressesDispositionV1()
-        if all(_exact_never_suppresses(face.value) for face in exit_.exits)
+        if all(_exact_never_suppresses(face.value) for face in completed)
         else ReturnTruthinessDispositionV1()
     )
     semantics = ProtocolResourceSemanticsV1(
         EnterResultContractV1(PrimitiveSort("Value")),
-        ExitContractV1(disposition),
+        ExitContractV1(disposition, completion),
     )
     signature = _signature_for_behavior(behavior, semantics)
     return _sealed_summary(protocol, semantics, signature)
