@@ -53,6 +53,13 @@ class BranchResultAuthentication(FloorValue):
     def guarded(self, formula):
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.ir import and_, implies
+        from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+        if formula == true_guard():
+            # ``true -> A`` is ``A``: an unguarded entry keeps its own
+            # authentication form, so consumers that resolve branch-result
+            # slots (a native exit's returns) still recognize it.
+            return self
 
         return InvValue(
             implies(formula, and_(list(self.inv_contribution()))), self.site

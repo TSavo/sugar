@@ -177,12 +177,26 @@ class WithResourceSugar(Sugar):
                         NeverSuppressesDispositionV1,
                         ReturnTruthinessDispositionV1,
                     )
-                    from sugar_lift_py_tests.effect import RaiseEffect
+                    from sugar_lift_py_tests.effect import (
+                        GroupedRaiseEffect,
+                        RaiseEffect,
+                    )
+                    from sugar_lift_py_tests.effect.raise_effect import (
+                        UndeterminedRaiseEffect,
+                    )
 
+                    # Every exception -- a leaf, a group, or the one a
+                    # may-raise operation threw without testimony -- is handed
+                    # to the parametric exit, so its truth decides suppression.
+                    # Treating an undetermined raise as never suppressed would
+                    # claim the exit cannot swallow it.
                     if (
                         isinstance(self.disposition, ReturnTruthinessDispositionV1)
                         and isinstance(body_exit, Halted)
-                        and isinstance(body_exit.effect, RaiseEffect)
+                        and isinstance(
+                            body_exit.effect,
+                            (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
+                        )
                     ):
                         after = face.and_exit_truthiness(exit_es, site=self.site)
                     else:

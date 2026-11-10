@@ -154,6 +154,10 @@ class ConstructedManagerProtocolV1:
         """
         from sugar_lift_py_tests.outcome import Completed, Halted
         from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor.undetermined_exception_value import (
+            UndeterminedExceptionTypeValue,
+        )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.floor import FloorValue, NoneValue
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
@@ -241,6 +245,19 @@ class ConstructedManagerProtocolV1:
                     effect.exception_type_coordinate, effect.exception_type_mro
                 ),
                 GroupedExceptionValue(effect, self.exit_face_id),
+                ExitTracebackCoordinate(self.exit_face_id, None),
+            )
+        elif isinstance(body_face, Halted) and isinstance(
+            body_face.effect, UndeterminedRaiseEffect
+        ) and body_face.effect.exception_value is not None:
+            # A may-raise operation threw ONE exception object nobody testified
+            # to. With hands it to __exit__ like any raise: (type(e), e, tb),
+            # with type(e) derived from e itself, never a guessed class. The
+            # exit's own type tests then split on it.
+            exception = body_face.effect.exception_value
+            args = (
+                UndeterminedExceptionTypeValue(exception),
+                exception,
                 ExitTracebackCoordinate(self.exit_face_id, None),
             )
         else:
