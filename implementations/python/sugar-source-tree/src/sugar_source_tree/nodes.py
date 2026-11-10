@@ -12228,6 +12228,23 @@ class Compare(Expression):
             return super()._construct_sugar()
 
         operands = (self.left, *self.comparators)
+        if len(self.ops) == 1 and self.ops[0].kind in ("Is", "IsNot"):
+            from .container_mutation import decided_identity
+
+            decided = decided_identity(self.left, self.comparators[0])
+            if decided is not None:
+                # Object identity between decided containers (see
+                # ``decided_identity``); value equality never answers ``is``.
+                from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                    FalseBoolLiteralSugar,
+                )
+                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                    TrueBoolLiteralSugar,
+                )
+
+                if decided == (self.ops[0].kind == "Is"):
+                    return TrueBoolLiteralSugar(site=self.fragment)
+                return FalseBoolLiteralSugar(site=self.fragment)
 
         def pair(index):
             op = self.ops[index]
