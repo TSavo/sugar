@@ -88,6 +88,24 @@ def branch_result_slot(test: Node) -> BranchResultSlot:
     return BranchResultSlot(f"branch-result:{address}")
 
 
+def try_route_site(try_node: Node) -> str:
+    """The one address every route slot of a ``try`` hangs off.
+
+    A ``try`` leaves by exactly one route: its body (and ``else``) completed,
+    or handler ``k`` ran and completed.  Each handler route is a slot
+    ``try-route:<site>:<k>``; the body route is every handler slot false.
+    """
+    memento = try_node.fragment.seal()
+    return f"try-route:{memento.source_cid}@{memento.start}:{memento.end}#{memento.cid}"
+
+
+def try_route_slot(site_id: str, arm: int) -> BranchResultSlot:
+    """Handler ``arm``'s route slot: true exactly when that handler ran and the
+    try left by its completion.  The reducer confirms it on every routed
+    outcome (``TrySugar``); a decided route grounds it."""
+    return BranchResultSlot(f"{site_id}:{arm}")
+
+
 @dataclass(frozen=True)
 class GuardedBinding:
     slot: BranchResultSlot

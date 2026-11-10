@@ -30,6 +30,10 @@ class TrySugar(Sugar):
     orelse: tuple = ()
     finalbody: tuple = ()
     site: object = dataclass_field(compare=False, default=None)
+    #: ``try-route`` address when the source tree joined a binding over this
+    #: try's routes (``Try._merge_completion_nets``); ``None`` when no binding
+    #: depends on the route, so no slot is confirmed.
+    route_site: object = None
 
     @classmethod
     def witnesses(cls):
@@ -76,6 +80,7 @@ class TrySugar(Sugar):
             self.orelse,
             site=self.site,
             ctx=ctx,
+            route_site=self.route_site,
         )
 
         if not self.finalbody:
@@ -256,6 +261,68 @@ def _binding_facts_for(slot_id, effect, site) -> tuple:
     return binding.to_facts(site=site)
 
 
+def _route_confirmation(route_site, handler_count, arm, site):
+    """The facts one routed outcome states about the try's route slots.
+
+    Handler ``arm`` ran: its slot is true and every other handler's is false.
+    The body route (``arm is None``): every handler slot is false.  Each fact
+    rides inside the routed outcome, so the outcome's own guard guards it --
+    the slot is confirmed exactly where that route was taken."""
+    if route_site is None:
+        return ()
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        BranchResultAuthentication,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+    from sugar_source_tree.binding_state import try_route_slot
+
+    return tuple(
+        BranchResultAuthentication(
+            try_route_slot(route_site, index),
+            true_guard() if index == arm else false_guard(),
+            site,
+        )
+        for index in range(handler_count)
+    )
+
+
+def _ground_decided_route(routed, route_site, handler_count, ctx, site):
+    """Ground the route slots when every completed outcome took one route.
+
+    Code after the try runs only on a completed outcome, so when all of them
+    came by the same route that route is decided for the continuation -- the
+    joined binding collapses to that route's value, as a ground ``if`` does."""
+    if route_site is None or ctx is None:
+        return
+    table = getattr(ctx, "ground_branch_results", None)
+    if not isinstance(table, dict):
+        return
+    arms = {arm for arm, _exits in routed if _exits_can_complete(_exits)}
+    if len(arms) != 1:
+        return
+    (arm,) = arms
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+    from sugar_source_tree.binding_state import try_route_slot
+
+    for index in range(handler_count):
+        table[try_route_slot(route_site, index).slot_id] = (
+            TrueBoolLiteralSugar(site=site)
+            if index == arm
+            else FalseBoolLiteralSugar(site=site)
+        )
+
+
+def _exits_can_complete(exits) -> bool:
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    return any(isinstance(exit_, Completed) for exit_ in exits.exits)
+
+
 def _route_handlers_over_exits(
     body_es,
     handlers: tuple,
@@ -263,11 +330,14 @@ def _route_handlers_over_exits(
     *,
     site,
     ctx=None,
+    route_site=None,
 ):
     """Route each Halted raise through the first matching handler.
 
     Completed exits take ``else`` when present; unmatched halts propagate.
     Every resulting exit keeps its guard so finally fans across the partition.
+    With a ``route_site`` every routed outcome also confirms the try's route
+    slots (``_route_confirmation``).
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -276,10 +346,23 @@ def _route_handlers_over_exits(
     )
 
     parts: list = []
+    routed: list = []
+    count = len(handlers)
     for exit_ in body_es.exits:
         if isinstance(exit_, Halted):
-            parts.extend(_route_one_halt(exit_, handlers, site=site, ctx=ctx))
+            for arm, part in _route_one_halt(
+                exit_, handlers, site=site, ctx=ctx, with_arms=True
+            ):
+                if arm is not None:
+                    facts = _route_confirmation(route_site, count, arm, site)
+                    if facts:
+                        part = _prepend_facts(part, facts)
+                    routed.append((arm, part))
+                parts.append(part)
             continue
+        body_facts = _route_confirmation(route_site, count, None, site)
+        if body_facts:
+            exit_ = _prepend_facts(ExitSet((exit_,)), body_facts).exits[0]
 
         if orelse:
             else_es = reduce_block_to_exitset(orelse, ctx)
@@ -302,7 +385,9 @@ def _route_handlers_over_exits(
                 parts.append(ExitSet((exit_,)).sequence(lambda _s: else_es))
         else:
             parts.append(ExitSet((exit_,)))
+        routed.append((None, parts[-1]))
 
+    _ground_decided_route(routed, route_site, count, ctx, site)
     if not parts:
         return ExitSet.completed(
             _ReducedBlock(entries=(), can_fall_through=True, fall_through=())
@@ -313,7 +398,7 @@ def _route_handlers_over_exits(
     return result
 
 
-def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
+def _route_one_halt(exit_, handlers: tuple, *, site, ctx, with_arms=False) -> list:
     """Route ONE halted body exit through the handler list, in source order.
 
     Walks the arms carrying a residual: the exit as it still stands after every
@@ -356,16 +441,22 @@ def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
 
     parts: list = []
     residual = ExitSet((exit_,))
+
+    def done():
+        return parts if with_arms else [part for _arm, part in parts]
+
     for index, (matcher, handler_body, slot_id) in enumerate(handlers):
         if not residual.exits:
-            return parts
+            return done()
         residual_guard = residual.exits[0].guard
         verdict = _effect_match_verdict(exit_.effect, matcher, ctx, site=site)
         if isinstance(verdict, MatchDecided):
             if not verdict.value:
                 continue
-            parts.append(handler_exits(handler_body, slot_id).guarded(residual_guard))
-            return parts
+            parts.append(
+                (index, handler_exits(handler_body, slot_id).guarded(residual_guard))
+            )
+            return done()
         if not isinstance(verdict, MatchRetained):
             raise TypeError(
                 "except-arm verdict must be MatchDecided or MatchRetained; "
@@ -375,14 +466,17 @@ def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
         # exclusion legible only in the ``not_`` spelling of the two guards.
         caught_face, missed_face = partition(("try.except-identity", site, index))
         parts.append(
-            handler_exits(handler_body, slot_id)
-            .guarded(verdict.obligation, caught_face)
-            .guarded(residual_guard)
+            (
+                index,
+                handler_exits(handler_body, slot_id)
+                .guarded(verdict.obligation, caught_face)
+                .guarded(residual_guard),
+            )
         )
         residual = residual.guarded(not_(verdict.obligation), missed_face)
     if residual.exits:
-        parts.append(residual)
-    return parts
+        parts.append((None, residual))
+    return done()
 
 
 def _prepend_facts(exits, facts: tuple):
