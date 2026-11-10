@@ -774,6 +774,22 @@ class SourceUnit:
     _retained_lexical_call_rows: dict = field(
         init=False, default_factory=dict, repr=False, compare=False
     )
+    # READ-ONCE INDEXES over facts this unit already holds.  Every call
+    # construction asks three questions of the unit: which enrollment decision
+    # the walk published for this occurrence, which function encloses this
+    # position, and which CPython symtable that function owns.  Each was a
+    # scan of the whole module per call.  The facts are fixed once published,
+    # so each is indexed once; an index is tied to the exact tuple it was
+    # built from and rebuilt if that tuple is replaced.
+    _lexical_call_enrollment_index: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _function_symtable_index: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _function_span_index: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -801,6 +817,68 @@ class SourceUnit:
         object.__setattr__(self, "_constructed_module", None)
         object.__setattr__(self, "_target_pattern_enrollments", None)
         object.__setattr__(self, "_retained_lexical_call_rows", {})
+        object.__setattr__(self, "_lexical_call_enrollment_index", None)
+        object.__setattr__(self, "_function_symtable_index", None)
+        object.__setattr__(self, "_function_span_index", None)
+
+    def _published_enrollment_decisions(
+        self, occurrence: SourceOccurrenceIdentityV1
+    ) -> tuple:
+        """Every decision the walk published for one occurrence, in walk order.
+
+        The same answer the scan of ``lexical_call_enrollments`` gave --
+        occurrence equality is value equality, so it is the dict's key -- read
+        from an index built once per published tuple.
+        """
+        enrollments = self.constructed_module.lexical_call_enrollments
+        index = self._lexical_call_enrollment_index
+        if index is None or index[0] is not enrollments:
+            by_occurrence: dict = {}
+            for candidate, decision in enrollments:
+                by_occurrence.setdefault(candidate, []).append(decision)
+            index = (
+                enrollments,
+                {key: tuple(found) for key, found in by_occurrence.items()},
+            )
+            object.__setattr__(self, "_lexical_call_enrollment_index", index)
+        return index[1].get(occurrence, ())
+
+    def innermost_function_containing(self, span) -> object | None:
+        """The enclosing function with the latest start line, or None.
+
+        The same choice the scan of ``function_nodes`` made -- every function
+        whose span contains the position, latest start line, first in
+        ``function_nodes`` order on a tie -- answered once per position.
+        """
+        nodes = self.function_nodes
+        index = self._function_span_index
+        if index is None or index[0] is not nodes:
+            rows = []
+            for candidate in nodes:
+                owner_span = candidate.line_col_span()
+                rows.append(
+                    (
+                        (owner_span.start_line, owner_span.start_col),
+                        (owner_span.end_line, owner_span.end_col),
+                        candidate,
+                    )
+                )
+            index = (nodes, tuple(rows), {})
+            object.__setattr__(self, "_function_span_index", index)
+        position = (span.start_line, span.start_col)
+        answers = index[2]
+        if position in answers:
+            return answers[position]
+        owner = None
+        owner_line = None
+        for start, end, candidate in index[1]:
+            if start <= position <= end and (
+                owner_line is None or start[0] > owner_line
+            ):
+                owner = candidate
+                owner_line = start[0]
+        answers[position] = owner
+        return owner
 
     def lexical_call_enrollment(self, call: "Call") -> LexicalCallEnrollmentV1:
         """The producer's ONE closed applicability decision for a call.
@@ -815,11 +893,7 @@ class SourceUnit:
         if self.typed_module is None:
             return mint_lexical_call_enrollment(call, "no-typed-module")
         occurrence = SourceOccurrenceIdentityV1.of(call)
-        matches = tuple(
-            decision
-            for candidate, decision in self.constructed_module.lexical_call_enrollments
-            if candidate == occurrence
-        )
+        matches = self._published_enrollment_decisions(occurrence)
         if not matches:
             from .shadow import ShadowNode
 
@@ -1662,19 +1736,23 @@ class SourceUnit:
         return module  # type: ignore[return-value]
 
     def function_symtable(self, name: str, lineno: int):
-        matches = []
+        index = self._function_symtable_index
+        if index is None:
+            # One walk of the CPython symtable tree, which is fixed for the
+            # life of the unit; every call used to repeat it.
+            index = {}
 
-        def visit(table) -> None:
-            for child in table.get_children():
-                if (
-                    child.get_type() == "function"
-                    and child.get_name() == name
-                    and child.get_lineno() == lineno
-                ):
-                    matches.append(child)
-                visit(child)
+            def visit(table) -> None:
+                for child in table.get_children():
+                    if child.get_type() == "function":
+                        index.setdefault(
+                            (child.get_name(), child.get_lineno()), []
+                        ).append(child)
+                    visit(child)
 
-        visit(self.module_symtable)
+            visit(self.module_symtable)
+            object.__setattr__(self, "_function_symtable_index", index)
+        matches = index.get((name, lineno), ())
         if len(matches) != 1:
             raise SourceTreePanic(
                 blame=f"{self.filename}:{lineno}:0",
@@ -1727,17 +1805,8 @@ class SourceUnit:
         if module is None:
             return None
         span = call.line_col_span()
-        containing = []
-        for candidate in self.function_nodes:
-            owner_span = candidate.line_col_span()
-            if (
-                (owner_span.start_line, owner_span.start_col)
-                <= (span.start_line, span.start_col)
-                <= (owner_span.end_line, owner_span.end_col)
-            ):
-                containing.append(candidate)
-        if containing:
-            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+        owner = self.innermost_function_containing(span)
+        if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(call.func.id)
@@ -1823,17 +1892,8 @@ class SourceUnit:
             return definition
 
         span = call.line_col_span()
-        containing = []
-        for candidate in self.function_nodes:
-            owner_span = candidate.line_col_span()
-            if (
-                (owner_span.start_line, owner_span.start_col)
-                <= (span.start_line, span.start_col)
-                <= (owner_span.end_line, owner_span.end_col)
-            ):
-                containing.append(candidate)
-        if containing:
-            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+        owner = self.innermost_function_containing(span)
+        if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(call.func.id)
@@ -2098,18 +2158,8 @@ class SourceUnit:
             "SourceUnit.provider_gated_import_target", blame=node.fragment
         )
 
-        function_owner = None
-        containing = []
-        for candidate in self.function_nodes:
-            cspan = candidate.line_col_span()
-            start = (cspan.start_line, cspan.start_col)
-            end = (cspan.end_line, cspan.end_col)
-            if start <= (span.start_line, span.start_col) <= end:
-                containing.append(candidate)
-        if containing:
-            function_owner = max(
-                containing, key=lambda value: value.line_col_span().start_line
-            )
+        function_owner = self.innermost_function_containing(span)
+        if function_owner is not None:
             table = self.function_symtable(
                 function_owner.name, function_owner.line_col_span().start_line
             )
@@ -2314,15 +2364,8 @@ class SourceUnit:
     def _compute_exception_type_identity(
         self, node: "Name", span, builtin_names, ctor, str_const
     ):
-        containing = []
-        for candidate in self.function_nodes:
-            cspan = candidate.line_col_span()
-            start = (cspan.start_line, cspan.start_col)
-            end = (cspan.end_line, cspan.end_col)
-            if start <= (span.start_line, span.start_col) <= end:
-                containing.append(candidate)
-        if containing:
-            owner = max(containing, key=lambda value: value.line_col_span().start_line)
+        owner = self.innermost_function_containing(span)
+        if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(node.id)
@@ -2615,6 +2658,24 @@ class _Splice:
 
 
 _FRAMES_UNDER_CONSTRUCTION: set = set()
+# One set per frame door in flight, innermost last: every definition whose
+# under-construction state that frame's construction asked about.
+_FRAME_REACH_STACK: list = []
+
+
+def _frame_is_under_construction(definition_cid: str) -> bool:
+    """THE ONE READ of ``_FRAMES_UNDER_CONSTRUCTION``.
+
+    A frame's answer depends on the traversal above it through this question
+    and nothing else: is that definition's frame still open?  Each ask is
+    charged to the frame door in flight, so a frame remembers exactly which
+    open frames its answer was a function of (``FunctionDef
+    .source_visible_call_frame``).  Reading the set any other way is a
+    dependency the memo cannot see.
+    """
+    if _FRAME_REACH_STACK:
+        _FRAME_REACH_STACK[-1].add(definition_cid)
+    return definition_cid in _FRAMES_UNDER_CONSTRUCTION
 
 
 class SourceCallFrameCycle(Exception):
@@ -4090,13 +4151,77 @@ class FunctionDef(Statement):
         a second body.
         """
         definition_cid = self.fragment.seal().cid
-        if definition_cid in _FRAMES_UNDER_CONSTRUCTION:
+        if _frame_is_under_construction(definition_cid):
             raise SourceCallFrameCycle(self)
+
+        # ONE FRAME PER CONSTRUCTION COORDINATE, not one per call site.  The
+        # frame is a function of this definition's coordinate -- the same key
+        # ``sugar()`` answers the roll by -- and of which frames were open
+        # above it, because an open frame turns a call into a recursion seat.
+        # Without this row every call site rebuilt its callee's whole frame,
+        # and every call inside that frame rebuilt its callee's: the cost of
+        # one call was the size of the call graph below it, paid once per
+        # path (pandas/_testing/asserters.py: 92% of an 87 s run, unfinished).
+        #
+        # A remembered frame answers only a traversal that would have asked
+        # the same questions and heard the same answers: of every definition
+        # the first construction asked about (``reach``), exactly the ones
+        # that were open then (``seats``) are open now.  Any other traversal
+        # constructs its own variant.  So a recursion seat never leaks into a
+        # traversal where that definition is not open, and a full body never
+        # replaces a seat.
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+        cache = self._construction_cache()
+        key = cache.key(
+            self.ref,
+            self.reporter,
+            self.control_context,
+            self.unit.construction_context,
+            kind=type(self).__name__,
+        )
+        for seats, reach, panic, frame in cache.call_frames.get(key, ()):
+            if (_FRAMES_UNDER_CONSTRUCTION & reach) != seats:
+                continue
+            if _FRAME_REACH_STACK:
+                # The caller's frame now depends on everything this one did.
+                _FRAME_REACH_STACK[-1].update(reach)
+            if panic is not None:
+                # A gap stays a gap, every time. Same panic, re-raised loudly.
+                raise panic
+            if frame.owner is not self:
+                # Shells are views; the frame is owned by the shell that asks.
+                frame = replace(frame, owner=self)
+            return frame
+
+        open_above = frozenset(_FRAMES_UNDER_CONSTRUCTION)
+        asked: set = set()
+        _FRAME_REACH_STACK.append(asked)
         _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
+        panic = None
+        frame = None
         try:
-            return FunctionDef._source_visible_call_frame_unguarded(self)
+            frame = FunctionDef._source_visible_call_frame_unguarded(self)
+        except (SourceTreePanic, ConstructionPanic) as raised:
+            # The two sanctioned construction gaps, remembered as loudly as a
+            # frame. Anything else (a cycle passing through, an interrupt) is
+            # a property of this traversal and is never remembered.
+            panic = raised
+            raise
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
+            _FRAME_REACH_STACK.pop()
+            # Its own recursion is decided inside this construction, never by
+            # the traversal above: the door refused above if it were open.
+            asked.discard(definition_cid)
+            if _FRAME_REACH_STACK:
+                _FRAME_REACH_STACK[-1].update(asked)
+            if panic is not None or frame is not None:
+                reach = frozenset(asked)
+                cache.call_frames.setdefault(key, []).append(
+                    (reach & open_above, reach, panic, frame)
+                )
+        return frame
 
     def _source_visible_call_frame_unguarded(self):
         """Construct this callable body through the ordinary node/Sugar door.
@@ -4909,7 +5034,7 @@ class FunctionDef(Statement):
         # for while that callee's own universe is under construction is the
         # recursion seat, not a second unfolding.
         definition_cid = self.fragment.seal().cid
-        if definition_cid in _FRAMES_UNDER_CONSTRUCTION:
+        if _frame_is_under_construction(definition_cid):
             raise SourceCallFrameCycle(self)
         _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
         try:

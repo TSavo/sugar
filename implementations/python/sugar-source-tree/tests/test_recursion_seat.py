@@ -115,3 +115,83 @@ def test_reentry_at_the_door_is_refused_not_unfolded(tmp_path) -> None:
             definition.source_visible_call_frame()
     finally:
         _FRAMES_UNDER_CONSTRUCTION.discard(cid)
+
+
+SHARED = (
+    "def leaf(v):\n"
+    "    return v\n"
+    "\n"
+    "def mid(v):\n"
+    "    return leaf(v) + leaf(v)\n"
+    "\n"
+    "def entry(v):\n"
+    "    return mid(v) + mid(v) + leaf(v)\n"
+)
+
+
+def _count_frame_constructions(monkeypatch) -> dict[str, int]:
+    """Count real frame constructions per definition name (memo hits excluded)."""
+    built: dict[str, int] = {}
+    construct = FunctionDef._source_visible_call_frame_unguarded
+
+    def counted(self):
+        built[self.name] = built.get(self.name, 0) + 1
+        return construct(self)
+
+    monkeypatch.setattr(FunctionDef, "_source_visible_call_frame_unguarded", counted)
+    return built
+
+
+def test_shared_callee_frame_is_constructed_once(tmp_path, monkeypatch) -> None:
+    """Truthful twin: one definition, one frame, however many sites call it.
+
+    pandas/_testing/asserters.py rebuilt every callee frame at every call
+    site, and theirs below it, so the work multiplied down each call chain
+    and the file ran past the 80 s ceiling. The frame is the definition's
+    own meaning: five sites of ``leaf`` and two of ``mid`` read one frame
+    each.
+    """
+    built = _count_frame_constructions(monkeypatch)
+    source_file = _open(tmp_path, SHARED)
+    entry = next(f for f in source_file.functions() if f.name == "entry")
+    calls = _calls(entry.sugar())
+    assert len(calls) >= 3
+    assert all(c.contract_resolution_gap is None for c in calls)
+    assert all(c.formal_function_sugar is not None for c in calls)
+    assert built == {"leaf": 1, "mid": 1}
+    assert not _FRAMES_UNDER_CONSTRUCTION
+
+
+def test_frame_built_under_an_open_definition_is_not_served_elsewhere(
+    tmp_path, monkeypatch
+) -> None:
+    """Lying twin: a frame holding a recursion seat answers only that recursion.
+
+    ``ensure_mapped_multi`` built while ``ensure_mapped`` is open carries a
+    ``call-graph-cycle`` seat in place of ``ensure_mapped``'s frame. Serving
+    that frame to an asker with nothing open would report a recursion that
+    is not there, so the second asker constructs its own; the first asker,
+    asking again under the same open definition, reads the one it built.
+    """
+    built = _count_frame_constructions(monkeypatch)
+    source_file = _open(tmp_path, MUTUAL)
+    functions = {f.name: f for f in source_file.functions()}
+    outer = functions["ensure_mapped"]
+    inner = functions["ensure_mapped_multi"]
+    outer_cid = outer.fragment.seal().cid
+
+    _FRAMES_UNDER_CONSTRUCTION.add(outer_cid)
+    try:
+        inner.source_visible_call_frame()
+        assert built == {"ensure_mapped_multi": 1}
+        inner.source_visible_call_frame()
+        assert built == {"ensure_mapped_multi": 1}, "same open set reads the memo"
+    finally:
+        _FRAMES_UNDER_CONSTRUCTION.discard(outer_cid)
+
+    inner.source_visible_call_frame()
+    assert built["ensure_mapped_multi"] == 2, (
+        "a frame built under an open definition was served with nothing open"
+    )
+    assert built["ensure_mapped"] == 1
+    assert not _FRAMES_UNDER_CONSTRUCTION

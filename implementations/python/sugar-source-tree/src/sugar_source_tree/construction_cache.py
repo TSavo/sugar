@@ -195,6 +195,7 @@ class ConstructionCache:
         "sugar_results",
         "sugar_panics",
         "substitutions",
+        "call_frames",
         "_pinned",
     )
 
@@ -242,6 +243,16 @@ class ConstructionCache:
         # binding (``{**scope, **binding}``), never mutates one in place, so a
         # rebind cannot alias a memo row that was minted before it.
         self.substitutions: dict[tuple, Any] = {}
+        # key -> [(seats, reach, panic, frame), ...]: the source-visible call
+        # frames a definition coordinate has constructed, one per distinct
+        # answer the traversal above it could give. ``reach`` is every
+        # definition whose open-frame state the construction asked about,
+        # ``seats`` the ones that were open. A row answers a later call only
+        # when the same subset of ``reach`` is open again
+        # (``FunctionDef.source_visible_call_frame``). Exactly one of
+        # ``panic`` / ``frame`` is set: a gap is remembered as loudly as a
+        # frame, the same as ``sugar_panics``.
+        self.call_frames: dict[tuple, list] = {}
         # key -> pin bag. The cache key embeds live identities (ref,
         # construction_context, and for control-sensitive kinds the nearest
         # loop/exception binding); pin every participant so IDs cannot be
