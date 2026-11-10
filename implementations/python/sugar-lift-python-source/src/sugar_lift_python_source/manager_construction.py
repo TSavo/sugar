@@ -3004,6 +3004,22 @@ def _resolve_source_visible_frame_uncached(
 
     # Only reachable ClassDefs (see filter above). Never constructor-sugar an
     # unrelated module-level class just because it shares this source file.
+    #
+    # Seat every reachable class's exact imported member coordinates before
+    # ANY class sugar is built.  A subclass below builds its local base's
+    # sugar, and a Name or Attribute sugar built over a coordinate that is
+    # not seated yet is cached as a free name for the life of the node.
+    for item in definitions:
+        if not isinstance(item, ClassDef):
+            continue
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=item,
+            session=session,
+            context=context,
+            dependency_graphs=dependency_graphs,
+        )
     for item in definitions:
         if not isinstance(item, ClassDef):
             continue
@@ -3029,16 +3045,8 @@ def _resolve_source_visible_frame_uncached(
             continue
         # Target class (or a local class the target actually reaches): panics
         # stay loud. There is no soft-green for a reached broken definition.
-        # Seat its exact imported member coordinates before constructor-frame
-        # construction can cache an AttributeSugar for a class-body field.
-        _seat_import_value_use_receipts(
-            source_file=source_file,
-            module=module,
-            target=item,
-            session=session,
-            context=context,
-            dependency_graphs=dependency_graphs,
-        )
+        # Its imported member coordinates were seated above, before any class
+        # sugar could cache an AttributeSugar for a class-body field.
         _mirror_source_call_frames(
             context,
             getattr(getattr(source_file, "unit", None), "construction_context", None),
