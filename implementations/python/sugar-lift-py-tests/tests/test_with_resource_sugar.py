@@ -528,6 +528,52 @@ def test_native_undecided_exit_return_keeps_both_suppression_faces():
     assert out.value.can_fall_through
 
 
+def _undetermined_body():
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    effect = UndeterminedRaiseEffect(
+        occurrence="t.py:2:4", producer_node_owner="UnprojectedSourceCall:m.g"
+    )
+    return effect, _FixedSugar(Incomplete(effect))
+
+
+@pytest.mark.parametrize(
+    ("exit_value", "halt_count"), [(TermValue(1), 0), (TermValue(0), 1)]
+)
+def test_native_exit_return_truthiness_decides_undetermined_raise_suppression(
+    exit_value, halt_count
+):
+    """An undetermined body raise is handed to exit; it is not never-suppressed."""
+    effect, body = _undetermined_body()
+    out = _resource(
+        body=(body,),
+        exit=_FixedSugar(Complete(exit_value)),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    contributions = out.value.contribution()
+    raises = [
+        entry
+        for entry in contributions
+        if isinstance(entry, Incomplete) and entry.effect == effect
+    ]
+    assert len(raises) == halt_count
+    assert out.value.can_fall_through is (halt_count == 0)
+
+
+def test_native_undecided_exit_keeps_both_undetermined_raise_faces():
+    effect, body = _undetermined_body()
+    out = _resource(
+        body=(body,),
+        exit=_FixedSugar(Complete(SymbolicValue(make_var("exit_result")))),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    assert any(
+        isinstance(entry, Incomplete) and entry.effect == effect
+        for entry in out.value.contribution()
+    )
+    assert out.value.can_fall_through
+
+
 def test_truthy_native_exit_runs_but_cannot_suppress_loop_transfer():
     """Truthy exit suppresses exceptions, never break/continue/return control."""
     cid = "blake3-512:" + "a" * 128

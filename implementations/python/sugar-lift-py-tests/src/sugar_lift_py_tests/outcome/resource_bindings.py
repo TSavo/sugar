@@ -59,6 +59,8 @@ class ExitFaceBinding:
 
     - completed: type/value/tb bound to None
     - raised: type open or named; value = raise occurrence; tb open
+    - undetermined: type = ``python:type_of(e)``, value = ``e``, the
+      ``UndeterminedExceptionValue`` a may-raise operation threw; tb open
     - open: all three open residuals
     """
 
@@ -66,12 +68,26 @@ class ExitFaceBinding:
     kind: str  # "completed" | "raised" | "open"
     exception_name: str | None = None
     occurrence: str | None = None
+    exception_value: object = None
 
     @classmethod
     def from_body_exit(cls, face_id: str, body_exit) -> "ExitFaceBinding":
-        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.effect.raise_effect import (
+            RaiseEffect,
+            UndeterminedRaiseEffect,
+        )
         from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
+        if (
+            isinstance(body_exit, Halted)
+            and isinstance(body_exit.effect, UndeterminedRaiseEffect)
+            and body_exit.effect.exception_value is not None
+        ):
+            return cls(
+                face_id=face_id,
+                kind="undetermined",
+                exception_value=body_exit.effect.exception_value,
+            )
         if isinstance(body_exit, Completed):
             return cls(face_id=face_id, kind="completed")
         if isinstance(body_exit, Halted) and isinstance(body_exit.effect, RaiseEffect):
@@ -118,6 +134,22 @@ class ExitFaceBinding:
             rows = (
                 eq(ctor("exit_type", [face]), type_term),
                 eq(ctor("exit_value", [face]), value_term),
+                eq(ctor("exit_traceback", [face]), open_tb),
+            )
+        elif self.kind == "undetermined":
+            from sugar_lift_py_tests.floor.undetermined_exception_value import (
+                UndeterminedExceptionTypeValue,
+            )
+
+            owner = "ExitFaceBinding.undetermined"
+            rows = (
+                eq(
+                    ctor("exit_type", [face]),
+                    UndeterminedExceptionTypeValue(self.exception_value).to_term(
+                        owner=owner
+                    ),
+                ),
+                eq(ctor("exit_value", [face]), self.exception_value.to_term(owner=owner)),
                 eq(ctor("exit_traceback", [face]), open_tb),
             )
         else:

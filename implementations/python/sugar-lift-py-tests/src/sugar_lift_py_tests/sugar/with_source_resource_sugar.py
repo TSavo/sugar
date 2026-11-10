@@ -122,6 +122,9 @@ class WithSourceResourceSugar(Sugar):
                             GroupedRaiseEffect,
                             RaiseEffect,
                         )
+                        from sugar_lift_py_tests.effect.raise_effect import (
+                            UndeterminedRaiseEffect,
+                        )
 
                         # An exception (a leaf or a group) is suppressed by a
                         # true exit result; loop control and return are not
@@ -134,7 +137,8 @@ class WithSourceResourceSugar(Sugar):
                         # takes the truth split; handing a boundary to exit as a
                         # raise would invent one, so it stays the With's residue.
                         if isinstance(body_face, Halted) and not isinstance(
-                            body_face.effect, (RaiseEffect, GroupedRaiseEffect)
+                            body_face.effect,
+                            (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
                         ):
                             routed = ExitSet((body_face,)).and_exit(
                                 exit_es,
