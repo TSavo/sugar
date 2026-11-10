@@ -2313,7 +2313,99 @@ def populate_source_derived_resource_refs(
     # publication door as import-backed ClassDef CMs. Uncovered uses stay empty
     # for With.require (L3d) to panic.
     _populate_same_module_class_manager_uses(source_file, context, uses)
+    _floor_language_owned_module_calls(
+        context,
+        call_receipts_by_site,
+        value_receipts_by_site,
+        manager_use_keys=frozenset(uses),
+        graphs=graphs,
+        session=session,
+        distribution_index=distribution_index,
+    )
     _rewrite_installed_generator_frames(context)
+
+
+def _floor_language_owned_module_calls(
+    context,
+    call_receipts_by_site,
+    value_receipts_by_site,
+    *,
+    manager_use_keys,
+    graphs,
+    session,
+    distribution_index,
+) -> None:
+    """Hang the language-owned floor on this module's own imported calls.
+
+    Frame projection already floors an imported call inside a dependency
+    frame (``manager_construction``); the consumer module's own calls never
+    pass through it, so ``return decimal.getcontext()`` stood as a bodiless
+    ``CallSiteValue`` that silently completed. The same door applies here:
+    the exact call receipt is resolved through the authenticated import
+    graph, and only an ``artifact-module-absent`` export whose runtime object
+    is a C function (or ContextVar) is floored, at its exact Call span. The
+    floor's application is the two-faced C-call law. With-head manager calls
+    keep their own contract and are never floored here.
+    """
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1,
+        authenticate_dependency_top_level,
+        resolve_import_binding,
+    )
+    from .language_owned_c_export import floor_language_owned_import_use
+    from .manager_construction import _language_owned_call_site_key
+
+    for site_key, receipt in call_receipts_by_site.items():
+        source_cid, *span = site_key
+        if tuple(span) in manager_use_keys:
+            continue
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        graph = graphs.get(top_level)
+        if graph is None and session.enabled:
+            graph = session.dependency_graphs.get(top_level)
+        if graph is None:
+            try:
+                graph = authenticate_dependency_top_level(
+                    top_level, distribution_index=distribution_index
+                )
+            except DependencyArtifactAuthenticationError:
+                # No authenticated graph: no runtime identity to key on. The
+                # call keeps its ordinary (unfloored) construction.
+                continue
+            graphs[top_level] = graph
+            if session.enabled:
+                session.dependency_graphs[top_level] = graph
+        imported = resolve_import_binding(receipt, graph=graph, session=session)
+        if isinstance(imported, ResolvedPythonObjectV1):
+            continue
+        # The value receipt at the exact callee occurrence (same binding,
+        # same target symbol, same start, inside this Call) carries the
+        # member path a ContextVar method floor needs.
+        call_site = receipt.use["useSite"]
+        callee_receipts = [
+            value
+            for value in value_receipts_by_site.values()
+            if value.target_symbol == receipt.target_symbol
+            and value.import_binding.cid == receipt.import_binding.cid
+            and value.use["useSite"]["sourceCid"] == source_cid
+            and value.use["useSite"]["startLine"] == call_site["startLine"]
+            and value.use["useSite"]["startCol"] == call_site["startCol"]
+            and (value.use["useSite"]["endLine"], value.use["useSite"]["endCol"])
+            < (call_site["endLine"], call_site["endCol"])
+        ]
+        value_receipt = callee_receipts[0] if len(callee_receipts) == 1 else None
+        floored = floor_language_owned_import_use(
+            imported,
+            value_receipt if value_receipt is not None else receipt,
+            graph=graph,
+            session=session,
+        )
+        if floored is None:
+            continue
+        context.language_owned_call_floors[
+            _language_owned_call_site_key(source_cid, receipt.use["useSite"])
+        ] = floored
 
 
 def _rewrite_installed_generator_frames(context) -> None:
