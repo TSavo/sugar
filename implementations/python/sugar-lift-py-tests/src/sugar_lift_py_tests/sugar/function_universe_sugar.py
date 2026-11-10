@@ -363,6 +363,19 @@ def reduce_block_to_exitset(
                 faces = outcome.value
                 entries = []
                 exits = []
+                # The condition's own testimony (a branch-result slot's
+                # authentication) was established before either arm ran, so a
+                # halted arm carries it too: its guard reads that slot, and a
+                # face whose guard names an unauthenticated slot reads as
+                # reachable on routes that can never take it.
+                halted_state = state
+                if faces.unconditional_entries:
+                    from dataclasses import replace as _replace
+
+                    halted_state = _replace(
+                        state,
+                        entries=(*state.entries, *faces.unconditional_entries),
+                    )
                 for entry in faces.contribution():
                     if isinstance(entry, Incomplete):
                         # A store inside a guarded face is NOT re-split here.
@@ -384,7 +397,7 @@ def reduce_block_to_exitset(
                             if len(entry.branch_conditions) == 1
                             else and_(list(entry.branch_conditions))
                         )
-                        exits.append(Halted(guard, entry.effect, state))
+                        exits.append(Halted(guard, entry.effect, halted_state))
                     else:
                         entries.append(entry)
                 completed_state = _ReducedBlock(

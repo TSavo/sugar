@@ -12,8 +12,9 @@ innermost.  ``TrySugar`` confirms the slots on every routed outcome -- handler
 slot false -- and grounds them when every completed outcome took one route.
 
 These tests read the lifted faces propositionally: every atom is an opaque
-boolean, the theory is the facts the function states, and a claim holds under
-a route when the theory and that route's guard entail it.
+boolean, the theory is the facts each face states under that face's own guard,
+and a claim holds under a route when the theory and that route's guard entail
+it.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
     BranchResultAuthentication,
 )
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-from sugar_lift_py_tests.ir import _Atomic, _Connective, and_, not_
+from sugar_lift_py_tests.ir import _Atomic, _Connective, and_, implies, not_
 from sugar_lift_py_tests.outcome import Completed, Halted
 
 from test_undetermined_raise_except_matching import _exits
@@ -65,22 +66,37 @@ class _Lift:
         self.returns = []  # (face guard, returned value)
         self.halts = []  # (guard, effect)
         for face in exits.exits:
+            # A face's facts hold where the face does: each is read under
+            # the face's own guard, never as a global axiom.
             if isinstance(face, Halted):
                 self.halts.append((face.guard, face.effect))
+                state = face.state
+                entries = getattr(state, "entries", None)
+                if entries is None:
+                    entries = getattr(getattr(state, "record", None), "statements", ())
+                self._facts(face.guard, entries)
                 continue
             record = getattr(face.value, "record", None)
-            for entry in getattr(record, "statements", ()):
+            statements = getattr(record, "statements", ())
+            self._facts(face.guard, statements)
+            for entry in statements:
                 name = type(entry).__name__
-                if isinstance(entry, BranchResultAuthentication):
-                    self.theory.extend(entry.inv_contribution())
-                elif name == "InvValue":
-                    self.theory.append(entry.formula)
-                elif name == "ReturnValue":
+                if name == "ReturnValue":
                     self.returns.append((face.guard, entry.value))
                 elif name == "Incomplete":
                     self.halts.append(
                         (and_([face.guard, *entry.branch_conditions]), entry.effect)
                     )
+
+    def _facts(self, guard, entries):
+        for entry in entries:
+            if isinstance(entry, BranchResultAuthentication):
+                facts = entry.inv_contribution()
+            elif type(entry).__name__ == "InvValue":
+                facts = (entry.formula,)
+            else:
+                continue
+            self.theory.extend(implies(guard, fact) for fact in facts)
 
     def atom(self, name, *needles):
         found = {}

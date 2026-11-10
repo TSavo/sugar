@@ -53,19 +53,27 @@ def _try(prelude: str, operation: str, *arms: tuple[str, str]) -> str:
 
 
 def _entries(exits):
-    """Every return/halt the function can leave by, with its guard text."""
+    """Every return/halt the function can leave by, with its guard text.
+
+    A routed face carries its guard on the face; an entry inside a face may
+    carry more.  The guard text is both, face first."""
     rows = []
     for face in exits.exits:
         if isinstance(face, Halted):
             rows.append(("halt", face.effect, repr(face.guard)))
             continue
+        face_guard = repr(face.guard)
         record = getattr(face.value, "record", None)
         for entry in getattr(record, "statements", ()):
             name = type(entry).__name__
             if name == "GuardedReturn":
-                rows.append(("return", entry.value, repr(entry.guards)))
+                rows.append(("return", entry.value, face_guard + repr(entry.guards)))
+            elif name == "ReturnValue":
+                rows.append(("return", entry.value, face_guard))
             elif name == "Incomplete":
-                rows.append(("halt", entry.effect, repr(entry.branch_conditions)))
+                rows.append(
+                    ("halt", entry.effect, face_guard + repr(entry.branch_conditions))
+                )
     return rows
 
 

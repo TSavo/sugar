@@ -67,15 +67,16 @@ def test_bare_c_call_statement_inside_try_rides_the_guard(tmp_path) -> None:
     head, _ = _subject(CALL)
     not_completed = "kind='not', operands=(_Atomic(name='python:c_extension.call_completes'"
     # The caught arm and the escaping raise both sit under the call's failure;
-    # the record's residual ``return 2`` is therefore the completed call.
+    # the remaining ``return 2`` is therefore the completed call's own face.
     (caught,) = _returns_one(exits)
     assert head in caught[2] and _handler("ValueError") in caught[2]
     assert not_completed in caught[2]
     (escaping,) = _undetermined_halts(exits, CALL)
     assert "kind='not', operands=(" + head in escaping[2]
     assert not_completed in escaping[2]
-    (residual,) = _plain_returns(exits)
-    assert "value=2" in repr(residual[0])
+    (residual,) = [row for row in _plain_returns(exits) if "value=2" in repr(row[0])]
+    assert not_completed not in residual[1]
+    assert "python:c_extension.call_completes" in residual[1]
 
 
 def test_subscript_of_c_result_may_raise(tmp_path) -> None:
@@ -89,7 +90,7 @@ def test_subscript_of_c_result_may_raise(tmp_path) -> None:
     # Reached only after the call completed, and only when the subscript did not.
     assert "python:c_extension.call_completes" in guard
     assert "kind='not', operands=(_Atomic(name='python:subscript.completes'" in guard
-    returned = [*(r[1:] for r in _entries(exits) if r[0] == "return"), *_plain_returns(exits)]
+    returned = [r[1:] for r in _entries(exits) if r[0] == "return"]
     ((value, _guard),) = returned
     assert "py.subscript" in repr(value)
     assert "python:c_extension.result" in repr(value)
