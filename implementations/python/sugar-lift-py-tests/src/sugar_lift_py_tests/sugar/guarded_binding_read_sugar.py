@@ -85,7 +85,7 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     if isinstance(state, Sugar):
         return outcome_to_exitset(state.desugar(ctx))
     if isinstance(state, UnboundProjection):
-        return ExitSet.halted(NameErrorEffect(name=read_name, site=read_site))
+        return ExitSet.halted(NameErrorEffect.at(name=read_name, site=read_site))
     if isinstance(state, LoopGuardedProjection):
         return _read_loop_projection(
             state, read_name=read_name, read_site=read_site, ctx=ctx
