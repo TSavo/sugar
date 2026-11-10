@@ -1295,8 +1295,10 @@ class CallSiteValue(FloorValue):
             ctx,
             owner=f"{operation.owner} callsite subscript receiver",
         )
-        receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
-        return operation.submit(receiver, ctx)
+        if floor is not None:
+            return operation.submit(floor, ctx)
+        outcome = operation.submit(SymbolicValue(self.term), ctx)
+        return _opaque_subscript_faces(outcome, getattr(operation, "blame", None))
 
     def project_sequence_with(self, operation, ctx):
         """``a, b = f(...)``: unpack of a callsite result.
@@ -1948,3 +1950,51 @@ def _ctx_with_curried_args(
             blame="<callsite-coordinate>",
         )
     return result
+
+
+def _opaque_subscript_faces(outcome, site):
+    """``opaque()[k]`` may raise: complete only under an opaque partition atom.
+
+    The receiver is a call result with no projected body, so its runtime type
+    and ``__getitem__`` are undecided. A completed symbolic ``py.subscript``
+    stands only under ``python:subscript.completes(python:subscript(<that
+    term>, <site>))``, keyed on the exact source site so two subscripts of the
+    same term are never forced to agree; the complement halts with an
+    ``UndeterminedRaiseEffect``. No exception type is guessed and no member is
+    invented. Any other outcome is left as produced.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    if not isinstance(outcome, Complete):
+        return outcome
+    value = outcome.value
+    subscript = ctor(
+        "python:subscript",
+        (
+            value.to_term(owner="CallSiteValue.subscript"),
+            str_const(str(site)),
+        ),
+    )
+    completes = atomic("python:subscript.completes", [subscript])
+    return ExitSet(
+        (
+            Completed(completes, value),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site) if site is not None else None,
+                    occurrence=str(site) if site is not None else None,
+                    producer_node_owner="CallSiteValue.subscript",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
