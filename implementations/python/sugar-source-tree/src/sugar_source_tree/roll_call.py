@@ -79,19 +79,33 @@ class MinorityReport:
         and ``minority`` used to re-derive the whole roll, entry by entry. A
         roll that was replaced or shortened is not the log that was indexed,
         and is read again from its first answer.
+
+        One logical node answers through many shells, and every shell used to
+        have its entry derived (locus projected, text sealed and hashed) only
+        to be dropped as a repeat. The coordinate is a function of the node's
+        fragment and kind: a fragment is one span of one oracle-pinned text
+        under one filename, so the file, the locus projected from the span
+        and the CID hashed from the text over it are all its own. A shell
+        whose fragment and kind were already read on this roll is the same
+        answer, and derives nothing.
         """
         nodes = getattr(self.reporter, roll)
-        source, consumed, out = self._indexed.get(roll, (None, 0, {}))
+        source, consumed, out, read = self._indexed.get(roll, (None, 0, {}, set()))
         if source is not nodes or len(nodes) < consumed:
-            consumed, out = 0, {}
+            consumed, out, read = 0, {}, set()
         # ``len`` is re-read each step: an answer appended while this question
         # is being answered belongs to this question, as it always did.
         while consumed < len(nodes):
-            e = roster_entry_for(nodes[consumed])
+            node = nodes[consumed]
             consumed += 1
+            answer = (node.fragment, node.kind)
+            if answer in read:
+                continue
+            read.add(answer)
+            e = roster_entry_for(node)
             key = (e.file, e.start_line, e.start_col, e.kind, e.cid)
             out.setdefault(key, e)
-        self._indexed[roll] = (nodes, consumed, out)
+        self._indexed[roll] = (nodes, consumed, out, read)
         return out
 
     @property
