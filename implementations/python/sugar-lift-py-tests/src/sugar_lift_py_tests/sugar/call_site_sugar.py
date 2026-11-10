@@ -396,6 +396,43 @@ class CallSiteSugar(ConstructedTermSugar):
             )
         return self._collect(self.args, (), ctx)
 
+    def _applied_builtin_exception_class(self, ctx, source_call_frame):
+        """The builtin exception class this call applies, by its bound value.
+
+        Read from the callee's temporal binding, never its spelling: a user
+        class or rebinding named ``ValueError`` is not a builtin exception.
+        """
+        if ctx is None or source_call_frame is not None or self.contract_ref is not None:
+            return None
+        from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
+
+        temporal = getattr(ctx, "temporal", None)
+        if temporal is None:
+            return None
+        receiver = temporal.value_if_bound(self.target_name)
+        if not isinstance(receiver, BuiltinExceptionClassValue):
+            return None
+        # The reduce scope's builtin seat is necessary, not sufficient: the
+        # unit's lexical exception-type authority must agree that the exact
+        # callee occurrence reaches the builtin class, so a same-spelled
+        # module or enclosing class never borrows builtin semantics.
+        from sugar_source_tree.nodes import Name
+
+        node = getattr(self.site, "node", None)
+        callee = getattr(node, "func", None)
+        unit = getattr(self.site, "unit", None)
+        if (
+            not isinstance(callee, Name)
+            or callee.id != self.target_name
+            or getattr(unit, "typed_module", None) is None
+        ):
+            # No typed Module bound: no lexical authority, so no decision.
+            return None
+        lexical = unit.exception_type_identity(callee)
+        if lexical is None or lexical != receiver.exception_type_identity():
+            return None
+        return receiver
+
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         if remaining:
             head, *rest = remaining
@@ -671,6 +708,9 @@ class CallSiteSugar(ConstructedTermSugar):
                 else native_operation_actuals.source_actuals
             ),
             bound_source_actuals=bound_source_actuals,
+            builtin_exception_class=self._applied_builtin_exception_class(
+                ctx, source_call_frame
+            ),
         )
         if native_operation_actuals is not None:
             pending = source_call_frame.pending_native_operation.discharge(
