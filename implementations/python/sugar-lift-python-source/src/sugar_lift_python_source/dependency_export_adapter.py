@@ -1135,6 +1135,43 @@ def _decided_if_test(test: ast.AST, prefix: list[ast.stmt]) -> bool | None:
     return _decided_builtin_module_membership(test, prefix)
 
 
+def _is_stdlib_extension_module(module_name: str) -> bool:
+    """True for a C extension shipped in the interpreter's own ``lib-dynload``.
+
+    Such a module (``_decimal``, ``_json``, ...) is part of the pinned
+    interpreter build exactly like a built-in module: it has no Python source in
+    any artifact, and its spec origin is an extension file
+    (``importlib.machinery.EXTENSION_SUFFIXES``) directly under the stdlib's
+    ``lib-dynload``. A third-party extension lives in its own artifact and is
+    not admitted here. The spec is found without executing the module.
+    """
+    import importlib.machinery
+    import importlib.util
+    import os
+    import sys
+    import sysconfig
+
+    if module_name.count(".") or not module_name:
+        return False
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ValueError):
+        return False
+    origin = getattr(spec, "origin", None)
+    if not isinstance(origin, str) or not isinstance(
+        getattr(spec, "loader", None), importlib.machinery.ExtensionFileLoader
+    ):
+        return False
+    # The base interpreter's stdlib, not a virtual environment's prefix.
+    platstdlib = sysconfig.get_paths(
+        vars={"base": sys.base_prefix, "platbase": sys.base_exec_prefix}
+    )["platstdlib"]
+    dynload = os.path.join(platstdlib, "lib-dynload")
+    return os.path.dirname(os.path.realpath(origin)) == os.path.realpath(
+        dynload
+    ) and origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES))
+
+
 def _builtin_module_star_names(module_name: str) -> frozenset[str]:
     """Names ``from <module> import *`` publishes for a built-in C module.
 
@@ -1144,12 +1181,16 @@ def _builtin_module_star_names(module_name: str) -> frozenset[str]:
     import-system rule: ``__all__`` when defined, otherwise every name not
     starting with an underscore
     (https://docs.python.org/3/reference/simple_stmts.html#the-import-statement).
-    Any other absent module publishes nothing here and stays a residual.
+    A C extension in the interpreter's own ``lib-dynload`` has the same
+    standing (``_is_stdlib_extension_module``). Any other absent module
+    publishes nothing here and stays a residual.
     """
     import importlib
     import sys
 
-    if module_name not in sys.builtin_module_names:
+    if module_name not in sys.builtin_module_names and not _is_stdlib_extension_module(
+        module_name
+    ):
         return frozenset()
     try:
         module = importlib.import_module(module_name)
@@ -2157,8 +2198,39 @@ def _statement_walrus_binds(statement: ast.AST, name: str) -> bool:
     return False
 
 
+def _interpreter_c_import_completes(statement: ast.AST) -> bool:
+    """``from <C module> import ...`` that the pinned interpreter decides completes.
+
+    The module must be compiled into the interpreter or shipped as a C extension
+    in its own ``lib-dynload`` (no artifact owns its source), it must import in
+    the running interpreter, and every explicitly named import must exist on the
+    module object. A star always completes once the module imports. Any other
+    import may raise and keeps its handler edges.
+    """
+    import importlib
+    import sys
+
+    if not isinstance(statement, ast.ImportFrom) or statement.level:
+        return False
+    module_name = statement.module
+    if not module_name or (
+        module_name not in sys.builtin_module_names
+        and not _is_stdlib_extension_module(module_name)
+    ):
+        return False
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        return False
+    return all(
+        alias.name == "*" or hasattr(module, alias.name) for alias in statement.names
+    )
+
+
 def _cannot_raise_during_module_init(statement: ast.AST) -> bool:
     if isinstance(statement, ast.Pass):
+        return True
+    if _interpreter_c_import_completes(statement):
         return True
     if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
