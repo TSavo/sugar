@@ -56,6 +56,21 @@ class Sugar(ABC):
 
         @functools.wraps(own)
         def desugar(self, ctx=None, *args, **kwargs):
+            tags = self.__dict__.get("_occurrence_tags") if hasattr(
+                self, "__dict__"
+            ) else None
+            if tags:
+                # This sugar is one iteration's copy of its node: every site
+                # under it is evaluated in that iteration (occurrence.py).
+                from sugar_lift_py_tests.occurrence import (
+                    current_path,
+                    occurrence_path,
+                )
+
+                path = current_path()
+                if path[len(path) - len(tags):] != tags:
+                    with occurrence_path((*path, *tags)):
+                        return desugar(self, ctx, *args, **kwargs)
             # A RHS an assignment statement already evaluated answers with
             # the value of the face it completed under; a read never
             # re-evaluates it (sugar/assigned_value.py).

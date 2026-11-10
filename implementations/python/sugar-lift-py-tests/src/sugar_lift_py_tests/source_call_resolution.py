@@ -76,6 +76,30 @@ __all__ = [
 ]
 
 
+def _occurrence_result(callsite, key):
+    """The value ONE evaluation of a bodiless call returned.
+
+    ``call:<target>(<args>)`` names the callee applied to its arguments; as a
+    value it would claim that every evaluation of that application returns the
+    same object (two iterations of ``r.append(textwrap.dedent(s))``, or two
+    sites calling it with equal arguments). Nothing testified to that, so the
+    completed result is ``python:call_result(<call term>, <occurrence>)``: the
+    application is kept, and the occurrence key makes each evaluation its own
+    unknown.
+    """
+    from dataclasses import replace
+
+    from .floor.call_site_value import CallSiteValue
+    from .ir import ctor, str_const
+
+    if not isinstance(callsite, CallSiteValue) or key is None:
+        return callsite
+    return replace(
+        callsite,
+        term=ctor("python:call_result", (callsite.term, str_const(key))),
+    )
+
+
 @dataclass(frozen=True)
 class UnprojectedSourceCallV1:
     """An authenticated source-defined callee whose body was not projected here.
@@ -105,15 +129,17 @@ class UnprojectedSourceCallV1:
         """Two faces for one bodiless call: opaque completion or a raise."""
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
+        from .occurrence import occurrence_key
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
 
         noun = "source_construction" if self.definition_kind == "class" else "source_call"
+        key = occurrence_key(site)
         call = ctor(
             f"python:{noun}",
             (
                 str_const(self.module_name),
                 str_const(self.definition_name),
-                str_const(str(site)),
+                str_const(key),
             ),
         )
         completes = atomic(f"python:{noun}.completes", [call])
@@ -124,12 +150,12 @@ class UnprojectedSourceCallV1:
         )
         return ExitSet(
             (
-                Completed(completes, callsite),
+                Completed(completes, _occurrence_result(callsite, key)),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
                         blame=str(site) if site is not None else None,
-                        occurrence=str(site) if site is not None else None,
+                        occurrence=key if site is not None else None,
                         producer_node_owner=(
                             f"{owner}:{self.module_name}.{self.definition_name}"
                         ),
@@ -161,21 +187,23 @@ class OffPopulationSourceCallV1:
     def faces(self, callsite, site):
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
+        from .occurrence import occurrence_key
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
 
+        key = occurrence_key(site)
         call = ctor(
             "python:off_population_call",
-            (str_const(self.target_name), str_const(str(site))),
+            (str_const(self.target_name), str_const(key)),
         )
         completes = atomic("python:off_population_call.completes", [call])
         return ExitSet(
             (
-                Completed(completes, callsite),
+                Completed(completes, _occurrence_result(callsite, key)),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
                         blame=str(site) if site is not None else None,
-                        occurrence=str(site) if site is not None else None,
+                        occurrence=key if site is not None else None,
                         producer_node_owner=f"OffPopulationCall:{self.target_name}",
                     ),
                     None,
