@@ -85,5 +85,11 @@ def test_string_receiver_with_undecided_prefix_stays_untyped() -> None:
         _Site("call"),
     ).desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
+    # ``str.startswith`` raises TypeError for a prefix that is not a str or
+    # tuple: over an undecided prefix the call may raise, never total.
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert isinstance(completed.value, CallSiteValue)
+    assert any(isinstance(face, Halted) for face in outcome.exits)
