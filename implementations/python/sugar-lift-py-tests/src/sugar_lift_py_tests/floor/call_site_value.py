@@ -1657,6 +1657,29 @@ class CallSiteValue(FloorValue):
             )
         return floor
 
+    def retained_source_completion_outcome(self):
+        """The completed body the Call producer already reduced, or None.
+
+        ``producer_outcome`` reduces a source body once, publishes its halts
+        at the Call, and seats the completed Floor here. A consumer that needs
+        that body (a statement-position call splicing its field stores) reads
+        it; reducing it again would replay the producer.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+
+        retained = self._retained_source_completion
+        if retained is None:
+            return None
+        if type(retained) is not _RetainedSourceCompletionV1 or not isinstance(
+            retained.value, FloorValue
+        ):
+            _retained_completion_invariant(
+                owner="CallSiteValue.retained_source_completion_outcome",
+                callsite=self,
+                observed="retained source completion has wrong exact type",
+            )
+        return Complete(retained.value)
+
     def reduce_source_outcome(self, ctx: Any = None):
         """Reduce this already-constructed source body without floor projection.
 
