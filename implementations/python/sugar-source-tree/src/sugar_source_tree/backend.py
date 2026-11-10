@@ -918,14 +918,7 @@ class Backend:
             if type(value) not in (int, float, str):
                 continue
             value_sugar = node.value._construct_sugar()
-            value_cache = node.value._construction_cache()
-            value_key = value_cache.key(
-                node.value.ref,
-                node.value.reporter,
-                node.value.control_context,
-                node.value.unit.construction_context,
-                kind=type(node.value).__name__,
-            )
+            value_cache, value_key, _ = node.value._coordinate()
             value_cache.sugar_results[value_key] = value_sugar
             node.value.reporter.present_fact(node.value)
             assert node.value.sugar() is value_sugar

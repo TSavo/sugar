@@ -2772,6 +2772,49 @@ class Node(Typed):
             object.__setattr__(self.unit, "construction_cache", cache)
         return cache
 
+    def _coordinate(self) -> "tuple[ConstructionCache, tuple, dict]":
+        """``(cache, key, field row)`` for this shell's construction coordinate.
+
+        The coordinate is a function of the shell's ref, reporter and control
+        context, the unit's construction context and the node class.  A shell
+        asks for it on every field read, every child-edge read and every
+        sugar read, and each ask used to recompute the key and re-pin it.
+
+        The shell holds the answer beside the participants that can be
+        rebound under it -- the unit's cache, the unit's construction context
+        and the reporter -- and asks ``cache.key`` again only when one of
+        them is a different object.  The ref and the control context are
+        frozen for the life of the shell.  The held row is the row in
+        ``cache.fields``: rows are never dropped from a live cache, so the
+        memo stays on the unit and every shell of one coordinate still reads
+        one row.
+        """
+        state = self.__dict__
+        unit = state["unit"]
+        reporter = state["reporter"]
+        cache = unit.construction_cache
+        context = unit.construction_context
+        held = state.get("_held_coordinate")
+        if (
+            held is not None
+            and held[0] is cache
+            and held[1] is context
+            and held[2] is reporter
+        ):
+            return held[3]  # type: ignore[no-any-return]
+        if cache is None:
+            cache = self._construction_cache()
+        key = cache.key(
+            state["ref"],
+            reporter,
+            state["control_context"],
+            context,
+            kind=type(self).__name__,
+        )
+        answer = (cache, key, cache.fields.setdefault(key, {}))
+        state["_held_coordinate"] = (cache, context, reporter, answer)
+        return answer
+
     @property
     def target_pattern_enrollment(self) -> TargetPatternEnrollmentV1:
         """Is this shape an enrolled target-pattern consumer? (closed answer)"""
@@ -2789,15 +2832,7 @@ class Node(Typed):
         # Field data is memoized on the unit once per site; this shell exposes it.
         if name.startswith("_"):
             raise AttributeError(name)
-        cache = self._construction_cache()
-        key = cache.key(
-            self.ref,
-            self.reporter,
-            self.control_context,
-            self.unit.construction_context,
-            kind=type(self).__name__,
-        )
-        row = cache.fields.setdefault(key, {})
+        row = self._coordinate()[2]
         if name in row:
             return row[name]
         for slot_name, slot in self.ref.describe().slots:
@@ -3408,14 +3443,7 @@ class Node(Typed):
         # rewritten shadow carries a DIFFERENT ref, so it can never collide
         # with the node it replaced. ``cache.key`` pins the ref, which is what
         # keeps a dead shadow's recycled address from serving stale work.
-        cache = self._construction_cache()
-        key = cache.key(
-            self.ref,
-            self.reporter,
-            self.control_context,
-            self.unit.construction_context,
-            kind=type(self).__name__,
-        )
+        cache, key, _ = self._coordinate()
         remembered_panic = cache.sugar_panics.get(key)
         if remembered_panic is not None:
             # A gap stays a gap, every time. Same panic, re-raised loudly.
@@ -3612,15 +3640,7 @@ class Node(Typed):
         is pure recompute.  Memoize on the unit construction cache (same key as
         field data) so the second consumer of a node pays zero field getattr.
         """
-        cache = self._construction_cache()
-        key = cache.key(
-            self.ref,
-            self.reporter,
-            self.control_context,
-            self.unit.construction_context,
-            kind=type(self).__name__,
-        )
-        row = cache.fields.setdefault(key, {})
+        row = self._coordinate()[2]
         cached = row.get("__child_edges__")
         if cached is not None:
             return cached  # type: ignore[no-any-return]
@@ -4172,14 +4192,7 @@ class FunctionDef(Statement):
         # replaces a seat.
         from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-        cache = self._construction_cache()
-        key = cache.key(
-            self.ref,
-            self.reporter,
-            self.control_context,
-            self.unit.construction_context,
-            kind=type(self).__name__,
-        )
+        cache, key, _ = self._coordinate()
         for seats, reach, panic, frame in cache.call_frames.get(key, ()):
             if (_FRAMES_UNDER_CONSTRUCTION & reach) != seats:
                 continue
