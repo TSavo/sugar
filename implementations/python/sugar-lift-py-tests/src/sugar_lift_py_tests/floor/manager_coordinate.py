@@ -188,6 +188,61 @@ class RaisedExitTypeValue(FloorValue):
     def exception_type_mro(self):
         return self.mro
 
+    def test_python_subtype(self, supertype, site):
+        """``issubclass(<raised type>, T)`` from the raise's own ancestry.
+
+        ``issubclass`` consults ``type(T).__subclasscheck__``. Only a builtin
+        exception class has the closed metaclass ``type``, so only there does
+        the raised MRO testimony settle the question. Any other class operand
+        keeps the ``python.subtype`` atom; nothing is decided by spelling.
+        """
+        from sugar_lift_py_tests.floor import ClassValue, SymbolicValue, TupleValue
+        from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+            AuthenticatedExceptionTypeValue,
+        )
+        from sugar_lift_py_tests.floor.builtin_exception_class_value import (
+            BuiltinExceptionClassValue,
+        )
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type(supertype) is TupleValue:
+            return supertype.test_python_subtype(self, site)
+        native = supertype
+        while isinstance(native, AuthenticatedExceptionTypeValue):
+            native = native.class_value if native.class_value is not None else native.value
+        if isinstance(native, BuiltinExceptionClassValue):
+            expected = native.exception_type_identity()
+            if expected == self.identity:
+                return Complete(TrueBoolLiteralSugar(site=site))
+            if self.mro is not None:
+                literal = (
+                    TrueBoolLiteralSugar if expected in self.mro else FalseBoolLiteralSugar
+                )
+                return Complete(literal(site=site))
+        if not isinstance(native, (ClassValue, SymbolicValue, BuiltinExceptionClassValue)):
+            return _dynamic_subtype_operand(self, supertype, site)
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "python.subtype",
+                    [
+                        self.to_term(owner="python.issubclass subtype"),
+                        native.to_term(owner="python.issubclass supertype"),
+                    ],
+                ),
+                site,
+                operand_callsites=(*self.callsites(), *native.callsites()),
+            )
+        )
+
     def equals(self, other, site):
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 

@@ -117,6 +117,19 @@ class TotalCompletionV1:
 
 
 @dataclass(frozen=True)
+class SourceExitFacesCompletionV1:
+    """The source ``__exit__`` may halt; its faces travel with each body face.
+
+    This is not totality. It admits only a source-derived protocol whose
+    construction re-runs the authenticated exit frame per incoming body face,
+    so every exit halt (a residual ``raise rest``, a runtime unpack effect)
+    supersedes the body exit as itself. Nothing is folded into completion.
+    """
+
+    kind: str = "source-exit-faces"
+
+
+@dataclass(frozen=True)
 class EnterResultContractV1:
     sort: Sort
     completion: TotalCompletionV1 = TotalCompletionV1()
@@ -126,7 +139,7 @@ class EnterResultContractV1:
 @dataclass(frozen=True)
 class ExitContractV1:
     disposition: NeverSuppressesDispositionV1 | ReturnTruthinessDispositionV1
-    completion: TotalCompletionV1 = TotalCompletionV1()
+    completion: TotalCompletionV1 | SourceExitFacesCompletionV1 = TotalCompletionV1()
 
 
 @dataclass(frozen=True)
@@ -610,7 +623,11 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
             raise ContextManagerContractError(
                 "unsupported protocol-resource enter testimony"
             )
-        if not isinstance(semantics.exit.completion, TotalCompletionV1):
+        if isinstance(semantics.exit.completion, TotalCompletionV1):
+            exit_completion = "total"
+        elif isinstance(semantics.exit.completion, SourceExitFacesCompletionV1):
+            exit_completion = "source-exit-faces"
+        else:
             raise ContextManagerContractError(
                 "unsupported protocol-resource exit testimony"
             )
@@ -648,7 +665,7 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
                     "exit",
                     vobj(
                         [
-                            ("completion", vobj([("kind", vstr("total"))])),
+                            ("completion", vobj([("kind", vstr(exit_completion))])),
                             ("disposition", vobj([("kind", vstr(disposition))])),
                         ]
                     ),
@@ -1009,6 +1026,17 @@ def _decode_total(raw: Any) -> TotalCompletionV1:
     return TotalCompletionV1()
 
 
+def _decode_exit_completion(
+    raw: Any,
+) -> TotalCompletionV1 | SourceExitFacesCompletionV1:
+    if isinstance(raw, dict) and set(raw) == {"kind"}:
+        if raw["kind"] == "total":
+            return TotalCompletionV1()
+        if raw["kind"] == "source-exit-faces":
+            return SourceExitFacesCompletionV1()
+    raise ContextManagerContractError("unknown exit completion testimony")
+
+
 def _decode_protocol_resource(raw: Any) -> ProtocolResourceSemanticsV1:
     if (
         set(raw) != {"kind", "schemaVersion", "enter", "exit"}
@@ -1031,7 +1059,7 @@ def _decode_protocol_resource(raw: Any) -> ProtocolResourceSemanticsV1:
     if not isinstance(exit_, dict) or set(exit_) != {"completion", "disposition"}:
         raise ContextManagerContractError("malformed context-manager semantics exit")
     disposition = exit_["disposition"]
-    exit_completion = _decode_total(exit_["completion"])
+    exit_completion = _decode_exit_completion(exit_["completion"])
     if not isinstance(disposition, dict) or set(disposition) != {"kind"}:
         raise ContextManagerContractError("malformed exit disposition")
     if disposition["kind"] == "never-suppresses":
