@@ -1966,25 +1966,29 @@ class SourceUnit:
         )
 
     @staticmethod
-    def source_class_admits_source_constructor_frame(
-        definition: "ClassDef",
-    ) -> bool:
-        """Whether this class call may carry its source constructor frame.
+    def _is_simple_class_field_statement(member: "Node") -> bool:
+        """A class-body name assignment, not a hook or a computed target."""
+        if isinstance(member, Assign):
+            return all(isinstance(target, Name) for target in member.targets)
+        if isinstance(member, AnnAssign):
+            return isinstance(member.target, Name)
+        return False
 
-        Ordinary classes already pass through default-attribute behavior.
-        A subclass that inherits an authenticated local initializer may also
-        carry that frame when the subclass itself has no constructor hooks
-        and the initializer's defining class already has default-attribute
-        behavior. Unauthenticated or computed bases stay outside this door.
+    @staticmethod
+    def source_class_has_plain_source_body(
+        definition: "ClassDef",
+        *,
+        _seen: frozenset[int] | None = None,
+    ) -> bool:
+        """Methods and simple class-body fields only, including local bases.
+
+        Constructor hooks, decorators, keywords, type parameters, and
+        unauthenticated or computed bases stay outside this door.
         """
-        if SourceUnit.source_class_has_authenticated_default_attribute_behavior(
-            definition
-        ):
-            return True
         if not isinstance(definition, ClassDef):
             return False
-        if definition._source_initializer() is None:
-            return False
+        if definition._authenticated_new_constructor_shape() is not None:
+            return True
         if definition.keywords or definition.decorators or definition.type_params:
             return False
         forbidden_methods = {
@@ -1997,25 +2001,55 @@ class SourceUnit:
             "__setitem__",
             "__delitem__",
         }
-        if any(
-            isinstance(member, FunctionDef)
-            and (
-                member.name in forbidden_methods
-                or (
+        for member in definition.body:
+            if isinstance(member, Pass):
+                continue
+            if isinstance(member, FunctionDef):
+                if member.name in forbidden_methods or (
                     member.decorators
                     and definition._method_descriptor_kind(member) is None
-                )
-            )
-            for member in definition.body
-        ):
+                ):
+                    return False
+                continue
+            if SourceUnit._is_simple_class_field_statement(member):
+                continue
             return False
-        owner = definition._source_initializer_class()
-        return (
-            owner is not None
-            and SourceUnit.source_class_has_authenticated_default_attribute_behavior(
-                owner
-            )
-        )
+        seen = set() if _seen is None else set(_seen)
+        if id(definition) in seen:
+            return False
+        seen.add(id(definition))
+        for base in definition.bases:
+            name = None
+            if isinstance(base, Name):
+                name = base.id
+            elif isinstance(base, Subscript) and isinstance(base.value, Name):
+                name = base.value.id
+            else:
+                return False
+            bindings = (definition.unit.module_direct_bindings or {}).get(name, ())
+            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+                return False
+            if not SourceUnit.source_class_has_plain_source_body(
+                bindings[0], _seen=frozenset(seen)
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def source_class_admits_source_constructor_frame(
+        definition: "ClassDef",
+    ) -> bool:
+        """Whether this class call may carry its source constructor frame.
+
+        Ordinary classes already pass through default-attribute behavior.
+        A class whose body is only methods and simple name assignments, and
+        whose bases are the same kind of authenticated local class, may also
+        carry the frame so instance reads can see those class fields.
+        Unauthenticated or computed bases stay outside this door.
+        """
+        return SourceUnit.source_class_has_authenticated_default_attribute_behavior(
+            definition
+        ) or SourceUnit.source_class_has_plain_source_body(definition)
 
     def construction_generation(self, node: "Node") -> int:
         """The source-authenticated generation of this exact occurrence.

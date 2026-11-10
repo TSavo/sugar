@@ -297,6 +297,11 @@ class ObjectValue(FloorValue):
                 owner="ObjectValue.attribute.property",
                 blame=site,
             ).and_then(invoke)
+        class_value = self._resolved_class_field(name)
+        if class_value is not None:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(class_value)
         if name in self.deleted_instance_fields:
             # Authenticated delattr removed this instance field — read is
             # AttributeError with delete→read lineage, not an undecided gap.
@@ -818,6 +823,24 @@ class ObjectValue(FloorValue):
         for field in reversed(self.class_fields):
             if field.name == name:
                 return field.value
+        return None
+
+    def _resolved_class_field(self, name: str) -> FloorValue | None:
+        """This class's field, else the first authenticated local base's.
+
+        Instance fields and data descriptors have already been considered.
+        A deleted instance field does not hide a still-present class field.
+        """
+        found = self.class_field_value(name)
+        if found is not None:
+            return found
+        defining = self.defining_class
+        if defining is None or not hasattr(defining, "_c3_tail"):
+            return None
+        for base in defining._c3_tail():
+            for field in reversed(getattr(base, "class_fields", ())):
+                if field.name == name:
+                    return field.value
         return None
 
     def _floor_gap(
