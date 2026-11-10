@@ -62,7 +62,7 @@ class BuiltinExceptionClassValue(ClassValue):
 
         return ctor(
             "python:exception_type_identity",
-            [str_const("builtins"), str_const(self.name)],
+            [str_const("builtins"), str_const(_canonical(self.name))],
         )
 
     def exception_type_mro(self) -> tuple[Term, ...]:
@@ -89,5 +89,13 @@ class BuiltinExceptionClassValue(ClassValue):
             for base in BUILTIN_EXCEPTION_BASES.get(name, ()):
                 walk(base)
 
-        walk(self.name)
+        walk(_canonical(self.name))
         return tuple(identity(name) for name in ordered)
+
+
+def _canonical(name: str) -> str:
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        canonical_builtin_exception_name,
+    )
+
+    return canonical_builtin_exception_name(name)

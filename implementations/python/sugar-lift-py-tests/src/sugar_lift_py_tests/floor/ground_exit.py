@@ -24,6 +24,11 @@ def _builtin_exception_identity(exception_name: str):
 
     if exception_name not in BUILTIN_EXCEPTION_NAMES:
         return None, None
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        canonical_builtin_exception_name,
+    )
+
+    exception_name = canonical_builtin_exception_name(exception_name)
 
     def identity(name: str):
         return ctor(

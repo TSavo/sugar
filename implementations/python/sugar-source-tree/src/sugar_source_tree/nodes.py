@@ -2479,10 +2479,17 @@ class SourceUnit:
                 # Import — any non-closed exception-class binding.
                 bindings.append(("other",))
 
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            canonical_builtin_exception_name,
+        )
+
         if not bindings and node.id in builtin_names:
             return ctor(
                 "python:exception_type_identity",
-                [str_const("builtins"), str_const(node.id)],
+                [
+                    str_const("builtins"),
+                    str_const(canonical_builtin_exception_name(node.id)),
+                ],
             )
         if len(bindings) != 1:
             return None
@@ -2494,7 +2501,10 @@ class SourceUnit:
         ):
             return ctor(
                 "python:exception_type_identity",
-                [str_const("builtins"), str_const(binding[2])],
+                [
+                    str_const("builtins"),
+                    str_const(canonical_builtin_exception_name(binding[2])),
+                ],
             )
         if binding[0] == "class":
             definition = binding[1]
@@ -2568,12 +2578,23 @@ class SourceUnit:
             if statement.kind == "ClassDef" and statement.name == node.id
         ]
         if len(definitions) != 1:
-            return (identity,)
+            # No unique lexical definition: the ancestry is UNKNOWN. The old
+            # ``(identity,)`` was the positive claim "no ancestors", which the
+            # matcher read as a decided miss against every handler but the
+            # class itself.
+            return None
 
         result = [identity]
         visiting: set[str] = set()
 
         def append_definition(definition) -> bool:
+            # The ancestry is testimony only when it is CLOSED: every base is
+            # either a builtin exception (whose own ancestry the language
+            # table states) or a unique module-level source class walked in
+            # turn. Anything else -- a dotted or imported base, a computed
+            # base, a base without a unique definition, a cycle -- leaves the
+            # whole ancestry unavailable, never a truncated prefix that a
+            # membership test would read as a decided miss.
             if definition.name in visiting:
                 return False
             visiting.add(definition.name)
@@ -2583,6 +2604,12 @@ class SourceUnit:
                 base_identity = self.exception_type_identity(base)
                 if base_identity is None:
                     return False
+                builtin_ancestry = self._builtin_exception_ancestry(base_identity)
+                if builtin_ancestry is not None:
+                    for ancestor in builtin_ancestry:
+                        if ancestor not in result:
+                            result.append(ancestor)
+                    continue
                 if base_identity not in result:
                     result.append(base_identity)
                 base_definitions = [
@@ -2590,7 +2617,7 @@ class SourceUnit:
                     for candidate in module.body
                     if candidate.kind == "ClassDef" and candidate.name == base.id
                 ]
-                if len(base_definitions) == 1 and not append_definition(
+                if len(base_definitions) != 1 or not append_definition(
                     base_definitions[0]
                 ):
                     return False
@@ -10029,8 +10056,32 @@ class Try(Statement):
             for index, handler in enumerate(self.handlers):
                 if self._handler_matches(handler, identity, mro):
                     routed.setdefault(index, []).append(state)
-                    break
+                    # Only a DECIDED match stops the edge: a handler that may
+                    # match (missing ancestry) may also miss, so the later
+                    # arms can still receive it.
+                    if self._handler_surely_matches(handler, identity, mro):
+                        break
         return routed
+
+    def _handler_surely_matches(self, handler, exception_identity, exception_mro) -> bool:
+        if handler.type_ is None:
+            return True
+        nodes = (
+            handler.type_.elts
+            if isinstance(handler.type_, Tuple_)
+            else (handler.type_,)
+        )
+        for node in nodes:
+            if not isinstance(node, Name):
+                continue
+            handler_identity = self.unit.exception_type_identity(node)
+            if handler_identity is None:
+                continue
+            if handler_identity == exception_identity or (
+                exception_mro is not None and handler_identity in exception_mro
+            ):
+                return True
+        return False
 
     def _incoming_halt_state(self, states):
         """What the edges reaching one handler AGREE on.
@@ -10063,11 +10114,15 @@ class Try(Statement):
         )
         for node in nodes:
             if not isinstance(node, Name):
-                continue
+                # An unresolved handler operand may name the raised class.
+                return True
             handler_identity = self.unit.exception_type_identity(node)
-            if handler_identity == exception_identity or (
-                exception_mro is not None and handler_identity in exception_mro
-            ):
+            if handler_identity is None or handler_identity == exception_identity:
+                return True
+            if exception_mro is None:
+                # Missing ancestry is not a miss: the handler may match.
+                return True
+            if handler_identity in exception_mro:
                 return True
         return False
 
