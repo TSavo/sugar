@@ -854,9 +854,7 @@ def _derive_effect_boundary_from_deferred_carrier(
     ]
     halted = ()
     if carrier.prefix_composition is not None:
-        resolved, _deferred, _continuation_count, _guard_count = (
-            carrier.prefix_composition
-        )
+        resolved = carrier.prefix_composition[0]
         halted = tuple(face for face in resolved if isinstance(face, Halted))
     absent_effect_halts = tuple(
         face
