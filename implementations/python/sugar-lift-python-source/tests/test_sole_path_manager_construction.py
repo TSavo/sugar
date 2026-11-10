@@ -8050,9 +8050,17 @@ def test_attribute_exception_class_path_consumes_matching_raise(tmp_path):
 
 
 def test_attribute_exception_class_path_restores_wrong_raise(tmp_path):
-    """Lying twin: wrong type is restored, never borrowed from sibling identity."""
+    """Lying twin: the wrong type is never consumed by a borrowed identity.
+
+    ``arbitrary.MyError`` reaches the boundary as an ``import`` coordinate: a
+    PATH, not a class. Nothing testified which class it names, and an import
+    path can alias a builtin (``socket.error is OSError``), so ``raise
+    ValueError`` against it is not a decided miss. The ValueError halt is
+    restored, still red, under the complement of the retained type test; it is
+    consumed only under that test.
+    """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
 
     tree, _context = _attribute_exception_tree(
         tmp_path,
@@ -8062,11 +8070,14 @@ def test_attribute_exception_class_path_restores_wrong_raise(tmp_path):
     exits = outcome_to_exitset(
         next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
     )
-    assert len(exits.exits) == 1
-    face = exits.exits[0]
-    assert isinstance(face, Halted)
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    consumed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(halted) == 1 and len(consumed) == 1
+    face = halted[0]
     assert isinstance(face.effect, RaiseEffect)
     assert face.effect.exception_name == "ValueError"
+    assert "adt.is_python_type" in repr(consumed[0].guard)
+    assert getattr(face.guard, "kind", None) == "not"
 
 
 def test_attribute_exception_class_with_match_consumes_and_misses(tmp_path):

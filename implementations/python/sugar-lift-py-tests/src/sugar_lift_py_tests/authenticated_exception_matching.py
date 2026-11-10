@@ -48,8 +48,26 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
     if expected_identity is not None and raised_identity is not None:
         if expected_identity == raised_identity:
             return MatchDecided(True)
-        raised_mro = getattr(effect, "exception_type_mro", None)
-        return MatchDecided(raised_mro is not None and expected_identity in raised_mro)
+        raised_mro = _authenticated_ancestry(effect, raised_identity)
+        if raised_mro is not None and expected_identity in raised_mro:
+            return MatchDecided(True)
+        # A MISS IS DECIDED ONLY FROM AUTHENTICATED ANCESTRY.
+        #
+        # ``exception_type_mro`` is ``None`` when nobody testified to the
+        # raised class's bases -- an import-bound class such as
+        # ``json.JSONDecodeError``, a source class with an imported or
+        # computed base. Absence of testimony is not the claim "no
+        # ancestors": ``JSONDecodeError`` IS a ``ValueError``. And a closed
+        # ancestry settles a miss only against a CANONICAL handler identity
+        # (a builtin or a source class definition); an ``import`` coordinate
+        # names a path, which may alias any class, including one in the
+        # raised ancestry. Both cases retain the question over the two
+        # identities, exactly as an unauthenticated operand does below.
+        if raised_mro is not None and _is_canonical_class_identity(expected_identity):
+            return MatchDecided(False)
+        return MatchRetained(
+            atomic("adt.is_python_type", [raised_identity, expected_identity])
+        )
 
     owner = "matches_raise_effect"
     handler_term = expected_identity
@@ -94,6 +112,40 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
             ),
         )
     return MatchRetained(atomic("adt.is_python_type", [raised_term, handler_term]))
+
+
+def _authenticated_ancestry(effect, raised_identity):
+    """The raised class's ancestry as testified, or ``None`` when nobody did.
+
+    The effect's own ``exception_type_mro`` is the testimony when it carries
+    one. A ``builtins`` identity minted without it (a ground language raise
+    such as ``None.attr``'s ``AttributeError``) still names a class whose
+    ancestry the language itself states, so the closed builtin table answers.
+    """
+    mro = getattr(effect, "exception_type_mro", None)
+    if mro is not None:
+        return mro
+    args = getattr(raised_identity, "args", ())
+    if len(args) != 2 or getattr(args[0], "value", None) != "builtins":
+        return None
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    identity, ancestry = _builtin_exception_identity(getattr(args[1], "value", None))
+    return ancestry if identity == raised_identity else None
+
+
+def _is_canonical_class_identity(identity) -> bool:
+    """True when the identity coordinate names ONE class, not a path to one.
+
+    ``builtins`` and ``source-class`` coordinates are minted from the class
+    itself (the language's own name, or the defining ``ClassDef`` span). An
+    ``import`` coordinate is the dotted path a module reached it by, and two
+    distinct paths can reach the same class.
+    """
+    args = getattr(identity, "args", ())
+    if len(args) != 2:
+        return False
+    return getattr(args[0], "value", None) in ("builtins", "source-class")
 
 
 def _operand_term(operand, *, owner, role):

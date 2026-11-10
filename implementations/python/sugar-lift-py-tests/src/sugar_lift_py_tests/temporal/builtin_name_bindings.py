@@ -98,6 +98,21 @@ def builtin_constant_names() -> frozenset[str]:
 _EMPTY_BUILTIN_TEMPORAL = None
 
 
+# ``IOError`` and ``EnvironmentError`` are not classes of their own: Python
+# binds both names to ``OSError`` itself (``IOError is OSError``). An identity
+# minted from the alias SPELLING is a second class that does not exist, and the
+# matcher read ``raise IOError()`` / ``except OSError`` as a decided miss.
+BUILTIN_EXCEPTION_ALIASES: dict[str, str] = {
+    "EnvironmentError": "OSError",
+    "IOError": "OSError",
+}
+
+
+def canonical_builtin_exception_name(name: str) -> str:
+    """The class a builtin exception NAME is bound to (aliases fold to it)."""
+    return BUILTIN_EXCEPTION_ALIASES.get(name, name)
+
+
 # Python owns its exception hierarchy, so the kit TRANSPORTS it rather than
 # deriving or assuming it. Every entry names one builtin exception's immediate
 # bases, restricted to ``BUILTIN_EXCEPTION_NAMES`` (the set is closed under
