@@ -3480,6 +3480,7 @@ class Node(Typed):
                 new_stmt.statements if isinstance(new_stmt, _Splice) else (new_stmt,)
             )
             for produced_stmt in produced:
+                pre_produced_scope = scope
                 new_items.append(produced_stmt)
                 binding = (
                     live_loop_bindings
@@ -3504,6 +3505,9 @@ class Node(Typed):
                             wb = node._binding_entries(wb, scope)
                             scope = {**scope, **wb}
                 scope = produced_stmt.post_binding_scope(scope)
+                from .container_mutation import havoc_after
+
+                scope = havoc_after(produced_stmt, pre_produced_scope, scope)
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
                 projected = stmt._binding_entries(new_stmt.bindings, scope)
                 scope = {**scope, **projected}
@@ -6223,6 +6227,22 @@ class Delete(Statement):
         if any(not isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             return self._substitute_children(scope)
 
+        if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
+            from .container_mutation import mutation_statement
+
+            target = self.targets[0]
+            if not isinstance(target.slice_, Slice):
+                mutation = mutation_statement(
+                    self,
+                    scope,
+                    call_site=target,
+                    receiver=target.value.substitute(scope),
+                    method="__delitem__",
+                    args=(target.slice_.substitute(scope),),
+                )
+                if mutation is not None:
+                    return mutation
+
         current = dict(scope)
         operations = []
         for target in self.targets:
@@ -6503,6 +6523,9 @@ class Assign(Statement):
         """
         from .shadow import rewrite
 
+        mutation = self._builtin_container_mutation(scope)
+        if mutation is not None:
+            return mutation
         mapping_pop = self._mapping_pop_assignment(scope)
         if mapping_pop is not None:
             return mapping_pop
@@ -6573,6 +6596,42 @@ class Assign(Statement):
                 ),
             ),
             self.reporter,
+        )
+
+    def _builtin_container_mutation(self, scope):
+        """``x = r.<mutator>(...)`` or ``r[k] = v`` on a decided list/dict/set."""
+        if len(self.targets) != 1:
+            return None
+        from .container_mutation import mutation_statement
+
+        target = self.targets[0]
+        if isinstance(target, Subscript) and not isinstance(target.slice_, Slice):
+            return mutation_statement(
+                self,
+                scope,
+                call_site=target,
+                receiver=target.value.substitute(scope),
+                method="__setitem__",
+                args=(target.slice_.substitute(scope), self.value.substitute(scope)),
+                value_first=True,
+            )
+        call = self.value
+        if (
+            not isinstance(target, Name)
+            or not isinstance(call, Call)
+            or call.keywords
+            or not isinstance(call.func, Attribute)
+            or any(isinstance(arg, Starred) for arg in call.args)
+        ):
+            return None
+        return mutation_statement(
+            self,
+            scope,
+            call_site=call,
+            receiver=call.func.value.substitute(scope),
+            method=call.func.attr,
+            args=tuple(arg.substitute(scope) for arg in call.args),
+            target_name=target.id,
         )
 
     def _mapping_pop_assignment(self, scope):
@@ -7394,6 +7453,22 @@ class AugAssign(Statement):
             pre_sub_operator_site = getattr(self, "operator_site", None)
             if pre_sub_operator_site is None:
                 pre_sub_operator_site = self._mint_operator_site_from_structure()
+
+        if isinstance(self.target, Name):
+            # ``r += x`` on a decided list/dict/set mutates the object in
+            # place: every alias sees it (container_mutation.py).
+            from .container_mutation import mutation_statement
+
+            mutation = mutation_statement(
+                self,
+                scope,
+                call_site=self,
+                receiver=self.target.substitute(scope),
+                method=f"__{self.op.inplace_operator}__",
+                args=(self.value.substitute(scope),),
+            )
+            if mutation is not None:
+                return mutation
 
         new_value, value_changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if value_changed else {}
@@ -10673,6 +10748,9 @@ class Expr(Statement):
     def substitute(self, scope):
         """Rewrite children and thread authenticated mutating-call post-state."""
         rewritten = self._substitute_children(scope)
+        mutation = self._builtin_container_mutation(scope)
+        if mutation is not None:
+            return mutation
         state = self._dict_setdefault_append_state(scope)
         statement_kind = "DictSetDefaultAppendStatement"
         if state is None:
@@ -10697,6 +10775,27 @@ class Expr(Statement):
                 ),
             ),
             self.reporter,
+        )
+
+    def _builtin_container_mutation(self, scope):
+        """``r.<mutator>(*args)`` on a decided list/dict/set (container_mutation.py)."""
+        call = self.value
+        if (
+            not isinstance(call, Call)
+            or call.keywords
+            or not isinstance(call.func, Attribute)
+            or any(isinstance(arg, Starred) for arg in call.args)
+        ):
+            return None
+        from .container_mutation import mutation_statement
+
+        return mutation_statement(
+            self,
+            scope,
+            call_site=call,
+            receiver=call.func.value.substitute(scope),
+            method=call.func.attr,
+            args=tuple(arg.substitute(scope) for arg in call.args),
         )
 
     def _dict_setdefault_append_state(self, scope):
@@ -13691,6 +13790,105 @@ class ReceiverFieldStoreState(Expression):
 
         return ReceiverFieldStoreStateSugar(
             self.receiver.sugar(), self.value.sugar(), self.attr, self.fragment
+        )
+
+
+class BuiltinContainerCall(Expression):
+    """One mutating method call on a decided list/dict/set (container_mutation.py)."""
+
+    receiver: Expression
+    args: Tuple[Expression, ...]
+    method: str
+    container_kind: str
+    value_first: bool
+    token: int
+    _child_fields = ("receiver", "args")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            BuiltinContainerCallSugar,
+        )
+
+        return BuiltinContainerCallSugar(
+            receiver=self.receiver.sugar(),
+            method=self.method,
+            args=tuple(arg.sugar() for arg in self.args),
+            kind=self.container_kind,
+            site=self.fragment,
+            value_first=self.value_first,
+            evaluation_token=self.token,
+        )
+
+
+class BuiltinContainerProjection(Expression):
+    """The receiver's post-state (0) or the call's value (1) of one call."""
+
+    call: Expression
+    index: int
+    _child_fields = ("call",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            BuiltinContainerProjectionSugar,
+        )
+
+        return BuiltinContainerProjectionSugar(
+            call=self.call.sugar(), index=self.index, site=self.fragment
+        )
+
+
+class ReceiverAfterCall(Expression):
+    """A value a call may have changed: unknown after that call."""
+
+    label: str
+    token: int
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            ReceiverAfterCallSugar,
+        )
+
+        return ReceiverAfterCallSugar(
+            label=self.label, site=self.fragment, evaluation_token=self.token
+        )
+
+
+class ContainerMutationStatement(Statement):
+    """A statement whose mutating call rebinds every alias of its receiver."""
+
+    names: Tuple[str, ...]
+    states: Tuple[Expression, ...]
+    evaluated: Tuple[Expression, ...]
+    _child_fields = ("states", "evaluated")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def substitution_binding(self, scope):
+        del scope
+        return dict(zip(self.names, self.states))
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            ContainerMutationStatementSugar,
+        )
+
+        return ContainerMutationStatementSugar(
+            evaluated=tuple(node.sugar() for node in self.evaluated),
+            site=self.fragment,
         )
 
 
