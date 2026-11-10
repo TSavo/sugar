@@ -427,13 +427,20 @@ def reduce_block_to_exitset(
                 # would report an empty temporal state and every earlier store
                 # would read as rolled back, which is exactly the law the store
                 # partition above exists to state.
+                head_halt = getattr(statement, "halts_at_statement_head", False)
                 outcome = ExitSet(
                     tuple(
                         (
                             Halted(
                                 exit_.guard,
                                 exit_.effect,
-                                _halt_state(state, exit_),
+                                # A simple statement binds nothing before its
+                                # own halt: a stateless arm halted at its head,
+                                # where the prefix is the whole record -- the
+                                # same state the Incomplete path below gives.
+                                state
+                                if head_halt and exit_.state is None
+                                else _halt_state(state, exit_),
                                 # This rebuild used to state three fields, so it
                                 # dropped BOTH the arm's partition testimony and
                                 # its pending obligations on the way through --

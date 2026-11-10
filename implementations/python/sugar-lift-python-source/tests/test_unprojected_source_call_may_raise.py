@@ -10,8 +10,8 @@ not projected may raise anything. The call now completes as the same
 ``CallSiteValue`` only under ``python:source_call.completes`` and halts with
 an ``UndeterminedRaiseEffect`` under its complement. Nothing about the
 callee's behavior is invented; a call whose body IS projected is untouched.
-Constructing an imported source-defined class is a different law (its
-``__init__``/``__new__`` and exception-class testimony) and is not floored here.
+Constructing an imported source-defined class is covered by
+``test_source_class_construction_may_raise.py``.
 """
 
 from __future__ import annotations

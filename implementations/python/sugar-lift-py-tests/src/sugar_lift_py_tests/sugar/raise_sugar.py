@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import hashlib
 from dataclasses import dataclass, field as dataclass_field
 
@@ -28,6 +30,8 @@ class RaiseSugar(Sugar):
     structural name remains routing provenance only; spelling never creates
     or authenticates an exception value.
     """
+
+    halts_at_statement_head: ClassVar[bool] = True
 
     exception: object | None
     cause: object | None

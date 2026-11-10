@@ -9,6 +9,8 @@ ride is an effect: an Incomplete outcome propagates itself through and_then, so
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -18,6 +20,8 @@ from sugar_lift_py_tests.sugar.witnesses import inert_statement_return_witness
 
 @dataclass(frozen=True)
 class ExprStatementSugar(Sugar):
+    halts_at_statement_head: ClassVar[bool] = True
+
     value: Sugar
     site: object = dataclass_field(compare=False)
 

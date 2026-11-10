@@ -36,6 +36,14 @@ class Sugar(ABC):
 
     effect_consumer_reason: ClassVar[str | None] = None
     universe_coordinates: ClassVar[frozenset[str]] = frozenset()
+    # A simple statement whose only work is evaluating its expression(s) and
+    # then completing, returning or raising. It binds nothing before its own
+    # halt, so a halted arm it hands back without a temporal record halted at
+    # the head of the statement: the enclosing block's prefix IS that arm's
+    # pre-halt state. Compound statements (with/try/finally) never set this;
+    # their stateless halts (an ``__exit__`` or cleanup raise) happen after a
+    # body ran and the prefix would erase that body's record.
+    halts_at_statement_head: ClassVar[bool] = False
 
     @classmethod
     @abstractmethod

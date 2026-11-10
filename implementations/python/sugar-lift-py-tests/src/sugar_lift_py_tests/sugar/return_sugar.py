@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor import ReturnValue
@@ -17,6 +19,8 @@ class ReturnSugar(Sugar):
     Meaning-only, node-constructed.  ``value=None`` is the syntax-owned bare
     return arm and constructs Python's existing ``NoneValue`` floor.
     """
+
+    halts_at_statement_head: ClassVar[bool] = True
 
     value: object | None  # expression sugar, or syntactic empty return
     site: object = dataclass_field(compare=False)
