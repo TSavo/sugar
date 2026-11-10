@@ -259,6 +259,197 @@ class BuiltinDunderCallV1:
         ).normalize()
 
 
+@dataclass(frozen=True)
+class BuiltinValueCallV1:
+    """A builtin over decided builtin operands that CPython may still refuse.
+
+    ``int('x')`` raises ``ValueError``, ``chr(-1)`` ``ValueError``,
+    ``max([])`` ``ValueError``, ``len(5)`` ``TypeError``, ``divmod(1, 0)``
+    ``ZeroDivisionError`` -- every dunder is CPython's own, yet whether the
+    call completes depends on the operands' values, which this call does not
+    evaluate.  So it completes only under ``python:builtin_call.completes(
+    python:builtin_call(name, site))`` and halts with an
+    ``UndeterminedRaiseEffect`` (owner ``BuiltinCall:<name>``) under the
+    complement -- the #7585 law.  Only the shapes ``builtin_call_total``
+    lists, which CPython documents as never raising, complete outright.
+    """
+
+    builtin_name: str
+
+    def faces(self, callsite, site):
+        from .effect.raise_effect import UndeterminedRaiseEffect
+        from .ir import atomic, ctor, str_const
+        from .occurrence import occurrence_key
+        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+
+        key = occurrence_key(site)
+        call = ctor(
+            "python:builtin_call",
+            (str_const(self.builtin_name), str_const(key)),
+        )
+        completes = atomic("python:builtin_call.completes", [call])
+        return ExitSet(
+            (
+                Completed(completes, _occurrence_result(callsite, key)),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(
+                        blame=str(site) if site is not None else None,
+                        occurrence=key if site is not None else None,
+                        producer_node_owner=f"BuiltinCall:{self.builtin_name}",
+                    ),
+                    None,
+                ),
+            )
+        ).normalize()
+
+
+def _scalar(value) -> bool:
+    """A decided hashable builtin scalar: int/float/str/bytes/None/bool."""
+    from .floor.bytes_value import BytesValue
+    from .floor.none_value import NoneValue
+    from .floor.string_value import StringValue
+    from .floor.term_value import TermValue
+    from .sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from .sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    return type(value) in (
+        TermValue,
+        StringValue,
+        BytesValue,
+        NoneValue,
+        TrueBoolLiteralSugar,
+        FalseBoolLiteralSugar,
+    )
+
+
+def _ground_number(value, kinds=(int, float)) -> bool:
+    import math
+
+    from .floor.term_value import TermValue
+
+    if type(value) is not TermValue:
+        return False
+    raw = value.value
+    if isinstance(raw, bool) or not isinstance(raw, kinds):
+        return False
+    return not isinstance(raw, float) or math.isfinite(raw)
+
+
+def _iterable(value) -> bool:
+    """A decided builtin value whose iteration is CPython's and cannot raise."""
+    from .floor.bytes_value import BytesValue
+    from .floor.dict_value import DictValue
+    from .floor.list_value import ListValue
+    from .floor.set_value import SetValue
+    from .floor.string_value import StringValue
+    from .floor.tuple_value import TupleValue
+
+    return type(value) in (
+        StringValue,
+        BytesValue,
+        ListValue,
+        TupleValue,
+        SetValue,
+        DictValue,
+    ) or (_builtin_container(value) and not _scalar(value))
+
+
+def _hashable_members(value) -> bool:
+    """Iterating ``value`` yields only hashable members (``set(value)``)."""
+    from .floor.bytes_value import BytesValue
+    from .floor.dict_value import DictValue
+    from .floor.list_value import ListValue
+    from .floor.set_value import SetValue
+    from .floor.string_value import StringValue
+    from .floor.tuple_value import TupleValue
+
+    if type(value) in (StringValue, BytesValue, SetValue, DictValue):
+        return True
+    if type(value) in (ListValue, TupleValue):
+        return all(_scalar(element) for element in value.elements)
+    return False
+
+
+def _finite_members(value):
+    """The decided members a list/tuple/set display iterates, or None."""
+    from .floor.list_value import ListValue
+    from .floor.set_value import SetValue
+    from .floor.tuple_value import TupleValue
+
+    if type(value) in (ListValue, TupleValue, SetValue):
+        return tuple(value.elements)
+    return None
+
+
+def _comparable(members) -> bool:
+    """All ground numbers, or all strings: ``<`` and ``+`` between them are
+    CPython's own and never raise."""
+    from .floor.string_value import StringValue
+
+    return all(_ground_number(v) for v in members) or all(
+        type(v) is StringValue for v in members
+    )
+
+
+def builtin_call_total(target_name, arg_values, keyword_names=()) -> bool:
+    """Whether CPython documents ``target_name(*arg_values)`` over decided
+    builtin operands as never raising.  Anything not listed may raise."""
+    from .floor.dict_value import DictValue
+
+    if keyword_names:
+        return False
+    args = tuple(arg_values)
+    n = len(args)
+    if target_name == "print":
+        return True
+    if target_name in ("str", "bool"):
+        return n <= 1
+    if target_name == "repr":
+        return n == 1
+    if target_name == "len":
+        return n == 1 and _iterable(args[0])
+    if target_name in ("list", "tuple"):
+        return n == 0 or (n == 1 and _iterable(args[0]))
+    if target_name in ("iter", "enumerate", "all", "any"):
+        return n == 1 and _iterable(args[0])
+    if target_name == "zip":
+        return all(_iterable(value) for value in args)
+    if target_name in ("set", "frozenset"):
+        return n == 0 or (n == 1 and _hashable_members(args[0]))
+    if target_name == "dict":
+        return n == 0 or (n == 1 and type(args[0]) is DictValue)
+    if target_name == "hash":
+        return n == 1 and _scalar(args[0])
+    if target_name == "abs":
+        return n == 1 and _ground_number(args[0])
+    if target_name == "int":
+        return n == 0 or (n == 1 and _ground_number(args[0]))
+    if target_name == "float":
+        return n == 0 or (n == 1 and _ground_number(args[0]))
+    if target_name in ("sum", "sorted", "min", "max"):
+        if n == 1:
+            members = _finite_members(args[0])
+            if members is None:
+                return False
+        else:
+            members = args
+        if not _comparable(members):
+            return False
+        if target_name == "sum":
+            return n == 1 and all(_ground_number(v) for v in members)
+        if target_name == "sorted":
+            return n == 1
+        return n >= 1 and len(members) > 0
+    if target_name == "round":
+        return n == 1 and _ground_number(args[0])
+    if target_name == "range":
+        if not (1 <= n <= 3) or not all(_ground_number(v, (int,)) for v in args):
+            return False
+        return n < 3 or args[2].value != 0
+    return False
+
+
 # Cited pure builtins that invoke a dunder of (or iterate) their operands.
 DUNDER_BUILTINS = frozenset(
     {
@@ -368,15 +559,20 @@ def _is_the_builtin(target_name, ctx) -> bool:
     return seated is not None and temporal.value_if_bound(target_name) is seated
 
 
-def builtin_dunder_call(target_name, arg_values, ctx=None):
-    """The may-raise testimony for a dunder-invoking builtin over an operand
-    whose type is not a decided builtin, or None."""
+def builtin_dunder_call(target_name, arg_values, ctx=None, keyword_names=()):
+    """The may-raise testimony for a dunder-invoking builtin, or None.
+
+    An operand whose type is not a decided builtin may run user code
+    (``BuiltinDunderCallV1``); decided operands may still be refused by value
+    (``BuiltinValueCallV1``) unless ``builtin_call_total`` lists the shape."""
     if target_name not in DUNDER_BUILTINS or not _is_the_builtin(target_name, ctx):
         return None
     if target_name in SHALLOW_DUNDER_BUILTINS:
         decided = all(_builtin_container(value) for value in arg_values)
     else:
         decided = all(builtin_typed_value(value) for value in arg_values)
-    if decided:
+    if not decided:
+        return BuiltinDunderCallV1(target_name)
+    if builtin_call_total(target_name, arg_values, keyword_names):
         return None
-    return BuiltinDunderCallV1(target_name)
+    return BuiltinValueCallV1(target_name)
