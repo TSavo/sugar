@@ -43,6 +43,12 @@ class EffectRefSugar(ConstructedTermSugar):
         reader = getattr(ctx, "observed_effect_for", None) if ctx is not None else None
         effect = reader(self.slot_id) if reader is not None else None
         if effect is not None:
+            # ``except T as e`` around a may-raise operation binds the very
+            # exception object that operation threw -- the same opaque value
+            # the arm's type test was stated over -- not a reconstruction.
+            exception_value = getattr(effect, "exception_value", None)
+            if exception_value is not None:
+                return Complete(exception_value)
             return Complete(
                 ObservedEffectValue(slot_id=self.slot_id, effect=effect, site=self.site)
             )
