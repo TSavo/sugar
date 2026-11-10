@@ -799,6 +799,14 @@ class CallSiteSugar(ConstructedTermSugar):
             unprojected = _unprojected_source_call(self)
             if unprojected is None:
                 unprojected = _off_population_source_call(self)
+            if unprojected is None and self.contract_resolution_gap is None:
+                from sugar_lift_py_tests.source_call_resolution import (
+                    builtin_dunder_call,
+                )
+
+                unprojected = builtin_dunder_call(
+                    self.target_name, callsite.arg_values, ctx
+                )
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         produced = callsite.producer_outcome(

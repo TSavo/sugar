@@ -123,18 +123,27 @@ class FormattedValueSugar(ConstructedTermSugar):
                 and self.format_spec is None
             ):
                 return Complete(value)
-            return Complete(
-                SymbolicValue(
-                    ctor(
-                        "python:fstring_value",
-                        [
-                            value.to_term(owner="FormattedValueSugar.value"),
-                            conversion_term,
-                            format_spec_term,
-                        ],
-                    )
+            formatted = SymbolicValue(
+                ctor(
+                    "python:fstring_value",
+                    [
+                        value.to_term(owner="FormattedValueSugar.value"),
+                        conversion_term,
+                        format_spec_term,
+                    ],
                 )
             )
+            from sugar_lift_py_tests.source_call_resolution import (
+                BuiltinDunderCallV1,
+                builtin_typed_value,
+            )
+
+            if not builtin_typed_value(value):
+                # ``f'{c}'`` runs ``type(c).__format__`` (``!s``/``!r``/``!a``
+                # its ``__str__``/``__repr__`` first): not CPython's own when
+                # ``c`` is not a decided builtin, so it may raise.
+                return BuiltinDunderCallV1("format").faces(formatted, self.site)
+            return Complete(formatted)
 
         # `f"{expr!r:{spec}}"` evaluates expr then spec, and EITHER can halt or
         # partition (`f"{d[k] := v}"`). Both thread through `and_then` -- the one

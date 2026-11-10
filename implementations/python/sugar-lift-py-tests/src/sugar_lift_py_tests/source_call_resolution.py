@@ -210,3 +210,173 @@ class OffPopulationSourceCallV1:
                 ),
             )
         ).normalize()
+
+
+@dataclass(frozen=True)
+class BuiltinDunderCallV1:
+    """A builtin that invokes an operand's dunder, on an operand whose type is
+    not a decided builtin.
+
+    ``str(c)`` runs ``type(c).__str__``, ``len(c)`` its ``__len__``,
+    ``sum([c])`` its ``__radd__``, ``print(c)`` its ``__str__``, ``sorted(c)``
+    its ``__iter__`` and the items' ``__lt__``. When an operand is not a
+    decided builtin all the way down, that dunder is not CPython's own: it may
+    be user code, or missing (``TypeError``), and may raise anything. So the
+    call completes only under ``python:builtin_dunder_call.completes(
+    python:builtin_dunder_call(name, site))`` and halts with an
+    ``UndeterminedRaiseEffect`` (owner ``BuiltinDunderCall:<name>``) under the
+    complement -- the #7585 law for a body that was not looked at. It never
+    names what the dunder does.
+    """
+
+    builtin_name: str
+
+    def faces(self, callsite, site):
+        from .effect.raise_effect import UndeterminedRaiseEffect
+        from .ir import atomic, ctor, str_const
+        from .occurrence import occurrence_key
+        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+
+        key = occurrence_key(site)
+        call = ctor(
+            "python:builtin_dunder_call",
+            (str_const(self.builtin_name), str_const(key)),
+        )
+        completes = atomic("python:builtin_dunder_call.completes", [call])
+        return ExitSet(
+            (
+                Completed(completes, _occurrence_result(callsite, key)),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(
+                        blame=str(site) if site is not None else None,
+                        occurrence=key if site is not None else None,
+                        producer_node_owner=f"BuiltinDunderCall:{self.builtin_name}",
+                    ),
+                    None,
+                ),
+            )
+        ).normalize()
+
+
+# Cited pure builtins that invoke a dunder of (or iterate) their operands.
+DUNDER_BUILTINS = frozenset(
+    {
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "chr",
+        "dict",
+        "divmod",
+        "enumerate",
+        "float",
+        "format",
+        "frozenset",
+        "hash",
+        "int",
+        "iter",
+        "len",
+        "list",
+        "max",
+        "min",
+        "ord",
+        "print",
+        "range",
+        "repr",
+        "reversed",
+        "round",
+        "set",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "zip",
+    }
+)
+
+
+# Of those, the builtins that invoke only the operand's OWN iteration/length
+# (``list.__iter__``, ``len``): the items are handed on, never asked anything.
+SHALLOW_DUNDER_BUILTINS = frozenset(
+    {"enumerate", "iter", "len", "list", "reversed", "tuple", "zip"}
+)
+
+
+def _builtin_container(value) -> bool:
+    """A value whose own type is a decided builtin container or scalar."""
+    from .floor.comprehension_value import ComprehensionValue
+    from .ir import _Ctor
+
+    if builtin_typed_value(value, shallow=True):
+        return True
+    if type(value) is ComprehensionValue and type(value.term) is _Ctor:
+        # A list/set/dict comprehension is an evaluated builtin container; a
+        # generator's iteration runs its element expressions.
+        return value.term.name in ("py.listcomp", "py.setcomp", "py.dictcomp")
+    return False
+
+
+def builtin_typed_value(value, depth=0, *, shallow=False) -> bool:
+    """Whether a floor value is a decided builtin all the way down (or, with
+    ``shallow``, whose own type is), so every dunder a builtin invokes on it
+    is CPython's own."""
+    from .floor.bytes_value import BytesValue
+    from .floor.dict_value import DictValue
+    from .floor.list_value import ListValue
+    from .floor.none_value import NoneValue
+    from .floor.set_value import SetValue
+    from .floor.string_value import StringValue
+    from .floor.term_value import TermValue
+    from .floor.tuple_value import TupleValue
+    from .sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from .sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if depth > 32:
+        return False
+    if type(value) in (
+        TermValue,
+        StringValue,
+        BytesValue,
+        NoneValue,
+        TrueBoolLiteralSugar,
+        FalseBoolLiteralSugar,
+    ):
+        return True
+    if shallow and type(value) in (ListValue, TupleValue, SetValue, DictValue):
+        return True
+    if type(value) in (ListValue, TupleValue, SetValue):
+        return all(builtin_typed_value(e, depth + 1) for e in value.elements)
+    if type(value) is DictValue:
+        return all(
+            builtin_typed_value(k, depth + 1) and builtin_typed_value(v, depth + 1)
+            for k, v in value.entries
+        )
+    return False
+
+
+def _is_the_builtin(target_name, ctx) -> bool:
+    """Whether ``target_name`` at this call is bound to Python's own builtin:
+    its temporal binding is the very one the builtin floor seats (a lexical
+    rebinding, ``tuple = 7``, replaces it)."""
+    temporal = getattr(ctx, "temporal", None)
+    if temporal is None:
+        return False
+    from .temporal.builtin_name_bindings import builtin_name_temporal
+
+    seated = builtin_name_temporal().value_if_bound(target_name)
+    return seated is not None and temporal.value_if_bound(target_name) is seated
+
+
+def builtin_dunder_call(target_name, arg_values, ctx=None):
+    """The may-raise testimony for a dunder-invoking builtin over an operand
+    whose type is not a decided builtin, or None."""
+    if target_name not in DUNDER_BUILTINS or not _is_the_builtin(target_name, ctx):
+        return None
+    if target_name in SHALLOW_DUNDER_BUILTINS:
+        decided = all(_builtin_container(value) for value in arg_values)
+    else:
+        decided = all(builtin_typed_value(value) for value in arg_values)
+    if decided:
+        return None
+    return BuiltinDunderCallV1(target_name)
