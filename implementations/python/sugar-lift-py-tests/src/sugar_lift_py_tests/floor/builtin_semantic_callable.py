@@ -311,6 +311,10 @@ class BuiltinSemanticCallable(FloorValue):
         return classinfo
 
     def _construct_set(self, operation):
+        """``set(iterable)`` over decided members: CPython hashes each member
+        in order, keeps the first of equal members, and raises ``TypeError`` at
+        the first unhashable one.  A member whose hash or equality the floor
+        does not decide leaves the construction a dig cue."""
         from sugar_lift_py_tests.floor import DictValue, ListValue, SetValue, TupleValue
         from sugar_lift_py_tests.outcome import Complete
 
@@ -321,9 +325,23 @@ class BuiltinSemanticCallable(FloorValue):
         source = operation.arguments[0]
         if isinstance(source, DictValue):
             return Complete(SetValue(tuple(key for key, _ in source.entries)))
-        if isinstance(source, (ListValue, SetValue, TupleValue)):
+        if isinstance(source, SetValue):
             return Complete(SetValue(tuple(source.elements)))
-        return None
+        if not isinstance(source, (ListValue, TupleValue)):
+            return None
+        kept = []
+        for member in source.elements:
+            refused = _refuse_unhashable(member, operation, "python.set.construct")
+            if refused is not None:
+                return refused
+            if not _hash_decided(member):
+                return None
+            found = _position(member, kept)
+            if found is None:
+                return None
+            if found < 0:
+                kept.append(member)
+        return Complete(SetValue(tuple(kept)))
 
     def _construct_tuple(self, operation):
         """Exact ``tuple(iterable)`` over finite authenticated containers.
@@ -377,9 +395,27 @@ class BuiltinSemanticCallable(FloorValue):
         return None
 
     def _construct_dict(self, operation):
-        """Construct ``dict`` from an authenticated mapping or pair iterable."""
-        from sugar_lift_py_tests.floor import DictValue, ListValue, TupleValue
+        """Construct ``dict`` from an authenticated mapping or pair iterable.
+
+        CPython walks the pairs in order: an item that is not iterable raises
+        ``TypeError``, one whose length is not 2 raises ``ValueError``, an
+        unhashable key raises ``TypeError``; a repeated key keeps its first
+        position and takes the last value."""
+        from sugar_lift_py_tests.floor import (
+            BytesValue,
+            DictValue,
+            ListValue,
+            NoneValue,
+            TermValue,
+            TupleValue,
+        )
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
 
         if operation.keyword_names or len(operation.arguments) > 1:
             return None
@@ -390,12 +426,38 @@ class BuiltinSemanticCallable(FloorValue):
             return Complete(source)
         if not isinstance(source, (ListValue, TupleValue)):
             return None
-        entries = []
+        owner = "python.dict.construct"
+        keys: list = []
+        values: list = []
         for item in source.elements:
-            if not isinstance(item, (ListValue, TupleValue)) or len(item.elements) != 2:
+            if type(item) in (
+                TermValue,
+                NoneValue,
+                TrueBoolLiteralSugar,
+                FalseBoolLiteralSugar,
+            ):
+                return _ground_refusal("TypeError", operation, owner)
+            if type(item) is BytesValue:
                 return None
-            entries.append(tuple(item.elements))
-        return Complete(DictValue(tuple(entries)))
+            if not isinstance(item, (ListValue, TupleValue)):
+                return None
+            if len(item.elements) != 2:
+                return _ground_refusal("ValueError", operation, owner)
+            key, value = item.elements
+            refused = _refuse_unhashable(key, operation, owner)
+            if refused is not None:
+                return refused
+            if not _hash_decided(key):
+                return None
+            found = _position(key, keys)
+            if found is None:
+                return None
+            if found < 0:
+                keys.append(key)
+                values.append(value)
+            else:
+                values[found] = value
+        return Complete(DictValue(tuple(zip(keys, values))))
 
     def test_python_type(self, value, site):
         """Constructor builtins that are also types answer isinstance tests.
@@ -425,3 +487,33 @@ class BuiltinSemanticCallable(FloorValue):
             tuple(value.to_term(owner=self.operation) for value in operands),
             result.to_term(owner=self.operation),
         )
+
+
+def _ground_refusal(name, operation, owner):
+    from .ground_exit import ground_exceptional_exit
+
+    return ground_exceptional_exit(
+        exception_name=name, site=operation.site, owner=f"BuiltinSemanticCallable.{owner}"
+    )
+
+
+def _refuse_unhashable(member, operation, owner):
+    """``TypeError`` when ``member`` decidedly cannot be hashed, else None."""
+    from .membership import decided_unhashable
+
+    if decided_unhashable(member):
+        return _ground_refusal("TypeError", operation, owner)
+    return None
+
+
+def _hash_decided(member) -> bool:
+    from .builtin_container_method import _hash_decided as decided
+
+    return decided(member)
+
+
+def _position(member, kept):
+    """Index of the first kept member equal to ``member``, -1, or None."""
+    from .builtin_container_method import _index_of
+
+    return _index_of(tuple(kept), member)

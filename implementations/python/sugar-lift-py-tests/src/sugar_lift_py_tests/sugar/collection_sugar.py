@@ -94,7 +94,10 @@ def _reduce_into(element_sugars, ctx, build):
                 lambda value: Complete((*collected, value))
             )
         )
-    built = outcome.and_then(lambda values: Complete(build(values)))
+    if getattr(build, "returns_outcome", False):
+        built = outcome.and_then(build)
+    else:
+        built = outcome.and_then(lambda values: Complete(build(values)))
     return rewrap_pending(pending, built, owner=owner, blame=owner)
 
 
@@ -198,8 +201,12 @@ class SetSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.set_value import SetValue
+        site = self.site
 
+        def SetValue(values):  # noqa: N802 -- the owner name the fold reports
+            return _built_set(values, site)
+
+        SetValue.returns_outcome = True
         return _reduce_into(self.elements, ctx, SetValue)
 
     def to_term(self, *, owner: str):
@@ -243,8 +250,6 @@ class DictSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.dict_value import DictValue
-
         # Keys and values interleave in source order (`{k1: v1, k2: v2}`), so
         # they reduce as ONE element sequence and are re-paired afterwards. A
         # halt in `v1` must not be reported after `k2` was evaluated.
@@ -252,10 +257,13 @@ class DictSugar(ConstructedTermSugar):
             sugar for pair in zip(self.keys, self.values) for sugar in pair
         )
 
-        def build(flat):
-            return DictValue(tuple(zip(flat[0::2], flat[1::2])))
+        site = self.site
 
-        return _reduce_into(interleaved, ctx, build)
+        def DictValue(flat):  # noqa: N802 -- the owner name the fold reports
+            return _built_dict(tuple(zip(flat[0::2], flat[1::2])), site)
+
+        DictValue.returns_outcome = True
+        return _reduce_into(interleaved, ctx, DictValue)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
@@ -275,3 +283,59 @@ class DictSugar(ConstructedTermSugar):
             ),
             symbol_kind="coordinate",
         )
+
+
+def _built_set(values, site):
+    """``{e1, e2, ...}``: CPython adds the members in order -- an unhashable
+    one raises ``TypeError``, an equal one collapses into the first.  A member
+    whose hash or equality the floor does not decide is kept as written."""
+    from sugar_lift_py_tests.floor.builtin_container_method import (
+        _hash_decided,
+        _index_of,
+    )
+    from sugar_lift_py_tests.floor.membership import decided_unhashable
+    from sugar_lift_py_tests.floor.set_value import SetValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    kept: list = []
+    for member in values:
+        if decided_unhashable(member):
+            return _display_refusal(site, "SetSugar")
+        if _hash_decided(member) and all(_hash_decided(k) for k in kept):
+            if _index_of(tuple(kept), member) not in (None, -1):
+                continue
+        kept.append(member)
+    return Complete(SetValue(tuple(kept)))
+
+
+def _built_dict(pairs, site):
+    """``{k1: v1, ...}``: an unhashable key raises ``TypeError``; a repeated
+    key keeps its first position and takes the last value.  A key whose hash
+    or equality the floor does not decide is kept as written."""
+    from sugar_lift_py_tests.floor.builtin_container_method import (
+        _hash_decided,
+        _index_of,
+    )
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.membership import decided_unhashable
+    from sugar_lift_py_tests.outcome import Complete
+
+    keys: list = []
+    values: list = []
+    for key, value in pairs:
+        if decided_unhashable(key):
+            return _display_refusal(site, "DictSugar")
+        if _hash_decided(key) and all(_hash_decided(k) for k in keys):
+            found = _index_of(tuple(keys), key)
+            if found not in (None, -1):
+                values[found] = value
+                continue
+        keys.append(key)
+        values.append(value)
+    return Complete(DictValue(tuple(zip(keys, values))))
+
+
+def _display_refusal(site, owner):
+    from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+    return ground_exceptional_exit(exception_name="TypeError", site=site, owner=owner)
