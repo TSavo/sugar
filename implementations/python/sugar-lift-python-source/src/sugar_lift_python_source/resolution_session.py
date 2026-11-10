@@ -215,9 +215,14 @@ class CallClosureLedger:
     projection reached.  A memo hit charges that whole set, so the closure of
     a definition is the same whether its callees were projected just now or by
     an earlier root -- a warm session cannot make an over-bound closure fit.
+
+    ``absences`` records, beside the same row, every dependency top that
+    projection found WITHOUT a seat at the import value-use door.  That door
+    answers an unseated top with the bare receipt, so the row stands only
+    while those tops stay unseated; it is rebuilt once one of them is seated.
     """
 
-    __slots__ = ("stack", "root", "closures")
+    __slots__ = ("stack", "root", "closures", "absent", "absences", "left_absent")
 
     def __init__(self) -> None:
         # One set per projection in flight, innermost last.
@@ -226,16 +231,34 @@ class CallClosureLedger:
         self.root: set[tuple] = set()
         # definition coordinate -> its completed projection's closure.
         self.closures: dict[tuple, frozenset[tuple]] = {}
+        # Unseated tops read so far, one set per projection in flight.
+        self.absent: list[set[str]] = []
+        # definition coordinate -> unseated tops its completed projection read.
+        self.absences: dict[tuple, frozenset[str]] = {}
+        # What the projection closed by the last ``leave`` read unseated.
+        self.left_absent: frozenset[str] = frozenset()
 
     def enter(self, key: tuple) -> None:
         self.root.add(key)
         if len(self.root) > SOURCE_CALL_CLOSURE_FRAME_BOUND:
             raise CallClosureOverBound
         self.stack.append({key})
+        self.absent.append(set())
 
-    def charge(self, closure: frozenset[tuple]) -> None:
+    def saw_absent(self, top_level: str) -> None:
+        """The projection in flight was answered by ``top_level`` having no seat."""
+        if self.absent:
+            self.absent[-1].add(top_level)
+
+    def stale(self, key: tuple, seats: Any) -> bool:
+        """A top the row at ``key`` was built without is seated now."""
+        absent = self.absences.get(key)
+        return bool(absent) and not absent.isdisjoint(seats)
+
+    def charge(self, closure: frozenset[tuple], absent: frozenset[str] = frozenset()) -> None:
         """Count a memo hit's closure against the projections in flight."""
         self.stack[-1] |= closure
+        self.absent[-1] |= absent
         self.root |= closure
         if len(self.root) > SOURCE_CALL_CLOSURE_FRAME_BOUND:
             raise CallClosureOverBound
@@ -243,11 +266,39 @@ class CallClosureLedger:
     def leave(self) -> frozenset[tuple]:
         """Close the innermost projection; its caller inherits what it reached."""
         closure = frozenset(self.stack.pop())
+        self.left_absent = frozenset(self.absent.pop())
         if self.stack:
             self.stack[-1] |= closure
+            self.absent[-1] |= self.left_absent
         else:
             self.root.clear()
         return closure
+
+
+def _artifact_cid(graph: Any) -> Any:
+    return getattr(graph, "distribution_artifact_cid", None)
+
+
+class DependencySeats(dict):
+    """``top_level -> DependencyArtifactGraph`` seated by one session.
+
+    A top is authenticated at the first door that asks for it and every later
+    asker reads that seat.  WHICH tops are seated so far is therefore history
+    of the traversal and decides nothing.  A seat moved to a different
+    artifact does decide: ``reseated`` names every top that has held two.
+    """
+
+    __slots__ = ("reseated",)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reseated: set[str] = set()
+
+    def __setitem__(self, top_level: str, graph: Any) -> None:
+        held = self.get(top_level)
+        if held is not None and _artifact_cid(held) != _artifact_cid(graph):
+            self.reseated.add(top_level)
+        super().__setitem__(top_level, graph)
 
 
 class SourceResolutionSession:
@@ -342,7 +393,47 @@ class SourceResolutionSession:
         # Graphs are content-addressed install facts (no live construction
         # context) — process-resident top-level cache remains legal; this
         # table deletes the path-local re-ask disease.
-        self.dependency_graphs: dict[str, Any] = {}
+        self.dependency_graphs: dict[str, Any] = DependencySeats()
+
+    # -- dependency seats -------------------------------------------------
+
+    def dependency_seat_key(self, held: Any) -> tuple:
+        """The dependency seats an answer for an asker holding ``held`` stands on.
+
+        Not the roster of tops seated so far.  That roster only grows as doors
+        ask for tops, and a memo keyed on it forgets every projected frame and
+        every materialized module each time it grows (``StataReader`` six
+        times, the pandas megamodules nine, in one test_stata open).  Every
+        door but one authenticates the top it needs when it asks, so a top
+        not seated yet is not an input there.  The one door that reads an
+        unseated top as an answer records that read beside the row
+        (``CallClosureLedger.absences``), and the row is rebuilt when it stops
+        being true.
+
+        What IS an input: a top whose seat moved to another artifact in this
+        session, and a top the asker itself holds at an artifact other than
+        the session's.  The key names exactly those, each with its artifact.
+        """
+        seats = self.dependency_graphs
+        held = held or {}
+        if self.enabled:
+            for top_level, graph in held.items():
+                seats.setdefault(top_level, graph)
+        moved = tuple(
+            sorted(
+                (top_level, _artifact_cid(seats[top_level]))
+                for top_level in getattr(seats, "reseated", ())
+            )
+        )
+        own = tuple(
+            sorted(
+                (top_level, _artifact_cid(graph))
+                for top_level, graph in held.items()
+                if top_level in seats
+                and _artifact_cid(seats[top_level]) != _artifact_cid(graph)
+            )
+        )
+        return (moved, own)
 
     # -- export resolution memo ------------------------------------------
 
@@ -398,6 +489,7 @@ class SourceResolutionSession:
             old_key, _ = self.frame_results.popitem(last=False)
             self.frame_holds.pop(old_key, None)
             self.call_closure.closures.pop(old_key, None)
+            self.call_closure.absences.pop(old_key, None)
         # Holds without a memo row are dead weight (should not happen if
         # remember_frame is the only writer; scrub anyway).
         if len(self.frame_holds) > len(self.frame_results):

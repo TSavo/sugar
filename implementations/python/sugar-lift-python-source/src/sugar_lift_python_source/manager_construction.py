@@ -2271,12 +2271,7 @@ def resolve_source_visible_frame(
     definition = resolved.definition
     cache_key = (
         graph.distribution_artifact_cid,
-        tuple(
-            sorted(
-                (name, dependency.distribution_artifact_cid)
-                for name, dependency in (dependency_graphs or {}).items()
-            )
-        ),
+        session.dependency_seat_key(dependency_graphs),
         resolved.source_cid,
         definition.name,
         definition.kind,
@@ -2293,6 +2288,9 @@ def resolve_source_visible_frame(
     # by name instead of projected.
     ledger = session.call_closure
     hit = session.frame_hit(cache_key)
+    if hit is not None and ledger.stale(cache_key, session.dependency_graphs):
+        # Built while a top it read had no seat; that top is seated now.
+        hit = None
     if hit is not None:
         if ledger.stack:
             # A callee of a projection in flight, answered from the memo.  It
@@ -2302,7 +2300,10 @@ def resolve_source_visible_frame(
                 and hit.kind == "call-closure-over-bound"
             ):
                 raise CallClosureOverBound
-            ledger.charge(ledger.closures.get(cache_key, frozenset((cache_key,))))
+            ledger.charge(
+                ledger.closures.get(cache_key, frozenset((cache_key,))),
+                ledger.absences.get(cache_key, frozenset()),
+            )
         return hit
     if cache_key in session.frame_active:
         # Re-entered while its own frame is still being projected.  Not
@@ -2360,6 +2361,10 @@ def resolve_source_visible_frame(
     if cache_key in session.frame_results:
         # Recorded only beside a live memo row; evicted in lockstep with it.
         ledger.closures[cache_key] = closure
+        if ledger.left_absent:
+            ledger.absences[cache_key] = ledger.left_absent
+        else:
+            ledger.absences.pop(cache_key, None)
     return returned
 
 
@@ -2368,23 +2373,26 @@ def _module_materialize_key(
     graph: DependencyArtifactGraph,
     module,
     dependency_graphs: dict[str, DependencyArtifactGraph] | None,
+    session: SourceResolutionSession | None = None,
 ) -> tuple:
     """Session key for one authenticated module's SourceFile materialize.
 
     Per-definition frame projection still keys on the definition coordinate.
     Materializing the whole module per definition is what multiplied
     in-population megamodules (``pandas/_config/config.py`` ×18). Key is
-    artifact + dependency seats + source CID + module name + source seat — never process
-    state; the session is the authority boundary.
+    artifact + contested dependency seats + source CID + module name + source
+    seat — never process state; the session is the authority boundary.
+
+    The dependency part is ``SourceResolutionSession.dependency_seat_key``:
+    only a seat that moved, or one the asker holds at another artifact.  The
+    roster of tops seated so far is not in it — keyed on that roster, every
+    module was materialized again each time some door authenticated one more
+    top.
     """
+    seats = ((), ()) if session is None else session.dependency_seat_key(dependency_graphs)
     return (
         graph.distribution_artifact_cid,
-        tuple(
-            sorted(
-                (name, dependency.distribution_artifact_cid)
-                for name, dependency in (dependency_graphs or {}).items()
-            )
-        ),
+        seats,
         module.source_cid,
         module.module_name,
         module.source_seat,
@@ -2559,7 +2567,10 @@ def _resolve_source_visible_frame_uncached(
     if session.enabled:
         session.dependency_graphs[top] = graph
     module_key = _module_materialize_key(
-        graph=graph, module=module, dependency_graphs=dependency_graphs
+        graph=graph,
+        module=module,
+        dependency_graphs=dependency_graphs,
+        session=session,
     )
     module_product = session.module_materialize_hit(module_key)
     if module_product is None:
@@ -3918,7 +3929,8 @@ def _seat_import_value_use_receipts(
     — never spelling-derived ambient dependency authentication.  Seating
     requires exact unit source_cid + validated span.  Missing graph /
     non-resolved import leaves that coordinate unseated (consume stays
-    typed-loud); CID/auth defects raise.
+    typed-loud) and the missing top is recorded against the frame in flight;
+    CID/auth defects raise.
     """
     from pathlib import Path
 
@@ -4163,12 +4175,17 @@ def _seat_import_value_use_receipts(
             )
         top_level = dependency_module.split(".", 1)[0]
         # Only the receipt's authenticated module identity selects among the
-        # pre-authenticated graphs carried by this publication.
+        # graphs this frame carried in: the session's seats as of the frame's
+        # entry plus what the frame itself authenticated.  A top seated by a
+        # callee since then is not read here; the row is rebuilt for it.
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
             # An absent graph carries no source authority.  Leave the exact
             # import-use coordinate unseated; any consumer that needs it stays
-            # typed-loud at its ordinary resolution door.
+            # typed-loud at its ordinary resolution door.  The frame being
+            # projected stands on this top having no seat: say so, so its
+            # memo row is rebuilt once the top is seated.
+            session.call_closure.saw_absent(top_level)
             seat_receipt()
             continue
         binding_target = receipt.import_binding.value["target"]
