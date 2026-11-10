@@ -805,7 +805,10 @@ class CallSiteSugar(ConstructedTermSugar):
                 )
 
                 unprojected = builtin_dunder_call(
-                    self.target_name, callsite.arg_values, ctx
+                    self.target_name,
+                    callsite.arg_values,
+                    ctx,
+                    getattr(callsite, "keyword_names", ()) or (),
                 )
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
