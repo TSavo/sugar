@@ -140,31 +140,20 @@ class SetValue(GuardStableValue):
         distributed = distribute_guarded_predicate(self, item, "contains", site)
         if distributed is not None:
             return distributed
-        decisions = tuple(
-            _closed_member_equal(item, element) for element in self.elements
-        )
-        if any(decision is True for decision in decisions):
-            return _bool_result(True, site)
-        if all(decision is False for decision in decisions):
-            return _bool_result(False, site)
-        if any(decision is None for decision in decisions):
-            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-            from sugar_lift_py_tests.ir import atomic
-            from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor.membership import membership
 
-            return Complete(
-                PredicateValue(
-                    atomic(
-                        "python.set.contains",
-                        [
-                            item.to_term(owner="python.set.contains member"),
-                            self.to_term(owner="python.set.contains set"),
-                        ],
-                    ),
-                    site,
-                    operand_callsites=(*item.callsites(), *self.callsites()),
-                )
-            )
+        decided = membership(
+            self,
+            item,
+            self.elements,
+            kind="set",
+            member_role="member",
+            container_role="set",
+            hashed=True,
+            site=site,
+        )
+        if decided is not None:
+            return decided
         return _unsupported_member(item, site)
 
     def subtract(self, other, site):
@@ -199,70 +188,16 @@ class SetValue(GuardStableValue):
 
 
 def _closed_member_equal(left, right):
-    from sugar_lift_py_tests.floor.bytes_value import BytesValue
-    from sugar_lift_py_tests.floor.list_value import ListValue
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.floor.tuple_value import TupleValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+    """Membership equality: one law, ``floor/membership.py``."""
+    from sugar_lift_py_tests.floor.membership import member_equal
 
-    if type(left) is SymbolicValue or type(right) is SymbolicValue:
-        return None
-    if type(left) is TermValue and type(right) is TermValue:
-        return left.value == right.value
-    if type(left) is StringValue and type(right) is StringValue:
-        return left.value == right.value
-    if type(left) is BytesValue and type(right) is BytesValue:
-        return left.value == right.value
-    if type(left) is NoneValue or type(right) is NoneValue:
-        return type(left) is type(right)
-    bool_types = (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
-    if type(left) in bool_types and type(right) in bool_types:
-        return type(left) is type(right)
-    # Nested sequence membership: ``[1] in [[1], [2]]`` is ground list equality
-    # on each element — not a construction gap and not a dual-edge invent.
-    if type(left) is ListValue and type(right) is ListValue:
-        return _closed_sequence_equal(left.elements, right.elements)
-    if type(left) is TupleValue and type(right) is TupleValue:
-        return _closed_sequence_equal(left.elements, right.elements)
-    if type(left) is ListValue or type(right) is ListValue:
-        # list == non-list is False at Python (except exotic peers handled above).
-        return False
-    if type(left) is TupleValue or type(right) is TupleValue:
-        return False
-    supported = (TermValue, StringValue, BytesValue, NoneValue, *bool_types)
-    if type(left) in supported and type(right) in supported:
-        return False
-    # A residual pair measured on the installed pandas tree lands here:
-    # `{List,Tuple,Set}Value.contains x CallSiteValue`. A call's result IS a
-    # value of undecided identity, so the honest answer is ``None`` (emit the
-    # typed python.*.contains obligation), not NotImplemented (a gap). What it
-    # is NOT is "any value carrying a term": FunctionCallable carries one and is
-    # a callable, never a member -- two tests pin that refusal deliberately. So
-    # the discriminator is ``FloorValue.denotes_a_value``, testimony each floor
-    # states about ITSELF and which defaults to no, never a property a caller
-    # reads off the carrier's shape.
-    if _denotes_a_value(left, supported) and _denotes_a_value(right, supported):
-        return None
-    return NotImplemented
+    return member_equal(left, right)
 
 
 def _closed_sequence_equal(left_elements, right_elements):
-    """Elementwise closed equality for nested list/tuple membership needles."""
-    if len(left_elements) != len(right_elements):
-        return False
-    decisions = tuple(
-        _closed_member_equal(left, right)
-        for left, right in zip(left_elements, right_elements)
-    )
-    if any(decision is None for decision in decisions):
-        return None
-    if any(decision is NotImplemented for decision in decisions):
-        return NotImplemented
-    return all(decisions)
+    from sugar_lift_py_tests.floor.membership import sequence_equal
+
+    return sequence_equal(left_elements, right_elements)
 
 
 def _denotes_a_value(value, supported: tuple) -> bool:

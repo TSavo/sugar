@@ -76,36 +76,20 @@ class DictValue(GuardStableValue):
         distributed = distribute_guarded_predicate(self, item, "contains", site)
         if distributed is not None:
             return distributed
-        # Python ``k in d`` is key membership over constructed entry keys.
-        from sugar_lift_py_tests.floor.set_value import (
-            _bool_result,
-            _closed_member_equal,
+        from sugar_lift_py_tests.floor.membership import membership
+
+        decided = membership(
+            self,
+            item,
+            tuple(key for key, _value in self.entries),
+            kind="dict",
+            member_role="key",
+            container_role="dict",
+            hashed=True,
+            site=site,
         )
-
-        keys = tuple(key for key, _value in self.entries)
-        decisions = tuple(_closed_member_equal(item, key) for key in keys)
-        if any(decision is True for decision in decisions):
-            return _bool_result(True, site)
-        if all(decision is False for decision in decisions):
-            return _bool_result(False, site)
-        if any(decision is None for decision in decisions):
-            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-            from sugar_lift_py_tests.ir import atomic
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(
-                PredicateValue(
-                    atomic(
-                        "python.dict.contains",
-                        [
-                            item.to_term(owner="python.dict.contains key"),
-                            self.to_term(owner="python.dict.contains dict"),
-                        ],
-                    ),
-                    site,
-                    operand_callsites=(*item.callsites(), *self.callsites()),
-                )
-            )
+        if decided is not None:
+            return decided
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(
@@ -119,15 +103,14 @@ class DictValue(GuardStableValue):
     def bitwise_or(self, other, site):
         if type(other) is not DictValue:
             return super().bitwise_or(other, site)
-        del site
         entries = list(self.entries)
         for right_key, right_value in other.entries:
-            for index, (left_key, _left_value) in enumerate(entries):
-                if type(left_key) is type(right_key) and getattr(
-                    left_key, "value", object()
-                ) == getattr(right_key, "value", object()):
-                    entries[index] = (left_key, right_value)
-                    break
+            found = _key_position(tuple(entries), right_key)
+            if found is None:
+                # Whether this key is already present is undecided.
+                return super().bitwise_or(other, site)
+            if found >= 0:
+                entries[found] = (entries[found][0], right_value)
             else:
                 entries.append((right_key, right_value))
         from sugar_lift_py_tests.outcome import Complete
@@ -220,13 +203,10 @@ class DictValue(GuardStableValue):
         # Concrete key match returns the value; concrete miss is KeyError.
         # Source-decided unhashable keys are TypeError. An index whose
         # hash/eq semantics are not source-decided stays the named refusal.
-        from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.floor.set_value import SetValue
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.membership import decided_unhashable
         from sugar_lift_py_tests.outcome import Complete
 
-        if type(index) in (ListValue, DictValue, SetValue):
+        if decided_unhashable(index):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -235,14 +215,10 @@ class DictValue(GuardStableValue):
                 owner="DictValue.subscript",
             )
 
-        concrete = type(index) is StringValue or type(index) is TermValue
-        if concrete:
-            for key, value in self.entries:
-                if type(key) is type(index):
-                    if type(key) is StringValue and key.value == index.value:
-                        return Complete(value)
-                    if type(key) is TermValue and key.value == index.value:
-                        return Complete(value)
+        found = _key_position(self.entries, index)
+        if found is not None and found >= 0:
+            return Complete(self.entries[found][1])
+        if found == -1:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -256,17 +232,16 @@ class DictValue(GuardStableValue):
         guarded = self._guarded_setitem(index, value, site)
         if guarded is not None:
             return guarded
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        if type(index) is StringValue or type(index) is TermValue:
+        found = _key_position(self.entries, index)
+        if found is not None:
             entries = list(self.entries)
-            for position, (key, _old_value) in enumerate(entries):
-                if type(key) is type(index) and key.value == index.value:
-                    entries[position] = (key, value)
-                    return Complete(DictValue(tuple(entries)))
-            entries.append((index, value))
+            if found >= 0:
+                # The stored key stays: ``{1: a}[True] = b`` is ``{1: b}``.
+                entries[found] = (entries[found][0], value)
+            else:
+                entries.append((index, value))
             return Complete(DictValue(tuple(entries)))
         from sugar_lift_py_tests.effect import (
             SubscriptStoreRuntimeEffect,
@@ -313,21 +288,14 @@ class DictValue(GuardStableValue):
         return None
 
     def delitem(self, index, site):
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        if type(index) is StringValue or type(index) is TermValue:
-            for position, (key, _value) in enumerate(self.entries):
-                if type(key) is type(index) and key.value == index.value:
-                    return Complete(
-                        DictValue(
-                            (
-                                *self.entries[:position],
-                                *self.entries[position + 1 :],
-                            )
-                        )
-                    )
+        found = _key_position(self.entries, index)
+        if found is not None:
+            if found >= 0:
+                return Complete(
+                    DictValue((*self.entries[:found], *self.entries[found + 1 :]))
+                )
             # Ground missing key: decidable KeyError — not a RuntimeEffect mint.
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
@@ -349,3 +317,16 @@ class DictValue(GuardStableValue):
                 **runtime_effect_evidence("py.delitem", index, site),
             )
         )
+
+
+def _key_position(entries, index):
+    """Where ``index`` is among ``entries``' keys: int, -1 (absent), or None.
+
+    CPython's dict lookup (``floor/membership.py``): the key's hash and
+    ``is``/``==`` against each stored key. None when the key's hash or any
+    comparison is not decided."""
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+
+    if not law._hash_decided(index):
+        return None
+    return law._find_key(tuple(entries), index)

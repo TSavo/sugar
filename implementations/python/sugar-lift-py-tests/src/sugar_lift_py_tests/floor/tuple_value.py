@@ -182,38 +182,20 @@ class TupleValue(GuardStableValue):
         distributed = distribute_guarded_predicate(self, item, "contains", site)
         if distributed is not None:
             return distributed
-        # Membership over a constructed tuple: same closed-equality law as
-        # ListValue / SetValue — fold, emit typed obligation, or stay loud.
-        from sugar_lift_py_tests.floor.set_value import (
-            _bool_result,
-            _closed_member_equal,
-        )
+        from sugar_lift_py_tests.floor.membership import membership
 
-        decisions = tuple(
-            _closed_member_equal(item, element) for element in self.elements
+        decided = membership(
+            self,
+            item,
+            self.elements,
+            kind="tuple",
+            member_role="member",
+            container_role="tuple",
+            hashed=False,
+            site=site,
         )
-        if any(decision is True for decision in decisions):
-            return _bool_result(True, site)
-        if all(decision is False for decision in decisions):
-            return _bool_result(False, site)
-        if any(decision is None for decision in decisions):
-            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-            from sugar_lift_py_tests.ir import atomic
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(
-                PredicateValue(
-                    atomic(
-                        "python.tuple.contains",
-                        [
-                            item.to_term(owner="python.tuple.contains member"),
-                            self.to_term(owner="python.tuple.contains tuple"),
-                        ],
-                    ),
-                    site,
-                    operand_callsites=(*item.callsites(), *self.callsites()),
-                )
-            )
+        if decided is not None:
+            return decided
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(
