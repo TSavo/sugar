@@ -3176,8 +3176,24 @@ def test_installed_pytest_raises_excinfo_value_args_are_the_constructor_argument
     assert returned == TupleValue(elements=(StringValue("boom"),))
 
 
+def _contextmanager_decorated(source: str, name: str = "make_guard") -> str:
+    """Decorate the fixture generator with ``@contextlib.contextmanager``.
+
+    A bare generator function is not a context manager: ``with g():`` raises
+    TypeError (``GeneratorObjectWithSugar``). These fixtures exercise the
+    generator-manager machine, so they state the decorator that makes one.
+    contextlib stays off the enrolled roster, so the head is consumed by
+    ``GeneratorWithSugar`` under the same law.
+    """
+    marker = f"def {name}("
+    assert source.count(marker) == 1, source
+    return "import contextlib\n" + source.replace(
+        marker, f"@contextlib.contextmanager\n{marker}"
+    )
+
+
 def _installed_generator_with(tmp_path, source: str, consumer: str):
-    distribution = _distribution(tmp_path, source)
+    distribution = _distribution(tmp_path, _contextmanager_decorated(source))
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -6927,7 +6943,7 @@ def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
     """Truthful twin: suspension testimony, not a manager-name table, opens it."""
     distribution = _distribution(
         tmp_path,
-        "def make_guard(expected):\n    yield expected\n",
+        _contextmanager_decorated("def make_guard(expected):\n    yield expected\n"),
     )
     consumer = "import arbitrary\nwith arbitrary.make_guard(23):\n    pass\n"
     path = tmp_path / "consumer.py"

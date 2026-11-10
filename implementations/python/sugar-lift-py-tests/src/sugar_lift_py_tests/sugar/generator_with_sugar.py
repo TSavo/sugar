@@ -190,3 +190,81 @@ class GeneratorWithSugar(Sugar):
             requested="an exhaustive GeneratorConstructionV1 transition",
             fix="construct the transition or retain this typed loud boundary",
         )
+
+
+@dataclass(frozen=True)
+class GeneratorObjectWithSugar(Sugar):
+    """``with g():`` where ``g`` is an undecorated generator function.
+
+    The call returns a generator object and runs none of its body; a
+    generator object is not a context manager, so the ``with`` statement
+    itself raises -- after the manager expression, before any enter and
+    before the body. Each completed manager face therefore halts with the
+    interpreter's own observed refusal (``generator_object_with_refusal``),
+    carrying the constructed generator as its state; each halted manager face
+    (the call's own binding errors) stands. The body is never reached, so it
+    is never constructed. Nothing here is a manager: no enter, no exit, no
+    suppression.
+    """
+
+    manager: Sugar
+    site: object = field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="ExitSet",
+            reason="a generator object at a with head halts before any body face",
+        )
+
+    def desugar(self, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.generator_object_with_refusal import (
+            observed_generator_object_with_refusal,
+        )
+        from sugar_lift_py_tests.sugar.exit_set_routing import (
+            exitset_to_outcome,
+            sugar_outcome_to_exitset,
+        )
+
+        refusal = observed_generator_object_with_refusal()
+        blame = str(self.site)
+        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        exits = []
+        for manager_exit in manager_es.exits:
+            if isinstance(manager_exit, Halted):
+                exits.append(manager_exit)
+                continue
+            if not isinstance(manager_exit.value, GeneratorConstructionV1):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="GeneratorObjectWithSugar.desugar",
+                    observed=(
+                        "generator-function call completed with "
+                        f"{type(manager_exit.value).__name__}"
+                    ),
+                    requested="GeneratorConstructionV1 (the generator object)",
+                    fix="construct the generator object or keep the with loud",
+                )
+            effect = RaiseEffect.for_builtin(
+                refusal.exception_name,
+                occurrence=f"generator-object-with-refusal:{blame}",
+                blame=blame,
+                raised_value=refusal.message,
+                producer_node_owner="GeneratorObjectWithSugar",
+            )
+            exits.append(
+                Halted(
+                    manager_exit.guard,
+                    effect,
+                    manager_exit.value,
+                    manager_exit.faces,
+                    manager_exit.pending_contracts,
+                )
+            )
+        return exitset_to_outcome(ExitSet(tuple(exits)).normalize())

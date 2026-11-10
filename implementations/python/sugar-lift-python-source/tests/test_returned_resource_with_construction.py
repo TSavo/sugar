@@ -769,11 +769,17 @@ def test_renamed_generator_requires_its_authenticated_decorator_graph(
 
 
 def test_unauthenticated_generator_manager_stays_on_generator_path(tmp_path: Path):
-    """A source generator without resource coordinates never enters this arm."""
+    """A source generator without resource coordinates never enters this arm.
+
+    Undecorated, its call returns a bare generator object, which is not a
+    manager: the With halts with TypeError (``GeneratorObjectWithSugar``).
+    """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
     )
-    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_lift_py_tests.sugar.generator_with_sugar import (
+        GeneratorObjectWithSugar,
+    )
 
     manager_name = "unsealed_stream"
     dist = _distribution(
@@ -795,7 +801,7 @@ def test_unauthenticated_generator_manager_stays_on_generator_path(tmp_path: Pat
         isinstance(reference, ContextManagerResolutionGapV1)
         for reference in context.source_derived_contract_refs.values()
     )
-    assert isinstance(resource, GeneratorWithSugar)
+    assert isinstance(resource, GeneratorObjectWithSugar)
 
 
 def test_source_true_exit_publishes_truthiness_and_consumes_raise(tmp_path: Path):
