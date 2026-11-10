@@ -490,6 +490,37 @@ class _YieldFromIteratorStepV1:
 
 
 @dataclass(frozen=True)
+class YieldExceptStepV1:
+    """``try: yield v`` with ``except`` arms and nothing else in the suite.
+
+    ``contextlib`` throws a body exception in at the yield, so these arms are
+    where a generator manager decides suppression. Admitted by the producer
+    only when the try body is exactly that one yield, the arms own no
+    suspension and bind no name the rest of the frame could read, and every
+    arm type is an authenticated exception coordinate (the ``TrySugar``
+    handler roster). Anything wider stays an honest ``OpaqueStepV1``.
+    """
+
+    yield_step: YieldStepV1
+    handlers: tuple = field(compare=False, repr=False)
+    fragment_cid: str
+    site: object = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class ExceptArmsStepV1:
+    """Where a ``YieldExceptStepV1`` suspends: its arms, right after the yield.
+
+    Resuming steps past it (the try body completed); a throw is routed through
+    its arms with ``TrySugar``'s one matcher before anything after the try.
+    """
+
+    handlers: tuple = field(compare=False, repr=False)
+    fragment_cid: str
+    site: object = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
 class IfStepV1:
     """A branch inside a generator body, with each side's own step sequence.
 
@@ -847,6 +878,15 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "yield-from-iterator",
             "occurrenceCid": step.occurrence_cid,
         }
+    if isinstance(step, YieldExceptStepV1):
+        return {
+            "kind": "yield-except",
+            "fragmentCid": step.fragment_cid,
+            "yield": _generator_step_testimony(step.yield_step, owner=owner),
+            "handlerCount": len(step.handlers),
+        }
+    if isinstance(step, ExceptArmsStepV1):
+        return {"kind": "except-arms", "fragmentCid": step.fragment_cid}
     if isinstance(step, IfStepV1):
         return {
             "kind": "if",
@@ -1181,6 +1221,10 @@ class GeneratorConstructionV1:
         require_effect(effect)
         incoming = ExitSet.halted(effect, state=self)
         if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], ExceptArmsStepV1
+        ):
+            return self._throw_into_except_arms(self.steps[self.cursor], effect)
+        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], NestedManagerExitStepV1
         ):
             # Halted edge: nested cleanup BEFORE outer yield-resume / halt.
@@ -1208,6 +1252,18 @@ class GeneratorConstructionV1:
 
     def close(self):
         if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], ExceptArmsStepV1
+        ):
+            # close() throws GeneratorExit at the yield. Step past the arms
+            # only when every arm is a settled miss for it; an arm that may
+            # catch GeneratorExit owes "generator ignored GeneratorExit" or a
+            # second close law, which is not written.
+            if not self._arms_decided_miss(
+                self.steps[self.cursor], "GeneratorExit"
+            ):
+                return self._gap("close", "except arm may catch GeneratorExit")
+            return replace(self, cursor=self.cursor + 1).close()
+        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], NestedManagerExitStepV1
         ):
             step = self.steps[self.cursor]
@@ -1232,6 +1288,129 @@ class GeneratorConstructionV1:
                 )
             )
         return GeneratorTerminationV1(None, self.binding_state)
+
+    def _arms_decided_miss(self, step: "ExceptArmsStepV1", exception_name: str):
+        from sugar_lift_py_tests.authenticated_exception_matching import (
+            MatchDecided,
+        )
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.sugar.try_sugar import _effect_match_verdict
+
+        probe = RaiseEffect.for_builtin(
+            exception_name,
+            occurrence=f"generator-close:{step.fragment_cid}",
+            blame=step.fragment_cid,
+        )
+        for matcher, _body, _slot in step.handlers:
+            verdict = _effect_match_verdict(
+                probe, matcher, self._guard_evaluation_context(), site=step.site
+            )
+            if not (isinstance(verdict, MatchDecided) and verdict.value is False):
+                return False
+        return True
+
+    def _throw_into_except_arms(self, step: "ExceptArmsStepV1", effect) -> ExitSet:
+        """``gen.throw(e)`` at ``try: yield ... except ...``.
+
+        The arms are ``TrySugar``'s: the one matcher decides, splits
+        (``MatchRetained``, e.g. an undetermined exception), or misses. A halt
+        out of the arms (unmatched, or raised by an arm) is thrown on at the
+        step after the try, so an enclosing ``finally`` still runs. An arm that
+        completes resumes the frame after the try; an arm that returns ends it.
+        """
+        from sugar_lift_py_tests.floor import ReturnValue
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            Halted,
+            true_guard,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.try_sugar import _route_one_halt
+        from sugar_source_tree.panic import SugarNotWritten
+
+        after_try = replace(
+            self, cursor=self.cursor + 1, suspended_resume_coordinate=None
+        )
+        parts = _route_one_halt(
+            Halted(true_guard(), effect, self),
+            step.handlers,
+            site=step.site,
+            ctx=self._guard_evaluation_context(),
+        )
+        routed = []
+        for part in parts:
+            for face in part.exits:
+                if isinstance(face, Halted):
+                    onward = after_try.throw(face.effect)
+                    routed.append(_guard_exits(onward, face))
+                    continue
+                block = face.value
+                returned = (
+                    tuple(
+                        entry
+                        for entry in getattr(block, "entries", ())
+                        if isinstance(entry, ReturnValue)
+                    )
+                    if isinstance(block, _ReducedBlock)
+                    else ()
+                )
+                if isinstance(block, _ReducedBlock) and block.can_fall_through:
+                    resumed = after_try._transition("throw")
+                    if isinstance(resumed, GeneratorTransitionGapV1):
+                        raise SugarNotWritten(
+                            owner="GeneratorConstructionV1.throw",
+                            blame=step.site,
+                            observed=resumed.observed,
+                            requested=resumed.requested,
+                            fix="construct the transition after the except arm",
+                        )
+                    resumed_es = (
+                        resumed
+                        if isinstance(resumed, ExitSet)
+                        else ExitSet.completed(resumed)
+                    )
+                    routed.append(_guard_exits(resumed_es, face))
+                    continue
+                cleanup_ahead = any(
+                    isinstance(
+                        later,
+                        (
+                            FinallyStepV1,
+                            NestedManagerExitStepV1,
+                            NestedCitedOpaqueExitStepV1,
+                        ),
+                    )
+                    for later in self.steps[self.cursor + 1 :]
+                )
+                if len(returned) == 1 and not cleanup_ahead:
+                    routed.append(
+                        _guard_exits(
+                            ExitSet.completed(
+                                GeneratorTerminationV1(
+                                    returned[0].value, self.binding_state
+                                )
+                            ),
+                            face,
+                        )
+                    )
+                    continue
+                raise SugarNotWritten(
+                    owner="GeneratorConstructionV1.throw",
+                    blame=step.site,
+                    observed=(
+                        "except arm leaves by return under a pending cleanup"
+                        if cleanup_ahead
+                        else f"except arm completed as {type(block).__name__}"
+                    ),
+                    requested="an arm that falls through, raises, or returns",
+                    fix="construct the arm's exit or keep the throw loud",
+                )
+        if not routed:
+            return ExitSet(())
+        result = routed[0]
+        for part in routed[1:]:
+            result = result.union(part)
+        return result.normalize()
 
     def _transition(self, requested: str):
         if self.cursor >= len(self.steps):
@@ -1465,6 +1644,31 @@ class GeneratorConstructionV1:
                 binding_state=binding_state,
             )
             return machine._transition(requested)
+        if isinstance(step, ExceptArmsStepV1):
+            # The try body (one yield) completed: no arm runs.
+            machine = replace(self, cursor=self.cursor + 1)
+            return machine._transition(requested)
+        if isinstance(step, YieldExceptStepV1):
+            # The yielded value is evaluated INSIDE the try. A value whose
+            # evaluation may halt would need its halt routed through the arms;
+            # that routing is not written, so it stays loud rather than escape.
+            value = self._reduce_value(step.yield_step.value, requested)
+            if isinstance(value, GeneratorTransitionGapV1):
+                return value
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+            from sugar_lift_py_tests.floor import RaiseValue
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            if isinstance(
+                value, (Incomplete, ExitSet, NativeOperationExitCarrierV1, RaiseValue)
+            ):
+                return self._gap(
+                    requested, "yield value inside try/except may raise"
+                )
+            arms = ExceptArmsStepV1(step.handlers, step.fragment_cid, step.site)
+            return self._spliced((step.yield_step, arms))._transition(requested)
         if isinstance(step, IfStepV1):
             return self._transition_branch(step, requested)
         if isinstance(step, ReturnStepV1):
@@ -1922,18 +2126,35 @@ class GeneratorConstructionV1:
         exit_es = law._exit_exitset(step.manager_value)
         if incoming is not None:
             return incoming.and_exit_truthiness(exit_es, site=step.site)
+        # The body reached the end of this ``with``: its exit runs on that
+        # completion NOW, and only a completed exit continues to the steps
+        # after it. Applying this exit over the continuation instead would
+        # wrap every later step -- an enclosing ``with``'s exit, a later
+        # raise -- inside this one, letting it "suppress" what runs after it.
+        from sugar_lift_py_tests.outcome.exit_set import Completed
+
         advanced = replace(self, cursor=self.cursor + 1)
-        if requested == "close":
-            continued = advanced.close()
-        else:
-            continued = advanced._transition(requested)
-        if isinstance(continued, GeneratorTransitionGapV1):
-            return continued
-        if isinstance(continued, ExitSet):
-            body_es = continued
-        else:
-            body_es = ExitSet.completed(continued)
-        return body_es.and_exit_truthiness(exit_es, site=step.site)
+        exited = ExitSet.completed(advanced).and_exit_truthiness(
+            exit_es, site=step.site
+        )
+        parts = []
+        for face in exited.exits:
+            if not isinstance(face, Completed):
+                parts.append(ExitSet((face,)))
+                continue
+            if requested == "close":
+                continued = face.value.close()
+            else:
+                continued = face.value._transition(requested)
+            if isinstance(continued, GeneratorTransitionGapV1):
+                return continued
+            if not isinstance(continued, ExitSet):
+                continued = ExitSet.completed(continued)
+            parts.append(_guard_exits(continued, face))
+        result = parts[0]
+        for part in parts[1:]:
+            result = result.union(part)
+        return result.normalize()
 
 
     def _fold_pending_cited_opaque_exits(self, outgoing):
@@ -1954,18 +2175,32 @@ class GeneratorConstructionV1:
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
+        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
         pending = []
-        for step in self.steps[self.cursor + 1 :]:
+        last = None
+        for index, step in enumerate(
+            self.steps[self.cursor + 1 :], start=self.cursor + 1
+        ):
             if isinstance(step, (FinallyStepV1, InertStepV1)):
                 continue
             if isinstance(step, NestedCitedOpaqueExitStepV1):
                 pending.append(step)
+                last = index
                 continue
             break
         if not pending:
             return outgoing
         if isinstance(outgoing, ExitSet):
-            incoming = outgoing
+            # A halted edge leaves THIS machine at this cursor: whatever
+            # internal state a reduced helper carried, the generator's
+            # pre-halt state is the machine itself.
+            incoming = ExitSet(
+                tuple(
+                    replace(face, state=self) if isinstance(face, Halted) else face
+                    for face in outgoing.exits
+                )
+            )
         else:
             incoming = ExitSet.completed(outgoing)
         result = incoming
@@ -1975,7 +2210,21 @@ class GeneratorConstructionV1:
                 requested="pending cited-opaque exit",
                 incoming=result,
             )
-        return result
+        # A face the exit SUPPRESSED completes carrying the pre-halt state --
+        # this machine, still poised on the raise. Python continues after the
+        # ``with`` statement, so that face's successor is the machine past the
+        # last exit step, never the raise again.
+        after_with = replace(self, cursor=last + 1)
+        return ExitSet(
+            tuple(
+                Completed(
+                    face.guard, after_with, face.faces, face.pending_contracts
+                )
+                if isinstance(face, Completed) and face.value is self
+                else face
+                for face in result.exits
+            )
+        )
 
     def _exit_nested_manager(self, step: NestedManagerExitStepV1, *, requested: str):
         """Exit the nested layer for this occurrence; advance past the exit step."""
@@ -2366,3 +2615,20 @@ class GeneratorConstructionV1:
             observed=observed,
             requested=requested,
         )
+
+
+def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
+    """Conjoin one routing face's guard and partition keys onto every exit."""
+    from sugar_lift_py_tests.caller_parameter_contract import merge_pending
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, _and_guards
+
+    out = []
+    for inner in exit_set.exits:
+        guard = _and_guards(face.guard, inner.guard)
+        faces = face.faces | inner.faces
+        owed = merge_pending(face.pending_contracts, inner.pending_contracts)
+        if isinstance(inner, Halted):
+            out.append(Halted(guard, inner.effect, inner.state, faces, owed))
+        else:
+            out.append(Completed(guard, inner.value, faces, owed))
+    return ExitSet(tuple(out)).normalize()

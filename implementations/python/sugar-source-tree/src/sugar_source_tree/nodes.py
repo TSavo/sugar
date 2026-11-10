@@ -4732,6 +4732,53 @@ class FunctionDef(Statement):
                 )
             if (
                 isinstance(statement, Try)
+                and statement.handlers
+                and not statement.orelse
+                and not statement.finalbody
+                and len(statement.body) == 1
+                and isinstance(statement.body[0], Expr)
+                and isinstance(statement.body[0].value, Yield)
+                and (
+                    statement.body[0].value.value is None
+                    or isinstance(statement.body[0].value.value, (Name, Constant))
+                )
+                and all(
+                    not self._owns_yield(handler.body)
+                    and all(
+                        isinstance(item, (Pass, Raise, Return))
+                        or (
+                            isinstance(item, Expr)
+                            and not isinstance(item.value, (Yield, YieldFrom))
+                        )
+                        for item in handler.body
+                    )
+                    for handler in statement.handlers
+                )
+            ):
+                # ``try: yield v`` / ``except ...``: the arms a generator
+                # manager suppresses with. Arms that bind nothing keep the
+                # frame's binding state exact after an arm completes.
+                from sugar_lift_py_tests.generator_construction import (
+                    YieldExceptStepV1,
+                )
+
+                try:
+                    handlers = statement._authenticated_handler_specs()
+                except SugarNotWritten:
+                    return absent_step
+                if handlers is None:
+                    return absent_step
+                value = statement.body[0].value.value
+                return _GeneratorNamedStepV1(
+                    YieldExceptStepV1(
+                        YieldStepV1(None if value is None else value.sugar()),
+                        handlers,
+                        statement.fragment.seal().cid,
+                        statement.fragment,
+                    )
+                )
+            if (
+                isinstance(statement, Try)
                 and not statement.handlers
                 and not statement.orelse
                 and statement.finalbody
@@ -10262,6 +10309,26 @@ class Try(Statement):
                 site=self.fragment,
             )
 
+        handler_specs = self._authenticated_handler_specs()
+        if handler_specs is None:
+            return super()._construct_sugar()
+        return TrySugar(
+            body=tuple(stmt.sugar() for stmt in self.body),
+            handlers=tuple(handler_specs),
+            orelse=tuple(stmt.sugar() for stmt in self.orelse),
+            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+            site=self.fragment,
+        )
+
+    def _authenticated_handler_specs(self):
+        """``(type Sugar|None, body sugars, slot id)`` per arm, or None.
+
+        The one roster ``TrySugar`` routes through. ``None`` is an empty
+        ``except ()``, which has no honest matcher; an arm type without an
+        authenticated exception identity stays a loud ``SugarNotWritten``.
+        Shared with the generator step producer so a generator manager's
+        ``try: yield / except`` arms match exactly like an ordinary try.
+        """
         handler_specs = []
         for handler in self.handlers:
             # Every handler owns an effect slot. ``as e`` projects it; a bare
@@ -10278,7 +10345,7 @@ class Try(Statement):
                 else (handler.type_,)
             )
             if not type_nodes:
-                return super()._construct_sugar()  # empty tuple: no honest matcher
+                return None  # empty tuple: no honest matcher
             for type_node in type_nodes:
                 # A bare Name authenticates through the lexical builtin/source
                 # vocabulary; a dotted import-bound type (``except re.error``)
@@ -10336,14 +10403,7 @@ class Try(Statement):
                     )
                 )
 
-        return TrySugar(
-            body=tuple(stmt.sugar() for stmt in self.body),
-            handlers=tuple(handler_specs),
-            orelse=tuple(stmt.sugar() for stmt in self.orelse),
-            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
-            site=self.fragment,
-        )
-
+        return tuple(handler_specs)
 
 class TryStar(Statement):
     body: Tuple[Statement, ...]
