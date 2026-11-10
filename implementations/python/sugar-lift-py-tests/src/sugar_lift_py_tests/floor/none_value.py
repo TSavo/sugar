@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class NoneValue(FloorValue):
+class NoneValue(GuardStableValue):
     """The floor for the `None` literal. No fields -- the None-ness IS the type."""
 
     def denotes_value(self) -> bool:

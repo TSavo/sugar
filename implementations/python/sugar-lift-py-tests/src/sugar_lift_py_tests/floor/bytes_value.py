@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class BytesValue(FloorValue):
+class BytesValue(GuardStableValue):
     """The floor for a Python `bytes` literal. Carries the raw bytes; stands as
     the vendor-canonical ``python:bytes(<hex String const>)`` ctor already
     consumed by the SMT emitter (``literal_encoding.rs``: "python:bytes(<String

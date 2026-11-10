@@ -380,6 +380,12 @@ def _unhashable_destination_count() -> int:
     return len(_UNHASHABLE_DESTINATIONS)
 
 
+def _assigned_rows(value) -> tuple:
+    """The assignment values a completed block's context records."""
+    context = getattr(value, "context", None)
+    return getattr(context, "assigned_values", ()) or ()
+
+
 def _obligations(exit_: "Exit[T]") -> tuple:
     """An arm's obligations by content address, order-free (#6352).
 
@@ -777,6 +783,11 @@ class ExitSet(Generic[T]):
                     # destinations on THIS face too. Merging them would keep
                     # the prior's and drop the arrival's, silently.
                     and _obligations(exit_) == _obligations(prior)
+                    # Arms that completed an assignment with different values
+                    # (``y = -x if c else 0``) hold equal records but different
+                    # recorded values: merging them would keep the prior's
+                    # value on both paths.
+                    and _assigned_rows(exit_.value) == _assigned_rows(prior.value)
                 )
                 same_halted = (
                     isinstance(exit_, Halted)

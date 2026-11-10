@@ -720,6 +720,12 @@ class NativeOperationExitCarrierV1:
         default=(), compare=False, repr=False
     )
     short_circuits: tuple = dataclass_field(default=(), compare=False, repr=False)
+    # Where each short circuit was recorded: ``(continuations, exitset
+    # continuations, guards)`` counts at that moment. Work enrolled after a
+    # short circuit consumes the whole expression, so it runs on both legs.
+    short_circuit_positions: tuple = dataclass_field(
+        default=(), compare=False, repr=False
+    )
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
@@ -905,7 +911,25 @@ class NativeOperationExitCarrierV1:
                 *self.short_circuits,
                 (continuing_guard, stopped, continuing_face, stopped_face),
             ),
+            short_circuit_positions=(
+                *self._short_circuit_positions(),
+                (
+                    len(self.continuations),
+                    len(self.exitset_continuations),
+                    len(self.guards),
+                ),
+            ),
         )
+
+    def _short_circuit_positions(self):
+        """One recorded position per short circuit (unrecorded: at the end)."""
+        end = (
+            len(self.continuations),
+            len(self.exitset_continuations),
+            len(self.guards),
+        )
+        known = tuple(self.short_circuit_positions)
+        return known + (end,) * (len(self.short_circuits) - len(known))
 
     def discharge(self, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits.
@@ -925,15 +949,19 @@ class NativeOperationExitCarrierV1:
         )
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
+        def apply_exitset_step(projected, step):
+            projected = step(projected)
+            if isinstance(projected, NativeOperationExitCarrierV1):
+                projected = projected.discharge(actuals_by_formal_coordinate)
+            if not isinstance(projected, ExitSet):
+                projected = outcome_to_exitset(projected)
+            return projected
+
         def apply_exitset_steps(projected, continuation_count):
             for enrolled_count, step in self.exitset_continuations:
                 if enrolled_count != continuation_count:
                     continue
-                projected = step(projected)
-                if isinstance(projected, NativeOperationExitCarrierV1):
-                    projected = projected.discharge(actuals_by_formal_coordinate)
-                if not isinstance(projected, ExitSet):
-                    projected = outcome_to_exitset(projected)
+                projected = apply_exitset_step(projected, step)
             return projected
 
         if self.prefix_composition is not None:
@@ -1027,7 +1055,76 @@ class NativeOperationExitCarrierV1:
             # a normal completion.
             exits = outcome_to_exitset(projected)
 
-        exits = apply_exitset_steps(exits, 0)
+        # A short circuit recorded before later work (``return a if c else
+        # -x``: the return, the block projection, an enclosing ``if``'s join)
+        # unions its stopping face in where it was recorded, so that work runs
+        # on both legs. One recorded after all work keeps the end-of-discharge
+        # union below.
+        end = (
+            len(self.continuations),
+            len(self.exitset_continuations),
+            len(self.guards),
+        )
+        positions = self._short_circuit_positions()
+        positional = [
+            (position, short)
+            for position, short in zip(positions, self.short_circuits)
+            if position != end
+        ]
+        trailing = [
+            short
+            for position, short in zip(positions, self.short_circuits)
+            if position == end
+        ]
+        guards_applied = 0
+
+        def union_short_circuit(exits, short):
+            continuing_guard, stopped, continuing_face, stopped_face = short
+            stopping_exits = []
+            for exit_ in stopped.exits:
+                if isinstance(exit_, Halted):
+                    # A first-leg exception predates the truth-value split and
+                    # bypasses both faces unchanged.
+                    stopping_exits.append(exit_)
+                    continue
+                stopping_exits.extend(
+                    ExitSet((exit_,)).guarded(true_guard(), stopped_face).exits
+                )
+            return exits.guarded(continuing_guard, continuing_face).union(
+                ExitSet(tuple(stopping_exits))
+            )
+
+        def at_point(exits, continuation_count):
+            # Exit-set steps and short circuits enrolled at this continuation
+            # count, in the order they were enrolled.
+            nonlocal guards_applied
+            events = [
+                (index, 1, step)
+                for index, (enrolled_count, step) in enumerate(
+                    self.exitset_continuations
+                )
+                if enrolled_count == continuation_count
+            ]
+            events.extend(
+                (exitset_count, 0, (guard_count, short))
+                for (count, exitset_count, guard_count), short in positional
+                if count == continuation_count
+            )
+            for _order, kind, event in sorted(events, key=lambda e: (e[0], e[1])):
+                if kind == 1:
+                    exits = apply_exitset_step(exits, event)
+                    continue
+                guard_count, short = event
+                pre_split = _conjoin_guards(self.guards[guards_applied:guard_count])
+                if pre_split is not None:
+                    exits = exits.guarded(pre_split)
+                guards_applied = max(guards_applied, guard_count)
+                exits = union_short_circuit(exits, short)
+            return exits
+
+        step_point = at_point if positional else apply_exitset_steps
+
+        exits = step_point(exits, 0)
         for index, continuation in enumerate(self.continuations, start=1):
 
             def resume(value, *, step=continuation):
@@ -1048,29 +1145,12 @@ class NativeOperationExitCarrierV1:
                 return next_outcome
 
             exits = exits.and_then(resume)
-            exits = apply_exitset_steps(exits, index)
-        guard = _conjoin_guards(self.guards)
+            exits = step_point(exits, index)
+        guard = _conjoin_guards(self.guards[guards_applied:])
         if guard is not None:
             exits = exits.guarded(guard)
-        for (
-            continuing_guard,
-            stopped,
-            continuing_face,
-            stopped_face,
-        ) in self.short_circuits:
-            stopping_exits = []
-            for exit_ in stopped.exits:
-                if isinstance(exit_, Halted):
-                    # A first-leg exception predates the truth-value split and
-                    # bypasses both faces unchanged.
-                    stopping_exits.append(exit_)
-                    continue
-                stopping_exits.extend(
-                    ExitSet((exit_,)).guarded(true_guard(), stopped_face).exits
-                )
-            exits = exits.guarded(continuing_guard, continuing_face).union(
-                ExitSet(tuple(stopping_exits))
-            )
+        for short in trailing:
+            exits = union_short_circuit(exits, short)
         return exits
 
 

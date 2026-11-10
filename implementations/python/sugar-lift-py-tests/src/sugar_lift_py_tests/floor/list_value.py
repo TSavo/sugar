@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from sugar_lift_py_tests.effect import runtime_effect_evidence
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class ListValue(FloorValue):
+class ListValue(GuardStableValue):
     """A list of reduced floor values.
 
     Order matters for a list -- the tuple already preserves it. The sugar reduces

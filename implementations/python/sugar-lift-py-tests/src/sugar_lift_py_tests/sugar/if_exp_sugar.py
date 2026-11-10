@@ -191,16 +191,18 @@ class IfExpSugar(ConstructedTermSugar):
             )
 
             then_face, else_face = _partition(("IfExpSugar", self.site, formula))
+            # The decided peer stands under its own polarity, as BoolOp's
+            # stopping operand does: it is not a fact on the deferred path.
             if then_deferred:
                 return then_out.short_circuit(
                     continuing_guard=formula,
-                    stopped=outcome_to_exitset(else_out),
+                    stopped=outcome_to_exitset(else_out).guarded(not_formula),
                     continuing_face=then_face,
                     stopped_face=else_face,
                 )
             return else_out.short_circuit(
                 continuing_guard=not_formula,
-                stopped=outcome_to_exitset(then_out),
+                stopped=outcome_to_exitset(then_out).guarded(formula),
                 continuing_face=else_face,
                 stopped_face=then_face,
             )
