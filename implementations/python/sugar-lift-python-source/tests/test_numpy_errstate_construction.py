@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import (
+    ContextManagerResolutionGapV1,
     OpaqueCitedContextManagerRefV1,
     SourceDerivedContextManagerRefV1,
 )
@@ -112,49 +113,29 @@ def test_unenrolled_errstate_stays_call_target_off_population(tmp_path, monkeypa
     assert ref.roster.target_name == "python:numpy.errstate"
 
 
-def test_enrolled_errstate_constructs_as_never_suppresses(tmp_path, monkeypatch) -> None:
+def test_enrolled_errstate_enter_may_halt_through_its_c_call(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     root = _corpus(tmp_path, **{"e.py": ERRSTATE})
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"tiny-corpus", "numpy"})
     )
     ref = _with_resolution(root, "e.py", session=session)
-    assert type(ref) is SourceDerivedContextManagerRefV1
-    assert isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
-    source_file = _open(root, "e.py", session=session)
-    sugar = next(n.sugar() for n in source_file.nodes() if isinstance(n, With))
-    assert type(sugar) is WithSourceResourceSugar
-    func = next(
-        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
-    )
-    completed = func.sugar().desugar()
-    assert isinstance(completed, Complete)
-    assert isinstance(completed.value, UniverseValue)
-    returns = [
-        statement
-        for statement in completed.value.record.statements
-        if isinstance(statement, ReturnValue)
-    ]
-    assert len(returns) == 1
-    assert isinstance(returns[0].value, TermValue)
-    assert returns[0].value.value == 1
+    # errstate.__enter__ calls the C function _make_extobj, which raises on
+    # an invalid mode; its halt is untyped, so enter may halt (honestly red).
+    assert type(ref) is ContextManagerResolutionGapV1
+    assert ref.kind == "enter-may-halt"
+    assert ref.detail == "__enter__ ExitSet"
 
 
-def test_enrolled_errstate_does_not_suppress_a_body_raise(tmp_path, monkeypatch) -> None:
+def test_enrolled_errstate_with_body_raise_stays_enter_may_halt(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     root = _corpus(tmp_path, **{"e.py": ERRSTATE_RAISE})
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"tiny-corpus", "numpy"})
     )
     ref = _with_resolution(root, "e.py", session=session)
-    assert type(ref) is SourceDerivedContextManagerRefV1
-    assert isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
-    source_file = _open(root, "e.py", session=session)
-    func = next(
-        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
-    )
-    raised = func.sugar().desugar()
-    halted = [face for face in raised.exits if isinstance(face, Halted)]
-    assert len(halted) == 1
-    assert isinstance(halted[0].effect, RaiseEffect)
-    assert halted[0].effect.exception_name == "RuntimeError"
+    # errstate.__enter__ calls the C function _make_extobj, which raises on
+    # an invalid mode; its halt is untyped, so enter may halt (honestly red).
+    assert type(ref) is ContextManagerResolutionGapV1
+    assert ref.kind == "enter-may-halt"
+    assert ref.detail == "__enter__ ExitSet"

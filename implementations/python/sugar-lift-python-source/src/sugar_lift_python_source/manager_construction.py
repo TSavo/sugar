@@ -2834,15 +2834,22 @@ def _resolve_source_visible_frame_uncached(
             from .language_owned_c_export import floor_language_owned_import_use
 
             value_receipt = matching_values[0] if matching_values else receipt
-            if (
-                floor_language_owned_import_use(
-                    imported,
-                    value_receipt,
-                    graph=dependency_graph,
-                    session=session,
-                )
-                is not None
-            ):
+            call_floor = floor_language_owned_import_use(
+                imported,
+                value_receipt,
+                graph=dependency_graph,
+                session=session,
+            )
+            if call_floor is not None:
+                # Hang the floor on this exact call site (the receipt span
+                # is the Call span) so a dotted ``os.getcwd()`` applies it
+                # the way a bare imported name does, instead of standing as
+                # a bodiless coordinate that silently completes.
+                context.language_owned_call_floors[
+                    _language_owned_call_site_key(
+                        raw_site.get("sourceCid") or getattr(receipt, "source_cid", None), raw_site
+                    )
+                ] = call_floor
                 # A language-owned C-floor callable or ContextVar method has
                 # no source frame. Leave the call unparked so MethodCallSugar
                 # or the seated value-use applies the floor instead of citing
@@ -3516,6 +3523,18 @@ def _construct_reachable_decorated_class_bindings(
             )
         )
     return tuple(result)
+
+
+def _language_owned_call_site_key(source_cid, site) -> tuple:
+    """Key a language-owned call floor by its exact Call span, not a spelling."""
+    return (
+        "call-site",
+        source_cid,
+        site["startLine"],
+        site["startCol"],
+        site["endLine"],
+        site["endCol"],
+    )
 
 
 def _resolve_external_call_frame(

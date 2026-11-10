@@ -63,9 +63,21 @@ def test_artifact_module_absent_builtin_floors_as_a_typed_c_call() -> None:
     result = floored.callable_application_with(
         SimpleNamespace(arguments=(), keyword_names=(), blame="test"), None
     )
-    assert isinstance(result, Complete)
-    assert isinstance(result.value, LanguageOwnedCExtensionResultValue)
-    assert result.value.exported_name == "_make_extobj"
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    # Native code may raise anything: the call is a two-face partition on one
+    # opaque atom, never a total completion.
+    assert isinstance(result, ExitSet)
+    completed = [face for face in result.exits if isinstance(face, Completed)]
+    halted = [face for face in result.exits if isinstance(face, Halted)]
+    assert len(completed) == 1 and len(halted) == 1
+    assert isinstance(completed[0].value, LanguageOwnedCExtensionResultValue)
+    assert completed[0].value.exported_name == "_make_extobj"
+    assert completed[0].guard.name == "python:c_extension.call_completes"
+    assert halted[0].guard == complement_guard(completed[0].guard)
+    assert isinstance(halted[0].effect, UndeterminedRaiseEffect)
 
 
 def test_unrecognized_c_export_stays_a_gap() -> None:

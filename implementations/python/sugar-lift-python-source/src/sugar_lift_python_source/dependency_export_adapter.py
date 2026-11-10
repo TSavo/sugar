@@ -403,6 +403,8 @@ def _resolve_export_binding(
                 continue
             target = graph.modules.get(target_module)
             if target is None:
+                if exported_name in _builtin_module_star_names(target_module):
+                    publishers.append(star_import)
                 continue
             target_tree = parsed_tree(target.source, target.source_seat)
             published = _target_star_published_names(
@@ -1130,7 +1132,131 @@ def _decided_if_test(test: ast.AST, prefix: list[ast.stmt]) -> bool | None:
         return None if inner is None else (not inner)
     if isinstance(test, ast.Name):
         return _decided_prefix_name(test.id, prefix)
-    return None
+    return _decided_builtin_module_membership(test, prefix)
+
+
+def _builtin_module_star_names(module_name: str) -> frozenset[str]:
+    """Names ``from <module> import *`` publishes for a built-in C module.
+
+    A module in ``sys.builtin_module_names`` is compiled into the interpreter
+    and has no source in any artifact, so the running, pin-authenticated
+    interpreter's module object is the only authority. Star publication is the
+    import-system rule: ``__all__`` when defined, otherwise every name not
+    starting with an underscore
+    (https://docs.python.org/3/reference/simple_stmts.html#the-import-statement).
+    Any other absent module publishes nothing here and stays a residual.
+    """
+    import importlib
+    import sys
+
+    if module_name not in sys.builtin_module_names:
+        return frozenset()
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        return frozenset()
+    published = getattr(module, "__all__", None)
+    if published is None:
+        return frozenset(name for name in vars(module) if not name.startswith("_"))
+    if not all(isinstance(name, str) for name in published):
+        return frozenset()
+    return frozenset(published)
+
+
+def _decided_builtin_module_membership(
+    test: ast.AST, prefix: list[ast.stmt]
+) -> bool | None:
+    """Decide ``'<lit>' in <names>`` where ``<names>`` is ``sys.builtin_module_names``.
+
+    ``sys.builtin_module_names`` is a constant of the interpreter build
+    (https://docs.python.org/3/library/sys.html#sys.builtin_module_names). The
+    running, pin-authenticated interpreter is the same authority the C-export
+    floor already uses, so membership is read from it, never from a spelling.
+    ``<names>`` is either that attribute directly or a module name whose only
+    prefix binding is ``<names> = sys.builtin_module_names``; ``sys`` must be
+    bound only by a top-level ``import sys``.
+    """
+    if not (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.In, ast.NotIn))
+        and isinstance(test.left, ast.Constant)
+        and isinstance(test.left.value, str)
+    ):
+        return None
+    names = test.comparators[0]
+    if isinstance(names, ast.Name):
+        names = _unique_prefix_assigned_value(names.id, prefix)
+    if not (
+        isinstance(names, ast.Attribute)
+        and names.attr == "builtin_module_names"
+        and isinstance(names.value, ast.Name)
+        and _bound_only_by_import(names.value.id, "sys", prefix)
+    ):
+        return None
+    import sys
+
+    member = test.left.value in sys.builtin_module_names
+    return member if isinstance(test.ops[0], ast.In) else not member
+
+
+def _prefix_mentions_binding(statement: ast.stmt, name: str) -> bool:
+    for node in ast.walk(statement):
+        if isinstance(node, ast.Name) and node.id == name and not isinstance(
+            node.ctx, ast.Load
+        ):
+            return True
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".")[0]) == name for alias in node.names
+        ):
+            return True
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ) and node.name == name:
+            return True
+        if isinstance(node, ast.Global) and name in node.names:
+            return True
+    return False
+
+
+def _unique_prefix_assigned_value(name: str, prefix: list[ast.stmt]):
+    """The value of the one top-level ``name = <value>`` binding in a prefix."""
+    found = None
+    for statement in prefix:
+        if not _prefix_mentions_binding(statement, name):
+            continue
+        if (
+            found is None
+            and isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == name
+            and not _prefix_mentions_binding(statement.value, name)
+        ):
+            found = statement.value
+            continue
+        return None
+    return found
+
+
+def _bound_only_by_import(name: str, module: str, prefix: list[ast.stmt]) -> bool:
+    """``name`` is bound in the prefix only by top-level ``import <module>``."""
+    found = False
+    for statement in prefix:
+        if not _prefix_mentions_binding(statement, name):
+            continue
+        if (
+            not found
+            and isinstance(statement, ast.Import)
+            and len(statement.names) == 1
+            and statement.names[0].name == module
+            and statement.names[0].asname is None
+            and name == module
+        ):
+            found = True
+            continue
+        return False
+    return found
 
 
 def _all_extend_param(fn: ast.FunctionDef) -> str | None:
