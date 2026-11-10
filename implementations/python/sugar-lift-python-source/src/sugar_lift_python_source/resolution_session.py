@@ -184,6 +184,72 @@ def _frame_memo_limit() -> int:
         return _DEFAULT_FRAME_MEMO_LIMIT
 
 
+# How many distinct definitions one projection may reach through its source
+# calls -- itself included -- before construction stops following them.  A
+# definition whose call closure is larger is not projected; it is refused by
+# name (``call-closure-over-bound``).  The closure is counted in definitions,
+# not in time, so the verdict is the same on every machine and in every run.
+#
+# The largest closure anything constructs through today is 9 (installed
+# ``pytest.raises``); every root in the 1200 constructed files of the pinned
+# pandas corpus reaches at most 2.  The closures this refuses run to
+# thousands.
+SOURCE_CALL_CLOSURE_FRAME_BOUND = 16
+
+
+class CallClosureOverBound(Exception):
+    """The outermost projection's call closure passed the frame bound.
+
+    Raised at the frame that would be one too many and caught only by the
+    outermost ``resolve_source_visible_frame``.  It is deliberately not a
+    ``SugarNotWritten`` / ``TypeError`` / binding gap: the doors that park a
+    callee under those must not park this one, because a callee cut short here
+    is unfinished, not opaque.
+    """
+
+
+class CallClosureLedger:
+    """Which definitions the frame projections in flight have reached.
+
+    ``closures`` records, for every memoized frame result, the definitions its
+    projection reached.  A memo hit charges that whole set, so the closure of
+    a definition is the same whether its callees were projected just now or by
+    an earlier root -- a warm session cannot make an over-bound closure fit.
+    """
+
+    __slots__ = ("stack", "root", "closures")
+
+    def __init__(self) -> None:
+        # One set per projection in flight, innermost last.
+        self.stack: list[set[tuple]] = []
+        # Everything the outermost projection in flight has reached so far.
+        self.root: set[tuple] = set()
+        # definition coordinate -> its completed projection's closure.
+        self.closures: dict[tuple, frozenset[tuple]] = {}
+
+    def enter(self, key: tuple) -> None:
+        self.root.add(key)
+        if len(self.root) > SOURCE_CALL_CLOSURE_FRAME_BOUND:
+            raise CallClosureOverBound
+        self.stack.append({key})
+
+    def charge(self, closure: frozenset[tuple]) -> None:
+        """Count a memo hit's closure against the projections in flight."""
+        self.stack[-1] |= closure
+        self.root |= closure
+        if len(self.root) > SOURCE_CALL_CLOSURE_FRAME_BOUND:
+            raise CallClosureOverBound
+
+    def leave(self) -> frozenset[tuple]:
+        """Close the innermost projection; its caller inherits what it reached."""
+        closure = frozenset(self.stack.pop())
+        if self.stack:
+            self.stack[-1] |= closure
+        else:
+            self.root.clear()
+        return closure
+
+
 class SourceResolutionSession:
     """One bounded construction / source-oracle session and its memo tables."""
 
@@ -195,6 +261,7 @@ class SourceResolutionSession:
         "frame_results",
         "frame_holds",
         "frame_active",
+        "call_closure",
         "module_materializations",
         "prefix_files",
         "prefix_fallthrough",
@@ -243,6 +310,9 @@ class SourceResolutionSession:
         # typed-loud exactly like the local recursive case, and never loops.
         # Re-entrancy is a property of THIS traversal, so it is session state.
         self.frame_active: set[tuple] = set()
+        # What the projections in flight have reached, and what each memoized
+        # result reached.  Bounds one root's source call closure.
+        self.call_closure = CallClosureLedger()
         # Module SourceFile + producer root + pin roster for one authenticated
         # module under this session. Frame projection is per-definition, but
         # materializing the whole module per definition multiplied in-population
@@ -327,6 +397,7 @@ class SourceResolutionSession:
         while len(self.frame_results) > limit:
             old_key, _ = self.frame_results.popitem(last=False)
             self.frame_holds.pop(old_key, None)
+            self.call_closure.closures.pop(old_key, None)
         # Holds without a memo row are dead weight (should not happen if
         # remember_frame is the only writer; scrub anyway).
         if len(self.frame_holds) > len(self.frame_results):

@@ -54,7 +54,12 @@ from .dependency_artifact import (
     ResolvedPythonObjectV1,
     resolve_import_binding,
 )
-from .resolution_session import SourceResolutionSession, session_or_new
+from .resolution_session import (
+    SOURCE_CALL_CLOSURE_FRAME_BOUND,
+    CallClosureOverBound,
+    SourceResolutionSession,
+    session_or_new,
+)
 
 
 class ImportValueUseSeatingGap(ValueError):
@@ -1404,6 +1409,7 @@ class ManagerConstructionGapV1:
         "non-manager-result",
         "call-binding",
         "force-floor",
+        "call-closure-over-bound",
     ]
     resolved_object_cid: str
     detail: str
@@ -2279,8 +2285,24 @@ def resolve_source_visible_frame(
         definition.end_line,
         definition.end_col,
     )
+    # CALL CLOSURE BOUND.  A projection follows its definition's source calls,
+    # and theirs, eagerly.  Nothing but this bound stops that walk short of
+    # the whole reachable call graph, which for a pandas IO entry point is
+    # thousands of definitions.  The outermost projection may reach
+    # SOURCE_CALL_CLOSURE_FRAME_BOUND definitions; one more and it is refused
+    # by name instead of projected.
+    ledger = session.call_closure
     hit = session.frame_hit(cache_key)
     if hit is not None:
+        if ledger.stack:
+            # A callee of a projection in flight, answered from the memo.  It
+            # still counts for everything it reached when it was projected.
+            if (
+                isinstance(hit, ManagerConstructionGapV1)
+                and hit.kind == "call-closure-over-bound"
+            ):
+                raise CallClosureOverBound
+            ledger.charge(ledger.closures.get(cache_key, frozenset((cache_key,))))
         return hit
     if cache_key in session.frame_active:
         # Re-entered while its own frame is still being projected.  Not
@@ -2290,6 +2312,8 @@ def resolve_source_visible_frame(
             "call-graph-cycle", resolved.cid, "recursive source call graph"
         )
 
+    outermost = not ledger.stack
+    ledger.enter(cache_key)
     session.frame_active.add(cache_key)
     try:
         result = _resolve_source_visible_frame_uncached(
@@ -2299,16 +2323,44 @@ def resolve_source_visible_frame(
             dependency_graphs=dependency_graphs,
             session=session,
         )
+    except CallClosureOverBound:
+        if not outermost:
+            # Only the outermost projection is refused.  The frames between
+            # are unfinished, not wrong: they are not memoized, so a later
+            # root that fits can still project them.
+            raise
+        # The refusal names the crime, the owner, the illegal shape and the
+        # replacement, from facts of the definition alone: no count of what
+        # the walk happened to reach, so the words are the same on every run.
+        result = ManagerConstructionGapV1(
+            "call-closure-over-bound",
+            resolved.cid,
+            f"{definition.kind} {resolved.module_name}.{definition.name} "
+            f"(line {definition.start_line}): source call closure exceeds "
+            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions; "
+            "owner: resolve_source_visible_frame, which projects every "
+            "source call of a definition, and theirs, before the definition "
+            "itself; illegal shape: one eager projection spanning more than "
+            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions; replacement: "
+            "project each callee frame on demand at its own call site, so "
+            "no projection owns its whole closure",
+        )
     finally:
         session.frame_active.discard(cache_key)
+        closure = ledger.leave()
     if isinstance(result, tuple) and len(result) == 3:
         frame, target, source_file = result
         # Hold the SourceFile that owns target/frame node identity.
         session.remember_frame(cache_key, (frame, target), hold=source_file)
-        return frame, target
-    assert not isinstance(result, tuple)
-    session.remember_frame(cache_key, result)
-    return result
+        returned: tuple[object, Node] | ManagerConstructionGapV1 = (frame, target)
+    else:
+        assert not isinstance(result, tuple)
+        session.remember_frame(cache_key, result)
+        returned = result
+    if cache_key in session.frame_results:
+        # Recorded only beside a live memo row; evicted in lockstep with it.
+        ledger.closures[cache_key] = closure
+    return returned
 
 
 def _module_materialize_key(
@@ -2783,10 +2835,12 @@ def _resolve_source_visible_frame_uncached(
                 dependency_graphs=dependency_graphs,
                 session=session,
             )
-        except (SugarNotWritten, TypeError) as exc:
-            # Imported callee body is incomplete or construction TypeError'd:
-            # park the obligation, do not erase the outer authenticated target
-            # frame (same law as populate SNW — TypeError is the second costume).
+        except (SugarNotWritten, TypeError, SourceCallBindingGap) as exc:
+            # Imported callee body is incomplete, construction TypeError'd, or
+            # a call inside it could not bind its actuals: park the obligation,
+            # do not erase the outer authenticated target frame (same law as
+            # populate SNW — TypeError is the second costume, the binding gap
+            # the third).
             _install_opaque_call_obligation(
                 context,
                 call,
@@ -3474,9 +3528,11 @@ def _resolve_external_call_frame(
 
     try:
         projected = resolve_source_visible_frame(callee, graph=graph, session=session)
-    except (SugarNotWritten, TypeError):
+    except (SugarNotWritten, TypeError, SourceCallBindingGap):
         # Callee body is incomplete (e.g. Compare leg gap inside a method of a
-        # class this target only *names*) or construction TypeError'd.  Park the
+        # class this target only *names*), construction TypeError'd, or a call
+        # inside it could not bind its actuals (a class with no ``__init__`` of
+        # its own called with an argument).  Park the
         # free-name obligation; do not erase the outer authenticated target
         # frame.  When that broken definition IS the outer target,
         # resolve_source_visible_frame is the entry door and the panic stays

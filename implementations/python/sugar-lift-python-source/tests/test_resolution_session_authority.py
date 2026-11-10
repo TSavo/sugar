@@ -28,7 +28,10 @@ from sugar_lift_python_source.dependency_artifact import (
 from sugar_lift_python_source.manager_construction import (
     resolve_source_visible_frame,
 )
-from sugar_lift_python_source.resolution_session import SourceResolutionSession
+from sugar_lift_python_source.resolution_session import (
+    CallClosureLedger,
+    SourceResolutionSession,
+)
 
 _PACKAGE = "from example_pkg.implementation import build\n"
 _IMPL_A = "def build(value):\n    return value\n"
@@ -436,6 +439,8 @@ def leaky_process_memo(monkeypatch):
         self.frame_results = frames
         self.frame_holds = holds
         self.frame_active = active
+        # Per-traversal accounting, not a memo of answers: fresh per init.
+        self.call_closure = CallClosureLedger()
         self.module_materializations = modules
         self.prefix_files = prefixes
         self.prefix_fallthrough = fallthroughs
