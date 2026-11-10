@@ -416,6 +416,7 @@ def _calls(statement, bound_refs, *, include_container_calls):
         FunctionDef,
         Lambda,
         Node,
+        PathContainerCall,
     )
 
     stack = [statement]
@@ -435,6 +436,13 @@ def _calls(statement, bound_refs, *, include_container_calls):
             yield current
         if include_container_calls and isinstance(current, BuiltinContainerCall):
             yield current
+        if isinstance(current, PathContainerCall):
+            # Its ``fallback`` is this same call, not a second one.
+            if include_container_calls:
+                yield current
+            stack.append(current.receiver)
+            stack.extend(current.args)
+            continue
         for _name, _index, child in current._child_edges():
             if isinstance(child, Node):
                 stack.append(child)
@@ -454,6 +462,7 @@ def havoc_after(statement, pre_scope, scope):
         LoopRecurrenceStatement,
         MappingPopAssignStatement,
         Node,
+        PathContainerCall,
         While,
     )
 
@@ -486,6 +495,12 @@ def havoc_after(statement, pre_scope, scope):
     for call in _calls(statement, bound_refs, include_container_calls=loop):
         if isinstance(call, BuiltinContainerCall):
             targets.append(call.receiver)
+            continue
+        if isinstance(call, PathContainerCall):
+            root, _steps = path_steps(call.receiver)
+            if root is not None:
+                targets.append(root)
+                targets.extend(_sharing_states(pre_scope, root))
             continue
         targets.extend(_call_targets(call, pre_scope, bound_refs))
     return _rebind(statement, pre_scope, scope, targets)
@@ -551,3 +566,310 @@ def _rebind(statement, pre_scope, scope, targets):
     binding = {name: _havoc(statement, name, tags) for name in names}
     binding = statement._binding_entries(binding, scope)
     return {**scope, **binding}
+
+
+# ---------------------------------------------------------------------------
+# A mutating call whose receiver is reached through a path.
+#
+# ``c.items.append(x)``, ``d['k'].append(x)``, ``obj.a.b.add(y)``: the receiver
+# is the object the path evaluates to, and the store is on THAT object. It is
+# also reachable from the path's root (``c``/``d``/``obj``) and from any name
+# bound to it. THE LAW, at such a statement:
+#
+# - **The call.** One ``PathContainerCall`` evaluated at the statement. Its
+#   receiver is evaluated once; if the value is a decided list/dict/set the call
+#   is the cited CPython mutation (``floor/builtin_container_method``), else it
+#   is the ordinary call, and the receiver's contents afterwards are unknown.
+# - **The root.** Every name bound to the root's object is rebound to the root
+#   after the call (``PathAfterCall``, mode ``root``): the root's value with the
+#   path's member replaced by the post-state when every step is a plain field
+#   or a decided item and no other member of the root can be the same object;
+#   otherwise an unknown minted at the call.
+# - **The object itself.** A name bound to the same path on the same root, or
+#   to the node a display root holds there, is rebound to the post-state
+#   (mode ``inner``) when the path's steps are plain; otherwise unknown.
+# - **Everything else that may share it.** Any other name whose value holds the
+#   root, or anything the root holds (``L`` in ``c = C(L)``), is rebound to an
+#   unknown minted at the call. Never the pre-call contents.
+# ---------------------------------------------------------------------------
+
+# Root bindings that denote a (possibly mutable) object a path can reach into.
+_PATH_ROOT_KINDS = frozenset(
+    {
+        "List",
+        "Dict",
+        "Set",
+        "Tuple",
+        "Call",
+        "Attribute",
+        "Subscript",
+        "ObjectPlaceStateV1",
+        "OpaqueObjectStateV1",
+        "BuiltinContainerProjection",
+        "ReceiverAfterCall",
+        "PathAfterCall",
+        "FormalRef",
+        "BindingCoordinateRef",
+    }
+)
+# Bindings no mutation can change: rebinding them would only lose information.
+_NEVER_HAVOC_KINDS = frozenset(
+    {
+        "Constant",
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Lambda",
+        "ImportAlias",
+        "Import",
+        "ImportFrom",
+        "Module",
+    }
+)
+
+
+def _decided_key(value) -> bool:
+    return type(value) in (int, str)
+
+
+def path_steps(receiver):
+    """``(root, steps)`` of an attribute/subscript chain, or ``(None, ())``.
+
+    A step is ``("attr", name)``, ``("item", key)`` for a ground ``int``/``str``
+    constant key, or ``("undecided", None)``."""
+    from .nodes import Attribute, Constant, Subscript
+
+    steps = []
+    node = receiver
+    while isinstance(node, (Attribute, Subscript)):
+        if isinstance(node, Attribute):
+            steps.append(("attr", node.attr))
+        elif isinstance(node.slice_, Constant) and _decided_key(node.slice_.value):
+            steps.append(("item", node.slice_.value))
+        else:
+            steps.append(("undecided", None))
+        node = node.value
+    if not steps:
+        return None, ()
+    return node, tuple(reversed(steps))
+
+
+def _decided_steps(steps) -> bool:
+    return all(kind != "undecided" for kind, _value in steps)
+
+
+def _same_steps(left, right) -> bool:
+    if len(left) != len(right) or not _decided_steps(left):
+        return False
+    return all(
+        lk == rk and type(lv) is type(rv) and lv == rv
+        for (lk, lv), (rk, rv) in zip(left, right)
+    )
+
+
+def _display_member(node, step):
+    """The node a display holds at a decided item step, or None."""
+    from .nodes import Constant, Starred
+
+    kind, key = step
+    if kind != "item":
+        return None
+    node_kind = getattr(node, "kind", None)
+    if node_kind == "Dict":
+        found = None
+        for item in node.items:
+            if item.key is None or not isinstance(item.key, Constant):
+                return None
+            existing = item.key.value
+            if not _decided_key(existing):
+                return None
+            if type(existing) is type(key) and existing == key:
+                found = item.value
+        return found
+    if node_kind in ("List", "Tuple") and type(key) is int:
+        if any(isinstance(element, Starred) for element in node.elts):
+            return None
+        if -len(node.elts) <= key < len(node.elts):
+            return node.elts[key]
+    return None
+
+
+def _static_member(root, steps):
+    """The node a display root holds at ``steps``, when the source says."""
+    from .nodes import Name
+
+    node = root
+    for step in steps:
+        node = _display_member(node, step)
+        if node is None or isinstance(node, Name):
+            return None
+    return node
+
+
+def _path_count(node, target, memo):
+    """How many child paths from ``node`` reach ``target`` (DAG-safe)."""
+    from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node
+
+    key = id(node)
+    if key in memo:
+        return memo[key]
+    memo[key] = 0
+    count = 1 if same_object(node, target) else 0
+    if not isinstance(node, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
+        for _name, _index, child in node._child_edges():
+            if isinstance(child, Node):
+                count += _path_count(child, target, memo)
+    memo[key] = count
+    return count
+
+
+def _object_key(node):
+    ref = _ref(node)
+    return ref if isinstance(ref, tuple) else id(ref)
+
+
+def _graph(node):
+    """Keys of every object ``node``'s value may be, hold, or be read from."""
+    from .nodes import Node
+
+    if not isinstance(node, Node):
+        return set()
+    return {
+        _object_key(member)
+        for member in _walk_values(node, kept_only=False)
+        if getattr(member, "kind", None) not in _NEVER_HAVOC_KINDS
+    }
+
+
+def _sharing_states(scope, root):
+    """Bound values that may hold, or be read from, anything ``root`` holds."""
+    from .nodes import Node
+
+    graph = _graph(root)
+    found = []
+    for name, value in scope.items():
+        state = _state(value)
+        if not isinstance(name, str) or not isinstance(state, Node):
+            continue
+        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+            continue
+        if _graph(state) & graph:
+            found.append(state)
+    return found
+
+
+def _path_after(site_node, call, root, steps, mode, label, tags, unshared, inner=None):
+    from .backend import Child, Leaf, MaybeChild
+    from .shadow import _handle_of
+
+    fields = [
+        ("call", Child(_handle_of(call))),
+        ("root", Child(_handle_of(root))),
+        ("steps", Leaf(tuple(steps))),
+        ("mode", Leaf(mode)),
+        ("label", Leaf(label)),
+        ("unshared", Leaf(unshared)),
+        ("token", Leaf(next(_TOKENS))),
+        # The root after the call holds the object after it: a later
+        # mutation of that object through another name reaches the root.
+        ("inner", MaybeChild(None if inner is None else _handle_of(inner))),
+    ]
+    return _materialize(site_node, "PathAfterCall", tuple(fields), tags)
+
+
+def path_mutation_statement(statement, scope, *, call, target_name=None):
+    """The shadow statement for ``<path>.<mutator>(*args)``, or None.
+
+    ``call`` is the statement's call, already substituted against ``scope``.
+    """
+    from .backend import Child, Children, Leaf
+    from .nodes import Attribute, Call, Node, Starred
+    from .shadow import _handle_of, occurrence_tags_of
+    from sugar_lift_py_tests.floor.builtin_container_method import (
+        ANY_MUTATING_METHOD,
+    )
+
+    if (
+        not isinstance(call, Call)
+        or call.keywords
+        or not isinstance(call.func, Attribute)
+        or call.func.attr not in ANY_MUTATING_METHOD
+        or any(isinstance(arg, Starred) for arg in call.args)
+    ):
+        return None
+    receiver = call.func.value
+    root, steps = path_steps(receiver)
+    if root is None or getattr(root, "kind", None) not in _PATH_ROOT_KINDS:
+        return None
+    bound = {
+        _object_key(_state(value))
+        for name, value in scope.items()
+        if isinstance(name, str) and isinstance(_state(value), Node)
+    }
+    if _object_key(root) not in bound:
+        # A root no name holds (``f().items.append(x)``) leaves nothing here
+        # for the store to rebind.
+        return None
+    tags = occurrence_tags_of(statement)
+    path_call = _materialize(
+        call,
+        "PathContainerCall",
+        (
+            ("receiver", Child(_handle_of(receiver))),
+            ("args", Children(tuple(_handle_of(arg) for arg in call.args))),
+            ("method", Leaf(call.func.attr)),
+            ("fallback", Child(_handle_of(call))),
+            ("token", Leaf(next(_TOKENS))),
+        ),
+        tags,
+    )
+    member = _static_member(root, steps)
+    # Distinct display nodes are distinct objects: the source alone says the
+    # root holds this member once, and nothing else in it can be the object.
+    unshared = member is not None and _path_count(root, member, {}) == 1
+    if (
+        member is None
+        and getattr(root, "kind", None) == "PathAfterCall"
+        and root.mode == "root"
+        and root.inner is not None
+        and _same_steps(tuple(root.steps), steps)
+    ):
+        # The root after an earlier call through this same path holds that
+        # call's object there.
+        member = root.inner
+    inner = _path_after(call, path_call, root, steps, "inner", "", tags, unshared)
+    root_after = _path_after(
+        call, path_call, root, steps, "root", "", tags, unshared, inner=inner
+    )
+    exact, _containing = aliases(scope, root)
+    names, states, evaluated = [], [], [path_call, root_after, inner]
+    for name in exact:
+        names.append(name)
+        states.append(root_after)
+    graph = _graph(root)
+    for name, value in scope.items():
+        if not isinstance(name, str) or name in names or name == target_name:
+            continue
+        state = _state(value)
+        if not isinstance(state, Node):
+            continue
+        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+            continue
+        bound_root, bound_steps = path_steps(state)
+        if (
+            bound_root is not None
+            and same_object(bound_root, root)
+            and _same_steps(bound_steps, steps)
+        ) or (member is not None and same_object(state, member)):
+            names.append(name)
+            states.append(inner)
+            continue
+        if _graph(state) & graph:
+            havoc = _havoc(call, name, tags)
+            names.append(name)
+            states.append(havoc)
+            evaluated.append(havoc)
+    if target_name is not None:
+        names.append(target_name)
+        states.append(_projection(call, path_call, 1, tags))
+    return _statement(statement, names, states, evaluated, tags)
