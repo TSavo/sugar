@@ -154,7 +154,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
             from sugar_lift_py_tests.temporal import bind_temporal
 
+            from dataclasses import replace
+
             runtime_ctx = ctx
+            if runtime_ctx is not None and runtime.carried_names:
+                runtime_ctx = replace(
+                    runtime_ctx,
+                    live_loop_names=frozenset(
+                        (
+                            *getattr(runtime_ctx, "live_loop_names", ()),
+                            *runtime.carried_names,
+                        )
+                    ),
+                )
             for name, sugar in zip(
                 runtime.carried_names, runtime.initial_value_sugars, strict=True
             ):
@@ -261,7 +273,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                         )
         return ExitSet(tuple(exits)).normalize()
 
-    def _advance_iterator(self, iterator, runtime, ctx, *, entries):
+    def _advance_iterator(self, iterator, runtime, ctx, *, entries, index=0):
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -323,15 +335,55 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 owner="LoopRecurrenceSugar.target-coordinate",
                 blame=str(self.site),
             )
-        body = reduce_block_to_exitset(
-            tuple(statement.sugar() for statement in runtime.body_statements),
-            iteration_ctx,
-        )
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+
+        # Each iteration is its own evaluation of the body's sites: a call in
+        # iteration 2 is never claimed to complete exactly when iteration 1's
+        # did (the unrolled loop's law, sugar/loop iteration segments).
+        with entered(loop_iteration_segment(self.target_cid, index)):
+            body = reduce_block_to_exitset(
+                tuple(statement.sugar() for statement in runtime.body_statements),
+                iteration_ctx,
+            )
         if not isinstance(body, ExitSet):
             return body
         if len(body.exits) != 1:
-            return body
+            # Each face of this iteration is its own path: a halt leaves the
+            # loop under its guard, a completed face carries its own state into
+            # the next iteration under its guard. The first iteration's faces
+            # are never the loop's outcome.
+            from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+            exits = []
+            for face in body.exits:
+                following = self._after_iteration_face(
+                    face,
+                    next_result,
+                    runtime,
+                    target_bindings,
+                    entries=entries,
+                    index=index,
+                )
+                if following is None:
+                    exits.append(face)
+                    continue
+                exits.extend(outcome_to_exitset(following).guarded(face.guard).exits)
+            return ExitSet(tuple(exits)).normalize()
         face = body.exits[0]
+        following = self._after_iteration_face(
+            face, next_result, runtime, target_bindings, entries=entries, index=index
+        )
+        return body if following is None else following
+
+    def _after_iteration_face(
+        self, face, next_result, runtime, target_bindings, *, entries, index
+    ):
+        """The loop's outcome after one face of an iteration, or None when the
+        face leaves the loop as it is (a halt that is not this loop's control)."""
+        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+
         if isinstance(face, Halted):
             effect = face.effect
             if (
@@ -348,14 +400,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                         runtime,
                         state,
                         entries=entries,
+                        index=index + 1,
                     )
                 if effect.action == "break":
                     return self._publish_runtime_bindings(
                         runtime, state, entries=entries
                     )
-            return body
+            return None
         if not isinstance(face, Completed):
-            return body
+            return None
         state = face.value
         combined = (*entries, *state.entries)
         if not state.can_fall_through:
@@ -365,6 +418,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             runtime,
             state.context,
             entries=combined,
+            index=index + 1,
         )
 
     def _project_iteration_target(self, pattern, value, ctx):

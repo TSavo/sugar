@@ -7935,16 +7935,25 @@ class For(Statement):
         """The names any statement (at any depth) binds -- the structural twin
         of _stmts_bind, for the symbolic-loop carried-name mask."""
         names: set = set()
+
+        def bind(target) -> None:
+            # A destructuring target (``n, k = ...``, ``[a, *b] = ...``) binds
+            # every name it nests, exactly as a plain Name target does.
+            if target.kind == "Name":
+                names.add(target.id)
+            elif target.kind in ("Tuple", "List"):
+                for element in target.elts:
+                    bind(element)
+            elif target.kind == "Starred":
+                bind(target.value)
+
         for stmt in statements:
             for n in stmt.walk():
                 if n.kind in ("Assign",):
                     for t in n.targets:
-                        if t.kind == "Name":
-                            names.add(t.id)
+                        bind(t)
                 elif n.kind in ("AugAssign", "AnnAssign", "NamedExpr"):
-                    t = n.target
-                    if t.kind == "Name":
-                        names.add(t.id)
+                    bind(n.target)
         return names
 
     @staticmethod

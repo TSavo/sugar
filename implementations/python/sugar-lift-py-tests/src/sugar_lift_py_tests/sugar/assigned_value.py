@@ -67,7 +67,24 @@ def recorded_value(ctx, sugar):
     return _MISS
 
 
-def evaluate_assignment_values(values, ctx, tail=None):
+def _bind_names(active, bind, completed):
+    """Rebind each live-loop ``(name, value index)`` to its completed value in
+    the temporal, as ``AugAssignSugar`` always has: a live loop body is read
+    through the temporal, not substituted per item, so the next statement and
+    the next item see the assignment."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+
+    live = getattr(active, "live_loop_names", frozenset())
+    for name, index in bind:
+        value = completed[index]
+        if name not in live or not isinstance(value, FloorValue):
+            continue
+        active = ScopeRebind(name, value).extend_scope(active)
+    return active
+
+
+def evaluate_assignment_values(values, ctx, tail=None, bind=()):
     """Evaluate ``values`` (RHS sugars, in evaluation order) at the statement.
 
     Returns the statement's outcome: every halt face of every RHS, in order
@@ -76,7 +93,9 @@ def evaluate_assignment_values(values, ctx, tail=None):
     completed value. ``tail(ctx, completed)``, if given, runs after the last
     RHS (store targets) with ``completed`` the completed value of each RHS, in
     ``values`` order, so a target consumes the one evaluation instead of a
-    second; its outcome replaces the empty completed block.
+    second; its outcome replaces the empty completed block. ``bind`` (without
+    ``tail``) names ``(name, value index)`` pairs the completed path rebinds in
+    the temporal.
     """
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -89,6 +108,10 @@ def evaluate_assignment_values(values, ctx, tail=None):
     def finish(active, completed):
         if tail is not None:
             return tail(active, completed)
+        if bind:
+            bound = _bind_names(active, bind, completed)
+            if bound is not active:
+                return ExitSet.completed(_ReducedBlock((), True, (), (), bound))
         if active is ctx:
             # Nothing recorded: the statement contributes nothing, as before.
             return Complete(BlockValue((), can_fall_through=True))
@@ -140,6 +163,15 @@ def evaluate_assignment_values(values, ctx, tail=None):
                     ),
                     gap_kind=GapKind.FLOOR,
                 )
+            if key is not None and _binds_live_name(active, bind, index):
+                # A live loop body rebinds names this RHS may read: a later
+                # read of this RHS must see this evaluation, not re-reduce
+                # over the rebound temporal.
+                return step(
+                    index + 1,
+                    active.with_assigned_value(key, outcome.value),
+                    (*completed, outcome.value),
+                )
             return step(index + 1, active, (*completed, outcome.value))
         if key is None:
             # No occurrence to record: the statement still halts here, and a
@@ -156,6 +188,14 @@ def evaluate_assignment_values(values, ctx, tail=None):
         )
 
     return step(0, ctx)
+
+
+def _binds_live_name(ctx, bind, index) -> bool:
+    """Inside a live loop body every assignment's RHS is recorded: a later
+    statement reads it through substitution, and the temporal it was reduced
+    over may since have been rebound."""
+    del bind, index
+    return bool(getattr(ctx, "live_loop_names", frozenset()))
 
 
 def _carries_halts(outcome) -> bool:
