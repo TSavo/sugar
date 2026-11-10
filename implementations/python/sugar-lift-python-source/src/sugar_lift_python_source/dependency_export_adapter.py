@@ -216,18 +216,30 @@ def _resolve_export_uncached(
         for node in tree.body
     )
     # Normal-completion authority for the prefix (statements strictly before
-    # the unique export-binding locus): producer-owned Completed faces only.
+    # the unique export-binding locus): producer-owned Completed faces, or a
+    # prefix that cannot skip the locus except by aborting the import.
+    # A construction refusal such as SymbolicValue.environ does not dynamize
+    # a later static bind that every successful import still reaches.
+    # A bind inside a decided If still uses that If as the fallthrough
+    # locus, so the prefix is the statements before the If, not the If
+    # itself (which would re-sugar the already-chosen arm).
     if locus is not None:
-        fallthrough = _prefix_has_completed_fallthrough(
-            module, locus, graph=graph, session=session
-        )
-        # Ordinary non-fallthrough and named construction refusal both cite
-        # through the existing typed dynamic-export membrane.  Their distinct
-        # producer testimony remains recoverable from the session memo.
-        if fallthrough.kind != "completed":
-            return _gap(
-                "dynamic-export", binding_cid, graph, module_name, exported_name
+        fallthrough_locus = _top_level_containing(tree.body, locus)
+        if not _prefix_reaches_locus_or_aborts(tree.body, fallthrough_locus):
+            fallthrough = _prefix_has_completed_fallthrough(
+                module,
+                fallthrough_locus,
+                graph=graph,
+                session=session,
             )
+            # Ordinary non-fallthrough and named construction refusal both
+            # cite through the existing typed dynamic-export membrane when
+            # the prefix may skip the bind.  Their distinct producer
+            # testimony remains recoverable from the session memo.
+            if fallthrough.kind != "completed":
+                return _gap(
+                    "dynamic-export", binding_cid, graph, module_name, exported_name
+                )
     return _resolve_export_binding(
         graph,
         binding_cid,
@@ -382,18 +394,55 @@ def _resolve_export_binding(
         )
     # Star import: TARGET module's ``__all__`` / public-name rule controls
     # which names star publishes (Python import semantics), not the importer's.
-    if binding is not None and binding[0] == "star":
-        return _resolve_star_export(
-            graph,
+    if binding is not None and binding[0] in {"star", "stars"}:
+        stars = (binding[1],) if binding[0] == "star" else binding[1]
+        publishers = []
+        for star_import in stars:
+            target_module = _absolute_import(module_name, module.source_seat, star_import)
+            if target_module is None:
+                continue
+            target = graph.modules.get(target_module)
+            if target is None:
+                continue
+            target_tree = parsed_tree(target.source, target.source_seat)
+            published = _target_star_published_names(
+                target_tree.body,
+                graph=graph,
+                module_name=target_module,
+                module=target,
+                seen=seen,
+            )
+            if exported_name in published:
+                publishers.append(star_import)
+        if len(publishers) > 1:
+            return _gap(
+                "ambiguous-static-export",
+                binding_cid,
+                graph,
+                module_name,
+                exported_name,
+            )
+        if len(publishers) == 1:
+            return _resolve_star_export(
+                graph,
+                binding_cid,
+                module,
+                module_name,
+                exported_name,
+                publishers[0],
+                warrants,
+                seen,
+                key,
+                session=session,
+            )
+        # A star that publishes nothing is still a star residual, not a
+        # missing static bind: the existing membrane names that dynamic-export.
+        return _gap(
+            "dynamic-export",
             binding_cid,
-            module,
+            graph,
             module_name,
             exported_name,
-            binding[1],
-            warrants,
-            seen,
-            key,
-            session=session,
         )
     if binding is not None and binding[0] == "dynamic":
         call_method = _callable_instance_call_method(body, binding[1], exported_name)
@@ -751,7 +800,13 @@ def _resolve_star_export(
             exported_name,
         )
     target_tree = parsed_tree(target.source, target.source_seat)
-    published = _target_star_published_names(target_tree.body)
+    published = _target_star_published_names(
+        target_tree.body,
+        graph=graph,
+        module_name=target_module,
+        module=target,
+        seen=seen,
+    )
     if exported_name not in published:
         return _gap("dynamic-export", binding_cid, graph, module_name, exported_name)
     warrant = ReexportWarrantV1(
@@ -774,13 +829,32 @@ def _resolve_star_export(
     )
 
 
-def _target_star_published_names(body: list[ast.stmt]) -> frozenset[str]:
+def _target_star_published_names(
+    body: list[ast.stmt],
+    *,
+    graph=None,
+    module_name: str | None = None,
+    module=None,
+    seen: frozenset[tuple[str, str]] | frozenset[str] = frozenset(),
+) -> frozenset[str]:
     """Names a module publishes under ``from module import *``.
 
-    Prefer a single immutable literal ``__all__``.  Without it, public names
-    (no leading ``_``) that have a source-visible top-level bind.  Computed /
-    competing ``__all__`` yields empty publication (star stays dynamic).
+    Prefer an evaluable ``__all__`` algebra (a literal list, ``+=`` /
+    ``extend`` of another module's ``__all__``, or a same-module helper
+    that only performs that union).  Without ``__all__``, public names
+    (no leading ``_``) that have a source-visible top-level bind.  Computed
+    or competing ``__all__`` that the algebra cannot close yields empty
+    publication (star stays dynamic).
     """
+    algebraic = _algebraic_all_publication(
+        body,
+        graph=graph,
+        module_name=module_name,
+        module=module,
+        seen=_module_seen(seen),
+    )
+    if algebraic is not None:
+        return algebraic
     literal = _literal_all_publication(body)
     if literal is not None:
         return literal
@@ -914,6 +988,617 @@ def _literal_string_sequence(node: ast.AST | None) -> frozenset[str] | None:
     return frozenset(names)
 
 
+def _module_seen(seen) -> frozenset[str]:
+    """Module names already on an ``__all__`` algebra walk."""
+    names: set[str] = set()
+    for item in seen:
+        if isinstance(item, str):
+            names.add(item)
+        elif isinstance(item, tuple) and item and isinstance(item[0], str):
+            names.add(item[0])
+    return frozenset(names)
+
+
+def _is_ident(node: ast.AST, name: str) -> bool:
+    return isinstance(node, ast.Name) and node.id == name
+
+
+def _is_attribute(node: ast.AST, value_name: str, attr: str) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and _is_ident(node.value, value_name)
+        and node.attr == attr
+    )
+
+
+def _constant_truth(node: ast.AST) -> bool | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+        return node.value
+    return None
+
+
+def _nameerror_except_constant(handler: ast.ExceptHandler, name: str) -> bool | None:
+    """Constant assigned to ``name`` by a bare ``except NameError`` handler."""
+    typ = handler.type
+    if typ is None:
+        return None
+    if _is_ident(typ, "NameError"):
+        pass
+    elif isinstance(typ, ast.Tuple) and len(typ.elts) == 1 and _is_ident(
+        typ.elts[0], "NameError"
+    ):
+        pass
+    else:
+        return None
+    body = handler.body
+    if len(body) != 1 or not isinstance(body[0], ast.Assign):
+        return None
+    assign = body[0]
+    if not (
+        len(assign.targets) == 1
+        and isinstance(assign.targets[0], ast.Name)
+        and assign.targets[0].id == name
+    ):
+        return None
+    return _constant_truth(assign.value)
+
+
+def _is_bare_name_load(statement: ast.stmt, name: str) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Name)
+        and statement.value.id == name
+    )
+
+
+def _try_nameerror_default(statement: ast.stmt, name: str) -> bool | None:
+    """``try: NAME\nexcept NameError: NAME = <bool>`` default, or None."""
+    if not isinstance(statement, ast.Try):
+        return None
+    if statement.orelse or statement.finalbody or len(statement.handlers) != 1:
+        return None
+    if not statement.body or not all(
+        _is_bare_name_load(item, name) or isinstance(item, ast.Pass)
+        for item in statement.body
+    ):
+        return None
+    if not any(_is_bare_name_load(item, name) for item in statement.body):
+        return None
+    return _nameerror_except_constant(statement.handlers[0], name)
+
+
+def _decided_prefix_name(name: str, prefix: list[ast.stmt]) -> bool | None:
+    """Truth of ``name`` after a module prefix, when uniquely decided."""
+    bound: bool | None = None
+    known = False
+    for statement in prefix:
+        default = _try_nameerror_default(statement, name)
+        if default is not None:
+            if not known:
+                bound = default
+                known = True
+            continue
+        if isinstance(statement, ast.Assign):
+            if not any(_target_binds(target, name) for target in statement.targets):
+                continue
+            if not (
+                len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and statement.targets[0].id == name
+            ):
+                return None
+            truth = _constant_truth(statement.value)
+            if truth is None:
+                return None
+            bound = truth
+            known = True
+            continue
+        if isinstance(statement, ast.AnnAssign) and _target_binds(statement.target, name):
+            if statement.value is None:
+                continue
+            if not isinstance(statement.target, ast.Name):
+                return None
+            truth = _constant_truth(statement.value)
+            if truth is None:
+                return None
+            bound = truth
+            known = True
+            continue
+        if isinstance(statement, ast.Delete) and any(
+            _target_binds(target, name) for target in statement.targets
+        ):
+            known = False
+            bound = None
+            continue
+        if isinstance(statement, ast.AugAssign) and _target_binds(statement.target, name):
+            return None
+        # Any other mention of the name in open control flow is not a decision.
+        if isinstance(statement, (ast.Try, ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Match)):
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Name) and node.id == name:
+                    return None
+    return bound if known else None
+
+
+def _decided_if_test(test: ast.AST, prefix: list[ast.stmt]) -> bool | None:
+    """Decide a module-level ``if`` test from a unique prefix binding."""
+    truth = _constant_truth(test)
+    if truth is not None:
+        return truth
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _decided_if_test(test.operand, prefix)
+        return None if inner is None else (not inner)
+    if isinstance(test, ast.Name):
+        return _decided_prefix_name(test.id, prefix)
+    return None
+
+
+def _all_extend_param(fn: ast.FunctionDef) -> str | None:
+    """Parameter whose ``.__all__`` this helper unions into module ``__all__``."""
+    if (
+        fn.decorator_list
+        or fn.args.vararg
+        or fn.args.kwarg
+        or fn.args.kwonlyargs
+        or fn.args.defaults
+        or len(fn.args.args) != 1
+    ):
+        return None
+    param = fn.args.args[0].arg
+    body = [
+        statement
+        for statement in fn.body
+        if not (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        )
+    ]
+    if len(body) == 1 and (
+        _is_all_aug_add_attr(body[0], param) or _is_all_extend_call(body[0], param)
+    ):
+        return param
+    if _is_extend_all_loop_body(body, param):
+        return param
+    return None
+
+
+def _is_all_aug_add_attr(statement: ast.stmt, param: str) -> bool:
+    return (
+        isinstance(statement, ast.AugAssign)
+        and isinstance(statement.op, ast.Add)
+        and _is_ident(statement.target, "__all__")
+        and _is_attribute(statement.value, param, "__all__")
+    )
+
+
+def _is_all_extend_call(statement: ast.stmt, param: str) -> bool:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return False
+    call = statement.value
+    return (
+        _is_attribute(call.func, "__all__", "extend")
+        and len(call.args) == 1
+        and not call.keywords
+        and _is_attribute(call.args[0], param, "__all__")
+    )
+
+
+def _is_extend_all_loop_body(body: list[ast.stmt], param: str) -> bool:
+    if len(body) != 3:
+        return False
+    existing_bind, mall_bind, loop = body
+    if not (
+        isinstance(existing_bind, ast.Assign)
+        and len(existing_bind.targets) == 1
+        and isinstance(existing_bind.targets[0], ast.Name)
+        and isinstance(existing_bind.value, ast.Call)
+        and _is_ident(existing_bind.value.func, "set")
+        and len(existing_bind.value.args) == 1
+        and not existing_bind.value.keywords
+        and _is_ident(existing_bind.value.args[0], "__all__")
+    ):
+        return False
+    existing = existing_bind.targets[0].id
+    if not (
+        isinstance(mall_bind, ast.Assign)
+        and len(mall_bind.targets) == 1
+        and isinstance(mall_bind.targets[0], ast.Name)
+        and _is_attribute(mall_bind.value, param, "__all__")
+    ):
+        return False
+    mall = mall_bind.targets[0].id
+    if not (
+        isinstance(loop, ast.For)
+        and not loop.orelse
+        and isinstance(loop.target, ast.Name)
+        and _is_ident(loop.iter, mall)
+        and len(loop.body) == 1
+    ):
+        return False
+    item = loop.target.id
+    guard = loop.body[0]
+    if not (
+        isinstance(guard, ast.If)
+        and not guard.orelse
+        and len(guard.body) == 1
+        and isinstance(guard.test, ast.Compare)
+        and _is_ident(guard.test.left, item)
+        and len(guard.test.ops) == 1
+        and isinstance(guard.test.ops[0], ast.NotIn)
+        and len(guard.test.comparators) == 1
+        and _is_ident(guard.test.comparators[0], existing)
+    ):
+        return False
+    append = guard.body[0]
+    return (
+        isinstance(append, ast.Expr)
+        and isinstance(append.value, ast.Call)
+        and _is_attribute(append.value.func, "__all__", "append")
+        and len(append.value.args) == 1
+        and not append.value.keywords
+        and _is_ident(append.value.args[0], item)
+    )
+
+
+def _imported_module_aliases(
+    statement: ast.stmt, importer_name: str | None, importer_seat: str | None, graph
+) -> dict[str, str]:
+    """Local name to absolute module, when that module is in the graph."""
+    aliases: dict[str, str] = {}
+    if graph is None or not importer_name or not importer_seat:
+        return aliases
+    if isinstance(statement, ast.Import):
+        for alias in statement.names:
+            bound = alias.asname or alias.name.split(".")[0]
+            module = alias.name if alias.asname is None else alias.name
+            # ``import pkg.sub as name`` binds the submodule; ``import pkg.sub``
+            # binds only ``pkg``.
+            target = alias.name if alias.asname is not None else alias.name.split(".")[0]
+            if target in graph.modules:
+                aliases[bound] = target
+        return aliases
+    if not isinstance(statement, ast.ImportFrom):
+        return aliases
+    base = _absolute_import(importer_name, importer_seat, statement)
+    if base is None:
+        return aliases
+    for alias in statement.names:
+        if alias.name == "*":
+            continue
+        bound = alias.asname or alias.name
+        # ``from . import numeric`` binds the submodule when it exists.
+        submodule = f"{base}.{alias.name}"
+        if submodule in graph.modules:
+            aliases[bound] = submodule
+        elif base in graph.modules and alias.name in graph.modules:
+            aliases[bound] = alias.name
+    return aliases
+
+
+def _module_published_names(
+    graph,
+    module_name: str,
+    seen: frozenset[str],
+) -> frozenset[str] | None:
+    if module_name in seen:
+        return None
+    target = graph.modules.get(module_name)
+    if target is None:
+        return None
+    tree = parsed_tree(target.source, target.source_seat)
+    return _target_star_published_names(
+        tree.body,
+        graph=graph,
+        module_name=module_name,
+        module=target,
+        seen=seen | {module_name},
+    )
+
+
+def _algebraic_all_publication(
+    body: list[ast.stmt],
+    *,
+    graph=None,
+    module_name: str | None = None,
+    module=None,
+    seen: frozenset[str] = frozenset(),
+) -> frozenset[str] | None:
+    """Walk a closed ``__all__`` algebra, or None when a step is unreadable."""
+    published: set[str] | None = None
+    saw_all = False
+    modules: dict[str, str] = {}
+    helpers: dict[str, str] = {}
+    opaque_all_helpers: set[str] = set()
+    seat = getattr(module, "source_seat", None)
+    for statement in body:
+        if isinstance(statement, ast.FunctionDef):
+            param = _all_extend_param(statement)
+            if param is not None:
+                helpers[statement.name] = param
+            elif any(
+                isinstance(node, ast.Name) and node.id == "__all__"
+                for node in ast.walk(statement)
+            ):
+                opaque_all_helpers.add(statement.name)
+            continue
+        modules.update(_imported_module_aliases(statement, module_name, seat, graph))
+        addition = _all_algebra_step(statement, modules, helpers, opaque_all_helpers, graph, seen)
+        if addition is False:
+            return None
+        if addition is None:
+            continue
+        saw_all = True
+        if addition[0] == "set":
+            published = set(addition[1])
+        else:
+            if published is None:
+                return None
+            published.update(addition[1])
+    return frozenset(published) if saw_all and published is not None else None
+
+
+def _all_algebra_step(
+    statement: ast.stmt,
+    modules: dict[str, str],
+    helpers: dict[str, str],
+    opaque_all_helpers: set[str],
+    graph,
+    seen: frozenset[str],
+):
+    """('set', names), ('add', names), None if unrelated, False if opaque."""
+    if isinstance(statement, ast.Assign):
+        if not any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in statement.targets
+        ):
+            return None
+        if not (
+            len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == "__all__"
+        ):
+            return False
+        names = _literal_string_sequence(statement.value)
+        if names is None:
+            return False
+        return ("set", names)
+    if isinstance(statement, ast.AnnAssign):
+        if not (
+            isinstance(statement.target, ast.Name) and statement.target.id == "__all__"
+        ):
+            return None
+        if statement.value is None:
+            return False
+        names = _literal_string_sequence(statement.value)
+        if names is None:
+            return False
+        return ("set", names)
+    if isinstance(statement, ast.AugAssign):
+        if not (
+            _is_ident(statement.target, "__all__")
+            and isinstance(statement.op, ast.Add)
+        ):
+            return None
+        names = _literal_string_sequence(statement.value)
+        if names is not None:
+            return ("add", names)
+        target = _all_attr_module(statement.value, modules)
+        if target is None or graph is None:
+            return False
+        published = _module_published_names(graph, target, seen)
+        if published is None:
+            return False
+        return ("add", published)
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        call = statement.value
+        if _is_attribute(call.func, "__all__", "extend") and len(call.args) == 1 and not call.keywords:
+            names = _literal_string_sequence(call.args[0])
+            if names is not None:
+                return ("add", names)
+            target = _all_attr_module(call.args[0], modules)
+            if target is None or graph is None:
+                return False
+            published = _module_published_names(graph, target, seen)
+            if published is None:
+                return False
+            return ("add", published)
+        if isinstance(call.func, ast.Name) and call.func.id in helpers and len(call.args) == 1 and not call.keywords:
+            if not isinstance(call.args[0], ast.Name):
+                return False
+            target = modules.get(call.args[0].id)
+            if target is None or graph is None:
+                return False
+            published = _module_published_names(graph, target, seen)
+            if published is None:
+                return False
+            return ("add", published)
+        if isinstance(call.func, ast.Name) and call.func.id in opaque_all_helpers:
+            return False
+        # A call that is not an __all__ step is unrelated.
+        return None
+    # Opaque mutation of __all__ elsewhere (e.g. inside an undecided If).
+    if isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)):
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Name) and node.id == "__all__":
+                return False
+    return None
+
+
+def _all_attr_module(node: ast.AST, modules: dict[str, str]) -> str | None:
+    if isinstance(node, ast.Attribute) and node.attr == "__all__" and isinstance(node.value, ast.Name):
+        return modules.get(node.value.id)
+    return None
+
+
+
+def _is_finite_sequence_value(expr: ast.AST) -> bool:
+    if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+        return True
+    if isinstance(expr, ast.Constant) and isinstance(
+        expr.value, (str, bytes, tuple, list, set, frozenset)
+    ):
+        return True
+    return (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Name)
+        and expr.func.id in {"list", "tuple", "set"}
+        and not expr.args
+        and not expr.keywords
+    )
+
+
+def _is_finite_iterable(expr: ast.AST, finite_names: set[str]) -> bool:
+    if _is_finite_sequence_value(expr):
+        return True
+    if isinstance(expr, ast.Name) and expr.id in finite_names:
+        return True
+    if (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Name)
+        and expr.func.id == "range"
+        and not expr.keywords
+        and all(
+            isinstance(arg, ast.Constant) and isinstance(arg.value, int)
+            for arg in expr.args
+        )
+    ):
+        return True
+    return False
+
+
+def _note_finite_bindings(statement: ast.AST, finite: set[str]) -> None:
+    added: set[str] = set()
+    discarded: set[str] = set()
+    stack: list[ast.AST] = [statement]
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            if _is_finite_sequence_value(node.value):
+                added.add(node.targets[0].id)
+            else:
+                discarded.add(node.targets[0].id)
+        if isinstance(node, ast.Delete):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    discarded.add(target.id)
+        stack.extend(ast.iter_child_nodes(node))
+    finite -= discarded
+    finite |= added - discarded
+
+
+def _suite_cannot_fall_through(statements: list[ast.stmt]) -> bool:
+    """True when no path falls through the end of this suite."""
+    for statement in statements:
+        if isinstance(statement, (ast.Raise, ast.Return)):
+            return True
+        if isinstance(statement, ast.If) and _suite_cannot_fall_through(
+            statement.body
+        ) and _suite_cannot_fall_through(statement.orelse):
+            return True
+    return False
+
+
+def _stmt_reaches_successor_or_aborts(
+    statement: ast.stmt, finite: set[str], *, in_loop: bool = False
+) -> bool:
+    """True when a successful import still reaches later module bindings.
+
+    An unconditional ``raise`` or ``assert False`` has no success path.
+    A ``while True`` is not treated as reached: that would invent a bound.
+    A finite ``for`` whose body and else also have a success path is reached.
+    """
+    if isinstance(statement, (ast.Break, ast.Continue)):
+        return in_loop
+    if isinstance(statement, (ast.Raise, ast.Return)):
+        return False
+    if isinstance(statement, ast.Assert):
+        # A proven-false assert aborts with no later bind. Other asserts may
+        # pass, so they stay on a success path.
+        return not (
+            isinstance(statement.test, ast.Constant) and not statement.test.value
+        )
+    if isinstance(statement, ast.While):
+        if isinstance(statement.test, ast.Constant) and statement.test.value is False:
+            return all(
+                _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+                for item in statement.orelse
+            )
+        return False
+    if isinstance(statement, ast.For):
+        if not _is_finite_iterable(statement.iter, finite):
+            return False
+        if not all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=True)
+            for item in statement.body
+        ):
+            return False
+        return all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+            for item in statement.orelse
+        )
+    if isinstance(statement, ast.If):
+        body_ok = all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+            for item in statement.body
+        )
+        else_ok = all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+            for item in statement.orelse
+        )
+        truth = _constant_truth(statement.test)
+        if truth is True:
+            return body_ok
+        if truth is False:
+            return else_ok
+        # An aborting arm is not a success path. A successful import took
+        # an arm that still reaches later bindings.
+        return body_ok or else_ok
+    if isinstance(statement, _TRY_TYPES):
+        # A successful import takes the try body, else, and finally. Handlers
+        # that cannot fall through (they always raise) are only reached when
+        # the import aborts, so they do not have to be licensed here.
+        success = [
+            *statement.body,
+            *statement.orelse,
+            *statement.finalbody,
+        ]
+        if not all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+            for item in success
+        ):
+            return False
+        return all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+            for handler in statement.handlers
+            if not _suite_cannot_fall_through(handler.body)
+            for item in handler.body
+        )
+    if type(statement) in _EXPORT_SIMPLE_STATEMENTS:
+        return True
+    return False
+
+
+def _prefix_reaches_locus_or_aborts(body: list[ast.stmt], locus: ast.AST) -> bool:
+    """A later static bind is reached on any successful import of this module."""
+    finite: set[str] = set()
+    for statement in body:
+        if statement is locus:
+            return True
+        if not _stmt_reaches_successor_or_aborts(statement, finite):
+            return False
+        _note_finite_bindings(statement, finite)
+    return False
+
+
 def _statements_before(body: list[ast.stmt], locus: ast.stmt) -> list[ast.stmt]:
     prefix: list[ast.stmt] = []
     for statement in body:
@@ -923,7 +1608,18 @@ def _statements_before(body: list[ast.stmt], locus: ast.stmt) -> list[ast.stmt]:
     return prefix
 
 
-def _export_block_with_locus(statements, name, initial):
+def _top_level_containing(body: list[ast.stmt], locus: ast.AST) -> ast.AST:
+    """The module-body statement that must be reached to take ``locus``."""
+    for statement in body:
+        if statement is locus:
+            return statement
+        for node in ast.walk(statement):
+            if node is locus:
+                return statement
+    return locus
+
+
+def _export_block_with_locus(statements, name, initial, prefix=None):
     """Export transfer with the statement that last bound ``name``.
 
     Locus is the *innermost* statement that established the bind (e.g. the
@@ -932,16 +1628,20 @@ def _export_block_with_locus(statements, name, initial):
     """
     state = initial
     locus = None
+    seen = list(prefix or [])
     for statement in statements:
         prior = state
-        new_state, new_locus = _export_statement_with_locus(statement, name, state)
+        new_state, new_locus = _export_statement_with_locus(
+            statement, name, state, prefix=seen
+        )
         if new_state is not prior:
             state = new_state
             locus = new_locus if new_locus is not None else statement
+        seen.append(statement)
     return state, locus
 
 
-def _export_statement_with_locus(statement: ast.stmt, name: str, state):
+def _export_statement_with_locus(statement: ast.stmt, name: str, state, prefix=None):
     """Transfer one statement; return (state, innermost bind locus or None)."""
     if isinstance(statement, (ast.With, ast.AsyncWith)):
         for item in statement.items:
@@ -949,11 +1649,26 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state):
                 item.optional_vars, name
             ):
                 state = ("dynamic", statement)
-        body_state, body_locus = _export_block_with_locus(statement.body, name, state)
+        body_state, body_locus = _export_block_with_locus(
+            statement.body, name, state, prefix=prefix
+        )
         return body_state, body_locus
     if isinstance(statement, ast.If):
-        body_state, body_locus = _export_block_with_locus(statement.body, name, state)
-        else_state, else_locus = _export_block_with_locus(statement.orelse, name, state)
+        decided = _decided_if_test(statement.test, prefix or [])
+        if decided is True:
+            return _export_block_with_locus(
+                statement.body, name, state, prefix=prefix
+            )
+        if decided is False:
+            return _export_block_with_locus(
+                statement.orelse, name, state, prefix=prefix
+            )
+        body_state, body_locus = _export_block_with_locus(
+            statement.body, name, state, prefix=prefix
+        )
+        else_state, else_locus = _export_block_with_locus(
+            statement.orelse, name, state, prefix=prefix
+        )
         joined = _join_export_states((body_state, else_state), statement)
         if joined is body_state and body_state is not state:
             return joined, body_locus
@@ -969,10 +1684,10 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state):
         ):
             iterated = ("dynamic", statement)
         body_state, body_locus = _export_block_with_locus(
-            statement.body, name, iterated
+            statement.body, name, iterated, prefix=prefix
         )
         else_state, else_locus = _export_block_with_locus(
-            statement.orelse, name, body_state
+            statement.orelse, name, body_state, prefix=prefix
         )
         joined = _join_export_states((state, else_state), statement)
         if joined is not state:
@@ -1090,8 +1805,10 @@ def export_statement_coverage() -> tuple[list[str], list[str]]:
     )
 
 
-def _export_block(statements, name, initial):
-    state, _locus = _export_block_with_locus(statements, name, initial)
+def _export_block(statements, name, initial, prefix=None):
+    state, _locus = _export_block_with_locus(
+        statements, name, initial, prefix=prefix
+    )
     return state
 
 
@@ -1138,13 +1855,21 @@ def _export_statement(statement: ast.stmt, name: str, state):
         for alias in statement.names:
             if alias.name == "*":
                 # Star residual only when no explicit static bind already owns
-                # the name.  Literal ``__all__`` publication is resolve-time.
+                # the name.  Each target's ``__all__`` is applied at
+                # resolve-time; two stars stay a set until then, and become
+                # ambiguous only when they actually publish the same name.
+                if isinstance(state, tuple) and state[0] in {
+                    "definition",
+                    "import",
+                    "alias",
+                    "ambiguous",
+                }:
+                    continue
                 if isinstance(state, tuple) and state[0] == "star":
-                    state = ("ambiguous", statement)
-                elif not (
-                    isinstance(state, tuple)
-                    and state[0] in {"definition", "import", "alias", "ambiguous"}
-                ):
+                    state = ("stars", (state[1], statement))
+                elif isinstance(state, tuple) and state[0] == "stars":
+                    state = ("stars", (*state[1], statement))
+                else:
                     state = ("star", statement)
                 continue
             if (alias.asname or alias.name) == name:
