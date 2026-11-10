@@ -121,6 +121,26 @@ def _off_population_source_call(sugar):
     return OffPopulationSourceCallV1(gap[len(_OFF_POPULATION) :])
 
 
+def _unknown_callee_call(sugar, ctx):
+    """The may-raise testimony for a call whose callee nothing resolved.
+
+    The callee name has no binding in this reduction's scope (an undefined
+    name, or a dotted module member the import door did not cite), and no
+    contract, gap, language-owned floor or source frame speaks for it."""
+    if sugar.contract_resolution_gap is not None or sugar.contract_ref is not None:
+        return None
+    if sugar.site is None or sugar.formal_function_sugar is not None:
+        return None
+    temporal = getattr(ctx, "temporal", None)
+    if temporal is None or temporal.value_if_bound(sugar.target_name) is not None:
+        return None
+    if _language_owned_call_floor(sugar) is not None:
+        return None
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    return UnknownCalleeCallV1(sugar.target_name)
+
+
 @dataclass(frozen=True)
 class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
@@ -810,6 +830,8 @@ class CallSiteSugar(ConstructedTermSugar):
                     ctx,
                     getattr(callsite, "keyword_names", ()) or (),
                 )
+            if unprojected is None:
+                unprojected = _unknown_callee_call(self, ctx)
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         produced = callsite.producer_outcome(

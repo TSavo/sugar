@@ -213,6 +213,53 @@ class OffPopulationSourceCallV1:
 
 
 @dataclass(frozen=True)
+class UnknownCalleeCallV1:
+    """A call whose callee nothing here resolved: an undefined name, a formal,
+    or a module member the import door did not cite.
+
+    ``h()`` with ``h`` unbound, ``y()`` with ``y`` a formal, or
+    ``random.random()`` whose module was not enrolled: no body, contract or
+    floor testified to what runs, so the call may raise anything
+    (``NameError`` when the name is unbound, ``TypeError`` when the value is
+    not callable, or whatever the callee raises).  It completes only under
+    ``python:unknown_callee_call.completes(python:unknown_callee_call(callee,
+    site))`` with the value ``python:call_result(<call term>, <occurrence>)``,
+    and halts with an ``UndeterminedRaiseEffect`` (owner
+    ``UnknownCallee:<callee>``) under the complement -- the #7585 law.  It
+    never names what the callee does.
+    """
+
+    callee_name: str
+
+    def faces(self, callsite, site):
+        from .effect.raise_effect import UndeterminedRaiseEffect
+        from .ir import atomic, ctor, str_const
+        from .occurrence import occurrence_key
+        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+
+        key = occurrence_key(site)
+        call = ctor(
+            "python:unknown_callee_call",
+            (str_const(self.callee_name), str_const(key)),
+        )
+        completes = atomic("python:unknown_callee_call.completes", [call])
+        return ExitSet(
+            (
+                Completed(completes, _occurrence_result(callsite, key)),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(
+                        blame=str(site) if site is not None else None,
+                        occurrence=key if site is not None else None,
+                        producer_node_owner=f"UnknownCallee:{self.callee_name}",
+                    ),
+                    None,
+                ),
+            )
+        ).normalize()
+
+
+@dataclass(frozen=True)
 class BuiltinDunderCallV1:
     """A builtin that invokes an operand's dunder, on an operand whose type is
     not a decided builtin.
