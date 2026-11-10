@@ -203,6 +203,14 @@ class CallSiteValue(FloorValue):
         default=None, compare=False
     )
     bound_source_actuals: object | None = dataclass_field(default=None, compare=False)
+    # The language-owned builtin exception class this call applied, read from
+    # the temporal binding of the callee (a user rebinding replaces it). It
+    # authorizes only what every builtin exception instance shares; it is not
+    # the exception-type authority above, because ``OSError(...)`` and
+    # ``ExceptionGroup(...)`` construct a runtime-selected subclass.
+    builtin_exception_class: FloorValue | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )
@@ -624,7 +632,43 @@ class CallSiteValue(FloorValue):
             return dug.contains(item, site)
         return self.undecided_contains(item, site, owner="CallSiteValue.contains")
 
+    def _builtin_exception_instance_subscript(self, site):
+        """``ValueError("a")[0]``: a builtin exception instance is not subscriptable.
+
+        Decided only when the callee was the language-owned builtin exception
+        class and the running interpreter confirms that neither it nor any
+        builtins subclass its construction may select defines ``__getitem__``.
+        The result is the same ground TypeError as ``ExceptionValue.subscript``.
+        """
+        cls_value = self.builtin_exception_class
+        name = getattr(cls_value, "name", None)
+        if not isinstance(name, str):
+            return None
+        import builtins
+
+        runtime_class = getattr(builtins, name, None)
+        if not isinstance(runtime_class, type) or not issubclass(
+            runtime_class, BaseException
+        ):
+            return None
+        pending = [runtime_class]
+        while pending:
+            current = pending.pop()
+            if current.__module__ != "builtins":
+                continue
+            if hasattr(current, "__getitem__"):
+                return None
+            pending.extend(current.__subclasses__())
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="CallSiteValue.subscript"
+        )
+
     def subscript(self, index, site):
+        decided = self._builtin_exception_instance_subscript(site)
+        if decided is not None:
+            return decided
         return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
 
     def setitem(self, index, value, site):
@@ -1243,6 +1287,10 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
+        if self.builtin_exception_class is not None:
+            decided = self._builtin_exception_instance_subscript(operation.blame)
+            if decided is not None:
+                return decided
         floor = self._dig_floor_or_none(
             ctx,
             owner=f"{operation.owner} callsite subscript receiver",
