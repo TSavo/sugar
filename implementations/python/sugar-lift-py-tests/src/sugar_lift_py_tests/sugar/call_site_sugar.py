@@ -58,6 +58,17 @@ _NO_LEXICAL_SOURCE_CALL_ROW = DefinitionOccurrenceAbsentV1(
 )
 
 
+
+def _language_owned_call_floor(sugar):
+    """Return the Cut 2 floor hung on this named call, if any."""
+    unit = getattr(sugar.site, "unit", None)
+    context = getattr(unit, "construction_context", None) if unit is not None else None
+    floors = getattr(context, "language_owned_call_floors", None) if context is not None else None
+    if not floors:
+        return None
+    return floors.get(sugar.target_name)
+
+
 @dataclass(frozen=True)
 class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
@@ -357,6 +368,8 @@ class CallSiteSugar(ConstructedTermSugar):
                 "call-target-off-population"
             ):
                 return self._collect(self.args, (), ctx)
+            if _language_owned_call_floor(self) is not None:
+                return self._collect(self.args, (), ctx)
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
             raise OpaqueSourceCallResolutionGap(
@@ -416,6 +429,17 @@ class CallSiteSugar(ConstructedTermSugar):
                 and not kw_values
             ):
                 return receiver.callable_application_with(
+                    CallableApplication(
+                        positional + tuple(value for _, value in kw_values),
+                        tuple(name for name, _ in kw_values),
+                        self.site,
+                        call_occurrence=self.call_occurrence,
+                    ),
+                    ctx,
+                )
+            floored = _language_owned_call_floor(self)
+            if floored is not None:
+                return floored.callable_application_with(
                     CallableApplication(
                         positional + tuple(value for _, value in kw_values),
                         tuple(name for name, _ in kw_values),

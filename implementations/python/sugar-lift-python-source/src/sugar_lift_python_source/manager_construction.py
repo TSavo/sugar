@@ -2831,6 +2831,23 @@ def _resolve_source_visible_frame_uncached(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
+            from .language_owned_c_export import floor_language_owned_import_use
+
+            value_receipt = matching_values[0] if matching_values else receipt
+            if (
+                floor_language_owned_import_use(
+                    imported,
+                    value_receipt,
+                    graph=dependency_graph,
+                    session=session,
+                )
+                is not None
+            ):
+                # A language-owned C-floor callable or ContextVar method has
+                # no source frame. Leave the call unparked so MethodCallSugar
+                # or the seated value-use applies the floor instead of citing
+                # call-target-source-absent.
+                continue
             _install_opaque_call_obligation(
                 context,
                 call,
@@ -2929,6 +2946,11 @@ def _resolve_source_visible_frame_uncached(
                     name, resolved=resolved, graph=graph, session=session
                 )
                 if not isinstance(outcome, _ExternalCallTargetGap):
+                    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+                    if isinstance(outcome, FloorValue):
+                        context.language_owned_call_floors[name] = outcome
+                        continue
                     external_frames[name] = outcome
                     continue
                 declined = outcome.kind
@@ -3542,6 +3564,11 @@ def _resolve_external_call_frame(
         session=session,
     )
     if not isinstance(callee, _Resolved):
+        from .language_owned_c_export import floor_artifact_module_absent_export
+
+        floored = floor_artifact_module_absent_export(callee)
+        if floored is not None:
+            return floored
         return _ExternalCallTargetGap("call-target-source-absent")
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -4203,6 +4230,19 @@ def _seat_import_value_use_receipts(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
+            from .language_owned_c_export import floor_language_owned_import_use
+
+            floored = floor_language_owned_import_use(
+                imported, receipt, graph=dependency_graph, session=session
+            )
+            if floored is not None:
+                # The unit seater only admits a receipt or a resolved
+                # source object. Keep the receipt seated and hang the
+                # language-owned floor on the construction context so
+                # ImportMemberSugar can project it.
+                seat_receipt()
+                context.source_import_value_resolutions[coordinate] = floored
+                continue
             if imported.kind in {
                 "dynamic-export",
                 "static-export-absent",

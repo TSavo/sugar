@@ -120,7 +120,7 @@ _POPULATION_ENTRY = re.compile(r"^[A-Za-z0-9_.\-]+(:[A-Za-z_][A-Za-z0-9_]*)?$")
 # Declared here, never inferred from imports. Module-scoped so one stdlib
 # module can be admitted without opening the rest. ``SUGAR_ENROLLED_POPULATIONS``
 # may still add further entries.
-STANDING_EXTRA_POPULATIONS: frozenset[str] = frozenset({"cpython-stdlib:contextlib"})
+STANDING_EXTRA_POPULATIONS: frozenset[str] = frozenset({"cpython-stdlib:contextlib", "numpy"})
 
 
 def declared_extra_populations() -> frozenset[str]:
@@ -128,7 +128,8 @@ def declared_extra_populations() -> frozenset[str]:
 
     Declared, never inferred. The standing set always includes
     ``cpython-stdlib:contextlib`` so ``nullcontext`` can be derived from its
-    source. ``SUGAR_ENROLLED_POPULATIONS`` is a comma list that may add more
+    source, and ``numpy`` so ``errstate`` can be derived from its source plus
+    the language-owned ContextVar floor. ``SUGAR_ENROLLED_POPULATIONS`` is a comma list that may add more
     entries. An entry is a distribution name as its dependency graph spells
     it (``pytest``, ``numpy``, ``cpython-stdlib``) or a module-scoped form
     ``<distribution>:<top-level module>`` (``cpython-stdlib:contextlib``)
