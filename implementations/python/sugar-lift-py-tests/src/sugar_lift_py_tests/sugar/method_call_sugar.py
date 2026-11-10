@@ -213,16 +213,61 @@ class MethodCallSugar(ConstructedTermSugar):
             + kwarg_terms,
             symbol_kind="method-coordinate",
         )
-        return Complete(
-            CallSiteValue(
-                target_name=self.name,
-                arg_values=(receiver, *positional, *(v for _, v in kw_values)),
-                parameters=(),
-                term=term,
-                body=None,
-                site=self.site,
-                runtime_dispatch_receiver=receiver,
-                exception_type_coordinate=self.exception_type_coordinate,
-                exception_type_mro=self.exception_type_mro,
-            )
+        callsite = CallSiteValue(
+            target_name=self.name,
+            arg_values=(receiver, *positional, *(v for _, v in kw_values)),
+            parameters=(),
+            term=term,
+            body=None,
+            site=self.site,
+            runtime_dispatch_receiver=receiver,
+            exception_type_coordinate=self.exception_type_coordinate,
+            exception_type_mro=self.exception_type_mro,
         )
+        if (
+            self.site is None
+            or not _decided_here(receiver)
+            or _mentions_a_formal(term)
+        ):
+            # A symbolic receiver (a formal, a place a call may have changed, a
+            # field coordinate) or an operand bound to a formal stands for a
+            # value the caller's actuals or the frame's store application
+            # supply later; that discharge selects the method and its exits,
+            # so this frame mints no face for it.  A list/dict/set that reached
+            # here was not routed through ``BuiltinContainerCallSugar``, so its
+            # contents are not testified as the contents at this call.
+            return Complete(callsite)
+        # No floor of the receiver answered the method: its body was not
+        # looked at, so the call is two-faced (#7585), never total.
+        from sugar_lift_py_tests.source_call_resolution import UnprojectedMethodCallV1
+
+        return UnprojectedMethodCallV1(self.name).faces(callsite, self.site)
+
+
+def _mentions_a_formal(term) -> bool:
+    from sugar_lift_py_tests.ir import _free_vars_in_term
+
+    return bool(_free_vars_in_term(term))
+
+
+def _decided_here(receiver) -> bool:
+    """A receiver this frame holds as itself: a call's result, or a builtin
+    scalar the lift constructed.  Nothing later replaces it, so the method it
+    selects runs on exactly this value."""
+    from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    return type(receiver) in (
+        CallSiteValue,
+        StringValue,
+        BytesValue,
+        TermValue,
+        NoneValue,
+        TrueBoolLiteralSugar,
+        FalseBoolLiteralSugar,
+    )
