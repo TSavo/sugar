@@ -121,6 +121,90 @@ def _off_population_source_call(sugar):
     return OffPopulationSourceCallV1(gap[len(_OFF_POPULATION) :])
 
 
+def _lexically_unknown_callee(sugar) -> bool:
+    """The callee's head name is bound nowhere in its module, or only by an
+    import (a module member the import door did not cite).  A name a ``def``,
+    ``class`` or assignment in the module binds is source the lift holds, not
+    an unknown callee."""
+    unit = getattr(sugar.site, "unit", None)
+    table = getattr(unit, "module_symtable", None)
+    if table is None:
+        return False
+    head = sugar.target_name.split(".", 1)[0]
+    imported = False
+
+    def visit(scope) -> bool:
+        nonlocal imported
+        try:
+            symbol = scope.lookup(head)
+        except KeyError:
+            symbol = None
+        if symbol is not None:
+            if symbol.is_imported():
+                imported = True
+            elif symbol.is_assigned() or symbol.is_namespace() or symbol.is_parameter():
+                return True
+        return any(visit(child) for child in scope.get_children())
+
+    if visit(table):
+        return False
+    return imported or not hasattr(builtins, head)
+
+
+def _resolved_manager_construction(sugar) -> bool:
+    """This call is a ``with`` item's manager, which the manager resolution
+    resolved: its construction faces are that resolution's testimony, not an
+    unknown callee's."""
+    unit = getattr(sugar.site, "unit", None)
+    context = getattr(unit, "construction_context", None)
+    refs = getattr(context, "source_derived_contract_refs", None)
+    if not refs:
+        return False
+    try:
+        span = sugar.site.line_col_span
+        coordinate = SourceFragmentCoordinateV1(
+            sugar.site.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    except (AttributeError, TypeError):
+        return False
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+    )
+
+    resolved = refs.get(coordinate)
+    return resolved is not None and not isinstance(
+        resolved, ContextManagerResolutionGapV1
+    )
+
+
+def _unknown_callee_call(sugar, ctx):
+    """The may-raise testimony for a call whose callee nothing resolved.
+
+    The callee name has no binding in this reduction's scope (an undefined
+    name, or a dotted module member the import door did not cite), and no
+    contract, gap, language-owned floor or source frame speaks for it."""
+    if sugar.contract_resolution_gap is not None or sugar.contract_ref is not None:
+        return None
+    if sugar.site is None or sugar.formal_function_sugar is not None:
+        return None
+    temporal = getattr(ctx, "temporal", None)
+    if temporal is None or temporal.value_if_bound(sugar.target_name) is not None:
+        return None
+    if _language_owned_call_floor(sugar) is not None:
+        return None
+    if not _lexically_unknown_callee(sugar):
+        return None
+    if _resolved_manager_construction(sugar):
+        return None
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    return UnknownCalleeCallV1(sugar.target_name)
+
+
 @dataclass(frozen=True)
 class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
@@ -810,6 +894,8 @@ class CallSiteSugar(ConstructedTermSugar):
                     ctx,
                     getattr(callsite, "keyword_names", ()) or (),
                 )
+            if unprojected is None:
+                unprojected = _unknown_callee_call(self, ctx)
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         produced = callsite.producer_outcome(

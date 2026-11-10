@@ -9620,9 +9620,7 @@ def test_boolop_deferred_rhs_is_not_forced_through_outcome_to_exitset(
     assert isinstance(stopped.exits[0], Completed)
     assert isinstance(stopped.exits[0].value, PredicateValue)
     assert outcome.prefix_composition is not None
-    resolved_exits, _deferred, _continuation_count, _guard_count = (
-        outcome.prefix_composition
-    )
+    resolved_exits = outcome.prefix_composition[0]
     assert any(isinstance(face, Halted) for face in resolved_exits)
     with pytest.raises(ConstructionPanic, match="undischarged native operation demand"):
         outcome_to_exitset(outcome)

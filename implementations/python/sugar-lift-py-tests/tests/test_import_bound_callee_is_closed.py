@@ -43,7 +43,32 @@ def _post(source: str):
             ).functions()
         )
     )
-    return function.sugar().desugar(None).value.post()
+    return _completed(function.sugar().desugar(None)).post()
+
+
+def _completed(outcome):
+    """The one completed face's value.  A call of a module member the import
+    door did not cite may raise (``UnknownCallee:<target>``)."""
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, outcome_to_exitset
+
+    if isinstance(outcome, Complete):
+        return outcome.value
+    exits = outcome_to_exitset(outcome).exits
+    completed = [face for face in exits if isinstance(face, Completed)]
+    assert len(completed) == 1, exits
+    assert all(
+        face.effect.producer_node_owner.startswith("UnknownCallee:")
+        for face in exits
+        if isinstance(face, Halted)
+    )
+    return completed[0].value
+
+
+def _application(post):
+    """The application one evaluation's ``python:call_result`` names."""
+    result = post.args[1]
+    assert result.name == "python:call_result"
+    return result.args[0]
 
 
 def _scoped(post, formals: tuple[str, ...]) -> ScopedFormula:
@@ -54,7 +79,7 @@ def _scoped(post, formals: tuple[str, ...]) -> ScopedFormula:
 
 def test_module_alias_call_head_projects_a_closed_coordinate() -> None:
     post = _post("import numpy as np\n\n\ndef turn(m):\n    return np.rot90(m)\n")
-    assert post.args[1].name == "call:numpy.rot90"
+    assert _application(post).name == "call:numpy.rot90"
     scoped = _scoped(post, ("m",))
     assert scoped.formula.free_vars == {"m", "out"}
 
@@ -63,7 +88,7 @@ def test_dotted_import_head_closes_the_whole_chain() -> None:
     # `os.path.join` -- the same gap shape the pandas census catalogues with
     # `os` (docs/audits/pandas-gap-census.md, pandas-gap-21).
     post = _post("import os\n\n\ndef j(a, b):\n    return os.path.join(a, b)\n")
-    assert post.args[1].name == "call:os.path.join"
+    assert _application(post).name == "call:os.path.join"
     assert _scoped(post, ("a", "b")).formula.free_vars == {"a", "b", "out"}
 
 
@@ -72,7 +97,7 @@ def test_from_import_module_binding_closes_too() -> None:
         "from numpy import testing as t\n\n\ndef e(a, b):\n"
         "    return t.assert_equal(a, b)\n"
     )
-    assert post.args[1].name == "call:numpy.testing.assert_equal"
+    assert _application(post).name == "call:numpy.testing.assert_equal"
 
 
 def test_showcase_shape_binds_through_the_local_assignment() -> None:
@@ -98,9 +123,8 @@ def test_showcase_shape_binds_through_the_local_assignment() -> None:
     )
     exits = outcome_to_exitset(function.sugar().desugar(None))
     halts = [face for face in exits.exits if isinstance(face, Halted)]
-    assert halts and all(
-        face.effect.producer_node_owner == "CallSiteValue.subscript" for face in halts
-    )
+    owners = {face.effect.producer_node_owner for face in halts}
+    assert owners == {"CallSiteValue.subscript", "UnknownCallee:numpy.rot90"}
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
     assert _scoped(completed[0].value.post(), ()).formula.free_vars == {"out"}

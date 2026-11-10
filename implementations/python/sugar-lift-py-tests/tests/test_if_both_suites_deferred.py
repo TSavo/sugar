@@ -46,8 +46,13 @@ def _helper_outcome(source: str):
 
 
 def _guarded_returns(exits):
-    (face,) = exits.exits
-    assert isinstance(face, Completed)
+    # ``textwrap`` is not enrolled: its call's may-raise face returns nothing.
+    (face,) = [face for face in exits.exits if isinstance(face, Completed)]
+    assert [
+        other.effect.producer_node_owner
+        for other in exits.exits
+        if other is not face
+    ] == ["UnknownCallee:textwrap.dedent"]
     return [
         entry
         for entry in face.value.record.statements

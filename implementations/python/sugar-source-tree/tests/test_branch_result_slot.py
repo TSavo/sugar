@@ -65,13 +65,31 @@ def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(
     outcome = sugar.desugar()
     assert calls == 1
 
+    # ``predicate`` is unbound: its call may raise (its own halt), and every
+    # other face stands where it completed.
     exits = outcome.exits
-    halted = next(exit_ for exit_ in exits if type(exit_).__name__ == "Halted")
+    halts = [exit_ for exit_ in exits if type(exit_).__name__ == "Halted"]
+    (call_halt,) = [
+        exit_
+        for exit_ in halts
+        if getattr(exit_.effect, "producer_node_owner", None)
+        == "UnknownCallee:predicate"
+    ]
+    (halted,) = [exit_ for exit_ in halts if exit_ is not call_halt]
     completed = next(exit_ for exit_ in exits if type(exit_).__name__ == "Completed")
     from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 
-    assert halted.guard == branch_result_guard(if_sugar.branch_slot, if_sugar.site)
-    assert completed.guard.kind == "not"
+    assert call_halt.guard.kind == "not"
+    (completion,) = call_halt.guard.operands
+    assert completion.name == "python:unknown_callee_call.completes"
+    assert halted.guard.kind == "and"
+    assert halted.guard.operands == (
+        completion,
+        branch_result_guard(if_sugar.branch_slot, if_sugar.site),
+    )
+    assert completed.guard.kind == "and"
+    assert completed.guard.operands[0] == completion
+    assert completed.guard.operands[1].kind == "not"
 
     predicate_cids = {
         node.fragment.seal().cid

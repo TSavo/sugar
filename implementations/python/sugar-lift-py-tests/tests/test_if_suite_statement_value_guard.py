@@ -86,8 +86,19 @@ def _source(body: str, formals: str = "") -> str:
     "body", ("r[0] = 5", "r.append(5)", "len(r)", "r[0] = -r[0]")
 )
 def test_a_statement_value_in_an_undecided_suite_lifts(body) -> None:
+    """It lifts; its only halt is ``textwrap.dedent``'s own may-raise face.
+
+    ``textwrap`` is not enrolled here, so the guard's call is an unknown
+    callee: it completes under an opaque atom or raises under its complement.
+    """
     outcome = _helper_outcome(_source(body))
-    assert type(outcome).__name__ == "Complete"
+    faces = outcome.exits
+    assert any(isinstance(face, Completed) for face in faces)
+    assert [
+        face.effect.producer_node_owner
+        for face in faces
+        if not isinstance(face, Completed)
+    ] == ["UnknownCallee:textwrap.dedent"]
 
 
 def _discharged_returns(source: str, actual: int):
@@ -97,7 +108,10 @@ def _discharged_returns(source: str, actual: int):
     exits = pending.discharge({formal: TermValue(actual)})
     returns = []
     for face in exits.exits:
-        assert isinstance(face, Completed)
+        if not isinstance(face, Completed):
+            # The unenrolled guard call's own may-raise face returns nothing.
+            assert face.effect.producer_node_owner == "UnknownCallee:textwrap.dedent"
+            continue
         for entry in face.value.record.statements:
             if isinstance(entry, ReturnValue):
                 returns.append((face.guard, entry.value))
@@ -152,6 +166,18 @@ def test_the_stopping_leg_of_a_joined_name_reaches_the_return() -> None:
     assert sorted(by_value) == [-3, 0]
     # The stopping leg stands under the complement of the deferred leg's
     # guard: neither value is claimed on the other's path.
-    then_guard, else_guard = by_value[-3], by_value[0]
+    then_guard, else_guard = (
+        _within_dedent_completion(by_value[-3]),
+        _within_dedent_completion(by_value[0]),
+    )
     assert getattr(else_guard, "kind", None) == "not"
     assert else_guard.operands == (then_guard,)
+
+
+def _within_dedent_completion(guard):
+    """Both legs stand where ``textwrap.dedent`` completed: strip that atom."""
+    assert guard.kind == "and", guard
+    completion, inner = guard.operands
+    assert completion.name == "python:unknown_callee_call.completes"
+    assert completion.args[0].args[0].value == "textwrap.dedent"
+    return inner

@@ -193,13 +193,27 @@ class ComputedCallSugar(ConstructedTermSugar):
                 ),
                 ctx,
             )
-        return Complete(
-            CallSiteValue(
-                target_name="py.call",
-                arg_values=(callee, *positional, *(value for _, value in kw_values)),
-                parameters=(),
-                term=term,
-                body=None,  # the dig is CUED, not inlined here
-                site=self.site,
-            )
+        callsite = CallSiteValue(
+            target_name="py.call",
+            arg_values=(callee, *positional, *(value for _, value in kw_values)),
+            parameters=(),
+            term=term,
+            body=None,  # the dig is CUED, not inlined here
+            site=self.site,
         )
+        from sugar_lift_py_tests.floor import SymbolicValue
+
+        if self.site is not None and (
+            (type(callee) is SymbolicValue and callee.formal_coordinate is not None)
+            or (type(callee) is CallSiteValue and callee.body is None)
+        ):
+            # The callee is a formal or an opaque call's result: nothing here
+            # resolved what it runs, so the call is two-faced (#7585), never
+            # total.
+            from sugar_lift_py_tests.ir import _Var
+            from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+            callee_term = callee.to_term(owner=owner)
+            name = callee_term.name if type(callee_term) is _Var else "py.call"
+            return UnknownCalleeCallV1(name).faces(callsite, self.site)
+        return Complete(callsite)
