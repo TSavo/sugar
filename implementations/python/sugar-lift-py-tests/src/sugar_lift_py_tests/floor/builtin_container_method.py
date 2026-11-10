@@ -123,32 +123,21 @@ def _ground_int(value):
 
 
 def _equal(left, right):
-    """Closed ``==`` of two members: True, False, or None (undecided)."""
-    from .set_value import _closed_member_equal
-    from .term_value import TermValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+    """Closed ``x is e or x == e`` of two members: True, False, or None
+    (undecided). One law with membership (``floor/membership.py``)."""
+    from .membership import member_equal
 
-    # ``True == 1`` and ``False == 0.0``: bool is an int subclass (and hashes
-    # as one), so a bool and a number are compared by value.
-    bools = {TrueBoolLiteralSugar: 1, FalseBoolLiteralSugar: 0}
-    if type(left) in bools and type(right) is TermValue:
-        return bools[type(left)] == right.value
-    if type(right) in bools and type(left) is TermValue:
-        return bools[type(right)] == left.value
-    decision = _closed_member_equal(left, right)
+    decision = member_equal(left, right)
     if decision is NotImplemented:
         return None
     return decision
 
 
 def _unhashable(value) -> bool:
-    """A decided unhashable key/member: ``list``, ``dict``, ``set`` displays."""
-    from .dict_value import DictValue
-    from .list_value import ListValue
-    from .set_value import SetValue
+    """A decided unhashable key/member: a list/dict/set, or a tuple holding one."""
+    from .membership import decided_unhashable
 
-    return type(value) in (ListValue, DictValue, SetValue)
+    return decided_unhashable(value)
 
 
 def _hash_decided(value) -> bool:
@@ -170,13 +159,12 @@ def _hash_decided(value) -> bool:
 
 def _index_of(elements, needle):
     """Position of the first member equal to ``needle``: int, -1 (none), or None."""
-    for position, element in enumerate(elements):
-        decision = _equal(needle, element)
-        if decision is None:
-            return UNDECIDED
-        if decision:
-            return position
-    return -1
+    from .membership import position
+
+    found = position(needle, elements)
+    if found is NotImplemented:
+        return UNDECIDED
+    return found
 
 
 def finite_members(value):
