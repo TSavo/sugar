@@ -55,24 +55,34 @@ Anything that does not shrink the worklist or run the final pass is off plan. Sa
 | 2026-11-09 | `67033f579` | Plan v2 written. No board has completed since 2026-09-24. The process-floor run (native crashes, bare exceptions, timeouts) last succeeded on 2026-07-26 (run 30203371734). |
 | 2026-11-09 | `5ed7a85fc` | A one-file run costs one file: the provisional demand door resolves one source at a time. `core/arrays/categorical.py` alone seals in 3.8 s; before, every run first derived the whole-corpus table (6+ minutes). |
 | 2026-11-09 | on `5ed7a85fc` | `pandas/core/groupby/generic.py` constructs. Alone it ends completed, 65 of 65 functions, 0 gaps, 0 construction panics, in 17 to 27 s. Cause of the ceiling: `FunctionDef._owns_yield` walked the constructed DAG as a tree (5.1 million visits for 197 statements). One-file measurement, not a board. |
+| 2026-11-09 | `c4cef9904` | **Done.** One corpus pass on this commit of `main`. 1421 files enrolled, 1421 terminal: 1203 constructed, 218 refused by name. 0 over the 300 s ceiling, 0 native crashes, 0 bare exceptions, 0 instrument failures, 0 files missing. 28264 functions enumerated, 0 unaccounted. Board: `docs/ledgers/pandas-3.0.3-control-effect-c4cef9904.json`. |
+
+How that pass ran: 96 seats (`--slice i/96`), 28 at a time, 244 s for the seats and 14 s for the join, on one 32-thread box. Six seats were cut by the runner's own 90 s cap, which is not the product's 300 s per-file ceiling, leaving 8 files without rows; those seats were re-run in place (checkpoint resume) in 11 s and the 8 files ended in terminals. The board records this under `ledgerReduction.passRun`.
+
+The board itself reports `red`: its stable-zero rule counts the 218 named refusals as defects. That is plan v1's rule. Under the done line above a named refusal is a finished outcome.
 
 ### Worklist
 
-From the 2026-09-24 board. Refresh it on the next corpus pass.
+Empty. From the 2026-11-09 board, no file fails condition 2.
 
-1. ~~`pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.~~ Closed 2026-11-09; the corpus pass confirms it.
-2. Native crashes and bare exceptions: not measured since 2026-07-26.
+1. ~~`pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.~~ Closed 2026-11-09. On the board it ends completed.
+2. ~~Native crashes and bare exceptions: not measured since 2026-07-26.~~ Measured by the 2026-11-09 pass: every one of 96 seats exited 0, every file has a row, and every row that is not a completion is a panic of a named refusal class.
 
-### Residue on that board
+### Residue on the final board
 
-Named refusals. These are not worklist.
+Named refusals: the published residue. Constructing them is later work with its own plan.
 
-| Files | Refusing owner |
-|---|---|
-| 218 | `With._construct_sugar` ("no contract ref: runtime-selected") |
-| 3 | `SymbolicValue.attribute` |
-| 1 | `roll_call.discharge` |
-| 1 | `BuiltinSemanticCallable.python.super` |
+| Files | Refusing owner | What is missing |
+|---|---|---|
+| 156 | `With._construct_sugar` | No contract ref for the context manager: runtime-selected 76, dynamic-export 35, source-body-gap 25, no-derived-contract 12, call-closure-over-bound 4, artifact-module-absent 3, partition-member-unauthenticated 1 |
+| 21 | `construct_manager_behavior returned object` | Callsite body for an unresolved source call |
+| 20 | `CollectingReporter.present_construction` | A constructed-value category for `builtins.object` |
+| 17 | `truth` | `ImportMemberValue` standing as a condition |
+| 2 | `SymbolicValue.attribute` | Receiver type or member semantics for an attribute read |
+| 1 | `roll_call.discharge` | Bounded construction depth (a `RecursionError` refused by name) |
+| 1 | `BuiltinSuperValue.call_method_value` | The next class in the MRO for `super()` |
+
+The committed board is the sealed board with its bulk witness sections replaced in place by their size and sha256 (the sealed board is 154 MB; the ledger is 0.5 MB). Every count, every identity and all 218 refusals are kept. `ledgerReduction.omitted` lists what was left out.
 
 ## What changed from plan v1
 
