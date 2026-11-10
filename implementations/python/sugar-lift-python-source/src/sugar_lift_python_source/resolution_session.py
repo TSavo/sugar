@@ -116,14 +116,22 @@ ENROLLED_POPULATIONS_ENV = "SUGAR_ENROLLED_POPULATIONS"
 
 _POPULATION_ENTRY = re.compile(r"^[A-Za-z0-9_.\-]+(:[A-Za-z_][A-Za-z0-9_]*)?$")
 
+# Standing extras this lifter always enrolls with the corpus distribution.
+# Declared here, never inferred from imports. Module-scoped so one stdlib
+# module can be admitted without opening the rest. ``SUGAR_ENROLLED_POPULATIONS``
+# may still add further entries.
+STANDING_EXTRA_POPULATIONS: frozenset[str] = frozenset({"cpython-stdlib:contextlib"})
+
 
 def declared_extra_populations() -> frozenset[str]:
     """The extra authenticated source populations this measurement enrolls.
 
-    Declared, never inferred: ``SUGAR_ENROLLED_POPULATIONS`` is a comma list
-    of entries. An entry is a distribution name as its dependency graph
-    spells it (``pytest``, ``numpy``, ``cpython-stdlib``) or a module-scoped
-    form ``<distribution>:<top-level module>`` (``cpython-stdlib:contextlib``)
+    Declared, never inferred. The standing set always includes
+    ``cpython-stdlib:contextlib`` so ``nullcontext`` can be derived from its
+    source. ``SUGAR_ENROLLED_POPULATIONS`` is a comma list that may add more
+    entries. An entry is a distribution name as its dependency graph spells
+    it (``pytest``, ``numpy``, ``cpython-stdlib``) or a module-scoped form
+    ``<distribution>:<top-level module>`` (``cpython-stdlib:contextlib``)
     that enrolls one module of a distribution so a population can be widened
     one module at a time and measured (plan Cut 1). Malformed entries refuse.
     """
@@ -135,7 +143,7 @@ def declared_extra_populations() -> frozenset[str]:
                 f"{ENROLLED_POPULATIONS_ENV} entry {entry!r} is not a distribution "
                 "name or '<distribution>:<module>'"
             )
-    return entries
+    return STANDING_EXTRA_POPULATIONS | entries
 
 
 def enrolled_population_roster(distribution: str) -> frozenset[str]:
