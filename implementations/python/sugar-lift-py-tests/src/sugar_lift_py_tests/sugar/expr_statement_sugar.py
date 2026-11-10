@@ -141,5 +141,10 @@ class ExprStatementSugar(Sugar):
                     BlockValue((recorded, *extras), can_fall_through=True)
                 )
 
+            # The Call producer already reduced the body once (its halts left
+            # at the Call); consume that completion, never replay it.
+            retained = value.retained_source_completion_outcome()
+            if retained is not None:
+                return retained.and_then(pack)
             return value.reduce_source_outcome(ctx).and_then(pack)
         return Complete(BlockValue((recorded,), can_fall_through=True))
