@@ -24,6 +24,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.ir import eq, make_var
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir
 from sugar_lift_py_tests.proofir.scope import ScopedFormula
 from sugar_lift_py_tests.proofir.sorts import UnknownSort
@@ -130,24 +131,55 @@ def test_showcase_shape_binds_through_the_local_assignment() -> None:
     assert _scoped(completed[0].value.post(), ()).formula.free_vars == {"out"}
 
 
+def _method_call_carrier(source: str):
+    """A method call whose receiver or operand is a formal waits for the
+    caller's actual: the ``method_call`` carrier, never a completion."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(source)
+    function = next(
+        iter(
+            SourceFile(
+                path_source(path),
+                construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            ).functions()
+        )
+    )
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "method_call"
+    return outcome
+
+
 def test_a_head_that_is_not_import_bound_still_refuses_scope() -> None:
     # THE DISCRIMINATION. `zz` is bound by nothing: it must still mint a Var
-    # and ScopedFormula must still refuse the undeclared free var.
-    post = _post("def turn(m):\n    return zz.rot90(m)\n")
+    # (never an import coordinate), and ScopedFormula must still refuse the
+    # undeclared free var.  The formal operand ``m`` defers the call.
+    carrier = _method_call_carrier("def turn(m):\n    return zz.rot90(m)\n")
+    receiver = carrier.operands[0].to_term(owner="test")
+    assert carrier.demand.operand_coordinate_cids[0] is None
+    assert carrier.operands[1].value == "rot90"
     with pytest.raises(ConstructionPanic, match="illegal free var.*zz"):
-        _scoped(post, ("m",))
+        _scoped(eq(make_var("out"), receiver), ("m",))
 
 
 def test_a_shadowed_import_alias_is_not_import_bound() -> None:
     # The alias is rebound before the use, so the reaching definition is no
-    # longer the import: the head constructs as an ordinary receiver.
-    post = _post(
+    # longer the import: the head is the formal ``m``, an ordinary receiver.
+    carrier = _method_call_carrier(
         "import numpy as np\n\n\ndef turn(m):\n    np = m\n    return np.rot90(m)\n"
     )
-    assert post.args[1].name == "call:rot90"
+    assert carrier.demand.operand_coordinate_cids[0] is not None
+    assert carrier.operands[1].value == "rot90"
 
 
 def test_a_parameter_method_call_is_untouched() -> None:
-    post = _post("def turn(m):\n    return m.copy()\n")
-    assert post.args[1].name == "call:copy"
-    assert _scoped(post, ("m",)).formula.free_vars == {"m", "out"}
+    # Not import-bound: the formal receiver defers to the caller's actual.
+    carrier = _method_call_carrier("def turn(m):\n    return m.copy()\n")
+    assert carrier.demand.operand_coordinate_cids[0] is not None
+    assert carrier.operands[1].value == "copy"

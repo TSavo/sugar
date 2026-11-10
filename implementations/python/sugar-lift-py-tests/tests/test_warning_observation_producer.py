@@ -187,9 +187,27 @@ def test_a_shadowed_head_is_not_a_warning_occurrence(tmp_path):
     source = """def f(warnings):
     warnings.warn("m", UserWarning, stacklevel=2)
 """
-    entries = _entries(tmp_path, source)
-    assert not any(isinstance(entry, WarningObservationValue) for entry in entries)
-    assert any(isinstance(entry, CallSiteValue) for entry in entries)
+    # The formal receiver's method waits for the caller's actual: the
+    # ``method_call`` carrier, never a warning observation.
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    path = tmp_path / "warn_case.py"
+    path.write_text(source, encoding="utf-8")
+    function = next(
+        SourceFile(
+            path_source(str(path)),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "method_call"
+    assert outcome.operands[1].value == "warn"
+    assert not any(
+        isinstance(operand, WarningObservationValue) for operand in outcome.operands
+    )
 
 
 def test_a_computed_category_carries_no_identity(tmp_path):

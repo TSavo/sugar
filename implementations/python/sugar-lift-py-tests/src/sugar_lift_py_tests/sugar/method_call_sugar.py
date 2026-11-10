@@ -162,86 +162,194 @@ class MethodCallSugar(ConstructedTermSugar):
                     ctx,
                 )
             )
-        call_method_value = getattr(receiver, "call_method_value", None)
-        supports_closed_method = getattr(receiver, "supports_closed_method", None)
-        if callable(call_method_value) and (
-            not callable(supports_closed_method) or supports_closed_method(self.name)
-        ):
-            return call_method_value(
-                self.name,
-                positional,
-                owner="MethodCallSugar",
-                blame=self.site,
-                ctx=ctx,
-                keywords=kw_values,
-                required_frame=self.source_call_frame,
-            )
-        call_named_method = getattr(receiver, "call_named_method", None)
-        if callable(call_named_method):
-            native = call_named_method(
-                self.name,
-                positional,
-                owner="MethodCallSugar",
-                blame=self.site,
-                ctx=ctx,
-                keywords=kw_values,
-            )
-            if native is not None:
-                return native
-        if self.source_call_frame is not None:
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="MethodCallSugar._collect_kwargs",
-                observed=type(receiver).__name__,
-                requested="authenticated constructed receiver matching the method frame",
-                fix="preserve receiver identity or keep authenticated dispatch loud",
-            )
-        from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        owner = str(self.site)
-        kwarg_terms = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-            for name, value in kw_values
-        ]
-        term = ctor(
-            f"call:{self.name}",
-            [receiver.to_term(owner=owner)]
-            + [value.to_term(owner=owner) for value in positional]
-            + kwarg_terms,
-            symbol_kind="method-coordinate",
-        )
-        callsite = CallSiteValue(
-            target_name=self.name,
-            arg_values=(receiver, *positional, *(v for _, v in kw_values)),
-            parameters=(),
-            term=term,
-            body=None,
-            site=self.site,
-            runtime_dispatch_receiver=receiver,
+        return dispatch_method_call(
+            self.name,
+            receiver,
+            positional,
+            kw_values,
+            self.site,
+            ctx,
+            source_call_frame=self.source_call_frame,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
         )
-        if (
-            self.site is None
-            or not _decided_here(receiver)
-            or _mentions_a_formal(term)
-        ):
-            # A symbolic receiver (a formal, a place a call may have changed, a
-            # field coordinate) or an operand bound to a formal stands for a
-            # value the caller's actuals or the frame's store application
-            # supply later; that discharge selects the method and its exits,
-            # so this frame mints no face for it.  A list/dict/set that reached
-            # here was not routed through ``BuiltinContainerCallSugar``, so its
-            # contents are not testified as the contents at this call.
-            return Complete(callsite)
-        # No floor of the receiver answered the method: its body was not
-        # looked at, so the call is two-faced (#7585), never total.
-        from sugar_lift_py_tests.source_call_resolution import UnprojectedMethodCallV1
 
-        return UnprojectedMethodCallV1(self.name).faces(callsite, self.site)
+
+def dispatch_method_call(
+    name,
+    receiver,
+    positional,
+    kw_values,
+    site,
+    ctx,
+    *,
+    source_call_frame=None,
+    exception_type_coordinate=None,
+    exception_type_mro=None,
+    may_defer=True,
+):
+    """``receiver.name(*positional, **kw_values)`` selected by the receiver.
+
+    A floor of the receiver answers first (a source method body, a closed
+    builtin method).  When none does and the receiver or an operand is a
+    formal, the caller's actual selects the method: the call defers through
+    ``NativeOperationExitCarrierV1`` with the ``method_call`` operator, whose
+    projector re-runs this dispatch on the resolved actuals.  A built-in
+    container whose method no floor decided, and a receiver this frame holds
+    (a call's result, a builtin scalar), are two-faced (#7585)."""
+    call_method_value = getattr(receiver, "call_method_value", None)
+    supports_closed_method = getattr(receiver, "supports_closed_method", None)
+    if callable(call_method_value) and (
+        not callable(supports_closed_method) or supports_closed_method(name)
+    ):
+        return call_method_value(
+            name,
+            positional,
+            owner="MethodCallSugar",
+            blame=site,
+            ctx=ctx,
+            keywords=kw_values,
+            required_frame=source_call_frame,
+        )
+    call_named_method = getattr(receiver, "call_named_method", None)
+    if callable(call_named_method):
+        native = call_named_method(
+            name,
+            positional,
+            owner="MethodCallSugar",
+            blame=site,
+            ctx=ctx,
+            keywords=kw_values,
+        )
+        if native is not None:
+            return native
+    if source_call_frame is not None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=site,
+            owner="MethodCallSugar._collect_kwargs",
+            observed=type(receiver).__name__,
+            requested="authenticated constructed receiver matching the method frame",
+            fix="preserve receiver identity or keep authenticated dispatch loud",
+        )
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    owner = str(site)
+    kwarg_terms = [
+        ctor("py.kwarg", [str_const(key), value.to_term(owner=owner)])
+        for key, value in kw_values
+    ]
+    term = ctor(
+        f"call:{name}",
+        [receiver.to_term(owner=owner)]
+        + [value.to_term(owner=owner) for value in positional]
+        + kwarg_terms,
+        symbol_kind="method-coordinate",
+    )
+    callsite = CallSiteValue(
+        target_name=name,
+        arg_values=(receiver, *positional, *(v for _, v in kw_values)),
+        parameters=(),
+        term=term,
+        body=None,
+        site=site,
+        runtime_dispatch_receiver=receiver,
+        exception_type_coordinate=exception_type_coordinate,
+        exception_type_mro=exception_type_mro,
+    )
+    if site is None:
+        return Complete(callsite)
+    if may_defer:
+        deferred = _defer_formal_method_call(name, receiver, positional, kw_values, site)
+        if deferred is not None:
+            return deferred
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+
+    kind = law.container_kind(receiver)
+    if kind is not None:
+        return _container_method_call(kind, name, receiver, positional, kw_values, site)
+    if not _decided_here(receiver) or _mentions_a_formal(term):
+        # A symbolic receiver that is not a formal (a place a call may have
+        # changed, a field coordinate) stands for a value the frame's store
+        # application supplies later; that selects the method and its exits,
+        # so this frame mints no face for it.
+        return Complete(callsite)
+    # No floor of the receiver answered the method: its body was not
+    # looked at, so the call is two-faced (#7585), never total.
+    from sugar_lift_py_tests.source_call_resolution import UnprojectedMethodCallV1
+
+    return UnprojectedMethodCallV1(name).faces(callsite, site)
+
+
+# Cited container methods whose exits and result the law decides from the
+# operands alone, never from the receiver's contents.
+_CONTENTS_FREE_METHODS = {
+    "list": frozenset({"append", "extend", "insert", "clear", "reverse"}),
+    "dict": frozenset({"__setitem__", "update", "clear"}),
+    "set": frozenset(
+        {
+            "add",
+            "discard",
+            "update",
+            "clear",
+            "difference_update",
+            "intersection_update",
+            "symmetric_difference_update",
+        }
+    ),
+}
+
+
+def _container_method_call(kind, name, receiver, positional, kw_values, site):
+    """A built-in container's method that no floor of the receiver answered.
+
+    This value reached the call by binding (a helper's formal bound to the
+    caller's actual), not through the statement's own mutation path, so its
+    contents are not testified as the contents at this call: an earlier call
+    in the body may have changed the object without rebinding the name.  The
+    container law (#7603) decides only what does not read the contents; every
+    other call is two-faced under its ``python:builtin_method`` atom.  The
+    receiver's post-state is the statement's or the caller's to apply."""
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _opaque_pair
+
+    decided = None
+    if not kw_values and name in _CONTENTS_FREE_METHODS.get(kind, ()):
+        decided = law.apply(kind, name, receiver, tuple(positional), site)
+    if decided is None:
+        decided = _opaque_pair(kind, name, site)
+
+    def result(pair):
+        if type(pair) is TupleValue and len(pair.elements) == 2:
+            return Complete(pair.elements[1])
+        return Complete(pair)
+
+    return decided.and_then(result)
+
+
+def _defer_formal_method_call(name, receiver, positional, kw_values, site):
+    """The ``method_call`` carrier when the receiver or an operand is a formal."""
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    operands = (receiver, *positional, *(value for _, value in kw_values))
+    coordinates = tuple(getattr(value, "formal_coordinate", None) for value in operands)
+    if all(coordinate is None for coordinate in coordinates):
+        return None
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    keyword_names = TupleValue(tuple(StringValue(key) for key, _ in kw_values))
+    return NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator="method_call",
+        operands=(receiver, StringValue(name), keyword_names, *operands[1:]),
+        coordinates=(coordinates[0], None, None, *coordinates[1:]),
+    )
 
 
 def _mentions_a_formal(term) -> bool:

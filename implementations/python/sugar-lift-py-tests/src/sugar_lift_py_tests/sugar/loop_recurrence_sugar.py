@@ -225,9 +225,28 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         completed_guard = not_(
             halted_guards[0] if len(halted_guards) == 1 else or_(halted_guards)
         )
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
         exits = [Completed(completed_guard, recurrence)]
+        deferred = []
         for face in self.outward_faces:
             outcome = face.statement_sugar.desugar(ctx)
+            if isinstance(outcome, NativeOperationExitCarrierV1):
+                # The face's statement waits for the caller's actuals (a
+                # method call on a formal): it contributes its partition
+                # under its own guard once they discharge it.
+                marker = _DeferredOutwardFace(len(deferred))
+                deferred.append(
+                    outcome.after_discharge(
+                        lambda projected, *, face=face: ExitSet(
+                            _outward_face_partition(projected, face)
+                        )
+                    )
+                )
+                exits.append(Completed(face.guard, marker))
+                continue
             if isinstance(outcome, Complete) and isinstance(outcome.value, ReturnValue):
                 exits.append(
                     Completed(
@@ -245,32 +264,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 # wire -- each is a partition the face contributes under its own
                 # guard, which is what `BindingStateWireGap: loop outward face did
                 # not construct return or raise testimony` was refusing to state.
-                from sugar_lift_py_tests.floor.single_outcome_law import (
-                    pending_demand,
-                )
-                from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+                exits.extend(_outward_face_partition(outcome, face, guarded=True))
+        if deferred:
 
-                # A pending demand's home is a block entry, and this face builds
-                # exactly one: it rides beside the return in the same record.
-                pending, plain = pending_demand(outcome, face.guard)
-                for exit_ in outcome_to_exitset(plain).guarded(face.guard).exits:
-                    if isinstance(exit_, Halted):
-                        exits.append(Halted(exit_.guard, exit_.effect, face.state))
-                    else:
-                        entries = (
-                            (exit_.value,)
-                            if pending is None
-                            else (
-                                pending,
-                                exit_.value,
-                            )
-                        )
-                        exits.append(
-                            Completed(
-                                exit_.guard,
-                                BlockValue(entries, can_fall_through=False),
-                            )
-                        )
+            def select(value):
+                if isinstance(value, _DeferredOutwardFace):
+                    return deferred[value.index]
+                return Complete(value)
+
+            return NativeOperationExitCarrierV1.compose_prefix(
+                ExitSet(tuple(exits)), select
+            )
         return ExitSet(tuple(exits)).normalize()
 
     def _advance_iterator(self, iterator, runtime, ctx, *, entries, index=0):
@@ -557,3 +561,37 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 can_fall_through=can_fall_through,
             )
         )
+
+
+@dataclass(frozen=True)
+class _DeferredOutwardFace:
+    """Stands for an outward face whose statement a caller's actuals select."""
+
+    index: int
+
+
+def _outward_face_partition(outcome, face, *, guarded=False):
+    """The exits one outward face contributes: each return is the face's one
+    block entry (a pending demand rides beside it), each halt keeps the
+    face's state."""
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.single_outcome_law import pending_demand
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+    # A pending demand's home is a block entry, and this face builds
+    # exactly one: it rides beside the return in the same record.
+    pending, plain = pending_demand(outcome, face.guard)
+    exits = outcome_to_exitset(plain)
+    if guarded:
+        exits = exits.guarded(face.guard)
+    partition = []
+    for exit_ in exits.exits:
+        if isinstance(exit_, Halted):
+            partition.append(Halted(exit_.guard, exit_.effect, face.state))
+            continue
+        entries = (exit_.value,) if pending is None else (pending, exit_.value)
+        partition.append(
+            Completed(exit_.guard, BlockValue(entries, can_fall_through=False))
+        )
+    return tuple(partition)

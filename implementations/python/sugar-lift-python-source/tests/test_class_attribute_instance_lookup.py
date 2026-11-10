@@ -248,19 +248,27 @@ def _assert_complete_return_one(source_file) -> None:
     )
     # ``StringIO()`` is a call whose body the lift does not hold: it may
     # raise, and that halt is the ``with`` statement's own construction face.
+    # ``__exit__``'s ``self._old_targets.pop()`` reads a list reached through
+    # ``self``, whose contents at the exit (after ``__enter__``'s append) are
+    # not testified there: the pop is two-faced, never total.
     exits = func.sugar().desugar()
-    (completed,) = [face for face in exits.exits if isinstance(face, Completed)]
-    assert [
+    assert sorted(
         face.effect.producer_node_owner
         for face in exits.exits
         if isinstance(face, Halted)
-    ] == ["UnknownCallee:StringIO"]
-    assert isinstance(completed.value, UniverseValue)
+    ) == ["BuiltinMethodCall:list.pop", "UnknownCallee:StringIO"]
     returns = [
         statement
-        for statement in completed.value.record.statements
+        for face in exits.exits
+        if isinstance(face, Completed)
+        for statement in face.value.record.statements
         if isinstance(statement, ReturnValue)
     ]
+    assert all(
+        isinstance(face.value, UniverseValue)
+        for face in exits.exits
+        if isinstance(face, Completed)
+    )
     assert len(returns) == 1
     assert isinstance(returns[0].value, TermValue)
     assert returns[0].value.value == 1
@@ -288,7 +296,8 @@ def test_redirect_stdout_does_not_suppress_a_body_raise(tmp_path) -> None:
         face
         for face in raised.exits
         if isinstance(face, Halted)
-        and face.effect.producer_node_owner != "UnknownCallee:StringIO"
+        and face.effect.producer_node_owner
+        not in ("UnknownCallee:StringIO", "BuiltinMethodCall:list.pop")
     ]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, RaiseEffect)
