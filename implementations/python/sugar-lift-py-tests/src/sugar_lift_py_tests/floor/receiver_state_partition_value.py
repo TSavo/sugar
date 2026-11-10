@@ -76,6 +76,42 @@ class ReceiverStatePartitionValue(FloorValue):
             symbol_kind="coordinate",
         )
 
+    def constructor_faces(self):
+        """``(halts, completed)`` of this construction, nested partitions flattened.
+
+        Each nested face's guard is conjoined with its enclosing completed
+        face's guard, so a flattened face holds exactly where Python reaches
+        it. ``halts`` are the faces where construction itself raised (the With
+        never enters); ``completed`` are the receiver leaves. Returns ``None``
+        if any halt carries no typed effect: such a face cannot leave a With
+        as itself, so no consumer may seal over it.
+        """
+        from sugar_lift_py_tests.outcome import Completed, Halted
+        from sugar_lift_py_tests.outcome.exit_set import _and_guards
+        from dataclasses import replace
+
+        halts = []
+        completed = []
+
+        def walk(partition, outer):
+            for face in partition.exits.exits:
+                guard = face.guard if outer is None else _and_guards(outer, face.guard)
+                if isinstance(face, Completed):
+                    if isinstance(face.value, ReceiverStatePartitionValue):
+                        if not walk(face.value, guard):
+                            return False
+                        continue
+                    completed.append(replace(face, guard=guard))
+                    continue
+                if not isinstance(face, Halted) or face.effect is None:
+                    return False
+                halts.append(replace(face, guard=guard))
+            return True
+
+        if not walk(self, None):
+            return None
+        return tuple(halts), tuple(completed)
+
     @property
     def identity(self) -> str:
         from sugar_lift_py_tests.ir import _term_content_cid
