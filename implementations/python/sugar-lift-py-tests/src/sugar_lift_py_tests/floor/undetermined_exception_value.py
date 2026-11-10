@@ -52,6 +52,22 @@ class UndeterminedExceptionValue(FloorValue):
         # Its class is exactly what nobody testified to.
         return False
 
+    def is_identical(self, other, site):
+        """``e is None`` is decided false: a raised object is a
+        ``BaseException`` instance, never the ``None`` singleton.  Any other
+        operand keeps the emitted identity -- nothing about which object it
+        is was testified to."""
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+
+        if type(other) is NoneValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().is_identical(other, site)
+
 
 @dataclass(frozen=True)
 class UndeterminedExceptionTypeValue(FloorValue):
