@@ -48,17 +48,19 @@ class ExceptionValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        del index
-        from sugar_lift_py_tests.effect import (
-            TypeErrorRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
+        """``exc[i]`` on an exact builtin exception instance raises TypeError.
 
-        return Incomplete(
-            TypeErrorRuntimeEffect(
-                "exception subscript type boundary: builtin exception instances "
-                f"are not subscriptable; exception={self.exception_name} site={site}",
-                **runtime_effect_evidence("py.subscript", self, site),
-            )
+        No builtin ``BaseException`` subclass defines ``__getitem__`` (Python 3
+        removed ``BaseException.__getitem__``), and this value is an exact
+        builtin class, so the exceptional exit is decided at lift time. It is a
+        ground ``RaiseEffect`` like ``setitem``/``delitem``, never a
+        ``RuntimeEffect``: a RuntimeEffect is an undecided runtime boundary,
+        and typing a decided raise as one hides it from ``except`` and from a
+        With's ``__exit__``.
+        """
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="ExceptionValue.subscript"
         )
