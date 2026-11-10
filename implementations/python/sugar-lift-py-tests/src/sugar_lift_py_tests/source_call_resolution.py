@@ -74,3 +74,55 @@ __all__ = [
     "SourceCallPreconstructionRefV1",
     "SourceCallPreconstructionV1",
 ]
+
+
+@dataclass(frozen=True)
+class UnprojectedSourceCallV1:
+    """An authenticated source-defined callee whose body was not projected here.
+
+    Seated at an exact consumer call site after the import receipt resolved to
+    a Python ``def``/``class`` in an authenticated dependency artifact. The
+    body is real source but was not projected at this site, so the call may
+    raise anything: it completes only under the opaque partition atom
+    ``python:source_call.completes(module, name, site)`` and halts with an
+    ``UndeterminedRaiseEffect`` under its complement. It never names what the
+    callee does.
+    """
+
+    module_name: str
+    definition_name: str
+    definition_kind: Literal["function", "class"]
+    resolved_object_cid: str
+
+    def faces(self, callsite, site):
+        """Two faces for one bodiless call: opaque completion or a raise."""
+        from .effect.raise_effect import UndeterminedRaiseEffect
+        from .ir import atomic, ctor, str_const
+        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+
+        call = ctor(
+            "python:source_call",
+            (
+                str_const(self.module_name),
+                str_const(self.definition_name),
+                str_const(str(site)),
+            ),
+        )
+        completes = atomic("python:source_call.completes", [call])
+        return ExitSet(
+            (
+                Completed(completes, callsite),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(
+                        blame=str(site) if site is not None else None,
+                        occurrence=str(site) if site is not None else None,
+                        producer_node_owner=(
+                            "UnprojectedSourceCall"
+                            f":{self.module_name}.{self.definition_name}"
+                        ),
+                    ),
+                    None,
+                ),
+            )
+        ).normalize()

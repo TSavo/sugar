@@ -84,6 +84,28 @@ def _language_owned_call_floor(sugar):
     return floors.get(key)
 
 
+def _unprojected_source_call(sugar):
+    """Return the may-raise testimony seated at this exact call, if any."""
+    unit = getattr(sugar.site, "unit", None)
+    context = getattr(unit, "construction_context", None) if unit is not None else None
+    calls = getattr(context, "unprojected_source_calls", None) if context is not None else None
+    if not calls:
+        return None
+    try:
+        span = sugar.site.line_col_span
+        key = (
+            "call-site",
+            sugar.site.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    except (AttributeError, TypeError):
+        return None
+    return calls.get(key)
+
+
 @dataclass(frozen=True)
 class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
@@ -758,6 +780,10 @@ class CallSiteSugar(ConstructedTermSugar):
                     "context; do not invent the callee body"
                 ),
             )
+        if callsite.body is None:
+            unprojected = _unprojected_source_call(self)
+            if unprojected is not None:
+                return unprojected.faces(callsite, self.site)
         produced = callsite.producer_outcome(
             ctx,
             carrier_actuals=callsite.bound_native_actuals_by_coordinate,

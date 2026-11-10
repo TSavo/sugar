@@ -1135,6 +1135,10 @@ class TreeConstructionContextV1:
     # (Cut 2 C-extension callables and ContextVar methods), keyed by the
     # called name in the enclosing module.
     language_owned_call_floors: dict = field(default_factory=dict)
+    # Authenticated source-defined callees whose body was not projected at
+    # this module's own call site, keyed like ``language_owned_call_floors``
+    # call-site keys. The call stays a CallSiteValue that may also raise.
+    unprojected_source_calls: dict = field(default_factory=dict)
     # Producer-minted value-use receipt roster, retained once per exact source
     # CID so repeated frame/class publication transports object identity rather
     # than reminting an equivalent receipt at an occupied SourceUnit seat.
