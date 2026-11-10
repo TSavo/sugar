@@ -98,6 +98,10 @@ class GeneratorWithSugar(Sugar):
             for part in parts[1:]:
                 result = result.union(part)
             return result
+        if isinstance(entered, GeneratorConstructionV1):
+            # A step completed and left the machine runnable: run on to the
+            # first suspension.
+            return self._consume_enter_outcome(entered.resume(), manager_exit, ctx)
         if isinstance(entered, GeneratorTerminationV1):
             return self._entry_refusal_exit(manager_exit, entered)
         if isinstance(entered, GeneratorTransitionGapV1):
@@ -105,24 +109,38 @@ class GeneratorWithSugar(Sugar):
         if not isinstance(entered, YieldEffect):
             self._loud(type(entered).__name__, "opaque generator transition")
 
-        body_es = reduce_block_to_exitset(self.body, ctx).guarded(manager_exit.guard)
+        from sugar_lift_py_tests.context_manager_contract import (
+            NeverSuppressesDispositionV1,
+        )
+        from sugar_lift_py_tests.generator_manager_exit import (
+            generator_manager_exit,
+            is_exception_effect,
+        )
+        from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
+
+        # The generator-backed manager's __exit__ per body exit: an
+        # exception is thrown in at the yield, anything else resumes it.
+        body_es = promote_raise_halts(
+            reduce_block_to_exitset(self.body, ctx)
+        ).guarded(manager_exit.guard)
         exits = []
         for body_exit in body_es.exits:
-            if isinstance(body_exit, Halted):
-                thrown = entered.machine.throw(body_exit.effect).guarded(body_exit.guard)
-                exits.extend(thrown.exits)
-                continue
-            after = entered.machine.resume()
-            if isinstance(after, ExitSet):
-                exits.extend(after.guarded(body_exit.guard).exits)
-                continue
-            if isinstance(after, YieldEffect):
-                self._loud("generator yielded during exit", "second yield")
-            if isinstance(after, GeneratorTransitionGapV1):
-                self._loud(after.observed, "opaque generator transition")
-            if not isinstance(after, GeneratorTerminationV1):
-                self._loud(type(after).__name__, "opaque generator transition")
-            exits.append(Completed(body_exit.guard, body_exit.value))
+            exit_es = generator_manager_exit(
+                entered.machine, body_exit, blame=str(self.site)
+            )
+            if isinstance(body_exit, Halted) and not is_exception_effect(
+                body_exit.effect
+            ):
+                # Return/break/continue are not exceptions: __exit__(None, ...)
+                # runs and its result is ignored; the body's own exit stands.
+                routed = ExitSet((body_exit,)).and_exit(
+                    exit_es, disposition=NeverSuppressesDispositionV1()
+                )
+            else:
+                routed = ExitSet((body_exit,)).and_exit_truthiness(
+                    exit_es, site=self.site
+                )
+            exits.extend(routed.exits)
         result = ExitSet(tuple(exits)).normalize()
         facts = ()
         if self.enter_slot_id is not None:

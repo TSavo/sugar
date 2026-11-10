@@ -664,6 +664,33 @@ class GeneratorBackedManagerProtocolV1:
         """Resume/throw the exact entered machine once; expose suppression."""
         return exit_generator_resource_outcome_for(self, entered, ctx=ctx)
 
+    def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
+        """``_GeneratorContextManager.__exit__`` for ONE body exit.
+
+        A body exception is thrown in at the yield; any other exit resumes the
+        generator. One shared resume for every body face would hand a raise to
+        ``next()`` and decide a generator's ``except`` arms never run.
+        """
+        del ctx
+        from sugar_lift_py_tests.generator_manager_exit import (
+            generator_manager_exit,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if not isinstance(entered, EnteredGeneratorManagerStateV1) or (
+            entered.protocol_construction_cid != self.protocol_construction_cid
+        ):
+            raise SugarNotWritten(
+                blame=self.exit_face_id,
+                owner="GeneratorBackedManagerProtocolV1.exit_outcome_for_body",
+                observed=f"foreign entered state {type(entered).__name__}",
+                requested="EnteredGeneratorManagerStateV1 from this protocol's enter",
+                fix="do not resume a foreign entered generator face",
+            )
+        return generator_manager_exit(
+            entered.machine, body_face, blame=self.exit_face_id
+        )
+
 
 def enter_generator_resource_outcome(protocol, *, ctx: object = None):
     """Allocate and resume the generator frame to its first yield.

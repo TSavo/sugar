@@ -193,6 +193,13 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
             requested="an acyclic constructed manager receiver",
             fix="retain the source call-graph cycle as a construction gap",
         )
+    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
+
+    if type(value) is GeneratorConstructionV1:
+        # ``contextmanager(f)(...)`` is ``_GeneratorContextManager(f, args,
+        # kwds)``, whose ``self.gen`` is this allocated generator: the generator
+        # protocol enters and exits exactly this machine.
+        return ExitSet.completed(value)
     projected = value.project_operation_receiver_outcome(
         ctx, owner="WithSourceResourceSugar.manager"
     )

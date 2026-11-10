@@ -2313,6 +2313,13 @@ def populate_source_derived_resource_refs(
     # publication door as import-backed ClassDef CMs. Uncovered uses stay empty
     # for With.require (L3d) to panic.
     _populate_same_module_class_manager_uses(source_file, context, uses)
+    _populate_same_module_generator_manager_uses(
+        context,
+        uses,
+        session=session,
+        graphs=graphs,
+        distribution_index=distribution_index,
+    )
     _floor_language_owned_module_calls(
         context,
         call_receipts_by_site,
@@ -3186,6 +3193,108 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         )
 
 
+def _populate_same_module_generator_manager_uses(
+    context, uses, *, session, graphs, distribution_index
+) -> None:
+    """Derive ``with g(...)`` where ``g`` is a same-module decorated generator.
+
+    Import receipts never fire for a local callee, so a module's own
+    ``@contextlib.contextmanager`` generator was left ``runtime-selected``
+    and its generator protocol was never applied. The law is the import
+    road's, applied to the module binding: ``Call.func`` binds to exactly one
+    module FunctionDef whose body is a generator and whose decorator resolves
+    (through its authenticated import binding) to a function returning a
+    helper that constructs one class with distinct ``__enter__``/``__exit__``
+    -- contextlib's ``_GeneratorContextManager``, cited from the stdlib source.
+    The frame is seated and published through the same generator-backed door,
+    so the one ``generator_manager_exit`` law runs every body exit. When the
+    decorator's protocol cannot be cited, the use is a named gap, never a
+    seated frame: a local generator is not a manager on its spelling.
+    """
+    from sugar_source_tree.nodes import Call, FunctionDef, Name
+    from sugar_source_tree.panic import SugarNotWritten
+
+    from .canonical import cid_of_json
+    from .manager_construction import _install_source_call_frame
+
+    for _key, (coordinate, call, exit_face_id) in uses.items():
+        if coordinate in context.source_derived_contract_refs:
+            continue
+        if not isinstance(call, Call) or not isinstance(call.func, Name):
+            continue
+        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
+        if len(binds) != 1 or not isinstance(binds[0], FunctionDef):
+            continue
+        function_def = binds[0]
+        if not getattr(function_def, "decorators", ()):
+            continue
+        target_symbol = f"python:local:{function_def.name}"
+        try:
+            frame, generator_target = _source_visible_frame_for_function(
+                function_def
+            )
+        except (SugarNotWritten, TypeError):
+            # No frame, no generator claim: the require door stays loud.
+            continue
+        if frame is None or frame.generator_steps is None:
+            # Not a generator: another derivation (or the require door) owns it.
+            continue
+        declined: list[str] = []
+        if (
+            _protocol_coords_from_generator_decorators(
+                generator_target,
+                session=session,
+                graph=None,
+                dependency_graphs=graphs,
+                distribution_index=distribution_index,
+                declined=declined,
+            )
+            is None
+        ):
+            _install_local_derivation_gap(
+                context,
+                coordinate,
+                target_symbol,
+                "generator-protocol",
+                "native enter/exit definition coordinates unavailable"
+                + (f" [{'; '.join(declined)}]" if declined else ""),
+            )
+            continue
+        # Seat the frame in the form the installed-frame rewrite leaves it,
+        # so the protocol's frame CID is the CID the provider call allocates.
+        frame = _as_rewriting_generator_frame(
+            _frame_with_nested_manager_steps(frame, ())
+        )
+        _install_source_call_frame(context, call, frame)
+        context.source_manager_provider_calls[coordinate] = call
+        try:
+            _publish_generator_backed_resource_contract(
+                context,
+                coordinate,
+                frame=frame,
+                generator_target=generator_target,
+                exit_face_id=exit_face_id,
+                receipt=None,
+                session=session,
+                graph=None,
+                dependency_graphs=graphs,
+                distribution_index=distribution_index,
+                resolved_cid=cid_of_json(
+                    {
+                        "kind": "same-module-generator-manager",
+                        "schemaVersion": "1",
+                        "definitionCid": function_def.fragment.seal().cid,
+                    }
+                ),
+                local_target_symbol=target_symbol,
+            )
+        except (SugarNotWritten, TypeError) as exc:
+            kind, detail = _populate_body_defect_kind_detail(exc)
+            _install_local_derivation_gap(
+                context, coordinate, target_symbol, kind, detail
+            )
+
+
 def _install_local_derivation_gap(
     context, coordinate, target_symbol: str, kind: str, detail: str | None = None
 ) -> None:
@@ -3313,6 +3422,7 @@ def _publish_generator_backed_resource_contract(
     dependency_graphs=None,
     distribution_index=None,
     resolved_cid: str,
+    local_target_symbol: str | None = None,
 ) -> None:
     """Publish native enter/exit + one closed generator-backed resource ref.
 
@@ -3338,6 +3448,15 @@ def _publish_generator_backed_resource_contract(
         ManagerProtocolConstructionGapV1,
         construct_generator_backed_protocol,
     )
+
+    def _install_derivation_gap(context, receiver, receipt, kind, detail=None):
+        # A same-module manager has no import receipt: its demand is local.
+        if receipt is None:
+            _install_local_derivation_gap(
+                context, receiver, local_target_symbol, kind, detail
+            )
+            return
+        _install_derivation_gap_for_receipt(context, receiver, receipt, kind, detail)
 
     declined: list[str] = []
     coords = _protocol_coords_from_generator_decorators(
@@ -5135,6 +5254,10 @@ def _seat_off_population_citation(
         mint_opaque_cited_context_manager_ref(roster=roster)
     )
     return True
+
+
+def _install_derivation_gap_for_receipt(context, coordinate, receipt, kind, detail=None):
+    return _install_derivation_gap(context, coordinate, receipt, kind, detail)
 
 
 def _install_derivation_gap(

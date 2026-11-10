@@ -5209,7 +5209,7 @@ def test_installed_cited_opaque_nested_with_body_return_still_exits(tmp_path):
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5298,7 +5298,7 @@ def test_installed_cited_opaque_nested_with_body_raise_still_exits(tmp_path):
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5395,7 +5395,7 @@ def test_installed_cited_opaque_nested_with_body_attribute_assign_still_exits(tm
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5487,7 +5487,7 @@ def test_installed_cited_opaque_nested_with_body_assert_false_still_exits(tmp_pa
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5579,7 +5579,7 @@ def test_installed_cited_opaque_nested_with_body_divzero_still_exits(tmp_path):
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5673,7 +5673,7 @@ def test_installed_cited_opaque_nested_with_body_assign_divzero_still_exits(tmp_
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5765,7 +5765,7 @@ def test_installed_cited_opaque_nested_with_body_if_divzero_still_exits(tmp_path
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5858,7 +5858,7 @@ def test_installed_cited_opaque_nested_with_body_for_divzero_still_exits(tmp_pat
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -5958,7 +5958,7 @@ def test_installed_cited_opaque_nested_with_body_attribute_assign_divzero_still_
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -6050,7 +6050,7 @@ def test_installed_cited_opaque_nested_with_body_return_divzero_still_exits(tmp_
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
@@ -6141,7 +6141,7 @@ def test_installed_cited_opaque_nested_with_body_yield_divzero_still_exits(tmp_p
     constructed = boundary.desugar()
     assert isinstance(constructed, Complete)
     assert isinstance(constructed.value, BlockValue)
-    assert constructed.value.can_fall_through is False
+    assert constructed.value.can_fall_through is True
     effects = [
         statement.effect
         for statement in constructed.value.statements
