@@ -13969,6 +13969,31 @@ class ReceiverAfterCall(Expression):
         )
 
 
+class SourceCallActualAfter(Expression):
+    """An actual's object after a source helper's cited stores on it."""
+
+    state: Expression
+    label: str
+    token: int
+    _child_fields = ("state",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            SourceCallActualAfterSugar,
+        )
+
+        return SourceCallActualAfterSugar(
+            state=self.state.sugar(),
+            label=self.label,
+            site=self.fragment,
+            evaluation_token=self.token,
+        )
+
+
 class ContainerMutationStatement(Statement):
     """A statement whose mutating call rebinds every alias of its receiver."""
 

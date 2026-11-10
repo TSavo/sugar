@@ -177,7 +177,9 @@ def test_unrolled_loop_appends_one_distinct_unknown_per_iteration(tmp_path):
     assert len({halt.occurrence for halt in halts}) == 2
 
 
-def test_a_list_passed_to_a_helper_is_unknown_after_the_call(tmp_path):
+def test_a_list_passed_to_a_helper_is_what_its_body_leaves(tmp_path):
+    # The helper's body is projected: its append is a store on ``r``'s object
+    # (tests/test_source_helper_applies_actual_stores.py), never ``[]``.
     source = (
         "def g(x):\n"
         "    x.append(1)\n"
@@ -187,9 +189,19 @@ def test_a_list_passed_to_a_helper_is_unknown_after_the_call(tmp_path):
         "    v = g(r)\n"
         "    return r\n"
     )
-    value = _only_return(tmp_path, source)
-    assert value != ListValue(())
-    assert _is_unknown_after_call(value, "r")
+    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+
+
+def test_a_list_passed_to_unprojected_code_is_unknown_after_the_call(tmp_path):
+    source = (
+        "import copy\n"
+        "def f():\n"
+        "    r = []\n"
+        "    v = copy.copy(r)\n"
+        "    return r\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert returns and all(_is_unknown_after_call(value, "r") for value in returns)
 
 
 def test_a_pure_builtin_does_not_change_its_argument(tmp_path):

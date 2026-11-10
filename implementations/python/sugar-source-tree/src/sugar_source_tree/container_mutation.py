@@ -98,6 +98,9 @@ def decided_container_kind(node) -> Optional[str]:
     if isinstance(node, BuiltinContainerProjection):
         return node.call.container_kind if node.index == 0 else None
     kind = getattr(node, "kind", None)
+    if kind == "SourceCallActualAfter":
+        # The helper only mutated the object: its type is the actual's.
+        return decided_container_kind(node.state)
     if kind == "OpaqueObjectStateV1":
         # ``s = set()``: the call result's identity wrapper over the call.
         return decided_container_kind(node.base)
@@ -511,9 +514,16 @@ def havoc_after(statement, pre_scope, scope):
     # threaded by the branch and joined.
     loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
     targets = []
+    applied = []
     for call in _calls(statement, bound_refs, include_container_calls=loop):
         if isinstance(call, BuiltinContainerCall):
             targets.append(call.receiver)
+            continue
+        helper = None if loop else source_helper_actual_states(call, bound_refs)
+        if helper is not None:
+            havoc_targets, states = helper
+            targets.extend(havoc_targets)
+            applied.extend(states)
             continue
         if isinstance(call, PathContainerCall):
             root, _steps = path_steps(call.receiver)
@@ -522,7 +532,10 @@ def havoc_after(statement, pre_scope, scope):
                 targets.extend(_sharing_states(pre_scope, root))
             continue
         targets.extend(_call_targets(call, pre_scope, bound_refs))
-    return _rebind(statement, pre_scope, scope, targets)
+    havocked = _rebind(statement, pre_scope, scope, targets)
+    if not applied:
+        return havocked
+    return _apply_actual_states(statement, pre_scope, scope, havocked, applied)
 
 
 def _call_targets(call, scope, bound_refs):
@@ -978,3 +991,212 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
         names.append(target_name)
         states.append(_projection(call, path_call, 1, tags))
     return _statement(statement, names, states, evaluated, tags)
+
+
+# ---------------------------------------------------------------------------
+# A call to a lifted source helper applies its body's stores to the actuals.
+#
+# ``def add(l): l.append(1)`` / ``r = []; add(r); return r`` returns ``[1]``:
+# ``l`` is bound to the very object ``r`` names, and the helper's append is a
+# store on that object. THE LAW, at a statement that calls a same-module
+# source function whose body substitution can be followed:
+#
+# - The helper's body is substituted with each formal bound to the caller's
+#   actual node (the object), exactly as its node-specialized frame is. The
+#   formal's binding after the body is the object's state after the call.
+# - That state is applied (every name bound to the object is rebound to it)
+#   only when it is CLOSED: the actual itself (the helper did not change it)
+#   or a chain of cited built-in container mutations rooted at the actual,
+#   whose operands are constants, displays of constants, or formals -- nothing
+#   whose re-evaluation could raise, call, or mint a second unknown. A read
+#   keeps that state only when it evaluates to one plain completed value;
+#   otherwise it is an unknown minted at the call.
+# - Anything else -- a body with control flow the substitution cannot follow
+#   on every path (loops, try, with, an early return, a non-raising branch),
+#   a formal rebound to another object, an object the helper exposed to code
+#   it does not project, an object only CONTAINED in an actual -- keeps the
+#   havoc: unknown after the call, never the pre-call contents.
+#
+# The call's own halts are its faces at the call (the Call producer); a halt
+# path never reaches the statement's continuation, so the state is the
+# completed path's.
+# ---------------------------------------------------------------------------
+
+_HELPER_STATEMENT_KINDS = frozenset(
+    {"Expr", "Assign", "AnnAssign", "AugAssign", "Pass", "Raise", "Assert"}
+)
+_HELPERS_IN_PROGRESS: set = set()
+_CLOSED_OPERAND_KINDS = frozenset(
+    {"Constant", "List", "Tuple", "Set", "Dict", "FormalRef", "BindingCoordinateRef"}
+)
+
+
+def _straight_line_helper(definition) -> bool:
+    """Every path through ``definition``'s body is the one substitution threads:
+    straight-line statements, a trailing ``return``, and guards that only raise."""
+    from .nodes import FunctionDef, If, Raise, Return
+
+    if type(definition) is not FunctionDef or definition.decorators:
+        return False
+    if FunctionDef._owns_yield(definition.body):
+        return False
+    if any(param.param_kind != "positional_or_keyword" for param in definition.params):
+        return False
+    body = definition.body
+    for index, statement in enumerate(body):
+        kind = statement.kind
+        if kind in _HELPER_STATEMENT_KINDS:
+            continue
+        if isinstance(statement, Return) and index == len(body) - 1:
+            continue
+        if (
+            isinstance(statement, If)
+            and not statement.orelse
+            and len(statement.body) == 1
+            and isinstance(statement.body[0], Raise)
+        ):
+            continue
+        return False
+    return True
+
+
+def _closed_state(state, actual) -> bool:
+    """``state`` is ``actual`` after cited mutations with closed operands."""
+    from .nodes import BuiltinContainerCall, BuiltinContainerProjection
+
+    node = state
+    while True:
+        if same_object(node, actual):
+            return True
+        if isinstance(node, BuiltinContainerProjection) and node.index == 0:
+            call = node.call
+            if not isinstance(call, BuiltinContainerCall):
+                return False
+            if not all(_closed_operand(arg) for arg in call.args):
+                return False
+            node = call.receiver
+            continue
+        return False
+
+
+def _closed_operand(node) -> bool:
+    from .nodes import Node
+
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if getattr(current, "kind", None) not in _CLOSED_OPERAND_KINDS:
+            return False
+        for _name, _index, child in current._child_edges():
+            if isinstance(child, Node):
+                stack.append(child)
+    return True
+
+
+def source_helper_actual_states(call, bound_refs):
+    """``(havoc_targets, [(actual, state, index)])`` for a call to a followable
+    source helper, or None when the call is not one (it keeps its havoc)."""
+    from .nodes import Call, Name, Starred
+
+    if (
+        not isinstance(call, Call)
+        or not isinstance(call.func, Name)
+        or call.keywords
+        or any(isinstance(arg, Starred) for arg in call.args)
+    ):
+        return None
+    actuals = [
+        (index, arg)
+        for index, arg in enumerate(call.args)
+        if decided_container_kind(arg) is not None and _ref(arg) in bound_refs
+    ]
+    if not actuals:
+        return None
+    definition = call.unit.source_function_definition_for_call(call)
+    if definition is None or not _straight_line_helper(definition):
+        return None
+    params = definition.params
+    if len(params) != len(call.args):
+        return None
+    key = id(definition)
+    if key in _HELPERS_IN_PROGRESS:
+        return None
+    node_scope = {param.name: arg for param, arg in zip(params, call.args)}
+    _HELPERS_IN_PROGRESS.add(key)
+    try:
+        _body, _changed, net = definition._substitute_body_tracked(
+            definition.body, node_scope
+        )
+    finally:
+        _HELPERS_IN_PROGRESS.discard(key)
+    havoc_targets = []
+    states = []
+    claimed = {id(arg) for _index, arg in actuals}
+    for index, arg in enumerate(call.args):
+        exposed = [
+            node for node in _exposed(arg, bound_refs) if id(node) not in claimed
+        ]
+        havoc_targets.extend(exposed)
+    for index, actual in actuals:
+        name = params[index].name
+        state = _state(net[name]) if name in net else actual
+        if not _closed_state(state, actual):
+            havoc_targets.append(actual)
+            continue
+        if same_object(state, actual):
+            continue
+        states.append((actual, state, index))
+    return havoc_targets, states
+
+
+def _actual_after(site_node, state, label, tags):
+    from .backend import Child, Leaf
+    from .shadow import _handle_of
+
+    return _materialize(
+        site_node,
+        "SourceCallActualAfter",
+        (
+            ("state", Child(_handle_of(state))),
+            ("label", Leaf(label)),
+            ("token", Leaf(next(_TOKENS))),
+        ),
+        tags,
+    )
+
+
+def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
+    """Rebind every name bound to an actual's object to its state after the
+    helper; a name the havoc already rebound, or the statement itself bound,
+    keeps that binding. A name that merely contains the object is unknown."""
+    from .shadow import occurrence_tags_of
+
+    tags = occurrence_tags_of(statement)
+    binding = {}
+    havoc_names = []
+    for actual, state, index in applied:
+        exact, containing = aliases(scope, actual)
+        after = None
+        for name in exact:
+            if name in binding or not _untouched(name, pre_scope, scope, havocked):
+                continue
+            if after is None:
+                after = _actual_after(statement, state, f"actual:{index}", tags)
+            binding[name] = after
+        for name in containing:
+            if name in binding or name in havoc_names:
+                continue
+            if _untouched(name, pre_scope, scope, havocked):
+                havoc_names.append(name)
+    for name in havoc_names:
+        binding[name] = _havoc(statement, name, tags)
+    if not binding:
+        return havocked
+    binding = statement._binding_entries(binding, havocked)
+    return {**havocked, **binding}
+
+
+def _untouched(name, pre_scope, scope, havocked) -> bool:
+    if name not in scope or name not in pre_scope:
+        return name not in scope
+    return scope[name] is pre_scope[name] and havocked.get(name) is scope[name]
