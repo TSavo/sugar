@@ -203,7 +203,10 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     Minting ``MatchDecided(False)`` here would be a second mechanism: ad-hoc
     Python fabricating a miss outside the tree→sugar path.
     """
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import (
+        RaiseEffect,
+        UndeterminedRaiseEffect,
+    )
     from sugar_lift_py_tests.authenticated_exception_matching import (
         MatchDecided,
         matches_raise_effect,
@@ -211,7 +214,12 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
-    if not isinstance(effect, RaiseEffect):
+    # An ``UndeterminedRaiseEffect`` is an ordinary (non-group) exception
+    # whose class nobody testified to. Ordinary ``except`` reads it like any
+    # other leaf raise: the one matcher states the type test over the raised
+    # exception value it carries (``exception_value``), so no class is
+    # invented and no arm is decided by its absence.
+    if not isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
         blame = getattr(effect, "occurrence_id", None) or site
         raise SugarNotWritten(
             blame=blame,

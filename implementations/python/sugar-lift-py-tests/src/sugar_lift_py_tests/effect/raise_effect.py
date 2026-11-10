@@ -155,6 +155,32 @@ class UndeterminedRaiseEffect:
         return None
 
     @property
+    def exception_value(self):
+        """The exception object this occurrence threw, when the raise names none.
+
+        A may-raise operation's halt carries no ``raised_value``: the call did
+        not say what it raised. The exception still exists and is the subject
+        an ``except`` clause tests, so it is the opaque
+        ``UndeterminedExceptionValue`` keyed on this effect's occurrence. A
+        re-raise of such a value (``except T as e: raise e``) throws the SAME
+        object, so it keeps its original key. A raise that carries an operand
+        (``raise exc`` on a formal) keeps that operand as the matcher's
+        subject, and an occurrence-less halt has no key: both answer ``None``.
+        """
+        from sugar_lift_py_tests.floor.undetermined_exception_value import (
+            UndeterminedExceptionValue,
+        )
+
+        if isinstance(self.raised_value, UndeterminedExceptionValue):
+            return self.raised_value
+        if self.raised_value is not None:
+            return None
+        occurrence = self.occurrence_id
+        if not isinstance(occurrence, str) or not occurrence:
+            return None
+        return UndeterminedExceptionValue(occurrence, self.producer_node_owner)
+
+    @property
     def reason(self) -> str:
         locus = f" at {self.blame}" if self.blame is not None else ""
         return (

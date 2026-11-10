@@ -45,6 +45,11 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
     identity_reader = getattr(expected, "exception_type_identity", None)
     expected_identity = identity_reader() if identity_reader is not None else None
     raised_identity = getattr(effect, "exception_type_coordinate", None)
+    if raised_identity is None and _is_base_exception_identity(expected_identity):
+        # ``except BaseException`` is total over every raise: Python 3 raises
+        # only BaseException instances (raising anything else is itself a
+        # TypeError), so the class nobody testified to is still a subclass.
+        return MatchDecided(True)
     if expected_identity is not None and raised_identity is not None:
         if expected_identity == raised_identity:
             return MatchDecided(True)
@@ -76,7 +81,7 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
     raised_term = raised_identity
     if raised_term is None:
         raised_term = _operand_term(
-            effect.raised_value, owner=owner, role="raised exception"
+            _raised_subject(effect), owner=owner, role="raised exception"
         )
     if handler_term is None or raised_term is None:
         # THIS REFUSAL IS CORRECT OUTPUT, NOT OWED WORK.
@@ -98,6 +103,15 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
         # not have. The earlier `fix:` line here read "resolve both exception
         # operands through their lexical coordinates", which invited exactly
         # that repair; it cost one owner three rounds and nearly landed.
+        #
+        # A may-raise operation's ``UndeterminedRaiseEffect`` does NOT reach
+        # this refusal, and not because the coordinate was let in. Its subject
+        # is ``exception_value``: the opaque ``UndeterminedExceptionValue``,
+        # the exception OBJECT that occurrence threw, with its own function
+        # symbol ``python:undetermined_exception``. The occurrence is only the
+        # key that keeps two such objects apart; the predicate is about the
+        # raised value, never about the span. An effect with no occurrence key
+        # has no such value and still refuses here.
         raise SugarNotWritten(
             blame=effect.occurrence_id,
             owner="matches_raise_effect",
@@ -132,6 +146,30 @@ def _authenticated_ancestry(effect, raised_identity):
 
     identity, ancestry = _builtin_exception_identity(getattr(args[1], "value", None))
     return ancestry if identity == raised_identity else None
+
+
+def _raised_subject(effect):
+    """The raised exception VALUE the handler's type test is stated over.
+
+    A raise that names its operand (``raise exc``) offers that operand. A
+    may-raise operation names none; its subject is the exception object that
+    occurrence threw -- ``UndeterminedRaiseEffect.exception_value``, an opaque
+    value keyed on the effect's occurrence. That value is the raised object
+    itself, not the raise site standing in for it: see the refusal below.
+    """
+    raised = getattr(effect, "raised_value", None)
+    if raised is not None:
+        return raised
+    return getattr(effect, "exception_value", None)
+
+
+def _is_base_exception_identity(identity) -> bool:
+    args = getattr(identity, "args", ())
+    return (
+        len(args) == 2
+        and getattr(args[0], "value", None) == "builtins"
+        and getattr(args[1], "value", None) == "BaseException"
+    )
 
 
 def _is_canonical_class_identity(identity) -> bool:
