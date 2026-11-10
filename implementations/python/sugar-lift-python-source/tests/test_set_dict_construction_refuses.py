@@ -77,3 +77,36 @@ def test_a_repeated_dict_display_key_takes_the_last_value(tmp_path):
     assert value == DictValue(
         ((TermValue(1), StringValue("c")), (TermValue(2), StringValue("b")))
     )
+
+
+def test_a_decided_equal_member_collapses_past_an_undecided_one(tmp_path):
+    # ``1`` meets the first ``1`` before ``x``: CPython keeps one of them.
+    (value,) = _returns(tmp_path, "def f(x):\n    return {1, x, 1}\n")[0]
+    assert type(value) is SetValue and len(value.elements) == 2
+    assert value.elements[0] == TermValue(1)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(x):\n    return len({x, 1})\n",
+        "def f(x):\n    return len({x: 1, 2: 3})\n",
+    ],
+)
+def test_members_of_undecided_equality_are_not_counted(tmp_path, source):
+    # ``x`` may equal ``1``/``2``: the table may hold one member, not two.
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    (value,) = _returns(tmp_path, source)[0]
+    assert type(value) is CallSiteValue and value.target_name == "len"
+
+
+@pytest.mark.parametrize(
+    "source, count",
+    [
+        ("def f():\n    return len({1, 2, 1})\n", 2),
+        ("def f():\n    return len({1: 2, True: 3})\n", 1),
+    ],
+)
+def test_decided_members_are_counted_after_collapse(tmp_path, source, count):
+    assert _only_return(tmp_path, source) == TermValue(count)

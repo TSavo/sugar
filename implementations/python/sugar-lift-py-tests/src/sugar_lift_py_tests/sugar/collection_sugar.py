@@ -288,7 +288,8 @@ class DictSugar(ConstructedTermSugar):
 def _built_set(values, site):
     """``{e1, e2, ...}``: CPython adds the members in order -- an unhashable
     one raises ``TypeError``, an equal one collapses into the first.  A member
-    whose hash or equality the floor does not decide is kept as written."""
+    whose hash or equality the floor does not decide is kept as written; the
+    set's length then stays undecided (``SetValue.length``), never a count."""
     from sugar_lift_py_tests.floor.builtin_container_method import (
         _hash_decided,
         _index_of,
@@ -301,9 +302,8 @@ def _built_set(values, site):
     for member in values:
         if decided_unhashable(member):
             return _display_refusal(site, "SetSugar")
-        if _hash_decided(member) and all(_hash_decided(k) for k in kept):
-            if _index_of(tuple(kept), member) not in (None, -1):
-                continue
+        if _hash_decided(member) and _index_of(tuple(kept), member) not in (None, -1):
+            continue
         kept.append(member)
     return Complete(SetValue(tuple(kept)))
 
@@ -311,7 +311,8 @@ def _built_set(values, site):
 def _built_dict(pairs, site):
     """``{k1: v1, ...}``: an unhashable key raises ``TypeError``; a repeated
     key keeps its first position and takes the last value.  A key whose hash
-    or equality the floor does not decide is kept as written."""
+    or equality the floor does not decide is kept as written; the dict's length
+    and key traversal then stay undecided (``DictValue``), never a count."""
     from sugar_lift_py_tests.floor.builtin_container_method import (
         _hash_decided,
         _index_of,
@@ -325,11 +326,10 @@ def _built_dict(pairs, site):
     for key, value in pairs:
         if decided_unhashable(key):
             return _display_refusal(site, "DictSugar")
-        if _hash_decided(key) and all(_hash_decided(k) for k in keys):
-            found = _index_of(tuple(keys), key)
-            if found not in (None, -1):
-                values[found] = value
-                continue
+        found = _index_of(tuple(keys), key) if _hash_decided(key) else None
+        if found not in (None, -1):
+            values[found] = value
+            continue
         keys.append(key)
         values.append(value)
     return Complete(DictValue(tuple(zip(keys, values))))

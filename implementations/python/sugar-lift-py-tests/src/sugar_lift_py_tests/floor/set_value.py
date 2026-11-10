@@ -110,11 +110,14 @@ class SetValue(GuardStableValue):
         )
 
     def length(self, site):
-        # A set knows its length: the count of reduced elements.
-        del site
+        # A set knows its length when its members are decidedly distinct;
+        # members whose equality is undecided may have collapsed.
+        from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete
 
+        if not decided_distinct(self.elements):
+            return undecided_length(self, site)
         return Complete(TermValue(len(self.elements)))
 
     def slice_assign_iterable_with(self, operation, ctx):
@@ -191,6 +194,25 @@ class SetValue(GuardStableValue):
                 return Complete(SetValue(result))
             return _symbolic_set_operation("python.set.intersection", self, other, site)
         return super().bitwise_and(other, site)
+
+
+def undecided_length(container, site):
+    """``len(container)`` as the ``call:len`` coordinate: never a count."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    owner = str(site)
+    return Complete(
+        CallSiteValue(
+            target_name="len",
+            arg_values=(container,),
+            parameters=(),
+            term=ctor("call:len", (container.to_term(owner=owner),), symbol_kind="builtin"),
+            body=None,
+            site=site,
+        )
+    )
 
 
 def _closed_member_equal(left, right):
