@@ -76,11 +76,34 @@ def test_from_import_module_binding_closes_too() -> None:
 
 
 def test_showcase_shape_binds_through_the_local_assignment() -> None:
-    post = _post(
-        "import numpy as np\n\n\ndef test_rot90_quarter_turn():\n"
-        "    r = np.rot90([[1, 2], [3, 4]])\n    return r[0][0]\n"
+    # ``r[0][0]`` indexes an opaque call result, so each subscript may raise
+    # (an UndeterminedRaiseEffect under the complement of its completion
+    # atom). Every completed face still closes over ``out`` alone.
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(
+            "import numpy as np\n\n\ndef test_rot90_quarter_turn():\n"
+            "    r = np.rot90([[1, 2], [3, 4]])\n    return r[0][0]\n"
+        )
+    function = next(
+        iter(
+            SourceFile(
+                path_source(path),
+                construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            ).functions()
+        )
     )
-    assert _scoped(post, ()).formula.free_vars == {"out"}
+    exits = outcome_to_exitset(function.sugar().desugar(None))
+    halts = [face for face in exits.exits if isinstance(face, Halted)]
+    assert halts and all(
+        face.effect.producer_node_owner == "CallSiteValue.subscript" for face in halts
+    )
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(completed) == 1
+    assert _scoped(completed[0].value.post(), ()).formula.free_vars == {"out"}
 
 
 def test_a_head_that_is_not_import_bound_still_refuses_scope() -> None:
