@@ -33,6 +33,8 @@ class GroupedRaiseSugar(Sugar):
     message: Sugar
     children: tuple[Sugar, ...]
     site: SourceFragment = dataclass_field(compare=False)
+    exception_type_coordinate: object | None = None
+    exception_type_mro: tuple | None = None
 
     @classmethod
     def witnesses(cls):
@@ -72,5 +74,7 @@ class GroupedRaiseSugar(Sugar):
                 message.value,
                 tuple(effects),
                 occurrence=occurrence,
+                exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
             )
         )

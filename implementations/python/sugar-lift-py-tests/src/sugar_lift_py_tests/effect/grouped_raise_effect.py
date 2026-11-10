@@ -19,6 +19,11 @@ class GroupedRaiseEffect:
     message: object
     children: tuple[RaiseEffect | "GroupedRaiseEffect", ...]
     occurrence: str | None = None
+    # The builtin group class the Raise construction authenticated by runtime
+    # identity (builtins.ExceptionGroup or builtins.BaseExceptionGroup). None
+    # when a producer did not supply that testimony; exit inputs then stay loud.
+    exception_type_coordinate: object | None = None
+    exception_type_mro: tuple | None = None
 
     @property
     def occurrence_id(self) -> str:
@@ -56,6 +61,8 @@ class GroupedRaiseEffect:
             self.message,
             children,
             occurrence=self.occurrence,
+            exception_type_coordinate=self.exception_type_coordinate,
+            exception_type_mro=self.exception_type_mro,
         )
 
 

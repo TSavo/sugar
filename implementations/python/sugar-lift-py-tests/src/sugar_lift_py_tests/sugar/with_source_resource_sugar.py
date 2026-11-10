@@ -118,10 +118,16 @@ class WithSourceResourceSugar(Sugar):
                         from sugar_lift_py_tests.context_manager_contract import (
                             NeverSuppressesDispositionV1,
                         )
-                        from sugar_lift_py_tests.effect import RaiseEffect
+                        from sugar_lift_py_tests.effect import (
+                            GroupedRaiseEffect,
+                            RaiseEffect,
+                        )
 
+                        # An exception (a leaf or a group) is suppressed by a
+                        # true exit result; loop control and return are not
+                        # exceptions, so the exit result is ignored for them.
                         if isinstance(body_face, Halted) and not isinstance(
-                            body_face.effect, RaiseEffect
+                            body_face.effect, (RaiseEffect, GroupedRaiseEffect)
                         ):
                             routed = ExitSet((body_face,)).and_exit(
                                 exit_es,

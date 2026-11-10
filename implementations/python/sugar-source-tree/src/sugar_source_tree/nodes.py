@@ -9702,6 +9702,8 @@ class Raise(Statement):
                     for member in call.args[1].elts
                 ),
                 site=call.fragment,
+                exception_type_coordinate=self.unit.exception_type_identity(call.func),
+                exception_type_mro=self.unit.exception_type_mro(call.func),
             )
 
         if group_call(self.exc):
