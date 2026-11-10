@@ -1920,6 +1920,12 @@ def populate_source_derived_resource_refs(
             from .language_owned_io_resource import mint_language_owned_io_resource_ref
 
             owned = mint_language_owned_io_resource_ref(coordinate, receipt, resolved)
+            if owned is None:
+                from .language_owned_c_manager import (
+                    mint_language_owned_c_manager_ref,
+                )
+
+                owned = mint_language_owned_c_manager_ref(coordinate, receipt, resolved)
             if owned is not None:
                 context.source_derived_contract_refs[coordinate] = owned
                 continue

@@ -8590,6 +8590,7 @@ class With(Statement):
             ProtocolResourceSemanticsV1,
             SourceEnterFacesCompletionV1,
             SourceExitFacesCompletionV1,
+            LanguageOwnedCCallFacesCompletionV1,
             TotalCompletionV1,
         )
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -8598,6 +8599,9 @@ class With(Statement):
             FactoredSourceDerivedContextManagerRefV1,
             LanguageOwnedContextManagerRefV1,
             SourceDerivedContextManagerRefV1,
+        )
+        from sugar_lift_py_tests.floor.language_owned_c_manager import (
+            LanguageOwnedCManagerProtocol,
         )
         from sugar_lift_py_tests.ir import PrimitiveSort
         from sugar_lift_py_tests.outcome import Completed
@@ -8691,6 +8695,14 @@ class With(Statement):
                     isinstance(semantics.enter.completion, SourceEnterFacesCompletionV1)
                     and isinstance(resolution, SourceDerivedContextManagerRefV1)
                 )
+                or (
+                    isinstance(
+                        semantics.enter.completion,
+                        LanguageOwnedCCallFacesCompletionV1,
+                    )
+                    and isinstance(resolution, LanguageOwnedContextManagerRefV1)
+                    and isinstance(resolution.protocol, LanguageOwnedCManagerProtocol)
+                )
             )
             and semantics.enter.projection == "enter-result"
             and isinstance(semantics.enter.sort, PrimitiveSort)
@@ -8700,6 +8712,14 @@ class With(Statement):
                 or (
                     isinstance(semantics.exit.completion, SourceExitFacesCompletionV1)
                     and isinstance(resolution, SourceDerivedContextManagerRefV1)
+                )
+                or (
+                    isinstance(
+                        semantics.exit.completion,
+                        LanguageOwnedCCallFacesCompletionV1,
+                    )
+                    and isinstance(resolution, LanguageOwnedContextManagerRefV1)
+                    and isinstance(resolution.protocol, LanguageOwnedCManagerProtocol)
                 )
             )
             and isinstance(

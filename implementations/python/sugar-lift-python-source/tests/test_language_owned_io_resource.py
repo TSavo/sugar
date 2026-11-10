@@ -2,8 +2,8 @@
 
 io.py reexports both names from the C module _io, which has no authenticated
 source. The twins require the documented IOBase law: a completing body
-returns 1, and a ValueError in the body is not suppressed. io.open stays an
-artifact-module-absent gap in this increment.
+returns 1, and a ValueError in the body is not suppressed. io.open is a C
+function and gets only the generic C-owned protocol, never this law.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     ProtocolResourceSemanticsV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
-    ContextManagerResolutionGapV1,
     LanguageOwnedContextManagerRefV1,
     SourceDerivedContextManagerRefV1,
 )
@@ -142,8 +141,20 @@ def test_from_io_import_stringio_never_suppresses(tmp_path, monkeypatch) -> None
     _assert_constructed(tmp_path, monkeypatch, _helpers("from_import"))
 
 
-def test_io_open_stays_artifact_module_absent(tmp_path, monkeypatch) -> None:
-    """Lying twin: the _io floor is not a blanket enrollment of every C export."""
+def test_io_open_is_not_the_iobase_floor(tmp_path, monkeypatch) -> None:
+    """Lying twin: the _io floor is not a blanket enrollment of every C export.
+
+    ``_io.open`` is a C function, so it constructs under the generic C-owned
+    protocol (enter/exit may raise, exit truth decides suppression), never under
+    the IOBase never-suppresses law that only StringIO/BytesIO carry.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        ReturnTruthinessDispositionV1,
+    )
+    from sugar_lift_py_tests.floor.language_owned_c_manager import (
+        LanguageOwnedCManagerProtocol,
+    )
+
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     source = (
         "import io\n"
@@ -157,6 +168,9 @@ def test_io_open_stays_artifact_module_absent(tmp_path, monkeypatch) -> None:
     refs = source_file.root.unit.construction_context.source_derived_contract_refs
     assert len(refs) == 1
     ref = next(iter(refs.values()))
-    assert isinstance(ref, ContextManagerResolutionGapV1), ref
-    assert ref.kind == "artifact-module-absent"
+    assert isinstance(ref, LanguageOwnedContextManagerRefV1), ref
+    assert type(ref.protocol) is LanguageOwnedCManagerProtocol
+    assert ref.protocol.module_name == "_io"
     assert ref.target_symbol == "python:io.open"
+    assert isinstance(ref.semantics.exit.disposition, ReturnTruthinessDispositionV1)
+    assert not isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
