@@ -627,6 +627,27 @@ class NestedCitedOpaqueExitStepV1:
     site: object = field(compare=False)
 
 
+# Statements that may follow a halting statement inside a flattened nested
+# with body and are skipped by that halt. Handler and other-manager exit steps
+# are deliberately absent: a halt does not skip past them to a later exit.
+_BODY_REMAINDER_STEPS = (
+    YieldStepV1,
+    YieldFromStepV1,
+    TermStepV1,
+    AssignStepV1,
+    AttributeAssignStepV1,
+    AssertStepV1,
+    ImportStepV1,
+    ImportFromStepV1,
+    IfStepV1,
+    ForStepV1,
+    WhileStepV1,
+    ReturnStepV1,
+    RaiseStepV1,
+    OpaqueStepV1,
+)
+
+
 GeneratorStepV1 = (
     YieldStepV1
     | YieldFromStepV1
@@ -2246,6 +2267,13 @@ class GeneratorConstructionV1:
             if isinstance(step, NestedCitedOpaqueExitStepV1):
                 pending.append(step)
                 last = index
+                continue
+            if not pending and isinstance(step, _BODY_REMAINDER_STEPS):
+                # The rest of the flattened with body (a later statement, a
+                # yield not yet reached): a halt leaves the body, so it never
+                # runs, and the enclosing exit still does. Only a flattened
+                # body is spliced before its exit step, so that exit encloses
+                # this cursor.
                 continue
             break
         if not pending:

@@ -96,6 +96,59 @@ def _build_slice(
     return context, with_node, body_expr
 
 
+def _without_pytest_raises_construction_halts(exits):
+    """The With's body-route faces after ``AbstractRaises.__init__``'s own halts.
+
+    pytest's ``re.compile(match)`` is an off-population call inside the
+    enrolled pytest body, so it may raise. Python evaluates
+    ``pytest.raises(...)`` before anything is entered, so each such halt is the
+    With's own face: the body never runs and ``__exit__`` never runs. pytest's
+    ``except re.error`` route reaches ``fail(...)`` (``Failed``); any other
+    exception propagates undetermined. Every remaining face is reached only
+    where that call completed.
+    """
+    from sugar_lift_py_tests.outcome import Halted
+
+    construction = [
+        face
+        for face in exits
+        if isinstance(face, Halted)
+        and _negates_off_population_call(face.guard, "python:re.compile")
+    ]
+    kinds = sorted(
+        (
+            type(face.effect).__name__,
+            getattr(face.effect, "exception_name", None)
+            or getattr(face.effect, "producer_node_owner", None),
+        )
+        for face in construction
+    )
+    assert kinds == [
+        ("RaiseEffect", "Failed"),
+        ("UndeterminedRaiseEffect", "OffPopulationCall:python:re.compile"),
+    ], kinds
+    (failed,) = [face for face in construction if face.effect.exception_name == "Failed"]
+    assert "re.error" in repr(failed.guard)
+    rest = tuple(face for face in exits if all(face is not c for c in construction))
+    for face in rest:
+        assert not _negates_off_population_call(face.guard, "python:re.compile")
+    return rest
+
+
+def _negates_off_population_call(guard, target):
+    """``guard`` conjoins ``not python:off_population_call.completes(target, _)``."""
+    kind = getattr(guard, "kind", None)
+    if kind == "not":
+        (operand,) = guard.operands
+        if getattr(operand, "name", None) != "python:off_population_call.completes":
+            return False
+        (call,) = operand.args
+        return getattr(call.args[0], "value", None) == target
+    if kind == "and":
+        return any(_negates_off_population_call(op, target) for op in guard.operands)
+    return False
+
+
 @pytest.mark.parametrize(
     "family,body,expected,node_type",
     _FAMILY_SLICES,
@@ -173,7 +226,9 @@ def test_full_route_consumes_matching_halt(
         tmp_path, family=family, body=body, expected=expected
     )
     outcome = with_node.sugar().desugar()
-    exits = outcome_to_exitset(outcome).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(outcome).exits
+    )
     assert len(exits) == 1, (family, exits)
     assert isinstance(exits[0], Completed), (
         family,
@@ -208,7 +263,9 @@ def test_lying_body_without_matching_halt_fails_expectation(
         tmp_path, family=family, body=body, expected=expected
     )
     outcome = with_node.sugar().desugar()
-    exits = outcome_to_exitset(outcome).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(outcome).exits
+    )
     assert len(exits) == 1
     face = exits[0]
     assert isinstance(face, Halted)

@@ -26,10 +26,6 @@ class ReceiverStatePartitionValue(FloorValue):
                     UndeterminedRaiseEffect,
                 )
 
-                from sugar_lift_py_tests.effect.raise_effect import (
-                    UndeterminedRaiseEffect,
-                )
-
                 if isinstance(face.effect, RaiseEffect):
                     from sugar_lift_py_tests.floor.raise_value import (
                         _exceptional_exit_term,

@@ -2913,6 +2913,59 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
     return tree, context
 
 
+def _without_pytest_raises_construction_halts(exits):
+    """The With's body-route faces after ``AbstractRaises.__init__``'s own halts.
+
+    pytest's ``re.compile(match)`` is an off-population call inside the
+    enrolled pytest body, so it may raise. Python evaluates
+    ``pytest.raises(...)`` before anything is entered, so each such halt is the
+    With's own face: the body never runs and ``__exit__`` never runs. pytest's
+    ``except re.error`` route reaches ``fail(...)`` (``Failed``); any other
+    exception propagates undetermined. Every remaining face is reached only
+    where that call completed.
+    """
+    from sugar_lift_py_tests.outcome import Halted
+
+    construction = [
+        face
+        for face in exits
+        if isinstance(face, Halted)
+        and _negates_off_population_call(face.guard, "python:re.compile")
+    ]
+    kinds = sorted(
+        (
+            type(face.effect).__name__,
+            getattr(face.effect, "exception_name", None)
+            or getattr(face.effect, "producer_node_owner", None),
+        )
+        for face in construction
+    )
+    assert kinds == [
+        ("RaiseEffect", "Failed"),
+        ("UndeterminedRaiseEffect", "OffPopulationCall:python:re.compile"),
+    ], kinds
+    (failed,) = [face for face in construction if face.effect.exception_name == "Failed"]
+    assert "re.error" in repr(failed.guard)
+    rest = tuple(face for face in exits if all(face is not c for c in construction))
+    for face in rest:
+        assert not _negates_off_population_call(face.guard, "python:re.compile")
+    return rest
+
+
+def _negates_off_population_call(guard, target):
+    """``guard`` conjoins ``not python:off_population_call.completes(target, _)``."""
+    kind = getattr(guard, "kind", None)
+    if kind == "not":
+        (operand,) = guard.operands
+        if getattr(operand, "name", None) != "python:off_population_call.completes":
+            return False
+        (call,) = operand.args
+        return getattr(call.args[0], "value", None) == target
+    if kind == "and":
+        return any(_negates_off_population_call(op, target) for op in guard.operands)
+    return False
+
+
 def _installed_pytest_raises_boundary(tmp_path, manager_call, body):
     from sugar_lift_py_tests.context_manager_contract import (
         EffectBoundarySemanticsV1,
@@ -2949,17 +3002,19 @@ def test_installed_pytest_raises_truthful_route_cites_kwargs_match(
 ):
     """Installed ``pytest.raises(ValueError, match="boom")`` absorbs a match."""
     from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
 
     boundary = _installed_pytest_raises_boundary(
         tmp_path,
         'pytest.raises(ValueError, match="boom")',
         'raise ValueError("boom")',
     )
-    exits = outcome_to_exitset(boundary.desugar()).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(boundary.desugar()).exits
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], Completed)
-    assert exits[0].guard == true_guard()
+    # Absorbed wherever the manager was constructed: re.compile completed.
+    assert "python:off_population_call.completes" in repr(exits[0].guard)
 
 
 def test_installed_pytest_raises_wrong_message_is_not_absorbed(tmp_path):
@@ -2972,7 +3027,9 @@ def test_installed_pytest_raises_wrong_message_is_not_absorbed(tmp_path):
         'pytest.raises(ValueError, match="boom")',
         'raise ValueError("other")',
     )
-    exits = outcome_to_exitset(boundary.desugar()).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(boundary.desugar()).exits
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], Halted)
     assert isinstance(exits[0].effect, RaiseEffect)
@@ -2989,7 +3046,9 @@ def test_installed_pytest_raises_empty_body_is_expectation_not_met(tmp_path):
         'pytest.raises(ValueError, match="boom")',
         "pass",
     )
-    exits = outcome_to_exitset(boundary.desugar()).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(boundary.desugar()).exits
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], Halted)
     assert isinstance(exits[0].effect, ExpectationNotMetEffect)
@@ -3066,7 +3125,9 @@ def test_installed_pytest_raises_excinfo_type_is_the_raised_class(tmp_path):
         ),
     )
     fn = next(node for node in tree.nodes() if node.kind == "FunctionDef")
-    exits = outcome_to_exitset(fn.sugar().desugar()).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(fn.sugar().desugar()).exits
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], Completed)
     record = exits[0].value.record
@@ -3114,7 +3175,9 @@ def test_installed_pytest_raises_excinfo_value_is_the_raised_instance(tmp_path):
         ),
     )
     fn = next(node for node in tree.nodes() if node.kind == "FunctionDef")
-    exits = outcome_to_exitset(fn.sugar().desugar()).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(fn.sugar().desugar()).exits
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], Completed)
     record = exits[0].value.record
@@ -3164,7 +3227,9 @@ def test_installed_pytest_raises_excinfo_value_args_are_the_constructor_argument
         ),
     )
     fn = next(node for node in tree.nodes() if node.kind == "FunctionDef")
-    exits = outcome_to_exitset(fn.sugar().desugar()).exits
+    exits = _without_pytest_raises_construction_halts(
+        outcome_to_exitset(fn.sugar().desugar()).exits
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], Completed)
     record = exits[0].value.record
@@ -3217,6 +3282,44 @@ def _installed_generator_with(tmp_path, source: str, consumer: str):
     return next(node for node in tree.nodes() if node.kind == "With").sugar()
 
 
+
+def _without_catch_warnings_construction_halt(faces, constructions=1):
+    """The halted faces after ``warnings.catch_warnings(...)``'s own construction.
+
+    That construction is an off-population call inside the enrolled body, so
+    it completes only under its opaque atom and halts with an
+    ``UndeterminedRaiseEffect`` under the complement, before ``__enter__`` is
+    ever called. Asserting it here keeps every test's remaining halt count
+    about the entered manager.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
+
+    halted = [face for face in faces if isinstance(face, Halted)]
+    construction = [
+        face
+        for face in halted
+        if isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner
+        == "OffPopulationCall:python:warnings.catch_warnings"
+    ]
+    assert len(construction) == constructions, construction
+    for face in construction:
+        assert _negates_off_population_completion(face.guard), face.guard
+    return [face for face in halted if all(face is not c for c in construction)]
+
+
+def _negates_off_population_completion(guard):
+    """``guard`` conjoins ``not python:off_population_call.completes(...)``."""
+    kind = getattr(guard, "kind", None)
+    if kind == "not":
+        operand = guard.operands[0]
+        return getattr(operand, "name", None) == "python:off_population_call.completes"
+    if kind == "and":
+        return any(_negates_off_population_completion(op) for op in guard.operands)
+    return False
+
+
 def test_installed_cited_opaque_nested_with_yields_open_enter_result(tmp_path):
     """A nameable ``with warnings.catch_warnings() as w: yield w`` keeps both enter faces.
 
@@ -3256,7 +3359,7 @@ def test_installed_cited_opaque_nested_with_yields_open_enter_result(tmp_path):
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -3336,7 +3439,7 @@ def test_installed_cited_opaque_nested_with_try_finally_pass_yields_open_enter_r
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -3416,18 +3519,46 @@ def test_installed_cited_opaque_nested_with_simplefilter_is_term_step(tmp_path):
     assert any(isinstance(item, FinallyStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
-    assert len(halted) == 1
-    assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
-    assert "warnings.catch_warnings" in halted[0].effect.reason
-    assert len(completed) == 1
-    # The completed-enter face may yield or halt at the uncited simplefilter
-    # term; either is honest. Inventing that the filter ran is not.
-    yielded = completed[0].value
-    if isinstance(yielded, YieldEffect):
-        assert isinstance(yielded.value, OpaqueManagerProtocolCoordinate)
-        assert yielded.value.symbol == "python:cm_enter_result"
+    # ``warnings.simplefilter`` is an off-population call: it may raise. That
+    # raise leaves the with body before the yield, so the cited manager's
+    # __exit__ still runs over it: the exit may itself halt, may re-raise the
+    # filter's exception, or may suppress it (the generator continues after
+    # the with). Inventing that the filter ran is not honest; neither is
+    # letting its raise skip __exit__.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
+
+    by_kind = {}
+    for face in halted:
+        by_kind.setdefault(type(face.effect).__name__, []).append(face.effect)
+    assert sorted(by_kind) == [
+        "ContextManagerEnterRuntimeEffect",
+        "ContextManagerExitRuntimeEffect",
+        "UndeterminedRaiseEffect",
+    ]
+    assert all(len(effects) == 1 for effects in by_kind.values())
+    (enter,) = by_kind["ContextManagerEnterRuntimeEffect"]
+    assert "warnings.catch_warnings" in enter.reason
+    (exit_,) = by_kind["ContextManagerExitRuntimeEffect"]
+    assert "warnings.catch_warnings" in exit_.reason
+    (filtered,) = by_kind["UndeterminedRaiseEffect"]
+    assert isinstance(filtered, UndeterminedRaiseEffect)
+    assert filtered.producer_node_owner == "OffPopulationCall:python:warnings.simplefilter"
+    assert len(completed) == 2
+    (yielded,) = [face.value for face in completed if isinstance(face.value, YieldEffect)]
+    assert isinstance(yielded.value, OpaqueManagerProtocolCoordinate)
+    assert yielded.value.symbol == "python:cm_enter_result"
+    (suppressed,) = [
+        face.value
+        for face in completed
+        if isinstance(face.value, GeneratorConstructionV1)
+    ]
+    assert not any(
+        isinstance(step, NestedCitedOpaqueManagerStepV1)
+        for step in suppressed.steps[suppressed.cursor :]
+    )
 
 
 def test_installed_cited_opaque_nested_with_except_handler_stays_opaque(tmp_path):
@@ -3510,7 +3641,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_assign(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -3596,7 +3727,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_for(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -3683,7 +3814,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_for_bare_name(tmp
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -3772,7 +3903,7 @@ def test_installed_cited_opaque_with_inside_cited_opaque_with(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in inner_steps[0].body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces, constructions=2)
     completed = [face for face in faces if isinstance(face, Completed)]
     enter_effects = [
         face.effect
@@ -3863,7 +3994,7 @@ def test_installed_cited_opaque_nested_with_yield_from_tuple(tmp_path):
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -3952,7 +4083,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_attribute_assign(
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4030,7 +4161,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_import_from(tmp_p
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4109,7 +4240,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_import(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4188,7 +4319,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_assert(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4268,7 +4399,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_assert_false(tmp_
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4353,7 +4484,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_divzero(tmp_path)
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4439,7 +4570,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_assign_divzero(tm
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4523,7 +4654,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_if_divzero(tmp_pa
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4608,7 +4739,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_for_divzero(tmp_p
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4703,7 +4834,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_attribute_assign_
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4787,7 +4918,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_return_divzero(tm
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4869,7 +5000,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_yield_divzero(tmp
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -4957,7 +5088,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_helper_for_divzer
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5045,7 +5176,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_helper_for_raisin
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5127,7 +5258,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_raise(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5213,7 +5344,7 @@ def test_installed_cited_opaque_nested_with_body_return_still_exits(tmp_path):
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5302,7 +5433,7 @@ def test_installed_cited_opaque_nested_with_body_raise_still_exits(tmp_path):
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5399,7 +5530,7 @@ def test_installed_cited_opaque_nested_with_body_attribute_assign_still_exits(tm
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5491,7 +5622,7 @@ def test_installed_cited_opaque_nested_with_body_assert_false_still_exits(tmp_pa
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5583,7 +5714,7 @@ def test_installed_cited_opaque_nested_with_body_divzero_still_exits(tmp_path):
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5677,7 +5808,7 @@ def test_installed_cited_opaque_nested_with_body_assign_divzero_still_exits(tmp_
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5769,7 +5900,7 @@ def test_installed_cited_opaque_nested_with_body_if_divzero_still_exits(tmp_path
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5862,7 +5993,7 @@ def test_installed_cited_opaque_nested_with_body_for_divzero_still_exits(tmp_pat
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -5962,7 +6093,7 @@ def test_installed_cited_opaque_nested_with_body_attribute_assign_divzero_still_
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6054,7 +6185,7 @@ def test_installed_cited_opaque_nested_with_body_return_divzero_still_exits(tmp_
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6145,7 +6276,7 @@ def test_installed_cited_opaque_nested_with_body_yield_divzero_still_exits(tmp_p
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6242,7 +6373,7 @@ def test_installed_cited_opaque_nested_with_body_helper_for_divzero_still_exits(
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6341,7 +6472,7 @@ def test_installed_cited_opaque_nested_with_body_helper_for_raising_tuple_still_
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6432,7 +6563,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_while(tmp_path):
     assert any(isinstance(item, YieldStepV1) for item in step.body_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6576,7 +6707,7 @@ def test_installed_cited_opaque_nested_with_formal_if_in_finally(tmp_path):
         assert has_assign is True
         entered = machine.resume()
         faces = list(entered.exits)
-        halted = [face for face in faces if isinstance(face, Halted)]
+        halted = _without_catch_warnings_construction_halt(faces)
         completed = [face for face in faces if isinstance(face, Completed)]
         assert len(halted) == 1
         assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6678,7 +6809,7 @@ def test_installed_cited_opaque_nested_with_builtin_class_if_in_finally(tmp_path
     )
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6783,7 +6914,7 @@ def test_installed_cited_opaque_nested_with_isinstance_tuple_if_in_finally(tmp_p
     assert machine._decide_guard(truth.value) is False
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -6866,7 +6997,7 @@ def test_installed_cited_opaque_nested_with_term_only_helper_iterates_enter_resu
     assert any(isinstance(item, TermStepV1) for item in cleanup.cleanup_steps)
     entered = machine.resume()
     faces = list(entered.exits)
-    halted = [face for face in faces if isinstance(face, Halted)]
+    halted = _without_catch_warnings_construction_halt(faces)
     completed = [face for face in faces if isinstance(face, Completed)]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, ContextManagerEnterRuntimeEffect)
@@ -7067,7 +7198,9 @@ def test_installed_plain_expected_halt_completes(tmp_path):
         tmp_path, "raise ValueError('expected')"
     )
     if isinstance(reference, SourceDerivedContextManagerRefV1):
-        exits = outcome_to_exitset(outcome).exits
+        exits = _without_pytest_raises_construction_halts(
+            outcome_to_exitset(outcome).exits
+        )
         assert len(exits) == 1
         assert isinstance(exits[0], Completed), exits
         return
@@ -7093,7 +7226,9 @@ def test_installed_plain_expected_halt_lie_fails(tmp_path):
 
     reference, outcome = _installed_plain_expected_halt_reference(tmp_path, "pass")
     if isinstance(reference, SourceDerivedContextManagerRefV1):
-        exits = outcome_to_exitset(outcome).exits
+        exits = _without_pytest_raises_construction_halts(
+            outcome_to_exitset(outcome).exits
+        )
         assert len(exits) == 1
         assert isinstance(exits[0], Halted), exits
         assert isinstance(exits[0].effect, ExpectationNotMetEffect), exits[0]
