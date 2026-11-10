@@ -255,6 +255,10 @@ def sugar_outcome_to_exitset(outcome) -> "ExitSet":
         return ExitSet.halted(outcome.effect)
     if isinstance(outcome, Complete):
         return ExitSet.completed(outcome.value)
+    if isinstance(outcome, ExitSet):
+        # A call that may complete or raise (a C call, an unprojected source
+        # call) is already its own guarded faces; keep every one.
+        return outcome
     raise TypeError(
         f"sugar_outcome_to_exitset expects Complete|Incomplete, got {type(outcome).__name__}"
     )
