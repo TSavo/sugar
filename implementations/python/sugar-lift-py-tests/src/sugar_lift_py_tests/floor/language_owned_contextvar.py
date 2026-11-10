@@ -159,8 +159,12 @@ class LanguageOwnedContextVarMethodValue(FloorValue):
 class LanguageOwnedCExtensionCallableValue(FloorValue):
     """A C-extension function whose body is not authenticated source.
 
-    The call completes as an opaque result: this does not invent the
-    function's vendor semantics.
+    A call has two faces under one opaque partition atom,
+    ``python:c_extension.call_completes(module, name, site)``. Completed carries
+    an opaque result, and its complement is Halted with an UndeterminedRaiseEffect,
+    because native code may raise any exception (os.chdir raises
+    FileNotFoundError on a missing path). Neither face invents the vendor's
+    semantics, and a caller that needs the call to be total sees the halt.
     """
 
     module_name: str
@@ -178,14 +182,50 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
 
     def callable_application_with(self, operation, ctx):
         del ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            ExitSet,
+            Halted,
+            complement_guard,
+        )
 
-        return Complete(
-            LanguageOwnedCExtensionResultValue(
-                module_name=self.module_name,
-                exported_name=self.exported_name,
-                site=getattr(operation, "blame", None) or getattr(operation, "site", None),
-            )
+        site = getattr(operation, "blame", None) or getattr(operation, "site", None)
+        call = ctor(
+            "python:c_extension.call",
+            (
+                str_const(self.module_name),
+                str_const(self.exported_name),
+                str_const(str(site)),
+            ),
+        )
+        completes = atomic("python:c_extension.call_completes", [call])
+        return (
+            ExitSet(
+                (
+                    Completed(
+                        completes,
+                        LanguageOwnedCExtensionResultValue(
+                            module_name=self.module_name,
+                            exported_name=self.exported_name,
+                            site=site,
+                        ),
+                    ),
+                    Halted(
+                        complement_guard(completes),
+                        UndeterminedRaiseEffect(
+                            blame=str(site) if site is not None else None,
+                            occurrence=str(site) if site is not None else None,
+                            producer_node_owner=(
+                                "LanguageOwnedCExtensionCallableValue"
+                                f":{self.module_name}.{self.exported_name}"
+                            ),
+                        ),
+                        None,
+                    ),
+                )
+            ).normalize()
         )
 
 

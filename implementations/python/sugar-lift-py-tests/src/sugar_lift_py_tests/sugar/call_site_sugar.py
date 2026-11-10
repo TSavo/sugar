@@ -66,7 +66,22 @@ def _language_owned_call_floor(sugar):
     floors = getattr(context, "language_owned_call_floors", None) if context is not None else None
     if not floors:
         return None
-    return floors.get(sugar.target_name)
+    named = floors.get(sugar.target_name)
+    if named is not None:
+        return named
+    try:
+        span = sugar.site.line_col_span
+        key = (
+            "call-site",
+            sugar.site.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    except (AttributeError, TypeError):
+        return None
+    return floors.get(key)
 
 
 @dataclass(frozen=True)
