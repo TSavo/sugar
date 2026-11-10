@@ -49,7 +49,7 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
     if isinstance(state, Sugar):
         return ExitSet.completed(BlockValue((), can_fall_through=True))
     if isinstance(state, UnboundProjection):
-        return ExitSet.halted(NameErrorEffect(name=name, site=site))
+        return ExitSet.halted(NameErrorEffect.at(name=name, site=site))
     if isinstance(state, LoopGuardedProjection):
         # A name a loop bound on several completed faces is deleted ON EACH FACE,
         # under that face's guard. `read_binding` already reads the same union;

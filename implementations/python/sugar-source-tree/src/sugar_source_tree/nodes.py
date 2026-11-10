@@ -4239,6 +4239,9 @@ class FunctionDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
+    def substitution_binding(self, scope):
+        return _local_definition_binding(self, scope)
+
     @property
     def args(self):
         return _arguments_projection(self.params)
@@ -5275,6 +5278,9 @@ class AsyncFunctionDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
+    def substitution_binding(self, scope):
+        return _local_definition_binding(self, scope)
+
     @property
     def args(self):
         return _arguments_projection(self.params)
@@ -5342,6 +5348,9 @@ class ClassDef(Statement):
         "keywords",
         "body",
     )
+
+    def substitution_binding(self, scope):
+        return _local_definition_binding(self, scope)
 
     def __post_init__(self):
         # A NODE OFF THE ROLL. `Node.__post_init__` is where registration
@@ -13514,6 +13523,11 @@ class Name(Expression):
         if bound is _MISSING:
             return self
         bound = unwrap_binding_state(bound)
+        if isinstance(bound, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            # A local definition bound this name: the read is the ordinary
+            # name, resolved by the definition's own runtime binding, never
+            # the definition statement spliced into expression position.
+            return self
         if isinstance(bound, Node):
             # Formal / binding-coordinate refs carry identity in ``coordinate``,
             # not in the Param's declaration span. Replacing every use with the
@@ -13725,6 +13739,57 @@ class LoopRecurrenceStatement(Statement):
             self.construction,
             self.fragment,
         )
+
+
+class DecoratedDefinitionRef(Expression):
+    """The value a decorated local ``def``/``class`` binds: not constructed.
+
+    ``@d def g(): ...`` binds ``g`` to ``d(<function g>)``, the decorator's
+    result. Decorator application is not constructed here, so a later read
+    refuses by name instead of standing as the bare definition (a wrong
+    value) or as unbound (a false NameError).
+    """
+
+    definition_name: str
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.decorated_definition_ref_sugar import (
+            DecoratedDefinitionRefSugar,
+        )
+
+        return DecoratedDefinitionRefSugar(self.definition_name, self.fragment)
+
+
+def _local_definition_binding(definition, scope):
+    """A local ``def``/``class`` binds its name for the statements after it.
+
+    Only a name the enclosing function holds as a lexical local is threaded;
+    an undecorated definition binds itself, a decorated one binds a loud
+    ``DecoratedDefinitionRef``.
+    """
+    lexical = scope.get(_LEXICALLY_BOUND_NAMES)
+    if not isinstance(lexical, frozenset) or definition.name not in lexical:
+        return None
+    if not definition.decorators:
+        return {definition.name: definition}
+    from .backend import Leaf, materialize
+    from .shadow import ShadowNode
+
+    return {
+        definition.name: materialize(
+            definition.unit,
+            ShadowNode(
+                "DecoratedDefinitionRef",
+                definition.span,
+                (("definition_name", Leaf(definition.name)),),
+            ),
+            definition.reporter,
+        )
+    }
 
 
 class ConstructedReceiverRef(Expression):
