@@ -1,0 +1,113 @@
+"""Protocol-resource routing for a language-owned C-floor manager.
+
+Same ExitSet algebra as ``WithSourceResourceSugar``, but enter/exit are the
+language-owned protocol, not source ``MethodCallSugar`` definition coordinates.
+``_io`` has no authenticated source for those coordinates, and inventing them
+would be a lie.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+
+@dataclass(frozen=True)
+class WithLanguageOwnedResourceSugar(Sugar):
+    manager: Sugar
+    protocol: object
+    summary: object
+    body: tuple[Sugar, ...]
+    manager_slot_id: str
+    enter_slot_id: str | None
+    exit_face_id: str
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.resource_bindings import (
+            EnterResultBinding,
+            ExitFaceBinding,
+            ManagerBinding,
+            prepend_facts_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.exit_set_routing import (
+            promote_raise_halts,
+            sugar_outcome_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+            _and,
+            _project_manager_receiver,
+            _returned_value,
+        )
+
+        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx)).sequence(
+            lambda value: _project_manager_receiver(value, ctx)
+        )
+        parts = []
+        for manager_face in manager_es.exits:
+            if isinstance(manager_face, Halted):
+                parts.append(ExitSet((manager_face,)))
+                continue
+            manager_facts = ManagerBinding(
+                self.manager_slot_id, manager_face.value
+            ).to_facts(site=self.site)
+            enter_outcome = self.protocol.enter_resource_outcome_for(
+                manager_face.value, ctx
+            )
+            enter_es = outcome_to_exitset(enter_outcome)
+            for enter_face in enter_es.exits:
+                guard = _and(manager_face.guard, enter_face.guard)
+                if isinstance(enter_face, Halted):
+                    parts.append(ExitSet((Halted(guard, enter_face.effect),)))
+                    continue
+                entered = enter_face.value
+                enter_value = _returned_value(entered.enter_value)
+                enter_facts = ()
+                if self.enter_slot_id is not None and enter_value is not None:
+                    enter_facts = EnterResultBinding(
+                        self.enter_slot_id, enter_value
+                    ).to_facts(site=self.site)
+                body_es = promote_raise_halts(
+                    reduce_block_to_exitset(self.body, ctx)
+                ).guarded(guard)
+                exit_es = outcome_to_exitset(
+                    self.protocol.exit_outcome_for(entered, ctx)
+                )
+                for body_face in body_es.exits:
+                    face_facts = ExitFaceBinding.from_body_exit(
+                        self.exit_face_id, body_face
+                    ).to_facts(site=self.site, guard=body_face.guard)
+                    routed = ExitSet((body_face,)).and_exit(
+                        exit_es,
+                        disposition=self.summary.semantics.exit.disposition,
+                    )
+                    parts.append(
+                        prepend_facts_to_exitset(
+                            routed, (*manager_facts, *enter_facts, *face_facts)
+                        )
+                    )
+        if not parts:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="WithLanguageOwnedResourceSugar.desugar",
+                observed="language-owned manager protocol produced no face",
+                requested="one completed or halted language-owned manager face",
+                fix="keep empty protocol testimony loud",
+            )
+        result = parts[0]
+        for part in parts[1:]:
+            result = result.union(part)
+        return result.normalize()
