@@ -203,8 +203,11 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.floor import SymbolicValue
 
-        if self.site is not None and type(callee) in (SymbolicValue, CallSiteValue):
-            # The callee is a formal, a place, or a call's result: nothing here
+        if self.site is not None and (
+            (type(callee) is SymbolicValue and callee.formal_coordinate is not None)
+            or (type(callee) is CallSiteValue and callee.body is None)
+        ):
+            # The callee is a formal or an opaque call's result: nothing here
             # resolved what it runs, so the call is two-faced (#7585), never
             # total.
             from sugar_lift_py_tests.ir import _Var

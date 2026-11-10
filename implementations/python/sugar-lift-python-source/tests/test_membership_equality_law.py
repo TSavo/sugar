@@ -116,8 +116,10 @@ def test_set_add_of_an_equal_float_keeps_one_member(tmp_path):
 def test_none_or_a_display_against_a_call_result_is_never_false(tmp_path, expression):
     # ``None == g()`` and ``[1] == g()`` depend on what ``g`` returns: the
     # member comparison is undecided, so membership is never decided False.
+    # ``h`` is unbound, so ``g()`` may raise too: its one halt is that call's.
     source = f"def g():\n    return h()\ndef f():\n    return {expression}\n"
-    value = _only_return(tmp_path, source)
+    (value,), halts = _returns(tmp_path, source)
+    assert [halt.producer_node_owner for halt in halts] == ["UnknownCallee:h"]
     assert type(value) is not FalseBoolLiteralSugar
     assert type(value) is not TrueBoolLiteralSugar
 

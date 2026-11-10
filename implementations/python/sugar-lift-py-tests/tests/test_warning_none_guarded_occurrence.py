@@ -130,7 +130,10 @@ def _entries(source: str, stem: str):
     )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
     return tuple(
-        entry for face in exits.exits for entry in getattr(face.value, "entries", ())
+        entry
+        for face in exits.exits
+        if isinstance(face, Completed)
+        for entry in getattr(face.value, "entries", ())
     )
 
 

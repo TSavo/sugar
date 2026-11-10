@@ -27,6 +27,30 @@ def _val(src):
     )
 
 
+def _completed_val(src, callee):
+    """The completed face's value where ``callee``'s own call may raise.
+
+    ``warnings`` is not enrolled, so ``warnings.warn`` is an unknown callee: it
+    completes or raises (``filterwarnings("error")`` makes it raise).
+    """
+    from sugar_lift_py_tests.outcome import Completed
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write("import pytest\nimport contextlib\nimport tm\n" + src)
+        path = f.name
+    exits = (
+        next(source_file_with_preconstruction(Path(path)).functions())
+        .sugar()
+        .desugar()
+        .exits
+    )
+    (completed,) = [face for face in exits if isinstance(face, Completed)]
+    assert [
+        face.effect.producer_node_owner for face in exits if face is not completed
+    ] == [f"UnknownCallee:{callee}"]
+    return completed.value
+
+
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write("import pytest\nimport contextlib\nimport tm\n" + src)
@@ -769,8 +793,9 @@ def test_warnings_warn_with_an_explicit_category_mints_authenticated_testimony()
     )
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    v = _val(
-        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n"
+    v = _completed_val(
+        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n",
+        "warnings.warn",
     )
     entries = v.record.contribution()
     observations = [
@@ -796,7 +821,10 @@ def test_warnings_warn_without_a_category_still_fabricates_nothing():
         WarningObservationValue,
     )
 
-    v = _val("import warnings\n" "def A():\n" "    warnings.warn('message')\n")
+    v = _completed_val(
+        "import warnings\n" "def A():\n" "    warnings.warn('message')\n",
+        "warnings.warn",
+    )
     entries = v.record.contribution()
     calls = [entry for entry in entries if isinstance(entry, CallSiteValue)]
     assert len(calls) == 1

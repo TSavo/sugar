@@ -19,7 +19,7 @@ from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
-from sugar_lift_py_tests.outcome import Complete, Halted
+from sugar_lift_py_tests.outcome import Complete, Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
@@ -246,8 +246,15 @@ def _assert_complete_return_one(source_file) -> None:
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    completed = func.sugar().desugar()
-    assert isinstance(completed, Complete)
+    # ``StringIO()`` is a call whose body the lift does not hold: it may
+    # raise, and that halt is the ``with`` statement's own construction face.
+    exits = func.sugar().desugar()
+    (completed,) = [face for face in exits.exits if isinstance(face, Completed)]
+    assert [
+        face.effect.producer_node_owner
+        for face in exits.exits
+        if isinstance(face, Halted)
+    ] == ["UnknownCallee:StringIO"]
     assert isinstance(completed.value, UniverseValue)
     returns = [
         statement
@@ -277,7 +284,12 @@ def test_redirect_stdout_does_not_suppress_a_body_raise(tmp_path) -> None:
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
     raised = func.sugar().desugar()
-    halted = [face for face in raised.exits if isinstance(face, Halted)]
+    halted = [
+        face
+        for face in raised.exits
+        if isinstance(face, Halted)
+        and face.effect.producer_node_owner != "UnknownCallee:StringIO"
+    ]
     assert len(halted) == 1
     assert isinstance(halted[0].effect, RaiseEffect)
     assert halted[0].effect.exception_name == "RuntimeError"

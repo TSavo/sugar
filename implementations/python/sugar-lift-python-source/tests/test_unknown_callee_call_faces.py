@@ -97,3 +97,12 @@ def test_a_source_function_is_not_this_law(tmp_path):
     source = "def g():\n    return 1\ndef f():\n    return g()\n"
     returns, halts = _split(tmp_path, source)
     assert not any(owner.startswith("UnknownCallee:") for owner in _owners(halts))
+
+
+def test_an_if_on_an_unknown_call_keeps_both_suites(tmp_path):
+    # The condition's completed face selects the suites; returning the
+    # condition's own faces as the statement's dropped ``return 1``.
+    source = "def f():\n    if h():\n        return 1\n    return 2\n"
+    returns, halts = _split(tmp_path, source)
+    assert _values(returns) == {1, 2}
+    assert _owners(halts) == ["UnknownCallee:h"]

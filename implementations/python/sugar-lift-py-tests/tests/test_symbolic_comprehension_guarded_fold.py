@@ -44,7 +44,48 @@ def _post_of(source, path=None):
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )[0]
-    return function.sugar().desugar(None).value.post()
+    return _completed(function.sugar().desugar(None)).post()
+
+
+def _completed(outcome):
+    """The one completed face's value.
+
+    A call whose callee nothing resolved (``g``, ``p``, ``h``) may raise: it
+    halts with an ``UndeterminedRaiseEffect`` under the complement of its
+    completion atom, beside the completion this file inspects."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+    if isinstance(outcome, Complete):
+        return outcome.value
+    exits = outcome_to_exitset(outcome).exits
+    completed = [face for face in exits if isinstance(face, Completed)]
+    halted = [face for face in exits if isinstance(face, Halted)]
+    assert len(completed) == 1, exits
+    assert all(
+        isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner.startswith("UnknownCallee:")
+        for face in halted
+    ), halted
+    return completed[0].value
+
+
+def _call_result(application):
+    """``python:call_result(application, <occurrence>)`` -- one evaluation's
+    unknown result -- matched on its application."""
+
+    class _Result:
+        def __eq__(self, other):
+            return (
+                getattr(other, "name", None) == "python:call_result"
+                and other.args[0] == application
+            )
+
+        def __repr__(self):
+            return f"python:call_result({application!r}, <occurrence>)"
+
+    return _Result()
 
 
 def _fold(post):
@@ -142,7 +183,7 @@ def test_symbolic_iterable_constructs_a_recurrence_not_an_unrolling():
     assert kind == "py.listcomp"
     assert iterable == make_var("xs")
     element = _coordinate(body)
-    assert body.body == _ctor("call:g", [element]), f"body was {body.body!r}"
+    assert body.body == _call_result(_ctor("call:g", [element])), f"body was {body.body!r}"
     assert post.args[1].args[2] == _ctor(
         "python:loop.exhaustion", [], symbol_kind="coordinate"
     )
@@ -163,7 +204,7 @@ def test_symbolic_filter_retains_a_guard_rather_than_deciding_it():
     _kind, _iterable, body = _fold(post)
     element = _coordinate(body)
     assert body.body == _filtered(
-        _ctor("call:p", [element]), _ctor("call:g", [element])
+        _call_result(_ctor("call:p", [element])), _call_result(_ctor("call:g", [element]))
     ), f"body was {body.body!r}"
 
 
@@ -174,8 +215,8 @@ def test_symbolic_filters_conjoin_in_source_order():
     _kind, _iterable, body = _fold(post)
     element = _coordinate(body)
     assert body.body == _filtered(
-        _ctor("call:p", [element]),
-        _filtered(_ctor("call:q", [element]), element),
+        _call_result(_ctor("call:p", [element])),
+        _filtered(_call_result(_ctor("call:q", [element])), element),
     ), f"body was {body.body!r}"
 
 
@@ -194,7 +235,7 @@ def test_nested_generators_preserve_ordering_and_binding_dependency():
     assert inner_fold.name == "python:loop.flat_map", f"outer body {inner_fold!r}"
     assert inner_fold.args[0] == x, "inner iterable must be the outer binding"
     y = _coordinate(inner_fold.args[1])
-    assert inner_fold.args[1].body == _ctor("call:g", [x, y])
+    assert inner_fold.args[1].body == _call_result(_ctor("call:g", [x, y]))
     assert x != y, "each generator binds its own coordinate"
 
 
@@ -203,7 +244,7 @@ def test_target_variable_does_not_leak_out_of_the_comprehension():
     # per-element coordinate. If the target leaked, the returned term would
     # mention the recurrence coordinate.
     post = _post_of("def f(x, xs):\n    ys = [g(x) for x in xs]\n    return h(x)\n")
-    assert post.args[1] == _ctor("call:h", [make_var("x")]), f"post was {post!r}"
+    assert post.args[1] == _call_result(_ctor("call:h", [make_var("x")])), f"post was {post!r}"
 
 
 def test_shadowed_outer_variable_remains_unchanged():
@@ -212,12 +253,14 @@ def test_shadowed_outer_variable_remains_unchanged():
     # outer binding. Both faces are asserted in ONE program.
     source = "def f(x, xs):\n    return h(x, [g(x) for x in xs])\n"
     post = _post_of(source)
-    call = post.args[1]
+    result = post.args[1]
+    assert result.name == "python:call_result"
+    call = result.args[0]
     assert call.name == "call:h"
     assert call.args[0] == make_var("x"), "outer x survives unshadowed"
     _kind, _iterable, body = _fold_of_term(call.args[1])
     element = _coordinate(body)
-    assert body.body == _ctor("call:g", [element]), "inner x is the coordinate"
+    assert body.body == _call_result(_ctor("call:g", [element])), "inner x is the coordinate"
     assert element != make_var("x")
 
 
@@ -237,7 +280,7 @@ def test_tuple_destructuring_binds_every_coordinate_correctly():
     assert body.body == _destructure(
         element,
         2,
-        _ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)]),
+        _call_result(_ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)])),
     ), f"body was {body.body!r}"
 
 
@@ -260,7 +303,7 @@ def test_list_shaped_target_destructures_like_a_tuple_target():
             _destructure(
                 element,
                 2,
-                _ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)]),
+                _call_result(_ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)])),
             )
             == body.body
         )
@@ -282,10 +325,10 @@ def test_nested_destructuring_projects_a_projection():
         _destructure(
             inner,
             2,
-            _ctor(
+            _call_result(_ctor(
                 "call:g",
                 [_project(element, 0, 2), _project(inner, 0, 2), _project(inner, 1, 2)],
-            ),
+            )),
         ),
     ), f"body was {body.body!r}"
 
@@ -298,10 +341,10 @@ def test_destructuring_arity_is_carried_not_assumed():
     assert body.body == _destructure(
         element,
         3,
-        _ctor(
+        _call_result(_ctor(
             "call:g",
             [_project(element, 0, 3), _project(element, 1, 3), _project(element, 2, 3)],
-        ),
+        )),
     ), f"body was {body.body!r}"
 
 
@@ -326,7 +369,7 @@ def test_destructure_halt_and_filter_latch_are_distinct_exits():
     assert body.body == _destructure(
         element,
         2,
-        _filtered(_ctor("call:p", [_project(element, 1, 2)]), _project(element, 0, 2)),
+        _filtered(_call_result(_ctor("call:p", [_project(element, 1, 2)])), _project(element, 0, 2)),
     ), f"body was {body.body!r}"
 
 
@@ -559,9 +602,9 @@ def test_a_comprehension_nested_in_a_dict_comprehension_value_is_constructed():
     assert value.args[0] != make_var("xs"), f"inner iterable was {value.args[0]!r}"
     inner = _coordinate(value.args[1])
     assert inner != outer, "inner and outer coordinates must be distinct"
-    assert value.args[1].body == _ctor(
+    assert value.args[1].body == _call_result(_ctor(
         "py.call", [make_var("g"), inner]
-    ), f"inner body was {value.args[1].body!r}"
+    )), f"inner body was {value.args[1].body!r}"
     assert value == _inner_listcomp(outer, value.args[1]), f"value was {value!r}"
 
 

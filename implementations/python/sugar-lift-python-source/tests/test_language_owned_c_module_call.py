@@ -85,5 +85,7 @@ def test_each_c_call_site_has_its_own_raise_face(tmp_path) -> None:
 def test_c_type_construction_is_not_floored_as_a_c_function(tmp_path) -> None:
     # ``_decimal.Decimal`` is a C type, not a builtin function: runtime
     # identity does not admit the C-function floor, so no C-call face appears.
+    # Constructing it is still a call whose body the lift does not hold, so it
+    # may raise -- under its own unknown-callee face, never the C-call one.
     exits = _exits(tmp_path, "import decimal\ndef f():\n    return decimal.Decimal(1)\n")
-    assert _owners(exits) == []
+    assert _owners(exits) == ["UnknownCallee:decimal.Decimal"]

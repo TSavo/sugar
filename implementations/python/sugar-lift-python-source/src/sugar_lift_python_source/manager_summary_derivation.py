@@ -2181,7 +2181,7 @@ def populate_source_derived_resource_refs(
                 frame_parameters[index] if index < len(frame_parameters) else None
             )
             actual_sugar = _actual_sugar(node, formal_name=formal_name)
-            outcome = actual_sugar.desugar(actual_ctx)
+            outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
@@ -2205,7 +2205,7 @@ def populate_source_derived_resource_refs(
                     actuals = []
                     break
                 actual_sugar = _actual_sugar(keyword.value, formal_name=keyword.arg)
-                outcome = actual_sugar.desugar(actual_ctx)
+                outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []
@@ -5330,3 +5330,19 @@ def _install_derivation_gap(
         detail,
     )
     context.source_derived_contract_refs[coordinate] = gap
+
+
+def _completed_actual(outcome):
+    """The actual a manager's construction receives when it completes.
+
+    An actual that may raise (a two-faced call) halts the ``with`` statement's
+    construction, which owns that face (#7599); the manager's behavior is
+    derived over the one value its completed face carries.  More than one
+    completed face is not one actual."""
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+
+    if isinstance(outcome, ExitSet):
+        completed = [face for face in outcome.exits if isinstance(face, Completed)]
+        if len(completed) == 1:
+            return Complete(completed[0].value)
+    return outcome

@@ -154,9 +154,36 @@ class IfSugar(Sugar):
         cond = self.test.desugar(ctx)
         if isinstance(cond, NativeOperationExitCarrierV1):
             return cond.and_then(lambda value: self._desugar_condition(value, ctx))
+        from sugar_lift_py_tests.outcome import ExitSet, Halted
+
+        if isinstance(cond, ExitSet) and any(
+            isinstance(face, Halted) for face in cond.exits
+        ):
+            # A condition that may raise (an unknown callee completes or
+            # raises): each completed face selects its suites under its own
+            # guard; a halted face never reaches either suite. Returning the
+            # condition's faces as the statement's dropped both suites.
+            return NativeOperationExitCarrierV1.compose_prefix(
+                cond, lambda value: self._select_on_face(value, ctx)
+            )
         if not isinstance(cond, Complete):
             return cond
         return self._desugar_condition(cond.value, ctx)
+
+    def _select_on_face(self, value, ctx):
+        """One completed condition face selects its suites.
+
+        A face whose truth is not one value (a guarded raise folded into its
+        truth) keeps the face's own value, as every condition face did before
+        faces selected suites: that gap is the truth law's, not this one's.
+        """
+        from sugar_lift_py_tests.floor import RaiseValue
+
+        if not isinstance(value, RaiseValue) and not isinstance(
+            value.truth(self.site), Complete
+        ):
+            return Complete(value)
+        return self._desugar_condition(value, ctx)
 
     def _ground_branch_result(self, ctx, observed_formula) -> None:
         """A ground condition decides this if's branch-result slot."""

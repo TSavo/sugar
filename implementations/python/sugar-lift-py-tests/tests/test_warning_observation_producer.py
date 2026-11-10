@@ -69,7 +69,10 @@ def _entries(tmp_path: Path, source: str, stem: str = "warn_case"):
     )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
     return tuple(
-        entry for face in exits.exits for entry in getattr(face.value, "entries", ())
+        entry
+        for face in exits.exits
+        if isinstance(face, Completed)
+        for entry in getattr(face.value, "entries", ())
     )
 
 
@@ -336,7 +339,10 @@ def _refusal_members(tmp_path, source, stem):
     )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
     entries = tuple(
-        entry for face in exits.exits for entry in getattr(face.value, "entries", ())
+        entry
+        for face in exits.exits
+        if isinstance(face, Completed)
+        for entry in getattr(face.value, "entries", ())
     )
     with pytest.raises(SugarNotWritten) as raised:
         _boundary("FutureWarning", entries).desugar()

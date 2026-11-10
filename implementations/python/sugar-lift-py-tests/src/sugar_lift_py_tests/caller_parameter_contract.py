@@ -884,6 +884,7 @@ class NativeOperationExitCarrierV1:
                 tuple(deferred),
                 len(representative.continuations),
                 len(representative.guards),
+                len(representative.exitset_continuations),
             ),
         )
 
@@ -965,9 +966,13 @@ class NativeOperationExitCarrierV1:
             return projected
 
         if self.prefix_composition is not None:
-            resolved, deferred, continuation_count, guard_count = (
-                self.prefix_composition
-            )
+            (
+                resolved,
+                deferred,
+                continuation_count,
+                guard_count,
+                exitset_count,
+            ) = self.prefix_composition
             exits = list(resolved)
             for prefix_exit, carrier in deferred:
                 following = carrier.discharge(actuals_by_formal_coordinate)
@@ -985,8 +990,10 @@ class NativeOperationExitCarrierV1:
             guard = _conjoin_guards(self.guards[guard_count:])
             if guard is not None:
                 projected = projected.guarded(guard)
-            for count in range(len(self.continuations) + 1):
-                projected = apply_exitset_steps(projected, count)
+            # Only steps enrolled after the prefix: the deferred arms'
+            # carriers already ran their own when they discharged.
+            for _enrolled_count, step in self.exitset_continuations[exitset_count:]:
+                projected = apply_exitset_step(projected, step)
             return projected
 
         def undischarged(reason):
