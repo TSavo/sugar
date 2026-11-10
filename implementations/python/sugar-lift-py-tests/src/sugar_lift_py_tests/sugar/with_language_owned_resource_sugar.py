@@ -54,6 +54,9 @@ class WithLanguageOwnedResourceSugar(Sugar):
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx)).sequence(
             lambda value: _project_manager_receiver(value, ctx)
         )
+        construct = getattr(self.protocol, "construct_manager", None)
+        if construct is not None:
+            manager_es = manager_es.sequence(lambda value: construct(value, ctx))
         parts = []
         for manager_face in manager_es.exits:
             if isinstance(manager_face, Halted):
@@ -88,9 +91,11 @@ class WithLanguageOwnedResourceSugar(Sugar):
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face
                     ).to_facts(site=self.site, guard=body_face.guard)
-                    routed = ExitSet((body_face,)).and_exit(
+                    routed = _route_body_face(
+                        body_face,
                         exit_es,
-                        disposition=self.summary.semantics.exit.disposition,
+                        self.summary.semantics.exit.disposition,
+                        self.site,
                     )
                     parts.append(
                         prepend_facts_to_exitset(
@@ -111,3 +116,35 @@ class WithLanguageOwnedResourceSugar(Sugar):
         for part in parts[1:]:
             result = result.union(part)
         return result.normalize()
+
+
+def _route_body_face(body_face, exit_es, disposition, site):
+    """Route one body face through exit under the protocol's typed disposition.
+
+    ``ReturnTruthiness`` is the same law ``WithSourceResourceSugar`` applies:
+    an exception (a leaf or a group) is suppressed only under the truth of the
+    exit result and re-raised under its falsity; loop control and return are
+    not exceptions, so the exit result does not decide them.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+        ReturnTruthinessDispositionV1,
+    )
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        _exit_return_values,
+    )
+
+    if not isinstance(disposition, ReturnTruthinessDispositionV1):
+        return ExitSet((body_face,)).and_exit(exit_es, disposition=disposition)
+    if isinstance(body_face, Halted) and not isinstance(
+        body_face.effect, (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect)
+    ):
+        return ExitSet((body_face,)).and_exit(
+            exit_es, disposition=NeverSuppressesDispositionV1()
+        )
+    return ExitSet((body_face,)).and_exit_truthiness(
+        _exit_return_values(exit_es), site=site
+    )

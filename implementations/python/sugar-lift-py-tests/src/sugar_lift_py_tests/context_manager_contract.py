@@ -143,16 +143,38 @@ class SourceEnterFacesCompletionV1:
 
 
 @dataclass(frozen=True)
+class LanguageOwnedCCallFacesCompletionV1:
+    """A C-owned ``__enter__``/``__exit__`` call has two faces, never one.
+
+    This is not totality. It admits only a language-owned protocol whose
+    construction emits each slot call as an opaque completed result under a
+    per-site atom and an ``UndeterminedRaiseEffect`` halt under its complement.
+    An enter halt leaves the With as itself; an exit halt supersedes the body
+    exit. Nothing is folded into completion.
+    """
+
+    kind: str = "language-owned-c-call-faces"
+
+
+@dataclass(frozen=True)
 class EnterResultContractV1:
     sort: Sort
-    completion: TotalCompletionV1 | SourceEnterFacesCompletionV1 = TotalCompletionV1()
+    completion: (
+        TotalCompletionV1
+        | SourceEnterFacesCompletionV1
+        | LanguageOwnedCCallFacesCompletionV1
+    ) = TotalCompletionV1()
     projection: str = ENTER_RESULT
 
 
 @dataclass(frozen=True)
 class ExitContractV1:
     disposition: NeverSuppressesDispositionV1 | ReturnTruthinessDispositionV1
-    completion: TotalCompletionV1 | SourceExitFacesCompletionV1 = TotalCompletionV1()
+    completion: (
+        TotalCompletionV1
+        | SourceExitFacesCompletionV1
+        | LanguageOwnedCCallFacesCompletionV1
+    ) = TotalCompletionV1()
 
 
 @dataclass(frozen=True)
@@ -632,7 +654,11 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
             semantics.schema_version != "1"
             or not isinstance(
                 semantics.enter.completion,
-                (TotalCompletionV1, SourceEnterFacesCompletionV1),
+                (
+                    TotalCompletionV1,
+                    SourceEnterFacesCompletionV1,
+                    LanguageOwnedCCallFacesCompletionV1,
+                ),
             )
             or semantics.enter.projection != ENTER_RESULT
         ):
@@ -643,6 +669,10 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
             exit_completion = "total"
         elif isinstance(semantics.exit.completion, SourceExitFacesCompletionV1):
             exit_completion = "source-exit-faces"
+        elif isinstance(
+            semantics.exit.completion, LanguageOwnedCCallFacesCompletionV1
+        ):
+            exit_completion = "language-owned-c-call-faces"
         else:
             raise ContextManagerContractError(
                 "unsupported protocol-resource exit testimony"
@@ -1054,23 +1084,31 @@ def _decode_total(raw: Any) -> TotalCompletionV1:
 
 def _decode_enter_completion(
     raw: Any,
-) -> TotalCompletionV1 | SourceEnterFacesCompletionV1:
+) -> (
+    TotalCompletionV1 | SourceEnterFacesCompletionV1 | LanguageOwnedCCallFacesCompletionV1
+):
     if isinstance(raw, dict) and set(raw) == {"kind"}:
         if raw["kind"] == "total":
             return TotalCompletionV1()
         if raw["kind"] == "source-enter-faces":
             return SourceEnterFacesCompletionV1()
+        if raw["kind"] == "language-owned-c-call-faces":
+            return LanguageOwnedCCallFacesCompletionV1()
     raise ContextManagerContractError("unknown enter completion testimony")
 
 
 def _decode_exit_completion(
     raw: Any,
-) -> TotalCompletionV1 | SourceExitFacesCompletionV1:
+) -> (
+    TotalCompletionV1 | SourceExitFacesCompletionV1 | LanguageOwnedCCallFacesCompletionV1
+):
     if isinstance(raw, dict) and set(raw) == {"kind"}:
         if raw["kind"] == "total":
             return TotalCompletionV1()
         if raw["kind"] == "source-exit-faces":
             return SourceExitFacesCompletionV1()
+        if raw["kind"] == "language-owned-c-call-faces":
+            return LanguageOwnedCCallFacesCompletionV1()
     raise ContextManagerContractError("unknown exit completion testimony")
 
 
