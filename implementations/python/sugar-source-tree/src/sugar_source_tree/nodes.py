@@ -2748,6 +2748,41 @@ def _abstract(cls: type) -> type:
     return cls
 
 
+def _as_evaluation_of(node, sugar):
+    """``node``'s sugar, stamped with the iterations ``node`` stands for.
+
+    A shallow copy (same type and fields), so a sugar the construction shares
+    with an untagged node is never mutated; the reducer enters the stamped
+    segments while it desugars this copy (``Sugar.desugar``).
+    """
+    from .shadow import occurrence_tags_of
+
+    tags = occurrence_tags_of(node)
+    if not tags or sugar is None:
+        return sugar
+    import copy
+
+    try:
+        stamped = copy.copy(sugar)
+        object.__setattr__(stamped, "_occurrence_tags", tags)
+    except (AttributeError, TypeError):
+        return sugar
+    return stamped
+
+
+def _iteration_copies(loop, index: int, statements) -> tuple:
+    """Iteration ``index`` of ``loop``: one occurrence copy per node.
+
+    The dissolved body shares node objects (and therefore spans and sugars)
+    across iterations; a copy per iteration is what lets each evaluation of a
+    site key its own opaque atoms (``shadow.OccurrenceShadowNode``).
+    """
+    from .shadow import as_occurrence, iteration_segment
+
+    segment = iteration_segment(loop, index)
+    return tuple(as_occurrence(statement, segment) for statement in statements)
+
+
 class _Splice:
     """A substitute result that EXPANDS one statement into several. Returned by
     ``For.substitute`` when a concrete loop unrolls: the loop dissolves into its
@@ -3568,7 +3603,7 @@ class Node(Typed):
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
             try:
-                result = self._construct_sugar()
+                result = _as_evaluation_of(self, self._construct_sugar())
                 # A constructed value whose testimony cannot be content-addressed
                 # raises ConstructedValueTestimonyNotWritten here, so the
                 # coordinate records the ABSENT answer (memoized panic, gap
@@ -7715,10 +7750,12 @@ class For(Statement):
                             scope
                         )  # carries loop variables across iterations
                         final_target_bindings = None
-                        for element_bindings in bindings:
+                        for index, element_bindings in enumerate(bindings):
                             final_target_bindings = element_bindings
                             iter_scope = {**carried, **element_bindings}
                             new_body, _c = self._substitute_body(self.body, iter_scope)
+                            # Each iteration is its own evaluation of the body.
+                            new_body = _iteration_copies(self, index, new_body)
                             unrolled.extend(new_body)
                             # thread this iteration's bindings forward (the
                             # carried fold), never the loop target's own names
@@ -7905,14 +7942,14 @@ class For(Statement):
         carried = dict(scope)
         final_target_bindings = None
         broke = False
-        for element_bindings in bindings:
+        for index, element_bindings in enumerate(bindings):
             final_target_bindings = element_bindings
             iteration = {**carried, **element_bindings}
             reduced = self._substitute_controlled_suite(self.body, iteration)
             if reduced is None:
                 return None
             statements, iteration, action = reduced
-            unrolled.extend(statements)
+            unrolled.extend(_iteration_copies(self, index, statements))
             target_names = set(
                 self.unit.require_target_pattern(self, self.target).names
             )
@@ -8174,7 +8211,7 @@ class While(Statement):
         controlled = For._body_has_owned_loop_control(self)
         carried = dict(scope)
         unrolled: list = []
-        for _ in range(self._FUEL):
+        for index in range(self._FUEL):
             test, _d = self._substitute_field(self.test, carried)
             verdict = self._ground_truth(test)
             if verdict is None:
@@ -8191,11 +8228,12 @@ class While(Statement):
                 if reduced is None:
                     return None
                 new_body, carried, action = reduced
-                unrolled.extend(new_body)
+                unrolled.extend(_iteration_copies(self, index, new_body))
                 if action == "break":
                     return tuple(unrolled)
                 continue
             new_body, _c = self._substitute_body(self.body, carried)
+            new_body = _iteration_copies(self, index, new_body)
             unrolled.extend(new_body)
             for stmt in new_body:
                 b = stmt.substitution_binding(carried)
@@ -11469,7 +11507,7 @@ class ListComp(Expression):
             return None
         target = gen.target
         results = []
-        for element in elements:
+        for index, element in enumerate(elements):
             bindings = self.unit.require_target_pattern(self, target).bindings_for(
                 element
             )
@@ -11482,7 +11520,9 @@ class ListComp(Expression):
             if not filters_pass:
                 continue
             new_elt, _d = self._substitute_field(self.elt, inner)
-            results.append(new_elt if _d else self.elt)
+            # Each member is its own evaluation of the element expression.
+            (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
+            results.append(member)
         return ListComp._make_list(self, tuple(results))
 
     def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":

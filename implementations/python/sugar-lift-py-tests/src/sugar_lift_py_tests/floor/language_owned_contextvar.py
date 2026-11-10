@@ -191,13 +191,16 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
             complement_guard,
         )
 
+        from sugar_lift_py_tests.occurrence import occurrence_key
+
         site = getattr(operation, "blame", None) or getattr(operation, "site", None)
+        key = occurrence_key(site)
         call = ctor(
             "python:c_extension.call",
             (
                 str_const(self.module_name),
                 str_const(self.exported_name),
-                str_const(str(site)),
+                str_const(key),
             ),
         )
         completes = atomic("python:c_extension.call_completes", [call])
@@ -210,13 +213,14 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
                             module_name=self.module_name,
                             exported_name=self.exported_name,
                             site=site,
+                            occurrence=key,
                         ),
                     ),
                     Halted(
                         complement_guard(completes),
                         UndeterminedRaiseEffect(
                             blame=str(site) if site is not None else None,
-                            occurrence=str(site) if site is not None else None,
+                            occurrence=key if site is not None else None,
                             producer_node_owner=(
                                 "LanguageOwnedCExtensionCallableValue"
                                 f":{self.module_name}.{self.exported_name}"
@@ -242,6 +246,10 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
     module_name: str
     exported_name: str
     site: object = None
+    # The dynamic occurrence of the call that produced this result
+    # (``occurrence.occurrence_key``): two iterations of one call site return
+    # two results nobody testified to be equal.
+    occurrence: str | None = None
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -252,7 +260,7 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
             (
                 str_const(self.module_name),
                 str_const(self.exported_name),
-                str_const(str(self.site)),
+                str_const(self.occurrence or str(self.site)),
             ),
         )
 

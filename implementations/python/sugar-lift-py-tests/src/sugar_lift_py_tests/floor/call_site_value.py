@@ -211,6 +211,15 @@ class CallSiteValue(FloorValue):
     builtin_exception_class: FloorValue | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # The dynamic occurrence path this call was evaluated under
+    # (``occurrence.current_path`` at mint). Its body reduces as the frame
+    # ``path + (this call,)``: two calls of one function are two frames, and
+    # every site in the body is evaluated once per frame.
+    occurrence_path: tuple[str, ...] = dataclass_field(
+        default_factory=lambda: _current_occurrence_path(),
+        compare=False,
+        repr=False,
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )
@@ -1486,7 +1495,7 @@ class CallSiteValue(FloorValue):
             token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
             try:
                 outcome = _reduce_callsite_body(
-                    body, reduce_ctx, blame=self.target_name
+                    body, reduce_ctx, blame=self.target_name, frame=self
                 )
             finally:
                 _ACTIVE_DIG_DEMAND.reset(token)
@@ -1615,7 +1624,9 @@ class CallSiteValue(FloorValue):
                 )
             value = retained.value
         else:
-            outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+            outcome = _reduce_callsite_body(
+                body, reduce_ctx, blame=self.target_name, frame=self
+            )
             if isinstance(outcome, Incomplete):
                 _force_floor_gap(
                     owner=owner,
@@ -1682,7 +1693,9 @@ class CallSiteValue(FloorValue):
                 owner="CallSiteValue lexical class cell",
                 blame=self.target_name,
             )
-        return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
+        return _reduce_callsite_body(
+            self.body, reduce_ctx, blame=self.target_name, frame=self
+        )
 
     def producer_outcome(self, ctx: Any = None, *, carrier_actuals: dict | None = None):
         """Publish authenticated source-body halts at the Call expression.
@@ -1809,7 +1822,29 @@ def force_floor(
     return value
 
 
+def _current_occurrence_path() -> tuple[str, ...]:
+    from sugar_lift_py_tests.occurrence import current_path
+
+    return current_path()
+
+
 def _reduce_callsite_body(
+    body: SugarBody[Any] | FunctionBodyUniverse,
+    ctx: Any,
+    *,
+    blame: str,
+    frame: "CallSiteValue | None" = None,
+):
+    """Reduce a callee body as the frame of ``frame``'s call occurrence."""
+    if frame is None or frame.site is None:
+        return _reduce_callsite_body_in_frame(body, ctx, blame=blame)
+    from sugar_lift_py_tests.occurrence import call_frame_path, occurrence_path
+
+    with occurrence_path(call_frame_path(frame.site, frame.occurrence_path)):
+        return _reduce_callsite_body_in_frame(body, ctx, blame=blame)
+
+
+def _reduce_callsite_body_in_frame(
     body: SugarBody[Any] | FunctionBodyUniverse,
     ctx: Any,
     *,
@@ -1973,14 +2008,17 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
         complement_guard,
     )
 
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
     if not isinstance(outcome, Complete):
         return outcome
     value = outcome.value
+    key = occurrence_key(site)
     subscript = ctor(
         "python:subscript",
         (
             value.to_term(owner="CallSiteValue.subscript"),
-            str_const(str(site)),
+            str_const(key),
         ),
     )
     completes = atomic("python:subscript.completes", [subscript])
@@ -1991,7 +2029,7 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
                 complement_guard(completes),
                 UndeterminedRaiseEffect(
                     blame=str(site) if site is not None else None,
-                    occurrence=str(site) if site is not None else None,
+                    occurrence=key if site is not None else None,
                     producer_node_owner=producer,
                 ),
                 None,

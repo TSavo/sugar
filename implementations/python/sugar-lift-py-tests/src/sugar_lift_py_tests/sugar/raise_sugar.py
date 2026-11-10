@@ -114,7 +114,7 @@ class RaiseSugar(Sugar):
                         exception_name=self.exception_name,
                         blame=blame,
                         source_sha256=source_sha256,
-                        occurrence=blame,
+                        occurrence=_occurrence_key(blame),
                         raised_value=raised_value,
                         cause_value=cause_value,
                         context_effect=context_effect,
@@ -166,3 +166,10 @@ class RaiseSugar(Sugar):
             )
 
         return self.exception.desugar(ctx).and_then(after_exception)
+
+
+def _occurrence_key(blame):
+    """This evaluation of the raise (``occurrence.occurrence_key``)."""
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
+    return None if blame is None else occurrence_key(blame)

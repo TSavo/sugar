@@ -70,6 +70,60 @@ class ShadowNode(BackendNode):
         return resolve_kind(self._kind, observed_at="<shadow rewrite>")
 
 
+class OccurrenceShadowNode(ShadowNode):
+    """A copy of a node that denotes ONE dynamic evaluation of its source.
+
+    A concrete loop dissolves into one copy of its body per iteration, and a
+    comprehension into one copy of its element per member. Those copies borrow
+    the same span, so a site key (``file [start, end) node``) cannot tell the
+    evaluations apart and an opaque atom keyed on it would name one unknown for
+    all of them. ``occurrence_tags`` (outermost first) are the iteration
+    segments this copy stands for; the reducer enters them while it reduces the
+    copy (``sugar_lift_py_tests.occurrence``), so each evaluation keys its own
+    atoms.
+    """
+
+    __slots__ = ("occurrence_tags",)
+
+    def __init__(
+        self,
+        kind: str,
+        span: Span,
+        slots: Tuple[Tuple[str, Slot], ...],
+        occurrence_tags: Tuple[str, ...],
+    ) -> None:
+        super().__init__(kind, span, slots)
+        self.occurrence_tags = tuple(occurrence_tags)
+
+
+def occurrence_tags_of(node: Node) -> Tuple[str, ...]:
+    """The iteration segments a node copy stands for (empty for source nodes)."""
+    return getattr(getattr(node, "ref", None), "occurrence_tags", ())
+
+
+def as_occurrence(origin: Node, segment: str) -> Node:
+    """A fresh copy of ``origin`` that is evaluation ``segment`` of it.
+
+    Same kind, span and children; a distinct construction coordinate (so its
+    sugar is its own) carrying ``segment`` outside any segments ``origin``
+    already stood for (an inner loop's iteration inside this one).
+    """
+    desc = origin.ref.describe()  # type: ignore[attr-defined]
+    shadow = OccurrenceShadowNode(
+        desc.kind,
+        desc.raw_span or origin.span,
+        tuple(desc.slots),
+        (segment, *occurrence_tags_of(origin)),
+    )
+    return materialize(origin.unit, shadow, origin.reporter, origin.control_context)
+
+
+def iteration_segment(loop: Node, index: int) -> str:
+    """Iteration ``index`` of the loop (or comprehension) node ``loop``."""
+    span = loop.span
+    return f"loop[{span.start},{span.end})#{index}"
+
+
 def _handle_of(node: Node) -> BackendNode:
     """The backend handle behind a materialized node — source- or shadow-backed.
     Rewriting a parent points its child slots at these, never at Node objects."""
@@ -103,7 +157,14 @@ def rewrite(origin: Node, **children: object) -> Node:
             )
         else:  # an optional single child given as a Node was handled above
             new_slots.append((name, MaybeChild(_handle_of(replacement))))
-    shadow = ShadowNode(desc.kind, desc.raw_span or origin.span, tuple(new_slots))
+    tags = occurrence_tags_of(origin)
+    if tags:
+        # A rewrite of one evaluation is still that evaluation.
+        shadow = OccurrenceShadowNode(
+            desc.kind, desc.raw_span or origin.span, tuple(new_slots), tags
+        )
+    else:
+        shadow = ShadowNode(desc.kind, desc.raw_span or origin.span, tuple(new_slots))
     # Same materialize door as source backends: shadow ref is another memoized
     # backend identity; field data is interned on the unit, shells are free.
     return materialize(origin.unit, shadow, origin.reporter, origin.control_context)

@@ -141,7 +141,7 @@ class LanguageOwnedCManagerProtocol:
             complement_guard,
         )
 
-        site = str(receiver.site)
+        site = receiver.occurrence or str(receiver.site)
         call = ctor(
             "python:c_extension.slot_call",
             (
@@ -175,7 +175,7 @@ class LanguageOwnedCManagerProtocol:
             module_name=self.module_name,
             exported_name=self.exported_name,
             slot=slot,
-            site=str(receiver.site),
+            site=receiver.occurrence or str(receiver.site),
         )
 
     def enter_resource_outcome_for(self, receiver, ctx=None):
