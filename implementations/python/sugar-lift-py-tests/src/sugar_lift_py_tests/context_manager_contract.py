@@ -130,9 +130,22 @@ class SourceExitFacesCompletionV1:
 
 
 @dataclass(frozen=True)
+class SourceEnterFacesCompletionV1:
+    """The source ``__enter__`` may halt; each halt is the With's own exit.
+
+    This is not totality. It admits only a source-derived protocol whose
+    construction runs the authenticated enter frame at the With, where every
+    enter halt (a native call that raised, a source raise) leaves the With as
+    itself before the body or exit runs. Nothing is folded into completion.
+    """
+
+    kind: str = "source-enter-faces"
+
+
+@dataclass(frozen=True)
 class EnterResultContractV1:
     sort: Sort
-    completion: TotalCompletionV1 = TotalCompletionV1()
+    completion: TotalCompletionV1 | SourceEnterFacesCompletionV1 = TotalCompletionV1()
     projection: str = ENTER_RESULT
 
 
@@ -617,7 +630,10 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
     if isinstance(semantics, ProtocolResourceSemanticsV1):
         if (
             semantics.schema_version != "1"
-            or not isinstance(semantics.enter.completion, TotalCompletionV1)
+            or not isinstance(
+                semantics.enter.completion,
+                (TotalCompletionV1, SourceEnterFacesCompletionV1),
+            )
             or semantics.enter.projection != ENTER_RESULT
         ):
             raise ContextManagerContractError(
@@ -647,7 +663,17 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
                     "enter",
                     vobj(
                         [
-                            ("completion", vobj([("kind", vstr("total"))])),
+                            (
+                                "completion",
+                                vobj(
+                                    [
+                                        (
+                                            "kind",
+                                            vstr(semantics.enter.completion.kind),
+                                        )
+                                    ]
+                                ),
+                            ),
                             (
                                 "result",
                                 vobj(
@@ -1026,6 +1052,17 @@ def _decode_total(raw: Any) -> TotalCompletionV1:
     return TotalCompletionV1()
 
 
+def _decode_enter_completion(
+    raw: Any,
+) -> TotalCompletionV1 | SourceEnterFacesCompletionV1:
+    if isinstance(raw, dict) and set(raw) == {"kind"}:
+        if raw["kind"] == "total":
+            return TotalCompletionV1()
+        if raw["kind"] == "source-enter-faces":
+            return SourceEnterFacesCompletionV1()
+    raise ContextManagerContractError("unknown enter completion testimony")
+
+
 def _decode_exit_completion(
     raw: Any,
 ) -> TotalCompletionV1 | SourceExitFacesCompletionV1:
@@ -1048,7 +1085,7 @@ def _decode_protocol_resource(raw: Any) -> ProtocolResourceSemanticsV1:
     if not isinstance(enter, dict) or set(enter) != {"completion", "result"}:
         raise ContextManagerContractError("malformed context-manager semantics enter")
     result = enter["result"]
-    completion = _decode_total(enter["completion"])
+    completion = _decode_enter_completion(enter["completion"])
     if (
         not isinstance(result, dict)
         or set(result) != {"kind", "projection", "sort"}

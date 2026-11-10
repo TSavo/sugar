@@ -6,18 +6,21 @@ import json
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    ContextManagerResolutionGapV1,
     OpaqueCitedContextManagerRefV1,
     SourceDerivedContextManagerRefV1,
 )
 from sugar_lift_py_tests.corpus_pin import pin_corpus
-from sugar_lift_py_tests.context_manager_contract import NeverSuppressesDispositionV1
+from sugar_lift_py_tests.context_manager_contract import (
+    NeverSuppressesDispositionV1,
+    SourceEnterFacesCompletionV1,
+)
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete, Halted
+from sugar_lift_py_tests.outcome import Complete, Completed, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
@@ -113,29 +116,76 @@ def test_unenrolled_errstate_stays_call_target_off_population(tmp_path, monkeypa
     assert ref.roster.target_name == "python:numpy.errstate"
 
 
-def test_enrolled_errstate_enter_may_halt_through_its_c_call(tmp_path, monkeypatch) -> None:
+def test_enrolled_errstate_constructs_with_its_c_call_enter_faces(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     root = _corpus(tmp_path, **{"e.py": ERRSTATE})
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"tiny-corpus", "numpy"})
     )
     ref = _with_resolution(root, "e.py", session=session)
-    # errstate.__enter__ calls the C function _make_extobj, which raises on
-    # an invalid mode; its halt is untyped, so enter may halt (honestly red).
-    assert type(ref) is ContextManagerResolutionGapV1
-    assert ref.kind == "enter-may-halt"
-    assert ref.detail == "__enter__ ExitSet"
+    # errstate.__enter__ calls the C function _make_extobj, which may raise:
+    # the resource is admitted with source enter faces, never as total.
+    assert type(ref) is SourceDerivedContextManagerRefV1
+    assert isinstance(ref.semantics.enter.completion, SourceEnterFacesCompletionV1)
+    assert isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
+    source_file = _open(root, "e.py", session=session)
+    sugar = next(n.sugar() for n in source_file.nodes() if isinstance(n, With))
+    assert type(sugar) is WithSourceResourceSugar
+    func = next(
+        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
+    )
+    exits = outcome_to_exitset(func.sugar().desugar()).exits
+    completed = [face for face in exits if isinstance(face, Completed)]
+    assert completed
+    for face in completed:
+        returns = [
+            statement
+            for statement in face.value.record.statements
+            if isinstance(statement, ReturnValue)
+        ]
+        assert len(returns) == 1
+        assert isinstance(returns[0].value, TermValue)
+        assert returns[0].value.value == 1
+    halted = [face for face in exits if isinstance(face, Halted)]
+    assert halted
+    assert all(isinstance(face.effect, UndeterminedRaiseEffect) for face in halted)
+    assert any("_make_extobj" in face.effect.producer_node_owner for face in halted)
 
 
-def test_enrolled_errstate_with_body_raise_stays_enter_may_halt(tmp_path, monkeypatch) -> None:
+def test_enrolled_errstate_does_not_suppress_a_body_raise(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     root = _corpus(tmp_path, **{"e.py": ERRSTATE_RAISE})
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"tiny-corpus", "numpy"})
     )
     ref = _with_resolution(root, "e.py", session=session)
-    # errstate.__enter__ calls the C function _make_extobj, which raises on
-    # an invalid mode; its halt is untyped, so enter may halt (honestly red).
-    assert type(ref) is ContextManagerResolutionGapV1
-    assert ref.kind == "enter-may-halt"
-    assert ref.detail == "__enter__ ExitSet"
+    assert type(ref) is SourceDerivedContextManagerRefV1
+    assert isinstance(ref.semantics.enter.completion, SourceEnterFacesCompletionV1)
+    assert isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
+    source_file = _open(root, "e.py", session=session)
+    func = next(
+        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
+    )
+    exits = outcome_to_exitset(func.sugar().desugar()).exits
+    raised = [
+        face
+        for face in exits
+        if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+    ]
+    assert raised
+    assert all(face.effect.exception_name == "RuntimeError" for face in raised)
+    native = [
+        face
+        for face in exits
+        if isinstance(face, Halted) and isinstance(face.effect, UndeterminedRaiseEffect)
+    ]
+    assert native
+    # The only completed face is the With's fact record: nothing returns and
+    # nothing falls through, so no face completes past the raise.
+    for face in exits:
+        if isinstance(face, Completed):
+            assert not face.value.record.can_fall_through
+            assert not any(
+                isinstance(statement, ReturnValue)
+                for statement in face.value.record.statements
+            )

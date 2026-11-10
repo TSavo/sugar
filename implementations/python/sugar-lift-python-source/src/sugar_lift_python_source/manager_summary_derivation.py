@@ -28,6 +28,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
     ReturnTruthinessDispositionV1,
+    SourceEnterFacesCompletionV1,
     SourceExitFacesCompletionV1,
     SuppressesModeV1,
     TotalCompletionV1,
@@ -458,11 +459,33 @@ def derive_manager_summary(
             protocol.protocol_construction_cid,
             f"{owner}:{observed}",
         )
-    if not enter.exits or any(not isinstance(face, Completed) for face in enter.exits):
+    enter_completion = TotalCompletionV1()
+    enter_halted = tuple(face for face in enter.exits if not isinstance(face, Completed))
+    if (
+        not enter.exits
+        or not any(isinstance(face, Completed) for face in enter.exits)
+        or (
+            enter_halted
+            and (
+                not isinstance(protocol, ConstructedManagerProtocolV1)
+                or any(
+                    not isinstance(face, Halted) or face.effect is None
+                    for face in enter_halted
+                )
+            )
+        )
+    ):
         return DerivedManagerSummaryGapV1(
             "enter-may-halt", protocol.protocol_construction_cid, "__enter__ ExitSet"
         )
-    if behavior is not None:
+    if enter_halted:
+        # An enter that may halt is not a total resource. It is admitted only
+        # for the real source protocol: With runs this same enter frame, and
+        # each enter halt leaves the With as its own effect before body/exit.
+        enter_completion = SourceEnterFacesCompletionV1()
+    # An effect-boundary theorem has no enter-completion field, so it cannot
+    # carry enter halts; only the protocol-resource arm below may.
+    if behavior is not None and not enter_halted:
         factored = _derive_factored_effect_boundary(protocol, behavior)
         if factored is not None:
             return factored
@@ -522,7 +545,7 @@ def derive_manager_summary(
         )
     boundary = (
         _derive_effect_boundary(exit_, protocol, behavior)
-        if behavior is not None
+        if behavior is not None and not enter_halted
         else None
     )
     if boundary is not None:
@@ -556,7 +579,7 @@ def derive_manager_summary(
         else ReturnTruthinessDispositionV1()
     )
     semantics = ProtocolResourceSemanticsV1(
-        EnterResultContractV1(PrimitiveSort("Value")),
+        EnterResultContractV1(PrimitiveSort("Value"), enter_completion),
         ExitContractV1(disposition, completion),
     )
     signature = _signature_for_behavior(behavior, semantics)

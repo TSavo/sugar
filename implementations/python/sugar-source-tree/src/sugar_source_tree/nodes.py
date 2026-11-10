@@ -8588,6 +8588,7 @@ class With(Statement):
             NeverSuppressesDispositionV1,
             ReturnTruthinessDispositionV1,
             ProtocolResourceSemanticsV1,
+            SourceEnterFacesCompletionV1,
             SourceExitFacesCompletionV1,
             TotalCompletionV1,
         )
@@ -8684,7 +8685,13 @@ class With(Statement):
         admitted_resource = (
             isinstance(semantics, ProtocolResourceSemanticsV1)
             and semantics.schema_version == "1"
-            and isinstance(semantics.enter.completion, TotalCompletionV1)
+            and (
+                isinstance(semantics.enter.completion, TotalCompletionV1)
+                or (
+                    isinstance(semantics.enter.completion, SourceEnterFacesCompletionV1)
+                    and isinstance(resolution, SourceDerivedContextManagerRefV1)
+                )
+            )
             and semantics.enter.projection == "enter-result"
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
