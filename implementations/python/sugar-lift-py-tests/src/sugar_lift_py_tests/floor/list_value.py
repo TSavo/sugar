@@ -238,14 +238,16 @@ class ListValue(GuardStableValue):
 
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
-            if all(
-                bound is None or (type(bound) is TermValue and type(bound.value) is int)
-                for bound in bounds
-            ):
-                lower, upper, step = (
-                    bound.value if isinstance(bound, TermValue) else None
-                    for bound in bounds
+            if _slice_bounds_not_indices(bounds):
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
                 )
+
+                return ground_exceptional_exit(
+                    exception_name="TypeError", site=site, owner="ListValue.delitem"
+                )
+            if _slice_bounds_ground(bounds):
+                lower, upper, step = _slice_bound_ints(bounds)
                 if step == 0:
                     from sugar_lift_py_tests.floor.ground_exit import (
                         ground_exceptional_exit,
@@ -341,10 +343,13 @@ class ListValue(GuardStableValue):
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
         bounds = (index.lower, index.upper, index.step)
-        if not all(
-            bound is None or (type(bound) is TermValue and type(bound.value) is int)
-            for bound in bounds
-        ):
+        if _slice_bounds_not_indices(bounds):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="ListValue.setitem"
+            )
+        if not _slice_bounds_ground(bounds):
             from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 
             return Incomplete(
@@ -354,9 +359,7 @@ class ListValue(GuardStableValue):
                     **runtime_effect_evidence("py.setitem", index, site),
                 )
             )
-        lower, upper, step = (
-            bound.value if isinstance(bound, TermValue) else None for bound in bounds
-        )
+        lower, upper, step = _slice_bound_ints(bounds)
         if step == 0:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
@@ -415,14 +418,16 @@ class ListValue(GuardStableValue):
 
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
-            if all(
-                bound is None or (type(bound) is TermValue and type(bound.value) is int)
-                for bound in bounds
-            ):
-                lower, upper, step = (
-                    bound.value if isinstance(bound, TermValue) else None
-                    for bound in bounds
+            if _slice_bounds_not_indices(bounds):
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
                 )
+
+                return ground_exceptional_exit(
+                    exception_name="TypeError", site=site, owner="ListValue.delitem"
+                )
+            if _slice_bounds_ground(bounds):
+                lower, upper, step = _slice_bound_ints(bounds)
                 if step == 0:
                     from sugar_lift_py_tests.floor.ground_exit import (
                         ground_exceptional_exit,
@@ -483,3 +488,36 @@ class ListValue(GuardStableValue):
                 **runtime_effect_evidence("py.delitem", index, site),
             )
         )
+
+
+def _slice_bound_omitted(bound) -> bool:
+    """``r[:k]`` and ``r[None:k]`` alike: CPython reads ``None`` as omitted."""
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    return bound is None or type(bound) is NoneValue
+
+
+def _slice_bounds_ground(bounds) -> bool:
+    """Every bound is omitted or a ground integer (``bool`` is one)."""
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    return all(
+        _slice_bound_omitted(bound)
+        or (type(bound) is TermValue and isinstance(bound.value, int))
+        for bound in bounds
+    )
+
+
+def _slice_bound_ints(bounds):
+    return tuple(
+        None if _slice_bound_omitted(bound) else int(bound.value) for bound in bounds
+    )
+
+
+def _slice_bounds_not_indices(bounds) -> bool:
+    """A bound whose decided type has no ``__index__`` (``r[1:'a']``): CPython's
+    ``TypeError: slice indices must be integers or None``."""
+    return any(
+        not _slice_bound_omitted(bound) and bound.python_index_protocol() is False
+        for bound in bounds
+    )

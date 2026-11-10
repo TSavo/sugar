@@ -69,6 +69,22 @@ class ComprehensionValue(GuardStableValue):
             )
         )
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """``xs[lo:hi] = (x for x in ...)``: a comprehension is iterable.
+
+        A list comprehension or generator with every member projected answers
+        with those members, in order. Anything else (a set/dict comprehension,
+        whose iteration order or members are not testified, or no finite
+        testimony) is an undecided RHS -- never ``TypeError``."""
+        del ctx
+        from sugar_lift_py_tests.ir import _Ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        name = self.term.name if type(self.term) is _Ctor else None
+        if self.finite_elements is not None and name in ("py.listcomp", "py.genexp"):
+            return Complete(tuple(self.finite_elements))
+        return _undecided_slice_rhs(operation, self)
+
     def project_sequence_with(self, operation, ctx):
         """`a, b = <comprehension>` -- the comprehension owns the cardinality.
 
@@ -295,3 +311,21 @@ class ComprehensionValue(GuardStableValue):
                 site=site,
             )
         )
+
+
+def _undecided_slice_rhs(operation, value):
+    """A slice-assignment RHS that is iterable but whose members are not
+    testified: the named runtime boundary, never a decided TypeError."""
+    from sugar_lift_py_tests.effect import (
+        SubscriptStoreRuntimeEffect,
+        runtime_effect_evidence,
+    )
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return Incomplete(
+        SubscriptStoreRuntimeEffect(
+            "list slice assignment RHS members are undecided at lift; "
+            f"owner={operation.owner} site={operation.blame}",
+            **runtime_effect_evidence("py.setitem", value, operation.blame),
+        )
+    )

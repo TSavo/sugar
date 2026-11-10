@@ -6247,17 +6247,18 @@ class Delete(Statement):
             from .container_mutation import mutation_statement
 
             target = self.targets[0]
-            if not isinstance(target.slice_, Slice):
-                mutation = mutation_statement(
-                    self,
-                    scope,
-                    call_site=target,
-                    receiver=target.value.substitute(scope),
-                    method="__delitem__",
-                    args=(target.slice_.substitute(scope),),
-                )
-                if mutation is not None:
-                    return mutation
+            # ``del r[k]`` and ``del r[lo:hi:st]`` alike: the slice is the
+            # key ``__delitem__`` receives.
+            mutation = mutation_statement(
+                self,
+                scope,
+                call_site=target,
+                receiver=target.value.substitute(scope),
+                method="__delitem__",
+                args=(target.slice_.substitute(scope),),
+            )
+            if mutation is not None:
+                return mutation
 
         current = dict(scope)
         operations = []
@@ -6621,7 +6622,9 @@ class Assign(Statement):
         from .container_mutation import mutation_statement
 
         target = self.targets[0]
-        if isinstance(target, Subscript) and not isinstance(target.slice_, Slice):
+        if isinstance(target, Subscript):
+            # ``r[k] = v`` and ``r[lo:hi:st] = it`` alike: the slice is the key
+            # ``__setitem__`` receives.
             return mutation_statement(
                 self,
                 scope,
