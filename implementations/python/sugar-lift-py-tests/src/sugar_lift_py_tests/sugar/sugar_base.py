@@ -45,6 +45,34 @@ class Sugar(ABC):
     # body ran and the prefix would erase that body's record.
     halts_at_statement_head: ClassVar[bool] = False
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        own = cls.__dict__.get("desugar")
+        if own is None or getattr(own, "_answers_assigned_value", False):
+            return
+        if getattr(own, "__isabstractmethod__", False):
+            return
+        import functools
+
+        @functools.wraps(own)
+        def desugar(self, ctx=None, *args, **kwargs):
+            # A RHS an assignment statement already evaluated answers with
+            # the value of the face it completed under; a read never
+            # re-evaluates it (sugar/assigned_value.py).
+            if ctx is not None and getattr(ctx, "assigned_values", None):
+                from sugar_lift_py_tests.sugar.assigned_value import (
+                    _MISS,
+                    recorded_value,
+                )
+
+                value = recorded_value(ctx, self)
+                if value is not _MISS:
+                    return Complete(value)
+            return own(self, ctx, *args, **kwargs)
+
+        desugar._answers_assigned_value = True
+        cls.desugar = desugar
+
     @classmethod
     @abstractmethod
     def witnesses(cls) -> SugarWitnesses:

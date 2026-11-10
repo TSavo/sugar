@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -29,8 +30,10 @@ class AssignSugar(Sugar):
     """
 
     name: str
-    value: object  # the rhs sugar -- provenance only; substitute already inlined it
+    value: object  # the rhs sugar, evaluated at this statement
     site: object = dataclass_field(compare=False)
+    # Evaluating the RHS is the statement's only work before it binds.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -45,10 +48,14 @@ class AssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Inert: the binding was consumed by substitute. Contribute nothing.
-        from sugar_lift_py_tests.floor.block_value import BlockValue
+        # The binding was consumed by substitute, but the RHS is evaluated
+        # HERE: its halts are this statement's, and a later read sees the
+        # completed value (sugar/assigned_value.py).
+        from sugar_lift_py_tests.sugar.assigned_value import (
+            evaluate_assignment_values,
+        )
 
-        return Complete(BlockValue((), can_fall_through=True))
+        return evaluate_assignment_values((self.value,), ctx)
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,7 @@ class MultiAssignSugar(Sugar):
 
     bindings: tuple  # tuple of (name, value_sugar) pairs, in target order
     site: object = dataclass_field(compare=False)
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -82,10 +90,15 @@ class MultiAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Inert: every binding was consumed by substitute. Contribute nothing.
-        from sugar_lift_py_tests.floor.block_value import BlockValue
+        # Every binding was consumed by substitute; each RHS member is still
+        # evaluated HERE, left to right, before any name is bound.
+        from sugar_lift_py_tests.sugar.assigned_value import (
+            evaluate_assignment_values,
+        )
 
-        return Complete(BlockValue((), can_fall_through=True))
+        return evaluate_assignment_values(
+            _distinct_in_order(value for _name, value in self.bindings), ctx
+        )
 
 
 @dataclass(frozen=True)
@@ -106,22 +119,27 @@ class ChainedAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
-
-        return self.value.desugar(ctx).and_then(
-            lambda value: (
-                reduce_body(
-                    tuple(
-                        _PreconstructedStoreSugar(store, value) for store in self.stores
-                    ),
-                    ctx,
-                )
-                if self.stores
-                else Complete(BlockValue((), can_fall_through=True))
-            )
+        from sugar_lift_py_tests.sugar.assigned_value import (
+            evaluate_assignment_values,
         )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        if not self.stores:
+            return evaluate_assignment_values((self.value,), ctx)
+
+        def stores(active, completed):
+            # The RHS was evaluated once, above; each store consumes that one
+            # value, left to right.
+            (value,) = completed
+            return _reduce_targets(
+                tuple(_PreconstructedStoreSugar(s, value) for s in self.stores),
+                active,
+                ctx,
+            )
+
+        return evaluate_assignment_values((self.value,), ctx, tail=stores)
 
 
 @dataclass(frozen=True)
@@ -329,6 +347,72 @@ class UnpackStoreAssignSugar(Sugar):
         # Name bindings are spent by substitute; only store effects remain.
         # Sequencing of store success/halt is the shared reducer — not a local
         # second composition algebra.
-        if not self.stores:
-            return Complete(BlockValue((), can_fall_through=True))
-        return reduce_body(self.stores, ctx)
+        from sugar_lift_py_tests.sugar.assigned_value import (
+            evaluate_assignment_values,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        # Python evaluates the whole RHS display first, left to right, then
+        # assigns each target left to right. Every RHS member is evaluated
+        # here in source order; a store then reads its member's completed
+        # value and evaluates only its own target.
+        values = sorted(
+            (
+                *(value for _name, value in self.bindings),
+                *(store.value for store in self.stores),
+            ),
+            key=_source_start,
+        )
+        values = _distinct_in_order(values)
+
+        def stores(active, completed):
+            # Each store consumes its member's one completed value and
+            # evaluates only its own target (receiver, then key).
+            def leaf(store):
+                for member, value in zip(values, completed):
+                    if store.value is member and hasattr(store, "desugar_store"):
+                        return _PreconstructedStoreSugar(store, value)
+                return store
+
+            return _reduce_targets(
+                tuple(leaf(store) for store in self.stores), active, ctx
+            )
+
+        return evaluate_assignment_values(
+            values, ctx, tail=stores if self.stores else None
+        )
+
+
+def _reduce_targets(targets, active, ctx):
+    """The statement's store targets, after its RHS completed.
+
+    Where the RHS recorded nothing this is the block the
+    statement always reduced to; where it recorded completed values, the
+    targets' exits carry that context on to the next statement.
+    """
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+        reduce_body,
+    )
+
+    if getattr(active, "assigned_values", ()) == getattr(ctx, "assigned_values", ()):
+        return reduce_body(targets, active)
+    return reduce_block_to_exitset(targets, active)
+
+
+def _distinct_in_order(values):
+    """Each RHS sugar once, in order: ``x = y = e`` evaluates ``e`` once."""
+    seen = []
+    for value in values:
+        if any(value is prior for prior in seen):
+            continue
+        seen.append(value)
+    return tuple(seen)
+
+
+def _source_start(sugar):
+    site = getattr(sugar, "site", None)
+    span = getattr(site, "span", None)
+    return getattr(span, "start", 0)
