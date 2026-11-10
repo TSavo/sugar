@@ -1868,6 +1868,12 @@ def populate_source_derived_resource_refs(
                 session.dependency_graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if not isinstance(resolved, ResolvedPythonObjectV1):
+            from .language_owned_io_resource import mint_language_owned_io_resource_ref
+
+            owned = mint_language_owned_io_resource_ref(coordinate, receipt, resolved)
+            if owned is not None:
+                context.source_derived_contract_refs[coordinate] = owned
+                continue
             kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue

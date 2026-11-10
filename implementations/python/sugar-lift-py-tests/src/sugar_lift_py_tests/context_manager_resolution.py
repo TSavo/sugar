@@ -830,6 +830,26 @@ class SourceDerivedGeneratorResourceRefV1:
         return self.protocol.protocol_construction_cid
 
 
+
+@dataclass(frozen=True)
+class LanguageOwnedContextManagerRefV1:
+    """A language-owned C-floor resource contract, not a source-derived body.
+
+    Published when export resolution names ``_io.StringIO`` or ``_io.BytesIO``
+    as ``artifact-module-absent``. The protocol is the documented IOBase law,
+    keyed on that authenticated gap and the running ``PythonRuntimeIdentity``,
+    never on a use-site spelling and never on invented source coordinates.
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    summary_cid: str
+    semantics: ContextManagerSemanticsV1
+    import_signature: ImportSignatureV2
+    protocol: object = field(compare=False, repr=False)
+    target_symbol: str = ""
+    exported_name: str = ""
+
+
 def effective_context_manager_resolutions_for_source(
     context: object, *, source_cid: str
 ) -> dict[SourceFragmentCoordinateV1, object]:
@@ -873,6 +893,7 @@ def context_manager_resolution_outcome(resolution: object) -> str:
             SourceDerivedContextManagerRefV1,
             SourceDerivedGeneratorResourceRefV1,
             ContextManagerContractRefV1,
+            LanguageOwnedContextManagerRefV1,
         ),
     ):
         return "constructed"

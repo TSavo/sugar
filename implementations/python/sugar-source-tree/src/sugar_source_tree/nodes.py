@@ -8466,6 +8466,7 @@ class With(Statement):
             ContextManagerContractRefV1,
             ContextManagerResolutionGapV1,
             FactoredSourceDerivedContextManagerRefV1,
+            LanguageOwnedContextManagerRefV1,
             SourceDerivedContextManagerRefV1,
         )
         from sugar_lift_py_tests.ir import PrimitiveSort
@@ -8540,6 +8541,7 @@ class With(Statement):
                 ContextManagerContractRefV1,
                 SourceDerivedContextManagerRefV1,
                 SourceDerivedGeneratorResourceRefV1,
+                LanguageOwnedContextManagerRefV1,
             ),
         ):
             backend_defect(
@@ -8647,6 +8649,7 @@ class With(Statement):
         )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
+            LanguageOwnedContextManagerRefV1,
             SourceDerivedContextManagerRefV1,
         )
         from .shadow import rewrite
@@ -8659,7 +8662,11 @@ class With(Statement):
         resolution = self._prebound_manager_resolution(item)
         if not isinstance(
             resolution,
-            (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1),
+            (
+                ContextManagerContractRefV1,
+                SourceDerivedContextManagerRefV1,
+                LanguageOwnedContextManagerRefV1,
+            ),
         ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
             return self
 
@@ -8741,6 +8748,7 @@ class With(Statement):
 
             from sugar_lift_py_tests.context_manager_resolution import (
                 FactoredSourceDerivedContextManagerRefV1,
+                LanguageOwnedContextManagerRefV1,
                 SourceDerivedContextManagerRefV1,
             )
 
@@ -8811,6 +8819,28 @@ class With(Statement):
                 if isinstance(resolved_ref, SourceDerivedGeneratorResourceRefV1)
                 else None
             )
+            if isinstance(resolved_ref, LanguageOwnedContextManagerRefV1) and isinstance(
+                resolved_ref.semantics, ProtocolResourceSemanticsV1
+            ):
+                from sugar_lift_py_tests.sugar.with_language_owned_resource_sugar import (
+                    WithLanguageOwnedResourceSugar,
+                )
+
+                manager_slot = item._manager_slot_id()
+                enter_slot = (
+                    f"{manager_slot}#enter_result" if binds_enter_result else None
+                )
+                return WithLanguageOwnedResourceSugar(
+                    manager=item.context_expr.sugar(),
+                    protocol=resolved_ref.protocol,
+                    summary=resolved_ref,
+                    body=tuple(stmt.sugar() for stmt in self.body),
+                    manager_slot_id=manager_slot,
+                    enter_slot_id=enter_slot,
+                    exit_face_id=item._exit_face_id(),
+                    site=self.fragment,
+                )
+
             if (
                 isinstance(resolved_ref, SourceDerivedContextManagerRefV1)
                 or generator_protocol is not None
