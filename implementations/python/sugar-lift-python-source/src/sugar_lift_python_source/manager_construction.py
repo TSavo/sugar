@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -2334,6 +2336,149 @@ def resolve_source_visible_frame(
     dependency_graphs: dict[str, DependencyArtifactGraph] | None = None,
     session: SourceResolutionSession | None = None,
 ) -> tuple[object, Node] | ManagerConstructionGapV1:
+    """The source frame of one authenticated definition (see the bounded door).
+
+    A CLASS whose whole projection exceeds the call-closure bound is projected
+    again over the methods its instances run on the projected path only
+    (#7664): construction (``__new__``/``__init__``), the context-manager
+    protocol, and every method those name on ``self``, transitively.  A class
+    statement binds its methods; it runs none of them.  The rest keep their
+    source bodies for whoever calls them (``DeferredClassMethodV1``) and their
+    callees are never projected here.  Only the outermost projection retries:
+    a callee's over-bound closure is unfinished, not opaque.
+    """
+    result = _resolve_source_visible_frame_bounded(
+        resolved, graph=graph, dependency_graphs=dependency_graphs, session=session
+    )
+    if not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "call-closure-over-bound"
+        and resolved.definition.kind == "class"
+        and session is not None
+        and not session.call_closure.stack
+        and _USED_METHOD_PROJECTION.get() is None
+    ):
+        return result
+    module = graph.modules.get(resolved.module_name)
+    projected = (
+        None
+        if module is None
+        else _used_class_methods(module.source, resolved.definition)
+    )
+    if projected is None:
+        return result
+    from sugar_source_tree.nodes import PROJECTED_CLASS_METHODS
+
+    token = _USED_METHOD_PROJECTION.set(projected)
+    node_token = PROJECTED_CLASS_METHODS.set(projected)
+    try:
+        retried = _resolve_source_visible_frame_bounded(
+            resolved,
+            graph=graph,
+            dependency_graphs=dependency_graphs,
+            session=session,
+        )
+    finally:
+        PROJECTED_CLASS_METHODS.reset(node_token)
+        _USED_METHOD_PROJECTION.reset(token)
+    return retried
+
+
+# Class name -> the method names a used-method projection constructs; None
+# outside one.  See ``resolve_source_visible_frame``.
+_USED_METHOD_PROJECTION: ContextVar[dict | None] = ContextVar(
+    "used_method_projection", default=None
+)
+
+_PROJECTED_ENTRY_METHODS = (
+    "__new__",
+    "__init__",
+    "__post_init__",
+    "__enter__",
+    "__exit__",
+    "__aenter__",
+    "__aexit__",
+)
+
+
+def _used_class_methods(source: str, definition) -> dict[str, frozenset[str]] | None:
+    """The methods a class's instances run on the projected path, per class.
+
+    Read off the class statement's own syntax: the entry methods, then every
+    attribute a reached method reads on its first parameter (``self.open()``,
+    ``self.close``) or through ``super()``, until nothing new is reached.  The
+    class's same-module bases named as plain names share the walk, since a
+    method an instance runs may be defined on either.  ``None`` when the class
+    statement is not found at the definition's coordinates.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    top = {
+        node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
+    }
+    target = next(
+        (
+            node
+            for node in top.values()
+            if node.name == definition.name
+            and node.lineno == definition.start_line
+        ),
+        None,
+    )
+    if target is None:
+        return None
+    classes = []
+    pending = [target]
+    while pending:
+        current = pending.pop()
+        if current in classes:
+            continue
+        classes.append(current)
+        for base in current.bases:
+            if isinstance(base, ast.Subscript):
+                base = base.value
+            if isinstance(base, ast.Name) and base.id in top:
+                pending.append(top[base.id])
+    methods: dict[str, list] = {}
+    for cls in classes:
+        for item in cls.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                methods.setdefault(item.name, []).append(item)
+    used: set[str] = set()
+    todo = [name for name in _PROJECTED_ENTRY_METHODS if name in methods]
+    while todo:
+        name = todo.pop()
+        if name in used:
+            continue
+        used.add(name)
+        for function in methods[name]:
+            params = function.args.posonlyargs + function.args.args
+            self_name = params[0].arg if params else None
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Attribute) or node.attr not in methods:
+                    continue
+                value = node.value
+                if (isinstance(value, ast.Name) and value.id == self_name) or (
+                    isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name)
+                    and value.func.id == "super"
+                ):
+                    todo.append(node.attr)
+    names = frozenset(used)
+    return {cls.name: names for cls in classes}
+
+
+def _resolve_source_visible_frame_bounded(
+    resolved: ResolvedPythonObjectV1,
+    *,
+    graph: DependencyArtifactGraph,
+    dependency_graphs: dict[str, DependencyArtifactGraph] | None = None,
+    session: SourceResolutionSession | None = None,
+) -> tuple[object, Node] | ManagerConstructionGapV1:
     """Resolve one authenticated definition into the ordinary source frame.
 
     This is orchestration over typed Nodes.  Function/Class bodies still
@@ -2372,7 +2517,14 @@ def resolve_source_visible_frame(
     if off_pop is not None:
         return off_pop
     definition = resolved.definition
+    used_methods = _USED_METHOD_PROJECTION.get()
     cache_key = (
+        (
+            "used-methods",
+            tuple(sorted((k, tuple(sorted(v))) for k, v in used_methods.items())),
+        )
+        if used_methods is not None
+        else None,
         graph.distribution_artifact_cid,
         session.dependency_seat_key(dependency_graphs),
         resolved.source_cid,
@@ -3958,7 +4110,13 @@ def _scanned_definitions(definition: Node) -> tuple[FunctionDef, ...]:
     if isinstance(definition, FunctionDef):
         return (definition,)
     if isinstance(definition, ClassDef):
-        return tuple(item for item in definition.body if isinstance(item, FunctionDef))
+        projected = _USED_METHOD_PROJECTION.get()
+        names = None if projected is None else projected.get(definition.name)
+        return tuple(
+            item
+            for item in definition.body
+            if isinstance(item, FunctionDef) and (names is None or item.name in names)
+        )
     return ()
 
 

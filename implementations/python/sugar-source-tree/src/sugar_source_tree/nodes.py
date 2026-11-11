@@ -91,6 +91,17 @@ _RECEIVER_FIELD_PROJECTIONS = object()
 # function (whose frame substitutes the body again) and is not testimony
 # about the statement that merely defined it.
 DEFER_DEFINITION_BODY_REFUSAL = object()
+
+# The methods a used-method class projection constructs, keyed by class name
+# (``None``: every method).  Set only by the source-frame door when a class's
+# whole projection exceeds the call-closure bound (#7664): the class statement
+# still binds every method, but a method nothing on the projected path names
+# keeps its source body for whoever calls it (``DeferredClassMethodV1``).
+import contextvars as _contextvars
+
+PROJECTED_CLASS_METHODS: "_contextvars.ContextVar[dict | None]" = (
+    _contextvars.ContextVar("projected_class_methods", default=None)
+)
 _MISSING = object()
 
 
@@ -5677,6 +5688,20 @@ class ClassDef(Statement):
             )
             from sugar_source_tree.panic import SugarNotWritten
 
+            projected = PROJECTED_CLASS_METHODS.get()
+            if (
+                projected is not None
+                and self.name in projected
+                and method.name not in projected[self.name]
+            ):
+                # Not on the projected path: bound, not run, not constructed.
+                return DeferredClassMethodV1(
+                    method.name,
+                    method.fragment.seal().cid,
+                    method,
+                    self._method_descriptor_kind(method),
+                    unprojected=True,
+                )
             try:
                 body = method.sugar()
                 frame = method.source_visible_call_frame()
