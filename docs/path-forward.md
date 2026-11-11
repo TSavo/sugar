@@ -4,6 +4,16 @@
 **Scope:** the Python lifter on the pinned pandas 3.0.3 corpus (1421 files). Nothing else is on this plan.
 **Replaces:** plan v1 of 2026-08-01 (Phases 0 to 4). See "What changed" at the end.
 
+## Job number one
+
+The owner, 2026-11-11: "that is job number one. Because we can't continue to build on unstable architecture." "That" is making the nine steps below the only way the lifter works.
+
+- **Done when:** the inventory of what the code does outside the nine steps (#7757) is empty, and the solver twins that are red on main are green.
+- **Until then the only work is:** deletions and collapses under a step, and what the solver door needs to give a verdict (steps 7 to 9, #7766).
+- **Behind job one, not started:** anything that adds a construct or a capability, including #7763 (`ord`, the symbolic string index, the encoder lowering) and with it the federation example (#7759). Corpus-file chasing stays stopped.
+
+Where a later section of this document disagrees with this one, this one holds.
+
 ## The nine steps: the one way a Python file becomes a proof
 
 Confirmed by the project owner, 2026-11-11: "It's a good umbrella, steps one through nine. That's what we're after. Everything that falls outside of steps one through nine is the cancer."
