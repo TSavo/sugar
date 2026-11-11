@@ -265,7 +265,9 @@ class ObjectValue(FloorValue):
 
         return self.call_method_value(
             dunder, (other,), owner=owner, blame=site
-        ).and_then(lambda call: call.reduce_source_outcome().and_then(completed))
+        ).and_then(
+            lambda call: call.retained_source_completion_outcome().and_then(completed)
+        )
 
     def matrix_multiply(self, other, site):
         """``@`` on an object is the ``__matmul__`` data-model method.
@@ -312,8 +314,7 @@ class ObjectValue(FloorValue):
             from sugar_lift_py_tests.effect import RaiseEffect
             from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 
-            def invoke(callsite):
-                outcome = callsite.producer_outcome()
+            def attribute_owned(outcome):
                 if not isinstance(outcome, ExitSet):
                     return outcome
                 return ExitSet(
@@ -345,12 +346,14 @@ class ObjectValue(FloorValue):
                     )
                 ).normalize()
 
-            return self.call_method_value(
-                name,
-                (),
-                owner="ObjectValue.attribute.property",
-                blame=site,
-            ).and_then(invoke)
+            return attribute_owned(
+                self.call_method_value(
+                    name,
+                    (),
+                    owner="ObjectValue.attribute.property",
+                    blame=site,
+                )
+            )
         class_value = self._resolved_class_field(name)
         if class_value is not None:
             from sugar_lift_py_tests.outcome import Complete
@@ -803,11 +806,35 @@ class ObjectValue(FloorValue):
         keywords: tuple[tuple[str, FloorValue], ...] = (),
         required_frame: object | None = None,
     ) -> Outcome:
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        """``self.<name>(*arguments, **keywords)``: select, bind, apply.
 
+        The application is the one a plain call ``f(...)`` uses
+        (``CallSiteValue.producer_outcome``, as ``CallSiteSugar`` applies it):
+        the body runs here and every face it has, raises included, is this
+        call's.
+        """
+        return self.bound_method_call(
+            name,
+            arguments,
+            owner=owner,
+            blame=blame,
+            ctx=ctx,
+            keywords=keywords,
+            required_frame=required_frame,
+        ).producer_outcome(ctx)
+
+    def bound_method_call(
+        self,
+        name: str,
+        arguments: tuple[FloorValue, ...],
+        *,
+        owner: str,
+        blame: object,
+        ctx: Any | None = None,
+        keywords: tuple[tuple[str, FloorValue], ...] = (),
+        required_frame: object | None = None,
+    ):
+        """The call ``<method>(self, *arguments, **keywords)``, bound, unapplied."""
         for method in reversed(self.methods):
             if method.name != name:
                 continue
@@ -815,68 +842,18 @@ class ObjectValue(FloorValue):
                 method.source_call_frame_cid != required_frame.frame_cid
             ):
                 continue
-            if not method.parameters:
-                return self._floor_gap(
-                    owner=owner,
-                    blame=blame,
-                    observed=f"{self.class_name}.{name}",
-                    requested="method self parameter",
-                    fix=f"add method binding sugar for `{self.class_name}.{name}`",
-                )
-            target_name = f"{self.class_name}.{name}"
-            arg_values = (self, *arguments)
-            bound_source_actuals = None
-            selected_frame = required_frame or method.source_call_frame
-            if selected_frame is not None:
-                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-                try:
-                    bound_source_actuals = selected_frame.bind_actuals(
-                        arg_values, keywords, ctx
-                    )
-                    arg_values = bound_source_actuals.actuals
-                except SourceCallBindingGap as exc:
-                    return self._floor_gap(
-                        owner=owner,
-                        blame=blame,
-                        observed=str(exc),
-                        requested="actuals matching authenticated method signature",
-                        fix="preserve exact defaults/variadics or keep the call loud",
-                    )
-            elif keywords or len(arguments) != len(method.parameters) - 1:
-                return self._floor_gap(
-                    owner=owner,
-                    blame=blame,
-                    observed=f"{self.class_name}.{name}",
-                    requested="arguments matching the constructor-bound method",
-                    fix="bind through the authenticated method frame or keep loud",
-                )
-            arg_terms = [
-                value.to_term(owner=f"{owner} method argument") for value in arg_values
-            ]
-            call_value = CallSiteValue(
-                target_name=target_name,
-                arg_values=arg_values,
-                parameters=method.parameters,
-                term=ctor(
-                    f"call:{target_name}",
-                    arg_terms,
-                    symbol_kind="contract-target",
-                ),
-                body=method.body,
-                source_call_frame_cid=method.source_call_frame_cid,
-                formal_coordinate_cids=method.formal_coordinate_cids,
-                bound_source_actuals=bound_source_actuals,
-                lexical_defining_class=method.defining_class,
+            return bind_method_call(
+                self,
+                method,
+                arguments,
+                keywords,
+                class_name=self.class_name,
+                ctx=ctx,
+                owner=owner,
+                blame=blame,
+                refuse=self._floor_gap,
+                required_frame=required_frame,
             )
-            if not any(
-                isinstance(value, (SymbolicValue, CallSiteValue))
-                for value in arg_values
-            ):
-                sink = ctx.dig_sink if ctx is not None else None
-                if sink is not None:
-                    sink.append(call_value)
-            return Complete(call_value)
         return self._floor_gap(
             owner=owner,
             blame=blame,
@@ -999,3 +976,90 @@ _UNARY_DUNDER_METHODS = {
     "py.neg": "__neg__",
     "py.invert": "__invert__",
 }
+
+
+def bind_method_call(
+    receiver,
+    method,
+    arguments,
+    keywords,
+    *,
+    class_name: str,
+    ctx,
+    owner: str,
+    blame: object,
+    refuse,
+    required_frame=None,
+):
+    """``receiver.m(*arguments, **keywords)`` is the call ``m(receiver, ...)``.
+
+    A bound method call is nothing but a call of the selected function with
+    the receiver bound as its first actual.  So it binds exactly as a plain
+    call binds (the method frame's ``bind_actuals``) and returns that call,
+    for ``CallSiteValue.producer_outcome`` to apply.  Every method dispatch
+    (``obj.m()``, ``self.m()``, a ``BoundMethodValue`` called with or without
+    ``**``, zero-argument ``super().m()``) binds here.
+
+    ``refuse`` is the caller's own panic for a method it cannot bind.
+    """
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    target_name = f"{class_name}.{method.name}"
+    if not method.parameters:
+        refuse(
+            owner=owner,
+            blame=blame,
+            observed=target_name,
+            requested="method self parameter",
+            fix=f"add method binding sugar for `{target_name}`",
+        )
+    arg_values = (receiver, *arguments)
+    bound_source_actuals = None
+    selected_frame = required_frame or method.source_call_frame
+    if selected_frame is not None:
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+        try:
+            bound_source_actuals = selected_frame.bind_actuals(
+                arg_values, keywords, ctx
+            )
+        except SourceCallBindingGap as exc:
+            refuse(
+                owner=owner,
+                blame=blame,
+                observed=str(exc),
+                requested="actuals matching authenticated method signature",
+                fix="preserve exact defaults/variadics or keep the call loud",
+            )
+        arg_values = bound_source_actuals.actuals
+    elif keywords or len(arguments) != len(method.parameters) - 1:
+        refuse(
+            owner=owner,
+            blame=blame,
+            observed=target_name,
+            requested="arguments matching the constructor-bound method",
+            fix="bind through the authenticated method frame or keep loud",
+        )
+    return CallSiteValue(
+        target_name=target_name,
+        arg_values=arg_values,
+        parameters=method.parameters,
+        term=ctor(
+            f"call:{target_name}",
+            [value.to_term(owner=f"{owner} method argument") for value in arg_values],
+            symbol_kind="contract-target",
+        ),
+        body=method.body,
+        site=blame,
+        source_call_frame_cid=method.source_call_frame_cid,
+        formal_coordinate_cids=method.formal_coordinate_cids,
+        bound_native_actuals_by_coordinate=(
+            bound_source_actuals.by_native_formal_coordinate
+            if bound_source_actuals is not None
+            and bound_source_actuals.native_formal_coordinates
+            else None
+        ),
+        bound_source_actuals=bound_source_actuals,
+        lexical_defining_class=method.defining_class,
+    )

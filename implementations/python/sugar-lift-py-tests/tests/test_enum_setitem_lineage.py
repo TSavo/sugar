@@ -40,16 +40,15 @@ def _source_receiver(source: str):
 
 
 def _source_method_outcome(receiver, context, key="member", value=7):
-    selected = receiver.call_method_value(
+    selected = receiver.bound_method_call(
         "__setitem__",
         (StringValue(key), TermValue(value)),
         owner="test_enum_setitem_lineage",
         blame="setitem-site",
         ctx=context,
     )
-    assert isinstance(selected, Complete)
     assert isinstance(
-        selected.value, CallSiteValue
+        selected, CallSiteValue
     ), "a source __setitem__ override must be selected before builtin dict mutation"
     return receiver.setitem_with_context(
         StringValue(key), TermValue(value), "setitem-site", context

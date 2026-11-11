@@ -257,6 +257,9 @@ class BoundSourceCallActualsV1:
     formal_coordinates: tuple[BindingCoordinateV1, ...]
     native_formal_coordinates: tuple = ()
     projected_pairs: tuple[BoundFormalActualV1, ...] = ()
+    # The definition whose formals these are: a native carrier coordinate is
+    # this frame's formal only if it names this definition.
+    definition_site: object = None
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
@@ -365,19 +368,38 @@ class BoundSourceCallActualsV1:
             # exit value before the lookup. This frame cannot treat that
             # coordinate as one of its formals.
             return carrier
+        demanded = tuple(
+            (demanded_cid, stored_coordinate)
+            for demanded_cid, stored_coordinate in zip(
+                carrier.demand.operand_coordinate_cids,
+                carrier.coordinates,
+                strict=True,
+            )
+            if demanded_cid is not None or stored_coordinate is not None
+        )
+        if any(demanded_cid is None for demanded_cid, _ in demanded):
+            raise SourceCallBindingGap(
+                "native carrier has coordinate testimony without a demand"
+            )
+        for _, stored in demanded:
+            _reauthenticate_native_coordinates((stored,))
+        # A carrier names the formals of the definition whose operation
+        # deferred.  A formal of an enclosing caller (its actual flowed in
+        # here unresolved) is not a slot of this frame: an ordinal of the
+        # same number here is a different formal.  That carrier stays pending
+        # for the frame that owns it.
+        own = tuple(
+            stored.owner_definition_locus == self.definition_site
+            for _, stored in demanded
+        )
+        if not any(own):
+            return carrier
+        if not all(own):
+            raise SourceCallBindingGap(
+                "native carrier demands formals of this frame and an outer frame"
+            )
         projected = {}
-        for demanded_cid, stored_coordinate in zip(
-            carrier.demand.operand_coordinate_cids,
-            carrier.coordinates,
-            strict=True,
-        ):
-            if demanded_cid is None:
-                if stored_coordinate is not None:
-                    raise SourceCallBindingGap(
-                        "native carrier has coordinate testimony without a demand"
-                    )
-                continue
-            _reauthenticate_native_coordinates((stored_coordinate,))
+        for demanded_cid, stored_coordinate in demanded:
             ordinal = stored_coordinate.ordinal
             if stored_coordinate.coordinate_cid != demanded_cid or ordinal >= len(
                 self.pairs
@@ -643,6 +665,7 @@ class SourceVisibleCallFrameV1:
             self.formal_coordinates,
             self.native_operation_formal_coordinates,
             tuple(projected_pairs),
+            self.definition_site,
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:

@@ -369,22 +369,22 @@ def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
     from sugar_source_tree.panic import SugarNotWritten
 
-    call = receiver.call_method_value(
+    bound_method_call = getattr(receiver, "bound_method_call", None)
+    if not callable(bound_method_call):
+        raise SugarNotWritten(
+            blame=exit_face_id,
+            owner="ConstructedManagerProtocolV1.protocol_method",
+            observed=type(receiver).__name__,
+            requested=f"authenticated {name} call over projected receiver state",
+            fix="preserve the exact receiver method frame or keep protocol loud",
+        )
+    return bound_method_call(
         name,
         arguments,
         owner="ConstructedManagerProtocolV1.protocol_method",
         blame=exit_face_id,
         ctx=ctx,
     )
-    if not isinstance(call, Complete) or not isinstance(call.value, CallSiteValue):
-        raise SugarNotWritten(
-            blame=exit_face_id,
-            owner="ConstructedManagerProtocolV1.protocol_method",
-            observed=type(call).__name__,
-            requested=f"authenticated {name} call over projected receiver state",
-            fix="preserve the exact receiver method frame or keep protocol loud",
-        )
-    return call.value
 
 
 def _receiver_state_after_enter(
@@ -1098,10 +1098,10 @@ def construct_manager_protocol(
             "exit-missing", behavior.manager_construction_cid, "source-visible method"
         )
     representative = receivers[0]
-    enter = representative.call_method_value(
+    enter = representative.bound_method_call(
         "__enter__", (), owner="construct_manager_protocol", blame=exit_face_id
     )
-    exit_ = representative.call_method_value(
+    exit_ = representative.bound_method_call(
         "__exit__",
         (
             ExitTypeCoordinate(exit_face_id, None),
@@ -1111,14 +1111,6 @@ def construct_manager_protocol(
         owner="construct_manager_protocol",
         blame=exit_face_id,
     )
-    if not isinstance(enter, Complete) or not isinstance(enter.value, CallSiteValue):
-        return ManagerProtocolConstructionGapV1(
-            "method-construction", behavior.manager_construction_cid, "__enter__"
-        )
-    if not isinstance(exit_, Complete) or not isinstance(exit_.value, CallSiteValue):
-        return ManagerProtocolConstructionGapV1(
-            "method-construction", behavior.manager_construction_cid, "__exit__"
-        )
     enter_frame_cid = _method_frame_cid(representative, "__enter__")
     exit_frame_cid = _method_frame_cid(representative, "__exit__")
     if any(
@@ -1142,8 +1134,8 @@ def construct_manager_protocol(
     return ConstructedManagerProtocolV1(
         behavior.manager_construction_cid,
         cid_of_json(preimage),
-        enter.value,
-        exit_.value,
+        enter,
+        exit_,
         enter_frame_cid,
         exit_frame_cid,
         exit_face_id,

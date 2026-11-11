@@ -88,7 +88,7 @@ class MappingObjectValue(ObjectValue):
                 ctx=method_ctx,
             )
             .and_then(
-                lambda callsite: callsite.reduce_source_outcome(method_ctx).and_then(
+                lambda callsite: callsite.retained_source_completion_outcome().and_then(
                     self._project_setitem_receiver
                 )
             )

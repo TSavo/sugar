@@ -51,6 +51,7 @@ from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
+from test_method_call_application_twins import bound_method_call_at
 
 METHOD_BODY = (
     "class Writer:\n" "    def store(self, obj, value):\n" "        obj.field = value\n"
@@ -117,10 +118,9 @@ def _method_callsite(source: str) -> CallSiteValue:
         and node.func.attr == "store"
     )
     assert len(calls) == 1, calls
-    constructed = calls[0].sugar().desugar(None)
-    assert isinstance(constructed, Complete), constructed
-    assert isinstance(constructed.value, CallSiteValue), constructed.value
-    return constructed.value
+    # #7756: the Call applies the method body itself; the binding under test
+    # is that call as bound, before the application.
+    return bound_method_call_at(calls[0])
 
 
 def _method_call_outcome(source: str):
