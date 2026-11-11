@@ -154,39 +154,9 @@ def _route_manager_faces(
                 )
 
                 if isinstance(disposition, ReturnTruthinessDispositionV1):
-                    from sugar_lift_py_tests.context_manager_contract import (
-                        NeverSuppressesDispositionV1,
+                    routed = route_body_face_through_exit_truth(
+                        body_face, exit_es, site=resource.site
                     )
-                    from sugar_lift_py_tests.effect import (
-                        GroupedRaiseEffect,
-                        RaiseEffect,
-                    )
-                    from sugar_lift_py_tests.effect.raise_effect import (
-                        UndeterminedRaiseEffect,
-                    )
-
-                    # An exception (a leaf or a group) is suppressed by a
-                    # true exit result; loop control and return are not
-                    # exceptions, so the exit result is ignored for them.
-                    # A RuntimeEffect is not an exception either: it is the
-                    # lift's boundary at an operation whose dispatch exists
-                    # only at runtime (it may complete or raise anything).
-                    # Every exception Python raises from a decided operation
-                    # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
-                    # takes the truth split; handing a boundary to exit as a
-                    # raise would invent one, so it stays the With's residue.
-                    if isinstance(body_face, Halted) and not isinstance(
-                        body_face.effect,
-                        (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
-                    ):
-                        routed = ExitSet((body_face,)).and_exit(
-                            exit_es,
-                            disposition=NeverSuppressesDispositionV1(),
-                        )
-                    else:
-                        routed = ExitSet((body_face,)).and_exit_truthiness(
-                            _exit_return_values(exit_es), site=resource.site
-                        )
                 else:
                     routed = ExitSet((body_face,)).and_exit(
                         exit_es,
@@ -298,6 +268,42 @@ def _returned_value(value):
         if isinstance(last, ReturnValue):
             return last.value
     return value
+
+
+
+def route_body_face_through_exit_truth(body_face, exit_es, *, site):
+    """One body face through an ``__exit__`` whose result's truth decides
+    suppression (Python reference 8.5).
+
+    An exception (a leaf or a group) is suppressed by a true exit result; loop
+    control and return are not exceptions, so the exit result is ignored for
+    them.  A RuntimeEffect is not an exception either: it is the lift's
+    boundary at an operation whose dispatch exists only at runtime (it may
+    complete or raise anything).  Every exception Python raises from a decided
+    operation (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and takes the
+    truth split; handing a boundary to exit as a raise would invent one, so it
+    stays the With's residue.  Every ``with`` whose exit truth decides
+    suppression routes its body faces here, whether its manager was
+    constructed from source or cited.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+    )
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+
+    if isinstance(body_face, Halted) and not isinstance(
+        body_face.effect,
+        (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
+    ):
+        return ExitSet((body_face,)).and_exit(
+            exit_es,
+            disposition=NeverSuppressesDispositionV1(),
+        )
+    return ExitSet((body_face,)).and_exit_truthiness(
+        _exit_return_values(exit_es), site=site
+    )
 
 
 def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return"):

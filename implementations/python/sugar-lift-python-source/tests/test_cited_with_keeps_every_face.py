@@ -97,3 +97,23 @@ def test_the_body_raise_is_kept_beside_its_suppressed_face(
         for face in exits.exits
     )
     assert _returns_seven(exits)
+
+
+def test_a_runtime_boundary_in_the_body_is_never_suppressed(tmp_path: Path) -> None:
+    # An unpack of an opaque operand is the lift's runtime boundary, not an
+    # exception: the cited exit's truth is not asked about it, exactly as for
+    # a constructed manager.  It stays the With's residue and never reaches
+    # ``return 7`` as if suppressed.
+    from sugar_lift_py_tests.effect import RuntimeEffect
+
+    exits = _faces(tmp_path, "a, b = p")
+    residues = [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted)
+        and isinstance(face.effect, RuntimeEffect)
+        and not isinstance(face.effect, RaiseEffect)
+        and "Unpack" in type(face.effect).__name__ + str(face.effect)
+    ]
+    assert residues
+    assert not _returns_seven(exits)

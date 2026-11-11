@@ -234,6 +234,9 @@ class WithOpaqueCitedManagerSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+            route_body_face_through_exit_truth,
+        )
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         parts: list = []
@@ -296,8 +299,8 @@ class WithOpaqueCitedManagerSugar(Sugar):
                     # ONE router for both questions. A completed body leaves
                     # completed unless exit halts; a halted body leaves as BOTH
                     # faces under the exit result's undecidable truthiness.
-                    after = ExitSet((body_exit,)).and_exit_truthiness(
-                        exit_es, site=self.site
+                    after = route_body_face_through_exit_truth(
+                        body_exit, exit_es, site=self.site
                     )
                     parts.append(prepend_facts_to_exitset(after, enter_facts))
 
