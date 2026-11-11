@@ -262,28 +262,45 @@ def _publish_undecided_dispatch_edges(
     if decided_left() and decided_right():
         return outcome
 
-    # Undecided compare must not mint a nameless RaiseEffect (sin-cluster-2 /
-    # constructor climb). Throwing is honorable unfinished identity work;
-    # dual-edge ExitSet with undetermined halt is forbidden.
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    # Undecided dispatch: the operands' runtime types select ``__eq__`` /
+    # ``__contains__`` (and their reflections), which this frame did not look
+    # at, so the comparison may raise anything -- the #7585 law.  It completes
+    # with the undecided comparison predicate only under
+    # ``python:compare.completes(python:compare(op, site))`` and halts with an
+    # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
+    # complement.  No exception type is named: the halt is undetermined.
+    return _undecided_dispatch_faces(outcome.value, site, op_kind)
 
-    construction_panic_gap(
-        owner=f"ComparisonOpSugar.{op_kind}",
-        blame=site,
-        observed=(
-            "undecided binary compare reached dual-edge path without "
-            "authenticated exception_type_coordinate"
-        ),
-        requested=(
-            "decided ground TypeError via ground_type_error, or named refusal "
-            "before ExitSet mint"
-        ),
-        fix=(
-            "do not construct RaiseEffect without exception_type_coordinate; "
-            "ground decided pairs use ground_type_error; undecided native "
-            "dispatch throws before dual-edge fabrication"
-        ),
+
+def _undecided_dispatch_faces(predicate, site, op_kind: str):
+    """Two faces for one undecided rich-comparison dispatch."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
     )
+
+    key = occurrence_key(site)
+    dispatch = ctor("python:compare", (str_const(op_kind), str_const(key)))
+    completes = atomic("python:compare.completes", [dispatch])
+    return ExitSet(
+        (
+            Completed(completes, predicate),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site) if site is not None else None,
+                    occurrence=key if site is not None else None,
+                    producer_node_owner=f"UndecidedCompare:{op_kind}",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
 
 
 @dataclass(frozen=True)

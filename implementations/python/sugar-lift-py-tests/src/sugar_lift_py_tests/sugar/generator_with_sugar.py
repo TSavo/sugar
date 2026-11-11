@@ -209,6 +209,9 @@ class GeneratorObjectWithSugar(Sugar):
 
     manager: Sugar
     site: object = field(compare=False)
+    # ``"generator"`` for a ``def`` generator function, ``"async_generator"``
+    # for an ``async def`` one: each object's refusal is observed separately.
+    object_kind: str = "generator"
 
     @classmethod
     def witnesses(cls):
@@ -230,7 +233,7 @@ class GeneratorObjectWithSugar(Sugar):
             sugar_outcome_to_exitset,
         )
 
-        refusal = observed_generator_object_with_refusal()
+        refusal = observed_generator_object_with_refusal(self.object_kind)
         blame = str(self.site)
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         exits = []

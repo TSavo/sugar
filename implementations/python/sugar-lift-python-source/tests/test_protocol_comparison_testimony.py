@@ -10,7 +10,7 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
 )
 from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-from sugar_lift_py_tests.gap import ConstructionPanic
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_py_tests.sugar.comparison_op_sugar import (
@@ -69,8 +69,19 @@ def test_undecided_comparison_predicate_is_not_native_completion_testimony(op):
     unproven = Complete(
         PredicateValue(atomic("py.eq", (left.term, right.to_term(owner="right"))), site)
     )
-    with pytest.raises(ConstructionPanic):
-        publish_undecided_comparison_edges(left, right, site, op, unproven)
+    # The predicate alone is not testimony that dispatch completes: the
+    # undecided ``__eq__``/``__contains__`` may raise anything.  It completes
+    # only under ``python:compare.completes`` and halts undetermined (no
+    # invented exception type) under the complement -- the #7585 two faces.
+    result = publish_undecided_comparison_edges(left, right, site, op, unproven)
+    assert isinstance(result, ExitSet)
+    (completed,) = [face for face in result.exits if not isinstance(face, Halted)]
+    (halted,) = [face for face in result.exits if isinstance(face, Halted)]
+    assert completed.value is unproven.value
+    assert completed.guard.name == "python:compare.completes"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == f"UndecidedCompare:{op}"
 
 
 @pytest.mark.parametrize("operator", ["==", "!=", "in", "not in"])
