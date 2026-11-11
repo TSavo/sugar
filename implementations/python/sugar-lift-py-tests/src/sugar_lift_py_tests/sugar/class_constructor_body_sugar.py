@@ -6,6 +6,42 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
+def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
+    """Refuse a class call that would skip the class's own source ``__new__``.
+
+    ``Cls(...)`` is ``type.__call__``: it runs ``Cls.__new__`` first and only
+    then ``type(obj).__init__`` on whatever object ``__new__`` returned.  A
+    source ``__new__`` may return an instance of another class (pandas
+    ``ExcelWriter.__new__`` returns ``object.__new__(get_writer(engine))``),
+    so running ``Cls.__init__`` on a fresh ``Cls`` receiver constructs an
+    object Python never builds.  The only ``__new__`` arm constructed today is
+    the authenticated allocation-then-field-stores shape on a class without
+    ``__init__``; every other source ``__new__`` refuses here by name.
+    """
+    if new_method is None or runs_new:
+        return
+    from sugar_source_tree.panic import SugarNotWritten
+
+    class_name = getattr(definition, "class_name", type(definition).__name__)
+    raise SugarNotWritten(
+        blame=site,
+        owner=owner,
+        observed=(
+            f"{class_name}.__new__ is source the class call does not run "
+            "(its return value and the runtime class whose __init__ runs are "
+            "not constructed)"
+        ),
+        requested=(
+            "the object returned by source __new__, then __init__ dispatched "
+            "on that object's runtime class"
+        ),
+        fix=(
+            "construct the source __new__ return before __init__; never run "
+            "__init__ on a fresh receiver of the called class"
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class ClassConstructorBodySugar(Sugar):
     definition: Sugar
@@ -92,6 +128,16 @@ class ClassConstructorBodySugar(Sugar):
             )
 
         def construct(value):
+            refuse_unrun_source_new(
+                value,
+                new_method=self.constructed_new_method,
+                runs_new=(
+                    getattr(value, "initializer", None) is None
+                    and self.initializer_body is not None
+                ),
+                site=self.site,
+                owner="ClassConstructorBodySugar.__new__",
+            )
             if self.initializer_body is None:
                 return Complete(
                     value.construct_receiver_state_from_block(
