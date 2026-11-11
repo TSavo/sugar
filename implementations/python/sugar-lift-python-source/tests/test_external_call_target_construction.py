@@ -292,24 +292,32 @@ def test_reexport_chain_call_target_reduces(tmp_path):
     assert gap.observed == "call-target-source-absent:ScopedSlot"
 
 
-def test_unavailable_callee_stays_typed_loud(tmp_path):
-    """REQUIRED LOUD TWIN: callee outside the authenticated artifact.
+def test_stdlib_callee_is_cited_off_population_and_stays_loud(tmp_path):
+    """REQUIRED LOUD TWIN: callee outside this distribution's artifact.
 
     ``pathlib`` is not part of this distribution's authenticated file
-    manifest.  No source, no contract -- and specifically no fabricated one.
+    manifest; ``from pathlib import Path`` is followed into the stdlib's own
+    artifact, where ``Path`` is defined but off the enrolled population.  The
+    call is cited (two faces, nothing read inside it), so a factory
+    ``return Path(...)`` returns an opaque object: whether that object is a
+    manager is not known, and construction stays loud rather than inventing a
+    contract.
     """
-    gap = _opaque_gap(
-        tmp_path,
-        factory_source=(
-            "from pathlib import Path\n"
-            "\n"
-            "def make_guard(expected):\n"
-            "    return Path(expected)\n"
-        ),
-        support_source="MARKER = 1\n",
-    )
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-    assert gap.observed == "call-target-source-absent:Path"
+    with pytest.raises(ConstructionPanic) as raised:
+        _construct(
+            tmp_path,
+            factory_source=(
+                "from pathlib import Path\n"
+                "\n"
+                "def make_guard(expected):\n"
+                "    return Path(expected)\n"
+            ),
+            support_source="MARKER = 1\n",
+        )
+
+    assert "missing callsite body" in str(raised.value)
 
 
 def test_absent_module_callee_stays_typed_loud(tmp_path):
@@ -361,8 +369,8 @@ def _resolved_pair(root: Path, *, factory_source: str, support_source: str):
     "name,available",
     [
         ("ScopedSlot", True),
-        ("MISSING_NAME", False),
-        ("Path", False),
+        ("MISSING_NAME", "call-target-source-absent"),
+        ("Path", "call-target-off-population"),
         ("make_guard", True),
     ],
 )
@@ -372,8 +380,10 @@ def test_external_call_frame_demand_maps_exactly_onto_availability(
     """The demand table and the resolution table are one bijection.
 
     Every demanded name gets exactly one answer, and the answer is decided by
-    whether the defining source is authenticated in this artifact -- never by
-    which package or module the name happens to come from.
+    where the defining source is authenticated -- in this artifact (a frame),
+    in the owning artifact the import names but off the enrolled population
+    (``pathlib.Path``: cited off-population), or nowhere (source-absent) --
+    never by which package or module the name happens to come from.
     """
     graph, resolved = _resolved_pair(
         tmp_path,
@@ -397,15 +407,15 @@ def test_external_call_frame_demand_maps_exactly_onto_availability(
     )
 
     declined = isinstance(frame, _ExternalCallTargetGap)
-    assert (not declined) is available
-    if available:
+    assert (not declined) is (available is True)
+    if available is True:
         # The frame is the callee's OWN definition, addressed by content.
         assert frame.frame_cid.startswith("blake3-512:")
         assert frame.definition_fragment_cid.startswith("blake3-512:")
     else:
         # A decline is not a bare `None`: it names WHICH decline it was, so an
         # in-artifact symbol the door failed on can never be read as coverage.
-        assert frame.kind == "call-target-source-absent"
+        assert frame.kind == available
 
 
 def test_external_call_frame_is_the_callee_defining_source_not_the_caller(tmp_path):
