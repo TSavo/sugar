@@ -364,14 +364,20 @@ def _decided_here(receiver) -> bool:
     selects runs on exactly this value."""
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.language_owned_contextvar import (
+        LanguageOwnedContextVarReadValue,
+    )
     from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
+    # A ``ContextVar.get()`` read is one occurrence's own value, like a call's
+    # result: nothing later replaces it.
     return type(receiver) in (
         CallSiteValue,
+        LanguageOwnedContextVarReadValue,
         StringValue,
         BytesValue,
         TermValue,
