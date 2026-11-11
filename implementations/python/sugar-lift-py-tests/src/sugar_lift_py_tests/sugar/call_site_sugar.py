@@ -910,6 +910,19 @@ class CallSiteSugar(ConstructedTermSugar):
                     ctx,
                     getattr(callsite, "keyword_names", ()) or (),
                 )
+                if unprojected is None:
+                    from sugar_lift_py_tests.source_call_resolution import (
+                        builtin_list_construct,
+                    )
+
+                    constructed = builtin_list_construct(
+                        self.target_name,
+                        callsite.arg_values,
+                        ctx,
+                        getattr(callsite, "keyword_names", ()) or (),
+                    )
+                    if constructed is not None:
+                        return constructed
             if unprojected is None:
                 unprojected = _unknown_callee_call(self, ctx)
             if unprojected is not None:
