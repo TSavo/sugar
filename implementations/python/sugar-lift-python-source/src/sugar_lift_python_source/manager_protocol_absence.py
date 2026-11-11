@@ -1,0 +1,497 @@
+"""Prove, from source, that a class's instances lack ``__enter__``/``__exit__``.
+
+``with x:`` looks the protocol up on ``type(x)``'s MRO only.  An absence proof
+therefore walks the C3 MRO of the class (the same linearization law the Floor
+uses, :func:`sugar_lift_py_tests.floor.class_definition_value.c3_tail`) and
+requires every class on it to be either
+
+* a module-level ``class`` statement whose body is read here -- no class
+  decorators, no metaclass or other class keywords, a body of plain method
+  definitions and simple name assignments whose calls are only to unshadowed
+  builtins, no ``__new__`` (construction must return the instance) and no
+  ``__init_subclass__`` (a base could install the protocol on a subclass); or
+* a cited language base, ``object`` or ``abc.ABC``, whose attribute sets are
+  read from the running interpreter (never transcribed).
+
+Any base that is neither keeps the use a runtime-selected gap.  The defining
+module must also never store ``__enter__``/``__exit__``/``__class__`` as an
+attribute, never call ``setattr``/``delattr`` where it could name them, and
+never call ``exec``/``eval``/``globals``/``locals``/``vars``.
+
+The proof answers which of the two names the MRO binds; when one is missing
+the ``with`` halts with the interpreter's own observed ``TypeError``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sugar_lift_py_tests.manager_protocol_absence_refusal import (
+    PROTOCOL_NAMES,
+    cited_identity_decorator,
+    cited_language_base,
+)
+
+_FORBIDDEN_STORES = frozenset({*PROTOCOL_NAMES, "__class__"})
+_DYNAMIC_SCOPE_CALLS = frozenset({"exec", "eval", "globals", "locals", "vars"})
+_ATTRIBUTE_WRITERS = frozenset({"setattr", "delattr"})
+_FORBIDDEN_CLASS_NAMES = frozenset({"__new__", "__init_subclass__"})
+_BUILTIN_METHOD_DECORATORS = frozenset({"classmethod", "staticmethod", "property"})
+
+
+@dataclass(frozen=True)
+class ManagerProtocolAbsenceV1:
+    """Source proof that ``type_name`` instances miss part of the protocol."""
+
+    type_name: str
+    has_enter: bool
+    has_exit: bool
+    # Qualified names of the MRO, head first (source classes by module and
+    # name, cited bases by their interpreter names).
+    linearization: tuple[str, ...]
+
+
+class _Entry:
+    """One MRO member compared by identity (source node or cited base)."""
+
+    def __init__(self, key, class_def=None, cited=None):
+        self.key = key
+        self.class_def = class_def
+        self.cited = cited
+        self.bases = ()
+
+    def __eq__(self, other):
+        return isinstance(other, _Entry) and other.key == self.key
+
+    def __hash__(self):
+        return hash(self.key)
+
+
+def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None:
+    """The absence proof for ``class_def``'s instances, or None when unproven."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    from sugar_lift_py_tests.floor.class_definition_value import c3_tail
+
+    entries: dict = {}
+    if _resolve_source_class(class_def, entries) is None:
+        return None
+    head = entries[("source", id(class_def))]
+    tails: dict = {}
+
+    def tail_of(entry):
+        if entry in tails:
+            return tails[entry]
+        if entry.cited is not None:
+            # A cited base's own MRO is the interpreter's: its tail is the
+            # cited classes after it (``abc.ABC`` -> ``object``).
+            tail = tuple(_cited_entry(name, entries) for name in entry.cited.linearization[1:])
+        else:
+            tail = c3_tail(
+                _direct_bases(entry, entries),
+                tail_of,
+                blame=entry.class_def.fragment,
+                owner="prove_manager_protocol_absence",
+            )
+        tails[entry] = tail
+        return tail
+
+    try:
+        mro = (head, *tail_of(head))
+    except SugarNotWritten:
+        return None
+    if not any(
+        entry.cited is not None and entry.cited.qualified_name == "builtins.object"
+        for entry in mro
+    ):
+        return None
+    present: set[str] = set()
+    for entry in mro:
+        if entry.cited is not None:
+            if entry.cited.metaclass_overrides_call:
+                return None
+            if entry.cited.subclass_gains & set(PROTOCOL_NAMES):
+                return None
+            present |= entry.cited.protocol_names
+        else:
+            present |= _class_scope_names(entry.class_def) & set(PROTOCOL_NAMES)
+    if _leaves_an_abstract_method(mro):
+        # Construction itself would raise (an abstract class): not this law.
+        return None
+    has_enter = "__enter__" in present
+    has_exit = "__exit__" in present
+    if has_enter and has_exit:
+        return None
+    return ManagerProtocolAbsenceV1(
+        type_name=class_def.name,
+        has_enter=has_enter,
+        has_exit=has_exit,
+        linearization=tuple(_entry_name(entry) for entry in mro),
+    )
+
+
+def _leaves_an_abstract_method(mro) -> bool:
+    """Whether the most-derived binding of some ``abc.abstractmethod`` name is
+    itself abstract (instantiation would raise before any ``with``)."""
+    from sugar_source_tree.nodes import AsyncFunctionDef, Attribute, FunctionDef
+
+    def abstract_names(class_def):
+        names = set()
+        for statement in class_def.body:
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef)) and any(
+                isinstance(d, Attribute) and d.attr == "abstractmethod"
+                for d in statement.decorators
+            ):
+                names.add(statement.name)
+        return names
+
+    sources = [entry.class_def for entry in mro if entry.cited is None]
+    declared_abstract = set().union(*(abstract_names(c) for c in sources))
+    for name in declared_abstract:
+        owner = next(c for c in sources if name in _class_scope_names(c))
+        if name in abstract_names(owner):
+            return True
+    return False
+
+
+def prove_decorated_manager_absence(
+    function_def, decorator_function
+) -> ManagerProtocolAbsenceV1 | None:
+    """``@d async def g`` / ``@d def g``: the absence proof for what ``g()`` returns.
+
+    Only the strict shape is read: ``d``'s body is an optional docstring, one
+    nested ``helper`` definition (optionally ``@wraps(func)`` with ``wraps``
+    from ``functools``), and ``return helper``; ``helper``'s body is one
+    ``return C(...)`` where ``C`` is a module class.  Then ``g(...)`` is
+    ``C(...)`` and the proof is ``C``'s.
+    """
+    from sugar_source_tree.nodes import (
+        Call,
+        ClassDef,
+        Constant,
+        Expr,
+        FunctionDef,
+        ImportFrom,
+        Name,
+        Return,
+    )
+
+    del function_def
+    body = list(decorator_function.body)
+    if body and isinstance(body[0], Expr) and isinstance(body[0].value, Constant):
+        body = body[1:]
+    if len(body) != 2:
+        return None
+    helper, returned = body
+    if not isinstance(helper, FunctionDef) or not isinstance(returned, Return):
+        return None
+    if not (isinstance(returned.value, Name) and returned.value.id == helper.name):
+        return None
+    unit = decorator_function.unit
+    bindings = unit.module_direct_bindings or {}
+    for decorator in helper.decorators:
+        if not (
+            isinstance(decorator, Call)
+            and isinstance(decorator.func, Name)
+            and decorator.func.id == "wraps"
+        ):
+            return None
+        binds = bindings.get("wraps", ())
+        if not (
+            len(binds) == 1
+            and isinstance(binds[0], ImportFrom)
+            and binds[0].module == "functools"
+            and any(a.name == "wraps" and a.asname is None for a in binds[0].names)
+        ):
+            return None
+    if len(helper.body) != 1 or not isinstance(helper.body[0], Return):
+        return None
+    constructed = helper.body[0].value
+    if not isinstance(constructed, Call) or not isinstance(constructed.func, Name):
+        return None
+    binds = bindings.get(constructed.func.id, ())
+    if len(binds) != 1 or not isinstance(binds[0], ClassDef):
+        return None
+    return prove_manager_protocol_absence(binds[0])
+
+
+def _entry_name(entry) -> str:
+    if entry.cited is not None:
+        return entry.cited.qualified_name
+    return f"{entry.class_def.unit.filename}:{entry.class_def.name}"
+
+
+def _cited_entry(qualified_name, entries):
+    key = ("cited", qualified_name)
+    if key not in entries:
+        cited = cited_language_base(qualified_name)
+        if cited is None:
+            raise _Unproven(qualified_name)
+        entries[key] = _Entry(key, cited=cited)
+    return entries[key]
+
+
+class _Unproven(Exception):
+    pass
+
+
+def _direct_bases(entry, entries):
+    return entry.bases
+
+
+def _resolve_source_class(class_def, entries):
+    """Read one source class and (recursively) its bases; None when unproven."""
+    key = ("source", id(class_def))
+    if key in entries:
+        return entries[key]
+    entry = _Entry(key, class_def=class_def)
+    entries[key] = entry
+    try:
+        if not _module_admits_absence_proof(class_def.unit):
+            raise _Unproven("module")
+        if not _class_statement_admits_absence_proof(class_def):
+            raise _Unproven("class statement")
+        bases = []
+        for base in class_def.bases:
+            resolved = _resolve_base(base, class_def.unit, entries, class_def)
+            if resolved is None:
+                raise _Unproven("base")
+            bases.append(resolved)
+        if not bases:
+            bases.append(_cited_entry("builtins.object", entries))
+        entry.bases = tuple(bases)
+    except _Unproven:
+        del entries[key]
+        return None
+    return entry
+
+
+
+def _precedes(earlier, later) -> bool:
+    """A base class statement must run before the class statement naming it."""
+    first = earlier.line_col_span()
+    second = later.line_col_span()
+    return (first.end_line, first.end_col) <= (second.start_line, second.start_col)
+
+
+def _resolve_base(base, unit, entries, derived):
+    from sugar_source_tree.nodes import Attribute, ClassDef, Import, ImportFrom, Name
+
+    bindings = unit.module_direct_bindings or {}
+    if isinstance(base, Name):
+        binds = bindings.get(base.id, ())
+        if not binds:
+            if base.id == "object":
+                return _cited_entry("builtins.object", entries)
+            return None
+        if len(binds) != 1:
+            return None
+        (bound,) = binds
+        if isinstance(bound, ClassDef) and bound.name == base.id:
+            if bound.unit is not unit or not _precedes(bound, derived):
+                return None
+            return _resolve_source_class(bound, entries)
+        if isinstance(bound, ImportFrom) and bound.module == "abc" and not bound.level:
+            if any(
+                alias.name == "ABC" and (alias.asname or alias.name) == base.id
+                for alias in bound.names
+            ):
+                return _cited_entry("abc.ABC", entries)
+        return None
+    if isinstance(base, Attribute) and isinstance(base.value, Name):
+        if base.attr != "ABC":
+            return None
+        binds = bindings.get(base.value.id, ())
+        if len(binds) != 1 or not isinstance(binds[0], Import):
+            return None
+        if any(
+            alias.name == "abc" and alias.asname in (None, base.value.id)
+            and base.value.id == (alias.asname or alias.name)
+            for alias in binds[0].names
+        ):
+            return _cited_entry("abc.ABC", entries)
+    return None
+
+
+def _class_statement_admits_absence_proof(class_def) -> bool:
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        AsyncFunctionDef,
+        Constant,
+        Expr,
+        FunctionDef,
+        Name,
+        Pass,
+    )
+
+    if class_def.decorators or class_def.keywords or class_def.type_params:
+        return False
+    unit = class_def.unit
+    for statement in class_def.body:
+        if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
+            if statement.name in _FORBIDDEN_CLASS_NAMES:
+                return False
+            if not all(_decorator_is_cited(d, unit) for d in statement.decorators):
+                return False
+            if not all(_expression_is_inert(d, unit) for d in statement.decorators):
+                return False
+            continue
+        if isinstance(statement, Pass):
+            continue
+        if isinstance(statement, Expr):
+            if not isinstance(statement.value, Constant):
+                return False
+            continue
+        if isinstance(statement, Assign):
+            if not all(isinstance(target, Name) for target in statement.targets):
+                return False
+            if any(t.id in _FORBIDDEN_CLASS_NAMES for t in statement.targets):
+                return False
+            if not _expression_is_inert(statement.value, unit):
+                return False
+            continue
+        if isinstance(statement, AnnAssign):
+            if not isinstance(statement.target, Name):
+                return False
+            if statement.target.id in _FORBIDDEN_CLASS_NAMES:
+                return False
+            if statement.value is not None and not _expression_is_inert(
+                statement.value, unit
+            ):
+                return False
+            continue
+        return False
+    return True
+
+
+def _class_scope_names(class_def) -> set[str]:
+    from sugar_source_tree.nodes import AnnAssign, Assign, AsyncFunctionDef, FunctionDef
+
+    names: set[str] = set()
+    for statement in class_def.body:
+        if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
+            names.add(statement.name)
+        elif isinstance(statement, Assign):
+            names.update(target.id for target in statement.targets)
+        elif isinstance(statement, AnnAssign) and statement.value is not None:
+            names.add(statement.target.id)
+    return names
+
+
+def _unshadowed_builtin(name: str, unit) -> bool:
+    import builtins
+
+    bindings = unit.module_direct_bindings or {}
+    return not bindings.get(name) and hasattr(builtins, name)
+
+
+def _decorator_is_cited(decorator, unit) -> bool:
+    from sugar_source_tree.nodes import Attribute, Import, Name
+
+    if isinstance(decorator, Name):
+        return decorator.id in _BUILTIN_METHOD_DECORATORS and _unshadowed_builtin(
+            decorator.id, unit
+        )
+    if isinstance(decorator, Attribute) and isinstance(decorator.value, Name):
+        binds = (unit.module_direct_bindings or {}).get(decorator.value.id, ())
+        if len(binds) != 1 or not isinstance(binds[0], Import):
+            return False
+        module = next(
+            (
+                alias.name
+                for alias in binds[0].names
+                if (alias.asname or alias.name) == decorator.value.id
+            ),
+            None,
+        )
+        return module is not None and cited_identity_decorator(
+            f"{module}.{decorator.attr}"
+        )
+    return False
+
+
+def _expression_is_inert(expression, unit) -> bool:
+    """No walrus, no lambda-free surprises: calls only to unshadowed builtins."""
+    from sugar_source_tree.nodes import Call, Name, NamedExpr
+
+    for node in expression.walk():
+        if isinstance(node, NamedExpr):
+            return False
+        if isinstance(node, Call):
+            if not isinstance(node.func, Name) or not _unshadowed_builtin(
+                node.func.id, unit
+            ):
+                return False
+            if node.func.id in _DYNAMIC_SCOPE_CALLS | _ATTRIBUTE_WRITERS:
+                return False
+    return True
+
+
+def _module_admits_absence_proof(unit) -> bool:
+    """No statement in the module may install, remove or retarget the protocol."""
+    return _scan_module(unit)
+
+
+def _scan_module(unit) -> bool:
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        AsyncFor,
+        AsyncWith,
+        Attribute,
+        AugAssign,
+        Call,
+        Constant,
+        Delete,
+        DeleteAttribute,
+        For,
+        Import,
+        ImportFrom,
+        Name,
+        With,
+    )
+
+    module = getattr(unit, "typed_module", None)
+    if module is None:
+        return False
+    bindings = unit.module_direct_bindings or {}
+    for node in module.walk():
+        if isinstance(node, ImportFrom) and any(a.name == "*" for a in node.names):
+            return False
+        if isinstance(node, DeleteAttribute) and node.attr in _FORBIDDEN_STORES:
+            return False
+        targets = ()
+        if isinstance(node, (Assign, Delete)):
+            targets = node.targets
+        elif isinstance(node, (AugAssign, AnnAssign, For, AsyncFor)):
+            targets = (node.target,)
+        elif isinstance(node, (With, AsyncWith)):
+            targets = tuple(
+                item.optional_vars for item in node.items if item.optional_vars
+            )
+        for target in targets:
+            for leaf in target.walk():
+                if isinstance(leaf, Attribute) and leaf.attr in _FORBIDDEN_STORES:
+                    return False
+        if isinstance(node, Call) and isinstance(node.func, Name):
+            name = node.func.id
+            if name in _DYNAMIC_SCOPE_CALLS and not bindings.get(name):
+                return False
+            if name in _ATTRIBUTE_WRITERS and not bindings.get(name):
+                if len(node.args) < 2:
+                    return False
+                attribute = node.args[1]
+                if isinstance(attribute, Constant):
+                    if attribute.value in _FORBIDDEN_STORES:
+                        return False
+                    continue
+                # A computed attribute name may be anything: admitted only
+                # when the receiver is a module bound by ``import``.
+                receiver = node.args[0]
+                if not isinstance(receiver, Name):
+                    return False
+                binds = bindings.get(receiver.id, ())
+                if len(binds) != 1 or not isinstance(binds[0], Import):
+                    return False
+    return True

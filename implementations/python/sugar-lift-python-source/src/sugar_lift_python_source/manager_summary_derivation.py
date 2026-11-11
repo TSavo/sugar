@@ -49,6 +49,7 @@ from .canonical import cid_of_json
 from .manager_protocol_construction import (
     ConstructedManagerProtocolV1,
     GeneratorBackedManagerProtocolV1,
+    ManagerProtocolConstructionGapV1,
 )
 
 
@@ -3209,6 +3210,16 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             )
             continue
         if not isinstance(protocol, ConstructedManagerProtocolV1):
+            if _publish_proven_non_manager_head(
+                context,
+                coordinate,
+                call,
+                class_def,
+                protocol,
+                construction_total=isinstance(result_outcome, Complete)
+                and isinstance(result_outcome.value, ObjectValue),
+            ):
+                continue
             kind, detail = _gap_kind_and_detail(protocol)
             _install_local_derivation_gap(
                 context, coordinate, target_symbol, kind, detail
@@ -3268,7 +3279,19 @@ def _populate_same_module_generator_manager_uses(
         function_def = binds[0]
         if isinstance(function_def, AsyncFunctionDef) and function_def.decorators:
             # What a decorated ``async def`` returns is the decorator's to say;
-            # no generator protocol is read from its spelling.
+            # no generator protocol is read from its spelling.  When the
+            # decorator's source constructs one class whose MRO is proven to
+            # lack ``__enter__``/``__exit__`` (``@asynccontextmanager``), the
+            # With raises the interpreter's TypeError after the call.
+            _publish_decorated_non_manager_head(
+                context,
+                coordinate,
+                call,
+                function_def,
+                session=session,
+                graphs=graphs,
+                distribution_index=distribution_index,
+            )
             continue
         target_symbol = f"python:local:{function_def.name}"
         try:
@@ -3301,6 +3324,16 @@ def _populate_same_module_generator_manager_uses(
             )
             is None
         ):
+            if _publish_decorated_non_manager_head(
+                context,
+                coordinate,
+                call,
+                function_def,
+                session=session,
+                graphs=graphs,
+                distribution_index=distribution_index,
+            ):
+                continue
             _install_local_derivation_gap(
                 context,
                 coordinate,
@@ -3343,6 +3376,72 @@ def _populate_same_module_generator_manager_uses(
             _install_local_derivation_gap(
                 context, coordinate, target_symbol, kind, detail
             )
+
+
+def _publish_proven_non_manager_head(
+    context, coordinate, call, class_def, gap, *, construction_total: bool
+):
+    """Seat a source absence proof for ``with C(...)`` when the protocol gap
+    (``enter-missing`` / ``exit-missing``) agrees with the class's source MRO.
+
+    Only a construction that completes on one path is admitted: the With
+    evaluates the head as an ordinary call, and a constructor that may raise
+    must keep its own faces, which that call does not yet carry.
+    """
+    if not construction_total:
+        return False
+    from .manager_protocol_absence import prove_manager_protocol_absence
+
+    kind = getattr(gap, "kind", None)
+    if kind not in ("enter-missing", "exit-missing"):
+        return False
+    proof = prove_manager_protocol_absence(class_def)
+    if proof is None:
+        return False
+    if kind == "enter-missing" and proof.has_enter:
+        return False
+    if kind == "exit-missing" and (not proof.has_enter or proof.has_exit):
+        return False
+    context.source_non_manager_heads[coordinate] = proof
+    return True
+
+
+def _publish_decorated_non_manager_head(
+    context, coordinate, call, function_def, *, session, graphs, distribution_index
+) -> bool:
+    """``with g(...)`` for ``@d async def g``: seat ``g``'s frame and the proof
+    that ``d``'s constructed class lacks the sync protocol."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    from .manager_construction import _install_source_call_frame
+    from .manager_protocol_absence import prove_decorated_manager_absence
+
+    if len(function_def.decorators) != 1:
+        return False
+    outcome = _construct_decorator_function(
+        function_def.decorators[0],
+        session=session,
+        graph=None,
+        dependency_graphs=graphs,
+        distribution_index=distribution_index,
+    )
+    if not isinstance(outcome, DecoratorConstructedV1):
+        return False
+    proof = prove_decorated_manager_absence(function_def, outcome.function)
+    if proof is None:
+        return False
+    try:
+        frame, _generator_target = _source_visible_frame_for_function(function_def)
+    except (SugarNotWritten, TypeError):
+        return False
+    if frame is None or frame.generator_steps is None:
+        return False
+    # ``helper(*args, **kwds)`` constructs the class, whose ``__init__`` calls
+    # ``func(*args, **kwds)``: the call's argument binding is g's own frame.
+    _install_source_call_frame(context, call, frame)
+    context.source_manager_provider_calls[coordinate] = call
+    context.source_non_manager_heads[coordinate] = proof
+    return True
 
 
 def _install_local_derivation_gap(
