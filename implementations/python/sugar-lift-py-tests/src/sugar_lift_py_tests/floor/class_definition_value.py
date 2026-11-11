@@ -100,6 +100,9 @@ class ClassDefinitionValue(GuardStableValue):
     annotation_cids: tuple[str, ...] = ()
     decorator_cids: tuple[str, ...] = ()
     base_classes: tuple[object, ...] = ()
+    # The class statement this value was built from.  ``Cls(x)`` applies its
+    # one constructor frame, however the class is reached.
+    class_definition: object = field(default=None, compare=False)
 
     def __post_init__(self):
         if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
@@ -109,42 +112,26 @@ class ClassDefinitionValue(GuardStableValue):
             )
 
     def callable_application_with(self, operation, ctx):
-        """Construct one source class instance through its initializer frame."""
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
-            refuse_unrun_source_new,
-        )
+        """``Cls(*args, **kw)`` reached as a value: the same call as by name.
 
-        # This door runs only ``__init__``; a source ``__new__`` is never run here.
-        refuse_unrun_source_new(
-            self,
-            new_method=next(
-                (method for method in self.methods if method.name == "__new__"),
-                None,
-            ),
-            runs_new=False,
-            site=operation.site,
-            owner="ClassDefinitionValue.callable_application_with",
-        )
-        receiver_coordinate = (
-            self.initializer.source_call_frame.formal_coordinates[0].cid
-            if self.initializer is not None
-            else self.class_definition_cid
-        )
-        receiver = self.construct_receiver_state_from_block(None, receiver_coordinate)
-        if self.initializer is None:
-            if operation.arguments or operation.keyword_names:
-                raise SugarNotWritten(
-                    owner="ClassDefinitionValue.callable_application_with",
-                    blame=operation.site,
-                    observed="arguments supplied to source class without initializer",
-                    requested="zero-argument source class construction",
-                    fix="retain an initializer frame or keep the call loud",
-                )
-            return Complete(receiver)
+        A class call applies the class statement's constructor frame
+        (``ClassDef.source_visible_constructor_frame``: initializer, source
+        ``__new__``, dataclass and inherited-exception arms) through the one
+        application routine, ``CallSiteValue.producer_outcome``, exactly as
+        ``CallSiteSugar`` applies it for a lexically named class.  Every face of
+        the constructor, halts included, is this call's.
+        """
+        from sugar_lift_py_tests.floor.object_value import bind_call
 
-        frame = self.initializer.source_call_frame
+        if self.class_definition is None:
+            raise SugarNotWritten(
+                owner="ClassDefinitionValue.callable_application_with",
+                blame=operation.site,
+                observed=f"{self.class_name} value carries no class statement",
+                requested="the class statement whose constructor frame the call applies",
+                fix="build the class value from its ClassDef so its frame is applied",
+            )
+        frame = self.class_definition.source_visible_constructor_frame()
         keyword_count = len(operation.keyword_names)
         positional = (
             operation.arguments[:-keyword_count]
@@ -156,48 +143,32 @@ class ClassDefinitionValue(GuardStableValue):
             if keyword_count
             else ()
         )
-        bound = frame.bind_actuals(
-            (receiver, *positional),
-            keywords,
-            ctx,
-        )
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
 
-        call = CallSiteValue(
-            target_name=f"{self.class_name}.__init__",
-            arg_values=bound.actuals,
+        def refuse(*, owner, blame, observed, requested, fix):
+            raise SugarNotWritten(
+                owner=owner,
+                blame=blame,
+                observed=observed,
+                requested=requested,
+                fix=fix,
+            )
+
+        return bind_call(
+            self.class_name,
+            positional,
+            keywords,
+            frame=frame,
             parameters=frame.parameters,
-            term=ctor(
-                f"call:{self.class_name}.__init__",
-                tuple(
-                    value.to_term(owner=self.class_definition_cid)
-                    for value in bound.actuals
-                ),
-                symbol_kind="contract-target",
-            ),
             body=frame.body,
-            site=operation.site,
-            source_call_frame_cid=frame.frame_cid,
+            frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(
                 coordinate.cid for coordinate in frame.formal_coordinates
             ),
-            bound_source_actuals=bound,
-        )
-        method_ctx = ctx.with_temporal(
-            ctx.temporal.bind_value(
-                "__class__", self, blame=f"{self.class_name}.__init__"
-            )
-        )
-        outcome = call.reduce_source_outcome(method_ctx)
-
-        def project(value):
-            block = value if isinstance(value, BlockValue) else BlockValue((value,))
-            return Complete(
-                self.construct_receiver_state_from_block(block, receiver_coordinate)
-            )
-
-        return outcome.and_then(project)
+            ctx=ctx,
+            owner="ClassDefinitionValue.callable_application_with",
+            blame=operation.site,
+            refuse=refuse,
+        ).producer_outcome(ctx)
 
     def call_method_value(
         self,

@@ -994,17 +994,13 @@ def bind_method_call(
     """``receiver.m(*arguments, **keywords)`` is the call ``m(receiver, ...)``.
 
     A bound method call is nothing but a call of the selected function with
-    the receiver bound as its first actual.  So it binds exactly as a plain
-    call binds (the method frame's ``bind_actuals``) and returns that call,
-    for ``CallSiteValue.producer_outcome`` to apply.  Every method dispatch
+    the receiver bound as its first actual (``bind_call``), for
+    ``CallSiteValue.producer_outcome`` to apply.  Every method dispatch
     (``obj.m()``, ``self.m()``, a ``BoundMethodValue`` called with or without
     ``**``, zero-argument ``super().m()``) binds here.
 
     ``refuse`` is the caller's own panic for a method it cannot bind.
     """
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor
-
     target_name = f"{class_name}.{method.name}"
     if not method.parameters:
         refuse(
@@ -1014,26 +1010,10 @@ def bind_method_call(
             requested="method self parameter",
             fix=f"add method binding sugar for `{target_name}`",
         )
-    arg_values = (receiver, *arguments)
-    bound_source_actuals = None
     selected_frame = required_frame or method.source_call_frame
-    if selected_frame is not None:
-        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-        try:
-            bound_source_actuals = selected_frame.bind_actuals(
-                arg_values, keywords, ctx
-            )
-        except SourceCallBindingGap as exc:
-            refuse(
-                owner=owner,
-                blame=blame,
-                observed=str(exc),
-                requested="actuals matching authenticated method signature",
-                fix="preserve exact defaults/variadics or keep the call loud",
-            )
-        arg_values = bound_source_actuals.actuals
-    elif keywords or len(arguments) != len(method.parameters) - 1:
+    if selected_frame is None and (
+        keywords or len(arguments) != len(method.parameters) - 1
+    ):
         refuse(
             owner=owner,
             blame=blame,
@@ -1041,19 +1021,79 @@ def bind_method_call(
             requested="arguments matching the constructor-bound method",
             fix="bind through the authenticated method frame or keep loud",
         )
+    return bind_call(
+        target_name,
+        (receiver, *arguments),
+        keywords,
+        frame=selected_frame,
+        parameters=method.parameters,
+        body=method.body,
+        frame_cid=method.source_call_frame_cid,
+        formal_coordinate_cids=method.formal_coordinate_cids,
+        lexical_defining_class=method.defining_class,
+        ctx=ctx,
+        owner=owner,
+        blame=blame,
+        refuse=refuse,
+    )
+
+
+def bind_call(
+    target_name: str,
+    arguments,
+    keywords,
+    *,
+    frame,
+    parameters,
+    body,
+    frame_cid,
+    formal_coordinate_cids,
+    lexical_defining_class=None,
+    ctx,
+    owner: str,
+    blame: object,
+    refuse,
+):
+    """Bind ``arguments``/``keywords`` to a source frame: the call, unapplied.
+
+    The frame's own ``bind_actuals`` puts every actual in its formal slot;
+    the result is the ``CallSiteValue`` that ``producer_outcome`` applies.
+    A method call (receiver first) and a class call (the class statement's
+    constructor frame) both bind here.  With no frame the actuals are taken
+    as already in formal order.
+    """
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    arg_values = tuple(arguments)
+    bound_source_actuals = None
+    if frame is not None:
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+        try:
+            bound_source_actuals = frame.bind_actuals(arg_values, keywords, ctx)
+        except SourceCallBindingGap as exc:
+            refuse(
+                owner=owner,
+                blame=blame,
+                observed=str(exc),
+                requested="actuals matching authenticated source signature",
+                fix="preserve exact defaults/variadics or keep the call loud",
+            )
+        arg_values = bound_source_actuals.actuals
     return CallSiteValue(
         target_name=target_name,
         arg_values=arg_values,
-        parameters=method.parameters,
+        parameters=parameters,
         term=ctor(
             f"call:{target_name}",
-            [value.to_term(owner=f"{owner} method argument") for value in arg_values],
+            [value.to_term(owner=f"{owner} call argument") for value in arg_values],
             symbol_kind="contract-target",
         ),
-        body=method.body,
+        body=body,
         site=blame,
-        source_call_frame_cid=method.source_call_frame_cid,
-        formal_coordinate_cids=method.formal_coordinate_cids,
+        source_call_frame_cid=frame_cid,
+        formal_coordinate_cids=formal_coordinate_cids,
         bound_native_actuals_by_coordinate=(
             bound_source_actuals.by_native_formal_coordinate
             if bound_source_actuals is not None
@@ -1061,5 +1101,5 @@ def bind_method_call(
             else None
         ),
         bound_source_actuals=bound_source_actuals,
-        lexical_defining_class=method.defining_class,
+        lexical_defining_class=lexical_defining_class,
     )

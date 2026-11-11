@@ -3156,36 +3156,55 @@ def _constructor_application_bindings(call, application, *, owner_cid: str, term
 
 
 def _receiver_from_constructor_outcome(outcome):
-    """Project constructor application to the completed manager receiver.
+    """Project a class call's outcome to the manager's receiver state.
 
-    ``ClassDefinitionValue.callable_application_with`` returns ``Complete``
-    when the initializer folds to one path. Once the body keeps an unfolded
-    branch or a validation halt (``if expected_exceptions == () ...: raise``),
-    the same construction is an ``ExitSet``. ``Complete`` unwraps through
-    ``.value``; ``ExitSet`` has no ``.value``, and reading it invented
-    ``non-manager-result: NoneType`` after the receiver was already
-    constructed. Validation Halted arms stay out of the manager the same way
-    protocol construction already filters them.
+    ``ClassDefinitionValue.callable_application_with`` applies the constructor
+    frame through ``producer_outcome``: each completed face is the call
+    retaining the receiver it built, and the constructor's halts are faces of
+    the call.  One completed face and no halt is that receiver; otherwise the
+    receiver state is the partition of every face, halts included (#7756:
+    a construction halt is never dropped on the way to the manager).
     """
-    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor import CallSiteValue, ReceiverStatePartitionValue
     from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
 
+    def receiver(value):
+        if isinstance(value, CallSiteValue):
+            retained = value.retained_source_completion_outcome()
+            if retained is not None:
+                return retained.value
+        return value
+
     if isinstance(outcome, Complete):
-        return outcome.value
+        return receiver(outcome.value)
     if isinstance(outcome, ExitSet):
-        found = []
-        for exit_ in outcome.exits:
-            if not isinstance(exit_, Completed):
-                continue
-            value = exit_.value
-            if isinstance(value, Complete):
-                value = value.value
-            if isinstance(value, (ObjectValue, ReceiverStatePartitionValue)):
-                found.append(value)
-        if len(found) == 1:
-            return found[0]
-        return None
+        return ReceiverStatePartitionValue(
+            ExitSet(
+                tuple(
+                    replace(exit_, value=receiver(exit_.value))
+                    if isinstance(exit_, Completed)
+                    else exit_
+                    for exit_ in outcome.exits
+                )
+            )
+        )
     return getattr(outcome, "value", None)
+
+
+def _owned_by_class(receiver, class_value) -> bool:
+    """The receiver was built by this class statement (its content address).
+
+    The class call re-reduces its own class statement, so the receiver's class
+    value is that statement's, equal by ``class_definition_cid``, not the
+    caller's object.
+    """
+    defining = getattr(receiver, "defining_class", None)
+    return defining is not None and (
+        getattr(defining, "class_definition_cid", None)
+        == class_value.class_definition_cid
+    )
 
 
 def _populate_same_module_class_manager_uses(source_file, context, uses) -> None:
@@ -3313,7 +3332,7 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             )
             result = _receiver_from_constructor_outcome(result_outcome)
             if isinstance(result, ObjectValue):
-                if getattr(result, "defining_class", None) is not class_value:
+                if not _owned_by_class(result, class_value):
                     _install_local_derivation_gap(
                         context,
                         coordinate,
@@ -3325,7 +3344,7 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             elif isinstance(result, ReceiverStatePartitionValue):
                 leaves = _completed_object_receivers(result)
                 if not leaves or any(
-                    getattr(leaf, "defining_class", None) is not class_value
+                    not _owned_by_class(leaf, class_value)
                     for leaf in leaves
                 ):
                     _install_local_derivation_gap(

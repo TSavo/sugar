@@ -6074,6 +6074,7 @@ class ClassDef(Statement):
             base_sugars=base_sugars,
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
+            class_definition=self,
         )
 
 

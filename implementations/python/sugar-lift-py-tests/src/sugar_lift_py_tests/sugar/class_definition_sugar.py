@@ -64,6 +64,9 @@ class ClassDefinitionSugar(Sugar):
     site: object = field(compare=False)
     decorator_sugars: tuple[Sugar, ...] = field(default=(), compare=False)
     decorator_occurrences: tuple[object, ...] = field(default=(), compare=False)
+    # The class statement itself: its constructor frame is the one ``Cls(x)``
+    # applies, whether the class is called by name or as a value.
+    class_definition: object = field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -210,6 +213,7 @@ class ClassDefinitionSugar(Sugar):
                 self.annotation_cids,
                 self.decorator_cids,
                 tuple(base_values),
+                class_definition=self.class_definition,
             )
         )
         if not body_faces:

@@ -105,6 +105,20 @@ def _distribution(
     return importlib.metadata.Distribution.at(metadata)
 
 
+
+def _sole_completed_receiver(behavior):
+    """The one receiver the construction completed with.
+
+    A construction that can also raise (#7756: its halts are carried, never
+    dropped) is a partition of those halts and the completed receiver.
+    """
+    from sugar_lift_python_source.manager_protocol_construction import (
+        _completed_object_receivers,
+    )
+
+    (receiver,) = _completed_object_receivers(behavior.receiver_state)
+    return receiver
+
 def _resolved(root: Path, source: str, *, exported: str = "make_guard"):
     graph = DependencyArtifactGraph.authenticate(
         _distribution(root, source, exported=exported)
@@ -1639,11 +1653,12 @@ def test_computed_base_does_not_supply_inherited_constructor_method(tmp_path):
     )
 
     assert isinstance(behavior, ConstructedManagerBehaviorV1)
-    assert not behavior.receiver_state.has_method("project")
+    receiver = _sole_completed_receiver(behavior)
+    assert not receiver.has_method("project")
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     with pytest.raises(ConstructionPanic) as caught:
-        behavior.receiver_state.call_method_value(
+        receiver.call_method_value(
             "project", (actual.value,), owner="computed-base liar", blame=call_site
         )
     assert "Descendant.project" in str(caught.value)
@@ -1740,9 +1755,10 @@ def test_merged_renamed_some_guard_factory_constructs_through_sole_door(tmp_path
     )
 
     assert isinstance(behavior, ConstructedManagerBehaviorV1)
-    assert behavior.receiver_state.class_name == "SomeGuard"
-    assert behavior.receiver_state.has_method("__enter__")
-    assert behavior.receiver_state.has_method("__exit__")
+    receiver = _sole_completed_receiver(behavior)
+    assert receiver.class_name == "SomeGuard"
+    assert receiver.has_method("__enter__")
+    assert receiver.has_method("__exit__")
     protocol = construct_manager_protocol(behavior, exit_face_id="fixture-face")
     assert isinstance(protocol, ConstructedManagerProtocolV1)
     assert protocol.enter_outcome() is not None

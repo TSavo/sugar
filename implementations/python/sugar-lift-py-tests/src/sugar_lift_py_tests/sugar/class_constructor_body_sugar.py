@@ -145,10 +145,7 @@ class ClassConstructorBodySugar(Sugar):
                     )
                 )
             from sugar_lift_py_tests.floor import BlockValue
-            from sugar_lift_py_tests.floor import (
-                EllipsisValue,
-                ReceiverStatePartitionValue,
-            )
+            from sugar_lift_py_tests.floor import EllipsisValue
             from sugar_lift_py_tests.outcome import Incomplete
             from sugar_lift_py_tests.outcome import Completed, Halted
             from sugar_lift_py_tests.outcome.exit_set import ExitSet
@@ -222,9 +219,11 @@ class ClassConstructorBodySugar(Sugar):
                             face.pending_contracts,
                         )
                     )
-                return Complete(
-                    ReceiverStatePartitionValue(ExitSet(tuple(projected)).normalize())
-                )
+                # ``Cls(x)`` is a call: the initializer's halted faces are the
+                # call's halted faces, each completed face its own receiver.
+                # Packing them inside one completed value hid the halts from
+                # the caller (#7756).
+                return ExitSet(tuple(projected)).normalize()
             if not isinstance(outcome, Complete):
                 return outcome
             block = outcome.value
