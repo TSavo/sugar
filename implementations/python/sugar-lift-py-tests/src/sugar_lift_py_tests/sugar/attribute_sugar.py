@@ -190,9 +190,99 @@ class AttributeSugar(ConstructedTermSugar):
                 return ImportMemberSugar(
                     target.removeprefix("python:"), receipt, site
                 ).desugar(ctx)
+        unknown = _unknown_receiver_attribute(receiver, name, site)
+        if unknown is not None:
+            return unknown
         return receiver.attribute(name, site)
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.project_attribute(receiver, self.name, self.site, ctx)
         )
+
+
+_ATTRIBUTE_RESULT = "python:attribute_result"
+
+
+def _unknown_receiver_attribute(receiver, name: str, site):
+    """``m.x`` where nothing here resolved ``m``: two faces, never a guess.
+
+    ``import sys`` with no projected ``sys`` leaves ``sys`` a bare symbolic
+    name.  When the module binds that name only by an import (or not at all)
+    -- the same lexical test an unknown callee passes -- no floor, contract or
+    source testified to what ``getattr`` runs, so the read may raise anything
+    (``AttributeError``, ``NameError``, a descriptor's own raise).  It
+    completes only under ``python:unknown_attribute.completes(
+    python:unknown_attribute(<dotted>, <occurrence>))`` with the value
+    ``python:attribute_result(<receiver>, <name>, <occurrence>)`` -- each read
+    its own unknown, since a module attribute may be rebound between reads --
+    and halts with an ``UndeterminedRaiseEffect`` (owner
+    ``UnknownAttribute:<dotted>``) under the complement: the #7585 law.  A read
+    on such a result is the same unknown again.  A formal receiver, or any
+    other symbolic value, keeps its own law.
+    """
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import _Ctor, _Var
+
+    if type(receiver) is not SymbolicValue or receiver.formal_coordinate is not None:
+        return None
+    if site is None:
+        return None
+    term = receiver.term
+    if isinstance(term, _Var):
+        from sugar_lift_py_tests.sugar.call_site_sugar import (
+            _lexically_unknown_head,
+        )
+
+        if not _lexically_unknown_head(site, term.name):
+            return None
+        dotted = f"{term.name}.{name}"
+    elif isinstance(term, _Ctor) and term.name == _ATTRIBUTE_RESULT:
+        dotted = f"{_dotted_of(term)}.{name}"
+    else:
+        return None
+
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    key = occurrence_key(site)
+    completes = atomic(
+        "python:unknown_attribute.completes",
+        [ctor("python:unknown_attribute", (str_const(dotted), str_const(key)))],
+    )
+    value = SymbolicValue(
+        ctor(_ATTRIBUTE_RESULT, (term, str_const(name), str_const(key)))
+    )
+    return ExitSet(
+        (
+            Completed(completes, value),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site),
+                    occurrence=key,
+                    producer_node_owner=f"UnknownAttribute:{dotted}",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
+
+
+def _dotted_of(term) -> str:
+    from sugar_lift_py_tests.ir import _ConstStr, _Ctor, _Var
+
+    if isinstance(term, _Var):
+        return term.name
+    if isinstance(term, _Ctor) and term.name == _ATTRIBUTE_RESULT:
+        inner, attr = term.args[0], term.args[1]
+        name = attr.value if isinstance(attr, _ConstStr) else "?"
+        return f"{_dotted_of(inner)}.{name}"
+    return "?"
