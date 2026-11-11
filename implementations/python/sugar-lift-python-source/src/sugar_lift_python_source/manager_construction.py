@@ -3365,6 +3365,21 @@ def _resolve_source_visible_frame_uncached(
 
             if not isinstance(exc, DependencyArtifactAuthenticationError):
                 raise
+            from .language_owned_c_export import floor_interpreter_module_callable
+
+            call_floor = floor_interpreter_module_callable(receipt.target_symbol)
+            if call_floor is not None:
+                # No artifact can own a module compiled into the interpreter
+                # (``sys``); its builtin callable is floored by runtime
+                # identity exactly as an artifact-module-absent C export.
+                context.language_owned_call_floors[
+                    _language_owned_call_site_key(
+                        raw_site.get("sourceCid")
+                        or getattr(receipt, "source_cid", None),
+                        raw_site,
+                    )
+                ] = call_floor
+                continue
             _install_opaque_call_obligation(
                 context,
                 call,
@@ -4204,9 +4219,11 @@ def _resolve_external_call_frame(
         floored = floor_artifact_module_absent_export(callee)
         if floored is not None:
             return floored
-        hopped = _resolve_in_owning_artifact(callee, session=session)
+        hopped = _follow_into_owning_artifact(callee, session=session)
         if hopped is None:
             return _ExternalCallTargetGap("call-target-source-absent")
+        if not isinstance(hopped, tuple):
+            return hopped
         callee, graph = hopped
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -4269,9 +4286,11 @@ def _resolve_local_import_call_frame(
         floored = floor_artifact_module_absent_export(callee)
         if floored is not None:
             return floored
-        hopped = _resolve_in_owning_artifact(callee, session=session)
+        hopped = _follow_into_owning_artifact(callee, session=session)
         if hopped is None:
             return _ExternalCallTargetGap("call-target-source-absent")
+        if not isinstance(hopped, tuple):
+            return hopped
         callee, graph = hopped
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -4371,10 +4390,45 @@ def _resolve_in_owning_artifact(gap, *, session: SourceResolutionSession):
     applied by the ordinary projection door afterwards, so a stdlib callee is
     cited ``call-target-off-population`` rather than projected.
     """
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        ResolvedPythonObjectV1 as _Resolved,
-    )
+    from .dependency_artifact import ResolvedPythonObjectV1 as _Resolved
+
+    hopped = _owning_artifact_export(gap, session=session)
+    if hopped is None or not isinstance(hopped[0], _Resolved):
+        return None
+    return hopped
+
+
+def _follow_into_owning_artifact(gap, *, session: SourceResolutionSession):
+    """The callee an ``artifact-module-absent`` export names in its owner.
+
+    Returns ``(resolved, graph)`` when the owning artifact defines the name in
+    source, a language-owned floor value when the owning artifact's own export
+    of it is in turn a C module's (``contextlib`` binds ``deque`` from
+    ``collections``, which binds it from the interpreter-owned
+    ``_collections``), or ``None`` to keep ``call-target-source-absent``.  The
+    floor is the same runtime-identity floor applied to a direct C export,
+    asked at the module that actually owns the object; a Python object behind
+    the owner's gap is never floored.
+    """
+    from .dependency_artifact import ResolvedPythonObjectV1 as _Resolved
+    from .language_owned_c_export import floor_artifact_module_absent_export
+
+    hopped = _owning_artifact_export(gap, session=session)
+    if hopped is None:
+        return None
+    callee, _owning = hopped
+    if isinstance(callee, _Resolved):
+        return hopped
+    return floor_artifact_module_absent_export(callee)
+
+
+def _owning_artifact_export(gap, *, session: SourceResolutionSession):
+    """``(export, owning graph)`` for an ``artifact-module-absent`` gap, or None.
+
+    ``export`` is whatever the owning artifact's export door answers: a
+    resolved object or its own typed gap.
+    """
+    from .dependency_artifact import DependencyArtifactAuthenticationError
 
     if getattr(gap, "kind", None) != "artifact-module-absent":
         return None
@@ -4402,8 +4456,6 @@ def _resolve_in_owning_artifact(gap, *, session: SourceResolutionSession):
         frozenset(),
         session=session,
     )
-    if not isinstance(callee, _Resolved):
-        return None
     return callee, owning
 
 
