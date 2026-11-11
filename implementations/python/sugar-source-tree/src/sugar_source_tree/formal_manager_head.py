@@ -138,7 +138,16 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
     module binds no ``getattr``).  At the ``with`` the local holds whatever
     attribute that run-time string names (``klass = getattr(module, klass)``
     then ``with klass(path) as f:``): no source decides the manager, so there
-    is no callee to read.  Anything else returns ``None``.
+    is no callee to read.
+
+    Or the local's only binding in that function is the ``as`` target (a name,
+    or one name of a flat tuple/list) of an item of one top-level ``with``
+    whose own head is formal-rooted (``formal_manager_head``), and the head
+    sits inside that ``with``'s body, which never rebinds the local.  At the
+    head the local holds what ``__enter__`` returned on an object a caller
+    passed (``with c.builder.if_else(p) as (then, otherwise):`` then ``with
+    then:``): no frame knows that object's type, so no source decides the
+    manager its enter result is.  Anything else returns ``None``.
     """
     tree = parsed_module(source)
     if tree is None:
@@ -148,7 +157,7 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
         return None
     function, expr = found
     root = _chain_root(expr, operands_admitted=True)
-    if root is None or name_bound_anywhere(tree, "getattr"):
+    if root is None:
         return None
     binders = [
         statement
@@ -158,6 +167,12 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
     if len(binders) != 1:
         return None
     statement = binders[0]
+    if isinstance(statement, ast.With):
+        if _formal_enter_result_binder(source, statement, root, expr):
+            return ast.unparse(expr)
+        return None
+    if name_bound_anywhere(tree, "getattr"):
+        return None
     if not (
         isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
@@ -169,6 +184,39 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
     if statement.end_lineno >= expr.lineno:
         return None
     return ast.unparse(expr)
+
+
+def _formal_enter_result_binder(source: str, statement, root: str, expr) -> bool:
+    """``statement`` binds ``root`` only as a formal-rooted item's enter result."""
+    binding_items = [
+        item
+        for item in statement.items
+        if item.optional_vars is not None
+        and name_bound_anywhere(item.optional_vars, root)
+    ]
+    if len(binding_items) != 1:
+        return False
+    (item,) = binding_items
+    target = item.optional_vars
+    names = (
+        target.elts if isinstance(target, (ast.Tuple, ast.List)) else (target,)
+    )
+    if not all(isinstance(name, ast.Name) for name in names):
+        return False
+    if [name.id for name in names].count(root) != 1:
+        return False
+    if any(name_bound_anywhere(item.context_expr, root) for item in statement.items):
+        return False
+    if any(name_bound_anywhere(body, root) for body in statement.body):
+        return False
+    if not any(_contains(body, expr) for body in statement.body):
+        return False
+    head = item.context_expr
+    return formal_manager_head(source, head.lineno, head.col_offset) is not None
+
+
+def _contains(tree, node) -> bool:
+    return any(child is node for child in ast.walk(tree))
 
 
 def _run_time_getattr(value) -> bool:
