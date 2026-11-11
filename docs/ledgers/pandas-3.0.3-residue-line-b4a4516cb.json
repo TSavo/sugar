@@ -1,0 +1,1406 @@
+{
+ "schemaVersion": 1,
+ "kind": "residue-line-standing",
+ "measuredCommit": "b4a4516cbccf3a18bf61fad72d45b6fdb8abd489",
+ "corpus": "pandas 3.0.3, 1421 files",
+ "door": "scripts/control_effect_recensus.py, one whole-corpus pass, 96 seats",
+ "pass": {
+  "seatsNonzero": 0,
+  "rows": 1421,
+  "wallSeconds": 557,
+  "joinRc": 2,
+  "note": "join exits 2 because the board's stable-zero rule counts refusals and instrument failures; rows are read per file from the seats' checkpoints"
+ },
+ "stateMeaning": {
+  "completed": "category completed and no with left unconstructed",
+  "hollow": "category completed with a with left unconstructed: not complete",
+  "refused": "named refusal",
+  "no-terminal": "instrument failure, no terminal"
+ },
+ "corpusTotals": {
+  "completed": 1338,
+  "refused": 75,
+  "hollow": 4,
+  "no-terminal": 4
+ },
+ "residueTotals": {
+  "7663": {
+   "completed": 54,
+   "no-terminal": 1,
+   "refused": 19,
+   "hollow": 2
+  },
+  "7664": {
+   "refused": 10,
+   "completed": 25
+  },
+  "7665": {
+   "no-terminal": 2,
+   "refused": 22,
+   "completed": 1
+  },
+  "7666": {
+   "refused": 16,
+   "hollow": 2,
+   "completed": 1,
+   "no-terminal": 1
+  },
+  "7667": {
+   "completed": 19,
+   "refused": 2
+  },
+  "7668": {
+   "completed": 19,
+   "refused": 1
+  },
+  "7669": {
+   "completed": 17
+  },
+  "7670": {
+   "completed": 1,
+   "refused": 3
+  }
+ },
+ "residueComplete": 137,
+ "residueFiles": 218,
+ "notComplete": {
+  "hollow": [
+   "plotting/_matplotlib/__init__.py",
+   "plotting/_matplotlib/boxplot.py",
+   "tests/indexing/test_loc.py",
+   "tests/series/indexing/test_setitem.py"
+  ],
+  "noTerminal": [
+   "_testing/contexts.py",
+   "core/_numba/extensions.py",
+   "io/orc.py",
+   "tests/io/test_common.py"
+  ]
+ },
+ "trackedIn": {
+  "line": 7661,
+  "hollow": 7699,
+  "noTerminal": 7711
+ },
+ "residueFilesRows": [
+  {
+   "file": "_config/localization.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "_testing/__init__.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "_testing/_io.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "_testing/contexts.py",
+   "issue": 7665,
+   "state": "no-terminal",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "_version.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "conftest.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "core/_numba/extensions.py",
+   "issue": 7663,
+   "state": "no-terminal",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "core/apply.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/arrays/_ranges.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/arrays/masked.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/arrays/sparse/array.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/arrays/timedeltas.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/base.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/frame.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "core/indexes/range.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/nanops.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/series.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/window/common.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/window/ewm.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "core/window/rolling.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "io/clipboard/__init__.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/common.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/excel/_base.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/feather_format.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/formats/csvs.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/formats/format.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/formats/xml.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/html.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/json/_json.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/orc.py",
+   "issue": 7665,
+   "state": "no-terminal",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/parsers/readers.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/pickle.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/pytables.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/sas/sasreader.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/sql.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/stata.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "io/xml.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "plotting/_matplotlib/__init__.py",
+   "issue": 7666,
+   "state": "hollow",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "plotting/_matplotlib/boxplot.py",
+   "issue": 7666,
+   "state": "hollow",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "plotting/_matplotlib/converter.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/apply/test_frame_apply.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/apply/test_frame_transform.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/apply/test_invalid_arg.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/apply/test_series_apply.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/apply/test_series_transform.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arithmetic/test_datetime64.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arithmetic/test_numeric.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/arithmetic/test_timedelta64.py",
+   "issue": 7670,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/categorical/test_indexing.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/categorical/test_warnings.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/arrays/floating/test_function.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/integer/test_arithmetic.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/integer/test_function.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/sparse/test_arithmetics.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/sparse/test_array.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/arrays/string_/test_string_arrow.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/base/test_misc.py",
+   "issue": 7670,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/computation/test_eval.py",
+   "issue": 7665,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/config/test_config.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/config/test_localization.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/copy_view/test_chained_assignment_deprecation.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/copy_view/test_clip.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/copy_view/test_interp_fillna.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/copy_view/test_methods.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/copy_view/test_replace.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/dtypes/test_common.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/dtypes/test_inference.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/extension/base/dim2.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/extension/base/getitem.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/extension/base/methods.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/extension/base/setitem.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/extension/test_arrow.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/extension/test_numpy.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/indexing/test_indexing.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/indexing/test_setitem.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/indexing/test_xs.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/methods/test_fillna.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/methods/test_info.py",
+   "issue": 7666,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/methods/test_interpolate.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/methods/test_to_csv.py",
+   "issue": 7668,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/frame/test_api.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/frame/test_arithmetic.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/test_block_internals.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/test_npfuncs.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/test_reductions.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/frame/test_stack_unstack.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/generic/test_frame.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/generic/test_series.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/groupby/test_apply.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/groupby/test_categorical.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/groupby/test_groupby.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/groupby/test_grouping.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/groupby/transform/test_transform.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/base_class/test_indexing.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/categorical/test_category.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/datetimes/test_indexing.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/datetimes/test_iter.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/interval/test_constructors.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/multi/test_duplicates.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/multi/test_indexing.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/multi/test_integrity.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/test_base.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/indexes/test_numpy_compat.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/timedeltas/test_delete.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/timedeltas/test_indexing.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexes/timedeltas/test_scalar_compat.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/interval/test_interval.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/multiindex/test_chaining_and_caching.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/multiindex/test_multiindex.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/multiindex/test_partial.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/multiindex/test_setitem.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/test_chaining_and_caching.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/test_iloc.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/indexing/test_loc.py",
+   "issue": 7663,
+   "state": "hollow",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/interchange/test_impl.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/interchange/test_spec_conformance.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/conftest.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/excel/test_odswriter.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/excel/test_openpyxl.py",
+   "issue": 7670,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/excel/test_readers.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/excel/test_style.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/excel/test_writers.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/excel/test_xlrd.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/excel/test_xlsxwriter.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/formats/style/test_html.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/formats/style/test_style.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/formats/test_console.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/formats/test_format.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/formats/test_to_csv.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/formats/test_to_html.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/formats/test_to_latex.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/generate_legacy_storage_files.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/json/test_compression.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/json/test_pandas.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/json/test_readlines.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/common/test_chunksize.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/common/test_common_basic.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/common/test_data_list.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/common/test_file_buffer_url.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/common/test_iterator.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/common/test_read_errors.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/dtypes/test_categorical.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/test_c_parser_only.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/test_compression.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/test_dialect.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/test_encoding.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/test_index_col.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/parser/test_network.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/test_python_parser_only.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/test_read_fwf.py",
+   "issue": 7670,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/parser/test_textreader.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/conftest.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_compat.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_file_handling.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_keys.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_put.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_read.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_retain_attributes.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/pytables/test_round_trip.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_select.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_store.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_subclass.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/pytables/test_timezones.py",
+   "issue": 7664,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/sas/test_sas7bdat.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/sas/test_xport.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_clipboard.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/test_common.py",
+   "issue": 7666,
+   "state": "no-terminal",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_compression.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_feather.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/test_fsspec.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_gcs.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/test_html.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/test_http_headers.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_iceberg.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/test_parquet.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/io/test_pickle.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_sql.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/test_stata.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/xml/test_to_xml.py",
+   "issue": 7667,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/xml/test_xml.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/io/xml/test_xml_dtypes.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/libs/test_hashtable.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/plotting/frame/test_frame.py",
+   "issue": 7667,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/plotting/frame/test_frame_color.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/plotting/frame/test_frame_subplots.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/plotting/test_datetimelike.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/plotting/test_hist_method.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/plotting/test_series.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/plotting/test_style.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/resample/test_datetime_index.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/resample/test_resampler_grouper.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/reshape/concat/test_invalid.py",
+   "issue": 7666,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/reshape/merge/test_merge.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/reshape/test_pivot.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/scalar/period/test_period.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/scalar/timestamp/methods/test_replace.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false,
+   "orderDependent7678": true
+  },
+  {
+   "file": "tests/series/accessors/test_dt_accessor.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/accessors/test_list_accessor.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/indexing/test_indexing.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/indexing/test_setitem.py",
+   "issue": 7663,
+   "state": "hollow",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/series/methods/test_is_unique.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/methods/test_isin.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/methods/test_map.py",
+   "issue": 7664,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/methods/test_to_csv.py",
+   "issue": 7663,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/series/methods/test_tz_localize.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/methods/test_update.py",
+   "issue": 7669,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/test_arithmetic.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/series/test_constructors.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/test_expressions.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/test_nanops.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/test_register_accessor.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/tseries/offsets/test_month.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/tseries/offsets/test_offsets.py",
+   "issue": 7668,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/tslibs/test_parsing.py",
+   "issue": 7665,
+   "state": "refused",
+   "tickedOnIssue": false
+  },
+  {
+   "file": "tests/util/test_show_versions.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/util/test_util.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "tests/window/test_apply.py",
+   "issue": 7667,
+   "state": "completed",
+   "tickedOnIssue": true
+  },
+  {
+   "file": "util/_print_versions.py",
+   "issue": 7663,
+   "state": "completed",
+   "tickedOnIssue": true
+  }
+ ],
+ "offListNotCompleted": [
+  [
+   "core/internals/construction.py",
+   "refused"
+  ],
+  [
+   "tests/io/parser/test_multi_thread.py",
+   "refused"
+  ]
+ ]
+}
