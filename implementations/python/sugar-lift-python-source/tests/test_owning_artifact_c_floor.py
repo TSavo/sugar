@@ -98,6 +98,45 @@ def test_a_builtin_function_of_a_compiled_in_module_is_floored():
     )
 
 
+def test_a_c_class_of_a_compiled_in_module_is_floored_by_the_type_rule():
+    # ``itertools`` is compiled in and ``dropwhile`` is its own C heap type with
+    # no Python source: cited, never constructed or looked inside.  Calling it
+    # either completes with an opaque instance or raises undetermined.
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.language_owned_c_type import (
+        LanguageOwnedCInstanceValue,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    floored = floor_interpreter_module_callable("python:itertools.dropwhile")
+    assert floored == LanguageOwnedCTypeValue(
+        module_name="itertools", type_name="dropwhile"
+    )
+    exits = floored.callable_application_with(
+        CallableApplication(
+            arguments=(), keyword_names=(), site=None, owner="test"
+        ),
+        None,
+    ).exits
+    completed = [exit_ for exit_ in exits if isinstance(exit_, Completed)]
+    halted = [exit_ for exit_ in exits if isinstance(exit_, Halted)]
+    assert len(completed) == 1 and len(halted) == 1
+    assert isinstance(completed[0].value, LanguageOwnedCInstanceValue)
+    assert isinstance(halted[0].effect, UndeterminedRaiseEffect)
+
+
+def test_a_class_that_is_not_a_compiled_in_modules_own_c_heap_type_keeps_the_gap():
+    # A static (non-heap) type, a class owned by another module, and a
+    # method reached through a deeper chain are not this module's C class.
+    assert floor_interpreter_module_callable("python:builtins.object") is None
+    assert floor_interpreter_module_callable("python:builtins.int") is None
+    assert (
+        floor_interpreter_module_callable("python:itertools.chain.from_iterable")
+        is None
+    )
+
+
 def test_anything_else_on_a_compiled_in_module_keeps_the_gap():
     # Not a function, not a module export, not compiled in, not a symbol.
     assert floor_interpreter_module_callable("python:sys.maxsize") is None

@@ -3373,8 +3373,9 @@ def _resolve_source_visible_frame_uncached(
             call_floor = floor_interpreter_module_callable(receipt.target_symbol)
             if call_floor is not None:
                 # No artifact can own a module compiled into the interpreter
-                # (``sys``); its builtin callable is floored by runtime
-                # identity exactly as an artifact-module-absent C export.
+                # (``sys``, ``itertools``); its builtin callable or C class is
+                # floored by runtime identity exactly as an
+                # artifact-module-absent C export.
                 context.language_owned_call_floors[
                     _language_owned_call_site_key(
                         raw_site.get("sourceCid")
