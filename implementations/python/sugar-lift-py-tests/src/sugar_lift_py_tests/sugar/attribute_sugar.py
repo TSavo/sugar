@@ -131,6 +131,17 @@ class AttributeSugar(ConstructedTermSugar):
             receipt = site.unit.import_value_use_resolution(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
+            refined = None
+            if receipt is not None and type(receipt).__name__ == "ResolvedPythonObjectV1":
+                # A frame's receipt seating refines the authenticated value-use
+                # receipt at this occurrence into the source object it resolves
+                # to (``urllib.request.urlopen`` inside ``pandas.io.common
+                # .urlopen``, #7744).  The refinement names the definition, not
+                # the value; the value is still the import member that receipt
+                # testifies, which seating transported on the construction
+                # context before refining it.  Read it through that predecessor.
+                refined = receipt
+                receipt = None
             if receipt is None:
                 context = site.unit.construction_context
                 if context is not None:
@@ -146,6 +157,19 @@ class AttributeSugar(ConstructedTermSugar):
                     )
             from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
+            if refined is not None and (
+                type(receipt) is not AuthenticatedImportUseV1
+                or receipt.import_binding.cid != refined.import_binding_cid
+            ):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=site,
+                    owner="AttributeSugar.project_attribute",
+                    observed="resolved import value-use has no transported receipt predecessor",
+                    requested="the authenticated receipt the resolution refined, same binding",
+                    fix="transport the value-use receipt before seating its resolution",
+                )
             if type(receipt) is AuthenticatedImportUseV1:
                 receipt.revalidate()
                 use_site = receipt.use["useSite"]
