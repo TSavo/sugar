@@ -34,6 +34,8 @@ from __future__ import annotations
 import sys
 import traceback
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 
 def main(argv: list[str]) -> int:
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
@@ -101,6 +103,8 @@ def main(argv: list[str]) -> int:
                 f"  line {span.start_line} {statement.kind}: "
                 f"SugarNotWritten [{exc.owner}] {exc.observed}"
             )
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException as exc:  # a probe names its own death
             print(f"  line {span.start_line} {statement.kind}: {type(exc).__name__}: {exc}")
 
@@ -113,6 +117,8 @@ def main(argv: list[str]) -> int:
     except SugarNotWritten as exc:
         print(f"  _substitute_body RAISED SugarNotWritten [{exc.owner}] {exc.observed}")
         return 0
+    except ConstructionPanic:
+        raise  # a construction refusal propagates by its own name
     except BaseException:
         print("  _substitute_body RAISED:")
         traceback.print_exc()
@@ -135,6 +141,8 @@ def main(argv: list[str]) -> int:
                 f"  line {span.start_line} {statement.kind}: "
                 f"SugarNotWritten [{exc.owner}] {exc.observed}"
             )
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException as exc:
             print(f"  line {span.start_line} {statement.kind}: {type(exc).__name__}: {exc}")
 
@@ -163,6 +171,8 @@ def main(argv: list[str]) -> int:
                 f"can_fall_through="
                 f"{getattr(getattr(face, 'value', None), 'can_fall_through', None)!r}"
             )
+    except ConstructionPanic:
+        raise  # a construction refusal propagates by its own name
     except BaseException:
         traceback.print_exc()
     return 0

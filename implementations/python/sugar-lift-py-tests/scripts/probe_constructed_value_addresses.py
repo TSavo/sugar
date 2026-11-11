@@ -33,6 +33,8 @@ import sys
 import time
 from pathlib import Path
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
@@ -73,10 +75,14 @@ class _AddressingReporter:
         try:
             span = node.span
             where = f"{node.kind}@{node.unit.filename}:{span.start}-{span.end}"
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException as error:  # noqa: BLE001 -- named, never silent
             where = f"{node.kind}@uncoordinated:{type(error).__name__}"
         try:
             address = constructed_value_cid_v2(value)
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException as error:  # noqa: BLE001 -- named, never silent
             address = f"unaddressable:{type(error).__name__}"
         self.rows.append(f"{where} -> {address}")
@@ -139,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
                 distribution="pandas",
             )
             discharge(source_file)
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException as error:  # noqa: BLE001 -- named, never silent
             outcome = f"raised:{type(error).__name__}:{str(error)[:200]}"
             del error
