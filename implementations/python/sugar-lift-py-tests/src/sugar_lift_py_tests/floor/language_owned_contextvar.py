@@ -167,6 +167,14 @@ class LanguageOwnedContextVarReadValue(FloorValue):
     site: object = None
     occurrence: str | None = None
 
+    def denotes_value(self) -> bool:
+        """The read is a Python value: whatever the running context holds."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Undecided: a ``set`` anywhere may have stored any type."""
+        return False
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
 
