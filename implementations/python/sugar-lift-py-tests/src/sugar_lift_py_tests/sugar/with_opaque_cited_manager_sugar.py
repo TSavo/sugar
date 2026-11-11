@@ -48,9 +48,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 _CITED_BECAUSE = {
     "call-target-off-population": "the callee is off-population",
-    "call-target-c-type-without-source": (
-        "the callee is a C type with no Python source"
-    ),
     "head-runtime-selected": "the head's manager is chosen at run time",
 }
 

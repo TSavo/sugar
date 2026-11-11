@@ -1954,21 +1954,22 @@ def populate_source_derived_resource_refs(
                     top_level, distribution_index=distribution_index
                 )
             except DependencyArtifactAuthenticationError as exc:
-                from .language_owned_c_export import interpreter_owned_c_type_export
+                from .manager_construction import _graph_is_off_population
 
-                # No artifact, because no source: the callee is a C type an
-                # interpreter-owned module exports (``mmap.mmap``).  That is a
-                # positive runtime-identity fact, not the authentication
-                # failure read as one, so the manager is cited, naming its
-                # callee.  Anything else (an absent module, a Python object)
-                # keeps the gap.
+                # No artifact authenticates the head callee's top-level
+                # module, so the lifter does not have it: not bridged, and the
+                # manager is cited naming its import target, exactly as an
+                # authenticated off-population callee is.  What it is
+                # implemented in is never asked.
                 _install_derivation_gap(
                     context,
                     coordinate,
                     receipt,
                     (
-                        "call-target-c-type-without-source"
-                        if interpreter_owned_c_type_export(receipt.target_symbol)
+                        "call-target-off-population"
+                        if _graph_is_off_population(
+                            None, session=session, module_name=top_level
+                        )
                         else "no-derived-contract"
                     ),
                     f"dependency artifact authentication failed for {top_level}: {exc}",
@@ -6323,8 +6324,8 @@ def _seat_off_population_citation(
     decided not to look inside it".
 
     Returns True when the citation was seated, so the caller skips the gap.
-    Only a callee citation kind qualifies (``call-target-off-population``,
-    ``call-target-c-type-without-source``), and only with a known
+    Only a callee citation kind qualifies (``call-target-off-population``:
+    the callee is not bridged), and only with a known
     ``target_symbol`` -- a citation naming no callee would claim knowledge we
     do not have, which is the lookup-failure spelling wearing this one's
     clothes.
@@ -6348,11 +6349,9 @@ def _seat_off_population_citation(
                 kind,
             )
         )
-        if kind == "call-target-off-population":
-            # The head call is itself an opaque source call.  A C type's
-            # construction is not: the head evaluates through its own
-            # language-owned floor, so its roster rides only the citation.
-            context.opaque_source_call_obligations[coordinate] = roster
+        # The head call is itself the not-bridged call: it stands as its
+        # call-site coordinate, completing opaque or raising undetermined.
+        context.opaque_source_call_obligations[coordinate] = roster
     elif roster.resolution_kind != kind:
         # Another owner classified this same call differently. Their testimony
         # stands; do not overwrite it with a citation.

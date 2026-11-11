@@ -1561,12 +1561,21 @@ class ManagerConstructionGapV1:
 
 
 def _graph_is_off_population(
-    graph: "DependencyArtifactGraph",
+    graph: "DependencyArtifactGraph | None",
     *,
     session: SourceResolutionSession | None = None,
     module_name: str | None = None,
 ) -> bool:
     """True when ``graph`` is outside the enrolled measurement population.
+
+    This is the one answer to "is this callee bridged": the lifter has it
+    only when an authenticated artifact holds its source AND the measurement
+    enrolls that artifact.  ``graph=None`` means no artifact authenticates
+    ``module_name``'s top-level module at all, so the lifter does not have it
+    either: it is not bridged, whatever it is implemented in, unless the
+    roster names that top-level module as an enrolled distribution (an
+    enrolled distribution that fails authentication is a defect, kept loud by
+    the caller).
 
     ROSTER-ONLY LAW (plan Cut 1). The population is what the measurement
     DECLARES (``enrolled_population_roster``): the corpus distribution plus
@@ -1588,6 +1597,11 @@ def _graph_is_off_population(
         )
     from .resolution_session import population_admits
 
+    if graph is None:
+        if not module_name:
+            return False
+        top = module_name.split(".", 1)[0]
+        return not population_admits(session.enrolled_distributions, top, None)
     name = getattr(graph, "distribution_name", None)
     if name is None:
         return False
@@ -3474,26 +3488,20 @@ def _resolve_source_visible_frame_uncached(
 
             if not isinstance(exc, DependencyArtifactAuthenticationError):
                 raise
-            from .language_owned_c_export import floor_interpreter_module_callable
-
-            call_floor = floor_interpreter_module_callable(receipt.target_symbol)
-            if call_floor is not None:
-                # No artifact can own a module compiled into the interpreter
-                # (``sys``, ``itertools``); its builtin callable or C class is
-                # floored by runtime identity exactly as an
-                # artifact-module-absent C export.
-                context.language_owned_call_floors[
-                    _language_owned_call_site_key(
-                        raw_site.get("sourceCid")
-                        or getattr(receipt, "source_cid", None),
-                        raw_site,
-                    )
-                ] = call_floor
-                continue
+            # No artifact authenticates the callee's top-level module, so the
+            # lifter does not have it: not bridged.  It is cited exactly as
+            # any other callee the lifter does not have, keyed by its import
+            # target; what it is implemented in is never asked.
             _install_opaque_call_obligation(
                 context,
                 call,
-                obligation("call-target-source-absent"),
+                obligation(
+                    "call-target-off-population"
+                    if _graph_is_off_population(
+                        None, session=session, module_name=top_level
+                    )
+                    else "call-target-source-absent"
+                ),
             )
             continue
         imported = resolve_import_binding(

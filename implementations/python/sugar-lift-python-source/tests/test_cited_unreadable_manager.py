@@ -7,9 +7,11 @@ don't.  Two heads have nothing to read:
   run-time string picks the class, so there is no callee
   (``tests/io/parser/test_python_parser_only.py:176``).  The citation names no
   callee, only the head's own coordinate and ``head-runtime-selected``.
-* ``with mmap.mmap(fd, 0) as m:`` -- the callee is a C type with no Python
-  source (``tests/io/parser/test_c_parser_only.py:560``).  The citation names
-  the callee and ``call-target-c-type-without-source``.
+* ``with mmap.mmap(fd, 0) as m:`` -- no artifact authenticates ``mmap``, so
+  the lifter does not have the callee: it is not bridged
+  (``tests/io/parser/test_c_parser_only.py:560``).  The citation names the
+  callee's import target and nothing about why it is not bridged: the same
+  kind as ``tarfile.open``, an unenrolled pure-Python callee.
 
 Both are constructed over the existing ``OpaqueCitedContextManagerRefV1``
 (``WithOpaqueCitedManagerSugar``): enter and exit may each raise, suppression
@@ -46,6 +48,13 @@ _C_TYPE_HEAD = (
     "import mmap\n"
     "def f(fd):\n"
     "    with mmap.mmap(fd, 0) as m:\n"
+    "        {body}\n"
+    "    return 7\n"
+)
+_PYTHON_OFF_POPULATION_HEAD = (
+    "import tarfile\n"
+    "def f(fd):\n"
+    "    with tarfile.open(fd) as m:\n"
     "        {body}\n"
     "    return 7\n"
 )
@@ -97,17 +106,38 @@ def test_run_time_selected_head_keeps_the_body_raise(tmp_path):
     assert ("halt", "KeyError") in rows
 
 
-def test_c_type_without_source_is_cited_naming_its_callee(tmp_path):
+def test_an_unauthenticated_callee_is_cited_as_not_bridged(tmp_path):
     seated, consumer, rows = _lifted(tmp_path, _C_TYPE_HEAD, "pass")
     assert type(seated) is OpaqueCitedContextManagerRefV1
     assert seated.target_name == "python:mmap.mmap"
-    assert seated.roster.resolution_kind == "call-target-c-type-without-source"
+    assert seated.roster.resolution_kind == "call-target-off-population"
     assert consumer is WithOpaqueCitedManagerSugar
     assert ("halt", None) in rows
     assert ("return", 7) in rows
 
 
-def test_c_type_without_source_keeps_the_body_raise(tmp_path):
+def test_not_bridged_does_not_depend_on_the_callee_language(tmp_path):
+    # A pure-Python callee the lifter does not have (stdlib ``tarfile``, off
+    # the enrolled population) and one no artifact authenticates (``mmap``)
+    # get the same citation kind, the same consumer and the same rows.
+    (tmp_path / "c").mkdir()
+    (tmp_path / "py").mkdir()
+    c_seated, c_consumer, c_rows = _lifted(tmp_path / "c", _C_TYPE_HEAD, "pass")
+    py_seated, py_consumer, py_rows = _lifted(
+        tmp_path / "py", _PYTHON_OFF_POPULATION_HEAD, "pass"
+    )
+    assert type(py_seated) is type(c_seated) is OpaqueCitedContextManagerRefV1
+    assert py_seated.target_name == "python:tarfile.open"
+    assert (
+        py_seated.roster.resolution_kind
+        == c_seated.roster.resolution_kind
+        == "call-target-off-population"
+    )
+    assert py_consumer is c_consumer is WithOpaqueCitedManagerSugar
+    assert py_rows == c_rows
+
+
+def test_an_unauthenticated_callee_keeps_the_body_raise(tmp_path):
     seated, _consumer, rows = _lifted(tmp_path, _C_TYPE_HEAD, "raise KeyError(1)")
     assert type(seated) is OpaqueCitedContextManagerRefV1
     assert ("halt", "KeyError") in rows
