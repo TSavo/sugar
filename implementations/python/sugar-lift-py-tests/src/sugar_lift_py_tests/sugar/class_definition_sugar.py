@@ -178,6 +178,7 @@ class ClassDefinitionSugar(Sugar):
             # authority or behavior here.
 
         evaluated_groups = {}
+        body_faces = []
 
         def append_field(item):
             if isinstance(item, ConstructedClassConditionalFieldsV1):
@@ -222,15 +223,23 @@ class ClassDefinitionSugar(Sugar):
                 if item.evaluation_group_cid is not None:
                     evaluated_groups[item.evaluation_group_cid] = outcome
             if not isinstance(outcome, Complete):
-                from sugar_source_tree.panic import SugarNotWritten
+                value = _sole_completed_value(outcome)
+                if value is _NO_SOLE_COMPLETION:
+                    from sugar_source_tree.panic import SugarNotWritten
 
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ClassDefinitionSugar.desugar",
-                    observed=f"class field {item.name} did not construct completely",
-                    requested="one exact constructed class-field value",
-                    fix="keep effectful or unresolved class initializers loud",
-                )
+                    raise SugarNotWritten(
+                        blame=self.site,
+                        owner="ClassDefinitionSugar.desugar",
+                        observed=f"class field {item.name} did not construct completely",
+                        requested="one exact constructed class-field value",
+                        fix="keep effectful or unresolved class initializers loud",
+                    )
+                # The initializer may raise (#7585): executing the class body
+                # halts with it, and the class exists only on the one
+                # completed face.  Faces are sequenced in source order.
+                body_faces.append(outcome)
+                class_fields.append(ObjectField(item.name, value))
+                return
             class_fields.append(ObjectField(item.name, outcome.value))
 
         for item in self.fields:
@@ -249,7 +258,7 @@ class ClassDefinitionSugar(Sugar):
         )
         if initializer is None:
             initializer = _inherited_source_initializer(tuple(base_values))
-        return Complete(
+        constructed = Complete(
             ClassDefinitionValue(
                 self.class_name,
                 self.class_definition_cid,
@@ -263,3 +272,31 @@ class ClassDefinitionSugar(Sugar):
                 tuple(base_values),
             )
         )
+        if not body_faces:
+            return constructed
+        outcome = Complete(None)
+        for faces in body_faces:
+            outcome = outcome.and_then(lambda _, faces=faces: faces)
+        return outcome.and_then(lambda _: constructed)
+
+
+_NO_SOLE_COMPLETION = object()
+
+
+def _sole_completed_value(outcome):
+    """The value of an outcome whose only non-halting face is one completion.
+
+    A class-field initializer that may raise has that halt plus one completed
+    value, so executing the class body is two-faced.  Several completions
+    (distinct field values) or any other face stay refused.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+
+    if not isinstance(outcome, ExitSet):
+        return _NO_SOLE_COMPLETION
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    if len(completed) != 1 or any(
+        not isinstance(face, (Completed, Halted)) for face in outcome.exits
+    ):
+        return _NO_SOLE_COMPLETION
+    return completed[0].value
