@@ -338,6 +338,23 @@ def undecided_ordering_faces(left, right, site, *, operator: str):
     return undecided_dispatch_faces(predicate, site, op_kind)
 
 
+def _operation_receiver_outcome(value, ctx, *, owner: str):
+    """Project ``value`` to the receiver(s) that own the next comparison.
+
+    Sequenced through the Outcome algebra; a projected value that is itself
+    a different producer is projected again, so every completed face ends on
+    a value that is its own receiver.
+    """
+    from sugar_lift_py_tests.outcome import Complete
+
+    def settle(projected):
+        if projected is value:
+            return Complete(projected)
+        return _operation_receiver_outcome(projected, ctx, owner=owner)
+
+    return value.project_operation_receiver_outcome(ctx, owner=owner).and_then(settle)
+
+
 @dataclass(frozen=True)
 class ComparisonOpSugar(ConstructedTermSugar):
     op_kind: str
@@ -390,14 +407,22 @@ class ComparisonOpSugar(ConstructedTermSugar):
         )
 
     def apply_reduced(self, left, right, ctx: object = None) -> Outcome:
-        """Apply this leg's existing law to operands already evaluated once."""
-        return self._apply(
-            left.project_operation_receiver(
-                ctx, owner="ComparisonOpSugar left operation receiver"
-            ),
-            right.project_operation_receiver(
-                ctx, owner="ComparisonOpSugar right operation receiver"
-            ),
+        """Apply this leg's existing law to operands already evaluated once.
+
+        Each operand is sequenced through its operation-receiver Outcome: a
+        constructed object whose construction may raise is a partition of
+        receiver states, and the comparison runs on each receiver it can be
+        (a construction halt leaves as itself), exactly as a call actual does.
+        A projection that exposes another producer (a call whose authenticated
+        return is that partition) is projected again until the receiver owns
+        itself.
+        """
+        return _operation_receiver_outcome(
+            left, ctx, owner="ComparisonOpSugar left operation receiver"
+        ).and_then(
+            lambda left_receiver: _operation_receiver_outcome(
+                right, ctx, owner="ComparisonOpSugar right operation receiver"
+            ).and_then(lambda right_receiver: self._apply(left_receiver, right_receiver))
         )
 
     def _membership(self, container, item):

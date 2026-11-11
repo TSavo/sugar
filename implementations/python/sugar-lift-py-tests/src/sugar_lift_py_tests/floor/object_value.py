@@ -142,6 +142,54 @@ class ObjectValue(FloorValue):
         """
         if not self.has_method("__eq__"):
             return super().equals(other, site)
+        return self._source_rich_comparison(
+            "__eq__", other, site, owner="ObjectValue.equals"
+        )
+
+    def less_than(self, other, site):
+        """``self < other`` invokes the class's authenticated ``__lt__``."""
+        if not self.has_method("__lt__"):
+            return super().less_than(other, site)
+        return self._source_rich_comparison(
+            "__lt__", other, site, owner="ObjectValue.less_than"
+        )
+
+    def less_equal(self, other, site):
+        """``self <= other`` invokes the class's authenticated ``__le__``."""
+        if not self.has_method("__le__"):
+            return super().less_equal(other, site)
+        return self._source_rich_comparison(
+            "__le__", other, site, owner="ObjectValue.less_equal"
+        )
+
+    def greater_than(self, other, site):
+        """``self > other`` invokes the class's authenticated ``__gt__``."""
+        if not self.has_method("__gt__"):
+            return super().greater_than(other, site)
+        return self._source_rich_comparison(
+            "__gt__", other, site, owner="ObjectValue.greater_than"
+        )
+
+    def greater_equal(self, other, site):
+        """``self >= other`` invokes the class's authenticated ``__ge__``."""
+        if not self.has_method("__ge__"):
+            return super().greater_equal(other, site)
+        return self._source_rich_comparison(
+            "__ge__", other, site, owner="ObjectValue.greater_equal"
+        )
+
+    def _source_rich_comparison(self, dunder: str, other, site, *, owner: str):
+        """The ONE rich-comparison dispatch onto a source class's own method.
+
+        Python evaluates ``a <op> b`` as ``type(a).<dunder>(a, b)``, falling
+        to ``type(b)``'s reflection only on ``NotImplemented`` (or first, for
+        a right-hand subclass).  This constructs exactly the case whose method
+        order is authenticated without reflection: both operands instances of
+        the same source class (or an exact native right operand) and the
+        left's definition-owned ordinary method frame.  A result other than a
+        native boolean -- ``NotImplemented`` included -- stays a named
+        refusal, as does every reflected or subclass order.
+        """
         same_class = (
             isinstance(other, ObjectValue)
             and getattr(self.defining_class, "class_definition_cid", None) is not None
@@ -153,14 +201,14 @@ class ObjectValue(FloorValue):
             and (not other.denotes_value() or not other.runtime_type_is_decided())
         ):
             return self._floor_gap(
-                owner="ObjectValue.equals",
+                owner=owner,
                 blame=site,
-                observed="source equality method order is not authenticated",
+                observed=f"source {dunder} method order is not authenticated",
                 requested="same source class or an exact native right operand",
-                fix="derive reflected/subclass method order before rich equality",
+                fix="derive reflected/subclass method order before rich comparison",
             )
         method = next(
-            method for method in reversed(self.methods) if method.name == "__eq__"
+            method for method in reversed(self.methods) if method.name == dunder
         )
         if (
             method.source_call_frame is None
@@ -169,11 +217,11 @@ class ObjectValue(FloorValue):
             or method.source_call_frame_cid != method.source_call_frame.frame_cid
         ):
             return self._floor_gap(
-                owner="ObjectValue.equals",
+                owner=owner,
                 blame=site,
-                observed="source equality frame or descriptor is not authenticated",
-                requested="the definition-owned ordinary __eq__ method frame",
-                fix="construct its exact frame/descriptor binding before invoking equality",
+                observed=f"source {dunder} frame or descriptor is not authenticated",
+                requested=f"the definition-owned ordinary {dunder} method frame",
+                fix="construct its exact frame/descriptor binding before invoking it",
             )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.term_value import TermValue
@@ -187,9 +235,9 @@ class ObjectValue(FloorValue):
             ) or (isinstance(value, TermValue) and type(value.value) is bool):
                 return Complete(value)
             return self._floor_gap(
-                owner="ObjectValue.equals",
+                owner=owner,
                 blame=site,
-                observed=f"source equality returned {type(value).__name__}",
+                observed=f"source {dunder} returned {type(value).__name__}",
                 requested="native boolean or authenticated exceptional outcome",
                 fix="construct non-boolean/NotImplemented result dispatch before accepting it",
             )
@@ -207,16 +255,16 @@ class ObjectValue(FloorValue):
                 or not isinstance(block.statements[0], ReturnValue)
             ):
                 return self._floor_gap(
-                    owner="ObjectValue.equals",
+                    owner=owner,
                     blame=site,
-                    observed="source equality completion has untransported state or effects",
+                    observed=f"source {dunder} completion has untransported state or effects",
                     requested="a sole native return, or explicit callee-state transport",
                     fix="preserve the completed method prefix before extracting its scalar result",
                 )
             return returned(block.statements[0].value)
 
         return self.call_method_value(
-            "__eq__", (other,), owner="ObjectValue.equals", blame=site
+            dunder, (other,), owner=owner, blame=site
         ).and_then(lambda call: call.reduce_source_outcome().and_then(completed))
 
     def matrix_multiply(self, other, site):
