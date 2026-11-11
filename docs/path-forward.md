@@ -68,7 +68,7 @@ Ten files, from the corpus pass on `b4a4516cb` (all 1421 files; ledger `docs/led
 1. ~~`pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.~~ Closed 2026-11-09. On the board it ends completed.
 2. ~~Native crashes and bare exceptions: not measured since 2026-07-26.~~ Measured by the 2026-11-09 pass: every one of 96 seats exited 0, every file has a row, and every row that is not a completion is a panic of a named refusal class.
 3. ~~`pandas/tests/io/excel/test_writers.py`: ended in a BackendDefect with no terminal on `7abebcdae` (#7673).~~ Closed 2026-11-11. On `b4a4516cb` it ends in a named refusal.
-4. Four files have no terminal on `b4a4516cb` (#7711): `io/orc.py`, `tests/io/test_common.py` and `_testing/contexts.py` end in a BackendDefect inside `pandas/io/common.py`; `core/_numba/extensions.py` ends in a raw target-pattern gap. Each was a named refusal on `110626c00`.
+4. Four files have no terminal on `b4a4516cb`. #7712: `io/orc.py`, `tests/io/test_common.py` and `_testing/contexts.py` end in a BackendDefect inside `pandas/io/common.py`, introduced by `8d36276df` (#7709). #7713: `core/_numba/extensions.py` ends in a raw target-pattern gap, introduced by `cd7672eb2` (#7707). Each was a named refusal on `110626c00`.
 5. Four files end completed with a `with` left unconstructed (#7699): `tests/indexing/test_loc.py`, `tests/series/indexing/test_setitem.py`, `plotting/_matplotlib/__init__.py`, `plotting/_matplotlib/boxplot.py`. They are not counted as complete.
 6. Two files that completed on the board end in a named refusal now (#7676): `core/internals/construction.py`, `tests/io/parser/test_multi_thread.py`.
 
@@ -127,7 +127,7 @@ The state of each of the 218 files on `b4a4516cb` is in `docs/ledgers/pandas-3.0
 |---|---|---|---|
 | 2026-11-09 | `c4cef9904` | 218 | Board. |
 | 2026-11-10 | `7abebcdae` | 147 | Every one of the 218 files run once, one file per run (225 s, 14 at a time). 71 complete. 146 end in a named refusal: 129 the same refusal as on the board, 17 a different one. 1 has no terminal (#7673). Before this run, 90 PRs had merged since the board (#7576 to #7660) with none tied to an issue. |
-| 2026-11-11 | `b4a4516cb` | 81 | One corpus pass, all 1421 files, 96 seats, every seat exit 0, 557 s. Corpus: 1338 complete, 75 named refusals, 4 complete with a `with` unconstructed (#7699), 4 with no terminal (#7711). Of the 218: 137 complete, 73 named refusals, 4 unconstructed-`with`, 4 no terminal. Off the list, 2 files that completed on the board are refused (#7676). |
+| 2026-11-11 | `b4a4516cb` | 81 | One corpus pass, all 1421 files, 96 seats, every seat exit 0, 557 s. Corpus: 1338 complete, 75 named refusals, 4 complete with a `with` unconstructed (#7699), 4 with no terminal (#7712: three files, from #7709; #7713: one file, from #7707). Of the 218: 137 complete, 73 named refusals, 4 unconstructed-`with`, 4 no terminal. Off the list, 2 files that completed on the board are refused (#7676). |
 
 ## What changed from plan v1
 
