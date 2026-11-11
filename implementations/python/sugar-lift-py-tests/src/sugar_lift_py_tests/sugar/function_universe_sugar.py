@@ -232,6 +232,44 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
     return spliced
 
 
+def _is_return_entry(entry) -> bool:
+    """A record entry that is a ``return`` (guarded by its arm or not)."""
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    return isinstance(entry, (GuardedReturn, ReturnValue))
+
+
+def _prior_return_face(state, ctx) -> tuple:
+    """The completed exit an earlier guarded ``return`` already took.
+
+    After ``if c: return v`` the block goes on only under the fall-through
+    guard.  A later statement that halts, or that reduces to its own exits,
+    is guarded by it.  Where that guard fails, the function already returned,
+    and that completed exit, with its tail unreachable, must stay beside the
+    later statement's faces.  Dropping it made ``if c: return 7`` followed by
+    ``raise`` claim the function always raised.
+    """
+    if not state.fall_through or not any(
+        _is_return_entry(entry) for entry in state.entries
+    ):
+        return ()
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    continuation = (
+        state.fall_through[0]
+        if len(state.fall_through) == 1
+        else and_(list(state.fall_through))
+    )
+    return (
+        Completed(
+            complement_guard(continuation),
+            _ReducedBlock(state.entries, False, (), state.transforms, ctx),
+        ),
+    )
+
+
 def reduce_block_to_exitset(
     statements: tuple, ctx: object = None
 ) -> ExitSet[_ReducedBlock]:
@@ -418,8 +456,35 @@ def reduce_block_to_exitset(
                             completed_state,
                         )
                     )
+                elif any(_is_return_entry(entry) for entry in entries):
+                    # Neither arm falls through, but one RETURNS while another
+                    # halts (``if c: return 7`` / ``raise``).  The return is a
+                    # completed exit of the block: it holds exactly where no
+                    # halted arm does.  Dropping it claimed the block always
+                    # raised.
+                    from sugar_lift_py_tests.ir import and_
+                    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+                    remainders = [
+                        complement_guard(exit_.guard)
+                        for exit_ in exits
+                        if isinstance(exit_, Halted)
+                    ]
+                    exits.append(
+                        Completed(
+                            (
+                                true_guard()
+                                if not remainders
+                                else remainders[0]
+                                if len(remainders) == 1
+                                else and_(remainders)
+                            ),
+                            completed_state,
+                        )
+                    )
                 return ExitSet(tuple(exits)).normalize()
             if isinstance(outcome, ExitSet):
+                returned = _prior_return_face(state, active_ctx)
                 if state.fall_through:
                     from sugar_lift_py_tests.ir import and_
 
@@ -467,6 +532,10 @@ def reduce_block_to_exitset(
                         for exit_ in outcome.exits
                     )
                 )
+                if returned:
+                    return ExitSet(
+                        (*outcome.and_then(project).exits, *returned)
+                    ).normalize()
                 return outcome.and_then(project)
             contribution = outcome.contribution()
             for transform in reversed(state.transforms):
@@ -516,10 +585,25 @@ def reduce_block_to_exitset(
                             if len(outcome.branch_conditions) == 1
                             else and_(list(outcome.branch_conditions))
                         )
-                        return ExitSet.conditional_halt(
+                        halted = ExitSet.conditional_halt(
                             condition, outcome.effect, state
                         )
-                    return ExitSet.halted(outcome.effect, state=state)
+                    else:
+                        halted = ExitSet.halted(outcome.effect, state=state)
+                    returned = _prior_return_face(state, active_ctx)
+                    if returned:
+                        # Reached only where no earlier ``return`` fired.
+                        from sugar_lift_py_tests.ir import and_
+
+                        continuation = (
+                            state.fall_through[0]
+                            if len(state.fall_through) == 1
+                            else and_(list(state.fall_through))
+                        )
+                        return ExitSet(
+                            (*halted.guarded(continuation).exits, *returned)
+                        ).normalize()
+                    return halted
                 return ExitSet.completed(
                     _ReducedBlock(
                         entries,
