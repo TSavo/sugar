@@ -8506,10 +8506,16 @@ class If(Statement):
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
-        if d:
-            changed["body"] = new_body
-        new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
+        branch_token = _IN_BRANCH_SUITE.set(True)
+        try:
+            new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
+            if d:
+                changed["body"] = new_body
+            new_orelse, d, else_net = self._substitute_body_tracked(
+                self.orelse, scope
+            )
+        finally:
+            _IN_BRANCH_SUITE.reset(branch_token)
         if d:
             changed["orelse"] = new_orelse
         if retained_slot:
@@ -8673,10 +8679,19 @@ class If(Statement):
             pass
         with reduction_span(sugar="If.test", role="construction", site=where):
             test = self.test.sugar()
+        from sugar_lift_py_tests.sugar.if_sugar import BranchSuiteWithV1
+
+        def _suite_member(statement):
+            # A ``with`` constructs when its suite is reduced: a suite a
+            # ground condition never selects never demands its manager.
+            if isinstance(statement, With):
+                return BranchSuiteWithV1(statement)
+            return statement.sugar()
+
         with reduction_span(sugar="If.then", role="construction", site=where):
-            then_body = tuple(s.sugar() for s in self.body)
+            then_body = tuple(_suite_member(s) for s in self.body)
         with reduction_span(sugar="If.else", role="construction", site=where):
-            else_body = tuple(s.sugar() for s in self.orelse)
+            else_body = tuple(_suite_member(s) for s in self.orelse)
         return IfSugar(
             test=test,
             branch_slot=slot,
@@ -8686,10 +8701,48 @@ class If(Statement):
         )
 
 
+# True while an ``if``'s suites are substituted (#7665).  A ``with`` in a
+# suite constructs when that suite is reduced (``BranchSuiteWithV1``); a suite
+# a ground condition never selects is never reduced.  So while a suite is
+# substituted, a ``with`` whose manager has no seated contract exports no
+# ``as`` binding instead of demanding the contract now: if the suite is dead
+# the ``with`` never runs and binds nothing; if it is reached, its
+# construction is refused by the same require door, loudly, before any
+# reader of the binding is reduced.
+import contextvars as _contextvars
+
+_IN_BRANCH_SUITE: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
+    "sugar_in_branch_suite", default=False
+)
+
+
 class With(Statement):
     items: Tuple[WithItem, ...]
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
+
+    def _manager_contract_seated(self, item: WithItem) -> bool:
+        """Whether the require door would answer for ``item`` (never reports)."""
+        context = self.unit.construction_context
+        from sugar_lift_py_tests.context_manager_resolution import (
+            ContractRefProtocolError,
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if not isinstance(context, TreeConstructionContextV1):
+            return True  # the door itself reports the missing context
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid, start_line, start_col, end_line, end_col
+        )
+        if context.source_derived_contract_refs.get(coordinate) is not None:
+            return True
+        try:
+            context.contract_refs.require(coordinate)
+        except ContractRefProtocolError:
+            return False
+        return True
 
     def _prebound_manager_resolution(self, item: WithItem):
         """Read the sole preconstruction contract resolution for this occurrence."""
@@ -9936,6 +9989,11 @@ class With(Statement):
             # SourceTreePanic from the door propagates — no Exception swallow.
             resolved_ref = None
             if self._generator_manager_frame(item) is None:
+                if _IN_BRANCH_SUITE.get() and not self._manager_contract_seated(
+                    item
+                ):
+                    # Constructed (or refused) when its suite is reduced.
+                    return None
                 resolved_ref = self._require_narrow_cm_ref(item)
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,

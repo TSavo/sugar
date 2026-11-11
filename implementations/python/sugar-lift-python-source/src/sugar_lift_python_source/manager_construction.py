@@ -3661,9 +3661,18 @@ def _resolve_source_visible_frame_uncached(
                 graph=graph,
                 session=session,
             )
-            frames[function.name] = with_mutable_globals(
-                function.source_visible_call_frame()
-            )
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            try:
+                projected = function.source_visible_call_frame()
+            except SourceCallBindingGap as exc:
+                # A call in the body binds actuals its callee's frame cannot
+                # consume: the frame is unwritten.  Same named refusal as the
+                # runtime-entry binding above, never an escaped exception.
+                return ManagerConstructionGapV1(
+                    "call-binding", resolved.cid, f"{function.name}: {exc}"
+                )
+            frames[function.name] = with_mutable_globals(projected)
             pending.remove(function)
             progressed = True
         if not progressed:

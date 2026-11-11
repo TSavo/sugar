@@ -123,6 +123,37 @@ def _is_linear(exits) -> bool:
 
 
 @dataclass(frozen=True)
+class BranchSuiteWithV1:
+    """A ``with`` statement of a branch suite, constructed when its suite is.
+
+    A ``with`` constructs only through the require door: its manager's
+    contract must already be derived for its exact coordinate, or
+    construction is refused.  A suite a ground condition never selects is
+    never reduced (``_desugar_condition``), so Python never enters that
+    ``with``; demanding its manager contract while constructing the ``if``
+    turned an unreachable refusal into the whole function's
+    (``pandas.io.common._get_binary_io_classes``: ``with
+    zstd.ZstdDecompressor().stream_reader(b"")`` under ``if zstd is not
+    None`` where ``zstd`` is ``None`` because zstandard is not installed;
+    #7665).  The ``with`` is constructed -- by the same door, with the same
+    refusal -- exactly when its suite is reduced: under a symbolic condition
+    both suites still reduce and a refused ``with`` still refuses.
+    """
+
+    node: object
+
+    def force(self):
+        return self.node.sugar()
+
+
+def _constructed_suite(body: tuple) -> tuple:
+    return tuple(
+        statement.force() if type(statement) is BranchSuiteWithV1 else statement
+        for statement in body
+    )
+
+
+@dataclass(frozen=True)
 class IfSugar(Sugar):
     """`if <test>: <then> [else: <else>]`, constructed by `If.sugar()` with the
     test's sugar and each branch's statement sugars already built."""
@@ -262,9 +293,11 @@ class IfSugar(Sugar):
 
         if observed_formula in (false_guard(), true_guard()):
             selected = reduce_block_to_exitset(
-                self.then_body
-                if observed_formula == true_guard()
-                else self.else_body,
+                _constructed_suite(
+                    self.then_body
+                    if observed_formula == true_guard()
+                    else self.else_body
+                ),
                 branch_ctx,
             )
             self._ground_branch_result(ctx, observed_formula)
@@ -284,8 +317,12 @@ class IfSugar(Sugar):
                 else (ExitSet(()), selected)
             )
         else:
-            then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
-            else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
+            then_exits = reduce_block_to_exitset(
+                _constructed_suite(self.then_body), branch_ctx
+            )
+            else_exits = reduce_block_to_exitset(
+                _constructed_suite(self.else_body), branch_ctx
+            )
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a
