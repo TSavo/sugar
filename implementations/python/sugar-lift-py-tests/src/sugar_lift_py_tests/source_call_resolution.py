@@ -166,6 +166,45 @@ class UnprojectedSourceCallV1:
         ).normalize()
 
 
+def cpython_cited_fold(unprojected, arg_values, keyword_names):
+    """A stdlib call with no projected body whose result CPython's source decides.
+
+    ``unprojected`` is the call's may-raise testimony: an off-population
+    citation (``python:operator.index``) or an unprojected source function
+    (``operator`` / ``index``).  Either names the same stdlib callee.
+
+    ``operator.index(a)`` is ``_operator.index`` (Modules/_operator.c,
+    ``_operator_index``: ``return PyNumber_Index(a);``).  In
+    Objects/abstract.c, ``_PyNumber_Index`` returns ``Py_NewRef(item)`` when
+    ``PyLong_Check(item)``, and ``PyNumber_Index`` copies the result only when
+    it is not ``PyLong_CheckExact``: an exact ``int`` passes through unchanged
+    and nothing is raised.  Only that
+    case is decided here: an exact int (never ``bool``, whose index is a copy),
+    one positional, no keywords.  Every other operand keeps the off-population
+    call two-faced.
+    """
+    from .floor.term_value import TermValue
+    from .outcome import Complete
+
+    if isinstance(unprojected, OffPopulationSourceCallV1):
+        qualified = unprojected.target_name.removeprefix("python:")
+    elif (
+        isinstance(unprojected, UnprojectedSourceCallV1)
+        and unprojected.definition_kind == "function"
+    ):
+        qualified = f"{unprojected.module_name}.{unprojected.definition_name}"
+    else:
+        return None
+    if qualified != "operator.index" or keyword_names:
+        return None
+    if len(arg_values) != 1:
+        return None
+    (operand,) = arg_values
+    if type(operand) is TermValue and type(operand.value) is int:
+        return Complete(operand)
+    return None
+
+
 @dataclass(frozen=True)
 class OffPopulationSourceCallV1:
     """An authenticated callee cited off the enrolled population, called here.
