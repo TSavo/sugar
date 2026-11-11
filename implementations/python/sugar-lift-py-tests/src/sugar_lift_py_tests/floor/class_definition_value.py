@@ -199,33 +199,32 @@ class ClassDefinitionValue(GuardStableValue):
             )
         method = candidates[0]
         frame = required_frame or method.source_call_frame
-        bound = frame.bind_actuals((self, *arguments), keywords, ctx)
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.floor.object_value import bind_call
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
-        call = CallSiteValue(
-            target_name=f"{self.class_name}.{name}",
-            arg_values=bound.actuals,
+        def refuse(*, owner, blame, observed, requested, fix):
+            del owner, blame, requested, fix
+            raise SourceCallBindingGap(observed)
+
+        # ``cls.m(...)`` is the call ``m(cls, ...)``: the one binder, applied by
+        # the one routine.  The class is ``m``'s lexical ``__class__`` cell.
+        return bind_call(
+            f"{self.class_name}.{name}",
+            (self, *arguments),
+            keywords,
+            frame=frame,
             parameters=frame.parameters,
-            term=ctor(
-                f"call:{self.class_name}.{name}",
-                tuple(value.to_term(owner=owner) for value in bound.actuals),
-                symbol_kind="contract-target",
-            ),
             body=frame.body,
-            site=blame,
-            source_call_frame_cid=frame.frame_cid,
+            frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(
                 coordinate.cid for coordinate in frame.formal_coordinates
             ),
-            bound_source_actuals=bound,
-        )
-        method_ctx = ctx.with_temporal(
-            ctx.temporal.bind_value(
-                "__class__", self, blame=f"{self.class_name}.{name}"
-            )
-        )
-        return call.producer_outcome(method_ctx)
+            lexical_defining_class=self,
+            ctx=ctx,
+            owner=owner,
+            blame=blame,
+            refuse=refuse,
+        ).producer_outcome(ctx)
 
     def dispatch_super_method(
         self,
