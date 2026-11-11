@@ -348,9 +348,16 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
         term=ctor("call:ValueError", [str_const("boom")]),
         body=None,
     )
-    with pytest.raises(SugarNotWritten) as caught:
-        ordinary.attribute("args", site=site)
-    assert "CallSiteValue.args" in caught.value.observed
+    # An ordinary unexecuted call has no decided type: ``.args`` is the
+    # #7585 two-faced lookup of the coordinate ``attr:args``, never a tuple.
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    faces = ordinary.attribute("args", site=site)
+    assert isinstance(faces, ExitSet)
+    (completed,) = [f for f in faces.exits if isinstance(f, Completed)]
+    assert [f for f in faces.exits if isinstance(f, Halted)]
+    assert not isinstance(completed.value, TupleValue)
+    assert completed.value.term.name == "attr:args"
 
 
 def test_no_process_identity_in_slot_fallback() -> None:
