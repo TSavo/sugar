@@ -692,6 +692,39 @@ def _is_the_builtin(target_name, ctx) -> bool:
     return seated is not None and temporal.value_if_bound(target_name) is seated
 
 
+def builtin_list_construct(target_name, arg_values, ctx=None, keyword_names=()):
+    """``list(xs)`` over a sequence whose members and order are decided.
+
+    The builtin ``list`` (not a rebinding) with no keywords builds a new list
+    of its iterable's members in iteration order: ``list()`` is ``[]``, a
+    tuple or list gives its elements, a dict gives its keys in insertion
+    order, and a finite comprehension gives its projected members.  It never
+    raises for these (``builtin_call_total``).  A set's order depends on
+    hashing, so it is not decided here, and neither is any other operand;
+    those stay the ordinary bodiless call.
+    """
+    from .floor.comprehension_value import ComprehensionValue
+    from .floor.dict_value import DictValue
+    from .floor.list_value import ListValue
+    from .floor.tuple_value import TupleValue
+    from .outcome import Complete
+
+    if target_name != "list" or keyword_names or not _is_the_builtin("list", ctx):
+        return None
+    if not arg_values:
+        return Complete(ListValue(()))
+    if len(arg_values) != 1:
+        return None
+    (source,) = arg_values
+    if type(source) in (TupleValue, ListValue):
+        return Complete(ListValue(tuple(source.elements)))
+    if type(source) is DictValue:
+        return Complete(ListValue(tuple(key for key, _ in source.entries)))
+    if type(source) is ComprehensionValue and source.finite_elements is not None:
+        return Complete(ListValue(tuple(source.finite_elements)))
+    return None
+
+
 def builtin_dunder_call(target_name, arg_values, ctx=None, keyword_names=()):
     """The may-raise testimony for a dunder-invoking builtin, or None.
 
