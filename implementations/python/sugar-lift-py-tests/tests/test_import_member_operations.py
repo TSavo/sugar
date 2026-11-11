@@ -94,11 +94,23 @@ def test_attribute_is_undecided_refusal_not_write_more_floor() -> None:
     assert "undecided" in str(caught.value.observed).lower()
 
 
-def test_contains_is_undecided_refusal_not_write_more_floor() -> None:
+def test_contains_is_undecided_two_faces_not_write_more_floor() -> None:
     v, site = _import_member_and_site()
-    with pytest.raises(SugarNotWritten, match="ImportMemberValue.contains") as caught:
-        v.contains(v, site)
-    assert "write more Floor" not in str(caught.value)
+    _assert_undecided_membership_faces(v.contains(v, site))
+
+
+def _assert_undecided_membership_faces(outcome) -> None:
+    """Undecided membership is the two faces, not a refusal or a write-more-Floor."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [f for f in outcome.exits if isinstance(f, Completed)]
+    (halted,) = [f for f in outcome.exits if isinstance(f, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert completed.value.formula.name == "py.in"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
 
 
 def test_call_through_import_is_runtime_boundary_incomplete() -> None:

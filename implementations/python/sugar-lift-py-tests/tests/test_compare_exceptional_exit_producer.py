@@ -173,10 +173,12 @@ def _formal_coordinate(
 
 
 def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
-    """Equality dual-edge: completed solver atom beside a nameless Compare halt.
+    """Undecided dispatch: the solver atom completes only under
+    ``python:compare.completes`` beside an undetermined halt under the
+    complement (owner ``UndecidedCompare:<op>``, no invented exception type).
 
-    Ordering and membership no longer dual-edge at the floor — they throw named.
-    Keep this helper for equality law only.
+    Equality and membership dual-edge this way (#7620; membership at the
+    container's Floor door).
     """
     from sugar_lift_py_tests.floor import PredicateValue
     from sugar_lift_py_tests.outcome import ExitSet
@@ -200,8 +202,9 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     assert atom in atom_names(completed.value.formula)
     assert halted.effect.exception_name is None
     assert halted.effect.blame == blame
-    assert halted.effect.producer_node_owner == "Compare"
-    assert completed.guard == complement_guard(halted.guard)
+    assert halted.effect.producer_node_owner.startswith("UndecidedCompare:")
+    assert completed.guard.name == "python:compare.completes"
+    assert halted.guard == complement_guard(completed.guard)
 
 
 def _assert_named_ordering_or_membership_refusal(thunk) -> SugarNotWritten:
@@ -236,8 +239,8 @@ def _assert_named_ordering_or_membership_refusal(thunk) -> SugarNotWritten:
 
 
 def _assert_compare_dual(node, *, atom: str) -> None:
-    """Legacy name: equality still dual-edges; ordering/membership throw named."""
-    if atom in {"py.lt", "py.le", "py.gt", "py.ge", "py.in"}:
+    """Equality and membership dual-edge; ordering throws named."""
+    if atom in {"py.lt", "py.le", "py.gt", "py.ge"}:
         _assert_named_ordering_or_membership_refusal(lambda: node.sugar().desugar(None))
         return
     _assert_dual_dispatch(
@@ -392,8 +395,8 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
         "In": "py.in",
         "NotIn": "py.in",
     }[op_kind]
-    if op_kind in {"Lt", "In", "NotIn"}:
-        # Ordering / membership: named refusal, never fabricated Complete.
+    if op_kind == "Lt":
+        # Ordering: named refusal, never fabricated Complete.
         _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
         return
     _assert_dual_dispatch(
@@ -493,14 +496,15 @@ def test_membership_law_routes_through_authenticated_contains(
     op_kind: str, expression: str
 ) -> None:
     node = _synthetic_compare(expression)
-    # Undecided container: named refusal at contains (no Complete(py.in)).
+    # Undecided container: the contains door's two faces (never a sole
+    # Complete(py.in)); ``not in`` negates the completed face only.
     sugar = ComparisonOpSugar(
         op_kind,
         _ValueSugar(TermValue(1)),
         _ValueSugar(SymbolicValue(make_var("container"))),
         node.fragment,
     )
-    _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
+    _assert_dual_dispatch(sugar.desugar(None), atom="py.in", blame=str(node.fragment))
 
 
 def test_formal_ordering_survives_until_authenticated_caller_discharge() -> None:
@@ -870,11 +874,7 @@ def test_pandas_left_right_ordering_faces_retain_both_edges(
 def test_undecided_dispatch_partition_keys_are_law_scoped(
     expression: str, op_kind: str, law_name: str, atom: str
 ) -> None:
-    """Equality still dual-edges under a law-scoped key; ordering/membership refuse.
-
-    Partition keys remain law-scoped for equality. Ordering and membership no
-    longer mint dual-edge ExitSets from undecided floors — they throw named.
-    """
+    """Equality and membership dual-edge under a law-scoped key; ordering refuses."""
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
@@ -909,6 +909,10 @@ def test_undecided_dispatch_partition_keys_are_law_scoped(
             _ValueSugar(SymbolicValue(make_var("container"))),
             node.fragment,
         )
+        _assert_dual_dispatch(
+            sugar.desugar(None), atom=atom, blame=str(node.fragment)
+        )
+        return
     else:
         sugar = ComparisonOpSugar(op_kind, left, right, node.fragment)
     _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
