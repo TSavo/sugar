@@ -417,9 +417,9 @@ class SymbolicValue(FloorValue):
             )
         if isinstance(other, GuardedValue):
             return other.map_from_left(owner, self, site)
-        # Undecided native dispatch: throw named via the shared law. Never mint
-        # Complete(SymbolicValue) or a nameless dual-edge RaiseEffect — that
-        # half-writes an answer the TypeError boundary cannot match.
+        # Undecided native dispatch: the shared law's two faces (completes
+        # under python:binary_op.completes, else an UndeterminedRaiseEffect).
+        # Never a sole Complete(SymbolicValue): that claims it cannot raise.
         refused = self._undecided_binary_law(other, site, operator)
         if refused is not None:
             return refused

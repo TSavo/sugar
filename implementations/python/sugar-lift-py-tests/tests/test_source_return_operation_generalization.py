@@ -615,14 +615,17 @@ def test_module_scope_lambda_callee_constructs_by_substituting_first() -> None:
 
 def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
     """Lying twin: ``missing`` is bound nowhere. The lambda constructs (its
-    formals are its own), the call applies, and the dig refuses at the binary
-    floor by name -- it never invents a number for ``2 + missing``."""
+    formals are its own), the call applies, and the dig never invents a number
+    for ``2 + missing``: the operand's type is undecided, so the addition is
+    two-faced (#7585) and does not dig to a single Floor.
+    """
     tree, _, _ = _tree("result = (lambda value: value + missing)(2)\n")
     call = next(node for node in tree.nodes() if isinstance(node, Call))
     outcome = call.sugar().desugar(None)
     assert isinstance(outcome, Complete)
-    with pytest.raises(SugarNotWritten, match="binary_operation_exception_floor"):
-        outcome.value._dig_floor_or_none(None, owner="module-scope-lambda-unbound")
+    dug = outcome.value._dig_floor_or_none(None, owner="module-scope-lambda-unbound")
+    # Two faces do not dig to one Floor; no number is invented.
+    assert dug is None
 def test_nested_function_source_return_projects_into_outer_caller() -> None:
     tree, _, _ = _tree(
         "def outer():\n"

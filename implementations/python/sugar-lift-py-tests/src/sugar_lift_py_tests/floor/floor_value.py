@@ -1270,20 +1270,16 @@ class FloorValue:
     def _undecided_binary_law(self, other, site, operator):
         """The ONE law for a binary operation with an undecided operand.
 
-        Every binary-operation floor gap measured on pandas came in the same
-        shape wearing eight operator names: a left value with no arm named for
-        THIS right operand, falling through to the pair gap. Most of those
-        pairs are not eight separate arms to write. They are one law: when at
-        least one operand's runtime TYPE is undecided, Python's own operator
-        dispatch for the pair is undecided. That is a third value: the producer
-        cannot claim sole completion and cannot invent an exception identity.
-
-        Throw named (``SugarNotWritten``). Do not emit
-        ``Complete(SymbolicValue(...))`` and do not publish a dual-edge ExitSet
-        whose Halted face carries a nameless ``RaiseEffect`` — a nameless halt
-        is routed outside every TypeError boundary, so
-        ``pytest.raises(TypeError): a - b`` is structurally unsatisfiable while
-        still looking like a producer answer.
+        When at least one operand's runtime TYPE is undecided, Python selects
+        ``__op__``/``__rop__`` from types this frame did not look at, so the
+        operation may raise anything -- the #7585 law, as for ordering
+        (#7622).  It completes with the undecided result
+        ``python:binary_result(op, left, right, <occurrence>)`` -- each
+        evaluation its own unknown -- only under
+        ``python:binary_op.completes(python:binary_op(op, <occurrence>))`` and
+        halts with an ``UndeterminedRaiseEffect`` (owner
+        ``UndecidedBinary:<op>``) under the complement.  No exception type is
+        named and no result is folded.
 
         Two cases stay outside this door:
 
@@ -1294,33 +1290,13 @@ class FloorValue:
           ground field laws, and absence there is still a gap.
 
         Returns ``None`` when the law does not apply, so the caller falls
-        through to its own pair gap. Raises when it does apply.
+        through to its own pair gap.
         """
         if not (self.denotes_value() and other.denotes_value()):
             return None
         if self.runtime_type_is_decided() and other.runtime_type_is_decided():
             return None
-
-        from sugar_source_tree.panic import SugarNotWritten
-
-        raise SugarNotWritten(
-            blame=site,
-            owner="binary_operation_exception_floor",
-            observed=(
-                "undecided binary operand runtime type: "
-                f"{type(self).__name__} {operator} {type(other).__name__}"
-            ),
-            requested=(
-                "source-visible native binary-operator testimony selecting "
-                "completion or an authenticated exceptional exit"
-            ),
-            fix=(
-                "preserve the undecided third value at binary discharge; "
-                "resolve both operands' runtime types and __op__/__rop__ from "
-                "source before completing or halting — do not mint a nameless "
-                "raise face or a sole symbolic completion"
-            ),
-        )
+        return undecided_binary_faces(self, other, site, operator)
 
     def _binary_floor_gap(self, other, site, owner, floor):
         """The ONE None arm for every binary-operation floor.
@@ -1498,3 +1474,49 @@ class FloorValue:
             requested="format data-model method",
             fix="construct __format__",
         )
+
+
+def undecided_binary_faces(left, right, site, operator: str):
+    """Two faces for ``left <operator> right`` over an undecided operand type."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    key = occurrence_key(site) if site is not None else ""
+    owner = f"python:binary_op {operator} at {site}"
+    result = SymbolicValue(
+        ctor(
+            "python:binary_result",
+            (
+                str_const(operator),
+                left.to_term(owner=owner),
+                right.to_term(owner=owner),
+                str_const(key),
+            ),
+        )
+    )
+    completes = atomic(
+        "python:binary_op.completes",
+        [ctor("python:binary_op", (str_const(operator), str_const(key)))],
+    )
+    return ExitSet(
+        (
+            Completed(completes, result),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site) if site is not None else None,
+                    occurrence=key if site is not None else None,
+                    producer_node_owner=f"UndecidedBinary:{operator}",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
