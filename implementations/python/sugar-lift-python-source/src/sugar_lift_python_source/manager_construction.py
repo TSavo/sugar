@@ -2207,7 +2207,13 @@ def construct_manager_behavior(
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.temporal import builtin_name_temporal
 
-    reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
+    from sugar_lift_py_tests.sugar.call_site_sugar import _with_frame_mutable_globals
+
+    # The manager's frame runs in its defining module: its module bindings
+    # (the same ones a CallSiteSugar entry installs) are in scope.
+    reduce_ctx = _with_frame_mutable_globals(
+        ReduceContext(temporal=builtin_name_temporal()), frame
+    )
     try:
         result = call.force_floor(
             reduce_ctx, owner="construct_manager_behavior", project_callsite=False
@@ -2867,13 +2873,30 @@ def _resolve_source_visible_frame_uncached(
             )
             for pin in pin_scan.mutable_global_pins
         )
-        module_product = (source_file, producer_root, mutable_global_bindings)
+        immutable_global_bindings = _immutable_global_bindings(
+            producer_root, pin_scan, module.source_cid
+        )
+        module_product = (
+            source_file,
+            producer_root,
+            mutable_global_bindings,
+            immutable_global_bindings,
+        )
         session.remember_module_materialize(module_key, module_product)
-    source_file, producer_root, mutable_global_bindings = module_product
+    (
+        source_file,
+        producer_root,
+        mutable_global_bindings,
+        immutable_global_bindings,
+    ) = module_product
     context = source_file.unit.construction_context
 
     def with_mutable_globals(frame):
-        return replace(frame, mutable_global_bindings=mutable_global_bindings)
+        return replace(
+            frame,
+            mutable_global_bindings=mutable_global_bindings,
+            immutable_global_bindings=immutable_global_bindings,
+        )
 
     definitions = tuple(
         item for item in producer_root.body if isinstance(item, (FunctionDef, ClassDef))
@@ -3346,7 +3369,9 @@ def _resolve_source_visible_frame_uncached(
             context,
             getattr(getattr(source_file, "unit", None), "construction_context", None),
         )
-        frames[item.name] = item.source_visible_constructor_frame()
+        frames[item.name] = with_mutable_globals(
+            item.source_visible_constructor_frame()
+        )
 
     pending = [item for item in definitions if isinstance(item, FunctionDef)]
     # A class-method target is found above among methods of module-level
@@ -4096,6 +4121,108 @@ def _classify_named_call_target(
     if builtin_floor.value_if_bound(name) is not None:
         return "builtin"
     return "free-name"
+
+
+def _immutable_global_bindings(producer_root, pin_scan, source_cid):
+    """Admitted module value pins, each as the ground value its source binds.
+
+    ``scan_module_value_pins`` admits a name only when the module binds it
+    once to an immutable value and never rebinds it.  The value is
+    constructed from that binding's own right-hand side; a pin whose
+    right-hand side does not construct to one ground value is not carried
+    (the name stays what it was: a free symbolic read), never guessed.
+    """
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.effect import is_lift_time_decidable
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.source_call_frame import ImmutableGlobalBindingV1
+    from sugar_source_tree.panic import SugarNotWritten
+
+    statements = {}
+    for statement in producer_root.body:
+        if isinstance(statement, Assign) and len(statement.targets) == 1:
+            target = statement.targets[0]
+        elif isinstance(statement, AnnAssign) and statement.value is not None:
+            target = statement.target
+        else:
+            continue
+        if isinstance(target, Name):
+            statements.setdefault(
+                (target.id, statement.line_col_span().start_line), statement
+            )
+    bindings = []
+    for pin in pin_scan.pins.values():
+        if "." in pin.name:
+            continue
+        statement = statements.get((pin.name, pin.line))
+        if statement is None:
+            continue
+        try:
+            outcome = statement.value.sugar().desugar(
+                ReduceContext.root(owner="module value pin")
+            )
+        except (SugarNotWritten, TypeError, ValueError):
+            continue
+        if not isinstance(outcome, Complete):
+            continue
+        try:
+            term = outcome.value.to_term(owner="module value pin")
+        except (SugarNotWritten, TypeError, ValueError, AttributeError):
+            continue
+        if not is_lift_time_decidable(term):
+            continue
+        bindings.append(
+            ImmutableGlobalBindingV1(
+                source_cid=source_cid,
+                name=pin.name,
+                term=pin.term,
+                line=pin.line,
+                value=outcome.value,
+            )
+        )
+    # ``VERSION_PATTERN = _VERSION_PATTERN``: a module name bound once by a
+    # plain assignment and never rebound (the scan's own admission law),
+    # whose value is an earlier carried pin, is that same value.  The scan
+    # does not consider it only because a Name has no literal term shape.
+    from sugar_lift_python_source.value_pins import (
+        _admission_failure,
+        _binding_events,
+        _Candidate,
+        _global_declarations,
+    )
+
+    carried = {binding.name: binding for binding in bindings}
+    events_by_name = {}
+    for event in _binding_events(producer_root):
+        events_by_name.setdefault(event.name, []).append(event)
+    global_decls = _global_declarations(producer_root)
+    for (name, line), statement in sorted(
+        statements.items(), key=lambda item: item[0][1]
+    ):
+        if name in carried or not isinstance(statement.value, Name):
+            continue
+        source = carried.get(statement.value.id)
+        if source is None or source.line >= line:
+            continue
+        candidate = _Candidate(
+            name=name, value=statement.value, line=line, confession=None
+        )
+        if (
+            _admission_failure(
+                candidate, events_by_name.get(name, []), global_decls.get(name)
+            )
+            is not None
+        ):
+            continue
+        carried[name] = ImmutableGlobalBindingV1(
+            source_cid=source_cid,
+            name=name,
+            term=source.term,
+            line=line,
+            value=source.value,
+        )
+        bindings.append(carried[name])
+    return tuple(bindings)
 
 
 def _scanned_definitions(definition: Node) -> tuple[FunctionDef, ...]:
