@@ -61,7 +61,6 @@ from .bytes_value import BytesValue
 from .complex_value import ComplexValue
 from .ellipsis_value import EllipsisValue
 from .entered_manager_state_value import EnteredManagerStateValue
-from .language_owned_io_resource import LanguageOwnedIoResourceValue
 from .language_owned_contextvar import (
     LanguageOwnedCExtensionCallableValue,
     LanguageOwnedCExtensionResultValue,
@@ -128,7 +127,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ExceptionCauseValue,
     ExceptionValue,
     EnteredManagerStateValue,
-    LanguageOwnedIoResourceValue,
     LanguageOwnedCExtensionCallableValue,
     LanguageOwnedCExtensionResultValue,
     LanguageOwnedContextVarMethodValue,
@@ -237,7 +235,6 @@ __all__ = [
     "ComplexValue",
     "EllipsisValue",
     "EnteredManagerStateValue",
-    "LanguageOwnedIoResourceValue",
     "LanguageOwnedCExtensionCallableValue",
     "LanguageOwnedCExtensionResultValue",
     "LanguageOwnedContextVarMethodValue",

@@ -158,7 +158,9 @@ def test_projection_seats_an_outer_with_as_before_its_readers(tmp_path):
         "            pass\n"
     )
     _source_file, seated = _seated(tmp_path, source)
-    assert type(seated[2]).__name__ == "LanguageOwnedContextManagerRefV1"
+    # ``open`` is ``builtins.open``: no artifact holds it, so it is not
+    # bridged and is cited, like any callee the lifter does not have.
+    assert type(seated[2]).__name__ == "OpaqueCitedContextManagerRefV1"
 
 
 def test_projection_does_not_construct_an_unseated_with(tmp_path):
@@ -197,7 +199,9 @@ _GENERATOR_OPENS = (
 def test_generator_opening_a_file_is_constructed_from_source(tmp_path):
     _source_file, seated = _seated(tmp_path, _GENERATOR_OPENS.format(opener="open"))
     assert type(seated[3]).__name__ == "SourceDerivedGeneratorResourceRefV1"
-    assert type(seated[9]).__name__ == "LanguageOwnedContextManagerRefV1"
+    # ``open`` is ``builtins.open``: no artifact holds it, so it is not
+    # bridged and is cited, like any callee the lifter does not have.
+    assert type(seated[9]).__name__ == "OpaqueCitedContextManagerRefV1"
 
 
 def test_generator_opening_through_an_unread_name_is_not_constructed(tmp_path):

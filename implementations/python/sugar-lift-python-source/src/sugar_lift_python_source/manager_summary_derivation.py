@@ -1985,19 +1985,18 @@ def populate_source_derived_resource_refs(
                 session.dependency_graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if not isinstance(resolved, ResolvedPythonObjectV1):
-            from .language_owned_io_resource import mint_language_owned_io_resource_ref
+            from .manager_construction import _absent_module_is_off_population
 
-            owned = mint_language_owned_io_resource_ref(coordinate, receipt, resolved)
-            if owned is None:
-                from .language_owned_c_manager import (
-                    mint_language_owned_c_manager_ref,
-                )
-
-                owned = mint_language_owned_c_manager_ref(coordinate, receipt, resolved)
-            if owned is not None:
-                context.source_derived_contract_refs[coordinate] = owned
-                continue
-            kind = getattr(resolved, "kind", None) or "no-derived-contract"
+            # The export door found no source for the head callee here.  When
+            # the module that would hold it is not bridged, the manager is
+            # cited naming its import target; what it is implemented in is
+            # never asked.  Any other gap stays its named gap.
+            if _absent_module_is_off_population(
+                resolved, session=session, dependency_graphs=graphs
+            ):
+                kind = "call-target-off-population"
+            else:
+                kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue
         # A source-owned suspension is already the native manager testimony
@@ -2421,7 +2420,7 @@ def populate_source_derived_resource_refs(
     # manager whose own body opens a file (``@contextmanager def g(): with
     # open(p) as f: yield f``) builds its frame from that nested row, so it
     # must be seated before any same-module reader reads the body (#7732).
-    _populate_builtin_c_manager_uses(context, uses)
+    _populate_builtin_name_manager_uses(context, uses, session=session)
 
     # A callee Name assigned in every arm of a selection (``m = a.A`` /
     # ``elif``: ``m = b.B`` / ``with m(...)``) has no receipt at the call, but
@@ -3741,29 +3740,45 @@ def _populate_same_module_generator_manager_uses(
             )
 
 
-def _populate_builtin_c_manager_uses(context, uses) -> None:
-    """Seat the C-manager law at ``with open(...)``.
+def _populate_builtin_name_manager_uses(context, uses, *, session) -> None:
+    """``with open(...)``: a head calling a builtin name is not bridged.
 
     Import receipts never fire for a builtin name.  When the head calls a name
-    the module binds nowhere, and that builtin is the C function its own
-    interpreter-owned module exports (``builtins.open`` is ``_io.open``), the
-    head is a two-faced C call and the ``with`` law runs over its opaque
-    result exactly as for an imported C function (``decimal.localcontext``):
-    enter and exit are two-faced slot calls and suppression is ``py.truthy`` of
-    the opaque exit result.  Nothing is claimed about the result's type.
+    the module binds nowhere, the callee is ``builtins.<name>``.  No artifact
+    authenticates ``builtins``, so the lifter does not have it: the manager is
+    cited naming ``python:builtins.<name>``, exactly as any other callee the
+    lifter does not have.  What it is implemented in is never asked.
     """
+    from sugar_source_tree.builtin_reference import module_reads_builtin
     from sugar_source_tree.nodes import Call, Name
 
-    from .language_owned_c_manager import mint_builtin_c_manager_ref
+    from .manager_construction import _graph_is_off_population
 
+    if not _graph_is_off_population(None, session=session, module_name="builtins"):
+        return
     for _key, (coordinate, call, _exit_face_id) in uses.items():
         if coordinate in context.source_derived_contract_refs:
             continue
         if not isinstance(call, Call) or not isinstance(call.func, Name):
             continue
-        owned = mint_builtin_c_manager_ref(coordinate, call.func.id, call.unit.source)
-        if owned is not None:
-            context.source_derived_contract_refs[coordinate] = owned
+        name = call.func.id
+        if not module_reads_builtin(call.unit.source, name):
+            continue
+        target_symbol = f"python:builtins.{name}"
+        _seat_off_population_citation(
+            context,
+            coordinate,
+            target_symbol,
+            "call-target-off-population",
+            cid_of_json(
+                {
+                    "kind": "builtin-name-callee",
+                    "schemaVersion": "1",
+                    "targetSymbol": target_symbol,
+                    "useSite": coordinate.wire(),
+                }
+            ),
+        )
 
 
 def _populate_formal_selected_manager_uses(

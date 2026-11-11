@@ -1564,7 +1564,8 @@ def _graph_is_off_population(
 
     This is the one answer to "is this callee bridged": the lifter has it
     only when an authenticated artifact holds its source AND the measurement
-    enrolls that artifact.  ``graph=None`` means no artifact authenticates
+    enrolls that artifact.  A graph that holds no source for ``module_name``
+    does not have it.  ``graph=None`` means no artifact authenticates
     ``module_name``'s top-level module at all, so the lifter does not have it
     either: it is not bridged, whatever it is implemented in, unless the
     roster names that top-level module as an enrolled distribution (an
@@ -1597,6 +1598,11 @@ def _graph_is_off_population(
             return False
         top = module_name.split(".", 1)[0]
         return not population_admits(session.enrolled_distributions, top, None)
+    if module_name and module_name not in graph.modules:
+        # The artifact authenticates, but holds no source for this module
+        # (an extension file, or a module it never ships): the lifter does
+        # not have it, enrolled or not.
+        return True
     name = getattr(graph, "distribution_name", None)
     if name is None:
         return False
@@ -1606,6 +1612,35 @@ def _graph_is_off_population(
         module_name,
         session.imported_modules,
     )
+
+
+def _absent_module_is_off_population(
+    gap, *, session: SourceResolutionSession, dependency_graphs=None
+) -> bool:
+    """An ``artifact-module-absent`` export gap, asked the one bridged answer.
+
+    The gap names a module the importing artifact does not hold.  The graph
+    that would hold it is the module's own top-level artifact (``None`` when
+    none authenticates), and :func:`_graph_is_off_population` answers for that
+    graph and module.  No other gap kind is asked here: a name an artifact
+    holds the source of but cannot resolve statically stays its named gap.
+    """
+    from .dependency_artifact import DependencyArtifactAuthenticationError
+
+    if getattr(gap, "kind", None) != "artifact-module-absent":
+        return False
+    module_name = getattr(gap, "module_name", None)
+    if not isinstance(module_name, str) or not module_name:
+        return False
+    try:
+        graph = _dependency_graph_for_top(
+            module_name.split(".", 1)[0],
+            session=session,
+            dependency_graphs={} if dependency_graphs is None else dependency_graphs,
+        )
+    except DependencyArtifactAuthenticationError:
+        graph = None
+    return _graph_is_off_population(graph, session=session, module_name=module_name)
 
 
 def _off_population_materialize_gap(
