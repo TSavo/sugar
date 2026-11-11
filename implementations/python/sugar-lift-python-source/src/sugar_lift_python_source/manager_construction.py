@@ -878,6 +878,79 @@ def _enroll_imported_decorator_frames(
         _install_source_call_frame(context, decorator, decorator_frame)
 
 
+def _module_level_with_coordinates(source_file) -> frozenset:
+    """Use-site coordinates of every ``with`` the module body runs at import.
+
+    A def, lambda or class-method body does not run at import, so its withs
+    are not the prefix's.  A class body does run, so its withs are.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef, Lambda, With
+
+    def span(node):
+        box = node.line_col_span()
+        return (box.start_line, box.start_col), (box.end_line, box.end_col)
+
+    nodes = tuple(source_file.root.walk())
+    unrun = tuple(
+        span(node)
+        for node in nodes
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda))
+    )
+    coordinates = set()
+    for node in nodes:
+        if not isinstance(node, With):
+            continue
+        start, end = span(node)
+        if any(lo <= start and end <= hi for lo, hi in unrun):
+            continue
+        for item in node.items:
+            coordinates.add(
+                SourceFragmentCoordinateV1(
+                    item.context_expr.unit.source_cid,
+                    *item._manager_use_site_span(),
+                )
+            )
+    return frozenset(coordinates)
+
+
+def _populate_prefix_module_with_managers(module, source_file, *, session) -> None:
+    """Derive the managers of the withs a module runs at import.
+
+    The prefix door executes module-level ``with config.config_prefix(...)``
+    (pandas io/pytables.py:227) exactly as a module lift does, so it needs the
+    same derivation a module lift seats.  Without it, every such with refused
+    as "no context-manager derivation" and the export after it became
+    ``dynamic-export``.  Population runs once per prefix SourceFile and only
+    selects module-level withs.
+    """
+    from pathlib import Path
+
+    from .manager_summary_derivation import populate_source_derived_resource_refs
+
+    if getattr(source_file, "_prefix_with_managers_populated", False):
+        return
+    object.__setattr__(source_file, "_prefix_with_managers_populated", True)
+    selected = _module_level_with_coordinates(source_file)
+    if not selected:
+        return
+    seat = Path(module.source_seat)
+    depth = len(module.module_name.split("."))
+    if seat.name == "__init__.py":
+        depth += 1
+    parents = seat.parents
+    root = parents[depth - 1] if depth - 1 < len(parents) else Path(".")
+    populate_source_derived_resource_refs(
+        source_file,
+        root=root,
+        path=seat,
+        session=session,
+        selected_coordinates=selected,
+    )
+
+
 def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     """Execute the authenticated module prefix through its exact definitions."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -962,6 +1035,8 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     # ``_substitute_body`` may raise SugarNotWritten/TypeError; the caller
     # (``prefix_has_completed_fallthrough``) already catches exactly those and
     # turns them into named construction-refusal testimony, never a quiet False.
+    _populate_prefix_module_with_managers(module, source_file, session=session)
+
     # A def in the prefix binds a function; its body runs only when called.
     # A refusal inside that body is deferred to the call (see
     # DEFER_DEFINITION_BODY_REFUSAL), never prefix testimony.
