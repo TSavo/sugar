@@ -10,7 +10,7 @@ pairs construct Sugar (TrueBool/FalseBool/RaiseValue) on owned arms only.
 
 Also covers:
 - undecided binary: nameless halt is forbidden
-- undecided contains: named refusal
+- undecided contains: the #7585 two faces (python:compare.completes | undetermined halt)
 - undecided attribute: named refusal (already correct)
 
 NOTE: ``tests/sourcefile_construction_door_auditor.py`` audits SourceFile construction ownership
@@ -362,27 +362,33 @@ def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_undecided_contains_is_named_refusal_not_complete_or_panic() -> None:
-    """Membership over an undecided container is a third value, not our defect.
+def _assert_undecided_membership_faces(outcome) -> None:
+    """Undecided ``__contains__`` dispatch is the #7585 two faces.
 
-    construction_panic would count this as a missing Floor arm (OUR bug).
-    Complete(py.in) fabricates membership. Named refusal is honest.
+    Never a sole Complete(py.in) (fabricated membership), never a guessed
+    TypeError, never a construction panic: the predicate completes only under
+    ``python:compare.completes`` and an UndeterminedRaiseEffect halts under the
+    complement.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    with pytest.raises(SugarNotWritten) as raised:
-        _symbolic().contains(TermValue(1), SITE)
-    assert (
-        "membership" in (raised.value.requested or "").lower()
-        or "contain" in (raised.value.observed or "").lower()
-    )
-    # Not a construction panic harness failure.
-    assert not isinstance(raised.value, ConstructionPanic)
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert completed.value.formula.name == "py.in"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
 
 
-def test_undecided_callsite_contains_is_named_refusal() -> None:
-    with pytest.raises(SugarNotWritten):
-        _callsite().contains(TermValue(1), SITE)
+def test_undecided_contains_is_two_faced_not_complete_or_panic() -> None:
+    _assert_undecided_membership_faces(_symbolic().contains(TermValue(1), SITE))
+
+
+def test_undecided_callsite_contains_is_two_faced() -> None:
+    _assert_undecided_membership_faces(_callsite().contains(TermValue(1), SITE))
 
 
 def test_undecided_attribute_remains_named_refusal() -> None:

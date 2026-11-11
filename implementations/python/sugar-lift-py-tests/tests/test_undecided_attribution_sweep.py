@@ -76,9 +76,21 @@ def test_import_alias_attribute_is_undecided_not_write_more_floor() -> None:
 def test_import_alias_contains_is_undecided_not_write_more_floor() -> None:
     v = _alias()
     site = _Site()
-    with pytest.raises(SugarNotWritten, match="ImportAliasValue.contains") as caught:
-        v.contains(v, site)
-    assert "write more Floor" not in str(caught.value)
+    _assert_undecided_membership_faces(v.contains(v, site))
+
+
+def _assert_undecided_membership_faces(outcome) -> None:
+    """Undecided membership is the two faces, not a refusal or a write-more-Floor."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [f for f in outcome.exits if isinstance(f, Completed)]
+    (halted,) = [f for f in outcome.exits if isinstance(f, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert completed.value.formula.name == "py.in"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
 
 
 def test_import_alias_subscript_still_undecided() -> None:
@@ -101,9 +113,9 @@ def test_mutable_global_non_dict_contains_is_undecided_not_write_more_floor() ->
     v = _mutable(kind="list")
     site = _Site()
     assert v.runtime_type_is_decided() is False
-    with pytest.raises(SugarNotWritten, match="MutableGlobalValue.contains") as caught:
-        v.contains(0, site)
-    assert "write more Floor" not in str(caught.value)
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    _assert_undecided_membership_faces(v.contains(TermValue(0), site))
 
 
 def test_mutable_global_attribute_is_undecided_not_write_more_floor() -> None:

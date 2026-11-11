@@ -269,11 +269,16 @@ def _publish_undecided_dispatch_edges(
     # ``python:compare.completes(python:compare(op, site))`` and halts with an
     # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     # complement.  No exception type is named: the halt is undetermined.
-    return _undecided_dispatch_faces(outcome.value, site, op_kind)
+    return undecided_dispatch_faces(outcome.value, site, op_kind)
 
 
-def _undecided_dispatch_faces(predicate, site, op_kind: str):
-    """Two faces for one undecided rich-comparison dispatch."""
+def undecided_dispatch_faces(predicate, site, op_kind: str):
+    """Two faces for one undecided rich-comparison dispatch.
+
+    Shared by the Sugar membrane (a residual predicate over undecided
+    operands) and the Floor's undecided membership / ordering doors, so a
+    deferred formal discharged onto an undecided actual gets the same faces.
+    """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key

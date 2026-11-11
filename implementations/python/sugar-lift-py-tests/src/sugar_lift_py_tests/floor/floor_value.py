@@ -779,31 +779,37 @@ class FloorValue:
         )
 
     def undecided_contains(self, item, site, *, owner: str):
-        """Refuse membership when container dispatch is not source-decided.
+        """Membership whose container dispatch is not source-decided: two faces.
 
-        Named refusal, not construction panic and not ``Complete(py.in)``.
-        Membership over an undecided receiver is a third value: the producer
-        cannot choose completed membership or TypeError without inventing
-        container-type testimony. Construction panic would miscount that as
-        OUR missing floor arm.
+        The container's runtime type selects ``__contains__`` (or iteration
+        with ``__eq__``), which this frame did not look at, so ``item in self``
+        may raise anything -- the #7585 law.  It completes with the undecided
+        ``py.in(item, container)`` predicate only under
+        ``python:compare.completes(python:compare("In", site))`` and halts with
+        an ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:In``) under the
+        complement.  No exception type is named and no membership is decided.
+        ``not in`` dispatches the same ``__contains__``: the caller negates the
+        completed face only.
         """
-        del item
-        from sugar_source_tree.panic import SugarNotWritten
-
-        raise SugarNotWritten(
-            blame=site,
-            owner=owner,
-            observed=(
-                "undecided container runtime type or membership semantics: "
-                f"item in {type(self).__name__}"
-            ),
-            requested="a source-authenticated membership success or exceptional exit",
-            fix=(
-                "carry container-type and membership testimony to the contains "
-                "floor; do not guess TypeError or invent a completed py.in "
-                "coordinate"
-            ),
+        del owner
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+            undecided_dispatch_faces,
         )
+
+        predicate = PredicateValue(
+            atomic(
+                "py.in",
+                [
+                    item.to_term(owner="undecided membership item"),
+                    self.to_term(owner="undecided membership container"),
+                ],
+            ),
+            site,
+            operand_callsites=(*item.callsites(), *self.callsites()),
+        )
+        return undecided_dispatch_faces(predicate, site, "In")
 
     def contains(self, item, site):
         # Default: this value does not stand on the membership floor -- it cannot
