@@ -13401,8 +13401,7 @@ class Call(Expression):
         constructed DictValue. Star operands leave the frame unbound so
         SpreadCallSugar stays bodyless (no typed vararg projection yet).
         """
-        if any(isinstance(arg, Starred) for arg in self.args):
-            return None
+        starred = any(isinstance(arg, Starred) for arg in self.args)
         context = self._require_construction_context(
             owner="Call._spread_source_call_frame"
         )
@@ -13430,8 +13429,16 @@ class Call(Expression):
                 )
             ):
                 source_call_frame = definition.source_visible_constructor_frame()
+        if source_call_frame is None and starred:
+            source_call_frame = self._spread_lexical_source_call_frame()
         if source_call_frame is None:
             return None
+        if starred:
+            # A ``*`` operand's arity is decided only when it reduces, so no
+            # actual Node is bound here.  SpreadCallSugar splats a decided
+            # tuple into the positional roster and binds the values onto this
+            # unspecialized frame at desugar; any other operand stays bodyless.
+            return source_call_frame
         try:
             return source_call_frame.bind_node_actuals(
                 tuple(arg for arg in self.args if not isinstance(arg, Starred)),
@@ -13442,6 +13449,24 @@ class Call(Expression):
                 ),
             )
         except SourceCallBindingGap:
+            return None
+
+    def _spread_lexical_source_call_frame(self):
+        """The ordinary source function a spread call names, if any.
+
+        The same resolution the non-spread Call path uses: the producer's
+        lexical row, else the symtable-classified module binding.  A callee
+        whose frame is under construction up the stack (a recursion seat)
+        projects no frame.
+        """
+        if not isinstance(self.func, Name):
+            return None
+        definition = self.unit.source_function_definition_for_call(self)
+        if definition is None:
+            return None
+        try:
+            return definition.source_visible_call_frame()
+        except SourceCallFrameCycle:
             return None
 
     @staticmethod

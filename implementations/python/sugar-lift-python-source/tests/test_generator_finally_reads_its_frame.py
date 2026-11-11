@@ -64,8 +64,11 @@ def test_printoptions_cleanup_reads_the_frame(tmp_path, monkeypatch):
         for face in exits
         if isinstance(face, Halted) and isinstance(face.effect, UndeterminedRaiseEffect)
     ]
-    # ``_set_printoptions`` runs once (its face is the enter's), and the
-    # cleanup's reset of the token it returned is its own two faces.
-    assert owners.count("UnprojectedSpreadCall:_set_printoptions") == 1
+    # ``_set_printoptions(*args, **kwargs)`` splats the decided ``()`` and
+    # ``{'precision': 3}``, so its source body runs, once (its faces are the
+    # enter's): ``format_options.get() | new_opt`` is one undecided ``|``.
+    # The cleanup's reset of the token it returned is its own two faces.
+    assert owners.count("UnprojectedSpreadCall:_set_printoptions") == 0
+    assert owners.count("UndecidedBinary:|") == 1
     assert owners.count("ContextVarReset:format_options") == 1
 
