@@ -71,6 +71,36 @@ def mint_language_owned_c_manager_ref(coordinate, receipt, resolved):
     exported_name = getattr(resolved, "exported_name", None)
     if _interpreter_owned_c_function(module_name, exported_name) is None:
         return None
+    return _c_manager_ref(coordinate, module_name, exported_name, receipt.target_symbol)
+
+
+def mint_builtin_c_manager_ref(coordinate, name, source):
+    """``with open(...)``: the head calls a builtin that is a C function.
+
+    The name must read the builtin at every load in ``source`` (the module
+    binds it nowhere), and ``builtins.<name>`` must be the very C function that
+    its own interpreter-owned module exports (``builtins.open`` is
+    ``_io.open``).  Returns ``None`` otherwise, keeping the require door.
+    """
+    import builtins
+
+    from sugar_source_tree.builtin_reference import module_reads_builtin
+
+    if not module_reads_builtin(source, name):
+        return None
+    obj = getattr(builtins, name)
+    if type(obj) is not types.BuiltinFunctionType or not isinstance(
+        obj.__self__, types.ModuleType
+    ):
+        return None
+    module_name = obj.__self__.__name__
+    exported_name = obj.__name__
+    if _interpreter_owned_c_function(module_name, exported_name) is not obj:
+        return None
+    return _c_manager_ref(coordinate, module_name, exported_name, f"python:builtins.{name}")
+
+
+def _c_manager_ref(coordinate, module_name, exported_name, target_symbol):
     runtime = PythonRuntimeIdentity.current()
     protocol = LanguageOwnedCManagerProtocol(
         module_name=module_name,
@@ -98,7 +128,7 @@ def mint_language_owned_c_manager_ref(coordinate, receipt, resolved):
         },
         "semantics": json.loads(encode_jcs(semantics_to_value(semantics))),
         "importSignature": json.loads(encode_jcs(import_signature_to_value(signature))),
-        "targetSymbol": receipt.target_symbol,
+        "targetSymbol": target_symbol,
         "useSite": coordinate.wire(),
     }
     return LanguageOwnedContextManagerRefV1(
@@ -107,6 +137,6 @@ def mint_language_owned_c_manager_ref(coordinate, receipt, resolved):
         semantics=semantics,
         import_signature=signature,
         protocol=protocol,
-        target_symbol=receipt.target_symbol,
+        target_symbol=target_symbol,
         exported_name=exported_name,
     )
