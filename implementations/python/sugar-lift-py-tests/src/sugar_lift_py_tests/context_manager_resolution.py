@@ -94,7 +94,10 @@ class ImportedCallValueSubsumptionV1:
     resolution_kind: str
     resolved_object_cid: str
     relation_cid: str
-    _authority: object = field(init=False, repr=False, compare=False, default=None)
+    _authority: object = field(
+        init=False, repr=False, compare=False, default=None,
+        metadata={"testimony": "authority"},
+    )
 
     def __post_init__(self) -> None:
         if self._authority is not _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY:
