@@ -705,14 +705,24 @@ def test_from_import_name_constructs_member_and_rejects_a_ground_string(
 
 
 
-def test_imported_generic_base_does_not_abort_class_definition(
+def test_imported_generic_base_is_the_same_terminal_cold_and_warm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``class Box(Generic[T])`` still constructs after Generic is an import member."""
-    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    """``class Box(Generic[T])`` ends the same with or without a ``typing`` seat.
+
+    This used to assert the class constructs, which held only while ``typing``
+    had no seat: the bare receipt became an ImportMemberValue whose subscript
+    refusal the class model omits.  With ``typing`` seated (any walk whose
+    earlier file asked for it) ``Generic`` is a language-owned C type and its
+    subscript is a named construction panic.  The value-use door now
+    authenticates the top it needs (#7678), so both opens give that panic.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
-    from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
+    from sugar_lift_python_source.dependency_artifact import (
+        AuthenticatedModuleSourceV1,
+        authenticate_dependency_top_level,
+    )
     from sugar_lift_python_source.manager_construction import (
         _seat_import_value_use_receipts,
     )
@@ -724,26 +734,40 @@ def test_imported_generic_base_does_not_abort_class_definition(
         "class Box(Generic[T]):\n"
         "    value = 1\n"
     )
-    path, source_file, context = _consumer(tmp_path, source)
-    class_def = next(node for node in source_file.nodes() if isinstance(node, ClassDef))
-    authenticated_import_value_use_receipts(
-        tmp_path, path, source, source_file.unit.source_cid, module_identities={}
-    )
-    module = AuthenticatedModuleSourceV1(
-        module_name="consumer",
-        source_seat="consumer.py",
-        source_cid=source_file.unit.source_cid,
-        source=source,
-    )
     monkeypatch.chdir(tmp_path)
-    _seat_import_value_use_receipts(
-        source_file=source_file,
-        module=module,
-        target=class_def,
-        session=SourceResolutionSession(enrolled_distributions=frozenset()),
-        context=context,
-        dependency_graphs={},
-    )
-    outcome = class_def.sugar().desugar(context)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, ClassDefinitionValue)
+    observed = []
+    for warm in (False, True):
+        # One root per open: each is its own file, as two walks would see it.
+        root = tmp_path / ("warm" if warm else "cold")
+        root.mkdir()
+        path, source_file, context = _consumer(root, source)
+        class_def = next(
+            node for node in source_file.nodes() if isinstance(node, ClassDef)
+        )
+        authenticated_import_value_use_receipts(
+            root, path, source, source_file.unit.source_cid, module_identities={}
+        )
+        module = AuthenticatedModuleSourceV1(
+            module_name="consumer",
+            source_seat="consumer.py",
+            source_cid=source_file.unit.source_cid,
+            source=source,
+        )
+        session = SourceResolutionSession(enrolled_distributions=frozenset())
+        if warm:
+            session.dependency_graphs["typing"] = authenticate_dependency_top_level(
+                "typing"
+            )
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=class_def,
+            session=session,
+            context=context,
+            dependency_graphs=dict(session.dependency_graphs),
+        )
+        with pytest.raises(ConstructionPanic) as raised:
+            class_def.sugar().desugar(context)
+        observed.append(str(raised.value).split(" blame=")[0])
+    assert observed[0] == observed[1]
+    assert "owner=subscript" in observed[0]
