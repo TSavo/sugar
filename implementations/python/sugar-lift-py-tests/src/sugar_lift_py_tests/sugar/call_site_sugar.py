@@ -558,6 +558,41 @@ class CallSiteSugar(ConstructedTermSugar):
             return None
         return receiver
 
+    def _applied_builtin_type_of(
+        self, ctx, source_call_frame, positional, kw_values, term
+    ):
+        """The class coordinate ``type(obj)`` returns, by the callee's binding.
+
+        One positional actual applied through the language-owned ``type``
+        binding returns ``obj``'s class: a type object on every evaluation,
+        never a non-class and never a raise.  The coordinate is the call term
+        itself (which class is undecided).  Read from the temporal binding the
+        builtin dispatch above reads (``isinstance``/``issubclass``), never
+        the spelling: a rebound, source-defined or contracted ``type`` and the
+        three-argument class constructor get no coordinate.
+        """
+        if (
+            ctx is None
+            or source_call_frame is not None
+            or self.contract_ref is not None
+            or len(positional) != 1
+            or kw_values
+        ):
+            return None
+        temporal = getattr(ctx, "temporal", None)
+        if temporal is None:
+            return None
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_name_temporal,
+        )
+
+        builtin_type = builtin_name_temporal().value_if_bound("type")
+        if builtin_type is None or temporal.value_if_bound(
+            self.target_name
+        ) is not builtin_type:
+            return None
+        return term
+
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         if remaining:
             head, *rest = remaining
@@ -841,6 +876,9 @@ class CallSiteSugar(ConstructedTermSugar):
             bound_source_actuals=bound_source_actuals,
             builtin_exception_class=self._applied_builtin_exception_class(
                 ctx, source_call_frame
+            ),
+            python_type_coordinate=self._applied_builtin_type_of(
+                ctx, source_call_frame, positional, kw_values, term
             ),
         )
         if native_operation_actuals is not None:

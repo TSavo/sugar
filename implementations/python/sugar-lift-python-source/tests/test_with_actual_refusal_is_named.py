@@ -28,7 +28,7 @@ def cm(v):
 """
 
 
-def _tree(tmp_path: Path, consumer: str):
+def _tree(tmp_path: Path, consumer: str, impl: str = _IMPL):
     from test_returned_resource_with_construction import _distribution
 
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -41,7 +41,7 @@ def _tree(tmp_path: Path, consumer: str):
     from sugar_lift_python_source.resolution_session import SourceResolutionSession
     from sugar_source_tree.tree import SourceFile
 
-    dist = _distribution(tmp_path, _IMPL, exported="cm")
+    dist = _distribution(tmp_path, impl, exported="cm")
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
     tree = SourceFile(
@@ -99,3 +99,75 @@ def test_issubclass_on_an_operand_without_class_testimony_is_named(monkeypatch) 
     )
     with pytest.raises(SugarNotWritten, match="without class testimony"):
         callee.callable_application_with(operation, None)
+
+
+# ``pandas.io.common._is_binary_mode``: ``issubclass(type(handle), text_classes)``
+# inside ``get_handle`` (#7722).
+_TYPE_OF_IMPL = """class M:
+    def __init__(self, v):
+        self.v = v
+    def __enter__(self):
+        return 1
+    def __exit__(self, *exc):
+        return False
+def cm(v):
+    if issubclass({operand}(v), (ValueError, KeyError)):
+        return M(1)
+    return M(v)
+"""
+_TYPE_OF_CONSUMER = "from arbitrary import cm\ndef f(x):\n    with cm(x):\n        pass\n"
+
+
+def test_issubclass_of_builtin_type_of_an_undecided_actual_constructs(tmp_path) -> None:
+    from sugar_source_tree.nodes import With
+
+    tree = _tree(
+        tmp_path, _TYPE_OF_CONSUMER, impl=_TYPE_OF_IMPL.format(operand="type")
+    )
+    with_node = next(n for n in tree.nodes() if isinstance(n, With))
+    # Builtin ``type(v)`` is a class on every evaluation: issubclass over it is
+    # the two-faced subtype obligation, and the With constructs.
+    assert with_node.sugar() is not None
+
+
+def test_issubclass_of_an_uncited_call_result_stays_named(tmp_path) -> None:
+    from sugar_source_tree.nodes import With
+
+    # ``sorted(v)`` is a builtin call result with no class testimony: CPython
+    # may raise TypeError, so neither face is decided and the With stays loud.
+    tree = _tree(
+        tmp_path, _TYPE_OF_CONSUMER, impl=_TYPE_OF_IMPL.format(operand="sorted")
+    )
+    with_node = next(n for n in tree.nodes() if isinstance(n, With))
+    with pytest.raises(SourceTreePanic, match="without class testimony"):
+        with_node.sugar()
+
+
+def test_a_type_spelled_call_without_cited_class_stays_named() -> None:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
+    from sugar_lift_py_tests.ir import _Var, ctor
+    from sugar_source_tree.panic import SugarNotWritten
+
+    site = SourceFragmentCoordinateV1("blake3-512:" + "0" * 128, 1, 0, 1, 4)
+    actual = SymbolicValue(_Var("x"))
+    term = ctor("call:type", [actual.to_term(owner="t")])
+    supertype = SymbolicValue(ctor("python:type", []))
+    # The spelling ``type`` alone is not the builtin binding's citation.
+    spelled = CallSiteValue(
+        target_name="type", arg_values=(actual,), parameters=(), term=term, body=None
+    )
+    with pytest.raises(SugarNotWritten, match="without class testimony"):
+        spelled.test_python_subtype(supertype, site)
+    cited = CallSiteValue(
+        target_name="type",
+        arg_values=(actual,),
+        parameters=(),
+        term=term,
+        body=None,
+        python_type_coordinate=term,
+    )
+    formula = cited.test_python_subtype(supertype, site).value.formula
+    assert "python.subtype" in repr(formula)
