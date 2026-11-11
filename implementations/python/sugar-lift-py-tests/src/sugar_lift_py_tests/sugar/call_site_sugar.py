@@ -897,6 +897,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     unprojected,
                     callsite.arg_values,
                     getattr(callsite, "keyword_names", ()) or (),
+                    site=self.site,
                 )
                 if folded is not None:
                     return folded

@@ -166,7 +166,41 @@ class UnprojectedSourceCallV1:
         ).normalize()
 
 
-def cpython_cited_fold(unprojected, arg_values, keyword_names):
+def _constant_str(value):
+    from .floor.string_value import StringValue
+    from .floor.term_value import TermValue
+
+    if type(value) is StringValue and type(value.value) is str:
+        return value.value
+    if type(value) is TermValue and type(value.value) is str:
+        return value.value
+    return None
+
+
+def pinned_absent_top_level_module(name) -> bool:
+    """True iff the pinned interpreter's import system finds no ``name``.
+
+    Only a top-level absolute name is asked: ``importlib.util.find_spec`` on
+    a name with no dot imports nothing (no parent package runs) -- it reads
+    ``sys.modules`` and asks each ``sys.meta_path`` finder for a spec.  A
+    ``None`` answer is exactly the condition under which
+    ``importlib.import_module(name)`` raises ``ModuleNotFoundError``
+    (Lib/importlib/_bootstrap.py ``_find_and_load_unlocked``).
+    """
+    import importlib.util
+    import sys
+
+    if not isinstance(name, str) or not name.isidentifier():
+        return False
+    if name in sys.modules:
+        return sys.modules[name] is None
+    try:
+        return importlib.util.find_spec(name) is None
+    except (ImportError, ValueError):
+        return False
+
+
+def cpython_cited_fold(unprojected, arg_values, keyword_names, site=None):
     """A stdlib call with no projected body whose result CPython's source decides.
 
     ``unprojected`` is the call's may-raise testimony: an off-population
@@ -195,6 +229,27 @@ def cpython_cited_fold(unprojected, arg_values, keyword_names):
         qualified = f"{unprojected.module_name}.{unprojected.definition_name}"
     else:
         return None
+    if qualified == "importlib.import_module":
+        # ``importlib.import_module(name)`` (Lib/importlib/__init__.py) with
+        # a constant top-level absolute name and no ``package``: the pinned
+        # environment decides whether that module exists.  When no finder
+        # has it, CPython raises ``ModuleNotFoundError`` and nothing else
+        # runs; ``pandas.compat._optional.import_optional_dependency`` reads
+        # that as "not installed" and returns ``None`` (#7665: zstandard).
+        # A module that IS present keeps the two-faced off-population call:
+        # importing it runs its body, which was not looked at.
+        if keyword_names or len(arg_values) != 1 or site is None:
+            return None
+        name = _constant_str(arg_values[0])
+        if name is None or not pinned_absent_top_level_module(name):
+            return None
+        from .floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="ModuleNotFoundError",
+            site=site,
+            owner="cpython_cited_fold:importlib.import_module",
+        )
     if qualified != "operator.index" or keyword_names:
         return None
     if len(arg_values) != 1:
