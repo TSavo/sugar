@@ -68,9 +68,78 @@ def test_only_a_formal_rooted_effect_free_head_qualifies():
     assert head("def f(p):\n    with p.a.b(1, k='x'):\n        pass\n") == "p.a.b(1, k='x')"
     # The parameter is rebound before the with: not the caller's value.
     assert head("def f(p):\n    with p.m():\n        pass\n    p = 1\n") is None
-    # A non-constant argument has its own evaluation.
-    assert head("def f(p, q):\n    with p.m(q()):\n        pass\n") is None
+    # The manager-producing call's operands are evaluated by the head sugar
+    # (``test_formal_head_operands_keep_their_own_faces``); an operand of an
+    # INNER call of the chain is not, so that head still does not qualify.
+    assert head("def f(p, q):\n    with p.m(q()):\n        pass\n") == "p.m(q())"
+    assert head("def f(p, q):\n    with p.m(q()).n():\n        pass\n") is None
     # A module-level name is not a parameter.
     assert head("def f(p):\n    with x.m():\n        pass\n") is None
     # A subscript is not an attribute/call chain.
     assert head("def f(p):\n    with p[0]:\n        pass\n") is None
+
+
+def test_a_local_bound_only_to_a_parameter_is_that_parameter():
+    def head(source, line):
+        return formal_manager_head(source, line, 9)
+
+    aliased = "def f(all_parsers):\n    parser = all_parsers\n    with parser.read_csv(1):\n        pass\n"
+    assert head(aliased, 3) == "parser.read_csv(1)"
+    # The local is rebound: no longer the caller's object.
+    assert (
+        head(
+            "def f(a):\n    parser = a\n    with parser.m():\n        pass\n    parser = 2\n",
+            3,
+        )
+        is None
+    )
+    # Bound after the with, or bound to something other than a parameter.
+    assert head("def f(a):\n    with parser.m():\n        pass\n    parser = a\n", 2) is None
+    assert head("def f(a):\n    parser = g(a)\n    with parser.m():\n        pass\n", 3) is None
+    # The parameter it aliases is rebound.
+    assert (
+        head("def f(a):\n    parser = a\n    a = 1\n    with parser.m():\n        pass\n", 4)
+        is None
+    )
+
+
+def test_formal_head_operands_keep_their_own_faces(tmp_path):
+    source = (
+        "def f(all_parsers, data):\n"
+        "    parser = all_parsers\n"
+        "    with parser.read_csv(int(data), chunk=2) as reader:\n"
+        "        pass\n"
+        "    return 1\n"
+    )
+    exits = _exits(tmp_path, source).exits
+    owners = _owners(exits)
+    head = "parser.read_csv(int(data), chunk=2)"
+    # Selecting the callee, constructing, entering and exiting are each
+    # two-faced; the operand ``int(data)`` is evaluated between select and
+    # construct as an ordinary call with its own faces.
+    assert f"FormalSelectedManager:{head}.select" in owners
+    assert f"FormalSelectedManager:{head}.construct" in owners
+    completed = [face for face in exits if isinstance(face, Completed)]
+    assert completed
+    assert all("python:formal_manager.selects" in repr(face.guard) for face in completed)
+
+
+def test_a_raising_operand_halts_before_the_manager_is_built(tmp_path):
+    source = (
+        "def f(p):\n"
+        "    with p.open(boom()):\n"
+        "        pass\n"
+        "    return 1\n"
+        "def boom():\n"
+        "    raise KeyError(1)\n"
+    )
+    exits = _exits(tmp_path, source).exits
+    halts = [
+        face.effect
+        for face in exits
+        if isinstance(face, Halted) and not isinstance(face.effect, UndeterminedRaiseEffect)
+    ]
+    assert any(getattr(effect, "exception_name", None) == "KeyError" for effect in halts)
+    # The operand raised, so nothing after it ran: no construct/enter/exit face
+    # completes the function.
+    assert not [face for face in exits if isinstance(face, Completed)]

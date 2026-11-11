@@ -83,6 +83,12 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
 
     head: str
     site: str
+    # The manager-producing call's own operands, in source order.  Python
+    # selects the callee (attribute reads on the formal), then evaluates these,
+    # then calls; so a head with operands is a two-faced ``select`` step,
+    # these operands' own outcomes, and only then the opaque value whose
+    # construction the protocol's ``construct`` step owns.
+    operands: tuple = ()
 
     @classmethod
     def witnesses(cls):
@@ -91,8 +97,17 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.outcome import Complete
 
-        del ctx
-        return Complete(FormalSelectedManagerValue(self.head, self.site))
+        value = FormalSelectedManagerValue(self.head, self.site)
+        if not self.operands:
+            return Complete(value)
+        outcome = FormalSelectedManagerProtocol(self.head, self.site)._two_faced(
+            "select", None
+        )
+        for operand in self.operands:
+            outcome = outcome.and_then(
+                lambda _previous, operand=operand: operand.desugar(ctx)
+            )
+        return outcome.and_then(lambda _last: Complete(value))
 
 
 @dataclass(frozen=True)
@@ -118,6 +133,8 @@ class FormalSelectedManagerProtocol:
         name = (
             "python:formal_manager.constructs"
             if step == "construct"
+            else "python:formal_manager.selects"
+            if step == "select"
             else "python:formal_manager.slot_completes"
         )
         call = ctor(
