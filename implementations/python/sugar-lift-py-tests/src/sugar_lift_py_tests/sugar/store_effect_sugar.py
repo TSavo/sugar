@@ -170,8 +170,11 @@ class SubscriptStoreEffectSugar(Sugar):
     2. **Decided runtime type** → ``receiver.setitem(index, value, site)``
        projecting ``Completed`` or ``RaiseValue`` exceptional faces through
        the store path (never the load path).
-    3. **Undecided non-formal** → loud ``SugarNotWritten`` until the
-       three-operand formal carrier is attachable.
+    3. **Undecided non-formal** → two faces (#7585): no floor decides
+       ``type(receiver).__setitem__``, so the store completes only under
+       ``python:setitem.completes(python:setitem(<site occurrence>))`` --
+       leaving the receiver's contents unknown -- and halts with an
+       ``UndeterminedRaiseEffect`` under the complement.
     """
 
     receiver: Sugar
@@ -227,18 +230,7 @@ class SubscriptStoreEffectSugar(Sugar):
                 value=value,
             )
         if not receiver.runtime_type_is_decided():
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="SubscriptStoreEffectSugar._store",
-                blame=self.site,
-                observed="undischarged subscript store over runtime-selected receiver",
-                requested=(
-                    "NativeOperationExitCarrierV1 n-ary setitem demand over "
-                    "receiver, key, and value formal coordinates"
-                ),
-                fix="attach the three-operand carrier seam owned by 9883",
-            )
+            return _undecided_setitem_faces(receiver, self.site)
         source_aware = getattr(receiver, "setitem_with_context", None)
         projected = (
             source_aware(index, value, self.site, ctx)
@@ -281,3 +273,50 @@ class SubscriptStoreEffectSugar(Sugar):
             operands=(receiver, index, value),
             coordinates=coordinates,
         )
+
+
+def _undecided_setitem_faces(receiver, site):
+    """``r[k] = v`` where nothing decides ``type(r).__setitem__``.
+
+    The receiver is a value this frame holds (an opaque call result, an
+    unknown read) but no floor, contract or source testified to its type, so
+    ``__setitem__`` may run anything and raise anything.  The store completes
+    only under ``python:setitem.completes(python:setitem(<occurrence>))``,
+    keyed on this exact site and occurrence so two stores are never forced to
+    agree, and its post-state is ``python:receiver_after_call(<occurrence>,
+    "__setitem__")``: the receiver's contents after the call are unknown, as
+    for any undecided mutation.  The complement halts with an
+    ``UndeterminedRaiseEffect`` (owner ``UndecidedSetitem``).  No entry is
+    written into the receiver and no exception type is guessed.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _unknown_after
+
+    del receiver
+    key = occurrence_key(site)
+    completes = atomic(
+        "python:setitem.completes",
+        [ctor("python:setitem", (str_const(key),))],
+    )
+    return ExitSet(
+        (
+            Completed(completes, _unknown_after(site, "__setitem__")),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site),
+                    occurrence=key,
+                    producer_node_owner="UndecidedSetitem",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
