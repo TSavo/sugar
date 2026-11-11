@@ -96,6 +96,46 @@ class MutableGlobalBindingV1:
         object.__setattr__(self, "term", semantic_term)
 
 
+@dataclass(frozen=True)
+class ImmutableGlobalBindingV1:
+    """One admitted module value pin, carried into a frame of that module.
+
+    ``value_pins`` admits a module binding only when its value is immutable by
+    construction and the module never rebinds the name; the pinned term is the
+    value at every use site.  A function or class body of that module reads
+    the name as that value, exactly as the same literal written inline -- not
+    as a free symbolic name.  ``value`` is the constructed ground Floor of the
+    binding's own right-hand side; ``term`` is the pin's wire term.
+    """
+
+    source_cid: str
+    name: str
+    term: object
+    line: int
+    value: object = field(compare=False)
+    cid: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.name or "." in self.name:
+            raise SourceCallBindingGap(
+                "immutable global binding requires one module-level name"
+            )
+        object.__setattr__(
+            self,
+            "cid",
+            cid_of_json(
+                {
+                    "kind": "immutable-global-binding",
+                    "schemaVersion": "1",
+                    "sourceCid": self.source_cid,
+                    "name": self.name,
+                    "term": self.term,
+                    "line": self.line,
+                }
+            ),
+        )
+
+
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
     from sugar_source_tree.binding_provenance import BindingProvenanceGap
 
@@ -389,6 +429,9 @@ class SourceVisibleCallFrameV1:
     decorated_class_bindings: tuple[DecoratedClassBindingV1, ...] = field(
         default=(), compare=False
     )
+    immutable_global_bindings: tuple[ImmutableGlobalBindingV1, ...] = field(
+        default=(), compare=False
+    )
     constructed_new_method: object | None = field(default=None, compare=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
@@ -400,6 +443,13 @@ class SourceVisibleCallFrameV1:
         ):
             raise SourceCallBindingGap(
                 "mutable global binding source does not match source frame identity"
+            )
+        if any(
+            binding.source_cid != self.source_identity_cid
+            for binding in self.immutable_global_bindings
+        ):
+            raise SourceCallBindingGap(
+                "immutable global binding source does not match source frame identity"
             )
         if any(
             binding.publication.source_cid != self.source_identity_cid
@@ -467,6 +517,10 @@ class SourceVisibleCallFrameV1:
                 for item in self.decorated_class_bindings
             ],
         }
+        if self.immutable_global_bindings:
+            preimage["immutableGlobalBindingCids"] = [
+                item.cid for item in self.immutable_global_bindings
+            ]
         if self.declaration_frame_cid is not None:
             preimage["declarationFrameCid"] = self.declaration_frame_cid
         if self.constructed_new_method is not None:
