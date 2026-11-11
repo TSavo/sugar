@@ -12,13 +12,15 @@ Confirmed by the project owner, 2026-11-11: "It's a good umbrella, steps one thr
 2. **List the files** as content-addressed mementos. No parsing.
 3. **Resolve imports before construction.** The kit lists the imported names it needs contracts for. The linker answers each from the proofs in `.sugar/imports/` (a contract with its CIDs and return term, or a named gap) and binds the table back into the kit.
 4. **Parse into the node tree.** One node class per construct.
-5. **Construct.** `node.sugar()`: each node builds its sugar from its children's, or refuses by name.
+5. **Construct.** `node.sugar()`: each node builds its sugar from its children's, or refuses by name. A function body is first rewritten by temporal substitution (`FunctionDef._construct_sugar`), and that rewrite is part of the one way.
 6. **Reduce.** `sugar.desugar(ctx)` to outcomes (completions and halts) holding values. A function body gives its universe (contract rows). An assert gives a fact. A call stands as the coordinate `call:<name>(<arg terms>)`, or substitutes actuals into a bound contract's return term.
-7. **Emit edges.** The caller's claim, candidate target contracts, and a call edge with no target contract yet.
+7. **Emit edges.** The caller's claim, candidate target contracts, and a call edge with no target contract yet. An edge carries a `target_symbol`; the term `call:<name>(<arg terms>)` is what stands inside the formulas.
 8. **Package** the rows into a content-addressed `.proof`.
-9. **Prove.** Compile, conjoin with imported proofs on the shared coordinates, and the solver decides.
+9. **Prove.** Compile, join each edge's `target_symbol` to the imported contract whose `bridgeSourceSymbol` is the same string, conjoin, and the solver decides.
 
 One way means: open once, construct once, reduce once, and every row is read off that one reduction.
+
+Known violations of the way itself, recorded so they are not mistaken for part of it: a node's sugar reads a context table (`TreeConstructionContextV1`) that readers outside the tree fill; a second whole lifter (`lifter.py`) still runs on every mint (#7767); and the emitter emits rows only for a function that is a single completion, so no Python test reaches the solver (#7766).
 
 Every plan row and every open issue below carries the step it belongs to. Anything the code does that belongs to no step is a deletion.
 
