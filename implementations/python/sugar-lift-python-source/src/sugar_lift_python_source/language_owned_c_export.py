@@ -49,6 +49,56 @@ def floor_artifact_module_absent_export(resolved):
     return None
 
 
+def floor_interpreter_module_export(target_symbol):
+    """Floor ``python:<builtin module>.<name>`` for a module with no source.
+
+    ``sys.builtin_module_names`` modules (``itertools``) are compiled into the
+    pin-authenticated interpreter, so the stdlib source root cannot
+    authenticate them and the export door declines.  The interpreter's own
+    object is still the key: a builtin function floors as the two-faced
+    C-extension callable; a static C class whose members carry no Python
+    function is called the same way (its constructor is C).  Anything else
+    returns ``None`` and stays ``call-target-source-absent``.
+    """
+    import sys
+
+    if not isinstance(target_symbol, str) or not target_symbol.startswith("python:"):
+        return None
+    dotted = target_symbol[len("python:") :]
+    module_name, _, exported_name = dotted.partition(".")
+    if not exported_name or "." in exported_name:
+        return None
+    if module_name not in sys.builtin_module_names:
+        return None
+    from types import SimpleNamespace
+
+    direct = floor_artifact_module_absent_export(
+        SimpleNamespace(
+            kind="artifact-module-absent",
+            module_name=module_name,
+            exported_name=exported_name,
+        )
+    )
+    if direct is not None:
+        return direct
+    try:
+        obj = getattr(importlib.import_module(module_name), exported_name)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+    if (
+        isinstance(obj, type)
+        and not obj.__flags__ & _PY_TPFLAGS_HEAPTYPE
+        and not any(
+            isinstance(member, (types.FunctionType, staticmethod, classmethod))
+            for member in vars(obj).values()
+        )
+    ):
+        return LanguageOwnedCExtensionCallableValue(
+            module_name=module_name, exported_name=exported_name
+        )
+    return None
+
+
 _PY_TPFLAGS_HEAPTYPE = 1 << 9
 
 

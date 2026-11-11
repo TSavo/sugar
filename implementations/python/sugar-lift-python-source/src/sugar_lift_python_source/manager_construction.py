@@ -3302,6 +3302,21 @@ def _resolve_source_visible_frame_uncached(
 
             if not isinstance(exc, DependencyArtifactAuthenticationError):
                 raise
+            # A module built into the interpreter (``itertools``) has no
+            # source root to authenticate; the pin-authenticated interpreter's
+            # own object is the key, exactly as for an artifact-absent module.
+            from .language_owned_c_export import floor_interpreter_module_export
+
+            call_floor = floor_interpreter_module_export(receipt.target_symbol)
+            if call_floor is not None:
+                context.language_owned_call_floors[
+                    _language_owned_call_site_key(
+                        raw_site.get("sourceCid")
+                        or getattr(receipt, "source_cid", None),
+                        raw_site,
+                    )
+                ] = call_floor
+                continue
             _install_opaque_call_obligation(
                 context,
                 call,
