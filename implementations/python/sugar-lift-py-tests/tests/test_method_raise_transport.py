@@ -51,6 +51,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call
 from sugar_source_tree.tree import SourceFile
+from test_method_call_application_twins import bound_method_call_at
 
 CODEX3 = (
     "codex-3 exceptional method-raise transport: named halt must cross the "
@@ -100,13 +101,9 @@ def _method_callsite(source: str, attr: str = "boom") -> CallSiteValue:
         and node.func.attr == attr
     )
     assert len(calls) >= 1, (attr, source)
-    constructed = calls[-1].sugar().desugar(None)
-    assert isinstance(constructed, Complete), (
-        f"{CODEX3}: bound-method Call must construct Complete(CallSiteValue), "
-        f"got {type(constructed).__name__}"
-    )
-    assert isinstance(constructed.value, CallSiteValue), constructed.value
-    site = constructed.value
+    # #7756: the Call applies the method body itself; the binding under test
+    # is that call as bound, before the application.
+    site = bound_method_call_at(calls[-1])
     assert site.parameters[0] == "self"
     assert isinstance(site.arg_values[0], ObjectValue)
     return site

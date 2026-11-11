@@ -63,7 +63,7 @@ def _method_result(source: str):
     call = _returned(source)
     assert isinstance(call, CallSiteValue)
     assert call.target_name == "Box.pick"
-    outcome = call.reduce_source_outcome(None)
+    outcome = call.retained_source_completion_outcome()
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, BlockValue)
     (returned,) = outcome.value.statements

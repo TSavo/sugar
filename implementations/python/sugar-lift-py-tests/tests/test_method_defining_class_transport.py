@@ -57,7 +57,7 @@ def test_inherited_method_binds_lexical_class_not_runtime_receiver_class() -> No
     assert isinstance(projected, Complete)
     assert isinstance(projected.value, CallSiteValue)
     assert projected.value.lexical_defining_class is base
-    reduced = projected.value.reduce_source_outcome(context)
+    reduced = projected.value.retained_source_completion_outcome()
     assert isinstance(reduced, Complete)
     assert reduced.value.statements[0].value is base
 
@@ -79,5 +79,5 @@ def test_overriding_method_uses_derived_defining_class() -> None:
     ).value
 
     assert projected.lexical_defining_class is derived_value
-    reduced = projected.reduce_source_outcome(context)
+    reduced = projected.retained_source_completion_outcome()
     assert reduced.value.statements[0].value is derived_value

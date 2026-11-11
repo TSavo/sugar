@@ -50,6 +50,7 @@ from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, BinOp, Call, Compare, Name
 from sugar_source_tree.tree import SourceFile
+from test_method_call_application_twins import bound_method_call_at
 
 # ---------------------------------------------------------------------------
 # Owner named on every red face (codex-3 general producer)
@@ -147,10 +148,15 @@ def _attr_call_outcome(source: str, attr: str):
 
 
 def _attr_callsite(source: str, attr: str) -> CallSiteValue:
-    outcome = _attr_call_outcome(source, attr)
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    return outcome.value
+    """The bound method call before the Call applies it (#7756)."""
+    tree = _tree(source)
+    calls = tuple(
+        n
+        for n in tree.nodes()
+        if isinstance(n, Call) and isinstance(n.func, Attribute) and n.func.attr == attr
+    )
+    assert calls, (attr, source)
+    return bound_method_call_at(calls[-1])
 
 
 def _identity(name: str):

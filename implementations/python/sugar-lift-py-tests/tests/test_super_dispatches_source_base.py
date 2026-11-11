@@ -63,7 +63,7 @@ def test_super_dispatches_into_source_defined_base_init() -> None:
     # class after Base, not restart from Derived).
     assert call.lexical_defining_class is base
     assert call.arg_values[0] is receiver
-    reduced = call.reduce_source_outcome(context)
+    reduced = call.retained_source_completion_outcome()
     assert isinstance(reduced, Complete)
 
 
@@ -136,7 +136,7 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
     assert isinstance(projected, Complete)
     call = projected.value
     assert isinstance(call, CallSiteValue)
-    reduced = call.reduce_source_outcome(context)
+    reduced = call.retained_source_completion_outcome()
     if isinstance(reduced, ExitSet):
         completed = [
             face.value
