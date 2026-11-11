@@ -160,8 +160,11 @@ class AttributeSugar(ConstructedTermSugar):
                         use_site.get("endCol"),
                     )
                     != (span.start_line, span.start_col, span.end_line, span.end_col)
-                    or not exported_path
-                    or exported_path[-1] != name
+                    or (exported_path and exported_path[-1] != name)
+                    or (
+                        not exported_path
+                        and _submodule_terminus_module(receipt, name) is None
+                    )
                 ):
                     from sugar_source_tree.panic import BackendDefect
 
@@ -183,6 +186,26 @@ class AttributeSugar(ConstructedTermSugar):
                         requested="authenticated python: import target symbol",
                         fix="preserve the receipt targetSymbol unchanged",
                     )
+                if not exported_path:
+                    # ``import a.b`` binds ``a``; the occurrence ``a.b`` is the
+                    # module ``a.b`` itself, not a member of it (#7626).  The
+                    # receipt testifies that module, so the read completes as
+                    # its structural module coordinate; ``a.b.x`` keeps its own
+                    # member receipt at its own occurrence.
+                    from sugar_lift_py_tests.floor.symbolic_value import (
+                        SymbolicValue,
+                    )
+                    from sugar_lift_py_tests.ir import ctor, str_const
+                    from sugar_lift_py_tests.outcome import Complete
+
+                    return Complete(
+                        SymbolicValue(
+                            ctor(
+                                "python:module",
+                                (str_const(target.removeprefix("python:")),),
+                            )
+                        )
+                    )
                 from sugar_lift_py_tests.sugar.import_member_sugar import (
                     ImportMemberSugar,
                 )
@@ -202,6 +225,33 @@ class AttributeSugar(ConstructedTermSugar):
 
 
 _ATTRIBUTE_RESULT = "python:attribute_result"
+
+
+def _submodule_terminus_module(receipt, name: str) -> str | None:
+    """The module an ``import a.b`` receipt names at the Attribute ``a.b``.
+
+    The lexical pass enrolls the occurrence that spells a submodule binding's
+    whole module with an empty member path (#7626).  That receipt owns an
+    Attribute ``.name`` only when its binding is a plain ``import`` (no
+    from-import member) of a dotted module whose head is the bound local and
+    whose last segment is ``name``.  Anything else is ``None``.
+    """
+    binding = receipt.import_binding.value
+    target = binding.get("target")
+    if not isinstance(target, dict) or target.get("exportedPath") != []:
+        return None
+    symbol = receipt.target_symbol
+    if not symbol.startswith("python:"):
+        return None
+    module = symbol.removeprefix("python:")
+    segments = module.split(".")
+    if (
+        len(segments) < 2
+        or segments[0] != binding.get("localSlot")
+        or segments[-1] != name
+    ):
+        return None
+    return module
 
 
 def _unknown_receiver_attribute(receiver, name: str, site):
