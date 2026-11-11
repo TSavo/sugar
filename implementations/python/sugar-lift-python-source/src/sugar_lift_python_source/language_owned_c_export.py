@@ -52,6 +52,42 @@ def floor_artifact_module_absent_export(resolved):
     return None
 
 
+def floor_interpreter_module_callable(target_symbol):
+    """Floor ``python:<module>.<name>`` when ``<module>`` is compiled in.
+
+    A module in ``sys.builtin_module_names`` (``sys``) has no source file, so
+    no artifact authenticates it and no export door can be asked. The running,
+    pin-authenticated interpreter's own object is the key: when ``<name>`` on
+    that module is a builtin function the module itself owns, it is floored as
+    a C-extension callable (completes with an opaque result or raises
+    undetermined). A stdlib extension module has a file and its own artifact
+    path, a deeper attribute chain is not a module export, and any other
+    object keeps the gap.
+    """
+    import sys
+
+    if not isinstance(target_symbol, str) or not target_symbol.startswith("python:"):
+        return None
+    parts = target_symbol.removeprefix("python:").split(".")
+    if len(parts) != 2:
+        return None
+    module_name, exported_name = parts
+    if module_name not in sys.builtin_module_names:
+        return None
+    try:
+        module = importlib.import_module(module_name)
+        obj = getattr(module, exported_name)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+    if not isinstance(obj, types.BuiltinFunctionType):
+        return None
+    if getattr(obj, "__self__", None) is not module:
+        return None
+    return LanguageOwnedCExtensionCallableValue(
+        module_name=module_name, exported_name=exported_name
+    )
+
+
 def _floor_ambiguous_c_export(resolved):
     """An export the source binds twice, decided by the interpreter: a C builtin.
 

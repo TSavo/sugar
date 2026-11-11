@@ -40,7 +40,12 @@ class _ReducedBlock:
     can_fall_through: bool
     fall_through: tuple
     transforms: tuple = ()
-    context: object = dataclass_field(default=None, compare=False, repr=False)
+    # The live reducer context the block was reduced under: a lookup aid a
+    # continuation reads bindings OUT of, never testimony (it is already out of
+    # equality). ``entries`` and ``fall_through`` are the block's content.
+    context: object = dataclass_field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
 
 
 def _extend_receiver_store_scope(value, ctx):
