@@ -3107,6 +3107,7 @@ def _publish_nested_same_module_manager_uses(
         # factory: the same route a module lift takes, fed by this module's
         # authenticated import value receipts.
         from .manager_summary_derivation import (
+            _populate_call_bound_module_head_uses,
             _populate_same_module_factory_manager_uses,
         )
 
@@ -3122,13 +3123,25 @@ def _publish_nested_same_module_manager_uses(
                     site["endCol"],
                 )
             ] = receipt
+        graphs = _bind_dependency_graphs(
+            session, {resolved.module_name.split(".", 1)[0]: graph}
+        )
         _populate_same_module_factory_manager_uses(
             live_context,
             uses,
             value_receipts_by_site,
-            graphs=_bind_dependency_graphs(
-                session, {resolved.module_name.split(".", 1)[0]: graph}
-            ),
+            graphs=graphs,
+            session=session,
+            distribution_index=None,
+        )
+        # ``zstd = import_optional_dependency(...)`` then ``with
+        # zstd.ZstdDecompressor().stream_reader(b"")`` in the frame's own
+        # body (#7742): the same reader a module lift runs.
+        _populate_call_bound_module_head_uses(
+            function,
+            live_context,
+            value_receipts_by_site,
+            graphs=graphs,
             session=session,
             distribution_index=None,
         )

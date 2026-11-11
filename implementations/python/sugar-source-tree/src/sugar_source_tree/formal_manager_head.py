@@ -186,6 +186,85 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
     return ast.unparse(expr)
 
 
+def call_bound_local_manager_head(source: str, start_line: int, start_col: int):
+    """``(binder call (line, col), first attribute)`` for a call-bound local head.
+
+    The head is a chain (attribute reads, constant-argument calls, operands on
+    the outermost call) whose root is a local of the innermost function around
+    the ``with`` -- not a parameter, not declared ``global``/``nonlocal`` --
+    whose only binding in that function is one top-level statement ``local =
+    <call>``, lexically before the ``with``, and the chain's first step on the
+    local is an attribute read.  Top-level statements run in order, so at the
+    ``with`` the local holds a value that call returned; which value is for the
+    caller to decide from the call (#7742: ``zstd =
+    import_optional_dependency("zstandard", errors="ignore")`` then ``with
+    zstd.ZstdDecompressor().stream_reader(b"")``).  Anything else returns
+    ``None``.
+    """
+    tree = parsed_module(source)
+    if tree is None:
+        return None
+    found = _with_item_expr(tree, start_line, start_col)
+    if found is None:
+        return None
+    function, expr = found
+    root = _chain_root(expr, operands_admitted=True)
+    if root is None:
+        return None
+    first = _first_attribute_on(expr, root)
+    if first is None:
+        return None
+    arguments = function.args
+    parameters = {
+        arg.arg
+        for arg in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *(a for a in (arguments.vararg, arguments.kwarg) if a is not None),
+        )
+    }
+    if root in parameters:
+        return None
+    for node in ast.walk(function):
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and root in node.names:
+            return None
+    binders = [
+        statement
+        for statement in function.body
+        if name_bound_anywhere(statement, root)
+    ]
+    if len(binders) != 1:
+        return None
+    statement = binders[0]
+    if not (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == root
+        and isinstance(statement.value, ast.Call)
+    ):
+        return None
+    if statement.end_lineno >= expr.lineno:
+        return None
+    call = statement.value
+    return (call.lineno, call.col_offset), first
+
+
+def _first_attribute_on(expr, root: str):
+    """The attribute the chain reads directly on its root name, else None."""
+    node = expr
+    while True:
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == root:
+                return node.attr
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        else:
+            return None
+
+
 def _formal_enter_result_binder(source: str, statement, root: str, expr) -> bool:
     """``statement`` binds ``root`` only as a formal-rooted item's enter result."""
     binding_items = [

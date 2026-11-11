@@ -200,6 +200,63 @@ def pinned_absent_top_level_module(name) -> bool:
         return False
 
 
+def pinned_present_top_level_module(name) -> bool:
+    """True iff the pinned interpreter's import system finds ``name``.
+
+    The positive twin of :func:`pinned_absent_top_level_module`, asked the same
+    way (``sys.modules`` then ``importlib.util.find_spec`` on a top-level
+    absolute name: nothing is imported).  A failed question is neither answer.
+    """
+    import importlib.util
+    import sys
+
+    if not isinstance(name, str) or not name.isidentifier():
+        return False
+    if name in sys.modules:
+        return sys.modules[name] is not None
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def imported_module_value(name: str):
+    """The value an import of the top-level module ``name`` evaluates to.
+
+    ``import name`` binds, and ``importlib.import_module(name)`` returns, the
+    same object: ``sys.modules[name]`` once ``_bootstrap._gcd_import`` has
+    loaded it.  That object is named by its structural module coordinate
+    ``python:module(<name>)`` (the coordinate an ``import a.b`` occurrence reads
+    as, #7726); nothing about its members is claimed.
+    """
+    from .floor.symbolic_value import SymbolicValue
+    from .ir import ctor, str_const
+
+    return SymbolicValue(ctor("python:module", (str_const(name),)))
+
+
+def module_value_name(value):
+    """``<name>`` when ``value`` is exactly ``python:module(<name>)``, else None.
+
+    Only that structural coordinate is a module here: any other value (an
+    opaque call result, a string, ``None``) is not read as one.
+    """
+    from .floor.symbolic_value import SymbolicValue
+    from .ir import _ConstStr, _Ctor
+
+    if type(value) is not SymbolicValue:
+        return None
+    term = value.term
+    if (
+        type(term) is not _Ctor
+        or term.name != "python:module"
+        or len(term.args) != 1
+        or type(term.args[0]) is not _ConstStr
+    ):
+        return None
+    return term.args[0].value
+
+
 def cpython_cited_fold(unprojected, arg_values, keyword_names, site=None):
     """A stdlib call with no projected body whose result CPython's source decides.
 
@@ -236,12 +293,18 @@ def cpython_cited_fold(unprojected, arg_values, keyword_names, site=None):
         # has it, CPython raises ``ModuleNotFoundError`` and nothing else
         # runs; ``pandas.compat._optional.import_optional_dependency`` reads
         # that as "not installed" and returns ``None`` (#7665: zstandard).
-        # A module that IS present keeps the two-faced off-population call:
-        # importing it runs its body, which was not looked at.
+        # A module that IS present keeps the two-faced call -- importing it
+        # runs its body, which was not looked at, so it may raise anything --
+        # but its completed face returns that module: ``sys.modules[name]``,
+        # the very object ``import name`` binds (#7742).
         if keyword_names or len(arg_values) != 1 or site is None:
             return None
         name = _constant_str(arg_values[0])
-        if name is None or not pinned_absent_top_level_module(name):
+        if name is None:
+            return None
+        if pinned_present_top_level_module(name):
+            return unprojected.faces(imported_module_value(name), site)
+        if not pinned_absent_top_level_module(name):
             return None
         from .floor.ground_exit import ground_exceptional_exit
 
