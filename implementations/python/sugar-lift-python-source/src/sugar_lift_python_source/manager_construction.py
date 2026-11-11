@@ -3165,14 +3165,16 @@ def _resolve_source_visible_frame_uncached(
     # definition before constructing its frame. Identity operands bind via
     # authenticated coordinates on this unit; unrelated sibling definitions
     # never acquire authority merely by sharing the module source.
-    _seat_import_value_use_receipts(
-        source_file=source_file,
-        module=module,
-        target=target,
-        session=session,
-        context=context,
-        dependency_graphs=dependency_graphs,
-    )
+    def seat_target_value_uses() -> None:
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=target,
+            session=session,
+            context=context,
+            dependency_graphs=dependency_graphs,
+        )
+
     # Nested method export: project its ordinary frame without requiring the
     # enclosing class to be the export target. Leading ``self`` is the bound
     # instance for ``name = Class()`` callables and is not supplied by the
@@ -3182,6 +3184,7 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
+        seat_target_value_uses()
         _publish_nested_same_module_manager_uses(
             target,
             context,
@@ -3464,6 +3467,15 @@ def _resolve_source_visible_frame_uncached(
             continue
         imported_frame, _ = projected
         _install_source_call_frame(context, call, imported_frame)
+
+    # The target's value-uses are seated only now, after the call door above
+    # has classified every imported Attribute call: the callee of such a call
+    # is one occurrence with two receipts (call and value), and the call
+    # coordinate owns it.  Seated before, the value door refused a callee
+    # (``os.environ.get`` in ``pandas._testing.set_timezone``) that the call
+    # door cites opaque a moment later (#7723).  Nothing above builds sugar
+    # on this unit; it reads receipts and projects other frames.
+    seat_target_value_uses()
 
     definition_names = {item.name for item in definitions}
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
@@ -5313,11 +5325,17 @@ def _seat_import_value_use_receipts(
                 # module-wide refusal.
                 seat_receipt()
                 continue
-            if imported.kind == "ambiguous-static-export" and exact_parked_callee():
+            if exact_parked_callee():
                 # The exact call receipt already owns this callable occurrence
-                # and remains parked/loud at the full Call coordinate.  Its
-                # duplicate Attribute value receipt is deliberately unseated;
-                # no candidate definition or runtime branch is selected.
+                # and remains parked/loud at the full Call coordinate: the call
+                # door cited it opaque under its own resolution kind (an
+                # ambiguous export, or ``os.environ.get`` /
+                # ``parser_defaults.items`` whose member is reached through a
+                # module-level instance, ``target-outside-binding``, cited
+                # ``call-target-source-absent``).  The callee's duplicate
+                # Attribute value receipt is the same occurrence: it is
+                # deliberately unseated and not refused a second time; no
+                # candidate definition or runtime branch is selected (#7723).
                 continue
             if imported.kind == "ambiguous-static-export":
                 # Ambiguity at a non-callee value site cannot borrow a nearby
