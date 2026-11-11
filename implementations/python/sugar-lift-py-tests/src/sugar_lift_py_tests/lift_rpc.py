@@ -507,6 +507,12 @@ def open_source_file_for_construction(
                 source_workspace_root=source_workspace_root,
                 distribution=distribution,
             )
+        except (AttributeError, NameError):
+            # A lookup defect in the lifter's own code (``call.func.id`` on an
+            # Attribute callee) is not a populate residual.  Banking it emptied
+            # the manager's derived resource refs with no refusal anywhere a
+            # consumer reads; it propagates by its own name.
+            raise
         except Exception as populate_gap:  # noqa: BLE001 — floor law; see above
             _record_populate_path_residual(source_file, populate_gap)
     return source_file
