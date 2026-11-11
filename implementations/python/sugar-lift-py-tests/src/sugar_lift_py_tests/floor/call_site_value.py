@@ -370,7 +370,11 @@ class CallSiteValue(FloorValue):
             _term_cycle_key(self.term),
         )
         if self._retained_source_completion is not None:
-            coordinate = (*coordinate, self._retained_source_completion)
+            coordinate = (
+                *coordinate,
+                self._retained_source_completion,
+                _term_cycle_key(self.result_term()),
+            )
 
         def _on_die(ref: weakref.ReferenceType, *, _cid: int = cid) -> None:
             current = _CALLSITE_COORDINATE.get(_cid)
@@ -414,7 +418,38 @@ class CallSiteValue(FloorValue):
 
     def to_term(self, *, owner: str):
         del owner
-        return self.term
+        return self.result_term()
+
+    def result_term(self):
+        """The value ONE evaluation of this call returned.
+
+        ``term`` is the application ``call:<target>(<args>)``: the bridge
+        coordinate contract composition and cycle keys use.  As a value it
+        claims every evaluation of that application returns the same object
+        -- ``(g(), g())`` two equal results, a loop's second pass the first
+        pass's -- which nothing testified.  A call whose source body this
+        producer reduced is ``python:call_result(<application>,
+        <occurrence>)``, keyed on the site and the dynamic occurrence path it
+        was evaluated under; the body's post is applied at that term
+        (:meth:`derived_equality_residue`).  Calls the producer did not reduce
+        keep the application (their own faces mint the result, #7585).
+
+        A body that returns one ground immutable scalar (an int, str, bytes,
+        bool or None literal) returns that value on every evaluation: the
+        result stays ground."""
+        retained = self._retained_source_completion
+        if type(retained) is not _RetainedSourceCompletionV1 or self.site is None:
+            return self.term
+        ground = _ground_scalar_return(retained.value)
+        if ground is not None:
+            return ground
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+
+        return ctor(
+            "python:call_result",
+            (self.term, str_const(occurrence_key(self.site, self.occurrence_path))),
+        )
 
     def denotes_a_value(self) -> bool:
         # A call's RESULT is a value; what it is equal to is undecided until
@@ -482,7 +517,9 @@ class CallSiteValue(FloorValue):
                 ),
             )
         return Complete(
-            PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
+            PredicateValue(
+                py_truthy(self.result_term()), site, operand_callsites=(self,)
+            )
         )
 
     def _construct_decidable_truth(self, site):
@@ -524,12 +561,12 @@ class CallSiteValue(FloorValue):
     def bitwise_invert(self, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-        return SymbolicValue(self.term).bitwise_invert(site)
+        return SymbolicValue(self.result_term()).bitwise_invert(site)
 
     def unary_minus(self, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-        return SymbolicValue(self.term).unary_minus(site)
+        return SymbolicValue(self.result_term()).unary_minus(site)
 
     def unary_plus(self, site):
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.unary_plus")
@@ -546,7 +583,7 @@ class CallSiteValue(FloorValue):
         """Cite ``abs(call(...))`` without claiming the call's concrete value."""
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-        return SymbolicValue(self.term).absolute(site)
+        return SymbolicValue(self.result_term()).absolute(site)
 
     def python_isinstance(self, type_name: str, type_term, site):
         """``type(x)`` always returns a type object.
@@ -995,7 +1032,7 @@ class CallSiteValue(FloorValue):
             return None
         if not _is_ground_value_term(rhs):
             return None
-        return eq(self.term, rhs)
+        return eq(self.result_term(), rhs)
 
     def linear_method_call(self, method_name: str, args: tuple, site):
         """Name the next link in a timeless receiver-method rewrite."""
@@ -1306,7 +1343,7 @@ class CallSiteValue(FloorValue):
         )
         if floor is not None:
             return operation.submit(floor, ctx)
-        outcome = operation.submit(SymbolicValue(self.term), ctx)
+        outcome = operation.submit(SymbolicValue(self.result_term()), ctx)
         return _opaque_subscript_faces(outcome, getattr(operation, "blame", None))
 
     def project_sequence_with(self, operation, ctx):
@@ -1353,7 +1390,9 @@ class CallSiteValue(FloorValue):
             ctx,
             owner=f"{operation.owner} {owner_suffix}",
         )
-        receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
+        receiver: FloorValue = (
+            floor if floor is not None else SymbolicValue(self.result_term())
+        )
         return perform_operation(
             owner=operation.owner,
             blame=operation.blame,
@@ -2059,3 +2098,27 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
             ),
         )
     ).normalize()
+
+
+def _ground_scalar_return(value):
+    """The term of a sole returned ground immutable scalar, else None."""
+    from sugar_lift_py_tests.effect import is_lift_time_decidable
+    from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    projected = _project_authenticated_source_return(value)
+    if type(projected) not in (
+        TermValue,
+        StringValue,
+        BytesValue,
+        NoneValue,
+        TrueBoolLiteralSugar,
+        FalseBoolLiteralSugar,
+    ):
+        return None
+    term = projected.to_term(owner="CallSiteValue ground return")
+    return term if is_lift_time_decidable(term) else None
