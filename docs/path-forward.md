@@ -4,6 +4,24 @@
 **Scope:** the Python lifter on the pinned pandas 3.0.3 corpus (1421 files). Nothing else is on this plan.
 **Replaces:** plan v1 of 2026-08-01 (Phases 0 to 4). See "What changed" at the end.
 
+## The nine steps: the one way a Python file becomes a proof
+
+Confirmed by the project owner, 2026-11-11: "It's a good umbrella, steps one through nine. That's what we're after. Everything that falls outside of steps one through nine is the cancer."
+
+1. **Start the kit.** `sugar mint` drives the Python kit through one RPC method, `sugar.enumerate`.
+2. **List the files** as content-addressed mementos. No parsing.
+3. **Resolve imports before construction.** The kit lists the imported names it needs contracts for. The linker answers each from the proofs in `.sugar/imports/` (a contract with its CIDs and return term, or a named gap) and binds the table back into the kit.
+4. **Parse into the node tree.** One node class per construct.
+5. **Construct.** `node.sugar()`: each node builds its sugar from its children's, or refuses by name.
+6. **Reduce.** `sugar.desugar(ctx)` to outcomes (completions and halts) holding values. A function body gives its universe (contract rows). An assert gives a fact. A call stands as the coordinate `call:<name>(<arg terms>)`, or substitutes actuals into a bound contract's return term.
+7. **Emit edges.** The caller's claim, candidate target contracts, and a call edge with no target contract yet.
+8. **Package** the rows into a content-addressed `.proof`.
+9. **Prove.** Compile, conjoin with imported proofs on the shared coordinates, and the solver decides.
+
+One way means: open once, construct once, reduce once, and every row is read off that one reduction.
+
+Every plan row and every open issue below carries the step it belongs to. Anything the code does that belongs to no step is a deletion.
+
 ## Read this first: what the finish line below does and does not show
 
 Written 2026-11-11. The "Done" recorded below on 2026-11-09 stands as a record of what was measured. It is not the finish.
@@ -59,6 +77,7 @@ These were campaign-wide criteria in plan v1. They are now conditions on each pu
 Anything that does not shrink the worklist or run the final pass is off plan. Say **OFF-PLAN** before starting it. That includes:
 
 - Java and Rust work.
+- Anything the lifter does that belongs to none of the nine steps above. That is not work to plan; it is a deletion.
 - Example polish and showcase output. (Examples that mint and prove, such as `examples/python-base64-federation`, are not off plan: they are the acceptance test. Listing all examples here on 2026-11-09 was wrong.)
 - CI and runner plumbing.
 - New instruments, auditors or re-ranking exercises.
