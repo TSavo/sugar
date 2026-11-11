@@ -121,11 +121,23 @@ class LanguageOwnedContextVarValue(FloorValue):
             from sugar_lift_py_tests.occurrence import occurrence_key
 
             site = getattr(operation, "blame", None)
+            if site is None:
+                # The read is keyed by where it happens; with no site two
+                # reads would share one term and be claimed equal.
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=f"python:contextvars.ContextVar({self.name!r}).get",
+                    owner="LanguageOwnedContextVarValue.get",
+                    observed="ContextVar.get() with no call site",
+                    requested="the call site that keys this read's occurrence",
+                    fix="carry the call site onto the method application",
+                )
             return Complete(
                 LanguageOwnedContextVarReadValue(
                     variable_name=self.name,
                     site=site,
-                    occurrence=occurrence_key(site) if site is not None else None,
+                    occurrence=occurrence_key(site),
                 )
             )
         if operation.name == "reset" and not operation.keyword_names and len(operation.arguments) == 1:
@@ -204,7 +216,10 @@ class LanguageOwnedContextVarMethodValue(FloorValue):
             name=self.method,
             arguments=getattr(operation, "arguments", ()),
             keyword_names=getattr(operation, "keyword_names", ()),
-            blame=getattr(operation, "blame", None) or self.site,
+            # A CallableApplication carries its call site as ``site``.
+            blame=getattr(operation, "blame", None)
+            or getattr(operation, "site", None)
+            or self.site,
         )
         return self.variable.call_method_with(method_op, ctx)
 
