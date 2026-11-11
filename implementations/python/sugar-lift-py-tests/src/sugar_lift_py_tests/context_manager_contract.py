@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import re
 from typing import Any, Optional, Sequence, TYPE_CHECKING
@@ -331,13 +331,36 @@ class NoDefaultV1:
     kind: str = "no-default"
 
 
+def _seal_default_term(default) -> None:
+    """Seal a default's exact term under its content CID, at construction.
+
+    A default's ``value`` is its wire term (``{"kind": "ctor", "name":
+    "None", "args": []}``), so it carries JSON lists.  The term is testimony:
+    a ``with`` whose manager signature has defaulted parameters presents it
+    (``np.errstate(all="ignore")``, ``pandas/core/series.py:3345``; #7730).
+    Constructed-value testimony names a CID-owning value by its validated
+    ``preimage``/``cid`` pair; the CID is fixed here, when the default is
+    minted, so a term changed afterwards no longer reproduces it and is
+    refused rather than re-authenticated.
+    """
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    object.__setattr__(default, "cid", cid_of_json(default.preimage))
+
+
 @dataclass(frozen=True)
 class LiteralDefaultV1:
     value: Any
     kind: str = "literal-default"
+    cid: str = field(init=False, repr=False, compare=False)
+
+    @property
+    def preimage(self) -> dict:
+        return {"kind": self.kind, "value": self.value}
 
     def __post_init__(self) -> None:
         _validate_literal_default(self.value)
+        _seal_default_term(self)
 
 
 @dataclass(frozen=True)
@@ -351,12 +374,18 @@ class ConstructedDefaultV1:
 
     value: Any
     kind: str = "constructed-default"
+    cid: str = field(init=False, repr=False, compare=False)
+
+    @property
+    def preimage(self) -> dict:
+        return {"kind": self.kind, "value": self.value}
 
     def __post_init__(self) -> None:
         if not isinstance(self.value, dict) or "kind" not in self.value:
             raise ContextManagerContractError(
                 "constructed default must be an exact constructed term"
             )
+        _seal_default_term(self)
 
 
 @dataclass(frozen=True)
