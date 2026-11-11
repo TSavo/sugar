@@ -3223,7 +3223,32 @@ def _resolve_source_visible_frame_uncached(
                 # function stays parked (see the value-call-target twins).
                 if name == _classmethod_receiver_name(function):
                     continue
-                blocked.append((call, name, "value-call-target"))
+                imported = _dominating_local_import_target(function, call)
+                if imported is None:
+                    blocked.append((call, name, "value-call-target"))
+                    continue
+                outcome = _resolve_local_import_call_frame(
+                    imported, resolved=resolved, graph=graph, session=session
+                )
+                if isinstance(outcome, _ExternalCallTargetGap):
+                    blocked.append((call, name, outcome.kind))
+                    continue
+                from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+                if isinstance(outcome, FloorValue):
+                    coordinate = _call_coordinate(call)
+                    context.language_owned_call_floors[
+                        (
+                            "call-site",
+                            coordinate.source_cid,
+                            coordinate.start_line,
+                            coordinate.start_col,
+                            coordinate.end_line,
+                            coordinate.end_col,
+                        )
+                    ] = outcome
+                    continue
+                _install_source_call_frame(context, call, outcome)
                 continue
             declined = external_opaque.get(name)
             if declined is None:
@@ -3900,6 +3925,57 @@ def _resolve_external_call_frame(
     return frame
 
 
+def _resolve_local_import_call_frame(
+    imported: tuple[str, str],
+    *,
+    resolved: ResolvedPythonObjectV1,
+    graph: DependencyArtifactGraph,
+    session: SourceResolutionSession,
+) -> object | _ExternalCallTargetGap:
+    """Project a function-local ``from m import g`` callee through the door.
+
+    The same static export door as a module-level import, entered at ``m``
+    instead of at this module's top-level binding: ``m`` in this artifact,
+    otherwise in its own authenticated artifact (the stdlib included), with
+    the language-owned C floor for an interpreter-owned export. The decline
+    kinds are the module-level ones.
+    """
+    from .dependency_artifact import ResolvedPythonObjectV1 as _Resolved
+
+    module_name, member = imported
+    callee = _resolve_export(
+        graph,
+        resolved.import_binding_cid,
+        module_name,
+        member,
+        (),
+        frozenset(),
+        session=session,
+    )
+    if not isinstance(callee, _Resolved):
+        from .language_owned_c_export import floor_artifact_module_absent_export
+
+        floored = floor_artifact_module_absent_export(callee)
+        if floored is not None:
+            return floored
+        hopped = _resolve_in_owning_artifact(callee, session=session)
+        if hopped is None:
+            return _ExternalCallTargetGap("call-target-source-absent")
+        callee, graph = hopped
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        projected = resolve_source_visible_frame(callee, graph=graph, session=session)
+    except (SugarNotWritten, TypeError, SourceCallBindingGap):
+        return _ExternalCallTargetGap("call-target-export-unresolved")
+    if isinstance(projected, ManagerConstructionGapV1):
+        if projected.kind in ("call-graph-cycle", "call-target-off-population"):
+            return _ExternalCallTargetGap(projected.kind)
+        return _ExternalCallTargetGap("call-target-export-unresolved")
+    frame, _target = projected
+    return frame
+
+
 def _resolve_in_owning_artifact(gap, *, session: SourceResolutionSession):
     """Follow ``from m import name`` into ``m``'s own authenticated artifact.
 
@@ -4247,7 +4323,9 @@ def _scanned_definitions(definition: Node) -> tuple[FunctionDef, ...]:
     return ()
 
 
-def _frame_bound_names(function: FunctionDef) -> frozenset[str]:
+def _frame_bound_names(
+    function: FunctionDef, *, include_imports: bool = True
+) -> frozenset[str]:
     """Every name the enclosing definition binds itself: parameters and locals.
 
     A callee bound HERE is a runtime value, not a symbol.  The set is read off
@@ -4293,11 +4371,79 @@ def _frame_bound_names(function: FunctionDef) -> frozenset[str]:
         elif isinstance(node, ExceptHandler):
             if node.name:
                 names.add(node.name)
-        elif isinstance(node, (Import, ImportFrom)):
+        elif isinstance(node, (Import, ImportFrom)) and include_imports:
             for alias in node.names:
                 names.add(alias.asname or alias.name.split(".", 1)[0])
         stack.extend(child for _, _, child in node.children())
     return frozenset(names)
+
+
+def _dominating_local_import_target(
+    function: FunctionDef, call: Call
+) -> tuple[str, str] | None:
+    """``(module, member)`` when ``call``'s callee is a function-local import.
+
+    ``def f(): from m import g; return g()`` binds ``g`` in the frame, but
+    the binding is not a runtime value of unknown origin: it is the static
+    export ``m.g``. The callee is that export exactly when
+
+    - every binder of the name in this frame is an absolute
+      ``from m import g [as name]`` naming the same ``(m, g)`` (no parameter,
+      assignment, loop, with, except or nested-definition binder), and
+    - one such import is an earlier statement in a block that encloses the
+      call, so every execution reaching the call has executed the import.
+
+    Otherwise ``None``: the name stays a frame-bound value.
+    """
+    name = call.func.id
+    if name in _frame_bound_names(function, include_imports=False):
+        return None
+    targets: set[tuple[str, str]] = set()
+    parents: dict[int, tuple[Node, str, int]] = {}
+    stack: list[Node] = []
+    for index, statement in enumerate(function.body):
+        parents[id(statement)] = (function, "body", index)
+        stack.append(statement)
+    imports: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            continue
+        if isinstance(node, Import):
+            for alias in node.names:
+                if (alias.asname or alias.name.split(".", 1)[0]) == name:
+                    return None
+        if isinstance(node, ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) != name:
+                    continue
+                if node.level or not node.module or alias.name == "*":
+                    return None
+                targets.add((node.module, alias.name))
+                imports.add(id(node))
+        for field_name, index, child in node.children():
+            parents[id(child)] = (node, field_name, index)
+            stack.append(child)
+    if len(targets) != 1:
+        return None
+    current: Node = call
+    while id(current) in parents:
+        parent, field_name, index = parents[id(current)]
+        siblings = (
+            function.body
+            if parent is function
+            else [
+                child
+                for child_field, _, child in parent.children()
+                if child_field == field_name
+            ]
+        )
+        if isinstance(index, int) and any(
+            id(sibling) in imports for sibling in list(siblings)[:index]
+        ):
+            return next(iter(targets))
+        current = parent
+    return None
 
 
 def _local_named_calls(function: FunctionDef):
