@@ -308,6 +308,36 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
     ).normalize()
 
 
+_ORDERING_BY_OPERATOR: dict[str, tuple[str, str]] = {
+    "<": ("Lt", "lt"),
+    "<=": ("LtE", "le"),
+    ">": ("Gt", "gt"),
+    ">=": ("GtE", "ge"),
+}
+
+
+def undecided_ordering_faces(left, right, site, *, operator: str):
+    """Two faces for ``left <op> right`` whose operand runtime types are undecided.
+
+    The same law as undecided ``==``: the rich method (and its reflection)
+    Python selects is one this frame did not look at, so the comparison
+    completes with the undecided ``py.lt/le/gt/ge`` predicate only under
+    ``python:compare.completes(python:compare(op, site))`` and halts with an
+    ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
+    complement.  Nothing is folded and no ``TypeError`` is invented.
+    """
+    from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+    op_kind, atom_operator = _ORDERING_BY_OPERATOR[operator]
+    predicate = PredicateValue(
+        resolve_comparison_atom(atom_operator, left, right, owner=str(site)),
+        site,
+        operand_callsites=(*left.callsites(), *right.callsites()),
+    )
+    return undecided_dispatch_faces(predicate, site, op_kind)
+
+
 @dataclass(frozen=True)
 class ComparisonOpSugar(ConstructedTermSugar):
     op_kind: str
