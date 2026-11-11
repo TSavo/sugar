@@ -296,6 +296,17 @@ fn strong_tier_refusal(name: &str, reason: impl std::fmt::Display) -> CompileErr
     CompileError::MalformedIr(format!("{name}: {reason}; refusing rather than weakening"))
 }
 
+/// An n-ary connective in SMT-LIB. The empty conjunction is the IR's encoding of
+/// truth (and the empty disjunction of falsity); SMT-LIB has no nullary `and`/`or`
+/// application, so they render as the constants they denote.
+fn connective_smt(name: &str, unit: &str, operands: Vec<String>) -> String {
+    if operands.is_empty() {
+        unit.to_string()
+    } else {
+        format!("({} {})", name, operands.join(" "))
+    }
+}
+
 pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
     match formula {
         Formula::Atomic { name, args } => {
@@ -333,12 +344,12 @@ pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
         Formula::And { operands } => {
             let ops_str: Result<Vec<String>, CompileError> =
                 operands.iter().map(emit_formula).collect();
-            Ok(format!("({} {})", "and", ops_str?.join(" ")))
+            Ok(connective_smt("and", "true", ops_str?))
         }
         Formula::Or { operands } => {
             let ops_str: Result<Vec<String>, CompileError> =
                 operands.iter().map(emit_formula).collect();
-            Ok(format!("({} {})", "or", ops_str?.join(" ")))
+            Ok(connective_smt("or", "false", ops_str?))
         }
         Formula::Not { operands } => Ok(format!("(not {})", emit_formula(&operands[0])?)),
         Formula::Implies { operands } => Ok(format!(
@@ -1844,14 +1855,14 @@ fn emit_formula_with_opacities(
                 .iter()
                 .map(|o| emit_formula_with_opacities(o, opacities))
                 .collect();
-            Ok(format!("({} {})", "and", ops?.join(" ")))
+            Ok(connective_smt("and", "true", ops?))
         }
         Formula::Or { operands } => {
             let ops: Result<Vec<String>, CompileError> = operands
                 .iter()
                 .map(|o| emit_formula_with_opacities(o, opacities))
                 .collect();
-            Ok(format!("({} {})", "or", ops?.join(" ")))
+            Ok(connective_smt("or", "false", ops?))
         }
         Formula::Not { operands } => Ok(format!(
             "(not {})",

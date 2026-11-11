@@ -255,39 +255,15 @@ class UniverseValue(FloorValue):
         # The wire projection: one function-contract row (post + the def's
         # sealed warrant) and one contract row per stated inv (Stated, its
         # own warrant). The caller owns the loop; this value owns the shape.
-        import dataclasses
-
-        from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
-        from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
-        from sugar_lift_py_tests.proofir.nodes import (
-            ConstructionSite,
-            Derived,
-            Provenance,
-        )
-
-        span = def_memento.span
-        post_provenance = Provenance(
-            node_class="BodyUniverseDto",
-            construction_site=ConstructionSite(
-                path=def_memento.file,
-                line=span.start_line,
-                column=span.start_col,
-            ),
-            warrant=Derived(floor_chain=("UniverseValue.post",)),
-        )
+        # A single completed arm under guard true: the general projection
+        # (`exit_arms_payload_rows`) specialized, byte-for-byte.
         rows = [
-            BodyUniverseDto(
+            function_contract_row(
                 name=self.name,
-                post=claim_formula(
-                    self.post(),
-                    formals=self.formals,
-                    provenance=post_provenance,
-                    role="post",
-                ),
-                source_warrants=[def_memento],
-                formals=list(self.formals),
-                kind="function-contract",
-                bridge_source_symbol=self.bridge_source_symbol or self.name,
+                formals=self.formals,
+                bridge_source_symbol=self.bridge_source_symbol,
+                post=self.post(),
+                def_memento=def_memento,
             )
         ]
         rows.extend(self.inv_payload_rows())
@@ -295,28 +271,186 @@ class UniverseValue(FloorValue):
 
     def inv_payload_rows(self):
         """Project stated body claims without requiring a constructed post."""
-        import dataclasses
+        return mint_rows(self.name, self.formals, self.record.statements)
 
-        from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 
-        rows = []
-        for entry in self.record.statements:
-            for row in entry.mint_contribution(self.name, self.formals):
-                rows.append(
-                    BodyUniverseDto(
-                        name=row.name,
-                        inv=row.formula,
-                        source_warrants=[
-                            dataclasses.replace(
-                                warrant,
-                                source_function_name=self.name,
-                                role="assertion",
-                            )
-                            for warrant in row.source_warrants
-                        ],
-                        formals=list(row.formals),
-                        kind="contract",
-                        proofir_provenance=row.provenance().to_rpc(),
-                    )
+def function_contract_row(*, name, formals, bridge_source_symbol, post, def_memento):
+    """The one function-contract row: the post, the def's sealed warrant."""
+    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
+    from sugar_lift_py_tests.proofir.nodes import (
+        ConstructionSite,
+        Derived,
+        Provenance,
+    )
+
+    span = def_memento.span
+    post_provenance = Provenance(
+        node_class="BodyUniverseDto",
+        construction_site=ConstructionSite(
+            path=def_memento.file,
+            line=span.start_line,
+            column=span.start_col,
+        ),
+        warrant=Derived(floor_chain=("UniverseValue.post",)),
+    )
+    return BodyUniverseDto(
+        name=name,
+        post=claim_formula(
+            post,
+            formals=formals,
+            provenance=post_provenance,
+            role="post",
+        ),
+        source_warrants=[def_memento],
+        formals=list(formals),
+        kind="function-contract",
+        bridge_source_symbol=bridge_source_symbol or name,
+    )
+
+
+def mint_rows(name, formals, entries):
+    """The contract rows the record entries mint for themselves."""
+    import dataclasses
+
+    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
+
+    rows = []
+    for entry in entries:
+        for row in entry.mint_contribution(name, formals):
+            rows.append(
+                BodyUniverseDto(
+                    name=row.name,
+                    inv=row.formula,
+                    source_warrants=[
+                        dataclasses.replace(
+                            warrant,
+                            source_function_name=name,
+                            role="assertion",
+                        )
+                        for warrant in row.source_warrants
+                    ],
+                    formals=list(row.formals),
+                    kind="contract",
+                    proofir_provenance=row.provenance().to_rpc(),
                 )
-        return rows
+            )
+    return rows
+
+
+def assertion_site_key(site):
+    """An assertion site's identity: the fragment's own address."""
+    from sugar_lift_py_tests.effect.runtime_effect import resolve_runtime_effect_site
+
+    fragment = resolve_runtime_effect_site(site)
+    return (fragment.filename, fragment.line, fragment.col)
+
+
+def exit_arms_payload_rows(
+    *, name, formals, bridge_source_symbol, arms, assertion_sites, def_memento
+):
+    """Every arm of one reduction, projected to the wire (#7766).
+
+    ``arms`` are the completed arms ``(guard, UniverseValue)``; ``assertion_sites``
+    are the fragments of every ``assert`` the function body holds.
+
+    * post: the conjunction over completed arms of ``g_i -> post_i``.
+    * one contract row per assertion SITE: the OR over the completed arms that
+      reach the site of ``g_i AND fact_i``. The claim of an assertion is that an
+      execution reaches it and it holds there; a guard that can be made false
+      must not satisfy it, so this is never ``g -> fact``. A site no completed
+      arm reaches states the OR over nothing: false.
+
+    A single arm under guard true is exactly ``UniverseValue.payload_rows``.
+    """
+    from sugar_lift_py_tests.floor.inv_value import InvValue
+    from sugar_lift_py_tests.ir import and_, implies, or_
+    from sugar_lift_py_tests.outcome.exit_set import _is_true, false_guard
+
+    if len(arms) == 1 and _is_true(arms[0][0]):
+        guard, value = arms[0]
+        rows = value.payload_rows(def_memento)
+        reached = {
+            assertion_site_key(entry.site)
+            for entry in value.record.statements
+            if isinstance(entry, InvValue)
+        }
+    else:
+        post = and_([implies(guard, value.post()) for guard, value in arms])
+        rows = [
+            function_contract_row(
+                name=name,
+                formals=formals,
+                bridge_source_symbol=bridge_source_symbol,
+                post=post,
+                def_memento=def_memento,
+            )
+        ]
+        by_site: dict = {}
+        for arm_index, (guard, value) in enumerate(arms):
+            for entry in value.record.statements:
+                if isinstance(entry, InvValue):
+                    key = assertion_site_key(entry.site)
+                    by_site.setdefault(key, {}).setdefault(arm_index, (guard, []))[
+                        1
+                    ].append(entry)
+                    continue
+                if entry.mint_contribution(name, formals):
+                    from sugar_source_tree.panic import SugarNotWritten
+
+                    raise SugarNotWritten(
+                        owner="exit_arms_payload_rows",
+                        blame=name,
+                        observed=f"{type(entry).__name__} mints rows on one arm of several",
+                        requested="the entry's rows under its arm's guard",
+                        fix=(
+                            f"give {type(entry).__name__} the arm-guarded "
+                            "projection InvValue has"
+                        ),
+                    )
+        reached = set(by_site)
+        combined = []
+        for per_arm in by_site.values():
+            arm_rows = list(per_arm.values())
+            first = arm_rows[0][1][0]
+            derived_arms = [
+                (guard, [d for inv in invs for d in inv.derived_formulas])
+                for guard, invs in arm_rows
+            ]
+            derived = (
+                (or_([and_([guard, *ds]) for guard, ds in derived_arms]),)
+                if all(ds for _guard, ds in derived_arms)
+                else ()
+            )
+            combined.append(
+                InvValue(
+                    or_(
+                        [
+                            and_([guard, *(inv.formula for inv in invs)])
+                            for guard, invs in arm_rows
+                        ]
+                    ),
+                    first.site,
+                    tuple(
+                        callsite
+                        for _guard, invs in arm_rows
+                        for inv in invs
+                        for callsite in inv.operand_callsites
+                    ),
+                    derived,
+                    tuple(
+                        chain
+                        for _guard, invs in arm_rows
+                        for inv in invs
+                        for chain in inv.rewrite_chains
+                    ),
+                )
+            )
+        rows.extend(mint_rows(name, formals, combined))
+    unreached = [
+        InvValue(false_guard(), site)
+        for site in assertion_sites
+        if assertion_site_key(site) not in reached
+    ]
+    rows.extend(mint_rows(name, formals, unreached))
+    return rows

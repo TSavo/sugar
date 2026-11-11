@@ -2984,6 +2984,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
                 term_table = TermTableBuilder()
                 universes = []  # (name, memento_dict, contract_dto)
+                # Every row of every function's one reduction (#7766): the
+                # function-contract AND each assertion row. `universes` keeps
+                # the function-contract per def for the seek joins below.
+                scan_rows = []  # (memento_dict, dto)
                 gaps = []
                 # Phase-3: functions whose parameter-contract demands the caller
                 # already discharged (fold -> resume) are served from the resume
@@ -3026,6 +3030,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     if rows is None:
                         continue  # an effect, not a contract
                     universes.append((fn.name, def_memento.to_rpc(), rows[0]))
+                    scan_rows.extend((def_memento.to_rpc(), row) for row in rows)
 
                 def _node(memento, dto):
                     return {
@@ -3035,7 +3040,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     }
 
                 if not (seek and at is not None):
-                    nodes = [_node(m, d) for _n, m, d in universes]
+                    nodes = [_node(m, d) for m, d in scan_rows]
                     _send_enumerate_result(
                         msg_id, nodes, gaps, term_tables=[term_table.nodes]
                     )

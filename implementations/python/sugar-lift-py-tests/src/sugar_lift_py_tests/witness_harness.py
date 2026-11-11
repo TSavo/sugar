@@ -21,6 +21,7 @@ Verdict = Literal[
     "unwitnessed",
     "unwitnessed-modulo-unavailable-seats",
     "solver-timeout",
+    "open",
 ]
 
 
@@ -427,30 +428,69 @@ def run_source_through_real_solver(project: Path, source: str) -> WitnessPipelin
 
 
 def _captured_lift_document(capture: Path) -> dict:
+    """The rows mint received from the kit, read off the captured wire.
+
+    Mint is an enumeration client (#6025): the kit answers ``sugar.enumerate``
+    levels, never one ``lift`` response carrying ``ir``. Every contract row the
+    kit sent rides a node's ``audit``; the document is those rows, in order,
+    with the term tables that close them.
+    """
     if not capture.exists():
         raise WitnessPipelineError(f"lift RPC capture missing at {capture}")
     responses = [
         json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
     ]
-    lift_responses = [
-        item for item in responses if item.get("id") == 2 and "result" in item
-    ]
-    primary_lift_responses = [
-        item
-        for item in lift_responses
-        if isinstance(item.get("result"), dict) and item["result"].get("ir")
-    ]
-    if len(primary_lift_responses) != 1:
-        raise WitnessPipelineError(
-            f"expected one primary lift response, got {responses!r}"
-        )
-    return primary_lift_responses[0]["result"]
+    ir: list[dict] = []
+    term_table: dict = {}
+    for item in responses:
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        for node in result.get("nodes") or []:
+            audit = node.get("audit") if isinstance(node, dict) else None
+            if isinstance(audit, dict) and audit.get("kind") in {
+                "contract",
+                "function-contract",
+            }:
+                ir.append(audit)
+        table = result.get("termTable")
+        if isinstance(table, dict):
+            term_table.update(table)
+    return {"ir": ir, "termTable": term_table}
+
+
+def _is_assertion_row(row: dict) -> bool:
+    """A consistency row: the solver's verdict on a stated assertion's claim."""
+    return str(row.get("property") or "").startswith("consistency:") and (
+        "witness-package" not in str(row.get("property"))
+    )
 
 
 def prove_verdict(prove_doc: dict) -> Verdict:
-    rows = prove_doc.get("rows", [])
+    """The verdict on the source's stated assertions (#7766, D2/D3).
+
+    Each assertion site has one row whose claim is "an execution reaches this
+    assertion and it holds"; the consistency pass checks it with z3. Panic-site
+    rows (the halted arms) are separate obligations and do not decide the twin.
+    ``open``: the solver could not decide the claim (vacuous, or a call
+    coordinate no linked contract answers, #3896).
+    """
+    rows = [row for row in prove_doc.get("rows", [])]
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ProofObligationPanic(row)
+    rows = [row for row in rows if _is_assertion_row(row)]
     if not rows:
-        raise WitnessPipelineError(f"sugar prove returned no rows: {prove_doc!r}")
+        raise WitnessPipelineError(
+            f"sugar prove returned no assertion rows: {prove_doc!r}"
+        )
+    statuses = [row.get("status") for row in rows]
+    if "unsatisfied" in statuses:
+        return "unsat"
+    if all(status == "discharged" for status in statuses):
+        return "sat"
+    if any(status in {"refused", "undecidable"} for status in statuses):
+        return "open"
     for row in rows:
         if not isinstance(row, dict):
             raise ProofObligationPanic(row)
