@@ -1954,11 +1954,23 @@ def populate_source_derived_resource_refs(
                     top_level, distribution_index=distribution_index
                 )
             except DependencyArtifactAuthenticationError as exc:
+                from .language_owned_c_export import interpreter_owned_c_type_export
+
+                # No artifact, because no source: the callee is a C type an
+                # interpreter-owned module exports (``mmap.mmap``).  That is a
+                # positive runtime-identity fact, not the authentication
+                # failure read as one, so the manager is cited, naming its
+                # callee.  Anything else (an absent module, a Python object)
+                # keeps the gap.
                 _install_derivation_gap(
                     context,
                     coordinate,
                     receipt,
-                    "no-derived-contract",
+                    (
+                        "call-target-c-type-without-source"
+                        if interpreter_owned_c_type_export(receipt.target_symbol)
+                        else "no-derived-contract"
+                    ),
                     f"dependency artifact authentication failed for {top_level}: {exc}",
                 )
                 continue
@@ -2456,6 +2468,9 @@ def populate_source_derived_resource_refs(
         graphs=graphs,
         session=session,
         distribution_index=distribution_index,
+    )
+    _populate_runtime_selected_head_uses(
+        source_file, context, selected_coordinates=selected_coordinates
     )
     _seat_selected_manager_refs(context, selected_arms, selected_coordinates)
     _rewrite_installed_generator_frames(context)
@@ -3751,6 +3766,63 @@ def _populate_formal_selected_manager_uses(
                 continue
             context.source_derived_contract_refs[coordinate] = (
                 mint_formal_selected_manager_ref(coordinate, head)
+            )
+
+
+def _populate_runtime_selected_head_uses(
+    source_file, context, *, selected_coordinates=None
+) -> None:
+    """Cite the manager at a head whose value a run-time string selects.
+
+    ``klass = getattr(module, klass)`` then ``with klass(path) as f:``: which
+    class stands at the head is chosen by a string at run time, so there is no
+    callee for any derivation to read.  The With is constructed over the
+    existing opaque citation (enter, exit and suppression open and two-faced;
+    the head itself still evaluates through its own sugar).  The citation names
+    no callee -- it has none -- only the head's own coordinate and the reason
+    kind ``head-runtime-selected``.  Runs after every reader, so a head any
+    reader seated (a construction or its gap) is never cited over.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        SourceFragmentCoordinateV1,
+        _hash_json,
+        mint_opaque_cited_context_manager_ref,
+        opaque_source_call_roster_of,
+    )
+    from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
+    from sugar_source_tree.nodes import With
+
+    source = source_file.root.unit.source
+    for node in source_file.root.walk():
+        if not isinstance(node, With):
+            continue
+        for item in node.items:
+            coordinate = SourceFragmentCoordinateV1(
+                item.context_expr.unit.source_cid, *item._manager_use_site_span()
+            )
+            if coordinate in context.source_derived_contract_refs:
+                continue
+            if coordinate in context.opaque_source_call_obligations:
+                continue
+            if selected_coordinates is not None and coordinate not in selected_coordinates:
+                continue
+            start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
+            if runtime_selected_manager_head(source, start_line, start_col) is None:
+                continue
+            owner_cid = _hash_json(
+                {
+                    "kind": "runtime-selected-head-demand",
+                    "useSite": coordinate.wire(),
+                }
+            )
+            roster = opaque_source_call_roster_of(
+                OpaqueSourceCallObligationV1(
+                    coordinate, "", owner_cid, "head-runtime-selected"
+                )
+            )
+            context.source_derived_contract_refs[coordinate] = (
+                mint_opaque_cited_context_manager_ref(roster=roster)
             )
 
 
@@ -5935,18 +6007,20 @@ def _seat_off_population_citation(
     decided not to look inside it".
 
     Returns True when the citation was seated, so the caller skips the gap.
-    Only ``call-target-off-population`` qualifies, and only with a known
+    Only a callee citation kind qualifies (``call-target-off-population``,
+    ``call-target-c-type-without-source``), and only with a known
     ``target_symbol`` -- a citation naming no callee would claim knowledge we
     do not have, which is the lookup-failure spelling wearing this one's
     clothes.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
+        CALLEE_CITATION_KINDS,
         OpaqueSourceCallObligationV1,
         mint_opaque_cited_context_manager_ref,
         opaque_source_call_roster_of,
     )
 
-    if kind != "call-target-off-population" or not target_symbol:
+    if kind not in CALLEE_CITATION_KINDS or not target_symbol:
         return False
     roster = context.opaque_source_call_obligations.get(coordinate)
     if roster is None:
@@ -5955,11 +6029,15 @@ def _seat_off_population_citation(
                 coordinate,
                 str(target_symbol),
                 owner_cid,
-                "call-target-off-population",
+                kind,
             )
         )
-        context.opaque_source_call_obligations[coordinate] = roster
-    elif roster.resolution_kind != "call-target-off-population":
+        if kind == "call-target-off-population":
+            # The head call is itself an opaque source call.  A C type's
+            # construction is not: the head evaluates through its own
+            # language-owned floor, so its roster rides only the citation.
+            context.opaque_source_call_obligations[coordinate] = roster
+    elif roster.resolution_kind != kind:
         # Another owner classified this same call differently. Their testimony
         # stands; do not overwrite it with a citation.
         return False

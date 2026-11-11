@@ -125,3 +125,60 @@ def _with_item_expr(tree, line, col):
         for child in ast.iter_child_nodes(node):
             stack.append((child, function))
     return None
+
+
+def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
+    """The head's source text when its manager is selected by name at run time.
+
+    The head is a chain (attribute reads, constant-argument calls, operands on
+    the outermost call) rooted at a local of the innermost function around the
+    ``with`` whose only binding in that function is one top-level statement
+    ``local = getattr(<object>, <name>)``, lexically before the ``with``, with
+    a ``<name>`` that is not a constant and the builtin ``getattr`` (the
+    module binds no ``getattr``).  At the ``with`` the local holds whatever
+    attribute that run-time string names (``klass = getattr(module, klass)``
+    then ``with klass(path) as f:``): no source decides the manager, so there
+    is no callee to read.  Anything else returns ``None``.
+    """
+    tree = parsed_module(source)
+    if tree is None:
+        return None
+    found = _with_item_expr(tree, start_line, start_col)
+    if found is None:
+        return None
+    function, expr = found
+    root = _chain_root(expr, operands_admitted=True)
+    if root is None or name_bound_anywhere(tree, "getattr"):
+        return None
+    binders = [
+        statement
+        for statement in function.body
+        if name_bound_anywhere(statement, root)
+    ]
+    if len(binders) != 1:
+        return None
+    statement = binders[0]
+    if not (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == root
+        and _run_time_getattr(statement.value)
+    ):
+        return None
+    if statement.end_lineno >= expr.lineno:
+        return None
+    return ast.unparse(expr)
+
+
+def _run_time_getattr(value) -> bool:
+    """``getattr(<object>, <non-constant name>)`` with no default."""
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "getattr"
+        and len(value.args) == 2
+        and not value.keywords
+        and not any(isinstance(arg, ast.Starred) for arg in value.args)
+        and not isinstance(value.args[1], ast.Constant)
+    )
