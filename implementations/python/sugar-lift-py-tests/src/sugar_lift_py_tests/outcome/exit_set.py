@@ -6,7 +6,7 @@ from dataclasses import dataclass, field as _dataclass_field
 from typing import Callable, Generic, TypeVar
 
 from sugar_lift_py_tests.effect import Effect, require_effect
-from sugar_lift_py_tests.ir import Formula, and_, not_, or_
+from sugar_lift_py_tests.ir import Formula, _Connective, and_, not_, or_
 
 from .complete import Complete
 from .incomplete import Incomplete
@@ -25,11 +25,22 @@ def false_guard() -> Formula:
 
 
 def _is_true(guard: Formula) -> bool:
-    return guard == true_guard()
+    # Content equality with ``and_([])`` read off the shape: a formula's
+    # content key is ("connective", kind, operand keys), so it equals the
+    # empty conjunction exactly when it IS an operand-less "and" connective.
+    # Comparing against a freshly built guard authenticated the whole guard
+    # DAG's content identity on every call (#7664).
+    return type(guard) is _Connective and guard.kind == "and" and not guard.operands
 
 
 def _is_false(guard: Formula) -> bool:
-    return guard == false_guard()
+    # Content equality with ``not_(and_([]))``, read off the shape.
+    return (
+        type(guard) is _Connective
+        and guard.kind == "not"
+        and len(guard.operands) == 1
+        and _is_true(guard.operands[0])
+    )
 
 
 def _is_negation(left: Formula, right: Formula) -> bool:

@@ -467,12 +467,113 @@ def _term_content_cid(term: "Term") -> str:
                     cid_by_id[id(term)] = cached
                 return cached
 
-    cid = TermTableBuilder.root_cid(term)
+    cid = _structural_cid(term)
     _remember_term_content_cid(term, cid)
     if tables is not None:
         _by_key, by_id, cid_by_id = tables
         if by_id.get(id(term)) is term:
             cid_by_id[id(term)] = cid
+    return cid
+
+
+# Structure-keyed content-CID memo (#7664).
+#
+# The id-keyed memo above answers only for the SAME object.  A lift mints
+# structurally equal terms as fresh objects over and over (pinned pandas
+# test_subclass: 144,444 root CIDs over 310 distinct structures), and each
+# fresh object re-serialized and re-hashed its whole expanded form.
+#
+# A structure id is a dense integer for one finite structural key, built
+# bottom-up from exactly what the canonical text encodes: a ctor's name and
+# its children's structure ids; a lambda's parameter name, parameter sort
+# encoding and body's structure id; a leaf's own canonical encoding.  The
+# canonical text -- hence the CID -- is a function of that key, so equal keys
+# have equal CIDs: the memo returns the CID the fresh path would mint, never
+# another.  Keys never hold Term objects (no recursive dataclass hashing on
+# deep spines); the per-object structure-id memo is weak like the CID memo.
+_STRUCTURE_ID: dict[tuple, int] = {}
+_CID_BY_STRUCTURE: dict[int, str] = {}
+_STRUCTURE_ID_BY_TERM: dict[int, tuple[weakref.ReferenceType, int]] = {}
+
+
+def _known_structure_id(term: "Term") -> int | None:
+    entry = _STRUCTURE_ID_BY_TERM.get(id(term))
+    if entry is None:
+        return None
+    wr, structure = entry
+    if wr() is term:
+        return structure
+    if wr() is None:
+        _STRUCTURE_ID_BY_TERM.pop(id(term), None)
+    return None
+
+
+def _remember_structure_id(term: "Term", structure: int) -> None:
+    tid = id(term)
+
+    def _on_die(wr: weakref.ReferenceType, *, _tid: int = tid) -> None:
+        cur = _STRUCTURE_ID_BY_TERM.get(_tid)
+        if cur is not None and cur[0] is wr:
+            _STRUCTURE_ID_BY_TERM.pop(_tid, None)
+
+    try:
+        _STRUCTURE_ID_BY_TERM[tid] = (weakref.ref(term, _on_die), structure)
+    except TypeError:
+        pass
+
+
+def _structure_id(root: "Term") -> int:
+    """Dense id of ``root``'s structural key (iterative; shared nodes once)."""
+    known = _known_structure_id(root)
+    if known is not None:
+        return known
+    local: dict[int, int] = {}
+    work: list[tuple["Term", bool]] = [(root, False)]
+    while work:
+        term, finishing = work.pop()
+        identity = id(term)
+        if identity in local:
+            continue
+        if not finishing:
+            known = _known_structure_id(term)
+            if known is not None:
+                local[identity] = known
+                continue
+            if isinstance(term, (_Ctor, _Lambda)):
+                work.append((term, True))
+                children = term.args if isinstance(term, _Ctor) else (term.body,)
+                work.extend(
+                    (child, False) for child in reversed(children)
+                    if id(child) not in local
+                )
+                continue
+        if isinstance(term, _Ctor):
+            key = ("ctor", term.name, tuple(local[id(child)] for child in term.args))
+        elif isinstance(term, _Lambda):
+            key = (
+                "lambda",
+                term.param_name,
+                encode_jcs(sort_to_value(term.param_sort)),
+                local[id(term.body)],
+            )
+        else:
+            key = ("leaf", encode_jcs(term_to_value(term)))
+        structure = _STRUCTURE_ID.get(key)
+        if structure is None:
+            structure = len(_STRUCTURE_ID)
+            _STRUCTURE_ID[key] = structure
+        local[identity] = structure
+        _remember_structure_id(term, structure)
+    return local[id(root)]
+
+
+def _structural_cid(term: "Term") -> str:
+    """``TermTableBuilder.root_cid(term)``, memoized on structure."""
+    structure = _structure_id(term)
+    cid = _CID_BY_STRUCTURE.get(structure)
+    if cid is None:
+        cid = TermTableBuilder.root_cid(term)
+        _CID_BY_STRUCTURE[structure] = cid
     return cid
 
 
