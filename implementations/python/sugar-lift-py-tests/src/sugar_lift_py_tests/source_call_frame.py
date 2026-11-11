@@ -433,6 +433,9 @@ class SourceVisibleCallFrameV1:
         default=(), compare=False
     )
     constructed_new_method: object | None = field(default=None, compare=False)
+    #: The class a ``@classmethod`` frame is already bound to (``Class.m``
+    #: looked up before the call): its ``cls`` formal is not a parameter.
+    bound_receiver_class: object | None = field(default=None, compare=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
 

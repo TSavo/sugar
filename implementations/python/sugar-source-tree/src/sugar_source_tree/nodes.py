@@ -4423,7 +4423,41 @@ class FunctionDef(Statement):
                 )
         return frame
 
-    def _source_visible_call_frame_unguarded(self):
+    def bound_classmethod_call_frame(self, class_def: "ClassDef"):
+        """This ``@classmethod`` as ``Class.method``: ``cls`` already bound.
+
+        ``classmethod.__get__(None, Class)`` (Objects/funcobject.c
+        ``cm_descr_get``) returns a method whose ``__self__`` is ``Class``;
+        calling it supplies ``Class`` as the first formal.  The frame drops
+        that formal and the body reads ``Class`` by its module-level name
+        wherever it read ``cls``; the caller binds the remaining formals,
+        so a caller that also spells ``cls=`` is an unconsumed keyword, as
+        CPython's "multiple values" TypeError.  The caller has checked that
+        the module binds ``Class`` once, by this class statement.
+        """
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+        if (
+            self.unit.lexical_class_owner_for(self) is not class_def
+            or class_def._method_descriptor_kind(self) != "classmethod"
+            or not self.params
+            or self.params[0].param_kind
+            not in {"positional_only", "positional_or_keyword"}
+            or self.params[0].default is not None
+        ):
+            raise SourceCallBindingGap("bound classmethod frame needs its class owner")
+        definition_cid = self.fragment.seal().cid
+        if _frame_is_under_construction(definition_cid):
+            raise SourceCallFrameCycle(self)
+        _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
+        try:
+            return FunctionDef._source_visible_call_frame_unguarded(
+                self, bound_receiver=class_def
+            )
+        finally:
+            _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
+
+    def _source_visible_call_frame_unguarded(self, bound_receiver=None):
         """Construct this callable body through the ordinary node/Sugar door.
 
         Parameterized frames require the shared BindingCoordinateV1 owner.  The
@@ -4444,16 +4478,24 @@ class FunctionDef(Statement):
             span.end_line,
             span.end_col,
         )
-        parameters = tuple(param.name for param in self.params)
+        params = self.params if bound_receiver is None else self.params[1:]
+        offset = len(self.params) - len(params)
+        parameters = tuple(param.name for param in params)
         owner_cid = self.fragment.seal().cid
         coordinates = tuple(
-            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
-            for index, param in enumerate(self.params)
+            BindingCoordinateV1.mint(
+                owner_cid, param.fragment, ("formal", index + offset)
+            )
+            for index, param in enumerate(params)
         )
         formal_scope = {
             param.name: self._make_coordinate_ref(param, coordinate)
-            for param, coordinate in zip(self.params, coordinates, strict=True)
+            for param, coordinate in zip(params, coordinates, strict=True)
         }
+        if bound_receiver is not None:
+            formal_scope[self.params[0].name] = For._make_name(
+                self, bound_receiver.name
+            )
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
         )
@@ -4484,27 +4526,28 @@ class FunctionDef(Statement):
             parameters=parameters,
             formal_coordinates=coordinates,
             formal_declaration_sites=tuple(
-                param.fragment.seal().to_dict() for param in self.params
+                param.fragment.seal().to_dict() for param in params
             ),
             formal_projection_paths=tuple(
-                ("formal", index) for index, _ in enumerate(self.params)
+                ("formal", index + offset) for index, _ in enumerate(params)
             ),
-            parameter_kinds=tuple(param.param_kind for param in self.params),
+            parameter_kinds=tuple(param.param_kind for param in params),
             default_sugars=tuple(
                 param.default.sugar() if param.default is not None else None
-                for param in self.params
+                for param in params
             ),
-            default_nodes=tuple(param.default for param in self.params),
+            default_nodes=tuple(param.default for param in params),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
-                for param in self.params
+                for param in params
             ),
             default_fragment_cids=tuple(
                 param.default.fragment.seal().cid if param.default is not None else None
-                for param in self.params
+                for param in params
             ),
             body=body,
             owner=self,
+            bound_receiver_class=bound_receiver,
             generator_steps=generator_steps,
             generator_step_fragment_cids=(
                 ()
@@ -13425,6 +13468,8 @@ class Call(Expression):
                     and class_owner is not None
                     and class_owner._method_descriptor_kind(frame_owner)
                     == "classmethod"
+                    and getattr(source_call_frame, "bound_receiver_class", None)
+                    is None
                 ):
                     # ExceptionInfo.for_later() supplies the class as cls.
                     bind_args = (self.func.value,) + tuple(self.args)

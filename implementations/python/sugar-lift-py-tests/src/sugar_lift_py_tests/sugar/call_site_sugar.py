@@ -743,7 +743,12 @@ class CallSiteSugar(ConstructedTermSugar):
                 # so reduction must use the callee's declaration body whose
                 # BindingCoordinateRefs match this frame's formal coordinates,
                 # not the caller's inlined formal nodes.
-                declaration_frame = owner.source_visible_call_frame()
+                bound_class = getattr(source_call_frame, "bound_receiver_class", None)
+                declaration_frame = (
+                    owner.source_visible_call_frame()
+                    if bound_class is None
+                    else owner.bound_classmethod_call_frame(bound_class)
+                )
                 if (
                     declaration_frame.frame_cid
                     != source_call_frame.declaration_frame_cid
