@@ -166,7 +166,9 @@ class ExitFaceBinding:
 
 
 def prepend_facts_to_exitset(exits, facts: tuple):
-    """Attach binding facts to every completed exit's entry list."""
+    """Attach binding facts to every exit's record: a completed face's entries,
+    a halted face's pre-effect state.  Guards, partition faces and pending
+    obligations ride through unchanged."""
     from dataclasses import replace
 
     from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
@@ -177,20 +179,27 @@ def prepend_facts_to_exitset(exits, facts: tuple):
     out = []
     for exit_ in exits.exits:
         if isinstance(exit_, Halted):
-            # Face bindings for halt faces still ride as companion completed
-            # residue under the same guard so testimony is not dropped.
-            out.append(exit_)
-            if facts:
-                out.append(
-                    Completed(
-                        exit_.guard,
-                        _ReducedBlock(
-                            entries=facts,
-                            can_fall_through=False,
-                            fall_through=(),
-                        ),
-                    )
+            # A halt face's bindings ride on the halt's own pre-effect record:
+            # the slots were bound before control left with this effect, so a
+            # handler (or the function's halt row) reads them there.  A
+            # companion ``Completed`` under the halt's guard would claim the
+            # statement also completes on the path where it raises.
+            state = exit_.state
+            if isinstance(state, _ReducedBlock):
+                state = replace(state, entries=(*facts, *state.entries))
+            elif state is None:
+                state = _ReducedBlock(
+                    entries=facts, can_fall_through=False, fall_through=()
                 )
+            out.append(
+                Halted(
+                    exit_.guard,
+                    exit_.effect,
+                    state,
+                    exit_.faces,
+                    exit_.pending_contracts,
+                )
+            )
             continue
         value = exit_.value
         if isinstance(value, _ReducedBlock):
@@ -198,6 +207,8 @@ def prepend_facts_to_exitset(exits, facts: tuple):
                 Completed(
                     exit_.guard,
                     replace(value, entries=(*facts, *value.entries)),
+                    exit_.faces,
+                    exit_.pending_contracts,
                 )
             )
         else:
