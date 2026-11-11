@@ -50,6 +50,24 @@ class BranchResultAuthentication(FloorValue):
         )
         return (equivalence,)
 
+    def to_term(self, *, owner: str):
+        """The testimony's content: the slot guard and the guard it stands for.
+
+        A factory prefix is content-addressed face by face. This testimony's
+        identity is exactly the pair it proves equivalent, so its term carries
+        both formulas and nothing else.
+        """
+        del owner
+        from sugar_lift_py_tests.ir import ctor, formula_term
+
+        return ctor(
+            "python:branch_result_authentication",
+            [
+                formula_term(branch_result_guard(self.slot, self.site)),
+                formula_term(self.observed_guard),
+            ],
+        )
+
     def guarded(self, formula):
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.ir import and_, implies
