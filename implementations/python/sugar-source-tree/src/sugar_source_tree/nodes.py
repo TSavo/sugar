@@ -9420,9 +9420,6 @@ class With(Statement):
             LanguageOwnedContextManagerRefV1,
             SourceDerivedContextManagerRefV1,
         )
-        from sugar_lift_py_tests.floor.language_owned_c_manager import (
-            LanguageOwnedCManagerProtocol,
-        )
         from sugar_lift_py_tests.floor.formal_selected_manager import (
             FormalSelectedManagerProtocol,
         )
@@ -9524,10 +9521,7 @@ class With(Statement):
                         LanguageOwnedCCallFacesCompletionV1,
                     )
                     and isinstance(resolution, LanguageOwnedContextManagerRefV1)
-                    and isinstance(
-                        resolution.protocol,
-                        (LanguageOwnedCManagerProtocol, FormalSelectedManagerProtocol),
-                    )
+                    and isinstance(resolution.protocol, FormalSelectedManagerProtocol)
                 )
             )
             and semantics.enter.projection == "enter-result"
@@ -9545,10 +9539,7 @@ class With(Statement):
                         LanguageOwnedCCallFacesCompletionV1,
                     )
                     and isinstance(resolution, LanguageOwnedContextManagerRefV1)
-                    and isinstance(
-                        resolution.protocol,
-                        (LanguageOwnedCManagerProtocol, FormalSelectedManagerProtocol),
-                    )
+                    and isinstance(resolution.protocol, FormalSelectedManagerProtocol)
                 )
             )
             and isinstance(
