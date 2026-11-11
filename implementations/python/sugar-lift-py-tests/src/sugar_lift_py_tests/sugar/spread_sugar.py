@@ -403,15 +403,18 @@ class SpreadCallSugar(ConstructedTermSugar):
         if framed is not None:
             return Complete(framed)
 
-        return Complete(
-            CallSiteValue(
-                target_name=self.callee_name or "python:call",
-                arg_values=tuple(values),
-                parameters=(),
-                term=term,
-                body=None,
-                site=self.site,
-            )
+        callsite = CallSiteValue(
+            target_name=self.callee_name or "python:call",
+            arg_values=tuple(values),
+            parameters=(),
+            term=term,
+            body=None,
+            site=self.site,
+        )
+        if self.site is None:
+            return Complete(callsite)
+        return _unprojected_spread_call_faces(
+            callsite, self.callee_name or "python:call", self.site
         )
 
     def _body_bearing_callsite(self, values, term, ctx) -> object | None:
@@ -464,3 +467,47 @@ class SpreadCallSugar(ConstructedTermSugar):
             formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
             bound_source_actuals=bound,
         )
+
+
+def _unprojected_spread_call_faces(callsite, callee: str, site):
+    """``g(*a, **k)`` with no source frame projected here: two faces.
+
+    No body, contract or floor answered for the callee at this site, so the
+    call may raise anything.  It completes only under
+    ``python:spread_call.completes(python:spread_call(<callee>, <occurrence>))``
+    with the value ``python:call_result(<call term>, <occurrence>)`` -- each
+    evaluation its own unknown -- and halts with an ``UndeterminedRaiseEffect``
+    (owner ``UnprojectedSpreadCall:<callee>``) under the complement: the #7585
+    law for an unprojected call.  Completing it totally would claim the callee
+    never raises.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+    from sugar_lift_py_tests.source_call_resolution import _occurrence_result
+
+    key = occurrence_key(site)
+    completes = atomic(
+        "python:spread_call.completes",
+        [ctor("python:spread_call", (str_const(callee), str_const(key)))],
+    )
+    return ExitSet(
+        (
+            Completed(completes, _occurrence_result(callsite, key)),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site),
+                    occurrence=key,
+                    producer_node_owner=f"UnprojectedSpreadCall:{callee}",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
