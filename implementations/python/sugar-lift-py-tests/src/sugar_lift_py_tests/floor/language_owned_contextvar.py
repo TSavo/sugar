@@ -382,6 +382,83 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
         del formula
         return self
 
+    def _opaque_faces(self, step, site, value, owner):
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            ExitSet,
+            Halted,
+            complement_guard,
+        )
+
+        key = occurrence_key(site)
+        completes = atomic(
+            f"python:c_extension.result_{step}_completes",
+            [
+                ctor(
+                    f"python:c_extension.result_{step}",
+                    (self.to_term(owner=owner), str_const(key)),
+                )
+            ],
+        )
+        return ExitSet(
+            (
+                Completed(completes, value(key)),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(
+                        blame=str(site) if site is not None else None,
+                        occurrence=key if site is not None else None,
+                        producer_node_owner=owner,
+                    ),
+                    None,
+                ),
+            )
+        ).normalize()
+
+    def attribute(self, name, site):
+        """``r.x`` on an opaque C result: two faces, never a guess (#7585).
+
+        Nothing testified to the native type's members or descriptors, so the
+        read may raise anything.  It completes only under
+        ``python:c_extension.result_attribute_completes`` keyed on this read's
+        occurrence, with the opaque ``python:attribute_result`` value.
+        """
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        owner = f"CResultAttribute:{self.module_name}.{self.exported_name}.{name}"
+        return self._opaque_faces(
+            "attribute",
+            site,
+            lambda key: SymbolicValue(
+                ctor(
+                    "python:attribute_result",
+                    (self.to_term(owner=owner), str_const(name), str_const(key)),
+                )
+            ),
+            owner,
+        )
+
+    def callable_application_with(self, operation, ctx):
+        """``r(...)`` on an opaque C result: native ``__call__``, two faces."""
+        del ctx
+        site = getattr(operation, "blame", None) or getattr(operation, "site", None)
+        owner = f"CResultCall:{self.module_name}.{self.exported_name}"
+        return self._opaque_faces(
+            "call",
+            site,
+            lambda key: LanguageOwnedCExtensionResultValue(
+                module_name=self.module_name,
+                exported_name=f"{self.exported_name}()",
+                site=site,
+                occurrence=key,
+            ),
+            owner,
+        )
+
     def subscript_with(self, operation, ctx):
         """``c_call()[k]`` may raise: the #7587 opaque-subscript law.
 

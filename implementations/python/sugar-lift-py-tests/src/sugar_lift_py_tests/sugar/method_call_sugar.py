@@ -364,7 +364,11 @@ def _decided_here(receiver) -> bool:
     selects runs on exactly this value."""
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.language_owned_c_type import (
+        LanguageOwnedCInstanceValue,
+    )
     from sugar_lift_py_tests.floor.language_owned_contextvar import (
+        LanguageOwnedCExtensionResultValue,
         LanguageOwnedContextVarReadValue,
     )
     from sugar_lift_py_tests.floor.none_value import NoneValue
@@ -385,8 +389,12 @@ def _decided_here(receiver) -> bool:
         return True
     # A ``ContextVar.get()`` read is one occurrence's own value, like a call's
     # result: nothing later replaces it.
+    # An opaque C call result, or an instance a C class constructed at one
+    # site, is likewise that occurrence's own value.
     return type(receiver) in (
         CallSiteValue,
+        LanguageOwnedCExtensionResultValue,
+        LanguageOwnedCInstanceValue,
         LanguageOwnedContextVarReadValue,
         StringValue,
         BytesValue,
