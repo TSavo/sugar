@@ -18,6 +18,32 @@ class ConstructedClassMethodV1:
 
 
 @dataclass(frozen=True)
+class DeferredClassMethodV1:
+    """A method whose body refused at class construction.
+
+    A ``def`` in a class body binds a function; the body runs only when the
+    method is called.  The class statement completes; whoever reads the
+    method's body or frame (its caller) constructs it again and meets the
+    refusal there.  The refusal is never testimony about the class statement.
+    The definition itself is testified by ``definition_fragment_cid``; the
+    node is only the handle a caller constructs from.
+    """
+
+    name: str
+    definition_fragment_cid: str
+    definition: object = field(compare=False, metadata={"testimony": "lookup"})
+    descriptor_kind: str | None = None
+
+    @property
+    def body(self):
+        return self.definition.sugar()
+
+    @property
+    def source_call_frame(self):
+        return self.definition.source_visible_call_frame()
+
+
+@dataclass(frozen=True)
 class ConstructedClassFieldV1:
     name: str
     definition_fragment_cid: str
