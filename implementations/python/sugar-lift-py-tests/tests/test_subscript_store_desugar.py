@@ -156,7 +156,15 @@ def test_immutable_slice_store_halt_preserves_exact_prior_state(tmp_path, receiv
     assert halted[0].state.entries == (TermValue(99),)
 
 
-def test_undecided_store_never_claims_a_completed_face(tmp_path):
+def test_undecided_store_completes_only_under_its_own_atom(tmp_path):
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        Halted,
+        complement_guard,
+        outcome_to_exitset,
+    )
+
     store = _store(
         SymbolicValue(make_var("obj")),
         TermValue(0),
@@ -165,8 +173,15 @@ def test_undecided_store_never_claims_a_completed_face(tmp_path):
         _site(tmp_path),
     )
 
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
-        store.desugar()
+    exits = outcome_to_exitset(store.desugar()).exits
+    (done,) = [face for face in exits if isinstance(face, Completed)]
+    (halt,) = [face for face in exits if isinstance(face, Halted)]
+    assert "python:setitem.completes" in str(done.guard)
+    assert halt.guard == complement_guard(done.guard)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "UndecidedSetitem"
+    # The receiver's contents after the store are unknown, not the stored entry.
+    assert "python:receiver_after_call" in str(done.value.term)
 
 
 def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
