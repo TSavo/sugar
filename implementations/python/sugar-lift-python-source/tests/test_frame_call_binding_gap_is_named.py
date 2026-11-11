@@ -39,3 +39,14 @@ def test_unbindable_call_in_a_frame_is_a_call_binding_refusal(tmp_path: Path) ->
     with pytest.raises(SourceTreePanic, match="call-binding"):
         tree, with_node = _imported(tmp_path, _IMPL, "pass", contextlib_enrolled=False)
         _function_rows(tree, with_node)
+
+
+def test_the_frame_resolver_reads_the_module_binding_gap_class() -> None:
+    # A function-local import of SourceCallBindingGap made the name local to
+    # the whole resolver, so the imported-callee ``except`` above it raised
+    # UnboundLocalError and failed pinned pandas io/html.py,
+    # tests/io/json/test_compression.py and tests/io/sas/test_xport.py.
+    from sugar_lift_python_source import manager_construction
+
+    code = manager_construction._resolve_source_visible_frame_uncached.__code__
+    assert "SourceCallBindingGap" not in code.co_varnames
