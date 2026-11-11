@@ -971,6 +971,10 @@ class GeneratorAssignBindingV1:
     name: str
     value: object
     fragment_cid: str
+    # The RHS occurrence (``assigned_value.assigned_key``) this binding is the
+    # completed value of: a later step whose substituted sugar inlines that
+    # RHS answers with this value instead of evaluating the call again.
+    rhs_key: object = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -1461,8 +1465,13 @@ class GeneratorConstructionV1:
                     return self._fold_pending_cited_opaque_exits(
                         ExitSet.halted(resolved_value.effect, state=self)
                     )
+                from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+
                 binding = GeneratorAssignBindingV1(
-                    step.name, resolved_value, step.fragment_cid
+                    step.name,
+                    resolved_value,
+                    step.fragment_cid,
+                    assigned_key(step.value),
                 )
                 machine = replace(
                     self,
@@ -2600,10 +2609,22 @@ class GeneratorConstructionV1:
                 temporal = temporal.bind_value(item.coordinate.cid, item.value)
 
         if base is None:
-            return ReduceContext.root(
+            ctx = ReduceContext.root(
                 owner="GeneratorConstructionV1.guard"
             ).with_temporal(temporal)
-        return base.with_temporal(temporal)
+        else:
+            ctx = base.with_temporal(temporal)
+        # An assignment step evaluated its RHS once, at the step (#7600): a
+        # later step's substituted read of that RHS answers with the value the
+        # step completed with, never a second evaluation.
+        for item in self.binding_state:
+            if (
+                isinstance(item, GeneratorAssignBindingV1)
+                and item.value is not None
+                and item.rhs_key is not None
+            ):
+                ctx = ctx.with_assigned_value(item.rhs_key, item.value)
+        return ctx
 
     def _guard_truth(self, guard: object):
         """The guard's typed truth outcome, or None if it cannot stand.
@@ -2746,7 +2767,9 @@ class GeneratorConstructionV1:
                 requested="completed or halted cleanup",
                 fix="keep suspension and unresolved steps out of a finally cleanup suite",
             )
-        return reduce_block_to_exitset(step.statements)
+        return reduce_block_to_exitset(
+            step.statements, self._guard_evaluation_context()
+        )
 
     @staticmethod
     def _gap(requested: str, observed: str) -> GeneratorTransitionGapV1:
