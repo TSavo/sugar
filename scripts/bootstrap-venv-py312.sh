@@ -12,6 +12,8 @@
 #
 # Declared pins (sugar-build.toml + sugar-lift-py-tests[test] on main):
 #   python 3.12.13, numpy 2.5.1, pandas 3.0.3, pyarrow 22.0.0, pytest 9.1.1
+# plus pandas' optional packages, exact versions in scripts/corpus-env-optional.txt
+# (matplotlib, tables, IPython, fsspec, the excel engines, ...; no numba).
 #
 # Usage (from any checkout of this repository — the script must be IN the tree):
 #   bash scripts/bootstrap-venv-py312.sh
@@ -22,6 +24,9 @@
 #   VENV_DIR    destination (default: <repo>/.venv-py312)
 #   BOOTSTRAP_CHECK_ONLY=1
 #               validate the interpreter only; do not create a venv or pip install
+#   BOOTSTRAP_VERIFY_ONLY=1
+#               run the post-install assertions against an existing VENV_DIR and
+#               exit; never creates, locks, or installs into it
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -31,6 +36,11 @@ die() {
   echo "bootstrap-venv-py312: $*" >&2
   exit 2
 }
+
+optional_pins="$repo_root/scripts/corpus-env-optional.txt"
+optional_verifier="$repo_root/scripts/verify_corpus_env_optional.py"
+[[ -f "$optional_pins" ]] || die "missing $optional_pins"
+[[ -f "$optional_verifier" ]] || die "missing $optional_verifier"
 
 require_exact_cpython_31213() {
   local exe="$1"
@@ -52,6 +62,10 @@ require_exact_cpython_31213() {
 }
 
 py312="${PYTHON312:-}"
+if [[ -z "$py312" && "${BOOTSTRAP_VERIFY_ONLY:-0}" == "1" ]]; then
+  # Verifying an existing venv: its own interpreter is the one to authenticate.
+  py312="${VENV_DIR:-$repo_root/.venv-py312}/bin/python"
+fi
 if [[ -z "$py312" ]]; then
   for candidate in \
     /usr/local/opt/python@3.12/bin/python3.12 \
@@ -81,6 +95,8 @@ venv_dir="${VENV_DIR:-$repo_root/.venv-py312}"
 # reuse fast path and the full run, so reuse can never authenticate an
 # environment the full run would reject.
 verify_pins() {
+  # Optional set first: metadata only, names every missing or drifted package.
+  "$1/bin/python" "$optional_verifier" "$optional_pins" || return 1
   "$1/bin/python" - <<'PY'
 """Post-install discrimination: version AND load path inside this venv."""
 from __future__ import annotations
@@ -113,6 +129,12 @@ print("pytest", md.version("pytest"))
 print("PINS_OK")
 PY
 }
+
+if [[ "${BOOTSTRAP_VERIFY_ONLY:-0}" == "1" ]]; then
+  [[ -x "$venv_dir/bin/python" ]] || die "BOOTSTRAP_VERIFY_ONLY: no $venv_dir/bin/python"
+  verify_pins "$venv_dir" || die "BOOTSTRAP_VERIFY_ONLY: $venv_dir does not hold the declared pins"
+  exit 0
+fi
 
 # SERIALIZE MACHINE-WIDE, not per venv.
 #
@@ -173,7 +195,8 @@ echo "Creating $venv_dir from $py312 (3.12.13)"
 
 # AFTER the editable install: float was measured when extras resolved pandas
 # 3.0.5 while ledgers key to 3.0.3. Re-pin exactly, then verify load path.
-"$venv_dir/bin/python" -m pip install "numpy==2.5.1" "pandas==3.0.3"
+# The optional set resolves in the same step so it cannot float numpy/pandas.
+"$venv_dir/bin/python" -m pip install "numpy==2.5.1" "pandas==3.0.3" -r "$optional_pins"
 
 verify_pins "$venv_dir"
 
