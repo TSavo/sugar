@@ -296,7 +296,7 @@ fn strong_tier_refusal(name: &str, reason: impl std::fmt::Display) -> CompileErr
     CompileError::MalformedIr(format!("{name}: {reason}; refusing rather than weakening"))
 }
 
-pub /// An n-ary connective in SMT-LIB. The empty conjunction is the IR's encoding of
+/// An n-ary connective in SMT-LIB. The empty conjunction is the IR's encoding of
 /// truth (and the empty disjunction of falsity); SMT-LIB has no nullary `and`/`or`
 /// application, so they render as the constants they denote.
 fn connective_smt(name: &str, unit: &str, operands: Vec<String>) -> String {
@@ -307,7 +307,7 @@ fn connective_smt(name: &str, unit: &str, operands: Vec<String>) -> String {
     }
 }
 
-fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
+pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
     match formula {
         Formula::Atomic { name, args } => {
             if name == "identity" && args.len() == 2 {
