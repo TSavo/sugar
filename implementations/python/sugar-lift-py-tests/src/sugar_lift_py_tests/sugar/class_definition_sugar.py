@@ -144,6 +144,11 @@ class ClassDefinitionSugar(Sugar):
 
         class_fields = []
         base_values = []
+        # Base expressions are evaluated before the class body.  A base whose
+        # evaluation may raise (``Generic[T]`` over a cited C class: one
+        # completion plus an undetermined halt) makes the class statement
+        # two-faced; the halt is sequenced, never dropped.
+        base_faces = []
         for base in self.base_sugars:
             try:
                 outcome = base.desugar(ctx)
@@ -159,6 +164,11 @@ class ClassDefinitionSugar(Sugar):
                 continue
             from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
 
+            if (
+                not isinstance(outcome, Complete)
+                and _sole_completed_value(outcome) is not _NO_SOLE_COMPLETION
+            ):
+                base_faces.append(outcome)
             if isinstance(outcome, Complete) and isinstance(
                 outcome.value, (ClassDefinitionValue, BuiltinDictClassValue)
             ):
@@ -272,10 +282,11 @@ class ClassDefinitionSugar(Sugar):
                 tuple(base_values),
             )
         )
-        if not body_faces:
+        faces_in_order = [*base_faces, *body_faces]
+        if not faces_in_order:
             return constructed
         outcome = Complete(None)
-        for faces in body_faces:
+        for faces in faces_in_order:
             outcome = outcome.and_then(lambda _, faces=faces: faces)
         return outcome.and_then(lambda _: constructed)
 
