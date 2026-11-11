@@ -127,6 +127,10 @@ class MeasurementCeilingExceeded(BaseException):
         self.active_stack = list(active_stack)
 
 
+# Delay before a fired ceiling fires again if its raise was swallowed.
+_REFIRE_SECONDS = 0.5
+
+
 def ceiling_seconds() -> float:
     """The bound in force, from the environment or the stated default."""
     raw = os.environ.get(CEILING_ENV_VAR)
@@ -190,6 +194,13 @@ def measurement_ceiling(*, seat: str, seconds: float | None = None) -> Iterator[
         )
 
     def _fire(signum: int, frame: Any) -> None:
+        # Re-arm before raising. A signal handler runs wherever the main
+        # thread happens to be; if that is a weakref callback or ``__del__``,
+        # CPython prints "Exception ignored" and discards the raise. A
+        # one-shot ceiling would then be spent and the seat would run
+        # unbounded. The follow-up fires again until the raise lands; the
+        # ``finally`` below disarms it once the seat has unwound.
+        signal.setitimer(signal.ITIMER_REAL, _REFIRE_SECONDS)
         raise MeasurementCeilingExceeded(
             seat=seat,
             bound_seconds=bound,
