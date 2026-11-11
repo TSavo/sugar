@@ -17,12 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.floor.receiver_state_partition_value import (
-    ReceiverStatePartitionValue,
-)
 from sugar_lift_py_tests.outcome import Completed, Halted
 
 from test_undetermined_raise_except_matching import _exits
@@ -42,35 +37,31 @@ def f():
 '''
 
 
-class _Seen(Exception):
-    pass
+def _construction_faces(tmp_path: Path):
+    """The faces of ``f``: ``C()`` is a call, so its routes are ``f``'s routes.
+
+    Each completed face returns the ``x`` that route's constructor built; the
+    uncaught escape is ``f``'s own halt (#7756: a constructor's halts are the
+    call's, never packed inside a completed value).
+    """
+    return _exits(tmp_path, CONSTRUCTOR).exits
 
 
-def _construction_faces(tmp_path: Path, monkeypatch):
-    seen = []
-
-    def attribute(self, name, site):
-        seen.append(self)
-        raise _Seen(name)
-
-    monkeypatch.setattr(ReceiverStatePartitionValue, "attribute", attribute)
-    with pytest.raises(_Seen):
-        _exits(tmp_path, CONSTRUCTOR)
-    (partition,) = seen
-    return partition.exits.exits
+def _returned_x(face):
+    (returned,) = [
+        entry.value.value
+        for entry in face.value.record.statements
+        if type(entry).__name__ == "ReturnValue"
+    ]
+    return returned
 
 
-def _field(value, name):
-    (field,) = [f for f in value.fields if f.name == name]
-    return field.value.value
-
-
-def test_each_route_constructs_only_the_state_it_built(tmp_path, monkeypatch):
-    faces = _construction_faces(tmp_path, monkeypatch)
+def test_each_route_constructs_only_the_state_it_built(tmp_path):
+    faces = _construction_faces(tmp_path)
     completed = [face for face in faces if isinstance(face, Completed)]
     halted = [face for face in faces if isinstance(face, Halted)]
 
-    by_x = {_field(face.value, "x"): face.guard for face in completed}
+    by_x = {_returned_x(face): face.guard for face in completed}
     assert set(by_x) == {0, 1}
     # x == 1 only where the call completed.
     assert getattr(by_x[1], "name", None) == "python:source_call.completes"

@@ -24,9 +24,6 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
-from sugar_lift_py_tests.floor.receiver_state_partition_value import (
-    ReceiverStatePartitionValue,
-)
 from sugar_lift_py_tests.outcome import Completed, Halted
 
 from test_undetermined_raise_except_matching import _exits
@@ -36,41 +33,37 @@ RAISE_FROM = 'import re\nclass Base:\n    def __init__(self, *, match):\n       
 RE_ERROR_FLAG = 'import re\nclass Base:\n    def __init__(self, *, match):\n        if isinstance(match, str):\n            re_error = None\n            try:\n                self.match = re.compile(match)\n            except re.error as e:\n                re_error = e\n            if re_error is not None:\n                raise ValueError("bad")\n        else:\n            self.match = match\n        self._fail_reason = None\nclass Sub(Base):\n    def __init__(self, *, match=None):\n        super().__init__(match=match)\ndef f():\n    s = Sub(match="boom")\n    return s.match\n'
 
 
-class _Seen(Exception):
-    pass
+def _construction_faces(tmp_path: Path, source):
+    """The faces of ``f``: ``Sub(...)`` is a call, so its faces are ``f``'s.
+
+    A completed face returns ``s.match`` as that route's constructor stored it;
+    the constructor's halts are ``f``'s own (#7756: never packed inside a
+    completed value).
+    """
+    return _exits(tmp_path, source).exits
 
 
-def _construction_faces(tmp_path: Path, monkeypatch, source):
-    seen = []
-
-    def attribute(self, name, site):
-        seen.append(self)
-        raise _Seen(name)
-
-    monkeypatch.setattr(ReceiverStatePartitionValue, "attribute", attribute)
-    with pytest.raises(_Seen):
-        _exits(tmp_path, source)
-    (partition,) = seen
-    return partition.exits.exits
-
-
-def _fields(value):
-    return {f.name: f.value for f in value.fields}
+def _returned(face):
+    (returned,) = [
+        entry.value
+        for entry in face.value.record.statements
+        if type(entry).__name__ == "ReturnValue"
+    ]
+    return returned
 
 
 @pytest.mark.parametrize("source", [RAISE_FROM, RE_ERROR_FLAG], ids=["raise-from", "re-error-flag"])
-def test_completed_construction_keeps_the_compiled_match(tmp_path, monkeypatch, source):
-    faces = _construction_faces(tmp_path, monkeypatch, source)
+def test_completed_construction_keeps_the_compiled_match(tmp_path, source):
+    faces = _construction_faces(tmp_path, source)
     completed = [face for face in faces if isinstance(face, Completed)]
     halted = [face for face in faces if isinstance(face, Halted)]
 
     # Exactly one completed construction: where re.compile completed.
     (face,) = completed
     assert getattr(face.guard, "name", None) == "python:source_call.completes"
-    fields = _fields(face.value)
-    assert "match" in fields
-    assert "re" in repr(fields["match"]) and "compile" in repr(fields["match"])
-    assert type(fields["match"]).__name__ != "NoneValue"
+    match = _returned(face)
+    assert "re" in repr(match) and "compile" in repr(match)
+    assert type(match).__name__ != "NoneValue"
 
     # The handler route halts with ValueError; the unmatched raise stays an
     # undetermined halt -- neither is silently a completion.

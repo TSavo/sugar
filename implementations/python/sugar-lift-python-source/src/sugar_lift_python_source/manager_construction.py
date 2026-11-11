@@ -2110,21 +2110,43 @@ def _project_manager_from_exitset(
             managers.append((mgr, prefix))
         return None
 
+    # Halted arms that carry no manager are the factory's construction halts
+    # (a constructor that raised): they stay faces of the behavior.
+    construction_halts = []
+    completed_guard = None
     for exit_ in outcome.exits:
         if isinstance(exit_, Completed):
             gap = _collect_from_payload(exit_.value)
             if gap is not None:
                 return gap
+            completed_guard = exit_.guard
             continue
         if isinstance(exit_, Halted) and exit_.state is not None:
             # GuardedReturn on the CM face is often only preserved here after
             # IfSugar flattens multi-exit then-bodies into GuardedFaces and the
             # fall-through polarity continues into later raise validation.
+            before = len(managers)
             gap = _collect_from_payload(exit_.state)
             if gap is not None:
                 return gap
+            if len(managers) > before:
+                continue
+        if isinstance(exit_, Halted):
+            construction_halts.append(exit_)
 
     if not managers:
+        if construction_halts and len(construction_halts) == len(outcome.exits):
+            # Construction raised on every face (a constructor whose halts are
+            # now the call's own): no receiver state exists, and the behavior
+            # is exactly those halts.
+            from sugar_lift_py_tests.outcome import ExitSet
+
+            return (
+                ReceiverStatePartitionValue(
+                    ExitSet(tuple(construction_halts)).normalize()
+                ),
+                factory_prefix,
+            )
         return ManagerConstructionGapV1(
             "force-floor",
             resolved_cid,
@@ -2146,6 +2168,16 @@ def _project_manager_from_exitset(
             )
         managers = [(refined, managers[0][1])]
     obj, prefix = managers[0]
+    if construction_halts and completed_guard is not None:
+        # One receiver state exists only on the completed face: the behavior
+        # is the partition of the construction's halts and that receiver.
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        obj = ReceiverStatePartitionValue(
+            ExitSet(
+                (*construction_halts, Completed(completed_guard, obj))
+            ).normalize()
+        )
     return obj, factory_prefix + prefix
 
 
