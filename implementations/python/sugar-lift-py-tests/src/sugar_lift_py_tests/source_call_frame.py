@@ -230,7 +230,16 @@ class BoundSourceCallActualsV1:
         _reauthenticate_binding_coordinates(
             tuple(pair.coordinate for pair in self.projected_pairs)
         )
-        from sugar_lift_py_tests.floor import TupleValue
+        from sugar_lift_py_tests.floor import DictValue, TupleValue
+
+        def _projected_members(kind, actual):
+            # ``variadic`` indexes the collected ``*args`` tuple;
+            # ``variadic-keyword`` indexes the collected ``**kwargs`` entries.
+            if kind == "variadic" and type(actual) is TupleValue:
+                return actual.elements
+            if kind == "variadic-keyword" and type(actual) is DictValue:
+                return tuple(value for _key, value in actual.entries)
+            return None
 
         roots = tuple(zip(self.formal_coordinates, self.actuals, strict=True))
         for pair in self.projected_pairs:
@@ -247,16 +256,19 @@ class BoundSourceCallActualsV1:
                 if len(matching) == 1
                 else ()
             )
+            members = (
+                _projected_members(suffix[0], matching[0][1])
+                if len(suffix) == 2
+                else None
+            )
             if (
                 len(matching) != 1
-                or len(suffix) != 2
-                or suffix[0] != "variadic"
+                or members is None
                 or not isinstance(suffix[1], int)
                 or isinstance(suffix[1], bool)
-                or type(matching[0][1]) is not TupleValue
                 or suffix[1] < 0
-                or suffix[1] >= len(matching[0][1].elements)
-                or pair.actual is not matching[0][1].elements[suffix[1]]
+                or suffix[1] >= len(members)
+                or pair.actual is not members[suffix[1]]
                 or pair.coordinate != matching[0][0].project(*suffix)
             ):
                 raise SourceCallBindingGap(
@@ -527,6 +539,18 @@ class SourceVisibleCallFrameV1:
                 remaining.clear()
                 continue
             if kind == "kwarg":
+                # Each collected keyword is the ``variadic-keyword`` projection
+                # of this formal, in collection order -- the same coordinate
+                # ``bind_node_actuals`` seats on the entry's actual Node -- so a
+                # body read of that entry finds the caller's Floor, exactly as
+                # a ``variadic`` (``*args``) element does.
+                root = self.formal_coordinates[index]
+                projected_pairs.extend(
+                    BoundFormalActualV1(
+                        root.project("variadic-keyword", ordinal), actual
+                    )
+                    for ordinal, actual in enumerate(named.values())
+                )
                 bound.append(
                     DictValue(
                         tuple((StringValue(key), value) for key, value in named.items())
