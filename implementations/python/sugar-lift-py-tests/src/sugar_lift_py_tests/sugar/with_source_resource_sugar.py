@@ -42,136 +42,175 @@ class WithSourceResourceSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
-        from sugar_lift_py_tests.outcome.resource_bindings import (
-            EnterResultBinding,
-            ExitFaceBinding,
-            ManagerBinding,
-            prepend_facts_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            promote_raise_halts,
-            sugar_outcome_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            reduce_block_to_exitset,
-        )
+        return _route_manager_faces(self, ctx)
 
-        # A manager call coordinate is not its returned receiver. Perform its
-        # source outcome once, preserving exceptional faces before enter.
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx)).sequence(
-            lambda value: _project_manager_receiver(value, ctx)
+
+@dataclass(frozen=True)
+class WithManagerPartitionSugar(Sugar):
+    """A With over a factory whose faces return managers of different kinds.
+
+    The head is reduced once.  Every manager face it produces is entered by
+    the partition protocol's member for that kind of manager, under the
+    face's own guard; the body and exit run per entered face and the exit
+    sets are unioned (#7669).  There is no single ``__enter__`` call to
+    authenticate here: each member carries its own native definitions.
+    """
+
+    manager: Sugar
+    protocol: object
+    summary: object
+    body: tuple[Sugar, ...]
+    manager_slot_id: str
+    enter_slot_id: str | None
+    exit_face_id: str
+    site: object = field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if not callable(getattr(self.protocol, "exit_outcome_for_body", None)):
+            raise TypeError("a manager partition exits per body face")
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        return _route_manager_faces(self, ctx, project=_project_partition_manager)
+
+
+def _route_manager_faces(
+    resource, ctx: object = None, *, project=None
+) -> Outcome:
+    """Enter every manager face under its guard; union the exits (8.5)."""
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.outcome.resource_bindings import (
+        EnterResultBinding,
+        ExitFaceBinding,
+        ManagerBinding,
+        prepend_facts_to_exitset,
+    )
+    from sugar_lift_py_tests.sugar.exit_set_routing import (
+        promote_raise_halts,
+        sugar_outcome_to_exitset,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    # A manager call coordinate is not its returned receiver. Perform its
+    # source outcome once, preserving exceptional faces before enter.
+    manager_es = sugar_outcome_to_exitset(resource.manager.desugar(ctx)).sequence(
+        lambda value: (project or _project_manager_receiver)(value, ctx)
+    )
+    parts = []
+    for manager_face in manager_es.exits:
+        if isinstance(manager_face, Halted):
+            parts.append(ExitSet((manager_face,)))
+            continue
+        manager_facts = ManagerBinding(
+            resource.manager_slot_id, manager_face.value
+        ).to_facts(site=resource.site)
+        enter_outcome = resource.protocol.enter_resource_outcome_for(
+            manager_face.value, ctx
         )
-        parts = []
-        for manager_face in manager_es.exits:
-            if isinstance(manager_face, Halted):
-                parts.append(ExitSet((manager_face,)))
+        enter_es = outcome_to_exitset(enter_outcome)
+        for enter_face in enter_es.exits:
+            guard = _and(manager_face.guard, enter_face.guard)
+            if isinstance(enter_face, Halted):
+                parts.append(ExitSet((Halted(guard, enter_face.effect),)))
                 continue
-            manager_facts = ManagerBinding(
-                self.manager_slot_id, manager_face.value
-            ).to_facts(site=self.site)
-            enter_outcome = self.protocol.enter_resource_outcome_for(
-                manager_face.value, ctx
-            )
-            enter_es = outcome_to_exitset(enter_outcome)
-            for enter_face in enter_es.exits:
-                guard = _and(manager_face.guard, enter_face.guard)
-                if isinstance(enter_face, Halted):
-                    parts.append(ExitSet((Halted(guard, enter_face.effect),)))
-                    continue
-                entered = enter_face.value
-                enter_value = _returned_value(entered.enter_value)
-                enter_facts = ()
-                if self.enter_slot_id is not None and enter_value is not None:
-                    enter_facts = EnterResultBinding(
-                        self.enter_slot_id, enter_value
-                    ).to_facts(site=self.site)
-                body_es = promote_raise_halts(
-                    reduce_block_to_exitset(self.body, ctx)
-                ).guarded(guard)
-                concrete_exit = getattr(self.protocol, "exit_outcome_for_body", None)
-                # Generator protocols have a linear resume: retain their single
-                # existing exit reduction instead of resuming per body face.
-                abstract_exit = (
-                    None
-                    if concrete_exit is not None
-                    else outcome_to_exitset(
-                        self.protocol.exit_outcome_for(entered, ctx)
-                    )
+            entered = enter_face.value
+            enter_value = _returned_value(entered.enter_value)
+            enter_facts = ()
+            if resource.enter_slot_id is not None and enter_value is not None:
+                enter_facts = EnterResultBinding(
+                    resource.enter_slot_id, enter_value
+                ).to_facts(site=resource.site)
+            body_es = promote_raise_halts(
+                reduce_block_to_exitset(resource.body, ctx)
+            ).guarded(guard)
+            concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
+            # Generator protocols have a linear resume: retain their single
+            # existing exit reduction instead of resuming per body face.
+            abstract_exit = (
+                None
+                if concrete_exit is not None
+                else outcome_to_exitset(
+                    resource.protocol.exit_outcome_for(entered, ctx)
                 )
-                for body_face in body_es.exits:
-                    exit_es = (
-                        outcome_to_exitset(concrete_exit(entered, body_face, ctx))
-                        if concrete_exit is not None
-                        else abstract_exit
-                    )
-                    face_facts = ExitFaceBinding.from_body_exit(
-                        self.exit_face_id, body_face
-                    ).to_facts(site=self.site, guard=body_face.guard)
-                    disposition = self.summary.semantics.exit.disposition
+            )
+            for body_face in body_es.exits:
+                exit_es = (
+                    outcome_to_exitset(concrete_exit(entered, body_face, ctx))
+                    if concrete_exit is not None
+                    else abstract_exit
+                )
+                face_facts = ExitFaceBinding.from_body_exit(
+                    resource.exit_face_id, body_face
+                ).to_facts(site=resource.site, guard=body_face.guard)
+                disposition = resource.summary.semantics.exit.disposition
+                from sugar_lift_py_tests.context_manager_contract import (
+                    ReturnTruthinessDispositionV1,
+                )
+
+                if isinstance(disposition, ReturnTruthinessDispositionV1):
                     from sugar_lift_py_tests.context_manager_contract import (
-                        ReturnTruthinessDispositionV1,
+                        NeverSuppressesDispositionV1,
+                    )
+                    from sugar_lift_py_tests.effect import (
+                        GroupedRaiseEffect,
+                        RaiseEffect,
+                    )
+                    from sugar_lift_py_tests.effect.raise_effect import (
+                        UndeterminedRaiseEffect,
                     )
 
-                    if isinstance(disposition, ReturnTruthinessDispositionV1):
-                        from sugar_lift_py_tests.context_manager_contract import (
-                            NeverSuppressesDispositionV1,
-                        )
-                        from sugar_lift_py_tests.effect import (
-                            GroupedRaiseEffect,
-                            RaiseEffect,
-                        )
-                        from sugar_lift_py_tests.effect.raise_effect import (
-                            UndeterminedRaiseEffect,
-                        )
-
-                        # An exception (a leaf or a group) is suppressed by a
-                        # true exit result; loop control and return are not
-                        # exceptions, so the exit result is ignored for them.
-                        # A RuntimeEffect is not an exception either: it is the
-                        # lift's boundary at an operation whose dispatch exists
-                        # only at runtime (it may complete or raise anything).
-                        # Every exception Python raises from a decided operation
-                        # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
-                        # takes the truth split; handing a boundary to exit as a
-                        # raise would invent one, so it stays the With's residue.
-                        if isinstance(body_face, Halted) and not isinstance(
-                            body_face.effect,
-                            (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
-                        ):
-                            routed = ExitSet((body_face,)).and_exit(
-                                exit_es,
-                                disposition=NeverSuppressesDispositionV1(),
-                            )
-                        else:
-                            routed = ExitSet((body_face,)).and_exit_truthiness(
-                                _exit_return_values(exit_es), site=self.site
-                            )
-                    else:
+                    # An exception (a leaf or a group) is suppressed by a
+                    # true exit result; loop control and return are not
+                    # exceptions, so the exit result is ignored for them.
+                    # A RuntimeEffect is not an exception either: it is the
+                    # lift's boundary at an operation whose dispatch exists
+                    # only at runtime (it may complete or raise anything).
+                    # Every exception Python raises from a decided operation
+                    # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
+                    # takes the truth split; handing a boundary to exit as a
+                    # raise would invent one, so it stays the With's residue.
+                    if isinstance(body_face, Halted) and not isinstance(
+                        body_face.effect,
+                        (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
+                    ):
                         routed = ExitSet((body_face,)).and_exit(
                             exit_es,
-                            disposition=disposition,
+                            disposition=NeverSuppressesDispositionV1(),
                         )
-                    parts.append(
-                        prepend_facts_to_exitset(
-                            routed, (*manager_facts, *enter_facts, *face_facts)
+                    else:
+                        routed = ExitSet((body_face,)).and_exit_truthiness(
+                            _exit_return_values(exit_es), site=resource.site
                         )
+                else:
+                    routed = ExitSet((body_face,)).and_exit(
+                        exit_es,
+                        disposition=disposition,
                     )
-        if not parts:
-            from sugar_source_tree.panic import SugarNotWritten
+                parts.append(
+                    prepend_facts_to_exitset(
+                        routed, (*manager_facts, *enter_facts, *face_facts)
+                    )
+                )
+    if not parts:
+        from sugar_source_tree.panic import SugarNotWritten
 
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="WithSourceResourceSugar.desugar",
-                observed="constructed manager protocol produced no face",
-                requested="one completed or halted source-derived manager face",
-                fix="keep empty protocol testimony loud",
-            )
-        result = parts[0]
-        for part in parts[1:]:
-            result = result.union(part)
-        return result.normalize()
+        raise SugarNotWritten(
+            blame=resource.site,
+            owner="WithSourceResourceSugar.desugar",
+            observed="constructed manager protocol produced no face",
+            requested="one completed or halted source-derived manager face",
+            fix="keep empty protocol testimony loud",
+        )
+    result = parts[0]
+    for part in parts[1:]:
+        result = result.union(part)
+    return result.normalize()
 
 
 def _project_manager_receiver(value, ctx, seen=frozenset()):
@@ -212,6 +251,45 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
     )
 
 
+def _project_partition_manager(value, ctx, seen=frozenset()):
+    """One manager face per return of a factory with several returns.
+
+    A factory call whose retained completion has several guarded returns
+    stays its own CallSiteValue under ``project_operation_receiver_outcome``
+    (no single return speaks for the rest).  A manager partition enters each
+    of those returns under its own guard, so the returns are projected here
+    with their branch authentication, exactly as an exit's returns are.
+    """
+    from sugar_lift_py_tests.floor import BlockValue, CallSiteValue
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if isinstance(value, CallSiteValue) and value.body is not None:
+        retained = value.retained_source_completion_outcome()
+        if retained is not None and isinstance(retained.value, BlockValue):
+            projected = value.project_operation_receiver_outcome(
+                ctx, owner="WithManagerPartitionSugar.manager"
+            )
+            if projected.value is value:
+                if id(value) in seen:
+                    raise SugarNotWritten(
+                        blame="WithManagerPartitionSugar.manager",
+                        owner="WithManagerPartitionSugar.manager",
+                        observed="cycle in retained manager return projections",
+                        requested="an acyclic constructed manager receiver",
+                        fix="retain the source call-graph cycle as a construction gap",
+                    )
+                return _exit_return_values(
+                    ExitSet.completed(retained.value),
+                    owner="WithManagerPartitionSugar.manager-return",
+                ).sequence(
+                    lambda returned: _project_partition_manager(
+                        returned, ctx, seen | {id(value)}
+                    )
+                )
+    return _project_manager_receiver(value, ctx, seen)
+
+
 def _returned_value(value):
     from sugar_lift_py_tests.floor import BlockValue, ReturnValue
 
@@ -222,7 +300,7 @@ def _returned_value(value):
     return value
 
 
-def _exit_return_values(exit_es):
+def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return"):
     """Project native returns, retaining guards and refusing untransported state.
 
     A constructed conditional return is GuardedReturn, not a truthy BlockValue.
@@ -269,7 +347,7 @@ def _exit_return_values(exit_es):
                 continue
             if not isinstance(item, (ReturnValue, GuardedReturn)):
                 construction_panic_gap(
-                    owner="WithSourceResourceSugar.exit-return",
+                    owner=owner,
                     blame=type(item).__name__,
                     observed="native exit prefix requires state/effect transport",
                     requested="return testimony without discarding prefix operations",
@@ -280,7 +358,7 @@ def _exit_return_values(exit_es):
             local_guard = resolve_branch_result_guards(local_guard, authentication)
             if local_guard is None:
                 construction_panic_gap(
-                    owner="WithSourceResourceSugar.exit-return",
+                    owner=owner,
                     blame=type(item).__name__,
                     observed="return guard lacks native branch authentication",
                     requested="native branch-result testimony",
@@ -301,7 +379,7 @@ def _exit_return_values(exit_es):
             )
             if fall_guard is None:
                 construction_panic_gap(
-                    owner="WithSourceResourceSugar.exit-return",
+                    owner=owner,
                     blame="fall-through",
                     observed="fall-through guard lacks native branch authentication",
                     requested="native branch-result testimony",
@@ -319,7 +397,7 @@ def _exit_return_values(exit_es):
     result = ExitSet(tuple(results)).normalize()
     if not result.exits:
         construction_panic_gap(
-            owner="WithSourceResourceSugar.exit-return",
+            owner=owner,
             blame="native exit",
             observed="exit has no returned, fall-through, or halted face",
             requested="a reachable native exit outcome, not an empty green",

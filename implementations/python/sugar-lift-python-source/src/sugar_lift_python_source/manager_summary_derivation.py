@@ -2253,9 +2253,29 @@ def populate_source_derived_resource_refs(
                 detail,
             )
             continue
-        from .manager_construction import ConstructedManagerBehaviorV1
+        from .manager_construction import (
+            ConstructedManagerBehaviorV1,
+            PartitionedManagerBehaviorV1,
+        )
         from .manager_protocol_construction import ConstructedManagerProtocolV1
 
+        if isinstance(behavior, PartitionedManagerBehaviorV1):
+            # The factory returns managers of more than one kind on its faces:
+            # construct each, enter each under its own guard (#7669).
+            _publish_manager_face_partition(
+                context,
+                coordinate,
+                behavior,
+                receipt=receipt,
+                exit_face_id=exit_face_id,
+                session=session,
+                graph=graph,
+                dependency_graphs=graphs,
+                distribution_index=distribution_index,
+                positional_sugars=tuple(positional_sugars),
+                keyword_sugars=tuple(keyword_sugars),
+            )
+            continue
         if not isinstance(behavior, ConstructedManagerBehaviorV1):
             # Stage-keyed residual — never collapse assertion-membrane mass into
             # a single opaque label, and never fuse the stage with its data:
@@ -3721,6 +3741,138 @@ def _publish_class_protocol_native_definitions(context, receiver, behavior) -> N
     )
     _publish_native_definition(
         context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
+    )
+
+
+def _publish_manager_face_partition(
+    context,
+    coordinate,
+    behavior,
+    *,
+    receipt,
+    exit_face_id,
+    session,
+    graph,
+    dependency_graphs,
+    distribution_index,
+    positional_sugars,
+    keyword_sugars,
+) -> None:
+    """Publish one resource ref whose protocol enters each face's own manager.
+
+    A factory returning ``nullcontext()`` under one guard and
+    ``assert_produces_warning(...)`` under its complement returns a class
+    manager on one face and a generator manager on the other.  Each is
+    constructed here by the door its kind already has: the class manager's
+    ``__enter__``/``__exit__`` frames, the generator's decorator-constructed
+    lifecycle.  The With enters every manager face its reduction of the
+    factory produces, under that face's guard, and unions the exits.  Never
+    one face for all.  A face whose manager cannot be constructed keeps its
+    named refusal.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EnterResultContractV1,
+        ExitContractV1,
+        ImportSignatureV2,
+        ProtocolResourceSemanticsV1,
+        ReturnTruthinessDispositionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceCallActualSugarsV1,
+        SourceDerivedContextManagerRefV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort
+    from sugar_source_tree.panic import SugarNotWritten
+
+    from .manager_protocol_construction import (
+        ConstructedManagerProtocolV1,
+        construct_generator_backed_protocol,
+        construct_manager_partition_protocol,
+        construct_manager_protocol,
+    )
+
+    def refuse(kind, detail=None):
+        _install_derivation_gap_for_receipt(context, coordinate, receipt, kind, detail)
+
+    class_protocol = None
+    if behavior.class_behavior is not None:
+        try:
+            class_protocol = construct_manager_protocol(
+                behavior.class_behavior, exit_face_id=exit_face_id
+            )
+        except (SugarNotWritten, TypeError) as exc:
+            refuse(*_populate_body_defect_kind_detail(exc))
+            return
+        if not isinstance(class_protocol, ConstructedManagerProtocolV1):
+            refuse(*_gap_kind_and_detail(class_protocol))
+            return
+    generator_protocols = []
+    for machine in behavior.generators:
+        # The frame that allocated this face's machine: the protocol enters
+        # exactly the machines that frame allocates.
+        frame = machine.source_frame
+        declined: list[str] = []
+        coords = _protocol_coords_from_generator_decorators(
+            frame.owner,
+            session=session,
+            graph=graph,
+            dependency_graphs=dependency_graphs,
+            distribution_index=distribution_index,
+            declined=declined,
+        )
+        if coords is None:
+            refuse(
+                "generator-protocol",
+                "native enter/exit definition coordinates unavailable"
+                + (f" [{'; '.join(declined)}]" if declined else ""),
+            )
+            return
+        enter, exit_ = coords
+        protocol = construct_generator_backed_protocol(
+            frame=frame,
+            enter_definition=enter,
+            exit_definition=exit_,
+            exit_face_id=exit_face_id,
+            construction_cid=behavior.manager_construction_cid,
+        )
+        gap = _generator_protocol_construction_gap(protocol)
+        if gap is not None:
+            refuse(*_gap_kind_and_detail(gap))
+            return
+        generator_protocols.append(protocol)
+    protocol = construct_manager_partition_protocol(
+        manager_construction_cid=behavior.manager_construction_cid,
+        exit_face_id=exit_face_id,
+        class_protocol=class_protocol,
+        generator_protocols=tuple(generator_protocols),
+    )
+    # Each member's exit result decides suppression for its own faces: a
+    # generator's GCM throw/resume result, a class manager's returned value.
+    semantics = ProtocolResourceSemanticsV1(
+        EnterResultContractV1(PrimitiveSort("Value")),
+        ExitContractV1(ReturnTruthinessDispositionV1()),
+    )
+    summary_cid = cid_of_json(
+        {
+            "kind": "source-derived-manager-partition-summary",
+            "schemaVersion": "1",
+            "protocolConstructionCid": protocol.protocol_construction_cid,
+        }
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        SourceDerivedContextManagerRefV1(
+            coordinate,
+            summary_cid,
+            semantics,
+            ImportSignatureV2(()),
+            protocol,
+            call_actual_sugars=SourceCallActualSugarsV1(
+                coordinate,
+                positional_sugars,
+                keyword_sugars,
+                behavior.source_call_frame,
+            ),
+        )
     )
 
 

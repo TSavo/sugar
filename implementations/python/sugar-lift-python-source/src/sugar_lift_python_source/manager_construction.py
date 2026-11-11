@@ -1425,6 +1425,65 @@ class ConstructedManagerBehaviorV1:
             raise ValueError("source call frame CID mismatch")
 
 
+@dataclass(frozen=True)
+class ManagerFacePartitionV1:
+    """A factory's return faces that are managers of different kinds.
+
+    ``if PYPY: return nullcontext()`` / ``return assert_produces_warning(...)``
+    returns a class manager on one face and a generator-backed manager on the
+    other.  Both faces are kept: neither is the factory's manager on every
+    path.  The guards stay where the consumer's own reduction of the factory
+    puts them; this records only which managers can come back.
+    """
+
+    class_receivers: tuple[ObjectValue | ReceiverStatePartitionValue, ...]
+    generators: tuple[object, ...]
+
+
+@dataclass(frozen=True)
+class PartitionedManagerBehaviorV1:
+    """One constructed manager per kind of face a factory returns.
+
+    ``class_behavior`` is the ordinary construction of the class-manager face
+    (or None when no face returns one); ``generators`` are the allocated
+    generator machines the other faces return, each carrying the frame it was
+    allocated from.  Each face is entered under its own guard by the With.
+    """
+
+    resolved_object_cid: str
+    manager_construction_cid: str
+    class_behavior: ConstructedManagerBehaviorV1 | None
+    generators: tuple[object, ...] = field(compare=False)
+    generator_instance_coordinates: tuple[str, ...]
+    source_call_frame_cid: str
+    source_call_frame: object | None = field(default=None, compare=False, repr=False)
+
+    @property
+    def preimage(self):
+        return {
+            "kind": "constructed-manager-face-partition",
+            "schemaVersion": "1",
+            "resolvedObjectCid": self.resolved_object_cid,
+            "classManagerConstructionCid": (
+                None
+                if self.class_behavior is None
+                else self.class_behavior.manager_construction_cid
+            ),
+            "generatorInstanceCoordinates": list(self.generator_instance_coordinates),
+            "sourceCallFrameCid": self.source_call_frame_cid,
+        }
+
+    def __post_init__(self) -> None:
+        if tuple(
+            item.instance_coordinate for item in self.generators
+        ) != self.generator_instance_coordinates:
+            raise ValueError("generator faces do not match their coordinates")
+        if self.class_behavior is None and not self.generators:
+            raise ValueError("a manager partition needs at least one face")
+        if cid_of_json(self.preimage) != self.manager_construction_cid:
+            raise ValueError("manager partition CID does not match its preimage")
+
+
 # The four conditions that ``opaque-call-target`` used to fuse into one name.
 #
 # ``opaque-call-target`` named a *symptom* -- "construction could not see through
@@ -1826,10 +1885,19 @@ def _project_return_faces_to_manager(
     reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
     cited: list[str] = []
     unprojected: list[str] = []
+    generators: list[object] = []
+    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
+
     for face in faces:
         returned = face.value
         if isinstance(returned, ObjectValue):
             managers.append((face, returned, None))
+            continue
+        if type(returned) is GeneratorConstructionV1:
+            # A generator-function manager's allocated machine: a manager of
+            # another kind, entered by its own protocol (#7669).
+            if all(item is not returned for item in generators):
+                generators.append(returned)
             continue
         if not isinstance(returned, CallSiteValue):
             unprojected.append(type(returned).__name__)
@@ -1872,6 +1940,18 @@ def _project_return_faces_to_manager(
         return ManagerConstructionGapV1(
             "call-target-off-population", resolved_cid, cited[0]
         )
+
+    if generators and not unprojected and not nested:
+        # Every face is a manager, of more than one kind (or a generator
+        # manager alone).  Keep every face; never pick one (#7669).
+        return (
+            ManagerFacePartitionV1(
+                tuple(item[1] for item in managers), tuple(generators)
+            ),
+            factory_prefix + non_return_prefix,
+        )
+    if generators:
+        unprojected.extend(type(item).__name__ for item in generators)
 
     if unprojected and (managers or nested):
         # A guarded face returning a value this projection does not read (a
@@ -2001,6 +2081,15 @@ def _project_manager_from_exitset(
         if isinstance(projected, ManagerConstructionGapV1):
             return projected
         mgr, prefix = projected
+        if isinstance(mgr, ManagerFacePartitionV1):
+            # A partition on one exit arm beside other arms: keeping only this
+            # arm's managers would drop the others' faces.
+            return ManagerConstructionGapV1(
+                "non-manager-result",
+                resolved_cid,
+                "factory returns a manager partition on one exit arm of "
+                f"{len(outcome.exits)}",
+            )
         if isinstance(mgr, (ObjectValue, ReceiverStatePartitionValue)):
             managers.append((mgr, prefix))
         return None
@@ -2300,6 +2389,106 @@ def construct_manager_behavior(
                 "force-floor", resolved.cid, f"{owner}:{observed}"
             )
         raise
+    if isinstance(result, ManagerFacePartitionV1):
+        return _construct_manager_face_partition(
+            result,
+            resolved=resolved,
+            frame=frame,
+            values=values,
+            actuals=actuals,
+            keyword_actuals=keyword_actuals,
+            factory_prefix=factory_prefix,
+            projected_force_floor_detail=projected_force_floor_detail,
+        )
+    return _constructed_receiver_behavior(
+        result,
+        resolved=resolved,
+        frame=frame,
+        values=values,
+        actuals=actuals,
+        keyword_actuals=keyword_actuals,
+        factory_prefix=factory_prefix,
+        projected_force_floor_detail=projected_force_floor_detail,
+    )
+
+
+def _construct_manager_face_partition(
+    partition: ManagerFacePartitionV1,
+    *,
+    resolved,
+    frame,
+    values,
+    actuals,
+    keyword_actuals,
+    factory_prefix,
+    projected_force_floor_detail,
+) -> PartitionedManagerBehaviorV1 | ManagerConstructionGapV1:
+    """Construct each kind of manager a factory's faces return (#7669)."""
+    class_behavior = None
+    if partition.class_receivers:
+        identities = {
+            _manager_receiver_identity(item) for item in partition.class_receivers
+        }
+        if len(identities) > 1:
+            return ManagerConstructionGapV1(
+                "non-manager-result",
+                resolved.cid,
+                f"GuardedReturn with {len(identities)} manager receivers "
+                f"beside {len(partition.generators)} generator manager faces",
+            )
+        class_behavior = _constructed_receiver_behavior(
+            partition.class_receivers[0],
+            resolved=resolved,
+            frame=frame,
+            values=values,
+            actuals=actuals,
+            keyword_actuals=keyword_actuals,
+            factory_prefix=factory_prefix,
+            projected_force_floor_detail=projected_force_floor_detail,
+        )
+        if isinstance(class_behavior, ManagerConstructionGapV1):
+            return class_behavior
+    for machine in partition.generators:
+        if getattr(machine, "source_frame", None) is None:
+            return ManagerConstructionGapV1(
+                "non-manager-result",
+                resolved.cid,
+                "factory returns a generator manager whose allocating frame "
+                "is not retained",
+            )
+    coordinates = tuple(item.instance_coordinate for item in partition.generators)
+    preimage = {
+        "kind": "constructed-manager-face-partition",
+        "schemaVersion": "1",
+        "resolvedObjectCid": resolved.cid,
+        "classManagerConstructionCid": (
+            None if class_behavior is None else class_behavior.manager_construction_cid
+        ),
+        "generatorInstanceCoordinates": list(coordinates),
+        "sourceCallFrameCid": frame.frame_cid,
+    }
+    return PartitionedManagerBehaviorV1(
+        resolved_object_cid=resolved.cid,
+        manager_construction_cid=cid_of_json(preimage),
+        class_behavior=class_behavior,
+        generators=partition.generators,
+        generator_instance_coordinates=coordinates,
+        source_call_frame_cid=frame.frame_cid,
+        source_call_frame=frame,
+    )
+
+
+def _constructed_receiver_behavior(
+    result,
+    *,
+    resolved,
+    frame,
+    values,
+    actuals,
+    keyword_actuals,
+    factory_prefix,
+    projected_force_floor_detail,
+) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
     if not isinstance(result, (ObjectValue, ReceiverStatePartitionValue)):
         return ManagerConstructionGapV1(
             "non-manager-result", resolved.cid, type(result).__name__
