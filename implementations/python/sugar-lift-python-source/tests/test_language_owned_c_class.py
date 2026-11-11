@@ -112,6 +112,40 @@ def test_only_c_heap_classes_of_interpreter_owned_modules_qualify():
     assert floor_artifact_module_absent_export(_Absent("builtins", "int")) is None
 
 
+def test_a_static_c_type_of_an_interpreter_owned_module_is_floored(tmp_path):
+    """Truthful twin (#7735): ``decimal.Decimal`` is ``_decimal``'s static C type.
+
+    No class statement can make a static type, so the interpreter's own flag
+    proves it is C; its dotted ``tp_name`` names the extension module that
+    declares it.  The call completes with an opaque instance or raises.
+    """
+    from sugar_lift_py_tests.floor.language_owned_c_type import (
+        LanguageOwnedCTypeValue,
+    )
+
+    floored = floor_artifact_module_absent_export(_Absent("_decimal", "Decimal"))
+    assert type(floored) is LanguageOwnedCTypeValue
+    exits = _exits(
+        tmp_path, "from decimal import Decimal\ndef f(v):\n    return Decimal(v)\n"
+    )
+    assert _owners(exits) == ["LanguageOwnedCType:_decimal.Decimal"]
+    (completed,) = [face for face in exits.exits if isinstance(face, Completed)]
+    assert "python:c_type.constructs" in repr(completed.guard)
+
+
+def test_source_classes_core_types_and_absent_modules_are_not_floored():
+    """Lying twin (#7735): only a C type with no Python source is cited."""
+    # A class with Python source (the pure-Python fallback's Decimal).
+    assert floor_artifact_module_absent_export(_Absent("_pydecimal", "Decimal")) is None
+    # A static core language type keeps its own floor.
+    assert floor_artifact_module_absent_export(_Absent("builtins", "dict")) is None
+    # A module that does not exist keeps the gap, named.
+    assert (
+        floor_artifact_module_absent_export(_Absent("_no_such_c_module", "Decimal"))
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     ("source", "owner"),
     [

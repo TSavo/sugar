@@ -167,19 +167,28 @@ _PY_TPFLAGS_HEAPTYPE = 1 << 9
 
 
 def _interpreter_owned_c_class(module_name, module, obj) -> bool:
-    """``obj`` is a C heap type that an interpreter-owned module exports.
+    """``obj`` is a C type that an interpreter-owned module exports.
 
     Runtime identity, never a name table: the module is built in or a stdlib
-    ``lib-dynload`` extension, ``obj`` is a heap type (``_io.TextIOWrapper``),
-    and none of its own attributes is a Python function, so no Python body
-    stands behind it.  This is the type rule; the C-function rule above keys
-    on ``builtin_function_or_method`` and never admits a class.
+    ``lib-dynload`` extension, ``obj`` is a class, and none of its own
+    attributes is a Python function, so no Python body stands behind it.  A
+    heap type (``_io.TextIOWrapper``) qualifies through the member check.  A
+    class statement always makes a heap type, so a static type is C by the
+    interpreter's own testimony; it qualifies when its C ``tp_name`` is
+    dotted, i.e. it names the extension module that declares it
+    (``_decimal``'s ``Decimal`` reports ``decimal``).  A static type with an
+    undotted ``tp_name`` reports ``builtins``: it is a core language type
+    (``int``) with its own floor, not an opaque C-library type.  This is the
+    type rule; the C-function rule above keys on ``builtin_function_or_method``
+    and never admits a class.
     """
     import sys
 
     from .dependency_export_adapter import _is_stdlib_extension_module
 
-    if not isinstance(obj, type) or not obj.__flags__ & _PY_TPFLAGS_HEAPTYPE:
+    if not isinstance(obj, type):
+        return False
+    if not obj.__flags__ & _PY_TPFLAGS_HEAPTYPE and obj.__module__ == "builtins":
         return False
     if module_name not in sys.builtin_module_names and not _is_stdlib_extension_module(
         module_name
