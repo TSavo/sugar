@@ -36,6 +36,78 @@ def _is_authenticated_stop_iteration(effect) -> bool:
     return coordinate == stop_identity
 
 
+def _contents_undecided(iterable) -> bool:
+    """An iterable whose contents nothing here decided (#7742, #7676).
+
+    A dependency frame reads a mutable module global as the pinned object
+    itself (``MutableGlobalValue``, ``python:mutable_global_pin``): anything may
+    have mutated it before the function runs, so its contents are not the
+    literal in the module body.  A call nobody projected (``table.items()`` on
+    that pin, an off-population call, an unknown callee) returns the opaque
+    ``python:call_result``.  Either is as undecided as a symbolic term: the
+    loop takes the opaque recurrence (the body runs an undecided number of
+    times) instead of asking the value for an iterator protocol it cannot own.
+    A call with a projected body keeps its own iterator law.
+    """
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
+
+    if type(iterable) is MutableGlobalValue:
+        return True
+    return type(iterable) is CallSiteValue and iterable.body is None
+
+
+def _iteration_may_raise(outcome, iterable, site):
+    """Iterating an undecided value may raise: ``iter()`` and ``next()`` on it
+    run code nothing here read (or raise ``TypeError`` when it is not
+    iterable).  The loop's own outcome holds only under
+    ``python:iteration.completes(python:iteration(<iterable>, <site>))``; its
+    complement halts with an ``UndeterminedRaiseEffect`` (owner
+    ``UndecidedIteration``) -- the #7585 law for a body that was not looked at.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome import (
+        Completed,
+        ExitSet,
+        Halted,
+        outcome_to_exitset,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard, partition
+
+    key = occurrence_key(site)
+    iteration = ctor(
+        "python:iteration",
+        (iterable.to_term(owner="LoopRecurrenceSugar"), str_const(key)),
+    )
+    completes = atomic("python:iteration.completes", [iteration])
+    # The iteration either completes or raises: one split this law owns, so
+    # its two sides are named partition faces (factoring reads exclusion off
+    # them, never off the guard's spelling).
+    halt_face, pass_face = partition(("undecided_iteration", key))
+    halt = Halted(
+        complement_guard(completes),
+        UndeterminedRaiseEffect(
+            blame=str(site) if site is not None else None,
+            occurrence=key if site is not None else None,
+            producer_node_owner="UndecidedIteration",
+        ),
+        None,
+        frozenset({halt_face}),
+    )
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        marker = _DeferredOutwardFace(-1)
+        return NativeOperationExitCarrierV1.compose_prefix(
+            ExitSet((Completed(completes, marker, frozenset({pass_face})), halt)),
+            lambda value: outcome if value is marker else Complete(value),
+        )
+    iterated = outcome_to_exitset(outcome).guarded(completes, pass_face)
+    return ExitSet((*iterated.exits, halt)).normalize()
+
+
 @dataclass(frozen=True)
 class LoopBindingRefSugar(ConstructedTermSugar):
     target_cid: str
@@ -148,6 +220,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             iterable is not None
             and runtime is not None
             and not isinstance(iterable, SymbolicValue)
+            and not _contents_undecided(iterable)
         ):
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,
@@ -190,6 +263,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
             )
 
+        if iterable is not None and _contents_undecided(iterable):
+            return _iteration_may_raise(
+                self._recurrence(iterable, ctx), iterable, self.site
+            )
+        return self._recurrence(iterable, ctx)
+
+    def _recurrence(self, iterable, ctx):
+        """The opaque recurrence: the body runs an undecided number of times."""
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
 

@@ -158,3 +158,17 @@ def test_only_a_local_bound_once_by_a_call_qualifies():
     assert head("def f(m):\n    z = m\n    with z.A():\n        pass\n", 3) is None
     assert head("def f(z):\n    with z.A():\n        pass\n", 2) is None
     assert head("def f():\n    z = g('m')\n    with z():\n        pass\n", 3) is None
+
+
+def test_a_returned_off_population_stdlib_module_is_cited(tmp_path):
+    # Pair (population), truthful: json is not enrolled here.
+    _source_file, _with_node, seated = _lifted(tmp_path, name="json")
+    assert type(seated) is OpaqueCitedContextManagerRefV1
+    assert seated.target_name == "python:json.ZstdDecompressor"
+
+
+def test_a_returned_enrolled_module_is_not_cited(tmp_path):
+    # Pair (population), lying: the same chain on contextlib, which this
+    # session enrolls: a module on the population is never cited.
+    _source_file, _with_node, seated = _lifted(tmp_path, name="contextlib")
+    assert not isinstance(seated, OpaqueCitedContextManagerRefV1)
