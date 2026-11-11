@@ -8677,7 +8677,6 @@ def test_deferred_exit_projection_requires_its_own_actual_face():
 
 def test_deferred_exit_projection_does_not_authenticate_unknown_message_equality():
     from sugar_lift_py_tests.floor import ObjectField, ObjectValue, SymbolicValue
-    from sugar_lift_py_tests.gap import ConstructionPanic
     from sugar_lift_py_tests.ir import make_var
 
     coordinate, deferred, _ = _deferred_exit_message_comparison()
@@ -8686,9 +8685,24 @@ def test_deferred_exit_projection_does_not_authenticate_unknown_message_equality
         (ObjectField("message", SymbolicValue(make_var("unknown-payload"))),),
         identity="raised-error",
     )
-    with pytest.raises(ConstructionPanic) as caught:
+    # An unknown payload's ``__eq__`` is undecided dispatch: the predicate is
+    # never authenticated as a total completion.  It completes only under the
+    # opaque ``python:compare.completes`` atom and halts undetermined (no
+    # invented exception type) under the complement -- the #7585 two faces.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    exits = outcome_to_exitset(
         deferred.discharge({coordinate.coordinate_cid: receiver})
-    assert caught.value.info.owner == "ComparisonOpSugar.Eq"
+    ).exits
+    (completed,) = [face for face in exits if isinstance(face, Completed)]
+    (halted,) = [face for face in exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert completed.value.formula.name == "py.eq"
+    assert completed.value.formula.args[0] == make_var("unknown-payload")
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == "UndecidedCompare:Eq"
 
 
 @pytest.mark.parametrize(

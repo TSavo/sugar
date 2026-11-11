@@ -5451,6 +5451,14 @@ class AsyncFunctionDef(Statement):
         """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
         return FunctionDef._source_visible_generator_steps_from(self, *args, **kwargs)
 
+    def _source_visible_generator_steps(self, *args, **kwargs):
+        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
+        return FunctionDef._source_visible_generator_steps(self, *args, **kwargs)
+
+    def lacks_captured_binding_testimony(self) -> bool:
+        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
+        return FunctionDef.lacks_captured_binding_testimony(self)
+
     def _construct_sugar(self):
         """L1a: FunctionUniverse body construction — same door as FunctionDef."""
         return FunctionDef._construct_sugar(self)
@@ -8801,11 +8809,22 @@ class With(Statement):
         callee is not decided here: its call returns whatever the decorator
         returned.
         """
+        return self._bare_generator_object_kind(item) is not None
+
+    def _bare_generator_object_kind(self, item: WithItem):
+        """``"generator"`` / ``"async_generator"`` for an undecorated generator
+        function head (``def`` / ``async def``), else None."""
         frame = self._generator_manager_frame(item)
         if frame is None:
-            return False
+            return None
         owner = getattr(frame, "owner", None)
-        return isinstance(owner, FunctionDef) and not owner.decorators
+        if getattr(owner, "decorators", None):
+            return None
+        if isinstance(owner, FunctionDef):
+            return "generator"
+        if isinstance(owner, AsyncFunctionDef):
+            return "async_generator"
+        return None
 
     def _generator_manager_sugar(self, item: WithItem):
         if self._generator_manager_frame(item) is None:
@@ -9129,12 +9148,16 @@ class With(Statement):
                 GeneratorWithSugar,
             )
 
-            if self._generator_manager_is_bare_generator_object(item):
+            object_kind = self._bare_generator_object_kind(item)
+            if object_kind is not None:
                 # An undecorated generator function returns a generator
-                # object, which is not a context manager: the With raises
-                # TypeError after the call, before enter and body.
+                # object (an async generator object for ``async def``), which
+                # is not a context manager: the With raises TypeError after
+                # the call, before enter and body.
                 return GeneratorObjectWithSugar(
-                    manager=generator_manager, site=self.fragment
+                    manager=generator_manager,
+                    site=self.fragment,
+                    object_kind=object_kind,
                 )
 
             enter_slot = (

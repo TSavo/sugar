@@ -3251,7 +3251,7 @@ def _populate_same_module_generator_manager_uses(
     decorator's protocol cannot be cited, the use is a named gap, never a
     seated frame: a local generator is not a manager on its spelling.
     """
-    from sugar_source_tree.nodes import Call, FunctionDef, Name
+    from sugar_source_tree.nodes import AsyncFunctionDef, Call, FunctionDef, Name
     from sugar_source_tree.panic import SugarNotWritten
 
     from .canonical import cid_of_json
@@ -3263,10 +3263,12 @@ def _populate_same_module_generator_manager_uses(
         if not isinstance(call, Call) or not isinstance(call.func, Name):
             continue
         binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
-        if len(binds) != 1 or not isinstance(binds[0], FunctionDef):
+        if len(binds) != 1 or not isinstance(binds[0], (FunctionDef, AsyncFunctionDef)):
             continue
         function_def = binds[0]
-        if not getattr(function_def, "decorators", ()):
+        if isinstance(function_def, AsyncFunctionDef) and function_def.decorators:
+            # What a decorated ``async def`` returns is the decorator's to say;
+            # no generator protocol is read from its spelling.
             continue
         target_symbol = f"python:local:{function_def.name}"
         try:
@@ -3278,6 +3280,14 @@ def _populate_same_module_generator_manager_uses(
             continue
         if frame is None or frame.generator_steps is None:
             # Not a generator: another derivation (or the require door) owns it.
+            continue
+        if not getattr(function_def, "decorators", ()):
+            # An undecorated generator function returns the generator object
+            # itself, which has no ``__enter__``: seat the frame so the With
+            # constructs the interpreter's own TypeError (#7595), never a
+            # manager and never a runtime-selected gap.
+            _install_source_call_frame(context, call, frame)
+            context.source_manager_provider_calls[coordinate] = call
             continue
         declined: list[str] = []
         if (
@@ -3796,9 +3806,9 @@ def _project_nested_manager_layers(
 
 def _source_visible_frame_for_function(function_def):
     """Build (frame, FunctionDef) for a same-module generator FunctionDef."""
-    from sugar_source_tree.nodes import FunctionDef
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
 
-    if not isinstance(function_def, FunctionDef):
+    if not isinstance(function_def, (FunctionDef, AsyncFunctionDef)):
         return None, None
     frame = function_def.source_visible_call_frame()
     if frame is None:

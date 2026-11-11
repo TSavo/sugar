@@ -33,12 +33,27 @@ def _a_generator_function():
     yield  # pragma: no cover - the body never runs: the with refuses first
 
 
-@lru_cache(maxsize=1)
-def observed_generator_object_with_refusal() -> GeneratorObjectWithRefusalV1:
-    """Run ``with <generator object>:`` once and record what the interpreter raised."""
+async def _an_async_generator_function():
+    yield  # pragma: no cover - the body never runs: the with refuses first
+
+
+@lru_cache(maxsize=2)
+def observed_generator_object_with_refusal(
+    kind: str = "generator",
+) -> GeneratorObjectWithRefusalV1:
+    """Run ``with <generator object>:`` once and record what the interpreter raised.
+
+    ``kind`` is ``"generator"`` (an undecorated ``def`` generator function's
+    object) or ``"async_generator"`` (an undecorated ``async def`` one's: it
+    has ``__aiter__``/``__anext__``, and no ``__enter__`` either)."""
+    factories = {
+        "generator": _a_generator_function,
+        "async_generator": _an_async_generator_function,
+    }
+    head = factories[kind]()
     entered = False
     try:
-        with _a_generator_function():  # type: ignore[attr-defined]
+        with head:  # type: ignore[attr-defined]
             entered = True  # pragma: no cover
     except Exception as raised:  # the interpreter raises TypeError here
         if entered:  # pragma: no cover

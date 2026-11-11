@@ -26,7 +26,6 @@ from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import With
-from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 
 import test_contextlib_suppress_source_exit_faces as opener
 from test_contextlib_suppress_source_exit_faces import _corpus
@@ -320,8 +319,16 @@ def test_an_undecorated_local_generator_never_constructs_a_manager(tmp_path):
     assert not any(
         isinstance(ref, SourceDerivedGeneratorResourceRefV1) for ref in refs.values()
     )
-    with pytest.raises(ContextManagerResolutionConstructionGap):
-        with_node.sugar()
+    # ``cm()`` returns a generator object, which has no ``__enter__``: the
+    # With raises the interpreter's own TypeError before enter and body
+    # (#7595), never a manager and never a runtime-selected gap.
+    from sugar_lift_py_tests.sugar.generator_with_sugar import (
+        GeneratorObjectWithSugar,
+    )
+
+    sugar = with_node.sugar()
+    assert isinstance(sugar, GeneratorObjectWithSugar)
+    assert sugar.object_kind == "generator"
 
 
 def test_exit_refusal_texts_are_contextlibs_own():
