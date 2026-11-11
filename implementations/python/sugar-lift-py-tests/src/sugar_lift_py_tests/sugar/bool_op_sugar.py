@@ -61,6 +61,64 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
     )
 
 
+def _is_undecided_call_result(value) -> bool:
+    """An opaque call result whose runtime type the lift did not decide."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    if not isinstance(value, CallSiteValue):
+        return False
+    denotes = getattr(value, "denotes_value", None)
+    decided = getattr(value, "runtime_type_is_decided", None)
+    return bool(
+        callable(denotes) and callable(decided) and denotes() and not decided()
+    )
+
+
+def _two_faced_call_truth(outcome, value, site):
+    """``bool(opaque())`` may raise: the selection completes only under an atom.
+
+    The #7585 two-faced law at the BoolOp truth producer.  The operand is a
+    call result with no projected body, so its ``__bool__`` / ``__len__`` are
+    undecided.  The truth selection stands only under
+    ``python:truth.completes(python:truth(<call term>, <site>))``, keyed on
+    the exact source site; the complement halts with an
+    ``UndeterminedRaiseEffect``.  No exception type is named and no truth is
+    decided: the completed face still carries the undecided ``py.truthy``.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    if not isinstance(outcome, Complete):
+        return outcome
+    key = occurrence_key(site)
+    truth = ctor(
+        "python:truth",
+        (value.to_term(owner="BoolOpSugar.truth"), str_const(key)),
+    )
+    completes = atomic("python:truth.completes", [truth])
+    return ExitSet(
+        (
+            Completed(completes, outcome.value),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site) if site is not None else None,
+                    occurrence=key if site is not None else None,
+                    producer_node_owner="BoolOpSugar.truth",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
+
+
 def select_boolop_operand(
     value,
     *,
@@ -156,6 +214,8 @@ def select_boolop_operand(
             operands=(value,),
             coordinates=(formal_coordinate,),
         )
+    elif _is_undecided_call_result(value):
+        tested = _two_faced_call_truth(value.boolop_truth(site), value, site)
     else:
         refuse_undecided_boolean_truth(value, site, op_kind)
         tested = value.boolop_truth(site)
