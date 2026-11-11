@@ -11364,6 +11364,23 @@ class Try(Statement):
                 else:
                     identity = self.unit.imported_exception_type_identity(type_node)
                     mro = None
+                if identity is None and type_node.kind == "Call":
+                    # ``except tuple(types):`` -- a computed arm, read when a
+                    # raise reaches it (ComputedExceptionTypeSugar).
+                    from sugar_lift_py_tests.sugar.computed_exception_type_sugar import (
+                        ComputedExceptionTypeSugar,
+                    )
+
+                    handler_specs.append(
+                        (
+                            ComputedExceptionTypeSugar(
+                                type_node.sugar(), type_node.fragment
+                            ),
+                            body_sugars,
+                            slot_id,
+                        )
+                    )
+                    continue
                 if identity is None:
                     raise SugarNotWritten(
                         owner="Try._construct_sugar",
