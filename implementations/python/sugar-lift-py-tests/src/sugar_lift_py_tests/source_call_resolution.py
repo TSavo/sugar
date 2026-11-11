@@ -470,53 +470,6 @@ class BuiltinDunderCallV1:
 
 
 @dataclass(frozen=True)
-class UnprojectedMethodCallV1:
-    """``receiver.name(...)`` whose method body no floor projected.
-
-    The receiver's runtime type selects the method; when no floor of the
-    receiver answers ``name`` (a formal, a call's result, a value whose class
-    the lift does not hold), the body that runs was not looked at, so the call
-    may raise anything (``AttributeError`` when there is no such method, or
-    whatever the method raises).  It completes only under
-    ``python:method_call.completes(python:method_call(name, site))`` and halts
-    with an ``UndeterminedRaiseEffect`` (owner ``UnprojectedMethodCall:<name>``)
-    under the complement -- the #7585 law.  Its completed value is
-    ``python:call_result(<call term>, <occurrence>)``: two evaluations are
-    never claimed to return the same object.  It never names what the method
-    does.
-    """
-
-    method_name: str
-
-    def faces(self, callsite, site):
-        from .effect.raise_effect import UndeterminedRaiseEffect
-        from .ir import atomic, ctor, str_const
-        from .occurrence import occurrence_key
-        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
-
-        key = occurrence_key(site)
-        call = ctor(
-            "python:method_call",
-            (str_const(self.method_name), str_const(key)),
-        )
-        completes = atomic("python:method_call.completes", [call])
-        return ExitSet(
-            (
-                Completed(completes, _occurrence_result(callsite, key)),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=str(site) if site is not None else None,
-                        occurrence=key if site is not None else None,
-                        producer_node_owner=f"UnprojectedMethodCall:{self.method_name}",
-                    ),
-                    None,
-                ),
-            )
-        ).normalize()
-
-
-@dataclass(frozen=True)
 class BuiltinValueCallV1:
     """A builtin over decided builtin operands that CPython may still refuse.
 

@@ -153,7 +153,7 @@ def test_source_classes_core_types_and_absent_modules_are_not_floored():
         # native code nothing testified to: each is two-faced.
         (
             "import io\ndef f(b):\n    w = io.TextIOWrapper(b)\n    return w.read()\n",
-            "UnprojectedMethodCall:read",
+            "UnknownCallee:read",
         ),
         (
             "import io\ndef f(b):\n    w = io.TextIOWrapper(b)\n    return w.encoding\n",
@@ -167,7 +167,7 @@ def test_source_classes_core_types_and_absent_modules_are_not_floored():
         # complete a method call with no raise face.
         (
             "import decimal\ndef f():\n    c = decimal.getcontext()\n    return c.copy()\n",
-            "UnprojectedMethodCall:copy",
+            "UnknownCallee:copy",
         ),
     ],
 )
