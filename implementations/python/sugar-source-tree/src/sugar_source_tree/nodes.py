@@ -1426,6 +1426,18 @@ class SourceUnit:
             )
         elif isinstance(consumer, For):
             sites = ((consumer.target, ("target",)),)
+        elif isinstance(consumer, With):
+            # ``with M() as (a, b):`` -- the as-clause is an assignment whose
+            # binding occurrence is this statement.  ``_bind_store_target``
+            # lowers it to ``<target> = enter_result``; that store borrows this
+            # span but is not a source occurrence, so the pattern it reads is
+            # the one minted here, for the With that owns the target.
+            sites = tuple(
+                (item.optional_vars, ("items", item_index, "optional_vars"))
+                for item_index, item in enumerate(consumer.items)
+                if isinstance(item.optional_vars, (Tuple_, List))
+                and self._is_binding_target_pattern(item.optional_vars)
+            )
         elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
             sites = tuple(
                 (generator.target, ("generators", index, "target"))
@@ -7139,7 +7151,14 @@ class Assign(Statement):
             # pattern.  This arm is now reached ONLY for authentic
             # non-enrollment; a stranded enrolled row goes loud below.
             return None
-        pattern = self.unit.require_target_pattern(self, target)
+        # The pattern is read through the consumer that OWNS the target
+        # occurrence: this Assign for a source assignment, or the With whose
+        # as-clause this store lowers (``With._bind_store_target``).  The
+        # lowered store borrows the With's span but is no source occurrence of
+        # its own, so reading under ``self`` would always miss.  The owner's
+        # row is still read strictly: a stranded owner refuses.
+        owner = self.unit.require_target_pattern_for_target(target).consumer_occurrence
+        pattern = self.unit.require_target_pattern(owner, target)
         return pattern.bindings_for(self.value)
 
     def _display_unpack_pairs(self, target, value):

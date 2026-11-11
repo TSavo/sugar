@@ -546,3 +546,94 @@ def test_the_defaulting_lexical_reader_is_gone() -> None:
     assert not hasattr(nodes.SourceUnit, "lexical_call_rows_for")
     assert hasattr(nodes.SourceUnit, "retain_lexical_call_row")
     assert hasattr(nodes.SourceUnit, "require_lexical_call_rows")
+
+
+# --------------------------------------------------------------------------
+# #7713 -- ``with M() as (a, b):`` owns its target pattern.
+#
+# ``With._bind_store_target`` lowers a destructuring as-clause to
+# ``<target> = enter_result`` borrowing the With's span.  That store is enrolled
+# by shape, but it is not a source occurrence, so no producer row was ever
+# seated for it: ``_destructured_binding`` raised a bare
+# ``foreign-target-occurrence`` out of the enumerate handler (pandas
+# ``core/_numba/extensions.py``, ``with builder.if_else(...) as (a, b):``).
+# The With is the binding occurrence; the producer mints its pattern, and the
+# lowered store reads it through that owner.
+# --------------------------------------------------------------------------
+
+WITH_TUPLE_SOURCE = """\
+def branch_{tag}(builder, cond):
+    pair = (1, 2)
+    with builder.if_else(cond) as (yes, no):
+        return yes
+"""
+
+
+def _with_tuple(tmp_path: Path, tag: str):
+    source_file = _open(
+        tmp_path, f"with_tuple_{tag}.py", WITH_TUPLE_SOURCE.format(tag=tag)
+    )
+    with_node = next(node for node in source_file.nodes() if node.kind == "With")
+    display = next(node for node in source_file.nodes() if node.kind == "Assign")
+    target = with_node.items[0].optional_vars
+    # The exact lowering ``_bind_store_target`` performs, with a concrete
+    # display on the right so the destructure has something to project.
+    store = with_node._make_assign(target, display.value)
+    return source_file, with_node, target, store
+
+
+def test_with_tuple_target_is_an_enrolled_consumer_with_a_seated_row(
+    tmp_path: Path,
+) -> None:
+    """TRUTHFUL: the producer mints the pattern for the With that binds it."""
+    _, with_node, target, _ = _with_tuple(tmp_path, "w1")
+    enrollment = with_node.target_pattern_enrollment
+    assert isinstance(enrollment, nodes.TargetPatternEnrolledV1)
+    assert enrollment.covers(target)
+    (pattern,) = with_node.require_target_patterns()
+    assert pattern.consumer_occurrence is with_node
+    assert pattern.names == ("yes", "no")
+
+
+def test_lowered_with_store_projects_through_the_with_pattern(
+    tmp_path: Path,
+) -> None:
+    """TRUTHFUL: the lowered store destructures instead of raising."""
+    _, _, _, store = _with_tuple(tmp_path, "w2")
+    binding = store.substitution_binding({})
+    assert sorted(binding) == ["no", "yes"]
+    assert binding["yes"].value == 1
+    assert binding["no"].value == 2
+
+
+def test_lying_stranded_with_row_still_refuses_by_name(tmp_path: Path) -> None:
+    """LYING: reading through the owner must not make a lost row tolerable.
+
+    Drop the With's seated row: the lowered store must refuse by the named
+    gap, not fall through to a weaker store answer.
+    """
+    source_file, with_node, _, store = _with_tuple(tmp_path, "w3")
+    _strand(source_file.unit, with_node)
+    with pytest.raises(nodes.TargetPatternConstructionGapV1) as refused:
+        store.substitution_binding({})
+    assert refused.value.reason == "foreign-target-occurrence"
+
+
+def test_lying_mixed_with_target_is_not_enrolled(tmp_path: Path) -> None:
+    """LYING: a store leaf in the as-clause owns no binding pattern.
+
+    ``as (self.a, b)`` is the same shape Assign refuses to enroll; the With
+    must not enroll it either, or the two would answer differently.
+    """
+    source_file = _open(
+        tmp_path,
+        "with_mixed.py",
+        "class Holder:\n"
+        "    def f(self, m):\n"
+        "        with m() as (self.a, b):\n"
+        "            return b\n",
+    )
+    with_node = next(node for node in source_file.nodes() if node.kind == "With")
+    enrollment = with_node.target_pattern_enrollment
+    assert isinstance(enrollment, nodes.TargetPatternNotEnrolledV1)
+    assert enrollment.reason == "consumer-shape-not-enrolled"
