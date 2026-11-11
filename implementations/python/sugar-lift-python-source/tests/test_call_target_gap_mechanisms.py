@@ -1004,3 +1004,62 @@ def test_module_bound_spelling_is_not_cited_as_the_import_member(tmp_path):
     assert type(state).__name__ == "ReceiverStatePartitionValue", state
     assert "DynamicTypeOperandRuntimeEffect" in repr(state)
     assert "re.Pattern" not in repr(built)
+
+
+# --------------------------------------------------------------------------
+# function-local import -- a frame binder that names a static export
+# --------------------------------------------------------------------------
+
+
+def test_function_local_import_callee_resolves_like_a_module_import(tmp_path):
+    """POSITIVE: ``from m import g`` inside the frame is the export ``m.g``.
+
+    The module-level spelling and the function-local spelling bind the same
+    static export, so both faces get the same verdict from the same door
+    (here the stdlib callee is off-population). Neither is a
+    value-call-target.
+    """
+    module_level = _construct(
+        tmp_path / "module",
+        "from contextlib import nullcontext\n\n"
+        "def make_guard(expected):\n    return nullcontext()\n",
+    )
+    local = _construct(
+        tmp_path / "local",
+        "def make_guard(expected):\n"
+        "    if expected:\n"
+        "        from contextlib import nullcontext\n\n"
+        "        return nullcontext()\n"
+        "    return None\n",
+    )
+    assert isinstance(module_level, ManagerConstructionGapV1)
+    assert isinstance(local, ManagerConstructionGapV1)
+    assert local.kind == module_level.kind == "call-target-off-population"
+
+
+def test_local_import_that_does_not_dominate_the_call_stays_a_value(tmp_path):
+    """NEGATIVE: the import runs only on one branch; the call runs after it.
+
+    With ``expected=23`` the import is skipped and Python raises
+    ``UnboundLocalError`` at the call, so the call is not the export.
+    """
+    gap = _opaque_gap(
+        tmp_path,
+        "def make_guard(expected):\n"
+        "    if not expected:\n"
+        "        from contextlib import nullcontext\n"
+        "    return nullcontext()\n",
+    )
+    assert gap.observed == "value-call-target:nullcontext"
+
+
+def test_local_import_rebound_in_the_frame_stays_a_value(tmp_path):
+    """NEGATIVE: another binder of the same name makes the callee a value."""
+    gap = _opaque_gap(
+        tmp_path,
+        "def make_guard(expected):\n"
+        "    from contextlib import nullcontext\n"
+        "    nullcontext = expected\n"
+        "    return nullcontext()\n",
+    )
+    assert gap.observed == "value-call-target:nullcontext"
