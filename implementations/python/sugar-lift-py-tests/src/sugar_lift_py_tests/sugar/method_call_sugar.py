@@ -373,6 +373,16 @@ def _decided_here(receiver) -> bool:
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
+    # A ``with ... as v`` enter result is the value ``__enter__`` returned at
+    # that one entry: the body reads it through its enter-result slot, and no
+    # store application replaces that slot afterwards, so a method called on
+    # it runs on exactly that value.
+    from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
+
+    if type(receiver) is EffectCoordinate and receiver.slot_id.endswith(
+        "#enter_result"
+    ):
+        return True
     # A ``ContextVar.get()`` read is one occurrence's own value, like a call's
     # result: nothing later replaces it.
     return type(receiver) in (
