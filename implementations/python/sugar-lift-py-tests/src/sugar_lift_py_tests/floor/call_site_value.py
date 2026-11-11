@@ -665,6 +665,46 @@ class CallSiteValue(FloorValue):
             type_callsites=(self,),
         )
 
+    def test_python_subtype(self, supertype, site):
+        """``issubclass(call(...), T)`` when the call is cited to return a class.
+
+        A cited ``python_type_coordinate`` (``type(obj)`` through the builtin
+        binding) testifies the result is a class, so CPython's non-class
+        ``TypeError`` is not a face: which class is undecided, so the answer
+        is the two-faced ``python.subtype`` obligation over the coordinate.
+        An uncited call result has no class testimony and stays loud.
+        """
+        if self.python_type_coordinate is None:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=site,
+                owner="CallSiteValue.test_python_subtype",
+                observed=(
+                    "issubclass operand without class testimony: "
+                    f"call result of `{self.target_name}(...)`"
+                ),
+                requested="a cited class coordinate for the call result",
+                fix="cite the callee's returned type object, or keep the call loud",
+            )
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "python.subtype",
+                    [
+                        self.python_type_coordinate,
+                        supertype.to_term(owner="python.issubclass supertype"),
+                    ],
+                ),
+                site,
+                operand_callsites=(*self.callsites(), *supertype.callsites()),
+            )
+        )
+
     def length(self, site):
         # A callsite length stays the call:len coordinate over this value's term.
         from sugar_lift_py_tests.ir import ctor
