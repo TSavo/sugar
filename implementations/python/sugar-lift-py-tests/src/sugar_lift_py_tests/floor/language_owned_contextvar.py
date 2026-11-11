@@ -98,7 +98,6 @@ class LanguageOwnedContextVarValue(FloorValue):
         return super().attribute(name, site)
 
     def call_method_with(self, operation, ctx):
-        del ctx
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.outcome import Complete
 
@@ -147,6 +146,11 @@ class LanguageOwnedContextVarValue(FloorValue):
                 and token.variable_name == self.name
             ):
                 return Complete(NoneValue())
+            site = getattr(operation, "blame", None)
+            if site is not None and not isinstance(
+                token, LanguageOwnedContextVarToken
+            ):
+                return _undecided_reset_faces(self.name, site)
         return super().call_method_with(operation, ctx)
 
 
@@ -368,3 +372,51 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
             getattr(operation, "blame", None),
             producer="LanguageOwnedCExtensionResultValue.subscript",
         )
+
+
+def _undecided_reset_faces(variable_name: str, site):
+    """``var.reset(token)`` with a token the lift did not see ``var.set`` mint.
+
+    CPython raises ``TypeError`` for a non-Token, ``ValueError`` for a token
+    another ContextVar or Context created, and ``RuntimeError`` for one
+    already used; nothing here decides which token this is (an opaque call
+    result, say), so the reset completes with ``None`` only under
+    ``python:contextvar_reset.completes(python:contextvar_reset(<name>,
+    <occurrence>))`` and halts with an ``UndeterminedRaiseEffect`` (owner
+    ``ContextVarReset:<name>``) under the complement -- the #7585 law.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    key = occurrence_key(site)
+    completes = atomic(
+        "python:contextvar_reset.completes",
+        [
+            ctor(
+                "python:contextvar_reset",
+                (str_const(variable_name), str_const(key)),
+            )
+        ],
+    )
+    return ExitSet(
+        (
+            Completed(completes, NoneValue()),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site),
+                    occurrence=key,
+                    producer_node_owner=f"ContextVarReset:{variable_name}",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
