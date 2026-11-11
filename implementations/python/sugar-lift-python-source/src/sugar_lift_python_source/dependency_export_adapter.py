@@ -1749,6 +1749,16 @@ def _stmt_reaches_successor_or_aborts(
             if not _suite_cannot_fall_through(handler.body)
             for item in handler.body
         )
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        # A successful import passes a with in one of two ways: the body
+        # completes and ``__exit__`` returns, or the body raises and the
+        # manager suppresses it.  Both continue at the statement after the
+        # with; a raise out of ``__enter__``/``__exit__`` aborts the import.
+        # Only a body that leaves another way (break/continue) can skip it.
+        return all(
+            _stmt_reaches_successor_or_aborts(item, finite, in_loop=in_loop)
+            for item in statement.body
+        )
     if type(statement) in _EXPORT_SIMPLE_STATEMENTS:
         return True
     return False
