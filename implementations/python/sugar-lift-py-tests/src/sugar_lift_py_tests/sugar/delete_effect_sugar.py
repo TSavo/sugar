@@ -123,8 +123,12 @@ class SubscriptDeleteEffectSugar(Sugar):
        ``Completed`` or ``RaiseValue`` exceptional faces through the delete
        path (never the load path).  Earlier bindings survive later delete
        halts via reducer pre-effect state on the carrier.
-    3. **Undecided non-formal** → loud ``SugarNotWritten`` until the
-       two-operand formal carrier is attachable.
+    3. **Undecided non-formal** → two faces (#7585), as for ``r[k] = v``:
+       the delete completes only under
+       ``python:delitem.completes(python:delitem(<site occurrence>))`` --
+       leaving the receiver's contents unknown -- and halts with an
+       ``UndeterminedRaiseEffect`` (owner ``UndecidedDelitem``) under the
+       complement.
 
     Out of scope: Name deletion (``del name`` / DeleteNameSugar).
     """
@@ -156,20 +160,15 @@ class SubscriptDeleteEffectSugar(Sugar):
                 index=index,
             )
         if not receiver.runtime_type_is_decided():
-            from sugar_source_tree.panic import SugarNotWritten
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                undecided_item_mutation_faces,
+            )
 
-            raise SugarNotWritten(
-                owner="SubscriptDeleteEffectSugar._delete",
-                blame=self.site,
-                observed="undischarged subscript delete over runtime-selected receiver",
-                requested=(
-                    "NativeOperationExitCarrierV1 n-ary delitem demand over "
-                    "receiver and key formal coordinates"
-                ),
-                fix=(
-                    "attach the two-operand carrier via "
-                    "SubscriptDeleteEffectSugar.mint_delitem_carrier"
-                ),
+            return undecided_item_mutation_faces(
+                self.site,
+                noun="delitem",
+                method="__delitem__",
+                owner="UndecidedDelitem",
             )
         projected = receiver.delitem(index, self.site)
         from sugar_lift_py_tests.floor import RaiseValue
