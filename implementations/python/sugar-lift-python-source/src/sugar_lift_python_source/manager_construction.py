@@ -3174,6 +3174,23 @@ def _resolve_source_visible_frame_uncached(
                 default_fragment_cids=frame.default_fragment_cids[1:],
             )
         return frame, target, source_file
+    bound_class = None
+    if isinstance(target, FunctionDef) and target not in definitions:
+        # ``name = Class.method`` with ``method`` a ``@classmethod``
+        # (Lib/tarfile.py ``open = TarFile.open``): the export door resolved
+        # the bound method (``class_bound_classmethod``).  Its frame is the
+        # method with ``cls`` bound to that class, built below once the
+        # class and whatever the method calls have their frames.
+        class_owner = target.unit.lexical_class_owner_for(target)
+        if (
+            class_owner is None
+            or class_owner not in definitions
+            or class_owner._method_descriptor_kind(target) != "classmethod"
+        ):
+            return ManagerConstructionGapV1(
+                "definition-missing", resolved.cid, "resolved nested method"
+            )
+        bound_class = class_owner
 
     definitions_by_name = {item.name: item for item in definitions}
 
@@ -3196,7 +3213,21 @@ def _resolve_source_visible_frame_uncached(
     # Unrelated module-level classes are never constructor-sugared just because
     # they share a source file — their panics stay loud only if this target
     # actually reaches them.
-    reachable_names = _reachable_local_definition_names(target, definitions_by_name)
+    if bound_class is None:
+        reachable_names = _reachable_local_definition_names(
+            target, definitions_by_name
+        )
+    else:
+        # The bound method reaches its class (``cls``) and the module
+        # definitions it calls by name.
+        reachable_names = set()
+        for name in {bound_class.name} | {
+            call.func.id for call in _local_named_calls(target)
+        }:
+            if name in definitions_by_name:
+                reachable_names |= _reachable_local_definition_names(
+                    definitions_by_name[name], definitions_by_name
+                )
     definitions = tuple(item for item in definitions if item.name in reachable_names)
 
     # Imported Attribute calls inside an authenticated reachable definition are
@@ -3676,6 +3707,32 @@ def _resolve_source_visible_frame_uncached(
         if not progressed:
             return ManagerConstructionGapV1(
                 "call-graph-cycle", resolved.cid, "recursive source call graph"
+            )
+    if bound_class is not None:
+        receiver = target.params[0].name if target.params else None
+        binders = _frame_bound_names(target) - {receiver}
+        for call in _local_named_calls(target):
+            name = bound_class.name if call.func.id == receiver else call.func.id
+            if call.func.id in binders:
+                continue
+            nested = frames.get(name) or external_frames.get(name)
+            if nested is not None:
+                _install_source_call_frame(context, call, nested)
+        _publish_nested_same_module_manager_uses(
+            target,
+            context,
+            source_file,
+            resolved=resolved,
+            graph=graph,
+            session=session,
+        )
+        try:
+            frames[target.name] = with_mutable_globals(
+                target.bound_classmethod_call_frame(bound_class)
+            )
+        except SourceCallBindingGap as exc:
+            return ManagerConstructionGapV1(
+                "call-binding", resolved.cid, f"{target.name}: {exc}"
             )
     frame = frames.get(target.name)
     if frame is None:

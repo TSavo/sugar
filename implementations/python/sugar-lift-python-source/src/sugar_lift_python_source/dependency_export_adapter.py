@@ -447,6 +447,16 @@ def _resolve_export_binding(
             exported_name,
         )
     if binding is not None and binding[0] == "dynamic":
+        bound = class_bound_classmethod(body, binding[1], exported_name)
+        if bound is not None:
+            return ResolvedPythonObjectV1(
+                distribution_artifact_cid=graph.distribution_artifact_cid,
+                import_binding_cid=binding_cid,
+                module_name=module_name,
+                source_cid=module.source_cid,
+                reexport_warrants=warrants,
+                definition=_definition(module, bound[1]),
+            )
         call_method = _callable_instance_call_method(body, binding[1], exported_name)
         if call_method is not None:
             definition = _definition(module, call_method)
@@ -654,6 +664,82 @@ def resolve_class_body_member(graph, binding_cid: str, resolved, member_name: st
         reexport_warrants=resolved.reexport_warrants,
         definition=_definition(module, found[0]),
     )
+
+
+def class_bound_classmethod(
+    body: list[ast.stmt], statement: ast.AST, exported_name: str
+) -> tuple[ast.ClassDef, ast.FunctionDef] | None:
+    """``name = Class.method`` at module level, ``method`` a ``@classmethod``.
+
+    Lib/tarfile.py ends ``open = TarFile.open``.  Attribute lookup on the
+    class runs ``classmethod.__get__(None, TarFile)`` (Objects/funcobject.c
+    ``cm_descr_get``), which binds the class: the export is that bound
+    method, ``cls`` is ``Class`` and the caller supplies the remaining
+    formals.  Only the exact shape is admitted: one plain ``Assign`` to the
+    exported name, ``Class`` a module-level ``class`` statement that is the
+    only module-level binding of that name, and ``method`` the only member
+    of that name in the class body, decorated by the bare ``classmethod``
+    builtin, which the module never rebinds.  Anything else stays
+    ``dynamic-export``.
+    """
+    if not (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == exported_name
+        and isinstance(statement.value, ast.Attribute)
+        and isinstance(statement.value.value, ast.Name)
+    ):
+        return None
+    class_name = statement.value.value.id
+    method_name = statement.value.attr
+    if not any(item is statement for item in body):
+        return None
+    binders = [item for item in body if _module_statement_binds(item, class_name)]
+    if len(binders) != 1 or not isinstance(binders[0], ast.ClassDef):
+        return None
+    class_def = binders[0]
+    if body.index(class_def) > body.index(statement):
+        return None
+    if any(_module_statement_binds(item, "classmethod") for item in body):
+        return None
+    members = [
+        item for item in class_def.body if _module_statement_binds(item, method_name)
+    ]
+    if len(members) != 1 or not isinstance(members[0], ast.FunctionDef):
+        return None
+    method = members[0]
+    if not (
+        len(method.decorator_list) == 1
+        and isinstance(method.decorator_list[0], ast.Name)
+        and method.decorator_list[0].id == "classmethod"
+        and (method.args.posonlyargs or method.args.args)
+    ):
+        return None
+    return class_def, method
+
+
+def _module_statement_binds(statement: ast.stmt, name: str) -> bool:
+    """Whether one statement (at any depth) may bind ``name`` in its scope."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return statement.name == name
+    for node in ast.walk(statement):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            if getattr(node, "name", None) == name:
+                return True
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if node.id == name:
+                return True
+        if isinstance(node, ast.alias):
+            if (node.asname or node.name.split(".")[0]) == name or node.name == "*":
+                return True
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+            return True
+        if isinstance(node, ast.ExceptHandler) and node.name == name:
+            return True
+        if isinstance(node, ast.MatchAs) and node.name == name:
+            return True
+    return False
 
 
 def _callable_instance_call_method(
