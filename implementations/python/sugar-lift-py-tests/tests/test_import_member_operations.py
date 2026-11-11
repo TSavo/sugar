@@ -153,3 +153,13 @@ def test_comparison_constructs_on_authenticated_term() -> None:
     v, site = _import_member_and_site()
     outcome = v.equals(v, site)
     assert isinstance(outcome, Complete)
+
+
+def test_import_member_truth_stands_as_symbolic_condition() -> None:
+    """``if mod.FLAG:`` is py.truthy over the member coordinate, not a refusal."""
+    from sugar_lift_py_tests.ir import py_truthy
+
+    v, site = _import_member_and_site()
+    outcome = v.truth(site)
+    assert isinstance(outcome, Complete)
+    assert outcome.value.formula == py_truthy(v.to_term(owner="test"))
