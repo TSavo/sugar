@@ -896,9 +896,12 @@ def test_stdlib_makecodes_return_is_rebound_before_exact_slice_delete() -> None:
 
 
 def test_bodyless_call_result_cannot_be_promoted_to_delete_list(tmp_path: Path) -> None:
-    """Lying twin: an unresolved return stays loud at the exact delete owner."""
-    from sugar_lift_python_source import manager_construction
-    from sugar_source_tree.panic import SugarNotWritten
+    """Lying twin: an unresolved return is never promoted to a list.  The
+    delete from it is two-faced (#7585): it completes only under
+    ``python:delitem.completes`` and otherwise halts undetermined."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor import ListValue
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
     source = "OPCODES = external()\ndel OPCODES[-2:]\nafter = 1\n"
     dist = _dist(
@@ -909,13 +912,20 @@ def test_bodyless_call_result_cannot_be_promoted_to_delete_list(tmp_path: Path) 
     module = DependencyArtifactGraph.authenticate(dist).modules["bodyless_delete_pkg"]
     locus = ast.parse(source).body[-1]
 
-    with pytest.raises(SugarNotWritten) as raised:
-        _prefix_outcome(module, locus, distribution=dist)
+    exits = _prefix_outcome(module, locus, distribution=dist).exits
 
-    assert raised.value.owner == "SubscriptDeleteEffectSugar._delete"
-    assert raised.value.observed == (
-        "undischarged subscript delete over runtime-selected receiver"
-    )
+    owners = [
+        face.effect.producer_node_owner
+        for face in exits
+        if isinstance(face, Halted) and type(face.effect) is UndeterminedRaiseEffect
+    ]
+    assert "UndecidedDelitem" in owners
+    completed = [face for face in exits if isinstance(face, Completed)]
+    assert completed
+    for face in completed:
+        assert "python:delitem.completes" in repr(face.guard)
+        opcodes = face.value.context.temporal.value_if_bound("OPCODES")
+        assert type(opcodes) is not ListValue
 
 
 def test_module_prefix_execution_publishes_exact_decorator_result(

@@ -280,14 +280,26 @@ def _undecided_setitem_faces(receiver, site):
 
     The receiver is a value this frame holds (an opaque call result, an
     unknown read) but no floor, contract or source testified to its type, so
-    ``__setitem__`` may run anything and raise anything.  The store completes
-    only under ``python:setitem.completes(python:setitem(<occurrence>))``,
-    keyed on this exact site and occurrence so two stores are never forced to
-    agree, and its post-state is ``python:receiver_after_call(<occurrence>,
-    "__setitem__")``: the receiver's contents after the call are unknown, as
-    for any undecided mutation.  The complement halts with an
-    ``UndeterminedRaiseEffect`` (owner ``UndecidedSetitem``).  No entry is
-    written into the receiver and no exception type is guessed.
+    ``__setitem__`` may run anything and raise anything.  See
+    :func:`undecided_item_mutation_faces`.
+    """
+    del receiver
+    return undecided_item_mutation_faces(
+        site, noun="setitem", method="__setitem__", owner="UndecidedSetitem"
+    )
+
+
+def undecided_item_mutation_faces(site, *, noun: str, method: str, owner: str):
+    """Two faces for ``r[k] = v`` / ``del r[k]`` over an undecided receiver.
+
+    The mutation completes only under
+    ``python:<noun>.completes(python:<noun>(<occurrence>))``, keyed on this
+    exact site and occurrence so two mutations are never forced to agree, and
+    its post-state is ``python:receiver_after_call(<occurrence>, <method>)``:
+    the receiver's contents after the call are unknown, as for any undecided
+    mutation.  The complement halts with an ``UndeterminedRaiseEffect``
+    (``owner``).  No entry is written or removed and no exception type is
+    guessed.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -300,21 +312,20 @@ def _undecided_setitem_faces(receiver, site):
     )
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _unknown_after
 
-    del receiver
     key = occurrence_key(site)
     completes = atomic(
-        "python:setitem.completes",
-        [ctor("python:setitem", (str_const(key),))],
+        f"python:{noun}.completes",
+        [ctor(f"python:{noun}", (str_const(key),))],
     )
     return ExitSet(
         (
-            Completed(completes, _unknown_after(site, "__setitem__")),
+            Completed(completes, _unknown_after(site, method)),
             Halted(
                 complement_guard(completes),
                 UndeterminedRaiseEffect(
                     blame=str(site),
                     occurrence=key,
-                    producer_node_owner="UndecidedSetitem",
+                    producer_node_owner=owner,
                 ),
                 None,
             ),
