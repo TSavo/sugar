@@ -930,16 +930,21 @@ def _populate_prefix_module_with_managers(module, source_file, *, session) -> No
     ``dynamic-export``.  Population runs once per prefix SourceFile and only
     selects module-level withs.
     """
-    from pathlib import Path
-
-    from .manager_summary_derivation import populate_source_derived_resource_refs
-
     if getattr(source_file, "_prefix_with_managers_populated", False):
         return
     object.__setattr__(source_file, "_prefix_with_managers_populated", True)
     selected = _module_level_with_coordinates(source_file)
     if not selected:
         return
+    _populate_selected_with_managers(module, source_file, selected, session=session)
+
+
+def _populate_selected_with_managers(module, source_file, selected, *, session) -> None:
+    """Run the consumer derivation door over exactly ``selected`` with-sites."""
+    from pathlib import Path
+
+    from .manager_summary_derivation import populate_source_derived_resource_refs
+
     seat = Path(module.source_seat)
     depth = len(module.module_name.split("."))
     if seat.name == "__init__.py":
@@ -3132,6 +3137,23 @@ def _publish_nested_same_module_manager_uses(
             session=session,
             distribution_index=None,
         )
+        # Every other head in this frame (an imported manager class or
+        # factory, ``with suppress(...)`` from contextlib) takes the consumer
+        # derivation door a module lift takes, selected to exactly the sites
+        # the two same-module routes above left without a derivation.
+        live_context = getattr(
+            getattr(function, "unit", None), "construction_context", None
+        ) or live_context
+        published = live_context.source_derived_contract_refs
+        unpublished = frozenset(
+            coordinate
+            for _key, (coordinate, _call, _exit_face_id) in uses.items()
+            if coordinate not in published
+        )
+        if unpublished:
+            _populate_selected_with_managers(
+                module, source_file, unpublished, session=session
+            )
 
 
 def _resolve_source_visible_frame_uncached(
@@ -5492,6 +5514,10 @@ def _resolve_through_module_alias(
 ):
     """``import os`` then ``os.path.expanduser``: the member of ``os``'s alias.
 
+    ``import tables`` then ``tables.file._FILE_OPEN_POLICY``: the member of a
+    submodule the package's own source imports at module level, which binds
+    it as the package attribute (``package_submodule_binding``).
+
     ``os.path`` is no submodule in ``os``'s artifact: ``os`` binds ``path`` by
     ``import posixpath as path`` (on this interpreter; see
     ``module_alias_binding``).  The member is resolved in that module, through
@@ -5501,6 +5527,7 @@ def _resolve_through_module_alias(
     """
     from .dependency_artifact import (
         module_alias_binding,
+        package_submodule_binding,
         resolve_authenticated_module_export,
     )
 
@@ -5524,7 +5551,9 @@ def _resolve_through_module_alias(
         or (member_path is not None and list(member_path) != path)
     ):
         return None
-    alias = module_alias_binding(dependency_graph, module_name, path[0])
+    alias = module_alias_binding(
+        dependency_graph, module_name, path[0]
+    ) or package_submodule_binding(dependency_graph, module_name, path[0])
     if alias is None:
         return None
     alias_graph = _dependency_graph_for_top(
@@ -5539,8 +5568,13 @@ def _resolve_through_module_alias(
         exported_name=path[1],
         session=session,
     )
-    if not isinstance(resolved, ResolvedPythonObjectV1):
+    if not isinstance(resolved, ResolvedPythonObjectV1) and (
+        getattr(resolved, "kind", None) != "dynamic-export"
+    ):
         return None
+    # A value the reached module assigns (``_FILE_OPEN_POLICY = ...``) is an
+    # honest open-world export of THAT module: the caller cites it as such,
+    # exactly as it would had the binding named that module directly.
     return resolved, alias_graph
 
 

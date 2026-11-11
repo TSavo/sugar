@@ -1921,6 +1921,11 @@ class SourceUnit:
                 )
             return definition
 
+        if not isinstance(call.func, Name):
+            # Only a bare name is looked up against module bindings.  A call
+            # whose callee is an expression (``mgr.__enter__()`` the With door
+            # synthesizes, ``obj.method()``) names no module function here.
+            return None
         span = call.line_col_span()
         owner = self.innermost_function_containing(span)
         if owner is not None:
@@ -13482,8 +13487,16 @@ class Call(Expression):
         # Unconditional: this is WHERE the call is, not WHETHER a context was
         # seated. See ``Node.source_occurrence``.
         coordinate = self.source_occurrence()
+        # The With door's protocol calls (``ManagerRef(M).__enter__()`` /
+        # ``__exit__(...)``) are shadows that borrow the with item's span, which
+        # for ``with f(x):`` IS the head call's span.  The source-call tables
+        # are keyed by parsed call occurrences, so their row at this coordinate
+        # belongs to the head call ``f(x)``, never to the protocol call.
+        protocol_call = isinstance(self.func, Attribute) and isinstance(
+            self.func.value, ManagerRef
+        )
 
-        if isinstance(context, TreeConstructionContextV1):
+        if isinstance(context, TreeConstructionContextV1) and not protocol_call:
             # The roster states the ONE classification every authenticated
             # owner gave this call; owners that disagreed panicked at install,
             # so there is nothing here to choose between.
@@ -13586,7 +13599,9 @@ class Call(Expression):
         source_call_resolution = None
         recursion_seat = None
 
-        if (
+        if protocol_call:
+            pass
+        elif (
             isinstance(context, TreeConstructionContextV1)
             and context.source_call_frames
         ):

@@ -1101,6 +1101,57 @@ def module_alias_binding(graph, module_name: str, name: str) -> str | None:
     return registered_name
 
 
+def package_submodule_binding(graph, module_name: str, name: str) -> str | None:
+    """The submodule ``module_name.name`` when the package binds it by import.
+
+    Importing a submodule binds it as an attribute of its package, so
+    ``import tables`` then ``tables.file.X`` reads ``X`` from ``tables.file``
+    exactly when the package's own source imports that submodule at module
+    level (``from .file import open_file``, ``from . import file``,
+    ``import tables.file``).  Both testimonies are static: the submodule is a
+    module of this artifact, and the package's ``__init__`` source names it in
+    a module-level import.  A submodule nothing imports there is not an
+    attribute of the package and returns None, as does anything that is not a
+    package.
+    """
+    import ast
+
+    module = graph.modules.get(module_name)
+    submodule = f"{module_name}.{name}"
+    if (
+        module is None
+        or submodule not in graph.modules
+        or not str(module.source_seat).endswith("__init__.py")
+    ):
+        return None
+    try:
+        tree = ast.parse(module.source)
+    except SyntaxError:
+        return None
+    for statement in tree.body:
+        if isinstance(statement, ast.ImportFrom):
+            if statement.level == 1 and statement.module == name:
+                return submodule
+            if statement.level == 1 and statement.module is None and any(
+                alias.name == name for alias in statement.names
+            ):
+                return submodule
+            if statement.level == 0 and (
+                statement.module == submodule
+                or (
+                    statement.module == module_name
+                    and any(alias.name == name for alias in statement.names)
+                )
+            ):
+                return submodule
+        elif isinstance(statement, ast.Import) and any(
+            alias.name == submodule or alias.name.startswith(submodule + ".")
+            for alias in statement.names
+        ):
+            return submodule
+    return None
+
+
 def _class_member_through_module(graph, binding_cid, module_name, path, session):
     """``Class.method`` under an authenticated module, or ``None``.
 
