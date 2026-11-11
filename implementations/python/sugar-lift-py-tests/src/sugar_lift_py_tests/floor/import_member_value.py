@@ -109,8 +109,42 @@ class ImportMemberValue(FloorValue):
     # would miscount an undecided runtime type as OUR missing floor method.
 
     def subscript(self, index, site):
-        return self.undecided_subscript(
-            index, site, owner="ImportMemberValue.subscript"
+        """``mod.member[k]`` over a member whose runtime value is not projected.
+
+        The member's type and ``__getitem__`` are undecided, so the #7587
+        opaque-subscript law applies exactly as to a bodiless call result: the
+        symbolic ``py.subscript(<member>, <key>)`` completes only under
+        ``python:subscript.completes(python:subscript(<term>, <site>))`` and
+        the complement halts with an ``UndeterminedRaiseEffect``.  No entry is
+        chosen and no ``KeyError`` is guessed.  A key with no term, or a
+        subscript with no site to key the atom on, stays named-loud.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if site is None:
+            return self.undecided_subscript(
+                index, site, owner="ImportMemberValue.subscript"
+            )
+        try:
+            term = ctor(
+                "py.subscript",
+                [
+                    self.to_term(owner="ImportMemberValue.subscript"),
+                    index.to_term(owner="ImportMemberValue.subscript"),
+                ],
+            )
+        except SugarNotWritten:
+            return self.undecided_subscript(
+                index, site, owner="ImportMemberValue.subscript"
+            )
+        return _opaque_subscript_faces(
+            Complete(SymbolicValue(term)),
+            site,
+            producer="ImportMemberValue.subscript",
         )
 
     def attribute(self, name, site):

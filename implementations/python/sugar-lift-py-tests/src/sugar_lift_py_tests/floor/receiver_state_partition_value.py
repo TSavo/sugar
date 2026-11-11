@@ -108,6 +108,31 @@ class ReceiverStatePartitionValue(FloorValue):
             return None
         return tuple(halts), tuple(completed)
 
+    def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
+        """An operation on a constructed object runs on each receiver it can be.
+
+        Construction either raised (the operation never runs; that face
+        leaves as itself) or completed with one receiver state per face.  The
+        operation sequences over exactly those faces, flattened under their
+        guards.  A halt with no typed effect cannot leave as itself, so it
+        stays named-loud rather than being dropped.
+        """
+        del ctx
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet
+        from sugar_source_tree.panic import SugarNotWritten
+
+        faces = self.constructor_faces()
+        if faces is None:
+            raise SugarNotWritten(
+                blame="receiver-state-partition",
+                owner=owner,
+                observed="constructor halt with no typed effect",
+                requested="every construction face completed or halted with an effect",
+                fix="carry the constructor halt's effect into the receiver partition",
+            )
+        halts, completed = faces
+        return ExitSet((*halts, *completed))
+
     @property
     def identity(self) -> str:
         from sugar_lift_py_tests.ir import _term_content_cid

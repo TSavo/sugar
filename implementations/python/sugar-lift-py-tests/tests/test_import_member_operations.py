@@ -5,7 +5,8 @@ lift-time decided. Ops must not fall through to FloorValue's construction-
 panic ``write more Floor`` arm (that miscounts undecided type as OUR defect).
 
 Triage:
-  - subscript / attribute / contains → existing FloorValue.undecided_* (wire)
+  - subscript → #7587 opaque-subscript two faces
+  - attribute / contains → existing FloorValue.undecided_* (wire)
   - call / method / iter / binary → ImportedModuleRuntimeEffect incomplete
   - equals → FloorValue.equals via to_term (already constructs)
 
@@ -77,13 +78,24 @@ def test_import_member_runtime_type_undecided() -> None:
     assert v.runtime_type_is_decided() is False
 
 
-def test_subscript_is_undecided_refusal_not_write_more_floor() -> None:
-    """Wiring: enter FloorValue.undecided_subscript, not construction panic."""
+def test_subscript_is_two_faced_not_refusal() -> None:
+    """#7587 opaque-subscript law: an unprojected subscript has two faces.
+
+    ``sys.modules[name]`` completes under ``python:subscript.completes`` and
+    halts with an UndeterminedRaiseEffect under the complement; it neither
+    refuses as undecided nor panics with ``write more Floor``.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
     v, site = _import_member_and_site()
-    with pytest.raises(SugarNotWritten, match="ImportMemberValue.subscript") as caught:
-        v.subscript(v, site)
-    assert "write more Floor" not in str(caught.value)
-    assert "undecided" in str(caught.value.observed).lower()
+    outcome = v.subscript(v, site)
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [f for f in outcome.exits if isinstance(f, Completed)]
+    (halted,) = [f for f in outcome.exits if isinstance(f, Halted)]
+    assert completed.guard.name == "python:subscript.completes"
+    assert "py.subscript" in str(completed.value.term)
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
 
 
 def test_attribute_is_undecided_refusal_not_write_more_floor() -> None:
