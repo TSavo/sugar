@@ -2362,6 +2362,9 @@ def populate_source_derived_resource_refs(
         distribution_index=distribution_index,
     )
     _populate_builtin_c_manager_uses(context, uses)
+    _populate_formal_selected_manager_uses(
+        source_file, context, selected_coordinates=selected_coordinates
+    )
     _floor_language_owned_module_calls(
         context,
         call_receipts_by_site,
@@ -3402,6 +3405,48 @@ def _populate_builtin_c_manager_uses(context, uses) -> None:
         owned = mint_builtin_c_manager_ref(coordinate, call.func.id, call.unit.source)
         if owned is not None:
             context.source_derived_contract_refs[coordinate] = owned
+
+
+def _populate_formal_selected_manager_uses(
+    source_file, context, *, selected_coordinates=None
+) -> None:
+    """Seat the opaque two-faced manager at ``with p.m():`` / ``with self.x:``.
+
+    Nothing in the frame knows the type of the object a parameter holds, so no
+    derivation can name its ``__enter__``/``__exit__``.  When the head only
+    reads that parameter through attribute reads and constant-argument calls,
+    the manager is opaque and keyed on the With's site: construction, enter
+    and exit are two-faced and suppression is the undecided truth of the
+    exit result.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_source_tree.formal_manager_head import formal_manager_head
+    from sugar_source_tree.nodes import With
+
+    from .formal_selected_manager import mint_formal_selected_manager_ref
+
+    source = source_file.root.unit.source
+    for node in source_file.root.walk():
+        if not isinstance(node, With):
+            continue
+        for item in node.items:
+            expr = item.context_expr
+            coordinate = SourceFragmentCoordinateV1(
+                expr.unit.source_cid, *item._manager_use_site_span()
+            )
+            if coordinate in context.source_derived_contract_refs:
+                continue
+            if selected_coordinates is not None and coordinate not in selected_coordinates:
+                continue
+            start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
+            head = formal_manager_head(source, start_line, start_col)
+            if head is None:
+                continue
+            context.source_derived_contract_refs[coordinate] = (
+                mint_formal_selected_manager_ref(coordinate, head)
+            )
 
 
 def _publish_proven_non_manager_head(
