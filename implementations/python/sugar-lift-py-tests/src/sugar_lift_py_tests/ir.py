@@ -467,7 +467,7 @@ def _term_content_cid(term: "Term") -> str:
                     cid_by_id[id(term)] = cached
                 return cached
 
-    cid = TermTableBuilder().reference(term)["cid"]
+    cid = TermTableBuilder.root_cid(term)
     _remember_term_content_cid(term, cid)
     if tables is not None:
         _by_key, by_id, cid_by_id = tables
@@ -1472,6 +1472,22 @@ class TermTableBuilder:
 
     def _materialize(self, root: Term) -> None:
         """Intern one expanded term tree with heap-backed postorder traversal."""
+        TermTableBuilder._expanded_canonical(root, self._record_node)
+
+    @staticmethod
+    def root_cid(root: Term) -> str:
+        """Return the root's wire CID without minting a node per subterm.
+
+        Byte-identical to ``TermTableBuilder().reference(root)["cid"]``: the
+        same expanded canonical text, hashed once. A content-identity probe
+        needs only the root coordinate; the per-node table (one blake3 and one
+        node dict per subterm) is wire emission work.
+        """
+        return blake3_512_of(_rpc_canonical_bytes(TermTableBuilder._expanded_canonical(root, None)))
+
+    @staticmethod
+    def _expanded_canonical(root: Term, record) -> str:
+        """Expanded canonical text of ``root``; ``record(term, canonical)`` per node."""
         inbound: dict[int, int] = {}
         seen: set[int] = set()
         pending = [root]
@@ -1538,13 +1554,15 @@ class TermTableBuilder:
 
             if inbound.get(identity, 0) > 1:
                 shared_canonical[identity] = canonical
-            self._record_node(term, canonical)
+            if record is not None:
+                record(term, canonical)
             values.append(canonical)
 
         if len(values) != 1:
             raise AssertionError(
                 f"iterative term encoder left {len(values)} canonical values"
             )
+        return values[0]
 
     def _record_node(self, term: Term, canonical: str) -> None:
         started = time.monotonic()
