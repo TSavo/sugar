@@ -1074,8 +1074,20 @@ class FloorValue:
         construction_panic(info)
 
     def equals(self, other, site):
+        from sugar_lift_py_tests.floor.none_value import (
+            NoneValue,
+            decided_builtin_other_than_none,
+        )
         from sugar_lift_py_tests.floor.object_value import ObjectValue
 
+        if type(other) is NoneValue and decided_builtin_other_than_none(self):
+            # ``x == None`` for a decided builtin ``x``: identity, so False.
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
         if isinstance(other, ObjectValue) and other.has_method("__eq__"):
             return self._floor_gap(
                 owner="FloorValue.equals",
