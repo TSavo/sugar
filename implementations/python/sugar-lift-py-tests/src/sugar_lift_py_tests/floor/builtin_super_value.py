@@ -5,6 +5,20 @@ from dataclasses import dataclass
 from .floor_value import FloorValue
 
 
+def _base_label(base):
+    """A short name for one direct base Floor in a refusal."""
+    if base is None:
+        return "refused"
+    name = (
+        getattr(base, "class_name", None)
+        or getattr(base, "type_name", None)
+        or getattr(base, "name", None)
+        or getattr(getattr(base, "term", None), "name", None)
+    )
+    kind = type(base).__name__
+    return f"{kind} {name}" if isinstance(name, str) else kind
+
+
 @dataclass(frozen=True)
 class BuiltinSuperMethodValue(FloorValue):
     """One selected method on an authenticated zero-argument ``super``."""
@@ -73,10 +87,20 @@ class BuiltinSuperValue(FloorValue):
         if len(bases) != 1:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
+            direct = getattr(self.current_class, "direct_bases", ())
             construction_panic_gap(
                 owner="BuiltinSuperValue.call_method_value",
                 blame=blame,
-                observed=f"{len(bases)} direct bases",
+                observed=(
+                    f"{len(bases)} authenticated of {len(direct)} direct bases"
+                    + (
+                        " ("
+                        + ", ".join(_base_label(base) for base in direct)
+                        + ")"
+                        if direct
+                        else ""
+                    )
+                ),
                 requested="one authenticated next class in the MRO",
                 fix="construct C3 super selection before dispatching this method",
             )

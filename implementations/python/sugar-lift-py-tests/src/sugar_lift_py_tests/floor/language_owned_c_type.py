@@ -112,6 +112,71 @@ class LanguageOwnedCTypeValue(FloorValue):
             key,
         )
 
+    def owns_slot_method(self, name) -> bool:
+        """``name`` is a C descriptor in this class's own type dictionary.
+
+        Runtime identity of the pin-authenticated interpreter's class, never a
+        name table: ``vars(_io.BytesIO)['__init__']`` is the slot wrapper of
+        ``BytesIO``'s own ``tp_init``.  An inherited or Python-level attribute
+        is not owned here.
+        """
+        import importlib
+        import types
+
+        try:
+            cls = getattr(importlib.import_module(self.module_name), self.type_name)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            return False
+        if not isinstance(cls, type):
+            return False
+        member = vars(cls).get(name)
+        return isinstance(
+            member, (types.WrapperDescriptorType, types.MethodDescriptorType)
+        ) and getattr(member, "__objclass__", None) is cls
+
+    def call_own_slot_method(
+        self, receiver, name, arguments, keywords, *, owner, blame
+    ):
+        """``super().name(...)`` selecting this C class's own descriptor.
+
+        The native body is not authenticated source, so the call has two faces
+        under one opaque atom keyed on the call site, exactly like a C-extension
+        call: Completed, or Halted with an ``UndeterminedRaiseEffect``.  Only
+        ``__init__`` has a result the language fixes (the ``tp_init`` slot
+        wrapper returns ``None``); any other selected method stays loud.
+        """
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+
+        del receiver, arguments, keywords
+        if name != "__init__":
+            construction_panic_gap(
+                owner=owner,
+                blame=blame,
+                observed=f"{self.module_name}.{self.type_name}.{name}",
+                requested="a language-fixed result for the selected C method",
+                fix="floor this C method's result or keep the super call loud",
+            )
+        key = occurrence_key(blame)
+        call = ctor(
+            "python:c_type.method_call",
+            (
+                str_const(self.module_name),
+                str_const(self.type_name),
+                str_const(name),
+                str_const(key),
+            ),
+        )
+        return self._two_faced(
+            atomic("python:c_type.method_completes", [call]),
+            NoneValue(),
+            f"LanguageOwnedCTypeMethod.{name}",
+            blame,
+            key,
+        )
+
     def test_python_type(self, value, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic, ctor, str_const

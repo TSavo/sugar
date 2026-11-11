@@ -100,6 +100,9 @@ class ClassDefinitionValue(GuardStableValue):
     annotation_cids: tuple[str, ...] = ()
     decorator_cids: tuple[str, ...] = ()
     base_classes: tuple[object, ...] = ()
+    # Every direct base Floor in source order (``None`` where evaluation
+    # refused), including those ``base_classes`` omits.  Empty when unknown.
+    direct_bases: tuple[object, ...] = field(default=(), compare=False)
 
     def __post_init__(self):
         if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
@@ -344,6 +347,16 @@ class ClassDefinitionValue(GuardStableValue):
                 lexical_defining_class=method.defining_class,
             )
             return Complete(call_value)
+        c_owner = self._language_owned_c_next_owner(name)
+        if c_owner is not None:
+            return c_owner.call_own_slot_method(
+                receiver,
+                name,
+                arguments,
+                keywords,
+                owner=owner,
+                blame=blame,
+            )
         raise SugarNotWritten(
             owner=owner,
             blame=blame,
@@ -351,6 +364,42 @@ class ClassDefinitionValue(GuardStableValue):
             requested="a source-defined base method for zero-argument super",
             fix=f"construct a diggable body for `{self.class_name}.{name}` or keep loud",
         )
+
+    def _language_owned_c_next_owner(self, name):
+        """The interpreter C class that owns ``name`` next in this class's MRO.
+
+        Called only when no source class in the authenticated MRO defines
+        ``name``.  In any valid C3 linearization the class right after ``K`` is
+        ``K``'s first direct base, and when ``K`` has exactly one direct base
+        the rest is that base's own linearization.  So the walk follows first
+        bases through single-base source classes; it stops at the first
+        interpreter-owned C class and admits it only when ``name`` is in that
+        class's own type dictionary (a C slot or method descriptor), which
+        settles the lookup before any later base could interleave.  Any
+        omitted, unauthenticated or multiple-base step yields ``None``.
+        """
+        from sugar_lift_py_tests.floor.language_owned_c_type import (
+            LanguageOwnedCTypeValue,
+        )
+
+        current = self
+        seen = set()
+        while id(current) not in seen:
+            seen.add(id(current))
+            direct = current.direct_bases
+            if not direct:
+                return None
+            first = direct[0]
+            if isinstance(first, LanguageOwnedCTypeValue):
+                return first if first.owns_slot_method(name) else None
+            if (
+                not isinstance(first, ClassDefinitionValue)
+                or len(direct) != 1
+                or any(method.name == name for method in first.methods)
+            ):
+                return None
+            current = first
+        return None
 
     def to_term(self, *, owner: str):
         del owner

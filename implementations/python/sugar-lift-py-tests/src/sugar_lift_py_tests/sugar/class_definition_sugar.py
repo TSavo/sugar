@@ -144,6 +144,12 @@ class ClassDefinitionSugar(Sugar):
 
         class_fields = []
         base_values = []
+        # Every direct base in source order, authenticated or not (``None``
+        # for one whose evaluation refused).  ``base_values`` is the class
+        # model's roster; this is the testimony of what the roster omits, so
+        # MRO selection never mistakes a later base for the first one.
+        direct_bases = []
+        body_faces = []
         for base in self.base_sugars:
             try:
                 outcome = base.desugar(ctx)
@@ -156,9 +162,24 @@ class ClassDefinitionSugar(Sugar):
                 # specialization.
                 if getattr(exc, "owner", None) != "ImportMemberValue.subscript":
                     raise
+                direct_bases.append(None)
                 continue
             from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
 
+            if not isinstance(outcome, Complete):
+                # A base that is a local class whose body may raise (a field
+                # initializer calling C code): the base expression completes
+                # on one face and halts on the other.  The halt is sequenced
+                # before this class body exactly like a field's, never dropped.
+                value = _sole_completed_value(outcome)
+                if value is not _NO_SOLE_COMPLETION and isinstance(
+                    value, ClassDefinitionValue
+                ):
+                    body_faces.append(outcome)
+                    outcome = Complete(value)
+            direct_bases.append(
+                outcome.value if isinstance(outcome, Complete) else None
+            )
             if isinstance(outcome, Complete) and isinstance(
                 outcome.value, (ClassDefinitionValue, BuiltinDictClassValue)
             ):
@@ -178,7 +199,6 @@ class ClassDefinitionSugar(Sugar):
             # authority or behavior here.
 
         evaluated_groups = {}
-        body_faces = []
 
         def append_field(item):
             if isinstance(item, ConstructedClassConditionalFieldsV1):
@@ -270,6 +290,7 @@ class ClassDefinitionSugar(Sugar):
                 self.annotation_cids,
                 self.decorator_cids,
                 tuple(base_values),
+                direct_bases=tuple(direct_bases),
             )
         )
         if not body_faces:
