@@ -215,6 +215,16 @@ def test_subscripts_that_are_not_on_a_cited_c_type_keep_their_own_path(tmp_path)
     owners = _owners(exits)
     assert "LanguageOwnedCExtensionResultValue.subscript" in owners
     assert not any(owner.startswith("LanguageOwnedCType.subscript") for owner in owners)
-    # A class with Python source is never floored as a C type, so its
-    # subscript can never take the opaque C-type path.
-    assert floor_artifact_module_absent_export(_Absent("_pydecimal", "Decimal")) is None
+
+
+def test_the_same_subscript_on_a_class_with_python_source_is_not_cited(tmp_path):
+    """Lying twin of test_subscripting_a_cited_c_type_is_two_faced (#7755).
+
+    The one difference: ``_pyio.TextIOWrapper`` is the same class written in
+    Python.  A class with Python source is never floored as a C type, so the
+    same subscript takes its own path, never the opaque C-type law.
+    """
+    exits = _exits(tmp_path, "import _pyio\ndef f(k):\n    return _pyio.TextIOWrapper[k]\n")
+    assert not any(
+        owner.startswith("LanguageOwnedCType.subscript") for owner in _owners(exits)
+    )

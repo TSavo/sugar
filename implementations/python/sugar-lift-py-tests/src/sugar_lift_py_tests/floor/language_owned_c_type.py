@@ -122,19 +122,33 @@ class LanguageOwnedCTypeValue(FloorValue):
         on the exact subscript site; the complement halts with an
         ``UndeterminedRaiseEffect``.  No alias type, member or exception class
         is invented.
+
+        The site is read exactly as construction reads it (``_site_of``).  A
+        subscript with no site has nothing to key its atom on: keying it on
+        ``str(None)`` would force every un-sited subscript of the same term to
+        agree and leave the halt unblamed, so it refuses by name (#7755), as
+        ``ImportMemberValue.subscript`` does.
         """
         from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_source_tree.panic import SugarNotWritten
 
+        owner = f"LanguageOwnedCType.subscript:{self.module_name}.{self.type_name}"
+        site = _site_of(operation)
+        if site is None:
+            raise SugarNotWritten(
+                # The only coordinate there is: the demand that carried no site.
+                blame=self.site if self.site is not None else operation.owner,
+                owner=owner,
+                observed="a subscript of a cited C type with no source site",
+                requested="the subscript's source site to key python:subscript.completes on",
+                fix="carry the subscript site into SubscriptOperation.blame",
+            )
         outcome = operation.submit(
             SymbolicValue(self.to_term(owner=f"{operation.owner} C type subscript")),
             ctx,
         )
-        return _opaque_subscript_faces(
-            outcome,
-            getattr(operation, "blame", None),
-            producer=f"LanguageOwnedCType.subscript:{self.module_name}.{self.type_name}",
-        )
+        return _opaque_subscript_faces(outcome, site, producer=owner)
 
     def test_python_type(self, value, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
