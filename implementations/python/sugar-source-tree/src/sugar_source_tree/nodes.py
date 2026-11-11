@@ -12651,6 +12651,9 @@ class Compare(Expression):
 
 class Call(Expression):
     def substitute(self, scope: "dict[str, Node]") -> "Node":
+        snapshot = self._locals_snapshot(scope)
+        if snapshot is not None:
+            return snapshot
         rewritten = self._substitute_children(scope)
         if (
             rewritten is not self
@@ -12666,6 +12669,69 @@ class Call(Expression):
     args: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
     _child_fields = ("func", "args", "keywords")
+
+    def _locals_snapshot(self, scope) -> "Optional[Node]":
+        """``locals()`` before any other local is bound: a dict of the formals.
+
+        See ``locals_snapshot``: the builtin, called bare, directly in a
+        module-level function's frame.  The snapshot is ``{name: value}`` over
+        the parameters in ``co_varnames`` order, each value the parameter's
+        current binding.  When any other local of the frame is already in
+        scope, or a parameter's binding is not definite (deleted, guarded),
+        which names the snapshot holds is not fixed here and the call stays
+        an ordinary call.
+        """
+        if not (
+            isinstance(self.func, Name)
+            and self.func.id == "locals"
+            and not self.args
+            and not self.keywords
+        ):
+            return None
+        from .binding_state import unwrap_binding_state
+        from .locals_snapshot import locals_snapshot_shape
+
+        span = self.line_col_span()
+        shape = locals_snapshot_shape(
+            self.unit.source, span.start_line, span.start_col
+        )
+        if shape is None or any(name in scope for name in shape.other_locals):
+            return None
+        values = []
+        for name in shape.parameters:
+            bound = unwrap_binding_state(scope.get(name))
+            if not isinstance(bound, Node):
+                return None
+            values.append(bound)
+        from .backend import Child, Children, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        items = []
+        for name, value in zip(shape.parameters, values):
+            key = materialize(
+                self.unit,
+                ShadowNode(
+                    "Constant",
+                    self.span,
+                    (("value", Leaf(name)), ("literal_kind", Leaf(None))),
+                ),
+                self.reporter,
+            )
+            item = materialize(
+                self.unit,
+                ShadowNode(
+                    "DictItem",
+                    self.span,
+                    (("key", Child(_handle_of(key))), ("value", Child(_handle_of(value)))),
+                ),
+                self.reporter,
+            )
+            items.append(_handle_of(item))
+        return materialize(
+            self.unit,
+            ShadowNode("Dict", self.span, (("items", Children(tuple(items))),)),
+            self.reporter,
+        )
 
     def receiver(self) -> Optional[Expression]:
         """The object a method call is invoked on, when the callee is an
