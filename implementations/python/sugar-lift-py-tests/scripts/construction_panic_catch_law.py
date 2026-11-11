@@ -172,13 +172,19 @@ except BaseException as error:
         # The gap field is never populated beside a membership manifest, so the
         # shard still cannot look like a shard that saw nobody: it refuses by
         # name at compose. Absence and lookup-failure keep separate spellings.
+        #
+        # REKEYED (#7415). The bounded-seat cut moved this membrane under
+        # ``_measure_seat_under_ceiling`` and widened its guard from process
+        # control to ``is_unswallowable``, which also re-raises
+        # MeasurementCeilingExceeded. The handler re-raises strictly more than
+        # the reviewed shape and banks the same named gap row.
         "recensus_enumerate_consumer.py",
-        "measure_file_via_enumerate",
+        "_measure_seat_under_ceiling",
     ): frozenset(
         {
             _canonical_handler("""
 except BaseException as error:
-    if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+    if is_unswallowable(error):
         raise
     row[RELATION_MEMBERSHIP_GAP_ROW_FIELD] = [
         {
@@ -200,13 +206,16 @@ except BaseException as error:
         # shapes still matched, the FUNCTION KEY no longer did. Keyed by name,
         # a rename reads exactly like an unreviewed membrane -- which is the
         # law behaving correctly, and why it is rekeyed rather than exempted.
+        # #7415 then swapped ``_is_process_control`` for ``is_unswallowable``
+        # (process control plus MeasurementCeilingExceeded): the same three
+        # membranes, re-raising strictly more.
         "recensus_enumerate_consumer.py",
         "_terminal_via_enumerate",
     ): frozenset(
         {
             _canonical_handler("""
 except BaseException as error:
-    if _is_process_control(error):
+    if is_unswallowable(error):
         raise
     auth = int(ast_fn) if ast_fn is not None else 0
     panic = _panic_from_exception(error, file_rel=file_rel, phase="roster")
@@ -243,7 +252,7 @@ except BaseException as error:
 """),
             _canonical_handler("""
 except BaseException as error:
-    if _is_process_control(error):
+    if is_unswallowable(error):
         raise
     panic = _panic_from_exception(
         error, file_rel=file_rel, phase="context-manager-resolutions"
@@ -285,7 +294,7 @@ except BaseException as error:
 """),
             _canonical_handler("""
 except BaseException as error:
-    if _is_process_control(error):
+    if is_unswallowable(error):
         raise
     row = terminal_from_enumerate(
         file_rel=file_rel,
