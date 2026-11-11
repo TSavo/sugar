@@ -13429,15 +13429,21 @@ class Call(Expression):
                 )
             ):
                 source_call_frame = definition.source_visible_constructor_frame()
-        if source_call_frame is None and starred:
+        lexical = False
+        if source_call_frame is None:
+            # ``g(*t)`` and ``g(**k)`` alike name a module function the
+            # lexical scope resolves; its frame is the callee's own.
             source_call_frame = self._spread_lexical_source_call_frame()
+            lexical = source_call_frame is not None
         if source_call_frame is None:
             return None
-        if starred:
+        if starred or lexical:
             # A ``*`` operand's arity is decided only when it reduces, so no
             # actual Node is bound here.  SpreadCallSugar splats a decided
             # tuple into the positional roster and binds the values onto this
             # unspecialized frame at desugar; any other operand stays bodyless.
+            # The lexical frame binds every actual there too (``**`` merges a
+            # constructed DictValue onto the formals).
             return source_call_frame
         try:
             return source_call_frame.bind_node_actuals(
