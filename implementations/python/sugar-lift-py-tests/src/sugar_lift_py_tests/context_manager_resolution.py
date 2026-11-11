@@ -872,6 +872,32 @@ def effective_context_manager_resolutions_for_source(
     return effective
 
 
+@dataclass(frozen=True)
+class SelectedContextManagerRefV1:
+    """One ``with`` item whose manager the owning ``if`` selects.
+
+    ``ctx`` bound by a call in each arm of an ``if`` and entered by one
+    ``with ctx:``.  Each arm's manager is derived at that arm's own call
+    coordinate (where Python constructs it); the With item is still ONE
+    occurrence, so its single row lives here at the item's use site and the
+    arms ride inside it, never as rows of their own.  ``arms`` pairs each arm
+    call coordinate with its resolution (``None`` when nothing was derived
+    there, which keeps that arm's With loud).
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    arms: tuple
+
+    def arm(self, coordinate):
+        for arm_coordinate, resolution in self.arms:
+            if arm_coordinate == coordinate:
+                return resolution
+        return None
+
+    def covers(self, coordinate) -> bool:
+        return any(arm_coordinate == coordinate for arm_coordinate, _ in self.arms)
+
+
 def context_manager_resolution_outcome(resolution: object) -> str:
     """Closed census projection: constructed, cited-opaque, or unconstructed.
 
@@ -888,6 +914,20 @@ def context_manager_resolution_outcome(resolution: object) -> str:
     Known, unknown and absent each get their own spelling.  A census that
     cannot tell them apart cannot say what it observed.
     """
+    if isinstance(resolution, SelectedContextManagerRefV1):
+        # The item constructs only if every arm does; it is known only if
+        # every arm is known.
+        outcomes = {
+            "unconstructed"
+            if arm is None
+            else context_manager_resolution_outcome(arm)
+            for _, arm in resolution.arms
+        }
+        if not outcomes or "unconstructed" in outcomes:
+            return "unconstructed"
+        if "cited-opaque" in outcomes:
+            return "cited-opaque"
+        return "constructed"
     if isinstance(resolution, OpaqueCitedContextManagerRefV1):
         return "cited-opaque"
     if isinstance(

@@ -1852,12 +1852,21 @@ def populate_source_derived_resource_refs(
         module_identities={},
         module=source_file.root,
     )
-    uses = _projected_manager_call_uses(source_file)
+    selected_arms: dict = {}
+    uses = _projected_manager_call_uses(source_file, selected_arms)
     if selected_coordinates is not None:
+        # A branch-selected With item is selected by its own use site; its
+        # arms' calls are derived with it.
+        arm_owner = {
+            arm: use_site
+            for use_site, arms in selected_arms.items()
+            for arm in arms
+        }
         uses = {
             key: value
             for key, value in uses.items()
             if value[0] in selected_coordinates
+            or arm_owner.get(value[0]) in selected_coordinates
         }
 
     def _receipt_site_key(receipt):
@@ -2440,7 +2449,28 @@ def populate_source_derived_resource_refs(
         session=session,
         distribution_index=distribution_index,
     )
+    _seat_selected_manager_refs(context, selected_arms, selected_coordinates)
     _rewrite_installed_generator_frames(context)
+
+
+def _seat_selected_manager_refs(context, selected_arms, selected_coordinates) -> None:
+    """Move each branch-selected item's arm resolutions into its one row.
+
+    The arms were derived at their own call coordinates, which are not With
+    items; leaving them there counted one With item once per arm.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SelectedContextManagerRefV1,
+    )
+
+    table = context.source_derived_contract_refs
+    for use_site, arms in selected_arms.items():
+        if selected_coordinates is not None and use_site not in selected_coordinates:
+            continue
+        table[use_site] = SelectedContextManagerRefV1(
+            use_site=use_site,
+            arms=tuple((arm, table.pop(arm, None)) for arm in arms),
+        )
 
 
 def _floor_language_owned_module_type_reads(
@@ -5590,7 +5620,7 @@ def _seat_projected_manager_call_frame(context, coordinate, call, behavior) -> N
     _install_source_call_frame(context, call, frame)
 
 
-def _projected_manager_call_uses(source_file):
+def _projected_manager_call_uses(source_file, selected_arms=None):
     """Project ordinary reaching assignments into context-manager call uses.
 
     ``WithItem.substitute`` retains the consumer's immutable use coordinate
@@ -5638,11 +5668,17 @@ def _projected_manager_call_uses(source_file):
                                 span.end_col,
                             )
                             object.__setattr__(leaf, "_borrowed_manager_call", True)
-                            uses[key] = (
-                                SourceFragmentCoordinateV1(leaf.unit.source_cid, *key),
-                                leaf,
-                                item._exit_face_id(),
+                            leaf_coordinate = SourceFragmentCoordinateV1(
+                                leaf.unit.source_cid, *key
                             )
+                            uses[key] = (leaf_coordinate, leaf, item._exit_face_id())
+                            if selected_arms is not None:
+                                use_coordinate = SourceFragmentCoordinateV1(
+                                    leaf.unit.source_cid, *item._manager_use_site_span()
+                                )
+                                arms = selected_arms.setdefault(use_coordinate, [])
+                                if leaf_coordinate not in arms:
+                                    arms.append(leaf_coordinate)
                         continue
                 if not isinstance(expr, Call):
                     continue
