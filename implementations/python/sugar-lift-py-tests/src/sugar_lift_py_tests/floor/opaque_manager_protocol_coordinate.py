@@ -91,6 +91,21 @@ class OpaqueManagerProtocolCoordinate(FloorValue):
 
         return Complete(PredicateValue(py_truthy(self.to_term(owner=str(site))), site))
 
+    def attribute(self, name, site):
+        """``with cited() as r: r.x`` -- a read on what ``__enter__`` returned.
+
+        Only the enter-result coordinate denotes a Python value; nothing
+        testified to its runtime type, so the read is the opaque attribute
+        law: complete under ``python:attribute.completes``, otherwise an
+        undetermined raise.  The enter/exit completion coordinates are truths,
+        not values, and keep the default floor.
+        """
+        if self.symbol != "python:cm_enter_result":
+            return super().attribute(name, site)
+        from sugar_lift_py_tests.floor.call_site_value import _opaque_attribute_faces
+
+        return _opaque_attribute_faces(self, name, site)
+
 
 def _coordinate(manager_term, site, *, slot: str, symbol: str):
     return OpaqueManagerProtocolCoordinate(

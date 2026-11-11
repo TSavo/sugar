@@ -27,6 +27,17 @@ class EffectCoordinate(FloorValue):
         return ctor("python:effect_slot", [str_const(self.slot_id)])
 
     def attribute(self, name, site):
+        if self.slot_id.endswith("#enter_result") and type(self) is EffectCoordinate:
+            # ``with m as r: r.x`` read through the body's enter-result slot:
+            # the value ``__enter__`` returned at that one entry, whose runtime
+            # type nothing here testified to.  The opaque attribute law holds:
+            # complete under ``python:attribute.completes``, otherwise an
+            # undetermined raise; no member value or exception is invented.
+            from sugar_lift_py_tests.floor.call_site_value import (
+                _opaque_attribute_faces,
+            )
+
+            return _opaque_attribute_faces(self, name, site)
         if name != "__context__":
             return super().attribute(name, site)
         from sugar_lift_py_tests.gap.info import GapKind
