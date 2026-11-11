@@ -2427,6 +2427,14 @@ def populate_source_derived_resource_refs(
         graphs=graphs,
         distribution_index=distribution_index,
     )
+    _populate_same_module_factory_manager_uses(
+        context,
+        uses,
+        value_receipts_by_site,
+        graphs=graphs,
+        session=session,
+        distribution_index=distribution_index,
+    )
     _populate_builtin_c_manager_uses(context, uses)
     _populate_formal_selected_manager_uses(
         source_file, context, selected_coordinates=selected_coordinates
@@ -3413,6 +3421,135 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 summary.import_signature,
                 protocol,
             )
+        )
+
+
+def _same_module_factory_return(function_def):
+    """The one ``return <Call>`` a plain module factory leaves by, else None.
+
+    The factory's whole body is imports plus that single trailing return, so
+    the value ``with factory(...)`` enters is exactly the returned call's
+    result, whatever path the call takes.
+    """
+    from sugar_source_tree.nodes import Call, Import, ImportFrom, Return
+
+    body = tuple(function_def.body)
+    if not body or not isinstance(body[-1], Return):
+        return None
+    if not all(
+        isinstance(statement, (Import, ImportFrom))
+        or statement.kind == "Expr"
+        and statement.value.kind == "Constant"
+        for statement in body[:-1]
+    ):
+        return None
+    value = body[-1].value
+    return value if isinstance(value, Call) else None
+
+
+def _populate_same_module_factory_manager_uses(
+    context,
+    uses,
+    value_receipts_by_site,
+    *,
+    graphs,
+    session,
+    distribution_index,
+) -> None:
+    """``with f(...)`` where ``f`` is this module's plain factory.
+
+    ``pandas.io.common.urlopen`` is ``import urllib.request`` then ``return
+    urllib.request.urlopen(*args, **kwargs)``: the manager the With enters is
+    that vendor call's result.  The returned call's callee is followed through
+    its authenticated import value receipt to the object the export door
+    names.  When
+    the callee is off the enrolled population (CPython's ``urllib.request``),
+    the manager is cited, never materialized: the With keeps Python's law with
+    enter, exit and suppression open and two-faced
+    (``WithOpaqueCitedManagerSugar``), and the head still runs the factory's
+    own body.  Any other return shape, or a callee the door does not cite,
+    is left for ``With`` to refuse.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        OpaqueSourceCallRosterV1,
+        mint_opaque_cited_context_manager_ref,
+    )
+    from sugar_source_tree.nodes import AsyncFunctionDef, Call, FunctionDef, Name
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1,
+        resolve_import_binding,
+    )
+    from .manager_construction import (
+        _dependency_graph_for_top,
+        _graph_is_off_population,
+    )
+
+    for _key, (coordinate, call, _exit_face_id) in uses.items():
+        if coordinate in context.source_derived_contract_refs:
+            continue
+        if not isinstance(call, Call) or not isinstance(call.func, Name):
+            continue
+        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
+        if len(binds) != 1 or type(binds[0]) is not FunctionDef:
+            continue
+        function_def = binds[0]
+        if function_def.decorators or isinstance(function_def, AsyncFunctionDef):
+            continue
+        if any(node.kind in ("Yield", "YieldFrom") for node in function_def.walk()):
+            continue
+        returned = _same_module_factory_return(function_def)
+        if returned is None:
+            continue
+        # The callee's identity does not depend on the operands, so it is
+        # authenticated by the value-occurrence receipt at the callee
+        # expression (``*args, **kwargs`` calls carry no call-target row).
+        span = returned.func.line_col_span()
+        receipt = value_receipts_by_site.get(
+            (
+                returned.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+        )
+        if receipt is None:
+            continue
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        try:
+            graph = graphs.get(top_level) or _dependency_graph_for_top(
+                top_level,
+                session=session,
+                dependency_graphs=graphs,
+                distribution_index=distribution_index,
+            )
+        except DependencyArtifactAuthenticationError:
+            continue
+        resolved = resolve_import_binding(receipt, graph=graph, session=session)
+        if not isinstance(resolved, ResolvedPythonObjectV1):
+            continue
+        if not _graph_is_off_population(
+            graph, session=session, module_name=resolved.module_name
+        ):
+            continue
+        roster = OpaqueSourceCallRosterV1(
+            coordinate,
+            receipt.target_symbol,
+            "call-target-off-population",
+            (
+                OpaqueSourceCallObligationV1(
+                    coordinate,
+                    receipt.target_symbol,
+                    resolved.cid,
+                    resolution_kind="call-target-off-population",
+                ),
+            ),
+        )
+        context.source_derived_contract_refs[coordinate] = (
+            mint_opaque_cited_context_manager_ref(roster=roster)
         )
 
 

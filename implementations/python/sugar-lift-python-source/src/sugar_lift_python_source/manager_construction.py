@@ -2946,6 +2946,7 @@ def _publish_nested_same_module_manager_uses(
     resolved=None,
     graph=None,
     session=None,
+    module=None,
 ) -> None:
     """Publish same-module ClassDef CM contracts for With sites in ``function``.
 
@@ -3008,6 +3009,36 @@ def _publish_nested_same_module_manager_uses(
     ) or live_context
     _mirror_source_call_frames(context, live_context)
     _populate_same_module_class_manager_uses(source_file, live_context, uses)
+    if module is not None and graph is not None and session is not None:
+        # ``with urlopen(...)`` over the dependency module's own plain
+        # factory: the same route a module lift takes, fed by this module's
+        # authenticated import value receipts.
+        from .manager_summary_derivation import (
+            _populate_same_module_factory_manager_uses,
+        )
+
+        value_receipts_by_site = {}
+        for receipt in _session_import_value_receipts(session, module):
+            site = receipt.use["useSite"]
+            value_receipts_by_site[
+                (
+                    site["sourceCid"],
+                    site["startLine"],
+                    site["startCol"],
+                    site["endLine"],
+                    site["endCol"],
+                )
+            ] = receipt
+        _populate_same_module_factory_manager_uses(
+            live_context,
+            uses,
+            value_receipts_by_site,
+            graphs=_bind_dependency_graphs(
+                session, {resolved.module_name.split(".", 1)[0]: graph}
+            ),
+            session=session,
+            distribution_index=None,
+        )
 
 
 def _resolve_source_visible_frame_uncached(
@@ -3158,6 +3189,7 @@ def _resolve_source_visible_frame_uncached(
             resolved=resolved,
             graph=graph,
             session=session,
+            module=module,
         )
         frame = with_mutable_globals(target.source_visible_call_frame())
         if frame.parameters and frame.parameters[0] == "self":
@@ -3696,6 +3728,7 @@ def _resolve_source_visible_frame_uncached(
                 resolved=resolved,
                 graph=graph,
                 session=session,
+                module=module,
             )
             try:
                 projected = function.source_visible_call_frame()
