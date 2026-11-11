@@ -12743,7 +12743,13 @@ class Call(Expression):
             obligation = context.opaque_source_call_obligations.get(coordinate)
             if obligation is not None:
                 if (
-                    obligation.resolution_kind == "call-target-source-absent"
+                    # No body is projected either way: the export door found
+                    # no source, or found stdlib source off the enrolled
+                    # population (``from typing import cast`` followed into
+                    # the stdlib artifact).  The citation below is keyed by
+                    # the authenticated import target, not by which decline.
+                    obligation.resolution_kind
+                    in ("call-target-source-absent", "call-target-off-population")
                     and isinstance(self.func, Name)
                     and len(self.args) == 2
                     and not self.keywords

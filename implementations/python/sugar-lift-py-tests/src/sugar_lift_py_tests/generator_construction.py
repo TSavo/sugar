@@ -1650,7 +1650,7 @@ class GeneratorConstructionV1:
             from sugar_lift_py_tests.outcome import Completed, Halted
 
             if any(isinstance(exit_, Halted) for exit_ in cleanup.exits):
-                return cleanup
+                return self._continue_after_two_faced_cleanup(cleanup, requested)
             completed = tuple(
                 exit_ for exit_ in cleanup.exits if isinstance(exit_, Completed)
             )
@@ -2235,6 +2235,57 @@ class GeneratorConstructionV1:
         result = parts[0]
         for part in parts[1:]:
             result = result.union(part)
+        return result
+
+    def _continue_after_two_faced_cleanup(self, cleanup, requested: str):
+        """A ``finally`` cleanup that may complete or raise.
+
+        A halted face leaves the generator with the cleanup's raise.  A
+        completed face is the cleanup suite finishing: the frame continues past
+        the ``finally`` under that face's guard, exactly as a one-faced cleanup
+        does.  Handing the completed face's reduced block to the consumer would
+        present the cleanup's statement record as the generator's next
+        transition.
+        """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import Halted
+        from sugar_source_tree.panic import SugarNotWritten
+
+        halted = tuple(face for face in cleanup.exits if isinstance(face, Halted))
+        completed = tuple(
+            face for face in cleanup.exits if not isinstance(face, Halted)
+        )
+        result = ExitSet(halted)
+        if completed:
+
+            def continue_after(value):
+                binding_state = (
+                    value.binding_state
+                    if isinstance(value, GeneratorTerminationV1)
+                    else self.binding_state
+                )
+                machine = replace(
+                    self, cursor=self.cursor + 1, binding_state=binding_state
+                )
+                after = machine._transition(requested)
+                if isinstance(after, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=self.steps[self.cursor],
+                        observed=after.observed,
+                        requested=after.requested,
+                        fix="implement the transition after the finally cleanup",
+                    )
+                if isinstance(
+                    after, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
+                ):
+                    return after
+                return Complete(after)
+
+            result = result.union(ExitSet(completed).and_then(continue_after))
         return result
 
     def _fold_pending_cited_opaque_exits(self, outgoing):

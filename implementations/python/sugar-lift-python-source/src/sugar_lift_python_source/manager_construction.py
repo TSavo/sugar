@@ -3588,7 +3588,10 @@ def _resolve_external_call_frame(
         floored = floor_artifact_module_absent_export(callee)
         if floored is not None:
             return floored
-        return _ExternalCallTargetGap("call-target-source-absent")
+        hopped = _resolve_in_owning_artifact(callee, session=session)
+        if hopped is None:
+            return _ExternalCallTargetGap("call-target-source-absent")
+        callee, graph = hopped
     from sugar_source_tree.panic import SugarNotWritten
 
     try:
@@ -3615,6 +3618,55 @@ def _resolve_external_call_frame(
         return _ExternalCallTargetGap("call-target-export-unresolved")
     frame, _target = projected
     return frame
+
+
+def _resolve_in_owning_artifact(gap, *, session: SourceResolutionSession):
+    """Follow ``from m import name`` into ``m``'s own authenticated artifact.
+
+    ``artifact-module-absent`` means this artifact's import names a module
+    the artifact does not contain (``from tempfile import mkdtemp`` inside
+    numpy).  That module is still source: its top-level package authenticates
+    as its own artifact (the stdlib included), and the same export door
+    resolves the name there.  Returns ``(resolved, graph)`` or ``None`` when
+    the owning artifact does not authenticate or does not define the name,
+    which keeps ``call-target-source-absent``.  The population membrane is
+    applied by the ordinary projection door afterwards, so a stdlib callee is
+    cited ``call-target-off-population`` rather than projected.
+    """
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1 as _Resolved,
+    )
+
+    if getattr(gap, "kind", None) != "artifact-module-absent":
+        return None
+    module_name = getattr(gap, "module_name", None)
+    exported_name = getattr(gap, "exported_name", None)
+    if not isinstance(module_name, str) or not isinstance(exported_name, str):
+        return None
+    top_level = module_name.split(".", 1)[0]
+    try:
+        owning = _dependency_graph_for_top(
+            top_level, session=session, dependency_graphs={}
+        )
+    except DependencyArtifactAuthenticationError:
+        return None
+    if owning.distribution_artifact_cid == getattr(
+        gap, "distribution_artifact_cid", None
+    ):
+        return None
+    callee = _resolve_export(
+        owning,
+        gap.import_binding_cid,
+        module_name,
+        exported_name,
+        (),
+        frozenset(),
+        session=session,
+    )
+    if not isinstance(callee, _Resolved):
+        return None
+    return callee, owning
 
 
 def _resolve_export(*args, **kwargs):
