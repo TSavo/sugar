@@ -32,6 +32,21 @@ numpy_line="$(rg -n 'numpy==2\.5\.1' "$script" | head -1 | cut -d: -f1)"
 [[ -n "$editable_line" && -n "$numpy_line" ]] || fail "could not locate editable/pin order"
 [[ "$numpy_line" -gt "$editable_line" ]] || fail "corpus pins must run AFTER editable [test] install"
 
+optional_pins="$repo/scripts/corpus-env-optional.txt"
+optional_verifier="$repo/scripts/verify_corpus_env_optional.py"
+[[ -f "$optional_pins" ]] || fail "scripts/corpus-env-optional.txt is not in the tree"
+[[ -f "$optional_verifier" ]] || fail "scripts/verify_corpus_env_optional.py is not in the tree"
+rg -q -- '-r "\$optional_pins"' "$script" || fail "bootstrap does not pip-install the optional set"
+rg -q '"\$optional_verifier" "\$optional_pins"' "$script" || fail "verify_pins does not assert the optional set"
+for pin in 'matplotlib==3.11.2' 'tables==3.11.1' 'ipython==9.18.1' 'fsspec==2026.9.0' 'openpyxl==3.1.5'; do
+  rg -qx -F "$pin" "$optional_pins" || fail "optional set missing $pin"
+done
+! rg -qi '^(numba|numpy|pandas|pyarrow)==' "$optional_pins" \
+  || fail "optional set must not re-pin numpy/pandas/pyarrow or add numba"
+if rg -v '^\s*(#|$)' "$optional_pins" | rg -qv '^[A-Za-z0-9._-]+==[^=\s]+$'; then
+  fail "optional set has a line that is not an exact name==version pin"
+fi
+
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-venv-py312.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -128,6 +143,18 @@ if [[ "${1:-}" == -m && "${2:-}" == pip ]]; then
     printf '2.5.1\n' >"$FAKE_STATE/numpy"
     printf '3.0.3\n' >"$FAKE_STATE/pandas"
   fi
+  case " $* " in
+    *" -r "*corpus-env-optional.txt*) : >"$FAKE_STATE/optional" ;;
+  esac
+  exit 0
+fi
+# Optional-set verifier: holds only once pip was handed the optional pin file.
+if [[ "${1:-}" == *verify_corpus_env_optional.py ]]; then
+  [[ -e "$FAKE_STATE/optional" ]] || {
+    echo "optional set never installed" >&2
+    exit 1
+  }
+  printf 'OPTIONAL_OK\n'
   exit 0
 fi
 # Post-install verification heredoc: stdin mode (`python -`).
@@ -155,6 +182,79 @@ FAKE_STATE="$fake_state" FAKE_VENV_PYTHON="$fake_venv_python" \
 rg -Fq PINS_OK "$truthful_out" || fail "simulated bootstrap did not reach PINS_OK"
 rg -Fq 'numpy==2.5.1' "$fake_state/commands" || fail "simulated bootstrap never pip-installed numpy==2.5.1"
 rg -Fq 'pandas==3.0.3' "$fake_state/commands" || fail "simulated bootstrap never pip-installed pandas==3.0.3"
+rg -Fq OPTIONAL_OK "$truthful_out" || fail "simulated bootstrap did not assert the optional set"
+rg -Fq 'corpus-env-optional.txt' "$fake_state/commands" || fail "simulated bootstrap never pip-installed the optional set"
+
+# -- optional set: the real verifier over a synthetic site ---------------------
+# One dist-info per pin (python -S: nothing else on the path). Truthful: all
+# present. Lying: tables absent, or matplotlib at another version.
+
+site="$tmp/site"
+make_site() {
+  rm -rf "$site"
+  mkdir -p "$site"
+  python3 - "$optional_pins" "$site" "$@" <<'PY'
+import sys
+from pathlib import Path
+
+pins, site, *edits = sys.argv[1:]
+drop = {e[1:] for e in edits if e.startswith("-")}
+bump = dict(e[1:].split("==") for e in edits if e.startswith("~"))
+for raw in Path(pins).read_text().splitlines():
+    line = raw.split("#", 1)[0].strip()
+    if not line:
+        continue
+    name, _, version = line.partition("==")
+    if name in drop:
+        continue
+    version = bump.get(name, version)
+    info = Path(site) / f"{name.replace('-', '_')}-{version}.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
+PY
+}
+
+make_site
+PYTHONPATH="$site" python3 -S "$optional_verifier" "$optional_pins" >"$tmp/opt-ok" 2>"$tmp/opt-ok.err" \
+  || fail "optional verifier refused a site holding every pin: $(cat "$tmp/opt-ok.err")"
+rg -q 'OPTIONAL_OK 76 packages' "$tmp/opt-ok" || fail "truthful optional twin did not print OPTIONAL_OK"
+
+make_site -tables
+set +e
+PYTHONPATH="$site" python3 -S "$optional_verifier" "$optional_pins" >/dev/null 2>"$tmp/opt-missing.err"
+status_missing=$?
+set -e
+[[ "$status_missing" -ne 0 ]] || fail "optional verifier accepted a site without tables"
+rg -Fq 'tables==3.11.1: not installed' "$tmp/opt-missing.err" || fail "missing-tables refusal did not name tables"
+
+make_site ~matplotlib==3.10.0
+set +e
+PYTHONPATH="$site" python3 -S "$optional_verifier" "$optional_pins" >/dev/null 2>"$tmp/opt-drift.err"
+status_drift=$?
+set -e
+[[ "$status_drift" -ne 0 ]] || fail "optional verifier accepted matplotlib 3.10.0"
+rg -Fq 'matplotlib==3.11.2: observed 3.10.0' "$tmp/opt-drift.err" || fail "drift refusal did not name matplotlib"
+
+# -- lying twin through the script: BOOTSTRAP_VERIFY_ONLY on a venv without tables
+# The verify-only path must reject it and must not create, lock or install.
+
+make_site -tables
+lying_venv="$tmp/lying-venv"
+mkdir -p "$lying_venv/bin"
+cat >"$lying_venv/bin/python" <<EOF
+#!/usr/bin/env bash
+[[ "\${1:-}" == -c ]] && { printf '3.12.13\n'; exit 0; }
+PYTHONPATH="$site" exec python3 -S "\$@"
+EOF
+chmod +x "$lying_venv/bin/python"
+set +e
+BOOTSTRAP_VERIFY_ONLY=1 VENV_DIR="$lying_venv" BOOTSTRAP_LOCK_DIR="$tmp/must-not-lock" \
+  bash "$script" >"$tmp/out-lying" 2>"$tmp/err-lying"
+status_lying=$?
+set -e
+[[ "$status_lying" -ne 0 ]] || fail "bootstrap verify-only accepted a venv without tables"
+rg -Fq 'tables==3.11.1: not installed' "$tmp/err-lying" || fail "verify-only refusal did not name tables"
+[[ ! -e "$tmp/must-not-lock" ]] || fail "verify-only took the bootstrap lock"
 
 # -- truthful twin: real 3.12.13 when available --------------------------------
 
@@ -216,4 +316,4 @@ else:
 print("runtime-coordinate twin OK")
 PY
 
-echo "PASS: bootstrap-venv-py312 twins (exact 3.12.13, post-editable pins, bare-python3 refuse, runtime coordinate)"
+echo "PASS: bootstrap-venv-py312 twins (exact 3.12.13, post-editable pins, optional set, bare-python3 refuse, runtime coordinate)"
