@@ -35,6 +35,8 @@ import sys
 import traceback
 from pathlib import Path
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 LOCAL_TARGETS = [
     ("tests/test_register_accessor.py", "ensure_removed"),
     ("_config/localization.py", "set_locale"),
@@ -175,6 +177,8 @@ def arm_local(corpus, session) -> None:
             coords = _protocol_coords_from_generator_decorators(
                 target, session=session, graph=None
             )
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException:
             print("    decorator step RAISED:")
             traceback.print_exc()
@@ -238,12 +242,16 @@ def main() -> int:
     print("\nARM LOCAL -- same-module @contextmanager, no receipt, graph=None")
     try:
         arm_local(corpus, session)
+    except ConstructionPanic:
+        raise  # a construction refusal propagates by its own name
     except BaseException:
         traceback.print_exc()
 
     print("\nARM IMPORT -- control, the road that already works")
     try:
         arm_import(corpus, session)
+    except ConstructionPanic:
+        raise  # a construction refusal propagates by its own name
     except BaseException:
         traceback.print_exc()
     return 0

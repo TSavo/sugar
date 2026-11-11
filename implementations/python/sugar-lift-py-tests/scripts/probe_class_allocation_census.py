@@ -35,6 +35,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
@@ -137,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
                     exemplars.setdefault(key, [])
                     if len(exemplars[key]) < 6:
                         exemplars[key].append(seat)
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException as error:  # noqa: BLE001 -- an instrument, named loudly
             if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
                 raise
@@ -160,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
                     distribution="pandas",
                     source_workspace_root=locus_root,
                 )
+            except ConstructionPanic:
+                raise  # a construction refusal propagates by its own name
             except BaseException as error:  # noqa: BLE001
                 if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
                     raise

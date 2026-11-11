@@ -20,6 +20,8 @@ from __future__ import annotations
 import sys
 import traceback
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
 
 def _print_outcome(label: str, value: object) -> None:
     print(f"  {label}: {type(value).__name__}")
@@ -140,6 +142,8 @@ def main(argv: list[str]) -> int:
     for symbol in argv:
         try:
             probe(symbol, corpus.root)
+        except ConstructionPanic:
+            raise  # a construction refusal propagates by its own name
         except BaseException:  # a probe is diagnostic: never hide its own death
             traceback.print_exc()
         print(flush=True)
