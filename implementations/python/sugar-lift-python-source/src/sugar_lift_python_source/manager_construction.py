@@ -3848,6 +3848,12 @@ def _construct_reachable_decorated_class_bindings(
                 continue
             if not candidate.decorators:
                 continue
+            if candidate._dataclass_generated_init_fields() is not None:
+                # Bare stdlib ``@dataclasses.dataclass`` returns the class it
+                # was given (Lib/dataclasses.py ``_process_class`` returns
+                # ``cls`` unless ``slots=True``); its one modelled effect, the
+                # written ``__init__``, is the class's constructor frame.
+                continue
             try:
                 symbol = table.lookup(node.id)
             except KeyError:

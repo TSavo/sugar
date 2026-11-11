@@ -6035,6 +6035,211 @@ class ClassDef(Statement):
             None,
         )
 
+    def _module_import_binding(self, local_name: str):
+        """The sole module-level import statement binding ``local_name``."""
+        bindings = tuple(
+            (getattr(self.unit, "module_direct_bindings", None) or {}).get(
+                local_name, ()
+            )
+        )
+        if len(bindings) != 1 or not isinstance(bindings[0], (Import, ImportFrom)):
+            return None
+        return bindings[0]
+
+    def _names_stdlib_member(self, node, module_name: str, member: str) -> bool:
+        """``node`` spells ``<module_name>.<member>`` through one authenticated
+        module-level import: ``import M [as X]`` + ``X.member``, or
+        ``from M import member [as Y]`` + ``Y``."""
+        if isinstance(node, Attribute) and node.attr == member:
+            if not isinstance(node.value, Name):
+                return False
+            statement = self._module_import_binding(node.value.id)
+            return isinstance(statement, Import) and any(
+                alias.name == module_name and (alias.asname or alias.name) == node.value.id
+                for alias in statement.names
+            )
+        if isinstance(node, Name):
+            statement = self._module_import_binding(node.id)
+            return (
+                isinstance(statement, ImportFrom)
+                and statement.level == 0
+                and statement.module == module_name
+                and any(
+                    alias.name == member and (alias.asname or alias.name) == node.id
+                    for alias in statement.names
+                )
+            )
+        return False
+
+    def _dataclass_generated_init_fields(self):
+        """The ``__init__`` ``@dataclasses.dataclass`` writes, as its fields.
+
+        Lib/dataclasses.py ``_process_class`` collects the class's own
+        annotated assignments, in order, as fields; ``_init_fn`` writes
+        ``__init__(self, f1, f2=<default>, ...)`` with one store
+        ``self.f = f`` per field, and for ``field(default_factory=F)`` the
+        store ``self.f = F() if f is <sentinel> else f`` (``_field_init``):
+        the factory is called once per construction when the caller omits
+        the argument.
+
+        Returns ``((name, target, default, factory), ...)``, or ``None`` for
+        anything this does not model exactly: a decorator other than the bare
+        stdlib ``dataclasses.dataclass`` (any argument may change ``init``,
+        ``kw_only``, ``frozen`` or slots), a source ``__init__`` or
+        ``__post_init__``, a base other than ``typing.Generic[...]`` (base
+        dataclasses contribute fields), ``ClassVar``/``InitVar``/``KW_ONLY``
+        annotations, ``field(...)`` with anything but ``default_factory`` /
+        ``default``, or a non-default field after a default one (which
+        dataclasses itself rejects with ``TypeError``).
+        """
+        if len(self.decorators) != 1 or not self._names_stdlib_member(
+            self.decorators[0], "dataclasses", "dataclass"
+        ):
+            return None
+        for base in self.bases:
+            if not (
+                isinstance(base, Subscript)
+                and self._names_stdlib_member(base.value, "typing", "Generic")
+            ):
+                return None
+        if getattr(self, "keywords", ()):
+            return None
+
+        def mentions_special(annotation) -> bool:
+            for node in annotation.walk():
+                if isinstance(node, Name) and node.id in {
+                    "ClassVar",
+                    "InitVar",
+                    "KW_ONLY",
+                }:
+                    return True
+                if isinstance(node, Attribute) and node.attr in {
+                    "ClassVar",
+                    "InitVar",
+                    "KW_ONLY",
+                }:
+                    return True
+                if isinstance(node, Constant) and isinstance(node.value, str):
+                    return True  # a string annotation is not read here
+            return False
+
+        fields = []
+        seen_default = False
+        for item in self.body:
+            if isinstance(item, (FunctionDef, AsyncFunctionDef)) and item.name in {
+                "__init__",
+                "__post_init__",
+            }:
+                return None
+            if not isinstance(item, AnnAssign):
+                continue
+            if not isinstance(item.target, Name) or not item.simple:
+                return None
+            if mentions_special(item.annotation):
+                return None
+            default = None
+            factory = None
+            value = item.value
+            if value is not None:
+                if isinstance(value, Call) and self._names_stdlib_member(
+                    value.func, "dataclasses", "field"
+                ):
+                    if value.args or len(value.keywords) != 1:
+                        return None
+                    (keyword,) = value.keywords
+                    if keyword.arg == "default_factory":
+                        factory = keyword.value
+                    elif keyword.arg == "default":
+                        default = keyword.value
+                    else:
+                        return None
+                else:
+                    default = value
+            # CPython evaluates a default (and the factory expression) once,
+            # at class creation; the frame re-reads them per construction.
+            # That is the same value only for a constant default and a bare
+            # factory name, so nothing else is modelled.
+            if default is not None and not isinstance(default, Constant):
+                return None
+            if factory is not None and not isinstance(factory, Name):
+                return None
+            has_default = default is not None or factory is not None
+            if seen_default and not has_default:
+                return None
+            seen_default = seen_default or has_default
+            fields.append((item.target.id, item.target, default, factory))
+        if any(name == "__dataclass_self__" for name, *_ in fields):
+            return None
+        return tuple(fields)
+
+    def _dataclass_constructor_frame(self, fields, *, site, owner_cid):
+        """The frame of the dataclass-written ``__init__`` (see above)."""
+        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        coordinates = tuple(
+            BindingCoordinateV1.mint(owner_cid, target.fragment, ("dataclass-field", index))
+            for index, (_name, target, _default, _factory) in enumerate(fields)
+        )
+        defaults = tuple(
+            default
+            if default is not None
+            else (None if factory is None else self._make_call(factory, ()))
+            for _name, _target, default, factory in fields
+        )
+        default_sources = tuple(
+            default if default is not None else factory
+            for _name, _target, default, factory in fields
+        )
+        formal_scope = {
+            name: self._make_field_coordinate_ref(target, coordinate)
+            for (name, target, _default, _factory), coordinate in zip(
+                fields, coordinates, strict=True
+            )
+        }
+        return SourceVisibleCallFrameV1(
+            source_identity_cid=self.unit.source_cid,
+            definition_site=site,
+            definition_fragment_cid=owner_cid,
+            parameters=tuple(name for name, *_ in fields),
+            formal_coordinates=coordinates,
+            formal_declaration_sites=tuple(
+                target.fragment.seal().to_dict() for _name, target, *_ in fields
+            ),
+            formal_projection_paths=tuple(
+                ("dataclass-field", index) for index, _ in enumerate(fields)
+            ),
+            parameter_kinds=tuple("positional_or_keyword" for _ in fields),
+            default_sugars=tuple(
+                None if default is None else default.sugar() for default in defaults
+            ),
+            default_nodes=defaults,
+            default_fragments=tuple(
+                None if source is None else source.fragment for source in default_sources
+            ),
+            default_fragment_cids=tuple(
+                None if source is None else source.fragment.seal().cid
+                for source in default_sources
+            ),
+            body=self._source_visible_body(formal_scope, dataclass_fields=fields),
+            owner=self,
+            constructed_new_method=None,
+        )
+
+    def _make_field_coordinate_ref(self, target, coordinate) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "BindingCoordinateRef",
+                target.span,
+                (("coordinate", Leaf(coordinate)),),
+            ),
+            self.reporter,
+        )
+
     def source_visible_constructor_frame(self):
         """The class call projected through its already-constructed definition."""
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -6087,6 +6292,12 @@ class ClassDef(Statement):
         # exception construction during module-wide frame resolution — and that
         # silence blocked authenticated generator managers whose helpers only
         # *mention* those raises.
+        if initializer is None and new_shape is None and not new_definitions:
+            dataclass_fields = self._dataclass_generated_init_fields()
+            if dataclass_fields is not None:
+                return self._dataclass_constructor_frame(
+                    dataclass_fields, site=site, owner_cid=owner_cid
+                )
         if initializer is None and self._inherits_default_exception_constructor():
             args_coordinate = BindingCoordinateV1.mint(
                 owner_cid, self.fragment, ("inherited-exception-args", 0)
@@ -6207,7 +6418,9 @@ class ClassDef(Statement):
             self.reporter,
         )
 
-    def _source_visible_body(self, scope, *, constructed_new_method=None):
+    def _source_visible_body(
+        self, scope, *, constructed_new_method=None, dataclass_fields=None
+    ):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
         )
@@ -6217,7 +6430,37 @@ class ClassDef(Statement):
         initializer = self._source_initializer()
         initializer_body = None
         receiver_coordinate_cid = None
-        if initializer is not None:
+        if dataclass_fields is not None:
+            # ``_init_fn``: one ``__dataclass_self__.f = f`` per field, in
+            # field order (the receiver name CPython uses, which no field
+            # may spell -- checked when the fields were read).
+            from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+                SourceVisibleFunctionBodySugar,
+            )
+
+            coordinate = BindingCoordinateV1.mint(
+                self.fragment.seal().cid, self.fragment, ("dataclass-receiver", 0)
+            )
+            receiver = self._make_constructed_receiver_ref(coordinate.cid)
+            receiver_coordinate_cid = coordinate.cid
+            receiver_name = "__dataclass_self__"
+            stores = tuple(
+                self._make_assign(
+                    self._make_attribute(For._make_name(self, receiver_name), name),
+                    For._make_name(self, name),
+                )
+                for name, *_ in dataclass_fields
+            )
+            constructor_scope = {
+                receiver_name: BindingEntryV1(coordinate, receiver, None),
+                **scope,
+            }
+            substituted_body, _ = self._substitute_body(stores, constructor_scope)
+            initializer_body = SourceVisibleFunctionBodySugar(
+                tuple(statement.sugar() for statement in substituted_body),
+                self.fragment,
+            )
+        elif initializer is not None:
             receiver_param = initializer.params[0]
             coordinate = BindingCoordinateV1.mint(
                 self.fragment.seal().cid,
