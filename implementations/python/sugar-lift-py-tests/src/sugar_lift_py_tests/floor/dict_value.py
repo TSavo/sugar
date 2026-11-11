@@ -243,7 +243,44 @@ class DictValue(GuardStableValue):
                 site=site,
                 owner="DictValue.subscript",
             )
-        return self.undecided_subscript(index, site, owner="DictValue.subscript")
+        if getattr(index, "formal_coordinate", None) is not None:
+            # A formal key waits for the caller's actual, which decides it.
+            return self.undecided_subscript(index, site, owner="DictValue.subscript")
+        return self._undecided_key_lookup(index, site)
+
+    def _undecided_key_lookup(self, index, site):
+        """``d[k]`` whose key's hash or equality against ``d``'s keys is open.
+
+        CPython hashes ``k`` and compares it (``is``, then ``==``) with each
+        stored key: ``__hash__``/``__eq__`` of an undecided type may raise
+        anything, and the lookup may find any entry or none (``KeyError``).
+        Nothing here decides which, so the #7587 opaque-subscript law applies:
+        the symbolic ``py.subscript(<dict>, <key>)`` completes only under
+        ``python:subscript.completes(python:subscript(<term>, <site>))`` and
+        the complement halts with an ``UndeterminedRaiseEffect``.  No entry is
+        chosen and no ``KeyError`` is guessed.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if site is None:
+            return self.undecided_subscript(index, site, owner="DictValue.subscript")
+        try:
+            term = ctor(
+                "py.subscript",
+                [
+                    self.to_term(owner="DictValue.subscript"),
+                    index.to_term(owner="DictValue.subscript"),
+                ],
+            )
+        except SugarNotWritten:
+            return self.undecided_subscript(index, site, owner="DictValue.subscript")
+        return _opaque_subscript_faces(
+            Complete(SymbolicValue(term)), site, producer="DictValue.subscript"
+        )
 
     def setitem(self, index, value, site):
         guarded = self._guarded_setitem(index, value, site)
