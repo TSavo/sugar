@@ -2175,12 +2175,20 @@ def populate_source_derived_resource_refs(
 
         actuals = []
         positional_sugars = []
+        actual_refusal = None
         for index, node in enumerate(call.args):
             formal_name = (
                 frame_parameters[index] if index < len(frame_parameters) else None
             )
             actual_sugar = _actual_sugar(node, formal_name=formal_name)
-            outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
+            try:
+                outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
+            except SugarNotWritten as exc:
+                # The actual's own named refusal (an undecided ``self.x``
+                # receiver) is this With's refusal, never a file terminal.
+                actual_refusal = exc
+                actuals = []
+                break
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
@@ -2204,7 +2212,13 @@ def populate_source_derived_resource_refs(
                     actuals = []
                     break
                 actual_sugar = _actual_sugar(keyword.value, formal_name=keyword.arg)
-                outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
+                try:
+                    outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
+                except SugarNotWritten as exc:
+                    actual_refusal = exc
+                    keyword_actuals = []
+                    actuals = []
+                    break
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []
@@ -2225,9 +2239,17 @@ def populate_source_derived_resource_refs(
                         ),
                     )
                 )
-        if len(actuals) != len(call.args):
+        if actual_refusal is not None or len(actuals) != len(call.args):
             _install_derivation_gap(
-                context, coordinate, receipt, "incomplete-call-actuals"
+                context,
+                coordinate,
+                receipt,
+                "incomplete-call-actuals",
+                *(
+                    ()
+                    if actual_refusal is None
+                    else (str(getattr(actual_refusal, "observed", actual_refusal)),)
+                ),
             )
             continue
         from sugar_lift_py_tests.context_manager_contract import (

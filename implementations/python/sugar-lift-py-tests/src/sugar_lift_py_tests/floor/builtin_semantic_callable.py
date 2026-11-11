@@ -103,7 +103,24 @@ class BuiltinSemanticCallable(FloorValue):
         subtype, supertype = operation.arguments
         subtype = self._resolve_type_operand(subtype, operation.site)
         supertype = self._resolve_type_operand(supertype, operation.site)
-        return subtype.test_python_subtype(supertype, operation.site)
+        test = getattr(subtype, "test_python_subtype", None)
+        if test is None:
+            # No floor testifies what this operand is as a class (a call
+            # result nobody looked at): neither answer nor CPython's
+            # TypeError for a non-class is honest yet.
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=operation.site,
+                owner="BuiltinSemanticCallable.python.issubclass",
+                observed=(
+                    "issubclass operand without class testimony: "
+                    f"{type(subtype).__name__}"
+                ),
+                requested="an authenticated class operand",
+                fix="carry the operand's class identity, or keep the call loud",
+            )
+        return test(supertype, operation.site)
 
     def _unhandled_construct(self, operation, name: str):
         """Opaque construct operands stay a dig cue, not a ConstructionPanic.
