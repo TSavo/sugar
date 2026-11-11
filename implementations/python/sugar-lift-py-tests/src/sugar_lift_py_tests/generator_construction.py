@@ -1068,6 +1068,11 @@ class GeneratorConstructionV1:
     # evaluation extends its temporal rather than fabricating a temporal-only
     # substitute context.
     reduction_context: object | None = field(default=None, compare=False, repr=False)
+    # The source-visible frame this instance was allocated from: the one
+    # object that carries this generator's lexical owner, so a reader of the
+    # machine (a factory returning it, say) can name its function without
+    # re-resolving a spelling.  Not identity: frame_coordinate is.
+    source_frame: object | None = field(default=None, compare=False, repr=False)
 
     @classmethod
     def allocate(
@@ -1079,6 +1084,7 @@ class GeneratorConstructionV1:
         steps: tuple[GeneratorStepV1, ...],
         formal_floor_bindings: tuple[FormalFloorBindingV1, ...] = (),
         reduction_context: object | None = None,
+        source_frame: object | None = None,
     ) -> "GeneratorConstructionV1":
         from sugar_source_tree.binding_state import (
             BindingEntryV1,
@@ -1181,6 +1187,7 @@ class GeneratorConstructionV1:
             instance_coordinate=instance_coordinate,
             formal_floor_bindings=formal_floor_bindings,
             reduction_context=reduction_context,
+            source_frame=source_frame,
         )
 
     def construction_term_preimage(self) -> dict:

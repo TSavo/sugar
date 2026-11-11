@@ -9400,6 +9400,35 @@ class With(Statement):
                 enter_slot = (
                     f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
+                from sugar_lift_python_source.manager_protocol_construction import (
+                    GuardedManagerPartitionProtocolV1,
+                )
+
+                if isinstance(resolved_ref.protocol, GuardedManagerPartitionProtocolV1):
+                    # Each face's manager carries its own native definitions;
+                    # the With enters each under its own guard (#7669).
+                    from sugar_lift_py_tests.context_manager_resolution import (
+                        SourceFragmentCoordinateV1,
+                    )
+                    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+                        WithManagerPartitionSugar,
+                    )
+
+                    return WithManagerPartitionSugar(
+                        manager=resolved_ref.call_actual_sugars.bind(
+                            item.context_expr.sugar(),
+                            use_site=SourceFragmentCoordinateV1(
+                                self.unit.source_cid, *item._manager_use_site_span()
+                            ),
+                        ),
+                        protocol=resolved_ref.protocol,
+                        summary=resolved_ref,
+                        body=tuple(stmt.sugar() for stmt in self.body),
+                        manager_slot_id=manager_slot,
+                        enter_slot_id=enter_slot,
+                        exit_face_id=item._exit_face_id(),
+                        site=self.fragment,
+                    )
                 enter_definition, exit_definition = (
                     self._require_native_resource_definitions(resolved_ref)
                 )

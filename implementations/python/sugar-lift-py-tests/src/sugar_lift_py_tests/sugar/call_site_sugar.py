@@ -796,6 +796,7 @@ class CallSiteSugar(ConstructedTermSugar):
                         steps=source_call_frame.generator_steps,
                         formal_floor_bindings=formal_floor_bindings,
                         reduction_context=ctx,
+                        source_frame=source_call_frame,
                     )
                 )
         callsite = CallSiteValue(

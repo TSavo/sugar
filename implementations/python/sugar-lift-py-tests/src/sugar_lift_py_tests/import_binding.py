@@ -15,6 +15,7 @@ Two receipt faces share one reaching-definition walk:
 from __future__ import annotations
 
 import json
+from functools import cached_property
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from types import MappingProxyType
@@ -156,6 +157,15 @@ class ImportBindingV1:
     def to_value(self) -> dict[str, Any]:
         return json.loads(encode_jcs(_json_value(self.value)))
 
+    @property
+    def preimage(self) -> dict[str, Any]:
+        """The exact JSON ``cid`` authenticates (``__post_init__`` checks it).
+
+        With ``cid`` this is a self-authenticating pair, so a constructed value
+        that seats this binding references it by its validated native CID.
+        """
+        return self.to_value()
+
 
 @dataclass(frozen=True)
 class AuthenticatedImportUseV1:
@@ -212,6 +222,24 @@ class AuthenticatedImportUseV1:
         else:
             # call-contract-demand — closed call shape only.
             _require_call_contract_demand(self)
+
+    @cached_property
+    def preimage(self) -> dict[str, Any]:
+        """The authenticated demand row: this receipt's complete content.
+
+        ``__post_init__`` checks the row carries this receipt's use (with its
+        own CID), binding, binding CID and target symbol; the use site carries
+        the consumer source CID.  ``root``/``path``/``source`` and
+        ``module_identities`` are where resolution LOOKS, not what this use
+        is.  So the row's CID authenticates the receipt's content, and a
+        constructed value seating the receipt (an import member read) cites it
+        by that validated native CID instead of walking file-system paths.
+        """
+        return json.loads(encode_jcs(_json_value(self.demand)))
+
+    @cached_property
+    def cid(self) -> str:
+        return _hash(self.demand)
 
     def revalidate(self) -> None:
         """Demand byte identity against one shared #6090 snapshot per module.
