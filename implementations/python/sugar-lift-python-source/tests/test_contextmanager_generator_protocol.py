@@ -173,7 +173,7 @@ def _function_rows(source_file, with_node):
     rows = []
     for face in outcome_to_exitset(func.sugar().desugar()).exits:
         if isinstance(face, Halted):
-            rows.append(("halt", face.effect.exception_name))
+            rows.append(("halt", getattr(face.effect, "exception_name", None)))
             continue
         for entry in getattr(getattr(face.value, "record", None), "statements", ()):
             name = type(entry).__name__
@@ -183,7 +183,7 @@ def _function_rows(source_file, with_node):
                 rows.append(("return", 7))
             elif name == "Incomplete":
                 rows.append(("halt", getattr(entry.effect, "exception_name", None)))
-    return type(with_node.sugar()), sorted(rows)
+    return type(with_node.sugar()), sorted(rows, key=lambda row: (row[0], str(row[1])))
 
 
 @pytest.mark.parametrize(

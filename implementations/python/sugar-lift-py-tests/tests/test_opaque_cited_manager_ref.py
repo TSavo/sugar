@@ -111,14 +111,22 @@ def _node(body=(), *, site=None, ref=None):
 
 
 def _faces(node):
-    """(can_fall_through, [(effect type, guard text)]) for one desugared With."""
-    outcome = node.desugar()
-    block = outcome.value
-    rows = []
-    for statement in block.statements:
-        guard = " ".join(str(g) for g in getattr(statement, "branch_conditions", ()))
-        rows.append((type(statement.effect).__name__, guard))
-    return block.can_fall_through, rows
+    """(completes, [(effect type, guard text)]) for one desugared With.
+
+    The With hands its faces to the enclosing reducer as an ExitSet: a
+    ``Completed`` face is the with-statement completing (the suppressed face
+    included), and each ``Halted`` face is one way it leaves by an effect.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    exits = node.desugar()
+    rows = [
+        (type(face.effect).__name__, str(face.guard))
+        for face in exits.exits
+        if isinstance(face, Halted)
+    ]
+    completes = any(isinstance(face, Completed) for face in exits.exits)
+    return completes, rows
 
 
 def _guard_for(rows, effect_name: str) -> str:

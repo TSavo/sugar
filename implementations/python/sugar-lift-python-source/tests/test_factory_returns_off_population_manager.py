@@ -78,7 +78,10 @@ def test_body_raise_still_propagates_through_the_cited_manager(tmp_path: Path) -
     )
     _consumer, rows = _function_rows(tree, with_node)
     assert ("halt", "KeyError") in rows
-    assert ("return", 7) not in rows
+    # A cited manager's suppression is undecided: the raise propagates on one
+    # face and is suppressed on the other, which reaches ``return 7``.
+    # Asserting it unreachable claimed the cited manager never suppresses.
+    assert ("return", 7) in rows
 
 
 def test_factory_returning_an_enrolled_manager_is_not_cited(tmp_path: Path) -> None:
