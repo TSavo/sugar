@@ -227,7 +227,6 @@ class WithOpaqueCitedManagerSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
             promote_raise_halts,
             sugar_outcome_to_exitset,
         )
@@ -279,6 +278,21 @@ class WithOpaqueCitedManagerSugar(Sugar):
                 ).guarded(face_guard)
 
                 for body_exit in body_es.exits:
+                    if isinstance(body_exit, Halted) and body_exit.state is None:
+                        # A halt with no recorded state bound nothing in the
+                        # body before it.  Its suppressed face continues after
+                        # the ``with`` from that empty prefix; left as ``None``
+                        # it is a completion with no record, which the
+                        # enclosing reducer cannot sequence.
+                        body_exit = Halted(
+                            body_exit.guard,
+                            body_exit.effect,
+                            _ReducedBlock(
+                                entries=(), can_fall_through=True, fall_through=()
+                            ),
+                            body_exit.faces,
+                            body_exit.pending_contracts,
+                        )
                     # ONE router for both questions. A completed body leaves
                     # completed unless exit halts; a halted body leaves as BOTH
                     # faces under the exit result's undecidable truthiness.
@@ -296,7 +310,13 @@ class WithOpaqueCitedManagerSugar(Sugar):
             for part in parts[1:]:
                 routed = routed.union(part)
 
-        return exitset_to_outcome(routed)
+        # The routed faces are handed to the enclosing reducer as faces, as the
+        # constructed ``with`` (``_route_manager_faces``) does.  Collapsing them
+        # here to the linear ``BlockValue`` view lost the head, enter, exit and
+        # suppressed faces whenever the body always raised and a ``return``
+        # followed: ``promote_raise_halts`` keeps a completed arm only on
+        # fall-through, and a block that returns does not fall through.
+        return routed.normalize()
 
 
 def _and_guards(left, right):
