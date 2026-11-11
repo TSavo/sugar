@@ -2388,6 +2388,7 @@ def populate_source_derived_resource_refs(
                 ),
             )
         )
+        _seat_projected_manager_call_frame(context, coordinate, call, behavior)
 
     # A callee Name assigned in every arm of a selection (``m = a.A`` /
     # ``elif``: ``m = b.B`` / ``with m(...)``) has no receipt at the call, but
@@ -5570,6 +5571,25 @@ def _direct_with_call_uses(root) -> dict:
     return uses
 
 
+def _seat_projected_manager_call_frame(context, coordinate, call, behavior) -> None:
+    """``ctx = cm(); with ctx:`` -- the assignment performs the manager call.
+
+    The With's use coordinate borrowed the reaching assignment's Call
+    (``_projected_manager_call_uses``).  That Call is evaluated where it is
+    written, once, and ``with ctx`` enters the value it bound; so the derived
+    frame is seated on the Call's own coordinate, where the assignment
+    constructs it, instead of leaving the assignment an unresolved callee
+    whose value the With cannot enter.  Direct ``with cm():`` heads (the use
+    coordinate IS the call) are untouched.
+    """
+    frame = getattr(behavior, "source_call_frame", None)
+    if frame is None or not getattr(call, "_borrowed_manager_call", False):
+        return
+    from .manager_construction import _install_source_call_frame
+
+    _install_source_call_frame(context, call, frame)
+
+
 def _projected_manager_call_uses(source_file):
     """Project ordinary reaching assignments into context-manager call uses.
 
@@ -5583,6 +5603,8 @@ def _projected_manager_call_uses(source_file):
     )
     from sugar_source_tree.nodes import AsyncWith, Call, With
 
+    from sugar_source_tree.nodes import selected_manager_calls
+
     manager_scope_types = (With, AsyncWith)
 
     # Preserve the original direct-call route exactly.
@@ -5594,6 +5616,34 @@ def _projected_manager_call_uses(source_file):
                 continue
             for item in node.items:
                 expr = item.context_expr
+                if (
+                    projected_names
+                    and item.optional_vars is None
+                    and expr.kind == "IfExp"
+                ):
+                    leaves = selected_manager_calls(expr)
+                    if leaves is not None:
+                        # ``with ctx:`` where ``ctx`` was bound in the arms
+                        # of an ``if``: the head is the phi of the arms'
+                        # calls.  Each arm's call is its own use, at its own
+                        # coordinate (With._selected_manager_sugar).
+                        for leaf in leaves:
+                            if leaf.kind == "OpaqueObjectStateV1":
+                                leaf = leaf.base
+                            span = leaf.line_col_span()
+                            key = (
+                                span.start_line,
+                                span.start_col,
+                                span.end_line,
+                                span.end_col,
+                            )
+                            object.__setattr__(leaf, "_borrowed_manager_call", True)
+                            uses[key] = (
+                                SourceFragmentCoordinateV1(leaf.unit.source_cid, *key),
+                                leaf,
+                                item._exit_face_id(),
+                            )
+                        continue
                 if not isinstance(expr, Call):
                     continue
                 if not projected_names and hasattr(item, "manager_use_site_start_line"):
@@ -5623,6 +5673,7 @@ def _projected_manager_call_uses(source_file):
                     end_line,
                     end_col,
                 )
+                object.__setattr__(expr, "_borrowed_manager_call", True)
                 uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
                     coordinate,
                     expr,
