@@ -4938,13 +4938,13 @@ def _seat_import_value_use_receipts(
     """Seat authenticated value-use receipts owned by this exact frame target.
 
     Receipts are minted once via ``authenticated_import_value_use_receipts``
-    (source-CID authenticated; dual-door / mismatch raises).  Resolution uses
-    only pre-authenticated ``dependency_graphs`` already carried for this frame
-    — never spelling-derived ambient dependency authentication.  Seating
-    requires exact unit source_cid + validated span.  Missing graph /
-    non-resolved import leaves that coordinate unseated (consume stays
-    typed-loud) and the missing top is recorded against the frame in flight;
-    CID/auth defects raise.
+    (source-CID authenticated; dual-door / mismatch raises).  Resolution reads
+    the graph of the top named by the receipt's authenticated module identity,
+    authenticating it on ask like every other door (never a spelling), so the
+    answer does not depend on which tops earlier work happened to seat.
+    Seating requires exact unit source_cid + validated span.  A top no
+    artifact authenticates, or a non-resolved import, leaves that coordinate
+    unseated (consume stays typed-loud); CID/auth defects raise.
     """
     from pathlib import Path
 
@@ -5188,17 +5188,23 @@ def _seat_import_value_use_receipts(
                 f"unsupported receipt module identity {identity['kind']!r}",
             )
         top_level = dependency_module.split(".", 1)[0]
-        # Only the receipt's authenticated module identity selects among the
-        # graphs this frame carried in: the session's seats as of the frame's
-        # entry plus what the frame itself authenticated.  A top seated by a
-        # callee since then is not read here; the row is rebuilt for it.
-        dependency_graph = dependency_graphs.get(top_level)
-        if dependency_graph is None:
-            # An absent graph carries no source authority.  Leave the exact
+        # The receipt's authenticated module identity names the top this use
+        # needs, and this door authenticates it when it asks, like the call
+        # door beside it.  Reading only the tops seated so far made the answer
+        # traversal history: ``os`` unseated on a cold open left
+        # ``os.environ.get`` a bare receipt, while a walk whose earlier file
+        # had seated ``os`` refused the same frame (#7678).
+        from .dependency_artifact import DependencyArtifactAuthenticationError
+
+        try:
+            dependency_graph = _dependency_graph_for_top(
+                top_level, session=session, dependency_graphs=dependency_graphs
+            )
+        except DependencyArtifactAuthenticationError:
+            # No artifact authenticates for this top, on any traversal: an
+            # absent graph carries no source authority.  Leave the exact
             # import-use coordinate unseated; any consumer that needs it stays
-            # typed-loud at its ordinary resolution door.  The frame being
-            # projected stands on this top having no seat: say so, so its
-            # memo row is rebuilt once the top is seated.
+            # typed-loud at its ordinary resolution door.
             session.call_closure.saw_absent(top_level)
             seat_receipt()
             continue
