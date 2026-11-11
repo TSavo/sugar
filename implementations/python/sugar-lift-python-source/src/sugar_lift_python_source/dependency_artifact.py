@@ -846,6 +846,18 @@ def resolve_import_binding(
                 == suffix
             )
             if (
+                len(suffix) == 2
+                and nested_module in graph.modules
+                and member_path_ok
+                and requested[: len(binding_prefix)] == binding_prefix
+            ):
+                # ``from pkg import mod`` then ``mod.Class.method``.
+                member = _class_member_through_module(
+                    graph, binding_cid, nested_module, suffix, session
+                )
+                if member is not None:
+                    return member
+            if (
                 requested[: len(binding_prefix)] != binding_prefix
                 or len(suffix) != 1
                 or not member_path_ok
@@ -886,6 +898,25 @@ def resolve_import_binding(
                 )
     elif requested[: len(base)] == base and len(requested) == len(base) + 1:
         exported_name = requested[-1]
+    elif (
+        requested[: len(base)] == base
+        and len(requested) == len(base) + 2
+        and ".".join(requested[: len(base) + 1]) not in graph.modules
+        and (
+            authenticated_use.demand.get("kind") != "import-value-use-demand"
+            or list(authenticated_use.use.get("exportedMemberPath") or ())
+            == requested[len(base) :]
+        )
+        and (
+            member := _class_member_through_module(
+                graph, binding_cid, module_name, requested[len(base) :], session
+            )
+        )
+        is not None
+    ):
+        # ``import mod`` then ``mod.Class.method``: the same class-body lookup
+        # as ``from mod import Class`` then ``Class.method``.
+        return member
     else:
         return _gap(
             "target-outside-binding", binding_cid, graph, module_name, target_symbol
@@ -1021,6 +1052,31 @@ def _resolve_export(*args, **kwargs):
     from .dependency_export_adapter import resolve_export
 
     return resolve_export(*args, **kwargs)
+
+
+def _class_member_through_module(graph, binding_cid, module_name, path, session):
+    """``Class.method`` under an authenticated module, or ``None``.
+
+    ``path`` is ``[Class, method]``.  The class is resolved by the one export
+    door; a method is then looked up in its own class body.  Anything else
+    returns ``None`` and the caller keeps its gap.
+    """
+    class_name, member_name = path
+    class_result = _resolve_export(
+        graph,
+        binding_cid,
+        module_name,
+        class_name,
+        (),
+        frozenset(),
+        session=session_or_new(session),
+    )
+    if not (
+        isinstance(class_result, ResolvedPythonObjectV1)
+        and class_result.definition.kind == "class"
+    ):
+        return None
+    return _resolve_class_body_member(graph, binding_cid, class_result, member_name)
 
 
 def _resolve_class_body_member(*args, **kwargs):
