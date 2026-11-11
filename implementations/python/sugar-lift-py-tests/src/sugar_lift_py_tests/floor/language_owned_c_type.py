@@ -112,6 +112,30 @@ class LanguageOwnedCTypeValue(FloorValue):
             key,
         )
 
+    def subscript_with(self, operation, ctx):
+        """``T[k]`` on a cited C class: the #7587 opaque-subscript law.
+
+        The class has no authenticated source, so its ``__class_getitem__`` /
+        metaclass ``__getitem__`` is cited, never looked inside.  A symbolic
+        ``py.subscript`` over the class's term completes only under
+        ``python:subscript.completes(python:subscript(<term>, <site>))``, keyed
+        on the exact subscript site; the complement halts with an
+        ``UndeterminedRaiseEffect``.  No alias type, member or exception class
+        is invented.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        outcome = operation.submit(
+            SymbolicValue(self.to_term(owner=f"{operation.owner} C type subscript")),
+            ctx,
+        )
+        return _opaque_subscript_faces(
+            outcome,
+            getattr(operation, "blame", None),
+            producer=f"LanguageOwnedCType.subscript:{self.module_name}.{self.type_name}",
+        )
+
     def test_python_type(self, value, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic, ctor, str_const

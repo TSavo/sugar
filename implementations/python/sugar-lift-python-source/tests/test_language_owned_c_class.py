@@ -175,3 +175,46 @@ def test_operations_on_an_opaque_c_value_are_two_faced(tmp_path, source, owner):
     exits = _exits(tmp_path, source)
     assert owner in _owners(exits)
     assert any(isinstance(face, Completed) for face in exits.exits)
+
+
+def test_subscripting_a_cited_c_type_is_two_faced(tmp_path):
+    """Truthful twin: ``T[k]`` on a C class is an opaque cited operation.
+
+    Its ``__class_getitem__`` is native and never looked inside: the symbolic
+    ``py.subscript`` completes only under ``python:subscript.completes`` keyed
+    on the site, and the complement halts with an undetermined raise.
+    """
+    exits = _exits(tmp_path, "import io\ndef f(k):\n    return io.TextIOWrapper[k]\n")
+    assert _owners(exits) == ["LanguageOwnedCType.subscript:_io.TextIOWrapper"]
+    (completed,) = [face for face in exits.exits if isinstance(face, Completed)]
+    assert "python:subscript.completes" in repr(completed.guard)
+    assert "py.subscript" in repr(completed.value)
+
+
+def test_a_subscripted_c_type_stands_as_a_base_and_its_halt_is_kept(tmp_path):
+    # The class statement evaluates the base first: the class exists on the
+    # completed face, and the base's undetermined raise is sequenced, not
+    # dropped (before, a base's non-Complete outcome was discarded whole and
+    # this function had no raise face at all).
+    exits = _exits(
+        tmp_path,
+        "import io\ndef f(k):\n"
+        "    class W(io.TextIOWrapper[k]):\n        pass\n    return W\n",
+    )
+    assert _owners(exits) == ["LanguageOwnedCType.subscript:_io.TextIOWrapper"]
+    assert len([face for face in exits.exits if isinstance(face, Completed)]) == 1
+
+
+def test_subscripts_that_are_not_on_a_cited_c_type_keep_their_own_path(tmp_path):
+    """Lying twin: only the cited C class itself takes the C-type subscript."""
+    # An instance of a C class is a C result, not the type: its own law.
+    exits = _exits(
+        tmp_path,
+        "import io\ndef f(b, k):\n    w = io.TextIOWrapper(b)\n    return w[k]\n",
+    )
+    owners = _owners(exits)
+    assert "LanguageOwnedCExtensionResultValue.subscript" in owners
+    assert not any(owner.startswith("LanguageOwnedCType.subscript") for owner in owners)
+    # A class with Python source is never floored as a C type, so its
+    # subscript can never take the opaque C-type path.
+    assert floor_artifact_module_absent_export(_Absent("_pydecimal", "Decimal")) is None

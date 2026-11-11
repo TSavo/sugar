@@ -713,11 +713,12 @@ def test_imported_generic_base_is_the_same_terminal_cold_and_warm(
     This used to assert the class constructs, which held only while ``typing``
     had no seat: the bare receipt became an ImportMemberValue whose subscript
     refusal the class model omits.  With ``typing`` seated (any walk whose
-    earlier file asked for it) ``Generic`` is a language-owned C type and its
-    subscript is a named construction panic.  The value-use door now
-    authenticates the top it needs (#7678), so both opens give that panic.
+    earlier file asked for it) ``Generic`` is a language-owned C type, and
+    subscripting a cited C type is two-faced (#7735).  The value-use door
+    authenticates the top it needs (#7678), so both opens give that terminal.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
     from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
     from sugar_lift_python_source.dependency_artifact import (
         AuthenticatedModuleSourceV1,
@@ -766,8 +767,23 @@ def test_imported_generic_base_is_the_same_terminal_cold_and_warm(
             context=context,
             dependency_graphs=dict(session.dependency_graphs),
         )
-        with pytest.raises(ConstructionPanic) as raised:
-            class_def.sugar().desugar(context)
-        observed.append(str(raised.value).split(" blame=")[0])
+        outcome = class_def.sugar().desugar(context)
+        observed.append(
+            (
+                sorted(
+                    face.effect.producer_node_owner
+                    for face in outcome.exits
+                    if isinstance(face, Halted)
+                    and isinstance(face.effect, UndeterminedRaiseEffect)
+                ),
+                [type(face.value).__name__ for face in outcome.exits
+                 if isinstance(face, Completed)],
+            )
+        )
     assert observed[0] == observed[1]
-    assert "owner=subscript" in observed[0]
+    # ``Generic[T]`` subscripts a cited C class: the class constructs on the
+    # completed face, and the base's undetermined raise is the other face.
+    assert observed[0] == (
+        ["LanguageOwnedCType.subscript:_typing.Generic"],
+        ["ClassDefinitionValue"],
+    )
