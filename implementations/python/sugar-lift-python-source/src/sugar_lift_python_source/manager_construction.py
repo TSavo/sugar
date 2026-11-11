@@ -1825,12 +1825,14 @@ def _project_return_faces_to_manager(
 
     reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
     cited: list[str] = []
+    unprojected: list[str] = []
     for face in faces:
         returned = face.value
         if isinstance(returned, ObjectValue):
             managers.append((face, returned, None))
             continue
         if not isinstance(returned, CallSiteValue):
+            unprojected.append(type(returned).__name__)
             continue
         if returned.off_population_target is not None:
             # The factory returns what an off-population callee returned: a
@@ -1869,6 +1871,18 @@ def _project_return_faces_to_manager(
             )
         return ManagerConstructionGapV1(
             "call-target-off-population", resolved_cid, cited[0]
+        )
+
+    if unprojected and (managers or nested):
+        # A guarded face returning a value this projection does not read (a
+        # generator-function manager, say) is still a face the factory can
+        # return. Choosing the manager on the other faces would claim it on
+        # every path.
+        return ManagerConstructionGapV1(
+            "non-manager-result",
+            resolved_cid,
+            "factory returns a projected manager on some faces and an "
+            f"unprojected value on others: {sorted(set(unprojected))}",
         )
 
     if managers:
