@@ -2361,6 +2361,7 @@ def populate_source_derived_resource_refs(
         graphs=graphs,
         distribution_index=distribution_index,
     )
+    _populate_builtin_c_manager_uses(context, uses)
     _floor_language_owned_module_calls(
         context,
         call_receipts_by_site,
@@ -3376,6 +3377,31 @@ def _populate_same_module_generator_manager_uses(
             _install_local_derivation_gap(
                 context, coordinate, target_symbol, kind, detail
             )
+
+
+def _populate_builtin_c_manager_uses(context, uses) -> None:
+    """Seat the C-manager law at ``with open(...)``.
+
+    Import receipts never fire for a builtin name.  When the head calls a name
+    the module binds nowhere, and that builtin is the C function its own
+    interpreter-owned module exports (``builtins.open`` is ``_io.open``), the
+    head is a two-faced C call and the ``with`` law runs over its opaque
+    result exactly as for an imported C function (``decimal.localcontext``):
+    enter and exit are two-faced slot calls and suppression is ``py.truthy`` of
+    the opaque exit result.  Nothing is claimed about the result's type.
+    """
+    from sugar_source_tree.nodes import Call, Name
+
+    from .language_owned_c_manager import mint_builtin_c_manager_ref
+
+    for _key, (coordinate, call, _exit_face_id) in uses.items():
+        if coordinate in context.source_derived_contract_refs:
+            continue
+        if not isinstance(call, Call) or not isinstance(call.func, Name):
+            continue
+        owned = mint_builtin_c_manager_ref(coordinate, call.func.id, call.unit.source)
+        if owned is not None:
+            context.source_derived_contract_refs[coordinate] = owned
 
 
 def _publish_proven_non_manager_head(

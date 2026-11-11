@@ -21,6 +21,8 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from .builtin_reference import name_bound_anywhere
+
 _PARSED: dict = {}
 
 
@@ -35,7 +37,7 @@ def locals_snapshot_shape(source: str, line: int, col: int):
     if "locals" not in source:
         return None
     tree = _parse(source)
-    if tree is None or _binds_anywhere(tree, "locals"):
+    if tree is None or name_bound_anywhere(tree, "locals"):
         return None
     for function in tree.body:
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -65,28 +67,6 @@ def _parse(source):
         _PARSED.clear()
     _PARSED[source] = tree
     return tree
-
-
-def _binds_anywhere(tree, name) -> bool:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == name and not isinstance(
-            node.ctx, ast.Load
-        ):
-            return True
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name == name:
-                return True
-        if isinstance(node, ast.arg) and node.arg == name:
-            return True
-        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
-            return True
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                if alias.name == "*" or (alias.asname or alias.name.split(".")[0]) == name:
-                    return True
-        if isinstance(node, ast.ExceptHandler) and node.name == name:
-            return True
-    return False
 
 
 def _path_to_call(root, line, col):
