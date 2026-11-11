@@ -345,7 +345,14 @@ class CallSiteValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TupleValue(elements=self.arg_values))
-        return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
+        if self.exception_type_coordinate is not None:
+            # An authenticated exception instance has a decided runtime type;
+            # its unprojected members (``__context__``) are not opaque-call
+            # lookups and stay a named third value.
+            return self.undecided_attribute(
+                name, site, owner="CallSiteValue.attribute"
+            )
+        return _opaque_attribute_faces(self, name, site)
 
     def _identity(self) -> tuple:
         """Authenticate this immutable callsite's finite coordinate once.
@@ -2056,6 +2063,62 @@ def _ctx_with_curried_args(
             blame="<callsite-coordinate>",
         )
     return result
+
+
+def _opaque_attribute_faces(receiver, name, site):
+    """``opaque().name`` may raise: complete only under an opaque atom.
+
+    The #7585 two-faced law, the attribute twin of the #7587 subscript law.
+    The receiver is a call result with no projected body, so its runtime type
+    and ``__getattribute__`` / ``__getattr__`` are undecided.  The member
+    completes as the coordinate ``attr:<name>(<receiver>)`` -- the same
+    spelling ``__name__`` already uses, no value invented -- only under
+    ``python:attribute.completes(python:attribute(<receiver>, <name>,
+    <site>))``, keyed on the exact source site; the complement halts with an
+    ``UndeterminedRaiseEffect``.  No exception type is named.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    if site is None:
+        return receiver.undecided_attribute(
+            name, site, owner="CallSiteValue.attribute"
+        )
+    receiver_term = receiver.to_term(owner=str(site))
+    member = CallSiteValue(
+        target_name=name,
+        arg_values=(receiver,),
+        parameters=(),
+        term=ctor(f"attr:{name}", [receiver_term], symbol_kind="method-coordinate"),
+        body=None,
+        site=site,
+    )
+    key = occurrence_key(site)
+    completes = atomic(
+        "python:attribute.completes",
+        [ctor("python:attribute", (receiver_term, str_const(name), str_const(key)))],
+    )
+    return ExitSet(
+        (
+            Completed(completes, member),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site),
+                    occurrence=key,
+                    producer_node_owner="CallSiteValue.attribute",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
 
 
 def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"):

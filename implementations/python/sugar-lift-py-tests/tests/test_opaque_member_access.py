@@ -1,10 +1,12 @@
-"""Opaque member operations refuse until a producer owns their runtime edges.
+"""Opaque member operations are two-faced (#7585, #7587).
 
 An unexecuted call authenticates which call produced the receiver, but not its
-runtime type or members.  A completed ``py.getattr`` coordinate would silently
-choose the success edge; a guessed ``AttributeError`` would silently choose the
-failure edge.  Neither choice has source testimony, so both attribute and
-subscript operations remain named construction refusals.
+runtime type or members.  A completed coordinate alone would silently choose
+the success edge; a guessed ``AttributeError`` would silently choose the
+failure edge.  Neither is chosen: the lookup completes as the coordinate
+``attr:<name>(<receiver>)`` only under ``python:attribute.completes(...)`` and
+halts with an ``UndeterminedRaiseEffect`` (no exception type named) under the
+complement.
 """
 
 import os
@@ -55,14 +57,47 @@ def _subscript_refusal(src):
     raise AssertionError("opaque subscript invented a completed coordinate or panic")
 
 
-def test_opaque_attribute_is_named_undecided():
-    info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
-
-    assert info.owner == "CallSiteValue.attribute"
-    assert info.observed.endswith("CallSiteValue.foo")
-    assert "source-authenticated attribute success or exceptional exit" in (
-        info.requested
+def _attribute_faces(src):
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as source_file:
+        source_file.write(src)
+    function = next(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
     )
+    return function.sugar().desugar(None)
+
+
+def _attribute_completion_and_halt(src):
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    exits = outcome_to_exitset(_attribute_faces(src)).exits
+    halts = [
+        f
+        for f in exits
+        if isinstance(f, Halted)
+        and isinstance(f.effect, UndeterminedRaiseEffect)
+        and f.effect.producer_node_owner == "CallSiteValue.attribute"
+    ]
+    import re
+
+    # The temporary directory is per run; the source seat is not the claim.
+    guards = re.sub(
+        r"/tmp/[^/']+/", "<dir>/", " ".join(str(getattr(f, "guard", "")) for f in exits)
+    )
+    return halts, guards, exits
+
+
+def test_opaque_attribute_is_two_faced():
+    halts, guards, _ = _attribute_completion_and_halt(
+        "def f(x):\n    return g(x).foo\n"
+    )
+    assert len(halts) == 1
+    assert "python:attribute.completes" in guards
 
 
 def test_opaque_subscript_is_named_undecided():
@@ -74,32 +109,22 @@ def test_opaque_subscript_is_named_undecided():
     assert "IndexError" not in refusal.observed
 
 
-def test_opaque_attribute_uses_the_typed_construction_refusal():
-    info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
-
-    assert type(info).__name__ == "SugarNotWritten"
-    assert "AttributeError" not in info.observed
-    assert "AttributeError" not in info.requested
+def test_opaque_attribute_names_no_exception_type():
+    halts, _, _ = _attribute_completion_and_halt("def f(x):\n    return g(x).foo\n")
+    assert "AttributeError" not in repr(halts[0].effect)
 
 
-def test_opaque_attribute_refusal_is_reproducible():
-    first = _attribute_refusal("def f(x):\n    return g(x).foo\n")
-    second = _attribute_refusal("def f(x):\n    return g(x).foo\n")
-
-    assert (first.owner, first.observed, first.requested) == (
-        second.owner,
-        second.observed,
-        second.requested,
-    )
+def test_opaque_attribute_faces_are_reproducible():
+    first = _attribute_completion_and_halt("def f(x):\n    return g(x).foo\n")[1]
+    second = _attribute_completion_and_halt("def f(x):\n    return g(x).foo\n")[1]
+    assert first == second
 
 
 def test_opaque_attribute_name_is_carried_verbatim():
-    foo = _attribute_refusal("def f(x):\n    return g(x).foo\n")
-    bar = _attribute_refusal("def f(x):\n    return g(x).bar\n")
-
-    assert foo.observed.endswith(".foo")
-    assert bar.observed.endswith(".bar")
-    assert foo.observed != bar.observed
+    foo = _attribute_completion_and_halt("def f(x):\n    return g(x).foo\n")[1]
+    bar = _attribute_completion_and_halt("def f(x):\n    return g(x).bar\n")[1]
+    assert "foo" in foo and "bar" not in foo
+    assert "bar" in bar
 
 
 if __name__ == "__main__":
