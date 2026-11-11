@@ -376,7 +376,13 @@ def test_multi_exit_string_helper_stays_the_callsite_not_the_block() -> None:
     assert projected.value is helper
     assert isinstance(projected.value, CallSiteValue)
     assert not isinstance(projected.value, BlockValue)
-    assert helper.to_term(owner="backquote") == helper.term
+    # The application ``helper.term`` stays the bridge coordinate; as a value
+    # the call is ONE evaluation's result, keyed on its occurrence -- never the
+    # application itself, which would claim every evaluation returns the same
+    # object.
+    result = helper.to_term(owner="backquote")
+    assert result.name == "python:call_result"
+    assert result.args[0] == helper.term
 
 
 def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_invented_string() -> None:
