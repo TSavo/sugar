@@ -2411,6 +2411,12 @@ def populate_source_derived_resource_refs(
         )
         _seat_projected_manager_call_frame(context, coordinate, call, behavior)
 
+    # ``with open(...)`` first: it depends on no other row, and a same-module
+    # manager whose own body opens a file (``@contextmanager def g(): with
+    # open(p) as f: yield f``) builds its frame from that nested row, so it
+    # must be seated before any same-module reader reads the body (#7732).
+    _populate_builtin_c_manager_uses(context, uses)
+
     # A callee Name assigned in every arm of a selection (``m = a.A`` /
     # ``elif``: ``m = b.B`` / ``with m(...)``) has no receipt at the call, but
     # each ARM has a value receipt at its own occurrence. Derive the partition
@@ -2447,7 +2453,6 @@ def populate_source_derived_resource_refs(
         session=session,
         distribution_index=distribution_index,
     )
-    _populate_builtin_c_manager_uses(context, uses)
     _populate_formal_selected_manager_uses(
         source_file, context, selected_coordinates=selected_coordinates
     )
@@ -5842,7 +5847,7 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
     )
     from sugar_source_tree.nodes import AsyncWith, Call, With
 
-    from sugar_source_tree.nodes import selected_manager_calls
+    from sugar_source_tree.nodes import manager_use_projection, selected_manager_calls
 
     manager_scope_types = (With, AsyncWith)
 
@@ -5940,7 +5945,10 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
             for node in function.walk()
         ):
             continue
-        collect(function.substitute({}), projected_names=True)
+        # No reader has run yet: a ``with ... as`` in the frame exports no
+        # binding here rather than demanding a contract nobody has seated.
+        with manager_use_projection():
+            collect(function.substitute({}), projected_names=True)
 
     return uses
 

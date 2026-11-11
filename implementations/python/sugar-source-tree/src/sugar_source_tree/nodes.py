@@ -9054,11 +9054,32 @@ class If(Statement):
 # the ``with`` never runs and binds nothing; if it is reached, its
 # construction is refused by the same require door, loudly, before any
 # reader of the binding is reduced.
+import contextlib as _contextlib_for_projection
 import contextvars as _contextvars
 
 _IN_BRANCH_SUITE: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
     "sugar_in_branch_suite", default=False
 )
+
+# True while population projects a frame only to collect its manager calls
+# (#7732).  That projection runs BEFORE any reader has seated a contract, so a
+# ``with ... as name`` in the projected frame has none yet: it exports no
+# ``as`` binding instead of demanding the contract now.  The projection is
+# read for its manager calls and then discarded; the With itself constructs
+# later through the same require door, loudly, once every reader has run.
+_IN_MANAGER_USE_PROJECTION: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
+    "sugar_in_manager_use_projection", default=False
+)
+
+
+@_contextlib_for_projection.contextmanager
+def manager_use_projection():
+    """Mark a substitution as population's manager-call projection."""
+    token = _IN_MANAGER_USE_PROJECTION.set(True)
+    try:
+        yield
+    finally:
+        _IN_MANAGER_USE_PROJECTION.reset(token)
 
 
 def selected_manager_calls(expr):
@@ -9087,6 +9108,21 @@ class With(Statement):
     items: Tuple[WithItem, ...]
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
+
+    def _manager_contract_populated(self, item: WithItem) -> bool:
+        """Whether population has seated a row (ref, citation or gap) for ``item``."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+
+        context = self.unit.construction_context
+        refs = getattr(context, "source_derived_contract_refs", None)
+        if refs is None:
+            return True  # the door itself reports the missing context
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid, *item._manager_use_site_span()
+        )
+        return coordinate in refs
 
     def _manager_contract_seated(self, item: WithItem) -> bool:
         """Whether the require door would answer for ``item`` (never reports)."""
@@ -10452,6 +10488,12 @@ class With(Statement):
                     item
                 ):
                     # Constructed (or refused) when its suite is reduced.
+                    return None
+                if (
+                    _IN_MANAGER_USE_PROJECTION.get()
+                    and not self._manager_contract_populated(item)
+                ):
+                    # No reader has run yet; constructed (or refused) later.
                     return None
                 resolved_ref = self._require_narrow_cm_ref(item)
             from sugar_lift_py_tests.context_manager_contract import (
