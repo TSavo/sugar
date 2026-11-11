@@ -4131,11 +4131,19 @@ class WithItem(Node):
             call.base if call.kind == "OpaqueObjectStateV1" else call
         ).line_col_span()
         desc = rewrite(self, context_expr=call).ref.describe()
+        owner_start_line, owner_start_col, owner_end_line, owner_end_col = (
+            self._manager_use_site_span()
+        )
         use_site = {
             "manager_use_site_start_line": span.start_line,
             "manager_use_site_start_col": span.start_col,
             "manager_use_site_end_line": span.end_line,
             "manager_use_site_end_col": span.end_col,
+            # The With item this arm belongs to: its one selected ref.
+            "selected_arm_of_start_line": owner_start_line,
+            "selected_arm_of_start_col": owner_start_col,
+            "selected_arm_of_end_line": owner_end_line,
+            "selected_arm_of_end_col": owner_end_col,
         }
         return materialize(
             self.unit,
@@ -9114,6 +9122,26 @@ class With(Statement):
         derived = context.source_derived_contract_refs.get(coordinate)
         if derived is not None:
             return derived
+        if hasattr(item, "selected_arm_of_start_line"):
+            # One arm of a branch-selected head (``_selected_manager_sugar``):
+            # its resolution rides inside the With item's selected ref.
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SelectedContextManagerRefV1,
+            )
+
+            selected = context.source_derived_contract_refs.get(
+                SourceFragmentCoordinateV1(
+                    self.unit.source_cid,
+                    item.selected_arm_of_start_line,
+                    item.selected_arm_of_start_col,
+                    item.selected_arm_of_end_line,
+                    item.selected_arm_of_end_col,
+                )
+            )
+            if isinstance(selected, SelectedContextManagerRefV1):
+                arm = selected.arm(coordinate)
+                if arm is not None:
+                    return arm
         try:
             return context.contract_refs.require(coordinate)
         except ContractRefProtocolError:

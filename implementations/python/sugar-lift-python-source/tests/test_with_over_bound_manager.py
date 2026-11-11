@@ -130,3 +130,41 @@ def test_symbolic_branch_refuses_at_the_arm_call_it_cannot_enter(tmp_path):
     # Blamed at ``cn()`` (line 5), the arm's own call -- the same refusal a
     # direct ``with cn():`` receives -- never at the ``with ctx`` name.
     assert "start_line=5, start_col=14" in str(raised.value)
+
+
+def _rows(tree):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        context_manager_resolution_outcome,
+        effective_context_manager_resolutions_for_source,
+    )
+
+    table = effective_context_manager_resolutions_for_source(
+        tree.root.unit.construction_context, source_cid=tree.unit.source_cid
+    )
+    return {
+        coordinate.start_line: (type(resolution).__name__, context_manager_resolution_outcome(resolution))
+        for coordinate, resolution in table.items()
+    }
+
+
+def test_a_branch_selected_item_is_one_census_row(tmp_path):
+    # Census law: one resolution row per With item.  The arms' calls (lines 5
+    # and 7) are not With items; their resolutions ride inside the item's row.
+    consumer = (
+        "import os\nfrom arbitrary import cm\ndef f():\n"
+        '    if os.environ.get("X"):\n        ctx = cm()\n'
+        "    else:\n        ctx = cm()\n" + _WITH
+    )
+    rows = _rows(_populated(tmp_path, consumer))
+    assert rows == {8: ("SelectedContextManagerRefV1", "constructed")}
+
+
+def test_an_arm_that_does_not_construct_leaves_the_item_unconstructed(tmp_path):
+    consumer = (
+        "import os\nfrom arbitrary import cm, cn\ndef f():\n"
+        '    if os.environ.get("X"):\n        ctx = cn()\n'
+        "    else:\n        ctx = cm()\n" + _WITH
+    )
+    rows = _rows(_populated(tmp_path, consumer))
+    assert list(rows) == [8]
+    assert rows[8] == ("SelectedContextManagerRefV1", "unconstructed")
