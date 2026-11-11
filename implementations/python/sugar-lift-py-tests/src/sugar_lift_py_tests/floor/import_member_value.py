@@ -150,6 +150,25 @@ class ImportMemberValue(FloorValue):
     def attribute(self, name, site):
         return self.undecided_attribute(name, site, owner="ImportMemberValue.attribute")
 
+    def truth(self, site):
+        """``if mod.FLAG:`` stands as ``py.truthy(<member>)``.
+
+        The export's runtime value is not projected, so its truth is not
+        decided at lift time. Like a call result's truth, the condition stands
+        as the symbolic ``py.truthy`` over the authenticated member coordinate
+        and both suites stay reachable under their guards. Nothing is folded:
+        the member's value is not guessed.
+        """
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                py_truthy(self.to_term(owner="ImportMemberValue.truth")), site
+            )
+        )
+
     def contains(self, item, site):
         return self.undecided_contains(item, site, owner="ImportMemberValue.contains")
 
