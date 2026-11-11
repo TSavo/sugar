@@ -80,7 +80,7 @@
  "trackedIn": {
   "line": 7661,
   "hollow": 7699,
-  "noTerminal": 7711
+  "noTerminal": [7712, 7713]
  },
  "residueFilesRows": [
   {
