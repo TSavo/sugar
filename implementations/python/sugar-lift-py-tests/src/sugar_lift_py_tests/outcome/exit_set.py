@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, field as _dataclass_field
 from typing import Callable, Generic, TypeVar
 
@@ -419,6 +420,43 @@ def _obligations(exit_: "Exit[T]") -> tuple:
     )
 
 
+# Identity-retained destination hashes (#7664).  A frozen dataclass's hash is a
+# function of its content, which cannot change, so one live object hashes the
+# same forever.  ``normalize`` re-buckets the same arm values on every call
+# (pinned pandas ``tests/io/pytables/test_subclass.py``: 1.67M destination
+# keys, 95M recursive dataclass ``__hash__`` frames), and a dataclass does not
+# cache its hash.  Retained per live object under a weakref guard, so a dead
+# object's recycled ``id`` never answers for a new one; a value that cannot be
+# weakly referenced (a tuple, an int) is hashed directly, as before.  A
+# ``TypeError`` is never retained: unhashable stays unhashable on every call.
+_DESTINATION_HASH: dict[int, tuple["weakref.ReferenceType", int]] = {}
+
+
+def _retained_hash(value: object) -> int:
+    vid = id(value)
+    entry = _DESTINATION_HASH.get(vid)
+    if entry is not None:
+        if entry[0]() is value:
+            return entry[1]
+        _DESTINATION_HASH.pop(vid, None)
+    hashed = hash(value)
+    params = getattr(type(value), "__dataclass_params__", None)
+    if params is None or not params.frozen:
+        # Only a FROZEN dataclass's content hash is known not to drift; any
+        # other ``__hash__`` is asked fresh every time, exactly as before.
+        return hashed
+    try:
+        def _on_die(wr: "weakref.ReferenceType", *, _vid: int = vid) -> None:
+            current = _DESTINATION_HASH.get(_vid)
+            if current is not None and current[0] is wr:
+                _DESTINATION_HASH.pop(_vid, None)
+
+        _DESTINATION_HASH[vid] = (weakref.ref(value, _on_die), hashed)
+    except TypeError:
+        pass
+    return hashed
+
+
 def _destination_key(exit_: "Exit[T]") -> object:
     """Bucket key for an exit's DESTINATION, ignoring its guard.
 
@@ -430,11 +468,11 @@ def _destination_key(exit_: "Exit[T]") -> object:
         if isinstance(exit_, Completed):
             # Obligations are part of the destination on this face too: two
             # completed arms owing different things are different destinations.
-            return ("completed", hash(exit_.value), _obligations(exit_))
+            return ("completed", _retained_hash(exit_.value), _obligations(exit_))
         return (
             "halted",
-            hash(exit_.effect),
-            hash(exit_.state),
+            _retained_hash(exit_.effect),
+            _retained_hash(exit_.state),
             _obligations(exit_),
         )
     except TypeError:
