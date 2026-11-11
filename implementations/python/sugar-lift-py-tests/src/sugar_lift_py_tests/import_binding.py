@@ -141,7 +141,9 @@ class ImportBindingV1:
 
     value: dict[str, Any]
     cid: str
-    _authority: object = dataclass_field(repr=False, compare=False)
+    _authority: object = dataclass_field(
+        repr=False, compare=False, metadata={"testimony": "authority"}
+    )
 
     def __post_init__(self) -> None:
         if self._authority is not _IMPORT_AUTHORITY:
@@ -170,7 +172,9 @@ class AuthenticatedImportUseV1:
     module_identities: dict[str, dict[str, Any]] = dataclass_field(
         repr=False, compare=False
     )
-    _authority: object = dataclass_field(repr=False, compare=False)
+    _authority: object = dataclass_field(
+        repr=False, compare=False, metadata={"testimony": "authority"}
+    )
 
     def __post_init__(self) -> None:
         if self._authority is not _IMPORT_AUTHORITY:

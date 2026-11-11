@@ -507,7 +507,10 @@ class TargetPatternReceiptV1:
     leaf_node_shape_cids: tuple[str, ...]
     binding_coordinate_cids: tuple[str, ...]
     cid: str
-    _authority: object = field(default=None, init=False, compare=False, repr=False)
+    _authority: object = field(
+        default=None, init=False, compare=False, repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     @property
     def preimage(self) -> dict[str, object]:

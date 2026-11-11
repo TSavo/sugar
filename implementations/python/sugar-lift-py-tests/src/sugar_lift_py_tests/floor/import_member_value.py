@@ -32,7 +32,10 @@ class ImportMemberValue(FloorValue):
     use_cid: str
     exported_member_path: tuple[str, ...]
     receipt: object = field(compare=False, repr=False)
-    _authority: object = field(default=None, compare=False, repr=False)
+    _authority: object = field(
+        default=None, compare=False, repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     def __post_init__(self):
         from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1

@@ -30,7 +30,10 @@ class DecoratorApplicationPublicationV1:
     input_floor_cid: str
     output_floor_cid: str
     application_cid: str
-    _authority: object = field(default=None, compare=False, repr=False)
+    _authority: object = field(
+        default=None, compare=False, repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     @classmethod
     def mint(cls, *, occurrence, callable_floor, input_floor, output_floor):
@@ -106,7 +109,10 @@ class DecoratedClassPublicationV1:
     raw_class_cid: str
     final_class_cid: str
     publication_cid: str
-    _authority: object = field(default=None, compare=False, repr=False)
+    _authority: object = field(
+        default=None, compare=False, repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     @classmethod
     def mint(
@@ -292,7 +298,10 @@ class MetaclassClassPublicationV1:
     module_construction_receipt_cid: str
     application_cid: str
     publication_cid: str
-    _authority: object = field(default=None, init=False, compare=False, repr=False)
+    _authority: object = field(
+        default=None, init=False, compare=False, repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     def __post_init__(self):
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -457,7 +466,10 @@ class DecoratedClassMemberValue(FloorValue):
     member_floor_cid: str
     publication_cid: str
     member_cid: str
-    _authority: object = field(default=None, compare=False, repr=False)
+    _authority: object = field(
+        default=None, compare=False, repr=False,
+        metadata={"testimony": "authority"},
+    )
 
     @classmethod
     def mint(cls, *, publication, member_definition, member_floor):
