@@ -165,9 +165,14 @@ def discharge(source_file) -> MinorityReport:
     # (top-level), then each function. A written root discharges its subtree
     # present; an unwritten one (e.g. Module.sugar, still on the frontier)
     # reports absent -- honestly, by attempt, red until written.
+    from sugar_lift_py_tests.sugar.if_sugar import construct_definition_branch_withs
+
     for root_node in (source_file.root, *source_file.functions()):
         try:
-            root_node.sugar()
+            # A definition is accounted by constructing it; nothing here
+            # reduces it, so no branch suite of it is selected. Its deferred
+            # ``with`` statements are constructed with it (#7699).
+            construct_definition_branch_withs(root_node.sugar())
         except SugarNotWritten:
             pass  # the gap is on the roll; the report reads it
         except RecursionError:
