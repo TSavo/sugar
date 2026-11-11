@@ -115,7 +115,26 @@ def as_occurrence(origin: Node, segment: str) -> Node:
         tuple(desc.slots),
         (segment, *occurrence_tags_of(origin)),
     )
-    return materialize(origin.unit, shadow, origin.reporter, origin.control_context)
+    copy = materialize(origin.unit, shadow, origin.reporter, origin.control_context)
+    _retain_call_row(origin, copy)
+    return copy
+
+
+def _retain_call_row(origin: Node, copy: Node) -> None:
+    """An evaluation of a source call is still that call (#7673).
+
+    The copy is a fresh backend identity over the origin's span and kind, so
+    it joins the origin's published enrollment decision by occurrence; its
+    producer-owned lexical row is keyed by identity and must ride along, as
+    ``Call.substitute`` carries it for a rewrite.  Only the copied node itself
+    gets a new identity -- its children are the origin's own handles.
+    """
+    from .nodes import Call, LexicalCallEnrolledV1
+
+    if isinstance(origin, Call) and isinstance(
+        origin.unit.lexical_call_enrollment(origin), LexicalCallEnrolledV1
+    ):
+        origin.unit.retain_lexical_call_row(origin, copy)
 
 
 def iteration_segment(loop: Node, index: int) -> str:
