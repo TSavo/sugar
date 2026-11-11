@@ -1607,20 +1607,16 @@ class GeneratorConstructionV1:
             )
         if isinstance(step, TermStepV1):
             from sugar_lift_py_tests.floor import RaiseValue
-            from sugar_lift_py_tests.gap.panic import ConstructionPanic
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_source_tree.panic import SugarNotWritten
 
+            # A ConstructionPanic from the term is its own named refusal: it
+            # propagates with its owner, requested, and observed intact. It is
+            # never rewritten into a transition gap.
             try:
                 outcome = step.term.desugar(self._guard_evaluation_context())
             except SugarNotWritten as exc:
                 return self._gap(requested, str(exc.observed))
-            except ConstructionPanic as exc:
-                info = exc.info
-                return self._gap(
-                    requested,
-                    f"{info.owner} requested {info.requested} on {info.observed}",
-                )
             if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.value.effect, state=self)

@@ -7009,13 +7009,15 @@ def test_installed_cited_opaque_nested_with_term_only_helper_iterates_enter_resu
     assert isinstance(completed[0].value, YieldEffect)
     assert isinstance(completed[0].value.value, OpaqueManagerProtocolCoordinate)
     assert completed[0].value.value.symbol == "python:cm_enter_result"
-    with pytest.raises(SugarNotWritten) as caught:
+    # The loop's ConstructionPanic propagates under its own name. The
+    # generator transition must not rewrite it into a transition gap.
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as caught:
         boundary.desugar()
-    assert caught.value.owner == "GeneratorConstructionV1.transition"
-    assert caught.value.observed == (
-        "LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate"
-    )
-    assert caught.value.requested == "finally cleanup"
+    assert caught.value.info.owner == "LoopRecurrenceSugar"
+    assert caught.value.info.requested == "iter_with"
+    assert caught.value.info.observed == "OpaqueManagerProtocolCoordinate"
 
 
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
@@ -7064,13 +7066,15 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
 
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     assert isinstance(boundary, GeneratorWithSugar)
-    with pytest.raises(SugarNotWritten) as caught:
+    # The loop's ConstructionPanic propagates under its own name. The
+    # generator transition must not rewrite it into a transition gap.
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as caught:
         boundary.desugar()
-    assert caught.value.owner == "GeneratorConstructionV1.transition"
-    assert caught.value.observed == (
-        "LoopRecurrenceSugar requested iter_with on OpaqueManagerProtocolCoordinate"
-    )
-    assert caught.value.requested == "finally cleanup"
+    assert caught.value.info.owner == "LoopRecurrenceSugar"
+    assert caught.value.info.requested == "iter_with"
+    assert caught.value.info.observed == "OpaqueManagerProtocolCoordinate"
 
 
 def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
