@@ -193,7 +193,7 @@ def test_facts_leaf_never_manufactures_a_contract_ref(
     """No use-site is silently promoted: the authority is a table, not a grant."""
     (tmp_path / "t.py").write_text(source, encoding="utf-8")
 
-    context = lift_rpc.audit_frontier_construction_context(tmp_path)
+    context = lift_rpc.enumerate_construction_context(tmp_path)
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
     )

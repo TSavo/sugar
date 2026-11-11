@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_python_source.source_oracle import install_root_for
     from sugar_lift_py_tests.lift_rpc import (
-        audit_frontier_construction_context,
+        enumerate_construction_context,
         open_source_file_for_construction,
     )
     from sugar_source_tree.roll_call import discharge
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
                 target,
                 root=corpus,
                 reporter=reporter,
-                construction_context=audit_frontier_construction_context(corpus),
+                construction_context=enumerate_construction_context(corpus),
                 source_workspace_root=locus_root,
                 populate_derived=True,
                 distribution="pandas",

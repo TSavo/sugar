@@ -763,8 +763,13 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     for source_path in sorted(root.rglob("*.py")):
         file_rel = str(source_path.relative_to(root))
         # No broad skip: a source that cannot be read is a LOUD failure, never a
-        # silently omitted file.
-        sf = _tree.source_file(source_path, root=root)
+        # silently omitted file. Building each function's universe constructs
+        # (fn.sugar()), so the tree opens through the construction door: the
+        # bare door has no construction context and every Call refuses
+        # (BareConstructionDoor), which failed every mint that reached a call.
+        # Same door as the `functions` level: no distribution is named here,
+        # so source-derived manager refs are not populated.
+        sf = _open_enumerated_file(source_path, root=root, locus_root=None)
         for fn in sf.functions():
             try:
                 outcome = _tree.function_universe_outcome(fn)
@@ -2045,8 +2050,14 @@ def _seat_roll_call_reporter(source_file, reporter) -> None:
         seat(node)
 
 
-def audit_frontier_construction_context(root: Path):
-    """The ONE preconstruction authority every ``auditFrontier`` level opens with.
+def enumerate_construction_context(root: Path):
+    """The ONE preconstruction authority every ``sugar.enumerate`` level opens with.
+
+    Every level of ``_handle_enumerate`` opens its file through
+    ``open_source_file_for_construction`` with this context, so every level
+    reads the same tree under the same authority. A level that opened the file
+    any other way answered according to whichever level happened to make the
+    file process-resident first.
 
     Bound authenticated refs when the Rust prebind installed them; otherwise the
     provisional demand table for this workspace root. Never ``None`` and never an
@@ -2073,6 +2084,22 @@ def audit_frontier_construction_context(root: Path):
             workspace_root=str(root),
         )
     return tree_construction_context_for_workspace(root)
+
+
+def _open_enumerated_file(full_path: Path, *, root: Path, locus_root: Path | None):
+    """How every ``sugar.enumerate`` level opens its file: the one opener, the one
+    authority, a seated registration channel, no source-derived population (the
+    levels that populate do it themselves, with the distribution they name)."""
+    from sugar_source_tree.reporter import CollectingReporter
+
+    return open_source_file_for_construction(
+        full_path,
+        root=root,
+        reporter=CollectingReporter(),
+        construction_context=enumerate_construction_context(root),
+        populate_derived=False,
+        source_workspace_root=locus_root,
+    )
 
 
 def _roll_call_audit_leaf(
@@ -2117,7 +2144,7 @@ def _roll_call_audit_leaf(
             full_path,
             root=root,
             reporter=reporter,
-            construction_context=audit_frontier_construction_context(root),
+            construction_context=enumerate_construction_context(root),
             source_workspace_root=locus_root,
             # Source-derived manager refs are frozen at exact use-sites only
             # when the demand names its enrolled distribution -- the same
@@ -2509,28 +2536,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         )
                         return
                     _src, _fname, file_cid = identity
-                    # This entrance only mints the module memento.  It must not
-                    # trigger the provisional demand walk that the subsequent
-                    # facts entrance performs as part of the one roll call.
-                    # An explicit empty contract table is honest here: no
-                    # source sugar is constructed at this level.
-                    # ONE DOOR, ONE LAW: every enumerate open seats a reporter
-                    # that can hold a registration. This level only mints the
-                    # module memento today, but a tree opened on the shared
-                    # `NULL_REPORTER` is a tree whose nodes are born
-                    # unregistered. Do not leave a second null-seated door for
-                    # the defect to move into.
-                    from sugar_source_tree.reporter import CollectingReporter
-
-                    sf = open_source_file_for_construction(
-                        full_path,
-                        root=root,
-                        reporter=CollectingReporter(),
-                        construction_context=tree_construction_context_for_workspace(
-                            root, contract_refs={}
-                        ),
-                        populate_derived=False,
-                        source_workspace_root=locus_root,
+                    # This entrance only mints the module memento, but it opens
+                    # the same tree every other level reads, under the same
+                    # authority: the demand table is derived per source and
+                    # memoized, so asking costs this file once.
+                    sf = _open_enumerated_file(
+                        full_path, root=root, locus_root=locus_root
                     )
                     memento = _tree.module_definition_memento(sf, file_rel, file_cid)
                     _send_enumerate_result(
@@ -2603,51 +2614,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # for it.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_python_source.source_oracle import SourceUnavailable
-                # Always inject construction context. Leaving it None makes every
-                # With unconditionally RuntimeSelectedContextManager (false red);
-                # production bind_contract_refs replaces the provisional gap table.
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    TreeConstructionContextV1,
-                )
-
-                if (
-                    _BOUND_CONTRACT_REFS is not None
-                    or _BOUND_CALL_CONTRACT_REFS is not None
-                ):
-                    construction_context = TreeConstructionContextV1(
-                        (
-                            _BOUND_CONTRACT_REFS
-                            if _BOUND_CONTRACT_REFS is not None
-                            else provisional_contract_refs_from_demands(root)
-                        ),
-                        call_contract_refs=_BOUND_CALL_CONTRACT_REFS,
-                        workspace_root=str(root),
-                    )
-                else:
-                    construction_context = tree_construction_context_for_workspace(root)
-                # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume).
-                # This door CONSTRUCTS sugar: `populate_source_derived_resource_refs`
-                # below reaches `ClassDef.sugar()`, which builds a
-                # `ConstructionTestimonyReporterV1` consumer roll over
-                # `self.reporter`. Leaving `reporter=` off defaults the whole
-                # tree to `NULL_REPORTER`, so every node in it is born
-                # unregistered. When a source-frame call then retains its
-                # producer definition, `retain_registered_node_from` is handed a
-                # node whose producer is the shared `NULL_REPORTER` -- which
-                # owns no registration and never can -- and refuses. The node is
-                # not foreign; it is genuinely unregistered, because this door
-                # never opened a channel to register it on. Seat the same
-                # `CollectingReporter` `audit_file_gaps` and `census.py` seat.
-                from sugar_source_tree.reporter import CollectingReporter
-
+                # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume):
+                # this door CONSTRUCTS sugar (`populate_source_derived_resource_refs`
+                # below reaches `ClassDef.sugar()`), so the tree must be opened
+                # on a reporter that can hold a registration. The one enumerate
+                # opener seats it.
                 try:
-                    tree_file = open_source_file_for_construction(
-                        full_path,
-                        root=root,
-                        reporter=CollectingReporter(),
-                        construction_context=construction_context,
-                        populate_derived=False,
-                        source_workspace_root=locus_root,
+                    tree_file = _open_enumerated_file(
+                        full_path, root=root, locus_root=locus_root
                     )
                 except SourceUnavailable as unavailable:
                     _send_enumerate_result(
@@ -2708,7 +2682,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     resolution_nodes = []
                     for coordinate, resolution in sorted(
                         effective_context_manager_resolutions_for_source(
-                            construction_context, source_cid=file_cid
+                            tree_file.unit.construction_context, source_cid=file_cid
                         ).items()
                     ):
                         resolution_nodes.append(
@@ -2872,7 +2846,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                sf = _tree.source_file(full_path, root=root)
+                sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
                 span = at.get("span") if isinstance(at, dict) else None
                 source_assert, assert_node = _tree.temporally_rewritten_assert(sf, span)
                 if source_assert is None or assert_node is None:
@@ -3007,7 +2981,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
-                sf = _tree.source_file(full_path, root=root)
+                sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
                 term_table = TermTableBuilder()
                 universes = []  # (name, memento_dict, contract_dto)
                 gaps = []
@@ -3187,7 +3161,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             if level in ("call_sites", "assertions", "facts"):
                 from sugar_lift_py_tests import tree_enumerate as _tree
 
-                sf = _tree.source_file(full_path, root=root)
+                sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
 
                 if level in ("call_sites", "assertions"):
                     if seek:
