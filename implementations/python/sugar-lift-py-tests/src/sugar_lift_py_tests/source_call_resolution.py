@@ -224,7 +224,10 @@ class OffPopulationSourceCallV1:
     target_name: str
 
     def faces(self, callsite, site):
+        from dataclasses import replace
+
         from .effect.raise_effect import UndeterminedRaiseEffect
+        from .floor.call_site_value import CallSiteValue
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
@@ -235,9 +238,12 @@ class OffPopulationSourceCallV1:
             (str_const(self.target_name), str_const(key)),
         )
         completes = atomic("python:off_population_call.completes", [call])
+        result = _occurrence_result(callsite, key)
+        if isinstance(result, CallSiteValue):
+            result = replace(result, off_population_target=self.target_name)
         return ExitSet(
             (
-                Completed(completes, _occurrence_result(callsite, key)),
+                Completed(completes, result),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
