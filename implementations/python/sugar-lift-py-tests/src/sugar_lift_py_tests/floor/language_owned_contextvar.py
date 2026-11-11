@@ -10,7 +10,7 @@ returns ``None``. This does not invent bodies for other C-extension members.
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .floor_value import FloorValue
 
@@ -274,6 +274,11 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
     module_name: str
     exported_name: str
     site: object = None
+    # The interpreter's own ``warnings.warn`` (keyed by runtime identity in
+    # ``floor_artifact_module_absent_export``): its completed face carries the
+    # warning its operands authenticate, read through CPython's fixed
+    # ``warn(message, category=...)`` signature.
+    warning_occurrence: bool = False
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -320,6 +325,9 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
                             exported_name=self.exported_name,
                             site=site,
                             occurrence=key,
+                            warning_observation=self._warning_observation(
+                                operation, site
+                            ),
                         ),
                     ),
                     Halted(
@@ -339,6 +347,25 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
         )
 
 
+    def _warning_observation(self, operation, site):
+        """The warning a completed ``warnings.warn`` call emitted, if typed.
+
+        The halted complement stays an undetermined raise: a warnings filter
+        set to ``error`` (or a malformed operand) makes the same call raise.
+        """
+        if not self.warning_occurrence:
+            return None
+        from sugar_lift_py_tests.sugar.warning_observation_producer import (
+            warning_observation_from_operands,
+        )
+
+        arguments = getattr(operation, "arguments", None)
+        keyword_names = getattr(operation, "keyword_names", None)
+        if arguments is None or keyword_names is None:
+            return None
+        return warning_observation_from_operands(arguments, keyword_names, site)
+
+
 @dataclass(frozen=True)
 class LanguageOwnedCExtensionResultValue(FloorValue):
     """An opaque result of a C-extension call with no authenticated body.
@@ -356,6 +383,9 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
     # (``occurrence.occurrence_key``): two iterations of one call site return
     # two results nobody testified to be equal.
     occurrence: str | None = None
+    # Statement-position testimony of the interpreter's ``warnings.warn``
+    # (``project_warning_observation`` reads it); not part of the result term.
+    warning_observation: object = field(default=None, compare=False)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const

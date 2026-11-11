@@ -3367,12 +3367,17 @@ def _resolve_source_visible_frame_uncached(
                 # or the seated value-use applies the floor instead of citing
                 # call-target-source-absent.
                 continue
-            _install_opaque_call_obligation(
-                context,
-                call,
-                obligation("call-target-source-absent"),
+            hopped = _resolve_through_runtime_module_alias(
+                imported, receipt, session=session
             )
-            continue
+            if hopped is None:
+                _install_opaque_call_obligation(
+                    context,
+                    call,
+                    obligation("call-target-source-absent"),
+                )
+                continue
+            imported, dependency_graph = hopped
         from sugar_source_tree.panic import SugarNotWritten
 
         try:
@@ -4247,6 +4252,77 @@ def _resolve_local_import_call_frame(
         return _ExternalCallTargetGap("call-target-export-unresolved")
     frame, _target = projected
     return frame
+
+
+def _resolve_through_runtime_module_alias(
+    gap, receipt, *, session: SourceResolutionSession
+):
+    """Follow ``m.alias.name`` where ``alias`` is a module ``m`` binds dynamically.
+
+    ``os.path`` is bound by ``os`` at import time (``import posixpath as
+    path`` under a platform test, then ``sys.modules['os.path'] = path``), so
+    the static export door declines it (``dynamic-export``) and every
+    ``os.path.dirname`` use is ``target-outside-binding``.  The running,
+    pin-authenticated interpreter decides that binding: when the attribute
+    chain under ``m`` reaches a module object, the remaining name is that
+    module's own export, resolved by the same export door in that module's
+    own authenticated artifact.  Runtime identity, never a spelling.  The
+    population membrane is applied by the ordinary projection door
+    afterwards, so a stdlib callee is cited ``call-target-off-population``.
+    Returns ``(resolved, graph)`` or ``None`` to keep the gap.
+    """
+    import importlib
+    import types
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1 as _Resolved,
+    )
+
+    if getattr(gap, "kind", None) != "target-outside-binding":
+        return None
+    module_name = getattr(gap, "module_name", None)
+    target = getattr(receipt, "target_symbol", None)
+    if not isinstance(module_name, str) or not isinstance(target, str):
+        return None
+    dotted = target.removeprefix("python:")
+    if not dotted.startswith(module_name + "."):
+        return None
+    path = dotted[len(module_name) + 1 :].split(".")
+    if len(path) < 2:
+        return None
+    try:
+        value = importlib.import_module(module_name)
+        for index, segment in enumerate(path[:-1]):
+            value = getattr(value, segment)
+            if isinstance(value, types.ModuleType):
+                break
+        else:
+            return None
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+    alias_module = value.__name__
+    remaining = path[index + 1 :]
+    if len(remaining) != 1 or not isinstance(alias_module, str):
+        return None
+    try:
+        owning = _dependency_graph_for_top(
+            alias_module.split(".", 1)[0], session=session, dependency_graphs={}
+        )
+    except DependencyArtifactAuthenticationError:
+        return None
+    callee = _resolve_export(
+        owning,
+        gap.import_binding_cid,
+        alias_module,
+        remaining[0],
+        (),
+        frozenset(),
+        session=session,
+    )
+    if not isinstance(callee, _Resolved):
+        return None
+    return callee, owning
 
 
 def _resolve_in_owning_artifact(gap, *, session: SourceResolutionSession):

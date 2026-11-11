@@ -55,15 +55,33 @@ def project_warning_observation(value):
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
+    # The completed result of the interpreter's own ``warnings.warn`` (the
+    # language-owned C callable, ``LanguageOwnedCExtensionCallableValue``)
+    # carries the observation its operands authenticated.
+    carried = getattr(value, "warning_observation", None)
+    if carried is not None:
+        return carried
     if not isinstance(value, CallSiteValue):
         return None
     if value.target_name != WARNING_OCCURRENCE_SYMBOL:
         return None
+    return warning_observation_from_operands(
+        value.arg_values, value.keyword_names, value.site
+    )
 
-    keyword_names = value.keyword_names
+
+def warning_observation_from_operands(arg_values, keyword_names, site):
+    """The observation one ``warnings.warn`` call's operands authenticate.
+
+    ``arg_values`` carries the positional operands followed by one value per
+    ``keyword_names`` entry.  ``None`` when the operands do not authenticate a
+    category -- never "no warning occurred".
+    """
+    keyword_names = tuple(keyword_names)
+    arg_values = tuple(arg_values)
     keyword_count = len(keyword_names)
-    positional = value.arg_values[: len(value.arg_values) - keyword_count]
-    keywords = dict(zip(keyword_names, value.arg_values[len(positional) :]))
+    positional = arg_values[: len(arg_values) - keyword_count]
+    keywords = dict(zip(keyword_names, arg_values[len(positional) :]))
 
     # A spread (``**kwargs``) keyword arrives spelled ``**``: the actual set is
     # not closed, so the occurrence is not authenticated.
@@ -104,7 +122,7 @@ def project_warning_observation(value):
             # cannot discharge a message-pattern obligation.  The boundary keeps
             # message-bearing warning assertions loud on its own side.
             message=None,
-            blame=None if value.site is None else str(value.site),
+            blame=None if site is None else str(site),
             category_identity=identity,
         )
     )

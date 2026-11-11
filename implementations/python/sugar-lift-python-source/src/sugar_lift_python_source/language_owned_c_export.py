@@ -19,7 +19,10 @@ from sugar_lift_py_tests.floor.language_owned_contextvar import (
 
 def floor_artifact_module_absent_export(resolved):
     """Return a language-owned floor value, or ``None`` to keep the gap."""
-    if getattr(resolved, "kind", None) != "artifact-module-absent":
+    kind = getattr(resolved, "kind", None)
+    if kind == "ambiguous-static-export":
+        return _floor_ambiguous_c_export(resolved)
+    if kind != "artifact-module-absent":
         return None
     module_name = getattr(resolved, "module_name", None)
     exported_name = getattr(resolved, "exported_name", None)
@@ -47,6 +50,49 @@ def floor_artifact_module_absent_export(resolved):
 
         return LanguageOwnedCTypeValue(module_name=module_name, type_name=exported_name)
     return None
+
+
+def _floor_ambiguous_c_export(resolved):
+    """An export the source binds twice, decided by the interpreter: a C builtin.
+
+    ``warnings.py`` binds ``warn`` both by ``from _warnings import warn`` (in a
+    ``try``) and by its pure-Python fallback ``def warn`` (in the ``except
+    ImportError``); statically that is ``ambiguous-static-export``.  The
+    running, pin-authenticated interpreter decides which binding stands, and
+    when its object is a builtin function exported by an interpreter-owned
+    module, the C import won and no Python body stands behind the name.  It is
+    then floored exactly as a C-extension callable: completes with an opaque
+    result or raises undetermined.  A Python fallback that won keeps the gap.
+    """
+    import sys
+
+    from .dependency_export_adapter import _is_stdlib_extension_module
+
+    module_name = getattr(resolved, "module_name", None)
+    exported_name = getattr(resolved, "exported_name", None)
+    if not isinstance(module_name, str) or not isinstance(exported_name, str):
+        return None
+    try:
+        module = importlib.import_module(module_name)
+        obj = getattr(module, exported_name)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+    if not isinstance(obj, types.BuiltinFunctionType):
+        return None
+    owner = getattr(obj, "__module__", None)
+    if not isinstance(owner, str) or (
+        owner not in sys.builtin_module_names
+        and not _is_stdlib_extension_module(owner)
+    ):
+        return None
+    import warnings
+
+    return LanguageOwnedCExtensionCallableValue(
+        module_name=module_name,
+        exported_name=exported_name,
+        # Runtime identity, not a spelling: the interpreter's own warn.
+        warning_occurrence=obj is warnings.warn,
+    )
 
 
 _PY_TPFLAGS_HEAPTYPE = 1 << 9
