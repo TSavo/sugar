@@ -10,9 +10,9 @@ which reaches three things no source stands behind (#7676):
   and the existing runtime-identity C floor is asked THERE.  A Python object
   behind the hop is still projected, and a name the owner does not define
   keeps ``call-target-source-absent``.
-* ``sys.exc_info()`` in ``ExitStack.__exit__``: ``sys`` is compiled into the
-  interpreter, so no artifact authenticates it.  A builtin function the module
-  itself owns is floored as a C-extension callable; anything else keeps the gap.
+* ``sys.exc_info()`` in ``ExitStack.__exit__``: no artifact authenticates
+  ``sys``, so the lifter does not have it: the call is not bridged and is cited
+  as such (``call-target-off-population``), whatever it is implemented in.
 * A constructor halt carries its initializer block, whose live reducer context
   is a lookup aid, not testimony: it no longer refuses the constructed value.
 """
@@ -22,17 +22,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from sugar_lift_py_tests.floor.language_owned_c_type import LanguageOwnedCTypeValue
-from sugar_lift_py_tests.floor.language_owned_contextvar import (
-    LanguageOwnedCExtensionCallableValue,
-)
 from sugar_lift_python_source.dependency_artifact import (
     ResolvedPythonObjectV1,
     authenticate_dependency_top_level,
 )
 from sugar_lift_python_source.dependency_export_adapter import resolve_export
-from sugar_lift_python_source.language_owned_c_export import (
-    floor_interpreter_module_callable,
-)
 from sugar_lift_python_source.manager_construction import (
     _follow_into_owning_artifact,
     _resolve_in_owning_artifact,
@@ -88,62 +82,6 @@ def test_a_name_the_owner_does_not_define_keeps_the_gap():
         )
         is None
     )
-
-
-def test_a_builtin_function_of_a_compiled_in_module_is_floored():
-    assert floor_interpreter_module_callable(
-        "python:sys.exc_info"
-    ) == LanguageOwnedCExtensionCallableValue(
-        module_name="sys", exported_name="exc_info"
-    )
-
-
-def test_a_c_class_of_a_compiled_in_module_is_floored_by_the_type_rule():
-    # ``itertools`` is compiled in and ``dropwhile`` is its own C heap type with
-    # no Python source: cited, never constructed or looked inside.  Calling it
-    # either completes with an opaque instance or raises undetermined.
-    from sugar_lift_py_tests.callable_application import CallableApplication
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.language_owned_c_type import (
-        LanguageOwnedCInstanceValue,
-    )
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-
-    floored = floor_interpreter_module_callable("python:itertools.dropwhile")
-    assert floored == LanguageOwnedCTypeValue(
-        module_name="itertools", type_name="dropwhile"
-    )
-    exits = floored.callable_application_with(
-        CallableApplication(
-            arguments=(), keyword_names=(), site=None, owner="test"
-        ),
-        None,
-    ).exits
-    completed = [exit_ for exit_ in exits if isinstance(exit_, Completed)]
-    halted = [exit_ for exit_ in exits if isinstance(exit_, Halted)]
-    assert len(completed) == 1 and len(halted) == 1
-    assert isinstance(completed[0].value, LanguageOwnedCInstanceValue)
-    assert isinstance(halted[0].effect, UndeterminedRaiseEffect)
-
-
-def test_a_class_that_is_not_a_compiled_in_modules_own_c_heap_type_keeps_the_gap():
-    # A static (non-heap) type, a class owned by another module, and a
-    # method reached through a deeper chain are not this module's C class.
-    assert floor_interpreter_module_callable("python:builtins.object") is None
-    assert floor_interpreter_module_callable("python:builtins.int") is None
-    assert (
-        floor_interpreter_module_callable("python:itertools.chain.from_iterable")
-        is None
-    )
-
-
-def test_anything_else_on_a_compiled_in_module_keeps_the_gap():
-    # Not a function, not a module export, not compiled in, not a symbol.
-    assert floor_interpreter_module_callable("python:sys.maxsize") is None
-    assert floor_interpreter_module_callable("python:sys.flags.optimize") is None
-    assert floor_interpreter_module_callable("python:json.dumps") is None
-    assert floor_interpreter_module_callable("python:sys.no_such_name") is None
-    assert floor_interpreter_module_callable("sys.exc_info") is None
 
 
 def test_a_reduced_block_context_is_not_testimony():

@@ -373,11 +373,10 @@ class ContextManagerContractRefV1:
 #: head's own source coordinate.
 CALLEE_CITATION_KINDS = frozenset(
     {
-        # The callee is off the enrolled population (``tarfile.open``).
+        # The callee is not bridged: the lifter holds no enrolled,
+        # authenticated source for it (``tarfile.open``, ``mmap.mmap``).  Why
+        # it is not bridged, and what it is implemented in, is never a kind.
         "call-target-off-population",
-        # The callee is a C type an interpreter-owned module exports and no
-        # Python source stands behind it (``mmap.mmap``).
-        "call-target-c-type-without-source",
     }
 )
 NO_CALLEE_CITATION_KINDS = frozenset({"head-runtime-selected"})
