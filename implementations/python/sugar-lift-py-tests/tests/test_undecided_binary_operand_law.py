@@ -8,9 +8,12 @@ named for THIS right operand, falling to the (owner x pair) gap.
 
 Most of those pairs are not eight arms to write. When at least one operand's
 runtime TYPE is undecided, Python's own operator dispatch for the pair is
-undecided.  That is a third value: the producer throws a named refusal
-(``SugarNotWritten``) rather than completing symbolically or minting a
-nameless dual-edge halt that TypeError boundaries cannot match.
+undecided, so the operation may raise anything (the #7585 law, as for
+ordering in #7622): it completes with the undecided
+``python:binary_result(op, left, right, <occurrence>)`` only under
+``python:binary_op.completes(python:binary_op(op, <occurrence>))`` and halts
+with an ``UndeterminedRaiseEffect`` (owner ``UndecidedBinary:<op>``) under the
+complement.  No exception type is named and no result is folded.
 
 The category is read from each value's own testimony (``denotes_value`` /
 ``runtime_type_is_decided``), never from a lexical type name.
@@ -36,7 +39,6 @@ from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, _Lambda, ctor, make_var
-from sugar_source_tree.panic import SugarNotWritten
 
 SITE = "undecided-binary-site"
 
@@ -66,25 +68,31 @@ def _comprehension() -> ComprehensionValue:
     )
 
 
-def _named_refusal(left, right, method: str, operator: str):
-    """Undecided native dispatch throws named — never Complete or nameless halt."""
-    del operator
-    with pytest.raises(SugarNotWritten) as raised:
-        getattr(left, method)(right, SITE)
-    assert raised.value.owner == "binary_operation_exception_floor"
-    assert "undecided" in raised.value.observed.lower()
-    # Do not invent TypeError identity in the refusal text as a fake exit.
-    assert "TypeError" not in (raised.value.observed or "")
-    return raised.value
+def _two_faced(left, right, method: str, operator: str):
+    """Undecided native dispatch: completes under its atom, else halts undetermined."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        Halted,
+        outcome_to_exitset,
+    )
+
+    exits = outcome_to_exitset(getattr(left, method)(right, SITE)).exits
+    (done,) = [face for face in exits if isinstance(face, Completed)]
+    (halt,) = [face for face in exits if isinstance(face, Halted)]
+    assert "python:binary_op.completes" in repr(done.guard)
+    assert isinstance(done.value, SymbolicValue)
+    assert done.value.term.name == "python:binary_result"
+    assert done.value.term.args[0].value == operator
+    # No exception type is named: the halt is undetermined.
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == f"UndecidedBinary:{operator}"
+    return done, halt
 
 
-def _refusal(left, right, method: str, operator: str):
-    return _named_refusal(left, right, method, operator)
-
-
-def test_undecided_native_bitwise_dispatch_throws_named() -> None:
+def test_undecided_native_bitwise_dispatch_is_two_faced() -> None:
     """The producer cannot choose sole ``__and__`` or sole TypeError."""
-    _named_refusal(_symbolic(), TermValue(0), "bitwise_and", "&")
+    _two_faced(_symbolic(), TermValue(0), "bitwise_and", "&")
 
 
 @pytest.mark.parametrize(
@@ -105,8 +113,8 @@ def test_undecided_native_bitwise_dispatch_throws_named() -> None:
         ("right_shift", ">>"),
     ),
 )
-def test_undecided_call_result_throws_named_refusal(method: str, operator: str) -> None:
-    _named_refusal(_callsite(), TermValue(2), method, operator)
+def test_undecided_call_result_is_two_faced(method: str, operator: str) -> None:
+    _two_faced(_callsite(), TermValue(2), method, operator)
 
 
 @pytest.mark.parametrize(
@@ -127,8 +135,8 @@ def test_undecided_call_result_throws_named_refusal(method: str, operator: str) 
         ("right_shift", ">>"),
     ),
 )
-def test_symbolic_left_operand_throws_named_refusal(method: str, operator: str) -> None:
-    _named_refusal(_symbolic(), TermValue(2), method, operator)
+def test_symbolic_left_operand_is_two_faced(method: str, operator: str) -> None:
+    _two_faced(_symbolic(), TermValue(2), method, operator)
 
 
 def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
@@ -140,25 +148,19 @@ def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
     assert outcome.value == TermValue(3)
 
 
-def test_swapped_symbolic_operands_both_throw_named() -> None:
-    """Both orderings refuse; neither fabricates a dual-edge partition."""
+def test_swapped_symbolic_operands_are_each_their_own_two_faces() -> None:
+    """Both orderings are two-faced, and they are different operations."""
     left = SymbolicValue(make_var("left"))
     right = SymbolicValue(make_var("right"))
-    with pytest.raises(SugarNotWritten) as forward:
-        left.subtract(right, SITE)
-    with pytest.raises(SugarNotWritten) as reverse:
-        right.subtract(left, SITE)
-    assert forward.value.owner == "binary_operation_exception_floor"
-    assert reverse.value.owner == "binary_operation_exception_floor"
-    assert " - " in forward.value.observed
-    assert " - " in reverse.value.observed
+    forward, _ = _two_faced(left, right, "subtract", "-")
+    reverse, _ = _two_faced(right, left, "subtract", "-")
+    assert forward.value != reverse.value
 
 
-def test_lying_exception_type_cannot_consume_named_binary_refusal() -> None:
-    """A boundary matcher never sees a nameless halt to invent identity for."""
-    with pytest.raises(SugarNotWritten) as raised:
-        _symbolic().add(TermValue(2), SITE)
-    assert raised.value.owner == "binary_operation_exception_floor"
+def test_a_named_exception_type_is_never_invented_for_the_halt() -> None:
+    """A boundary matcher sees an undetermined halt, never a minted TypeError."""
+    _, halt = _two_faced(_symbolic(), TermValue(2), "add", "+")
+    assert "TypeError" not in repr(halt.effect)
 
 
 # -- positive arm: the pairs the pinned census actually found -----------------
@@ -185,13 +187,13 @@ def test_lying_exception_type_cannot_consume_named_binary_refusal() -> None:
         (NoneValue(), _callsite(), "add", "+"),
     ),
 )
-def test_an_undecided_operand_keeps_the_third_value_loud(
+def test_an_undecided_operand_is_two_faced(
     left, right, method, operator
 ) -> None:
-    _refusal(left, right, method, operator)
+    _two_faced(left, right, method, operator)
 
 
-def test_the_law_refuses_every_operator_it_names_from_one_place() -> None:
+def test_the_law_answers_every_operator_it_names_from_one_place() -> None:
     """Eight operator names, one law -- so a ninth costs no new arm."""
     for method, operator in (
         ("add", "+"),
@@ -208,16 +210,16 @@ def test_the_law_refuses_every_operator_it_names_from_one_place() -> None:
         ("left_shift", "<<"),
         ("right_shift", ">>"),
     ):
-        _refusal(BytesValue(b"x"), _symbolic(), method, operator)
+        _two_faced(BytesValue(b"x"), _symbolic(), method, operator)
 
 
-def test_both_operand_categories_are_conserved_in_the_named_refusal() -> None:
-    """The refusal names both operand categories; no sole TypeError invent."""
+def test_both_operands_are_conserved_in_the_undecided_result() -> None:
+    """The result names both operands; no sole TypeError is invented."""
     left = BytesValue(b"ab")
     right = _symbolic()
-    refusal = _named_refusal(left, right, "add", "+")
-    assert "BytesValue" in refusal.observed
-    assert "SymbolicValue" in refusal.observed
+    done, _ = _two_faced(left, right, "add", "+")
+    assert done.value.term.args[1] == left.to_term(owner=SITE)
+    assert done.value.term.args[2] == right.to_term(owner=SITE)
 
 
 # -- the real reproducers: whole functions, lifted from source ---------------
@@ -238,7 +240,7 @@ def test_both_operand_categories_are_conserved_in_the_named_refusal() -> None:
         ("set_minus_call", "def f(g):\n    return {1, 2} - g()\n"),
     ),
 )
-def test_the_whole_function_publishes_undecided_named_refusal(
+def test_the_whole_function_publishes_the_undecided_binary_halt(
     tmp_path, name, source
 ) -> None:
     """Whole-function construction cannot launder sole completion or TypeError."""
@@ -255,9 +257,17 @@ def test_the_whole_function_publishes_undecided_named_refusal(
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )
-    with pytest.raises(SugarNotWritten) as raised:
-        fn.sugar().desugar(None)
-    assert raised.value.owner == "binary_operation_exception_floor"
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Halted, outcome_to_exitset
+
+    exits = outcome_to_exitset(fn.sugar().desugar(None)).exits
+    owners = [
+        face.effect.producer_node_owner
+        for face in exits
+        if isinstance(face, Halted) and type(face.effect) is UndeterminedRaiseEffect
+    ]
+    assert any(owner.startswith("UndecidedBinary:") for owner in owners)
+    assert any(not isinstance(face, Halted) for face in exits)
 
 
 class _FragmentSite:
@@ -430,8 +440,8 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
         # A pair the field law REFUSES -- it decides, then falls through.
         with pytest.raises(ConstructionPanic):
             TermValue(10**400).add(ComplexValue(0.0, 1.0), SITE)
-        # The pair this law refuses -- the field law still got asked first.
-        _refusal(ComplexValue(0.0, 1.0), _symbolic(), "add", "+")
+        # The pair this law answers -- the field law still got asked first.
+        _two_faced(ComplexValue(0.0, 1.0), _symbolic(), "add", "+")
     finally:
         complex_arithmetic.complex_add = original
 
@@ -442,7 +452,7 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
     ]
 
 
-def test_the_law_never_converts_a_panic_into_a_refusal() -> None:
+def test_the_law_never_converts_a_panic_into_two_faces() -> None:
     """A non-denoting right still panics; a decided list+peer is RaiseValue."""
     with pytest.raises(ConstructionPanic):
         BytesValue(b"x").add(_predicate(), SITE)
@@ -559,6 +569,6 @@ def test_no_value_class_states_testimony_the_base_class_lost() -> None:
     assert orphaned == []
 
 
-def test_the_undecided_pair_still_refuses_end_to_end() -> None:
+def test_the_undecided_pair_is_two_faced_end_to_end() -> None:
     """The one shape that proves the law is wired, not merely present."""
-    _refusal(BytesValue(b"x"), _symbolic(), "add", "+")
+    _two_faced(BytesValue(b"x"), _symbolic(), "add", "+")

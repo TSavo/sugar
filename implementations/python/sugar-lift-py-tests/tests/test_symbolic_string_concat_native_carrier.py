@@ -58,12 +58,21 @@ def test_string_plus_symbolic_mints_native_operation_carrier() -> None:
     assert outcome.demand.operator == "add"
 
 
-def test_symbolic_plus_int_still_refuses_undecided() -> None:
-    """Discrimination: numeric undecided pair stays SNW (not string-concat door)."""
+def test_symbolic_plus_int_is_the_undecided_binary_law() -> None:
+    """Discrimination: a numeric undecided pair takes the undecided binary law
+    (two faces, #7585), not the string-concat carrier door."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
     site = _tiny_binop_site()
-    with pytest.raises(SugarNotWritten) as raised:
-        SymbolicValue(make_var("n")).add(TermValue(2), site)
-    assert raised.value.owner == "binary_operation_exception_floor"
+    outcome = SymbolicValue(make_var("n")).add(TermValue(2), site)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert [face.effect.producer_node_owner for face in halts] == [
+        "UndecidedBinary:+"
+    ]
 
 
 def test_enum_py_line75_binop_desugar_does_not_snw() -> None:
