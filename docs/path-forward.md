@@ -4,6 +4,23 @@
 **Scope:** the Python lifter on the pinned pandas 3.0.3 corpus (1421 files). Nothing else is on this plan.
 **Replaces:** plan v1 of 2026-08-01 (Phases 0 to 4). See "What changed" at the end.
 
+## Read this first: what the finish line below does and does not show
+
+Written 2026-11-11. The "Done" recorded below on 2026-11-09 stands as a record of what was measured. It is not the finish.
+
+**How the project works.** A lifter turns source into a proof file. Proof files plug together: one from the Python lifter, one from another lifter, staged in `.sugar/imports/`, and the solver decides the combined claim. A call to something this proof does not contain is an edge with a target symbol nothing has answered yet; a proof that answers it binds it.
+
+**Two invariants, set by the project owner.**
+
+1. **It compiles all the way.** Every rule is shown by a twin through the real solver: a truthful source that comes back `sat`, and the same source with one thing falsified that comes back `unsat`.
+2. **One of each.** One lifter. One flooring mechanism. One temporal rewrite mechanism. No special cases, and no language detection: something the lifter does not have is not bridged, whatever the reason. A second way of doing something the lifter already does is the defect.
+
+**What the board counts.** The board's door builds each function's tree and never reduces it (`roll_call.discharge` calls `.sugar()` and not `.desugar()`). "Completed" there means every node of the file built its tree or refused by name. It does not mean the function bodies were evaluated, and it is not a proof.
+
+**What is true on main today.** `examples/python-base64-federation/run.sh`, the project in one script, fails at its first `sugar mint` (#7759). No change merged since the board has a twin through the solver. A review found ten places where the lifter has two doors where there should be one (#7757).
+
+**The plan** is on #7661, "Plan: collapse to one": the federation example runs first, then each second door is collapsed, in order. Files are expected to change state as that happens; a file count is not the goal.
+
 ## Done
 
 Done is one pass of the corpus, on one commit of `main`, in which both of these hold:
@@ -42,7 +59,7 @@ These were campaign-wide criteria in plan v1. They are now conditions on each pu
 Anything that does not shrink the worklist or run the final pass is off plan. Say **OFF-PLAN** before starting it. That includes:
 
 - Java and Rust work.
-- Examples and example gates.
+- Example polish and showcase output. (Examples that mint and prove, such as `examples/python-base64-federation`, are not off plan: they are the acceptance test. Listing all examples here on 2026-11-09 was wrong.)
 - CI and runner plumbing.
 - New instruments, auditors or re-ranking exercises.
 - Constructing a refusal that is not on the residue line below.
