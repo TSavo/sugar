@@ -110,6 +110,11 @@ class _ImportDef:
     cid: str
     target_symbol: str
     payload_jcs: str
+    # ``import a.b.c`` (no ``as``) binds the local ``a`` while the binding's
+    # module is ``a.b.c``: a use ``a.b.c.x`` names ``x`` of that module, so
+    # its member path is read after the ``("b", "c")`` it spells.  ``a.y`` is
+    # a member of the package ``a``, which this binding does not name.
+    submodule_tail: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -360,6 +365,22 @@ def _require_value_use_role(receipt: AuthenticatedImportUseV1) -> None:
         )
 
 
+def _member_path_after_submodule(
+    binding: _ImportDef, exported_path: tuple[str, ...]
+) -> tuple[str, ...] | None:
+    """The member path relative to the binding's module, or ``None``.
+
+    ``import a.b`` binds ``a``; ``a.b.x`` is ``x`` of ``a.b`` and ``a.y`` is
+    not a member of ``a.b`` at all, so it is not this binding's use.
+    """
+    tail = binding.submodule_tail
+    if not tail:
+        return exported_path
+    if exported_path[: len(tail)] != tail:
+        return None
+    return exported_path[len(tail) :]
+
+
 _NON_IMPORT = "non-import"
 _UNBOUND = "unbound"
 Definition = _ImportDef | _ModuleFunctionDef | str
@@ -540,13 +561,13 @@ class _Pass:
             # are stricter: unique ImportDef only — shadowing, reassignment,
             # unbound join, and wildcard ambiguity do not authorize a value.
             name_binding = self._unique_import_def(node.id, state, allow_unbound=True)
-            if name_binding is not None:
+            if name_binding is not None and not name_binding.submodule_tail:
                 span = node.line_col_span()
                 self.name_targets[
                     (span.start_line, span.start_col, span.end_line, span.end_col)
                 ] = name_binding.target_symbol
             value_binding = self._unique_import_def(node.id, state, allow_unbound=False)
-            if value_binding is not None:
+            if value_binding is not None and not value_binding.submodule_tail:
                 self._enroll_value_use(node, value_binding, ())
             return
         if node.kind == "Attribute":
@@ -561,8 +582,13 @@ class _Pass:
                 binding = self._unique_import_def(
                     local_name, state, allow_unbound=False
                 )
-                if binding is not None:
-                    self._enroll_value_use(node, binding, exported_path)
+                member = (
+                    _member_path_after_submodule(binding, exported_path)
+                    if binding is not None
+                    else None
+                )
+                if member is not None:
+                    self._enroll_value_use(node, binding, member)
             return
         if node.kind == "Call":
             self.expression(node.func, state, scope)
@@ -690,6 +716,10 @@ class _Pass:
         key = (span.start_line, span.start_col, span.end_line, span.end_col)
         if len(imports) == 1 and not nonimports:
             binding = next(iter(imports))
+            member = _member_path_after_submodule(binding, exported_path)
+            if member is None:
+                return
+            exported_path = member
             self.outcomes[key] = "authenticated-import-use"
             use_site = _site(self.source_cid, node)
             use = {
@@ -800,6 +830,9 @@ class _Pass:
                             _hash(payload),
                             f"python:{alias.name}",
                             encode_jcs(_json_value(payload)),
+                            ()
+                            if alias.asname
+                            else tuple(alias.name.split(".")[1:]),
                         )
                     }
                 )
