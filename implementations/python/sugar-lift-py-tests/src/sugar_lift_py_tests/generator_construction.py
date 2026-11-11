@@ -1140,7 +1140,9 @@ class GeneratorConstructionV1:
             if (
                 len(parents) != 1
                 or len(suffix) != 2
-                or suffix[0] != "variadic"
+                # ``*args`` elements and ``**kwargs`` entries are the two
+                # collected-formal projections ``bind_actuals`` seats.
+                or suffix[0] not in ("variadic", "variadic-keyword")
                 or not isinstance(suffix[1], int)
                 or isinstance(suffix[1], bool)
                 or coordinate != parents[0].project(*suffix)
