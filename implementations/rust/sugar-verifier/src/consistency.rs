@@ -2226,6 +2226,12 @@ fn count_top_level_constraints(inv: &Json) -> usize {
 /// the `=` case draws: interpreted+ground universe decides; uninterpreted operand
 /// does not.
 fn lone_fact_has_covering_universe(inv: &Json) -> bool {
+    // A lone fact the ground evaluator decides outright (a constant, or a
+    // comparison of closed data values) has its universe: the literals
+    // themselves. It is a substantive verdict and must reach the solver.
+    if eval_ground_bool(inv).is_some() {
+        return true;
+    }
     // Unwrap a single-operand `and([...])` (the lifter conjoins a contract's atoms,
     // so a one-atom contract arrives as `and([atom])`). A 0- or >=2-operand `and`
     // is handled by the ordinary constraint-count path, not here.
@@ -2289,6 +2295,36 @@ fn is_ground_string_theory_predicate(node: &Json) -> bool {
     }
     args.iter()
         .all(|arg| formula_is_closed(arg, &mut Vec::new()) && !term_has_opaque_call(arg))
+}
+
+/// The first `call:*` coordinate in `inv` that no linked contract instance
+/// answers, spelled compactly; `None` when every call coordinate is bound.
+fn unbound_call_coordinate(inv: &Json, linked_posts: &[LinkedPostInstance]) -> Option<String> {
+    fn collect(node: &Json, out: &mut Vec<Json>) {
+        if is_callsite_ctor_term(node) {
+            out.push(node.clone());
+        }
+        for key in ["args", "operands"] {
+            if let Some(items) = node.get(key).and_then(|v| v.as_array()) {
+                for item in items {
+                    collect(item, out);
+                }
+            }
+        }
+        if let Some(body) = node.get("body") {
+            collect(body, out);
+        }
+    }
+    let mut calls = Vec::new();
+    collect(inv, &mut calls);
+    let bound: std::collections::BTreeSet<String> = linked_posts
+        .iter()
+        .map(|instance| compact_json(&instance.call))
+        .collect();
+    calls
+        .iter()
+        .map(compact_json)
+        .find(|call| !bound.contains(call))
 }
 
 /// True if any `call:*` ctor appears anywhere in `term`. Such a ctor is an
@@ -2453,6 +2489,22 @@ fn check_inv_consistency_with_vacuity_reason(
         );
     }
     let (verdict, reason, effect) = consistency_verdict(raw, property_name, &raw_reason);
+    // OPEN EDGE (#3896). A satisfiable claim that mentions a call coordinate no
+    // linked contract answers is not proven: the callee's meaning is unbound, so
+    // any value satisfies it. A contradiction still refutes (it holds whatever
+    // the callee means); only the discharge is withheld.
+    let (verdict, reason, effect) = match unbound_call_coordinate(&inv, &linked_posts) {
+        Some(call) if verdict == ObligationVerdict::Discharged => {
+            let effect = VerifyEffect::NotBridged {
+                contract_cid: cid.clone(),
+                property_name: property_name.to_string(),
+                call,
+            };
+            let boundary = effect.to_legacy_boundary();
+            (boundary.verdict, boundary.reason, Some(effect))
+        }
+        _ => (verdict, reason, effect),
+    };
     if matches!(
         verdict,
         ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout

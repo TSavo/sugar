@@ -44,10 +44,13 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
         return Complete(self)
 
     def stated(self, site):
-        # Ground True states nothing: the assert is support, absorbed.
-        from sugar_lift_py_tests.floor.support_value import SupportValue
+        # An assert always states its fact. A test the floor decided True
+        # states the decided fact: truth, the constant that is all this value
+        # has. Its row says the assertion is reached and holds (#7766).
+        from sugar_lift_py_tests.floor.inv_value import InvValue
+        from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-        return Complete(SupportValue(site=site))
+        return Complete(InvValue(true_guard(), site))
 
     def negate(self) -> Outcome:
         # True negates to False -- the literal knows its opposite, no fork.
