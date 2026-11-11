@@ -2374,7 +2374,88 @@ def populate_source_derived_resource_refs(
         session=session,
         distribution_index=distribution_index,
     )
+    _floor_language_owned_module_type_reads(
+        source_file,
+        context,
+        call_receipts_by_site,
+        value_receipts_by_site,
+        graphs=graphs,
+        session=session,
+        distribution_index=distribution_index,
+    )
     _rewrite_installed_generator_frames(context)
+
+
+def _floor_language_owned_module_type_reads(
+    source_file,
+    context,
+    call_receipts_by_site,
+    value_receipts_by_site,
+    *,
+    graphs,
+    session,
+    distribution_index,
+) -> None:
+    """Seat a C class at this module's own non-call reads (``io.TextIOWrapper``).
+
+    ``isinstance(handle, io.TextIOWrapper)`` reads the class as a value.  The
+    consumer module's own value reads were never seated, so the read stood as
+    an unknown attribute and the isinstance as a dynamic type operand.  When
+    the read resolves to an ``artifact-module-absent`` export whose runtime
+    object is a C heap class of an interpreter-owned module, the read is that
+    language-owned C class (the type rule, never the C-function rule).  A read
+    that is a call's callee stays with the call floor.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor.language_owned_c_type import (
+        LanguageOwnedCTypeValue,
+    )
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        authenticate_dependency_top_level,
+        resolve_import_binding,
+    )
+    from .language_owned_c_export import floor_artifact_module_absent_export
+
+    unit = source_file.unit
+    callee_starts = {
+        (source_cid, start_line, start_col)
+        for source_cid, start_line, start_col, *_rest in call_receipts_by_site
+    }
+    for site_key, receipt in value_receipts_by_site.items():
+        source_cid, start_line, start_col, end_line, end_col = site_key
+        if source_cid != unit.source_cid:
+            continue
+        if (source_cid, start_line, start_col) in callee_starts:
+            continue
+        span = (start_line, start_col, end_line, end_col)
+        if unit.import_value_use_resolution(span) is not None:
+            continue
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        graph = graphs.get(top_level)
+        if graph is None and session.enabled:
+            graph = session.dependency_graphs.get(top_level)
+        if graph is None:
+            try:
+                graph = authenticate_dependency_top_level(
+                    top_level, distribution_index=distribution_index
+                )
+            except DependencyArtifactAuthenticationError:
+                continue
+            graphs[top_level] = graph
+            if session.enabled:
+                session.dependency_graphs[top_level] = graph
+        imported = resolve_import_binding(receipt, graph=graph, session=session)
+        floored = floor_artifact_module_absent_export(imported)
+        if type(floored) is not LanguageOwnedCTypeValue:
+            continue
+        unit.seat_import_value_use_resolution(span, receipt, source_cid=source_cid)
+        context.source_import_value_resolutions[
+            SourceFragmentCoordinateV1(source_cid, *span)
+        ] = floored
 
 
 def _floor_language_owned_module_calls(
