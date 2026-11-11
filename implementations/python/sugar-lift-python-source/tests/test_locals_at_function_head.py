@@ -6,7 +6,7 @@ parameters, then ``*args``, then ``**kwargs``.  A module-level function has
 no free variables.  So before any other local is bound, the snapshot is exactly
 ``{name: value}`` over the parameters.  numpy's ``_make_options_dict`` opens
 with ``{k: v for k, v in list(locals().items()) if v is not None}``, which
-was two-faced (``UnprojectedMethodCall:items`` and ``BuiltinDunderCall:list``).
+was two-faced (``UnknownCallee:items`` and ``BuiltinDunderCall:list``).
 Once another local is bound, a nested frame calls it, or ``locals`` is rebound,
 the call stays an ordinary call.
 """

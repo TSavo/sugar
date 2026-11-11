@@ -6,8 +6,8 @@ would replace, so it minted no face and ``v.write(...)`` completed totally.
 No later store application replaces an enter-result slot.  So a method called
 on it runs on exactly the value ``__enter__`` returned, and when no floor
 projects the method body the call is two-faced (#7585): it completes under
-``python:method_call.completes`` and otherwise halts with an
-``UndeterminedRaiseEffect`` owned by ``UnprojectedMethodCall:<name>``.
+``python:unknown_callee_call.completes`` and otherwise halts with an
+``UndeterminedRaiseEffect`` owned by ``UnknownCallee:<name>``.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def test_method_on_enter_result_is_two_faced(tmp_path, source):
         for face in exits
         if isinstance(face, Halted) and isinstance(face.effect, UndeterminedRaiseEffect)
     ]
-    assert "UnprojectedMethodCall:write" in owners
+    assert "UnknownCallee:write" in owners
     completed = [face for face in exits if isinstance(face, Completed)]
     assert completed
-    assert all("python:method_call.completes" in repr(face.guard) for face in completed)
+    assert all("python:unknown_callee_call.completes" in repr(face.guard) for face in completed)
