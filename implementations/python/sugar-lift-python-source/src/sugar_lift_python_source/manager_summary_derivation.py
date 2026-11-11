@@ -2474,6 +2474,15 @@ def populate_source_derived_resource_refs(
         session=session,
         distribution_index=distribution_index,
     )
+    _populate_call_bound_module_head_uses(
+        source_file.root,
+        context,
+        value_receipts_by_site,
+        graphs=graphs,
+        session=session,
+        distribution_index=distribution_index,
+        selected_coordinates=selected_coordinates,
+    )
     _populate_runtime_selected_head_uses(
         source_file, context, selected_coordinates=selected_coordinates
     )
@@ -3771,6 +3780,305 @@ def _populate_formal_selected_manager_uses(
                 continue
             context.source_derived_contract_refs[coordinate] = (
                 mint_formal_selected_manager_ref(coordinate, head)
+            )
+
+
+def _seat_imported_binder_frame(
+    context, call, value_receipts_by_site, *, graphs, session, distribution_index
+) -> None:
+    """Seat the source frame of an imported, enrolled function ``call`` names.
+
+    ``zstd = import_optional_dependency("zstandard", errors="ignore")``: the
+    callee is a plain function of an enrolled module
+    (``pandas.compat._optional``).  Its identity is the authenticated value
+    receipt at the callee occurrence; its body is the frame the export door
+    projects, bound to this call's own operands -- the same seat
+    ``populate_source_visible_call_frames`` installs -- so the call reduces
+    through that body and its return arms carry what it returns.  An
+    off-population callee, a decorated definition, a class, a call whose
+    operands do not bind, or a coordinate another owner already classified is
+    left as it was (the call stays the two-faced unprojected call).
+    """
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.nodes import FunctionDef, Name
+    from sugar_source_tree.panic import SugarNotWritten
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1,
+        resolve_import_binding,
+    )
+    from .manager_construction import (
+        ManagerConstructionGapV1,
+        _call_coordinate,
+        _dependency_graph_for_top,
+        _graph_is_off_population,
+        _install_source_call_frame,
+        resolve_source_visible_frame,
+    )
+
+    if not isinstance(call.func, Name):
+        return
+    if any(keyword.arg is None for keyword in call.keywords):
+        return
+    coordinate = _call_coordinate(call)
+    if (
+        coordinate in context.source_call_frames
+        or coordinate in context.opaque_source_call_obligations
+    ):
+        return
+    span = call.func.line_col_span()
+    receipt = value_receipts_by_site.get(
+        (
+            call.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    )
+    if receipt is None:
+        return
+    top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+    try:
+        graph = graphs.get(top_level) or _dependency_graph_for_top(
+            top_level,
+            session=session,
+            dependency_graphs=graphs,
+            distribution_index=distribution_index,
+        )
+    except DependencyArtifactAuthenticationError:
+        return
+    resolved = resolve_import_binding(receipt, graph=graph, session=session)
+    if not isinstance(resolved, ResolvedPythonObjectV1):
+        return
+    if _graph_is_off_population(graph, session=session, module_name=resolved.module_name):
+        return
+    try:
+        projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
+    except (SugarNotWritten, TypeError):
+        return
+    if isinstance(projected, ManagerConstructionGapV1):
+        return
+    frame, target = projected
+    if type(target) is not FunctionDef or target.decorators:
+        return
+    try:
+        frame = frame.bind_node_actuals(
+            call.args,
+            tuple((keyword.arg, keyword.value) for keyword in call.keywords),
+        )
+    except SourceCallBindingGap:
+        return
+    _install_source_call_frame(context, call, frame)
+
+
+def _returned_floors(value, depth: int = 0) -> tuple:
+    """The floors a completed call value can be, read through its return arms.
+
+    A body-bearing call carries the completion its source body retained: a
+    single floor, or a ``BlockValue`` whose ``ReturnValue``/``GuardedReturn``
+    entries are the arms it can return by (nested blocks are read the same
+    way; an arm that halts returns nothing).  Anything else -- an opaque call,
+    a body whose completion was not retained -- is returned as itself, so the
+    caller sees it and refuses to call it a module.
+    """
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.call_site_value import (
+        CallSiteValue,
+        _RetainedSourceCompletionV1,
+    )
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    if depth > 32:
+        return (value,)
+    if isinstance(value, CallSiteValue):
+        retained = value._retained_source_completion
+        if type(retained) is not _RetainedSourceCompletionV1:
+            return (value,)
+        return _returned_floors(retained.value, depth + 1)
+    if isinstance(value, BlockValue):
+        floors = []
+        for entry in value.statements:
+            if isinstance(entry, (ReturnValue, GuardedReturn)):
+                floors.extend(_returned_floors(entry.value, depth + 1))
+            elif isinstance(entry, BlockValue):
+                floors.extend(_returned_floors(entry, depth + 1))
+        return tuple(floors)
+    return (value,)
+
+
+def _module_returned_by_call(call) -> str | None:
+    """The one module ``call`` returns on every completed face that is not None.
+
+    The call is reduced through its own sugar (the same reduction the function
+    body runs); a source callee's completion is split per return arm, each arm
+    carrying its own returned floor.  The answer is ``<name>`` only when every
+    completed face returns either ``None`` or the module coordinate
+    ``python:module(<name>)`` -- the value ``importlib.import_module`` of a
+    present module completes with (#7742) -- and at least one returns it.  Any
+    other value (an opaque result, a string, two different modules) is not a
+    module, and a reduction that refuses decides nothing: both answer None.
+    """
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_lift_py_tests.source_call_resolution import module_value_name
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+    from sugar_source_tree.panic import SugarNotWritten
+
+    ctx = ReduceContext(temporal=builtin_name_temporal())
+    try:
+        exits = outcome_to_exitset(call.sugar().desugar(ctx)).exits
+    except (SugarNotWritten, TypeError):
+        return None
+    values = []
+    for face in exits:
+        if isinstance(face, Completed):
+            values.extend(_returned_floors(face.value))
+    modules = set()
+    for value in values:
+        if type(value) is NoneValue:
+            continue
+        name = module_value_name(value)
+        if name is None:
+            return None
+        modules.add(name)
+    if len(modules) != 1:
+        return None
+    (name,) = modules
+    return name
+
+
+def _populate_call_bound_module_head_uses(
+    scope,
+    context,
+    value_receipts_by_site,
+    *,
+    graphs,
+    session,
+    distribution_index,
+    selected_coordinates=None,
+) -> None:
+    """Cite the manager a call-returned off-population module's chain produces.
+
+    ``zstd = import_optional_dependency("zstandard", errors="ignore")`` then
+    ``with zstd.ZstdDecompressor().stream_reader(b"") as reader:``
+    (``pandas.io.common._get_binary_io_classes``, #7742).  The local's value is
+    read from its binding call: when that call returns, on every non-None
+    face, the one module ``M`` (``_module_returned_by_call``), the head is a
+    chain on ``M`` whose first step reads ``M.<attr>``.  When ``M``'s
+    distribution is off the enrolled population (a third-party package, or
+    CPython's own), the manager the chain produces is that package's object,
+    which is not looked at: it is cited over the existing
+    ``OpaqueCitedContextManagerRefV1`` naming ``python:M.<attr>`` with kind
+    ``call-target-off-population``, exactly as a factory returning an
+    off-population callee's result is (``_populate_same_module_factory_manager_uses``).
+    Enter and exit stay two-faced, suppression undecided, a body raise still
+    propagates, and the head itself still evaluates through its own sugar (its
+    roster rides only the citation).  A module on the population, a value that
+    is not a module, or a head any reader seated is left alone.
+
+    ``scope`` is the node whose ``with`` statements are read: a consumer
+    module's root, or one function of a dependency frame
+    (``_publish_nested_same_module_manager_uses``).
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        OpaqueSourceCallRosterV1,
+        SourceFragmentCoordinateV1,
+        _hash_json,
+        mint_opaque_cited_context_manager_ref,
+    )
+    from sugar_source_tree.formal_manager_head import call_bound_local_manager_head
+    from sugar_source_tree.nodes import Call, With
+
+    from .dependency_artifact import DependencyArtifactAuthenticationError
+    from .manager_construction import (
+        _dependency_graph_for_top,
+        _graph_is_off_population,
+    )
+
+    source = scope.unit.source
+    calls_by_start = None
+    for node in scope.walk():
+        if not isinstance(node, With):
+            continue
+        for item in node.items:
+            coordinate = SourceFragmentCoordinateV1(
+                item.context_expr.unit.source_cid, *item._manager_use_site_span()
+            )
+            if coordinate in context.source_derived_contract_refs:
+                continue
+            if coordinate in context.opaque_source_call_obligations:
+                continue
+            if selected_coordinates is not None and coordinate not in selected_coordinates:
+                continue
+            start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
+            head = call_bound_local_manager_head(source, start_line, start_col)
+            if head is None:
+                continue
+            binder_start, attribute = head
+            if calls_by_start is None:
+                calls_by_start = {}
+                for candidate in scope.walk():
+                    if isinstance(candidate, Call):
+                        span = candidate.line_col_span()
+                        calls_by_start.setdefault(
+                            (span.start_line, span.start_col), candidate
+                        )
+            binder = calls_by_start.get(binder_start)
+            if binder is None:
+                continue
+            _seat_imported_binder_frame(
+                context,
+                binder,
+                value_receipts_by_site,
+                graphs=graphs,
+                session=session,
+                distribution_index=distribution_index,
+            )
+            module_name = _module_returned_by_call(binder)
+            if module_name is None:
+                continue
+            top_level = module_name.split(".", 1)[0]
+            try:
+                graph = graphs.get(top_level) or _dependency_graph_for_top(
+                    top_level,
+                    session=session,
+                    dependency_graphs=graphs,
+                    distribution_index=distribution_index,
+                )
+            except DependencyArtifactAuthenticationError:
+                continue
+            if not _graph_is_off_population(
+                graph, session=session, module_name=module_name
+            ):
+                continue
+            target = f"python:{module_name}.{attribute}"
+            owner_cid = _hash_json(
+                {
+                    "kind": "call-bound-module-head-demand",
+                    "useSite": coordinate.wire(),
+                    "target": target,
+                }
+            )
+            roster = OpaqueSourceCallRosterV1(
+                coordinate,
+                target,
+                "call-target-off-population",
+                (
+                    OpaqueSourceCallObligationV1(
+                        coordinate,
+                        target,
+                        owner_cid,
+                        resolution_kind="call-target-off-population",
+                    ),
+                ),
+            )
+            context.source_derived_contract_refs[coordinate] = (
+                mint_opaque_cited_context_manager_ref(roster=roster)
             )
 
 
