@@ -33,21 +33,30 @@ class LanguageOwnedContextVarType(FloorValue):
     def callable_application_with(self, operation, ctx):
         del ctx
         from sugar_lift_py_tests.floor.string_value import StringValue
+
+        # A refusal needs a real coordinate: CallableApplication carries its
+        # call site as ``site``, not ``blame``.
+        site = getattr(operation, "blame", None) or getattr(operation, "site", None)
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
-        if operation.keyword_names or len(operation.arguments) != 1:
+        # ``ContextVar(name, *, default=...)``: ``default`` is keyword-only and
+        # changes only what ``get()`` returns with no value set; ``set`` and
+        # ``reset`` (the members this floor carries) do not read it.
+        if operation.keyword_names not in ((), ("default",)) or len(
+            operation.arguments
+        ) != 1 + len(operation.keyword_names):
             raise SugarNotWritten(
-                blame=getattr(operation, "blame", None),
+                blame=site,
                 owner="LanguageOwnedContextVarType.callable_application_with",
                 observed=(len(operation.arguments), operation.keyword_names),
-                requested="ContextVar(name) with a concrete string name",
-                fix="keep a default or a non-string name loud; do not invent a ContextVar",
+                requested="ContextVar(name[, default=...]) with a concrete string name",
+                fix="keep another keyword or a non-string name loud; do not invent a ContextVar",
             )
         name = operation.arguments[0]
         if not isinstance(name, StringValue):
             raise SugarNotWritten(
-                blame=getattr(operation, "blame", None),
+                blame=site,
                 owner="LanguageOwnedContextVarType.callable_application_with",
                 observed=type(name).__name__,
                 requested="ContextVar(name) with a concrete string name",
@@ -55,7 +64,9 @@ class LanguageOwnedContextVarType(FloorValue):
             )
         return Complete(
             LanguageOwnedContextVarValue(
-                name=name.value, site=getattr(operation, "blame", None)
+                name=name.value,
+                site=getattr(operation, "blame", None),
+                has_default=bool(operation.keyword_names),
             )
         )
 
@@ -66,6 +77,8 @@ class LanguageOwnedContextVarValue(FloorValue):
 
     name: str
     site: object = None
+    # ``ContextVar(name, default=...)``: ``get()`` never raises LookupError.
+    has_default: bool = False
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -74,7 +87,7 @@ class LanguageOwnedContextVarValue(FloorValue):
         return ctor("python:contextvars.ContextVar", (str_const(self.name),))
 
     def attribute(self, name, site):
-        if name in {"set", "reset"}:
+        if name in {"set", "reset"} or (name == "get" and self.has_default):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(
@@ -97,6 +110,24 @@ class LanguageOwnedContextVarValue(FloorValue):
                     site=getattr(operation, "blame", None),
                 )
             )
+        if (
+            operation.name == "get"
+            and self.has_default
+            and not operation.keyword_names
+            and not operation.arguments
+        ):
+            # The value set in the CURRENT context, or the default: which one
+            # is a property of the running context, not of this source.
+            from sugar_lift_py_tests.occurrence import occurrence_key
+
+            site = getattr(operation, "blame", None)
+            return Complete(
+                LanguageOwnedContextVarReadValue(
+                    variable_name=self.name,
+                    site=site,
+                    occurrence=occurrence_key(site) if site is not None else None,
+                )
+            )
         if operation.name == "reset" and not operation.keyword_names and len(operation.arguments) == 1:
             token = operation.arguments[0]
             if (
@@ -105,6 +136,29 @@ class LanguageOwnedContextVarValue(FloorValue):
             ):
                 return Complete(NoneValue())
         return super().call_method_with(operation, ctx)
+
+
+@dataclass(frozen=True)
+class LanguageOwnedContextVarReadValue(FloorValue):
+    """The value ``ContextVar.get()`` returned at one occurrence.
+
+    It is whatever the running context holds (the last ``set`` or the
+    default); nothing in source decides which, so two reads are never forced
+    equal and nothing about the value is claimed.
+    """
+
+    variable_name: str
+    site: object = None
+    occurrence: str | None = None
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        del owner
+        return ctor(
+            "python:contextvars.ContextVar.get",
+            (str_const(self.variable_name), str_const(self.occurrence or "")),
+        )
 
 
 @dataclass(frozen=True)
@@ -193,6 +247,8 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
 
         from sugar_lift_py_tests.occurrence import occurrence_key
 
+        # A refusal needs a real coordinate: CallableApplication carries its
+        # call site as ``site``, not ``blame``.
         site = getattr(operation, "blame", None) or getattr(operation, "site", None)
         key = occurrence_key(site)
         call = ctor(
