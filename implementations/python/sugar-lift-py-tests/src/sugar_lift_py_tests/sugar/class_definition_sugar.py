@@ -138,55 +138,91 @@ class ClassDefinitionSugar(Sugar):
         return cid_of_json(self.preimage)
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor import ObjectField
+        # Python evaluates the base expressions, in order, before the class
+        # body runs; if one raises, the statement raises and no class exists.
+        # So the bases are an ordinary operand fold (#7755): ``and_then`` runs
+        # the rest of the statement once under every completed face of a base
+        # and carries every halt of it unchanged.  A base that never completes
+        # leaves the statement with no completion at all; a base with several
+        # completions builds the class once per completion, each with the
+        # base it was built over.  A base that cannot be built refuses by
+        # name: nothing here catches its refusal.
+        body = []
 
-        from sugar_source_tree.panic import SugarNotWritten
+        def class_body():
+            # The body runs once, after all bases, whichever base face this is.
+            if not body:
+                body.append(self._class_body(ctx))
+            return body[0]
 
-        class_fields = []
+        return self._fold_bases(self.base_sugars, (), ctx, class_body)
+
+    def _fold_bases(self, remaining, evaluated, ctx, class_body) -> Outcome:
+        if not remaining:
+            return self._construct(evaluated, class_body)
+        head, *rest = remaining
+        return head.desugar(ctx).and_then(
+            lambda value: self._fold_bases(
+                tuple(rest), (*evaluated, value), ctx, class_body
+            )
+        )
+
+    def _construct(self, evaluated_bases, class_body) -> Outcome:
+        from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
+
         base_values = []
-        # Base expressions are evaluated before the class body.  A base whose
-        # evaluation may raise (``Generic[T]`` over a cited C class: one
-        # completion plus an undetermined halt) makes the class statement
-        # two-faced; the halt is sequenced, never dropped.
-        base_faces = []
-        for base in self.base_sugars:
-            try:
-                outcome = base.desugar(ctx)
-            except SugarNotWritten as exc:
-                # A from-import name such as ``typing.Generic`` is now an
-                # ImportMemberValue. ``Generic[T]`` subscripts that member
-                # with a type variable and refuses; the class model already
-                # omits every floor that is not a known class. Do not abort
-                # construction for that refuse, and do not invent a Generic
-                # specialization.
-                if getattr(exc, "owner", None) != "ImportMemberValue.subscript":
-                    raise
-                continue
-            from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
-
-            if (
-                not isinstance(outcome, Complete)
-                and _sole_completed_value(outcome) is not _NO_SOLE_COMPLETION
-            ):
-                base_faces.append(outcome)
-            if isinstance(outcome, Complete) and isinstance(
-                outcome.value, (ClassDefinitionValue, BuiltinDictClassValue)
-            ):
-                base_values.append(outcome.value)
-            elif (
-                isinstance(outcome, Complete)
-                and type(outcome.value) is ClassValue
-                and outcome.value.name == "type"
-            ):
+        for value in evaluated_bases:
+            if isinstance(value, (ClassDefinitionValue, BuiltinDictClassValue)):
+                base_values.append(value)
+            elif type(value) is ClassValue and value.name == "type":
                 # ``type`` is an exact Python builtin class binding. Retaining
                 # it is what lets zero-argument super in a source metaclass
                 # select type.__new__; no other generic ClassValue is admitted.
-                base_values.append(outcome.value)
-            # HEAD omitted unenrolled bases from this roster.  This increment
-            # evaluates them only to discover the exact BuiltinDictClassValue;
-            # every other Floor remains outside the class model and gains no
-            # authority or behavior here.
+                base_values.append(value)
+            # Every other evaluated base (an opaque cited value, a symbolic
+            # subscript) remains outside the class model and gains no
+            # authority or behavior here; its faces were already carried by
+            # the fold.
+        class_fields, body_faces = class_body()
+        # The last same-name method is Python's live class binding. Overload
+        # stubs written as ``def __init__(...): ...`` precede the implementation
+        # (RaisesExc); the first ``__init__`` would construct through an
+        # ellipsis body and drop every field store.
+        initializer = next(
+            (
+                method
+                for method in reversed(self.methods)
+                if method.name == "__init__"
+            ),
+            None,
+        )
+        if initializer is None:
+            initializer = _inherited_source_initializer(tuple(base_values))
+        constructed = Complete(
+            ClassDefinitionValue(
+                self.class_name,
+                self.class_definition_cid,
+                self.methods,
+                initializer,
+                self.binding_target_occurrence,
+                tuple(class_fields),
+                self.docstring_cid,
+                self.annotation_cids,
+                self.decorator_cids,
+                tuple(base_values),
+            )
+        )
+        if not body_faces:
+            return constructed
+        outcome = Complete(None)
+        for faces in body_faces:
+            outcome = outcome.and_then(lambda _, faces=faces: faces)
+        return outcome.and_then(lambda _: constructed)
 
+    def _class_body(self, ctx):
+        from sugar_lift_py_tests.floor import ObjectField
+
+        class_fields = []
         evaluated_groups = {}
         body_faces = []
 
@@ -254,41 +290,7 @@ class ClassDefinitionSugar(Sugar):
 
         for item in self.fields:
             append_field(item)
-        # The last same-name method is Python's live class binding. Overload
-        # stubs written as ``def __init__(...): ...`` precede the implementation
-        # (RaisesExc); the first ``__init__`` would construct through an
-        # ellipsis body and drop every field store.
-        initializer = next(
-            (
-                method
-                for method in reversed(self.methods)
-                if method.name == "__init__"
-            ),
-            None,
-        )
-        if initializer is None:
-            initializer = _inherited_source_initializer(tuple(base_values))
-        constructed = Complete(
-            ClassDefinitionValue(
-                self.class_name,
-                self.class_definition_cid,
-                self.methods,
-                initializer,
-                self.binding_target_occurrence,
-                tuple(class_fields),
-                self.docstring_cid,
-                self.annotation_cids,
-                self.decorator_cids,
-                tuple(base_values),
-            )
-        )
-        faces_in_order = [*base_faces, *body_faces]
-        if not faces_in_order:
-            return constructed
-        outcome = Complete(None)
-        for faces in faces_in_order:
-            outcome = outcome.and_then(lambda _, faces=faces: faces)
-        return outcome.and_then(lambda _: constructed)
+        return tuple(class_fields), tuple(body_faces)
 
 
 _NO_SOLE_COMPLETION = object()
