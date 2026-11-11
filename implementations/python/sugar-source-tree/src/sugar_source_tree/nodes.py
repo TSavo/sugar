@@ -93,10 +93,12 @@ _RECEIVER_FIELD_PROJECTIONS = object()
 DEFER_DEFINITION_BODY_REFUSAL = object()
 
 # The methods a used-method class projection constructs, keyed by class name
-# (``None``: every method).  Set only by the source-frame door when a class's
-# whole projection exceeds the call-closure bound (#7664): the class statement
-# still binds every method, but a method nothing on the projected path names
-# keeps its source body for whoever calls it (``DeferredClassMethodV1``).
+# (``None``: every method).  Set only by the source-frame door while a root
+# whose whole projection exceeds the call-closure bound is projected again
+# (#7664, #7733), to the classes of the module being projected: the class
+# statement still binds every method, but a method nothing on the projected
+# path names keeps its source body for whoever calls it
+# (``DeferredClassMethodV1``).
 import contextvars as _contextvars
 
 PROJECTED_CLASS_METHODS: "_contextvars.ContextVar[dict | None]" = (

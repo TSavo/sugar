@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import functools
 from contextvars import ContextVar
+from types import MappingProxyType
 
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Literal, Mapping
 
 from sugar_lift_py_tests.context_manager_resolution import (
     OpaqueSourceCallObligationV1,
@@ -2547,14 +2549,18 @@ def resolve_source_visible_frame(
 ) -> tuple[object, Node] | ManagerConstructionGapV1:
     """The source frame of one authenticated definition (see the bounded door).
 
-    A CLASS whose whole projection exceeds the call-closure bound is projected
-    again over the methods its instances run on the projected path only
-    (#7664): construction (``__new__``/``__init__``), the context-manager
-    protocol, and every method those name on ``self``, transitively.  A class
-    statement binds its methods; it runs none of them.  The rest keep their
-    source bodies for whoever calls them (``DeferredClassMethodV1``) and their
-    callees are never projected here.  Only the outermost projection retries:
-    a callee's over-bound closure is unfinished, not opaque.
+    A definition whose whole projection exceeds the call-closure bound is
+    projected again with every CLASS it reaches projected over the methods
+    its instances run (#7664, #7733): construction (``__new__``/``__init__``),
+    the context-manager protocol, and every method those name on ``self``,
+    transitively.  A class statement binds its methods; it runs none of them.
+    That holds for the target class, for a class of the target's own module
+    that a function reaches (``read_csv`` -> ``TextFileReader``), and for a
+    class reached as a callee in another module.  The rest keep their source
+    bodies for whoever calls them (``DeferredClassMethodV1``, refused by name
+    if run) and their callees are never projected here.  Only the outermost
+    projection retries: a callee's over-bound closure is unfinished, not
+    opaque.  If the retry is still over the bound it is refused by name.
     """
     result = _resolve_source_visible_frame_bounded(
         resolved, graph=graph, dependency_graphs=dependency_graphs, session=session
@@ -2562,24 +2568,12 @@ def resolve_source_visible_frame(
     if not (
         isinstance(result, ManagerConstructionGapV1)
         and result.kind == "call-closure-over-bound"
-        and resolved.definition.kind == "class"
         and session is not None
         and not session.call_closure.stack
-        and _USED_METHOD_PROJECTION.get() is None
+        and not _NARROW_EVERY_CLASS.get()
     ):
         return result
-    module = graph.modules.get(resolved.module_name)
-    projected = (
-        None
-        if module is None
-        else _used_class_methods(module.source, resolved.definition)
-    )
-    if projected is None:
-        return result
-    from sugar_source_tree.nodes import PROJECTED_CLASS_METHODS
-
-    token = _USED_METHOD_PROJECTION.set(projected)
-    node_token = PROJECTED_CLASS_METHODS.set(projected)
+    token = _NARROW_EVERY_CLASS.set(True)
     try:
         retried = _resolve_source_visible_frame_bounded(
             resolved,
@@ -2588,15 +2582,22 @@ def resolve_source_visible_frame(
             session=session,
         )
     finally:
-        PROJECTED_CLASS_METHODS.reset(node_token)
-        _USED_METHOD_PROJECTION.reset(token)
+        _NARROW_EVERY_CLASS.reset(token)
     return retried
 
 
-# Class name -> the method names a used-method projection constructs; None
-# outside one.  See ``resolve_source_visible_frame``.
-_USED_METHOD_PROJECTION: ContextVar[dict | None] = ContextVar(
-    "used_method_projection", default=None
+# True while an over-bound root is projected again with every class it
+# reaches narrowed to the methods its instances run.  Each projection then
+# reads its own module's narrowing (``_module_used_methods``) into
+# ``_USED_METHOD_PROJECTION``.  See ``resolve_source_visible_frame``.
+_NARROW_EVERY_CLASS: ContextVar[bool] = ContextVar(
+    "narrow_every_class", default=False
+)
+
+# Class name -> the method names a used-method projection constructs, for the
+# classes of the module being projected; None outside a narrowed projection.
+_USED_METHOD_PROJECTION: ContextVar[Mapping[str, frozenset[str]] | None] = (
+    ContextVar("used_method_projection", default=None)
 )
 
 _PROJECTED_ENTRY_METHODS = (
@@ -2610,36 +2611,44 @@ _PROJECTED_ENTRY_METHODS = (
 )
 
 
-def _used_class_methods(source: str, definition) -> dict[str, frozenset[str]] | None:
-    """The methods a class's instances run on the projected path, per class.
+@functools.lru_cache(maxsize=64)
+def _module_used_methods(source: str) -> Mapping[str, frozenset[str]]:
+    """Class name -> the methods its instances run, for every top-level class.
 
-    Read off the class statement's own syntax: the entry methods, then every
-    attribute a reached method reads on its first parameter (``self.open()``,
-    ``self.close``) or through ``super()``, until nothing new is reached.  The
-    class's same-module bases named as plain names share the walk, since a
-    method an instance runs may be defined on either.  ``None`` when the class
-    statement is not found at the definition's coordinates.
+    A pure function of the module's source text, so one answer serves every
+    projection of that module.  A base shared by several classes runs the
+    union of what each of them runs on it.  A class not written at top level
+    (inside a function, under ``if``) is not narrowed: all its methods stay.
     """
     import ast
 
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return None
+        return MappingProxyType({})
     top = {
         node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
     }
-    target = next(
-        (
-            node
-            for node in top.values()
-            if node.name == definition.name
-            and node.lineno == definition.start_line
-        ),
-        None,
+    merged: dict[str, set[str]] = {}
+    for node in top.values():
+        for name, used in _used_class_methods(top, node).items():
+            merged.setdefault(name, set()).update(used)
+    return MappingProxyType(
+        {name: frozenset(used) for name, used in merged.items()}
     )
-    if target is None:
-        return None
+
+
+def _used_class_methods(top: dict, target) -> dict[str, frozenset[str]]:
+    """The methods a class's instances run on the projected path, per class.
+
+    Read off the class statement's own syntax: the entry methods, then every
+    attribute a reached method reads on its first parameter (``self.open()``,
+    ``self.close``) or through ``super()``, until nothing new is reached.  The
+    class's same-module bases named as plain names (``top``) share the walk,
+    since a method an instance runs may be defined on either.
+    """
+    import ast
+
     classes = []
     pending = [target]
     while pending:
@@ -2726,7 +2735,13 @@ def _resolve_source_visible_frame_bounded(
     if off_pop is not None:
         return off_pop
     definition = resolved.definition
-    used_methods = _USED_METHOD_PROJECTION.get()
+    # In a narrowed retry every projection reads its OWN module's narrowing:
+    # the classes this module defines, each over the methods its instances
+    # run.  A pure function of the source, so it keys the memo like the
+    # source CID does.
+    used_methods = (
+        _module_used_methods(module.source) if _NARROW_EVERY_CLASS.get() else None
+    )
     cache_key = (
         (
             "used-methods",
@@ -2780,6 +2795,10 @@ def _resolve_source_visible_frame_bounded(
     outermost = not ledger.stack
     ledger.enter(cache_key)
     session.frame_active.add(cache_key)
+    from sugar_source_tree.nodes import PROJECTED_CLASS_METHODS
+
+    used_token = _USED_METHOD_PROJECTION.set(used_methods)
+    node_token = PROJECTED_CLASS_METHODS.set(used_methods)
     try:
         result = _resolve_source_visible_frame_uncached(
             resolved,
@@ -2802,8 +2821,14 @@ def _resolve_source_visible_frame_bounded(
             resolved.cid,
             f"{definition.kind} {resolved.module_name}.{definition.name} "
             f"(line {definition.start_line}): source call closure exceeds "
-            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions; "
-            "owner: resolve_source_visible_frame, which projects every "
+            f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions"
+            + (
+                " with every class it reaches narrowed to the methods its "
+                "instances run"
+                if used_methods is not None
+                else ""
+            )
+            + "; owner: resolve_source_visible_frame, which projects every "
             "source call of a definition, and theirs, before the definition "
             "itself; illegal shape: one eager projection spanning more than "
             f"{SOURCE_CALL_CLOSURE_FRAME_BOUND} definitions; replacement: "
@@ -2811,6 +2836,8 @@ def _resolve_source_visible_frame_bounded(
             "no projection owns its whole closure",
         )
     finally:
+        PROJECTED_CLASS_METHODS.reset(node_token)
+        _USED_METHOD_PROJECTION.reset(used_token)
         session.frame_active.discard(cache_key)
         closure = ledger.leave()
     if isinstance(result, tuple) and len(result) == 3:
