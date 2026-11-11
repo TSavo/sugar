@@ -14227,6 +14227,20 @@ class Attribute(Expression):
                     requested="same-source exact full-Attribute occurrence testimony",
                     fix="consume the receipt only at its producer-minted useSite",
                 )
+            from sugar_lift_py_tests.floor.import_member_value import (
+                _import_member_export_path,
+            )
+
+            if not _import_member_export_path(receipt):
+                # ``import urllib.request`` then ``urllib.request``: the dotted
+                # module alias itself, no member of it.  The same law as a
+                # module-alias Name: never an empty-path import member; the
+                # ordinary attribute read of the bound package stands.
+                from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+
+                return AttributeSugar(
+                    receiver=self.value.sugar(), name=self.attr, site=self.fragment
+                )
             from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
 
             qualified_name = receipt.target_symbol

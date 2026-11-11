@@ -1054,6 +1054,53 @@ def _resolve_export(*args, **kwargs):
     return resolve_export(*args, **kwargs)
 
 
+def module_alias_binding(graph, module_name: str, name: str) -> str | None:
+    """The module that ``module_name`` binds ``name`` to by ``import X as name``.
+
+    ``os`` binds ``path`` under platform guards: ``import posixpath as path``
+    on posix, ``import ntpath as path`` on nt.  Which one is the running
+    interpreter's own fact: the module it registered as ``sys.modules
+    ["os.path"]``.  Both testimonies must agree -- the module's source must
+    bind ``name`` by importing that module at module level, and the
+    interpreter's module table must name it.  Nothing is imported or executed:
+    the module table is read, never filled.  Any disagreement or absence
+    returns None.
+    """
+    import ast
+
+    module = graph.modules.get(module_name)
+    if module is None:
+        return None
+    try:
+        tree = ast.parse(module.source)
+    except SyntaxError:
+        return None
+    candidates = set()
+
+    def visit(statements):
+        for statement in statements:
+            if isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+            if isinstance(statement, ast.Import):
+                candidates.update(
+                    alias.name for alias in statement.names if alias.asname == name
+                )
+                continue
+            for field_name in ("body", "orelse", "finalbody"):
+                visit(getattr(statement, field_name, ()) or ())
+            for handler in getattr(statement, "handlers", ()) or ():
+                visit(handler.body)
+
+    visit(tree.body)
+    registered = sys.modules.get(f"{module_name}.{name}")
+    registered_name = getattr(registered, "__name__", None)
+    if not isinstance(registered_name, str) or registered_name not in candidates:
+        return None
+    return registered_name
+
+
 def _class_member_through_module(graph, binding_cid, module_name, path, session):
     """``Class.method`` under an authenticated module, or ``None``.
 

@@ -5037,6 +5037,19 @@ def _seat_import_value_use_receipts(
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
+        if (
+            not isinstance(imported, ResolvedPythonObjectV1)
+            and imported.kind == "target-outside-binding"
+        ):
+            aliased = _resolve_through_module_alias(
+                receipt,
+                dependency_graph,
+                session=session,
+                dependency_graphs=dependency_graphs,
+            )
+            if aliased is not None:
+                # The member lives in the alias module's own artifact.
+                imported, dependency_graph = aliased
         if not isinstance(imported, ResolvedPythonObjectV1):
             from .language_owned_c_export import floor_language_owned_import_use
 
@@ -5123,6 +5136,63 @@ def _seat_import_value_use_receipts(
         unit.seat_import_value_use_resolution(
             span_key, imported, source_cid=module.source_cid
         )
+
+
+def _resolve_through_module_alias(
+    receipt, dependency_graph, *, session, dependency_graphs
+):
+    """``import os`` then ``os.path.expanduser``: the member of ``os``'s alias.
+
+    ``os.path`` is no submodule in ``os``'s artifact: ``os`` binds ``path`` by
+    ``import posixpath as path`` (on this interpreter; see
+    ``module_alias_binding``).  The member is resolved in that module, through
+    the one export door, under the receipt's own binding.  Anything else
+    returns None and the receipt's gap stands.  Returns the resolved member
+    and the artifact graph it was resolved in.
+    """
+    from .dependency_artifact import (
+        module_alias_binding,
+        resolve_authenticated_module_export,
+    )
+
+    target = receipt.import_binding.value["target"]
+    identity = target["moduleIdentity"]
+    if target["exportedPath"] != []:
+        return None
+    if identity.get("kind") == "authenticated-python-module":
+        module_name = identity["moduleName"]
+    elif identity.get("kind") == "unavailable-python-module":
+        module_name = identity["name"]
+    else:
+        return None
+    requested = receipt.target_symbol.removeprefix("python:").split(".")
+    base = module_name.split(".")
+    path = requested[len(base) :]
+    member_path = receipt.use.get("exportedMemberPath")
+    if (
+        requested[: len(base)] != base
+        or len(path) != 2
+        or (member_path is not None and list(member_path) != path)
+    ):
+        return None
+    alias = module_alias_binding(dependency_graph, module_name, path[0])
+    if alias is None:
+        return None
+    alias_graph = _dependency_graph_for_top(
+        alias.split(".", 1)[0], session=session, dependency_graphs=dependency_graphs
+    )
+    if alias not in alias_graph.modules:
+        return None
+    resolved = resolve_authenticated_module_export(
+        graph=alias_graph,
+        binding_cid=receipt.import_binding.cid,
+        module_name=alias,
+        exported_name=path[1],
+        session=session,
+    )
+    if not isinstance(resolved, ResolvedPythonObjectV1):
+        return None
+    return resolved, alias_graph
 
 
 def _retain_import_value_receipt_roster(
