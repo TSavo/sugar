@@ -13,7 +13,7 @@ Done is one pass of the corpus, on one commit of `main`, in which both of these 
 
 The board from that pass is committed under `docs/ledgers/`. That commit is the finish.
 
-A named refusal is a finished outcome, not a defect. The README already says so: "What a kit can't see is reported honestly as an effect, residue, or refusal". The refusals on the final board are the published residue. Constructing more of them is later work with its own plan.
+A named refusal is a finished outcome, not a defect. The README already says so: "What a kit can't see is reported honestly as an effect, residue, or refusal". The refusals on the final board are the published residue. Constructing them is the next line: see "Next line: the residue" below.
 
 ## Why this ends
 
@@ -45,7 +45,7 @@ Anything that does not shrink the worklist or run the final pass is off plan. Sa
 - Examples and example gates.
 - CI and runner plumbing.
 - New instruments, auditors or re-ranking exercises.
-- Constructing a refusal that already has a name.
+- Constructing a refusal that is not on the residue line below.
 
 ## Standing
 
@@ -70,7 +70,7 @@ Empty. From the 2026-11-09 board, no file fails condition 2.
 
 ### Residue on the final board
 
-Named refusals: the published residue. Constructing them is later work with its own plan.
+Named refusals: the published residue. Constructing them is the next line, below.
 
 | Files | Refusing owner | What is missing |
 |---|---|---|
@@ -83,6 +83,39 @@ Named refusals: the published residue. Constructing them is later work with its 
 | 1 | `BuiltinSuperValue.call_method_value` | The next class in the MRO for `super()` |
 
 The committed board is the sealed board with its bulk witness sections replaced in place by their size and sha256 (the sealed board is 154 MB; the ledger is 0.5 MB). Every count, every identity and all 218 refusals are kept. `ledgerReduction.omitted` lists what was left out.
+
+## Next line: the residue
+
+Tracked in #7661. The issues are the worklist: work is picked from them, and a PR says which one it is part of.
+
+**The list.** The 218 files in the residue table above, as they stood on the board at `c4cef9904`. The list is fixed at those files. It does not grow.
+
+**Done.**
+
+1. Every one of the 218 files is ticked (a one-file run on `main` ends completed) or struck (the refusal is the correct final answer for that file, with the reason written down in its issue).
+2. Then one corpus pass on one commit of `main`, with the board committed under `docs/ledgers/`.
+
+**Why this ends.** The count is files. Constructing one gap in a file and meeting the next one does not move the count; only a file completing does. Counting gaps is plan v1's rule, and that count could not reach zero.
+
+**Rule for every PR on this line.** It says `Part of #N` for one of the issues below and names the board file it was reproduced on. It says whether that file now completes, or what it stops at next. A PR that names no board file is not on this line.
+
+| Issue | Refusal | Files |
+|---|---|---|
+| #7663 | `With` has no contract ref: runtime-selected | 76 |
+| #7664 | `With` has no contract ref: dynamic-export | 35 |
+| #7665 | `With` has no contract ref: source-body-gap | 25 |
+| #7666 | `With` has no contract ref: the four smaller kinds | 20 |
+| #7667 | `construct_manager_behavior returned object` | 21 |
+| #7668 | No constructed-value category for `builtins.object` | 20 |
+| #7669 | `ImportMemberValue` standing as a condition (`truth`) | 17 |
+| #7670 | The four single-owner refusals | 4 |
+
+### Standing on the residue line
+
+| Date | Commit | Remaining | Event |
+|---|---|---|---|
+| 2026-11-09 | `c4cef9904` | 218 | Board. |
+| 2026-11-10 | `073c9410a` | not measured | 90 PRs merged since the board (#7576 to #7660). None is tied to an issue, and 85 of the 90 descriptions name no pandas file. Which of the 218 files complete on this commit is not known. |
 
 ## What changed from plan v1
 
