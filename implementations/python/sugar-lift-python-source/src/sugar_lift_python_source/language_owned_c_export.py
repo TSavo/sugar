@@ -125,7 +125,8 @@ def contextvar_bound_in_tree(tree, name):
 
     ``name`` is bound exactly once, at module level, to ``ContextVar("n"[,
     default=...])`` with ``ContextVar`` bound exactly once by ``from
-    contextvars import ContextVar``; the call is applied through
+    contextvars import ContextVar``, or to ``m.ContextVar(...)`` with ``m``
+    bound exactly once by ``import contextvars [as m]``; the call is applied through
     ``LanguageOwnedContextVarType``.  Any other shape is ``None``.
     """
     import ast
@@ -139,9 +140,21 @@ def contextvar_bound_in_tree(tree, name):
     from sugar_lift_py_tests.outcome import Complete
 
     call = _sole_module_assignment_call(tree, name)
-    if call is None or not isinstance(call.func, ast.Name):
+    if call is None:
         return None
-    if not _bound_once_by_contextvars_import(tree, call.func.id):
+    if isinstance(call.func, ast.Name):
+        if not _bound_once_by_contextvars_import(tree, call.func.id):
+            return None
+    elif (
+        # ``import contextvars`` then ``contextvars.ContextVar(...)``: the
+        # same class reached through the module the name is bound to once.
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "ContextVar"
+        and isinstance(call.func.value, ast.Name)
+    ):
+        if not _bound_once_to_contextvars_module(tree, call.func.value.id):
+            return None
+    else:
         return None
     if len(call.args) != 1 or not (
         isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
@@ -288,6 +301,24 @@ def _sole_module_assignment_call(tree, name):
         ):
             return statement.value
     return None
+
+
+def _bound_once_to_contextvars_module(tree, name):
+    """``name`` is bound exactly once, by a module-level ``import contextvars``."""
+    import ast
+
+    bindings = _module_level_bindings(tree, name)
+    if bindings is None or len(bindings) != 1:
+        return False
+    (binding,) = bindings
+    return (
+        isinstance(binding, ast.Import)
+        and binding in tree.body
+        and any(
+            alias.name == "contextvars" and (alias.asname or alias.name) == name
+            for alias in binding.names
+        )
+    )
 
 
 def _bound_once_by_contextvars_import(tree, name):
