@@ -46,6 +46,15 @@ from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
+_CITED_BECAUSE = {
+    "call-target-off-population": "the callee is off-population",
+    "call-target-c-type-without-source": (
+        "the callee is a C type with no Python source"
+    ),
+    "head-runtime-selected": "the head's manager is chosen at run time",
+}
+
+
 @dataclass(frozen=True)
 class WithOpaqueCitedManagerSugar(Sugar):
     """Resource-shaped ``with`` whose manager protocol is cited, not known."""
@@ -152,9 +161,8 @@ class WithOpaqueCitedManagerSugar(Sugar):
         result = opaque_enter_result_coordinate(manager_term, self.site)
         effect = ContextManagerEnterRuntimeEffect(
             reason=(
-                "__enter__ of cited manager "
-                f"{self.contract_ref.target_name!r} may halt: the callee is "
-                "off-population, so its enter semantics are uncited"
+                f"__enter__ of cited manager {self._cited_subject()} may halt: "
+                f"{self._cited_because()}, so its enter semantics are uncited"
             ),
             **runtime_effect_evidence(
                 "python:cm_enter", manager_value, self.site
@@ -166,6 +174,17 @@ class WithOpaqueCitedManagerSugar(Sugar):
                 Halted(opaque_halted_guard(completed), effect, None),
             )
         )
+
+    def _cited_subject(self) -> str:
+        """The callee the citation names, or the head when there is none."""
+        subject = getattr(self.contract_ref, "cited_subject", None)
+        return subject if subject is not None else repr(self.contract_ref.target_name)
+
+    def _cited_because(self) -> str:
+        """Why the manager could not be read, from the citation's own kind."""
+        roster = getattr(self.contract_ref, "roster", None)
+        kind = getattr(roster, "resolution_kind", "call-target-off-population")
+        return _CITED_BECAUSE.get(kind, f"it is cited as {kind}")
 
     def _exit_exitset(self, manager_value):
         """Exit: completed with an OPEN result under ``g``, halted under ``not g``.
@@ -191,9 +210,9 @@ class WithOpaqueCitedManagerSugar(Sugar):
         result = opaque_exit_result_coordinate(manager_term, self.site)
         effect = ContextManagerExitRuntimeEffect(
             reason=(
-                "__exit__ of cited manager "
-                f"{self.contract_ref.target_name!r} may halt or suppress: the "
-                "callee is off-population, so its exit disposition is uncited"
+                f"__exit__ of cited manager {self._cited_subject()} may halt or "
+                f"suppress: {self._cited_because()}, so its exit disposition is "
+                "uncited"
             ),
             **runtime_effect_evidence("python:cm_exit", manager_value, self.site),
         )

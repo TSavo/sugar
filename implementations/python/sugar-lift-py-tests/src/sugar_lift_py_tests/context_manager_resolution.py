@@ -367,6 +367,22 @@ class ContextManagerContractRefV1:
     semantics: ContextManagerSemanticsV1
 
 
+#: Why a manager is cited, when it is.  The callee kinds name the callee the
+#: import door authenticated; ``head-runtime-selected`` has no callee to name
+#: (the head's value is chosen at run time), so its citation names only the
+#: head's own source coordinate.
+CALLEE_CITATION_KINDS = frozenset(
+    {
+        # The callee is off the enrolled population (``tarfile.open``).
+        "call-target-off-population",
+        # The callee is a C type an interpreter-owned module exports and no
+        # Python source stands behind it (``mmap.mmap``).
+        "call-target-c-type-without-source",
+    }
+)
+NO_CALLEE_CITATION_KINDS = frozenset({"head-runtime-selected"})
+
+
 @dataclass(frozen=True, eq=False)
 class _OpaqueCitedManagerAuthority:
     """Named category whose one producer instance is checked by identity."""
@@ -451,6 +467,21 @@ class OpaqueCitedContextManagerRefV1:
                 "opaque-cited context-manager ref may state only that its "
                 "enter/exit semantics are uncited"
             )
+        # A head with no callee names none: its subject is its own use site
+        # and the reason kind.  Every other citation names its callee.
+        no_callee = self.roster.resolution_kind in NO_CALLEE_CITATION_KINDS
+        if no_callee != (self.target_name == ""):
+            raise ContractRefProtocolError(
+                "opaque-cited context-manager ref names a callee exactly when "
+                "its reason kind has one"
+            )
+
+    @property
+    def cited_subject(self) -> str:
+        """What was cited, for a reader of one row: the callee, else the head."""
+        if self.target_name:
+            return repr(self.target_name)
+        return f"the {self.roster.resolution_kind} head at {self.use_site}"
 
     @property
     def semantics(self):
@@ -465,7 +496,7 @@ class OpaqueCitedContextManagerRefV1:
         """
         raise ContractRefProtocolError(
             "opaque-cited context-manager ref has no enter/exit semantics: the "
-            f"manager {self.target_name!r} at {self.use_site} is cited, not "
+            f"manager {self.cited_subject} at {self.use_site} is cited, not "
             "materialized. Carry the undischarged obligation; never substitute "
             "assumed semantics"
         )

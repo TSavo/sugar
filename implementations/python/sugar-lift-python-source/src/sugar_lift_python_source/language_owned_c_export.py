@@ -88,6 +88,29 @@ def floor_interpreter_module_callable(target_symbol):
     )
 
 
+def interpreter_owned_c_type_export(target_symbol) -> bool:
+    """``python:<module>.<Type>`` names a C type with no Python source.
+
+    Runtime identity, never a name table: ``<module>`` is built in or a stdlib
+    ``lib-dynload`` extension and ``<Type>`` on it is a class with no Python
+    function among its own members (:func:`_interpreter_owned_c_class`).  A
+    deeper attribute chain is not a module export, and a module that does not
+    import is not a C type: both answer False.
+    """
+    if not isinstance(target_symbol, str) or not target_symbol.startswith("python:"):
+        return False
+    parts = target_symbol.removeprefix("python:").split(".")
+    if len(parts) != 2:
+        return False
+    module_name, exported_name = parts
+    try:
+        module = importlib.import_module(module_name)
+        obj = getattr(module, exported_name)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return False
+    return _interpreter_owned_c_class(module_name, module, obj)
+
+
 def _floor_ambiguous_c_export(resolved):
     """An export the source binds twice, decided by the interpreter: a C builtin.
 
