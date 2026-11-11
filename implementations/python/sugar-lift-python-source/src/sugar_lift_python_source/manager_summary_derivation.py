@@ -2261,6 +2261,20 @@ def populate_source_derived_resource_refs(
             # a single opaque label, and never fuse the stage with its data:
             # `value-call-target` is the key, the callee names are the row.
             kind, detail = _gap_kind_and_detail(behavior)
+            if (
+                kind == "call-target-off-population"
+                and detail
+                and _seat_off_population_citation(
+                    context,
+                    coordinate,
+                    detail,
+                    kind,
+                    receipt.demand.get("cid", receipt.use["cid"]),
+                )
+            ):
+                # The factory returned an off-population callee's result: the
+                # citation names THAT callee, not the factory (#7667).
+                continue
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         try:

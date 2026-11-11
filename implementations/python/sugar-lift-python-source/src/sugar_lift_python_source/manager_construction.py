@@ -1822,12 +1822,21 @@ def _project_return_faces_to_manager(
     from sugar_lift_py_tests.temporal import builtin_name_temporal
 
     reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
+    cited: list[str] = []
     for face in faces:
         returned = face.value
         if isinstance(returned, ObjectValue):
             managers.append((face, returned, None))
             continue
         if not isinstance(returned, CallSiteValue):
+            continue
+        if returned.off_population_target is not None:
+            # The factory returns what an off-population callee returned: a
+            # manager nobody materialized, by population policy.  It has no
+            # body to floor -- forcing one is "missing callsite body" -- and
+            # it is not ours to invent.  The ``with`` over this factory is
+            # cited exactly as a ``with`` over that callee is (#7667).
+            cited.append(returned.off_population_target)
             continue
         if id(returned) in seen_calls:
             # Same CallSiteValue often appears on several ExitSet arms after
@@ -1847,6 +1856,18 @@ def _project_return_faces_to_manager(
             seen_calls.add(id(returned))
         else:
             nested.append((face, floor, returned))
+
+    if cited:
+        if managers or nested or len(set(cited)) != 1:
+            return ManagerConstructionGapV1(
+                "non-manager-result",
+                resolved_cid,
+                "factory returns an off-population call's result on some faces "
+                f"and another value on others: {sorted(set(cited))}",
+            )
+        return ManagerConstructionGapV1(
+            "call-target-off-population", resolved_cid, cited[0]
+        )
 
     if managers:
         # Sole manager identity wins. Multiple distinct receivers: prefer a

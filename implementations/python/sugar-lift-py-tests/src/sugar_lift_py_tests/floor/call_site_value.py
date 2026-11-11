@@ -220,6 +220,15 @@ class CallSiteValue(FloorValue):
         compare=False,
         repr=False,
     )
+    # The authenticated callee this value is the completed result of, when
+    # that callee was cited off the enrolled population
+    # (``OffPopulationSourceCallV1``).  Testimony only: a manager factory that
+    # returns this value returns a manager nobody materialized, and the
+    # ``with`` over the factory is cited exactly like a ``with`` over the
+    # callee itself (#7667).
+    off_population_target: str | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )

@@ -292,32 +292,32 @@ def test_reexport_chain_call_target_reduces(tmp_path):
     assert gap.observed == "call-target-source-absent:ScopedSlot"
 
 
-def test_stdlib_callee_is_cited_off_population_and_stays_loud(tmp_path):
-    """REQUIRED LOUD TWIN: callee outside this distribution's artifact.
+def test_stdlib_callee_is_cited_off_population_never_constructed(tmp_path):
+    """REQUIRED TWIN: callee outside this distribution's artifact.
 
     ``pathlib`` is not part of this distribution's authenticated file
     manifest; ``from pathlib import Path`` is followed into the stdlib's own
     artifact, where ``Path`` is defined but off the enrolled population.  The
     call is cited (two faces, nothing read inside it), so a factory
-    ``return Path(...)`` returns an opaque object: whether that object is a
-    manager is not known, and construction stays loud rather than inventing a
-    contract.
+    ``return Path(...)`` returns what an off-population callee returned.  No
+    contract is constructed for it -- whether it is a manager is not known --
+    and it is not a panic either: construction answers the typed
+    ``call-target-off-population`` gap naming the callee, which derivation
+    seats as the same opaque citation a direct ``with Path(...)`` gets (#7667).
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    behavior, _value = _construct(
+        tmp_path,
+        factory_source=(
+            "from pathlib import Path\n"
+            "\n"
+            "def make_guard(expected):\n"
+            "    return Path(expected)\n"
+        ),
+        support_source="MARKER = 1\n",
+    )
 
-    with pytest.raises(ConstructionPanic) as raised:
-        _construct(
-            tmp_path,
-            factory_source=(
-                "from pathlib import Path\n"
-                "\n"
-                "def make_guard(expected):\n"
-                "    return Path(expected)\n"
-            ),
-            support_source="MARKER = 1\n",
-        )
-
-    assert "missing callsite body" in str(raised.value)
+    assert behavior.kind == "call-target-off-population"
+    assert behavior.detail == "Path"
 
 
 def test_absent_module_callee_stays_typed_loud(tmp_path):
