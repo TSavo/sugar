@@ -364,29 +364,55 @@ def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
     assert names == ["mathy.add", "test_add"]
 
 
-def test_tree_enumerate_source_file_uses_the_workspace_relative_door(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+CALLING_SOURCE = """\
+def double(x):
+    return x + x
+
+
+def test_double():
+    assert double(3) == 6
+"""
+
+
+@pytest.mark.parametrize(
+    "level", ["call_sites", "assertions", "implications", "universe", "facts"]
+)
+def test_every_level_answers_the_same_when_asked_first(
+    tmp_path: Path, level: str
 ) -> None:
-    """Syntax enumeration opens through the root-relative source oracle."""
-    from sugar_lift_py_tests import tree_enumerate
+    """One opener: no level's answer depends on which level opened the file first.
 
-    source = tmp_path / "relative_owner.py"
-    source.write_text("def identity(value):\n    return value\n", encoding="utf-8")
-    opened = []
-    real_workspace_path_source = tree_enumerate.workspace_path_source
+    A level that opened its file without the construction context answered
+    from whatever tree an earlier level had left process-resident, and refused
+    with ``BareConstructionDoor`` when it was the first to ask (#7759).
+    """
+    from sugar_source_tree.process_resident_file import clear_process_resident_files
 
-    def observe_workspace_path_source(path, *, root):
-        opened.append((path, root))
-        return real_workspace_path_source(path, root=root)
+    (tmp_path / "dbl.py").write_text(CALLING_SOURCE, encoding="utf-8")
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"]["function_name"]: n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+    call_site = _enumerate("call_sites", tmp_path, at=functions["test_double"])[
+        "nodes"
+    ][0]["memento"]
+    assertion = _enumerate("assertions", tmp_path, at=call_site, seek=True)["nodes"][
+        0
+    ]["memento"]
+    at, seek = {
+        "call_sites": (functions["test_double"], False),
+        "assertions": (call_site, True),
+        "implications": (call_site, True),
+        "universe": (call_site, True),
+        "facts": (assertion, True),
+    }[level]
 
-    monkeypatch.setattr(
-        tree_enumerate, "workspace_path_source", observe_workspace_path_source
-    )
+    warm = _enumerate(level, tmp_path, at=at, seek=seek)
+    clear_process_resident_files()
+    cold = _enumerate(level, tmp_path, at=at, seek=seek)
 
-    source_file = tree_enumerate.source_file(source, root=tmp_path)
-
-    assert opened == [(str(source), str(tmp_path))]
-    assert source_file.unit.filename == "relative_owner.py"
+    assert cold == warm
 
 
 def test_functions_level_uses_the_canonical_construction_open(
