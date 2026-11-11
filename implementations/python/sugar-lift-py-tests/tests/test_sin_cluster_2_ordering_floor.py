@@ -5,7 +5,8 @@ mechanism. An ordering OUTCOME is meaning, so minting
 ``Complete(PredicateValue(py.lt/…))`` from a Python floor helper is a second
 mechanism even when the atom would be "right".
 
-Throwing is honorable. Undecided must never become a value. Decided ground
+Undecided must never become a sole value: undecided ordering is the #7585
+two faces (python:compare.completes | undetermined halt), like ``==``. Decided ground
 pairs construct Sugar (TrueBool/FalseBool/RaiseValue) on owned arms only.
 
 Also covers:
@@ -141,34 +142,44 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Ordering floor: undecided → named throw; decided ground → construct Sugar
+# Ordering floor: undecided → two faces; decided ground → construct Sugar
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "method",
-    ("less_than", "less_equal", "greater_than", "greater_equal"),
-)
-def test_undecided_ordering_operand_throws_named_never_complete(method: str) -> None:
-    """Truthful: undecided left never becomes Complete(PredicateValue)."""
-    left = _symbolic()
-    right = TermValue(1)
-    with pytest.raises(SugarNotWritten) as raised:
-        getattr(left, method)(right, SITE)
-    assert "undecided" in raised.value.observed.lower()
-    assert (
-        "ordering" in raised.value.observed.lower()
-        or "ordering" in (raised.value.requested or "").lower()
-    )
+def _assert_undecided_ordering_faces(outcome) -> None:
+    """Undecided ordering dispatch is the #7585 two faces, like ``==``.
+
+    Never a sole Complete(PredicateValue) and never a guessed TypeError: the
+    predicate completes only under ``python:compare.completes`` and an
+    UndeterminedRaiseEffect halts under the complement.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert completed.value.formula.name in {"py.lt", "py.le", "py.gt", "py.ge"}
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner.startswith("UndecidedCompare:")
 
 
 @pytest.mark.parametrize(
     "method",
     ("less_than", "less_equal", "greater_than", "greater_equal"),
 )
-def test_undecided_ordering_callsite_throws_named(method: str) -> None:
-    with pytest.raises(SugarNotWritten):
-        getattr(_callsite(), method)(TermValue(0), SITE)
+def test_undecided_ordering_operand_is_two_faced_never_sole_complete(method: str) -> None:
+    _assert_undecided_ordering_faces(getattr(_symbolic(), method)(TermValue(1), SITE))
+
+
+@pytest.mark.parametrize(
+    "method",
+    ("less_than", "less_equal", "greater_than", "greater_equal"),
+)
+def test_undecided_ordering_callsite_is_two_faced(method: str) -> None:
+    _assert_undecided_ordering_faces(getattr(_callsite(), method)(TermValue(0), SITE))
 
 
 def _relative_fragment(source: str, filename: str):
@@ -248,15 +259,10 @@ def test_decided_string_le_gt_ge_construct_bool_sugar() -> None:
 
 
 def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
-    """Lying twin: Complete(PredicateValue) is never the ordering answer."""
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-
-    with pytest.raises(SugarNotWritten):
-        outcome = _symbolic().less_than(TermValue(1), SITE)
-        assert not isinstance(getattr(outcome, "value", None), PredicateValue)
-        raise AssertionError(
-            "ordering floor returned a value; must throw named (SOURCEFILE_CONSTRUCTION_DOOR)"
-        )
+    """Lying twin: a sole Complete(PredicateValue) is never the ordering answer."""
+    outcome = _symbolic().less_than(TermValue(1), SITE)
+    assert not isinstance(outcome, Complete)
+    _assert_undecided_ordering_faces(outcome)
 
 
 def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:

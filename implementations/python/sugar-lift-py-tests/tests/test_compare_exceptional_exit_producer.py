@@ -177,8 +177,8 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     ``python:compare.completes`` beside an undetermined halt under the
     complement (owner ``UndecidedCompare:<op>``, no invented exception type).
 
-    Equality and membership dual-edge this way (#7620; membership at the
-    container's Floor door).
+    Equality, membership and ordering dual-edge this way (#7620; membership
+    and ordering at their Floor doors).
     """
     from sugar_lift_py_tests.floor import PredicateValue
     from sugar_lift_py_tests.outcome import ExitSet
@@ -207,42 +207,8 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     assert halted.guard == complement_guard(completed.guard)
 
 
-def _assert_named_ordering_or_membership_refusal(thunk) -> SugarNotWritten:
-    """Ordering/membership undecided dispatch throws named — never Complete.
-
-    Tooth requires ``undecided`` in observed (third-value testimony). Soft OR
-    on owner alone would green a decided-missing-arm mislabel as refusal.
-    """
-    with pytest.raises(SugarNotWritten) as raised:
-        thunk()
-    observed = (raised.value.observed or "").lower()
-    owner = (raised.value.owner or "").lower()
-    assert "undecided" in observed, (
-        "undecided refusal must name undecidability in observed; "
-        f"got owner={raised.value.owner!r} observed={raised.value.observed!r}"
-    )
-    assert (
-        "ordering" in observed
-        or "membership" in observed
-        or "contain" in observed
-        or "contain" in owner
-        or "less_than" in owner
-        or "greater" in owner
-        or "less_equal" in owner
-        or "contains" in owner
-        or "binary" in owner
-    ), (
-        f"refusal must name ordering/membership owner or observed; "
-        f"got owner={raised.value.owner!r} observed={raised.value.observed!r}"
-    )
-    return raised.value
-
-
 def _assert_compare_dual(node, *, atom: str) -> None:
-    """Equality and membership dual-edge; ordering throws named."""
-    if atom in {"py.lt", "py.le", "py.gt", "py.ge"}:
-        _assert_named_ordering_or_membership_refusal(lambda: node.sugar().desugar(None))
-        return
+    """Equality, membership and ordering all dual-edge over undecided operands."""
     _assert_dual_dispatch(
         node.sugar().desugar(None), atom=atom, blame=str(node.fragment)
     )
@@ -395,10 +361,6 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
         "In": "py.in",
         "NotIn": "py.in",
     }[op_kind]
-    if op_kind == "Lt":
-        # Ordering: named refusal, never fabricated Complete.
-        _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
-        return
     _assert_dual_dispatch(
         sugar.desugar(None),
         atom=atom,
@@ -415,16 +377,15 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
         ("GtE", ">=", "py.ge"),
     ),
 )
-def test_undecided_symbolic_ordering_throws_named_never_complete(
+def test_undecided_symbolic_ordering_is_two_faced_never_sole_complete(
     op_kind: str, operator: str, atom: str
 ) -> None:
-    """Ordering with undecided operands throws named — never Complete(py.lt)."""
-    del atom
+    """Ordering with undecided operands dual-edges — never a sole Complete(py.lt)."""
     node = _synthetic_compare(f"left {operator} 1")
     left = _ValueSugar(SymbolicValue(make_var("left")))
     right = _ValueSugar(TermValue(1))
     sugar = ComparisonOpSugar(op_kind, left, right, node.fragment)
-    _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
+    _assert_dual_dispatch(sugar.desugar(None), atom=atom, blame=str(node.fragment))
 
 
 def test_symbolic_equality_keeps_solver_atom_and_exceptional_edge() -> None:
@@ -874,7 +835,7 @@ def test_pandas_left_right_ordering_faces_retain_both_edges(
 def test_undecided_dispatch_partition_keys_are_law_scoped(
     expression: str, op_kind: str, law_name: str, atom: str
 ) -> None:
-    """Equality and membership dual-edge under a law-scoped key; ordering refuses."""
+    """Equality, membership and ordering dual-edge under a law-scoped key."""
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
@@ -913,9 +874,8 @@ def test_undecided_dispatch_partition_keys_are_law_scoped(
             sugar.desugar(None), atom=atom, blame=str(node.fragment)
         )
         return
-    else:
-        sugar = ComparisonOpSugar(op_kind, left, right, node.fragment)
-    _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
+    sugar = ComparisonOpSugar(op_kind, left, right, node.fragment)
+    _assert_dual_dispatch(sugar.desugar(None), atom=atom, blame=str(node.fragment))
 
 
 @pytest.mark.parametrize(("op_kind", "negated"), (("Is", False), ("IsNot", True)))
@@ -944,15 +904,24 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
     """Chaining law: ``a < b < c`` carries one middle through pair owners.
 
     Construction lives at ``Compare._construct_sugar`` (ChainedCompareSugar
-    over adjacent ComparisonOpSugar pairs). Undecided free names refuse named
-    at the first ordering floor — not a monomorphic chain panic and not a
-    fabricated dual-edge completion.
+    over adjacent ComparisonOpSugar pairs). Each undecided pair is two-faced:
+    both legs' undetermined halts survive, the second only past a truthy first.
     """
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
     node = _synthetic_compare("a < b < c")
     sugar = node.sugar()
     assert type(sugar).__name__ == "ChainedCompareSugar"
     assert len(sugar.values) == 2
-    _assert_named_ordering_or_membership_refusal(lambda: sugar.desugar(None))
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, ExitSet)
+    owners = [
+        exit_.effect.producer_node_owner
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted)
+    ]
+    assert owners.count("UndecidedCompare:Lt") == 2
 
 
 def test_chained_compare_leg_sites_follow_operator_occurrences_not_operands() -> None:
@@ -996,11 +965,11 @@ def test_decided_false_first_leg_emits_no_second_leg_occurrence() -> None:
 
 
 def test_subscript_root_preserves_nested_compare_owned_refusal() -> None:
-    """Enrolled getitem row: nested Compare undecided ordering throws named.
+    """Enrolled getitem row: nested Compare undecided ordering is two-faced.
 
-    Law change from nameless dual-edge Halted(Compare): undecided operands
-    refuse at the ordering floor (SugarNotWritten). Subscript must not swallow
-    that refusal into a fabricated ExitSet or sole Complete.
+    The nested comparison's undetermined halt (owner ``UndecidedCompare:<op>``,
+    blamed on the Compare) survives through the Subscript root: it is never
+    swallowed into a sole Complete.
     """
     path = _corpus_root() / "tests/series/indexing/test_getitem.py"
     source = path.read_text(encoding="utf-8")
@@ -1020,9 +989,20 @@ def test_subscript_root_preserves_nested_compare_owned_refusal() -> None:
         if isinstance(node, Compare) and node.line_col_span().start_line == 595
     )
 
-    with pytest.raises(SugarNotWritten) as raised:
-        subscript.sugar().desugar(None)
-    assert "undecided" in (raised.value.observed or "").lower()
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    exits = outcome_to_exitset(subscript.sugar().desugar(None)).exits
+    compare_halts = [
+        exit_
+        for exit_ in exits
+        if isinstance(exit_, Halted)
+        and str(getattr(exit_.effect, "producer_node_owner", "")).startswith(
+            "UndecidedCompare:"
+        )
+    ]
+    assert compare_halts
     # Blame still cites the Compare locus (not a silent swallow at Subscript).
-    blame = str(raised.value.blame)
-    assert str(comparison.fragment) in blame or "test_getitem" in blame
+    assert any(
+        str(comparison.fragment) in str(exit_.effect.blame) for exit_ in compare_halts
+    )

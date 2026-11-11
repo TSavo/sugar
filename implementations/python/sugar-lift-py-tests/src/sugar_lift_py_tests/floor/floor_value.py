@@ -1141,16 +1141,18 @@ class FloorValue:
         Two exits only:
 
         * **Undecided** (operands denote values but runtime type is not
-          source-decided): named third-value refusal (``SugarNotWritten``).
-          Perfect machinery over source could not yet choose Sugar fold or
-          authenticated TypeError.
+          source-decided): the operands' runtime types select ``__lt__`` /
+          ``__le__`` / ``__gt__`` / ``__ge__`` (and their reflections), which
+          this frame did not look at, so the comparison may raise anything --
+          the #7585 law, exactly as for ``==``.  Returned as two faces: the
+          undecided ``py.lt/le/gt/ge`` predicate completes only under
+          ``python:compare.completes(python:compare(op, site))`` and an
+          ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) halts
+          under the complement.  Never a sole ``Complete(PredicateValue)``.
         * **Decided (or non-undecided) with no ground arm**: construction
           panic. That is OUR missing Floor/Sugar arm, not source
-          undecidability. Mislabeling it as ``SugarNotWritten`` is unwritten
-          code wearing a typed refusal. Binary floor already panics decided
-          missing pairs via ``_binary_floor_gap``; ordering matches that law.
-
-        Does not return.
+          undecidability. Binary floor already panics decided missing pairs
+          via ``_binary_floor_gap``; ordering matches that law.
         """
         denotes_self = getattr(self, "denotes_value", None)
         denotes_other = getattr(other, "denotes_value", None)
@@ -1171,22 +1173,11 @@ class FloorValue:
         )
         pair = f"{type(self).__name__} {operator} {type(other).__name__}"
         if both_denote and not both_decided:
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                blame=site,
-                owner=owner,
-                observed=f"undecided ordering operand runtime type: {pair}",
-                requested=(
-                    "source-visible runtime types selecting Sugar-owned ordering "
-                    "meaning or an authenticated exceptional exit"
-                ),
-                fix=(
-                    "do not mint Complete(PredicateValue(py.lt/le/gt/ge)) or invent "
-                    "TypeError; resolve both operands' runtime types from source, "
-                    "then construct via a ground Sugar arm"
-                ),
+            from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+                undecided_ordering_faces,
             )
+
+            return undecided_ordering_faces(self, other, site, operator=operator)
 
         # Decided pair with no arm — or non-denoting pair on this door: OUR gap.
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -1208,8 +1199,10 @@ class FloorValue:
         )
 
     def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):
-        """Backward-compatible name: refuse ordering meaning (always throws)."""
-        self._refuse_ordering_meaning(other, site, owner=owner, operator=operator)
+        """Backward-compatible name for :meth:`_refuse_ordering_meaning`."""
+        return self._refuse_ordering_meaning(
+            other, site, owner=owner, operator=operator
+        )
 
     def less_than_from_left(self, left, site):
         """Default RHS law for ``left < self`` — never invents FOL meaning.
@@ -1217,22 +1210,22 @@ class FloorValue:
         Overrides (TermValue, StringValue, GuardedValue, NamedExpressionValue, …)
         construct Sugar or distribute. Does not call ``left.less_than(self)``.
         """
-        left._refuse_ordering_meaning(
+        return left._refuse_ordering_meaning(
             self, site, owner="FloorValue.less_than_from_left", operator="<"
         )
 
     def less_equal(self, other, site):
-        self._refuse_ordering_meaning(
+        return self._refuse_ordering_meaning(
             other, site, owner="FloorValue.less_equal", operator="<="
         )
 
     def greater_than(self, other, site):
-        self._refuse_ordering_meaning(
+        return self._refuse_ordering_meaning(
             other, site, owner="FloorValue.greater_than", operator=">"
         )
 
     def greater_equal(self, other, site):
-        self._refuse_ordering_meaning(
+        return self._refuse_ordering_meaning(
             other, site, owner="FloorValue.greater_equal", operator=">="
         )
 
