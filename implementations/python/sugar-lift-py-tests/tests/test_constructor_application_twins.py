@@ -118,3 +118,55 @@ def test_constructor_halt_in_process(body: str, actual: int, raises: bool) -> No
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
     assert outcome.exits[0].effect.exception_name == "ValueError"
+
+
+_FACTORY = """\
+class Box:
+    def __init__(self, n):
+        self.n = n
+        if n > 5:
+            raise ValueError('too big')
+
+    @classmethod
+    def make(cls, n):
+        return cls(n)
+"""
+
+
+@pytest.mark.parametrize(("actual", "raises"), [(3, False), (9, True)])
+def test_class_method_call_carries_the_constructor_halt(actual: int, raises: bool) -> None:
+    """``cls.m(x)`` binds ``cls`` first through the one binder (unit check).
+
+    ``Box.make(n)`` returns ``cls(n)``: the class call inside the classmethod
+    is the one constructor, so ``__init__``'s raise is a face of ``make``.
+    """
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
+    from sugar_source_tree.nodes import ClassDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (_FACTORY, "factory.py", blake3_512_of(_FACTORY.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    ctx = ReduceContext.root(owner="test")
+    box = class_def.sugar().desugar(ctx).value
+    outcome = box.call_method_value(
+        "make", (TermValue(actual),), owner="test", blame="make-site", ctx=ctx
+    )
+    halts = [
+        face
+        for face in getattr(outcome, "exits", ())
+        if isinstance(face, Halted)
+    ]
+    if raises:
+        assert isinstance(outcome, ExitSet), outcome
+        assert [face.effect.exception_name for face in halts] == ["ValueError"]
+    else:
+        assert halts == []
