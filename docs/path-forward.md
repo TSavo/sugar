@@ -63,10 +63,11 @@ The board itself reports `red`: its stable-zero rule counts the 218 named refusa
 
 ### Worklist
 
-Empty. From the 2026-11-09 board, no file fails condition 2.
+One file. The 2026-11-09 board left this list empty; a change since then broke a file that used to end in a terminal.
 
 1. ~~`pandas/core/groupby/generic.py`: constructing the class at line 189 exceeds the 300 s ceiling.~~ Closed 2026-11-09. On the board it ends completed.
 2. ~~Native crashes and bare exceptions: not measured since 2026-07-26.~~ Measured by the 2026-11-09 pass: every one of 96 seats exited 0, every file has a row, and every row that is not a completion is a panic of a named refusal class.
+3. `pandas/tests/io/excel/test_writers.py`: ends in a BackendDefect (`SourceUnit.require_lexical_call_rows`) with no terminal on `7abebcdae`. Introduced by `cca33d87d` (#7601). Tracked in #7673. It comes before anything on the residue line. Only the 218 files of the residue list were run; the 1203 files that completed on the board are not re-measured.
 
 ### Residue on the final board
 
@@ -99,23 +100,23 @@ Tracked in #7661. The issues are the worklist: work is picked from them, and a P
 
 **Rule for every PR on this line.** It says `Part of #N` for one of the issues below and names the board file it was reproduced on. It says whether that file now completes, or what it stops at next. A PR that names no board file is not on this line.
 
-| Issue | Refusal | Files |
-|---|---|---|
-| #7663 | `With` has no contract ref: runtime-selected | 76 |
-| #7664 | `With` has no contract ref: dynamic-export | 35 |
-| #7665 | `With` has no contract ref: source-body-gap | 25 |
-| #7666 | `With` has no contract ref: the four smaller kinds | 20 |
-| #7667 | `construct_manager_behavior returned object` | 21 |
-| #7668 | No constructed-value category for `builtins.object` | 20 |
-| #7669 | `ImportMemberValue` standing as a condition (`truth`) | 17 |
-| #7670 | The four single-owner refusals | 4 |
+| Issue | Refusal | Files | Complete on `7abebcdae` | Left |
+|---|---|---|---|---|
+| #7663 | `With` has no contract ref: runtime-selected | 76 | 44 | 32 |
+| #7664 | `With` has no contract ref: dynamic-export | 35 | 25 | 10 |
+| #7665 | `With` has no contract ref: source-body-gap | 25 | 1 | 24 |
+| #7666 | `With` has no contract ref: the four smaller kinds | 20 | 1 | 19 |
+| #7667 | `construct_manager_behavior returned object` | 21 | 0 | 21 |
+| #7668 | No constructed-value category for `builtins.object` | 20 | 0 | 20 |
+| #7669 | `ImportMemberValue` standing as a condition (`truth`) | 17 | 0 | 17 |
+| #7670 | The four single-owner refusals | 4 | 0 | 4 |
 
 ### Standing on the residue line
 
 | Date | Commit | Remaining | Event |
 |---|---|---|---|
 | 2026-11-09 | `c4cef9904` | 218 | Board. |
-| 2026-11-10 | `073c9410a` | not measured | 90 PRs merged since the board (#7576 to #7660). None is tied to an issue, and 85 of the 90 descriptions name no pandas file. Which of the 218 files complete on this commit is not known. |
+| 2026-11-10 | `7abebcdae` | 147 | Every one of the 218 files run once, one file per run (225 s, 14 at a time). 71 complete. 146 end in a named refusal: 129 the same refusal as on the board, 17 a different one. 1 has no terminal (#7673). Before this run, 90 PRs had merged since the board (#7576 to #7660) with none tied to an issue. |
 
 ## What changed from plan v1
 
