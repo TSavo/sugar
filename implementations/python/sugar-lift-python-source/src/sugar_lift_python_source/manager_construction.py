@@ -3661,8 +3661,6 @@ def _resolve_source_visible_frame_uncached(
                 graph=graph,
                 session=session,
             )
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
             try:
                 projected = function.source_visible_call_frame()
             except SourceCallBindingGap as exc:
