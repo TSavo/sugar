@@ -217,7 +217,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         it the generator stays an opaque coordinate and ``not expected_exceptions``
         refuses at the UnaryOp producer.
         """
-        if index == 0 and len(self.generators) == 1 and not generator.filters:
+        if index == 0 and len(self.generators) == 1:
             from sugar_lift_py_tests.sugar.finite_projection import (
                 FiniteProjectionNonSuccessV1,
                 FiniteProjectionRefusalV1,
@@ -309,6 +309,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         if members is None:
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         target = generator.target
+        if generator.filters and not hasattr(ctx, "temporal"):
+            return NotProjected(
+                FiniteProjectionNonSuccessV1.PROJECTION_UNAVAILABLE_IN_CONTEXT
+            )
         if target.coordinates is not None and generator.target_pattern is None:
             # The producer's OWN enrollment answer decides which fact this is.
             # ENROLLED + missing pattern is a stranded authenticated lookup, not
@@ -366,39 +370,9 @@ class ComprehensionSugar(ConstructedTermSugar):
                     ComprehensionValue(term, finite_elements=tuple(projected))
                 )
 
-            member = members[index].project_operation_receiver(
-                ctx, owner="ComprehensionSugar finite iterable member"
-            )
-            temporal = ctx.temporal.bind_value(generator.binding_coordinate_cid, member)
-            if target.coordinates is not None:
-                from sugar_lift_py_tests.operations.positional_unpack_operation import (
-                    PositionalUnpackOperation,
-                    UnpackMemberRoster,
-                )
-
-                leaves = _target_leaves(target)
-                unpacked = PositionalUnpackOperation(
-                    fixed_prefix=len(leaves),
-                    fixed_suffix=0,
-                    has_star=False,
-                    owner="ComprehensionSugar._finite_map.target",
-                    blame=self.site,
-                ).submit(member, ctx)
-                if not isinstance(unpacked, Complete) or not isinstance(
-                    unpacked.value, UnpackMemberRoster
-                ):
-                    return unpacked
-                for leaf, coordinate, value in zip(
-                    leaves,
-                    generator.target_coordinates,
-                    unpacked.value.members,
-                    strict=True,
-                ):
-                    temporal = temporal.bind_value(coordinate.cid, value)
-                    temporal = temporal.bind_value(leaf.source_name, value)
-            elif target.source_name is not None:
-                temporal = temporal.bind_value(target.source_name, member)
-            inner_ctx = replace(ctx, temporal=temporal)
+            inner_ctx = self._member_ctx(generator, members[index], ctx)
+            if not isinstance(inner_ctx, type(ctx)):
+                return inner_ctx
             if self.key is not None:
                 return self.key.desugar(inner_ctx).and_then(
                     lambda key: self.element.desugar(inner_ctx).and_then(
@@ -418,10 +392,91 @@ class ComprehensionSugar(ConstructedTermSugar):
                 )
             )
 
+        if generator.filters:
+            kept = self._kept_members(generator, members, ctx)
+            if kept is None:
+                return NotProjected(
+                    FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE
+                )
+            members = kept
         # Outcome.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
         return Projected(project(0, ()))
+
+    def _member_ctx(self, generator, member, ctx):
+        """``ctx`` with one finite member bound to the generator's target.
+
+        Returns the unpack's own outcome when the member does not destructure
+        into the target's leaves.
+        """
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.outcome import Complete
+
+        target = generator.target
+        member = member.project_operation_receiver(
+            ctx, owner="ComprehensionSugar finite iterable member"
+        )
+        temporal = ctx.temporal.bind_value(generator.binding_coordinate_cid, member)
+        if target.coordinates is not None:
+            from sugar_lift_py_tests.operations.positional_unpack_operation import (
+                PositionalUnpackOperation,
+                UnpackMemberRoster,
+            )
+
+            leaves = _target_leaves(target)
+            unpacked = PositionalUnpackOperation(
+                fixed_prefix=len(leaves),
+                fixed_suffix=0,
+                has_star=False,
+                owner="ComprehensionSugar._finite_map.target",
+                blame=self.site,
+            ).submit(member, ctx)
+            if not isinstance(unpacked, Complete) or not isinstance(
+                unpacked.value, UnpackMemberRoster
+            ):
+                return unpacked
+            for leaf, coordinate, value in zip(
+                leaves,
+                generator.target_coordinates,
+                unpacked.value.members,
+                strict=True,
+            ):
+                temporal = temporal.bind_value(coordinate.cid, value)
+                temporal = temporal.bind_value(leaf.source_name, value)
+        elif target.source_name is not None:
+            temporal = temporal.bind_value(target.source_name, member)
+        return replace(ctx, temporal=temporal)
+
+    def _kept_members(self, generator, members, ctx):
+        """The members every ``if`` filter keeps, when each verdict is decided.
+
+        Python evaluates a member's filters in order, stopping at the first
+        false one, and keeps the member only if all are true.  When every
+        filter reached reduces to a plain decided bool (no effect, no halt,
+        no symbolic guard), which members survive is fixed, so the map
+        projects over exactly those.  Any other verdict returns ``None`` and
+        the comprehension stays symbolic, as before.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+
+        kept = []
+        for member in members:
+            inner_ctx = self._member_ctx(generator, member, ctx)
+            if not isinstance(inner_ctx, type(ctx)):
+                return None
+            keep = True
+            for guard in generator.filters:
+                verdict = _decided_bool(guard.desugar(inner_ctx))
+                if verdict is None:
+                    return None
+                if not verdict:
+                    keep = False
+                    break
+            if keep:
+                kept.append(member)
+        return tuple(kept)
 
     def _desugar_filters(
         self, generator, filter_index, filters, iterable, index, resolved, ctx
@@ -526,6 +581,30 @@ class ComprehensionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
         return Complete(ComprehensionValue(term))
+
+
+def _decided_bool(outcome):
+    """``True``/``False`` when ``outcome`` is a plain decided bool, else ``None``."""
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if type(outcome) is not Complete:
+        return None
+    value = outcome.value
+    if isinstance(value, TrueBoolLiteralSugar):
+        return True
+    if isinstance(value, FalseBoolLiteralSugar):
+        return False
+    formula = getattr(value, "formula", None)
+    if formula is not None and formula == true_guard():
+        return True
+    if formula is not None and formula == false_guard():
+        return False
+    return None
 
 
 def _target_shape_name(target: ComprehensionTargetSugar) -> str:
