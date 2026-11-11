@@ -106,10 +106,6 @@ def floor_source_contextvar_export(resolved, *, graph):
     """
     import ast
 
-    from sugar_lift_py_tests.callable_application import CallableApplication
-    from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.outcome import Complete
-
     if getattr(resolved, "kind", None) != "dynamic-export":
         return None
     module_name = getattr(resolved, "module_name", None)
@@ -121,7 +117,28 @@ def floor_source_contextvar_export(resolved, *, graph):
         tree = ast.parse(module.source)
     except SyntaxError:
         return None
-    call = _sole_module_assignment_call(tree, exported_name)
+    return contextvar_bound_in_tree(tree, exported_name)
+
+
+def contextvar_bound_in_tree(tree, name):
+    """The language-owned ContextVar ``name`` denotes in module ``tree``.
+
+    ``name`` is bound exactly once, at module level, to ``ContextVar("n"[,
+    default=...])`` with ``ContextVar`` bound exactly once by ``from
+    contextvars import ContextVar``; the call is applied through
+    ``LanguageOwnedContextVarType``.  Any other shape is ``None``.
+    """
+    import ast
+
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.floor.language_owned_contextvar import (
+        LanguageOwnedContextVarType,
+        LanguageOwnedContextVarValue,
+    )
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    call = _sole_module_assignment_call(tree, name)
     if call is None or not isinstance(call.func, ast.Name):
         return None
     if not _bound_once_by_contextvars_import(tree, call.func.id):
@@ -156,6 +173,72 @@ def floor_source_contextvar_export(resolved, *, graph):
     ):
         return outcome.value
     return None
+
+
+def source_contextvar_global_read(source, name, line, col):
+    """The ContextVar a function body's global read of ``name`` denotes.
+
+    A ``Name`` read at (``line``, ``col``) inside a ``def`` or ``lambda`` of
+    ``source``, which nothing in that function binds, reads the module global;
+    when the module binds it by the ContextVar law above
+    (``contextvar_bound_in_tree``), the read is that ContextVar.  Any binding
+    of ``name`` anywhere else in the module (a local, a parameter, a
+    ``global``) breaks the exactly-once shape and keeps ``None``.
+    """
+    if "ContextVar" not in source:
+        return None
+    tree, functions = _parsed_module(source)
+    enclosing = [
+        params
+        for start_line, start_col, end_line, end_col, params in functions
+        if (start_line, start_col) <= (line, col) <= (end_line, end_col)
+    ]
+    if tree is None or not enclosing or any(name in params for params in enclosing):
+        return None
+    return contextvar_bound_in_tree(tree, name)
+
+
+_PARSED_MODULES: dict = {}
+
+
+def _parsed_module(source):
+    import ast
+
+    cached = _PARSED_MODULES.get(source)
+    if cached is not None:
+        return cached
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        cached = (None, ())
+    else:
+        functions = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                arguments = node.args
+                params = frozenset(
+                    argument.arg
+                    for argument in (
+                        *arguments.posonlyargs,
+                        *arguments.args,
+                        *arguments.kwonlyargs,
+                        *(a for a in (arguments.vararg, arguments.kwarg) if a),
+                    )
+                )
+                functions.append(
+                    (
+                        node.lineno,
+                        node.col_offset,
+                        node.end_lineno,
+                        node.end_col_offset,
+                        params,
+                    )
+                )
+        cached = (tree, tuple(functions))
+    if len(_PARSED_MODULES) > 16:
+        _PARSED_MODULES.clear()
+    _PARSED_MODULES[source] = cached
+    return cached
 
 
 def _module_level_bindings(tree, name):

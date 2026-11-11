@@ -97,6 +97,29 @@ class LanguageOwnedContextVarValue(FloorValue):
             )
         return super().attribute(name, site)
 
+    def call_named_method(
+        self, name, arguments, *, owner, blame, ctx=None, keywords=()
+    ):
+        """``v.name(...)`` written as a method call on this ContextVar.
+
+        The source method call reaches the same law as the floored
+        ``v.get`` / ``v.set`` / ``v.reset`` value: ``set``, ``reset``, and
+        ``get`` with a default are decided here; every other method (and
+        ``get`` with no default, which may raise LookupError) refuses by name.
+        """
+        from types import SimpleNamespace
+
+        return self.call_method_with(
+            SimpleNamespace(
+                name=name,
+                arguments=(*arguments, *(value for _, value in keywords)),
+                keyword_names=tuple(key for key, _ in keywords),
+                owner=owner,
+                blame=blame,
+            ),
+            ctx,
+        )
+
     def call_method_with(self, operation, ctx):
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.outcome import Complete
