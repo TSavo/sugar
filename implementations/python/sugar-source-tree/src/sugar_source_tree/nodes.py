@@ -84,6 +84,13 @@ _SCOPE_OWNER_CID = object()
 _SUBSTITUTION_TRACE_BUILDER = object()
 _BINDING_ENTRY_FACTORY = object()
 _RECEIVER_FIELD_PROJECTIONS = object()
+# Set by a door that threads a module body for what it does AT IMPORT (the
+# export prefix).  A ``def`` statement binds a function object; its body does
+# not run until something calls it.  Under this key a body that cannot thread
+# keeps its source body: the refusal is deferred to whoever calls the
+# function (whose frame substitutes the body again) and is not testimony
+# about the statement that merely defined it.
+DEFER_DEFINITION_BODY_REFUSAL = object()
 _MISSING = object()
 
 
@@ -5079,7 +5086,17 @@ class FunctionDef(Statement):
                 changed[field] = new
         # body: the enclosing scope with the bound names held out, THREADED --
         # each assignment binds its name for the statements after it.
-        new_body, body_diff = self._substitute_body(self.body, body_scope)
+        if scope.get(DEFER_DEFINITION_BODY_REFUSAL):
+            from .panic import SugarNotWritten
+
+            try:
+                new_body, body_diff = self._substitute_body(self.body, body_scope)
+            except (SugarNotWritten, TypeError):
+                # The def statement does not run its body; the caller's frame
+                # meets this refusal again when (if) it calls the function.
+                new_body, body_diff = self.body, False
+        else:
+            new_body, body_diff = self._substitute_body(self.body, body_scope)
         if body_diff:
             changed["body"] = new_body
 
@@ -5655,8 +5672,23 @@ class ClassDef(Statement):
             # never enters. Refusing the whole class over an async member is
             # why contextlib.nullcontext (async def __aenter__) stopped at
             # force-floor the moment contextlib was enrolled (plan Cut 1).
-            body = method.sugar()
-            frame = method.source_visible_call_frame()
+            from sugar_lift_py_tests.floor.class_definition_value import (
+                DeferredClassMethodV1,
+            )
+            from sugar_source_tree.panic import SugarNotWritten
+
+            try:
+                body = method.sugar()
+                frame = method.source_visible_call_frame()
+            except (SugarNotWritten, TypeError):
+                # The class body binds the method; the method body runs only
+                # when called.  Its refusal is deferred to that caller.
+                return DeferredClassMethodV1(
+                    method.name,
+                    method.fragment.seal().cid,
+                    method,
+                    self._method_descriptor_kind(method),
+                )
         else:
             from sugar_source_tree.panic import SugarNotWritten
 

@@ -9,6 +9,7 @@ from sugar_lift_py_tests.floor.class_definition_value import (
     ClassDefinitionValue,
     ConstructedClassFieldV1,
     ConstructedClassMethodV1,
+    DeferredClassMethodV1,
 )
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -96,12 +97,23 @@ class ClassDefinitionSugar(Sugar):
             "definitionFragmentCid": self.definition_fragment_cid,
             "bindingTargetOccurrence": self.binding_target_occurrence.wire(),
             "methods": [
-                {
-                    "name": method.name,
-                    "definitionFragmentCid": method.definition_fragment_cid,
-                    "sourceCallFrameCid": method.source_call_frame.frame_cid,
-                    "descriptorKind": method.descriptor_kind,
-                }
+                (
+                    {
+                        # A deferred method body is not constructed at class
+                        # definition: its source definition is its identity.
+                        "name": method.name,
+                        "definitionFragmentCid": method.definition_fragment_cid,
+                        "deferredBody": True,
+                        "descriptorKind": method.descriptor_kind,
+                    }
+                    if type(method) is DeferredClassMethodV1
+                    else {
+                        "name": method.name,
+                        "definitionFragmentCid": method.definition_fragment_cid,
+                        "sourceCallFrameCid": method.source_call_frame.frame_cid,
+                        "descriptorKind": method.descriptor_kind,
+                    }
+                )
                 for method in self.methods
             ],
             "fields": [encode_field(item) for item in self.fields],

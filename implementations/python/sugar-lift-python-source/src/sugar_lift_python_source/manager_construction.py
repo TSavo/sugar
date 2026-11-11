@@ -962,7 +962,14 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     # ``_substitute_body`` may raise SugarNotWritten/TypeError; the caller
     # (``prefix_has_completed_fallthrough``) already catches exactly those and
     # turns them into named construction-refusal testimony, never a quiet False.
-    prefix, _threaded = source_file.root._substitute_body(prefix, {})
+    # A def in the prefix binds a function; its body runs only when called.
+    # A refusal inside that body is deferred to the call (see
+    # DEFER_DEFINITION_BODY_REFUSAL), never prefix testimony.
+    from sugar_source_tree.nodes import DEFER_DEFINITION_BODY_REFUSAL
+
+    prefix, _threaded = source_file.root._substitute_body(
+        prefix, {DEFER_DEFINITION_BODY_REFUSAL: True}
+    )
 
     # Base testimony is installed from exact parser-owned module bindings,
     # never from a class-name scan.  Only earlier module ClassDefs can be a
