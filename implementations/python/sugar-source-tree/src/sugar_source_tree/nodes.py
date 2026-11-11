@@ -8710,6 +8710,26 @@ class With(Statement):
             return published
         return None
 
+    def _published_non_manager_head(self, item: WithItem):
+        """The producer's absence proof for a direct-call head, else None."""
+        if not isinstance(item.context_expr, Call):
+            return None
+        context = self._require_construction_context(
+            owner="With._published_non_manager_head"
+        )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if not isinstance(context, TreeConstructionContextV1):
+            return None
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid, start_line, start_col, end_line, end_col
+        )
+        return context.source_non_manager_heads.get(coordinate)
+
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
 
@@ -9137,6 +9157,23 @@ class With(Statement):
         binds_enter_result = item.optional_vars is not None
         if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
+
+        non_manager = self._published_non_manager_head(item)
+        if non_manager is not None:
+            from sugar_lift_py_tests.sugar.generator_with_sugar import (
+                NonManagerObjectWithSugar,
+            )
+
+            # The head's class is proven, from its source MRO, to lack
+            # ``__enter__`` (or ``__exit__``): evaluate the head once, then the
+            # With raises the interpreter's own TypeError before enter and body.
+            return NonManagerObjectWithSugar(
+                manager=item.context_expr.sugar(),
+                site=self.fragment,
+                type_name=non_manager.type_name,
+                has_enter=non_manager.has_enter,
+                has_exit=non_manager.has_exit,
+            )
 
         published_generator_resource = self._published_generator_resource_testimony(
             item

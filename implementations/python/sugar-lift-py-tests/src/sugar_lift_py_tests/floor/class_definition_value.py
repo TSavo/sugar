@@ -550,34 +550,12 @@ class ClassDefinitionValue(GuardStableValue):
         source_bases = tuple(
             base for base in self.base_classes if isinstance(base, ClassDefinitionValue)
         )
-        if not source_bases:
-            return ()
-        sequences = [list((base, *base._c3_tail())) for base in source_bases]
-        sequences.append(list(source_bases))
-        result = []
-        while any(sequences):
-            sequences = [sequence for sequence in sequences if sequence]
-            candidate = next(
-                (
-                    sequence[0]
-                    for sequence in sequences
-                    if not any(sequence[0] in other[1:] for other in sequences)
-                ),
-                None,
-            )
-            if candidate is None:
-                raise SugarNotWritten(
-                    blame=self.class_definition_cid,
-                    owner="ClassDefinitionValue._c3_tail",
-                    observed="inconsistent authenticated local base order",
-                    requested="one valid C3 linearization",
-                    fix="keep inconsistent or dynamic inheritance loud",
-                )
-            result.append(candidate)
-            for sequence in sequences:
-                if sequence and sequence[0] == candidate:
-                    sequence.pop(0)
-        return tuple(result)
+        return c3_tail(
+            source_bases,
+            lambda base: base._c3_tail(),
+            blame=self.class_definition_cid,
+            owner="ClassDefinitionValue._c3_tail",
+        )
 
     def _has_authenticated_dict_base(self) -> bool:
         from sugar_lift_py_tests.floor.builtin_dict_class_value import (
@@ -595,3 +573,42 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
+
+
+def c3_tail(bases, tail_of, *, blame, owner: str) -> tuple:
+    """The C3 linearization after the head, for a head with these direct bases.
+
+    ``tail_of(base)`` is that base's own tail.  Shared by the Floor's class
+    values and the source absence proof over class definitions, so both read
+    one MRO law.  An inconsistent base order refuses (CPython raises at class
+    creation; nothing here chooses an order).
+    """
+    bases = tuple(bases)
+    if not bases:
+        return ()
+    sequences = [list((base, *tail_of(base))) for base in bases]
+    sequences.append(list(bases))
+    result = []
+    while any(sequences):
+        sequences = [sequence for sequence in sequences if sequence]
+        candidate = next(
+            (
+                sequence[0]
+                for sequence in sequences
+                if not any(sequence[0] in other[1:] for other in sequences)
+            ),
+            None,
+        )
+        if candidate is None:
+            raise SugarNotWritten(
+                blame=blame,
+                owner=owner,
+                observed="inconsistent authenticated local base order",
+                requested="one valid C3 linearization",
+                fix="keep inconsistent or dynamic inheritance loud",
+            )
+        result.append(candidate)
+        for sequence in sequences:
+            if sequence and sequence[0] == candidate:
+                sequence.pop(0)
+    return tuple(result)

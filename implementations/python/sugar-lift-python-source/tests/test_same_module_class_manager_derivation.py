@@ -448,8 +448,17 @@ def test_installed_like_absent_effect_exit_derives_expected_exceptions(tmp_path:
     assert isinstance(ref.semantics.mode, ExpectsModeV1)
 
 
-def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
-    """ClassDef without __enter__/__exit__: gap row; With panics named."""
+def test_local_classdef_without_protocol_raises_the_interpreters_type_error(
+    tmp_path: Path,
+):
+    """ClassDef without __enter__/__exit__, MRO proven from source: no gap row;
+    the With evaluates ``NotCM()`` and halts with the interpreter's TypeError."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.manager_protocol_absence_refusal import (
+        observed_non_manager_with_refusal,
+    )
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
     source = textwrap.dedent("""\
         class NotCM:
             def run(self):
@@ -466,15 +475,24 @@ def test_local_classdef_without_protocol_installs_gap(tmp_path: Path):
         session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
 
-    assert len(context.source_derived_contract_refs) == 1
-    gap = next(iter(context.source_derived_contract_refs.values()))
-    assert type(gap).__name__ == "ContextManagerResolutionGapV1"
-    assert gap.target_symbol == "python:local:NotCM"
+    assert context.source_derived_contract_refs == {}
+    (proof,) = context.source_non_manager_heads.values()
+    assert proof.type_name == "NotCM"
+    assert (proof.has_enter, proof.has_exit) == (False, False)
 
-    with_node = next(n for n in tree.nodes() if isinstance(n, With))
-    with pytest.raises(ContextManagerResolutionConstructionGap) as caught:
-        with_node.sugar()
-    assert caught.value.owner == "With._construct_sugar"
+    from sugar_source_tree.nodes import FunctionDef
+
+    func = next(
+        n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f"
+    )
+    (face,) = outcome_to_exitset(func.sugar().desugar()).exits
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+    refusal = observed_non_manager_with_refusal(
+        "NotCM", has_enter=False, has_exit=False
+    )
+    assert face.effect.exception_name == refusal.exception_name == "TypeError"
+    assert face.effect.raised_value == refusal.message
 
 
 def test_install_gap_never_attribute_errors_on_import_auth_fail(tmp_path: Path):

@@ -1152,6 +1152,11 @@ class TreeConstructionContextV1:
     # those nested Withs to already carry a closed CM row — the CM form's
     # return path is what construct_manager_behavior force_floors.
     frame_projection: bool = False
+    # Manager uses whose head is proven, from source, not to be a context
+    # manager (a class MRO without ``__enter__`` or ``__exit__``): keyed like
+    # ``source_derived_contract_refs``; the With raises the interpreter's own
+    # TypeError after evaluating the head.
+    source_non_manager_heads: dict = field(default_factory=dict)
 
     @classmethod
     def for_source_call_construction(
