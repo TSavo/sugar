@@ -262,26 +262,64 @@ def test_predicate_left_makes_rhs_effect_conditional(kind, rhs_guard) -> None:
     assert halted[0].guard == rhs_guard
 
 
-@pytest.mark.parametrize("kind", ("And", "Or"))
-def test_undecided_operand_type_refuses_invented_truth(kind: str) -> None:
-    """``obj and obj`` cannot invent ``py.truthy`` when ``bool(obj)`` is undecided."""
-    with pytest.raises(SugarNotWritten) as caught:
-        _boolop(kind, NameSugar("obj1", _Site()), NameSugar("obj2", _Site()))
+def _assert_two_faced_symbolic_truth(outcome, left_term, right_term) -> None:
+    """``bool(left)`` may complete or raise: both faces, no invented identity.
 
-    refusal = caught.value
-    assert refusal.owner == "boolean_operation_exception_floor"
-    assert refusal.observed == f"SymbolicValue {'and' if kind == 'And' else 'or'}"
-    assert "authenticated exceptional exit" in refusal.requested
-    assert "TypeError" not in str(refusal)
-    assert "ValueError" not in str(refusal)
+    The completed faces stand only under ``python:truth.completes`` over the
+    left operand's term; the complement halts with an UndeterminedRaiseEffect
+    naming no exception type.  One completed face returns the left operand
+    (stopping face), the other the right operand (continuing face).
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    assert isinstance(outcome, ExitSet)
+    halted = [edge for edge in outcome.exits if isinstance(edge, Halted)]
+    assert len(halted) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "BoolOpSugar.truth"
+    assert "python:truth.completes" in repr(halted[0].guard)
+    assert repr(left_term) in repr(halted[0].guard)
+    assert "TypeError" not in repr(halted[0])
+    assert "ValueError" not in repr(halted[0])
+    completed = [edge for edge in outcome.exits if isinstance(edge, Completed)]
+    returned = {repr(edge.value.to_term(owner="test")) for edge in completed}
+    assert returned == {repr(left_term), repr(right_term)}
+    for edge in completed:
+        assert "python:truth.completes" in repr(edge.guard)
+
+
+@pytest.mark.parametrize("kind", ("And", "Or"))
+def test_undecided_symbolic_operand_truth_is_two_faced(kind: str) -> None:
+    """``obj1 or obj2``: undecided ``bool(obj1)`` is two-faced, never total.
+
+    Truthful twin of the #7681 law for a bare symbolic operand: no ``py.truthy``
+    completion is claimed unguarded and no exception identity is invented.
+    """
+    outcome = _boolop(kind, NameSugar("obj1", _Site()), NameSugar("obj2", _Site()))
+    _assert_two_faced_symbolic_truth(outcome, make_var("obj1"), make_var("obj2"))
+
+
+@pytest.mark.parametrize("kind", ("And", "Or"))
+def test_decided_left_operand_adds_no_truth_halt(kind: str) -> None:
+    """Lying twin: a decided left operand's truth cannot raise, so no halt."""
+    outcome = _boolop(
+        kind,
+        TrueBoolLiteralSugar(_Site()),
+        NameSugar("obj2", _Site()),
+    )
+    exits = outcome.exits if isinstance(outcome, ExitSet) else ()
+    assert not [edge for edge in exits if isinstance(edge, Halted)]
+    assert "python:truth.completes" not in repr(outcome)
 
 
 def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
-    """Truthful pandas ``obj1 and/or obj2`` raise at runtime; producer refuses.
+    """Truthful pandas ``obj1 and/or obj2`` raise at runtime; producer is two-faced.
 
     Site: ``pandas/tests/generic/test_generic.py`` lines 152/154 under
     ``pytest.raises(ValueError)``.  Source does not state Series type at the
-    BoolOp, so the producer cannot mint ValueError — only the named refusal.
+    BoolOp, so the producer cannot mint ValueError: the raise stands only as
+    the UndeterminedRaiseEffect face of the #7681 two-faced truth law.
     """
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
@@ -331,13 +369,10 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
         )
         assert isinstance(definition, NativeDefinitionCoordinateGapV1)
         assert definition.reason.startswith("authenticated source definition")
-        with pytest.raises(SugarNotWritten) as raised:
-            matches[0].sugar().desugar(None)
-        refusal = raised.value
-        assert refusal.owner == "boolean_operation_exception_floor"
-        assert refusal.observed == f"SymbolicValue {operator}"
-        assert "authenticated exceptional exit" in refusal.requested
-        assert "ValueError" not in str(refusal)
+        del operator
+        _assert_two_faced_symbolic_truth(
+            matches[0].sugar().desugar(None), make_var("obj1"), make_var("obj2")
+        )
 
 
 def test_pandas_unary_sites_stay_source_undecided() -> None:
