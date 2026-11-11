@@ -60,9 +60,12 @@ def floor_interpreter_module_callable(target_symbol):
     pin-authenticated interpreter's own object is the key: when ``<name>`` on
     that module is a builtin function the module itself owns, it is floored as
     a C-extension callable (completes with an opaque result or raises
-    undetermined). A stdlib extension module has a file and its own artifact
-    path, a deeper attribute chain is not a module export, and any other
-    object keeps the gap.
+    undetermined); when it is a C class the module itself owns
+    (``itertools.dropwhile``: :func:`_interpreter_owned_c_class`), it is
+    floored by the type rule, so calling it constructs an opaque instance or
+    raises undetermined. A stdlib extension module has a file and its own
+    artifact path, a deeper attribute chain is not a module export, and any
+    other object keeps the gap.
     """
     import sys
 
@@ -79,13 +82,19 @@ def floor_interpreter_module_callable(target_symbol):
         obj = getattr(module, exported_name)
     except (ImportError, AttributeError, TypeError, ValueError):
         return None
-    if not isinstance(obj, types.BuiltinFunctionType):
+    if isinstance(obj, types.BuiltinFunctionType):
+        if getattr(obj, "__self__", None) is not module:
+            return None
+        return LanguageOwnedCExtensionCallableValue(
+            module_name=module_name, exported_name=exported_name
+        )
+    if getattr(obj, "__module__", None) != module_name:
         return None
-    if getattr(obj, "__self__", None) is not module:
+    if not _interpreter_owned_c_class(module_name, module, obj):
         return None
-    return LanguageOwnedCExtensionCallableValue(
-        module_name=module_name, exported_name=exported_name
-    )
+    from sugar_lift_py_tests.floor.language_owned_c_type import LanguageOwnedCTypeValue
+
+    return LanguageOwnedCTypeValue(module_name=module_name, type_name=exported_name)
 
 
 def interpreter_owned_c_type_export(target_symbol) -> bool:

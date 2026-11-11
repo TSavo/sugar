@@ -315,3 +315,104 @@ def test_receiver_field_post_state_does_not_borrow_foreign_class_authority() -> 
 
     assert updated.defining_class is own_class
     assert updated.defining_class is not foreign.defining_class
+
+
+@dataclass(frozen=True)
+class _Occurrence:
+    """A hashable source occurrence: what ``assigned_key`` keys a record on."""
+
+    unit: str
+    span: tuple
+
+
+@dataclass(frozen=True)
+class _CountedCCall(ConstructedTermSugar):
+    """A two-faced RHS (a C class call) that counts its evaluations."""
+
+    calls: list
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.callable_application import CallableApplication
+        from sugar_lift_py_tests.floor.language_owned_c_type import (
+            LanguageOwnedCTypeValue,
+        )
+
+        del ctx
+        self.calls.append(1)
+        return LanguageOwnedCTypeValue("itertools", "dropwhile").callable_application_with(
+            CallableApplication(arguments=(), keyword_names=(), site=None, owner="test"),
+            None,
+        )
+
+    def to_term(self, *, owner: str):
+        return TermValue("counted").to_term(owner=owner)
+
+
+@dataclass(frozen=True)
+class _ReadStoredPayload(Sugar):
+    """A later ``self.payload`` read: substitution hands it the store sugar."""
+
+    receiver: Sugar
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: receiver.attribute("payload", "test")
+        )
+
+
+def _store_then_read(store_site, read_site):
+    from sugar_lift_py_tests.floor.language_owned_c_type import (
+        LanguageOwnedCInstanceValue,
+    )
+
+    calls: list = []
+    receiver = ObjectValue("Version", (), identity="receiver-1")
+    rhs = _CountedCCall(calls)
+    stored = ReceiverFieldStoreStateSugar(
+        _FixedSugar(receiver), rhs, "payload", store_site
+    )
+    read = ReceiverFieldStoreStateSugar(
+        _FixedSugar(receiver), rhs, "payload", read_site
+    )
+    exits = reduce_block_to_exitset(
+        (ExprStatementSugar(stored, store_site), _ReadStoredPayload(read)),
+        ReduceContext.root(owner="receiver-store-record"),
+    ).exits
+    completed = [exit_ for exit_ in exits if isinstance(exit_, Completed)]
+    read_values = [
+        entry
+        for exit_ in completed
+        for entry in exit_.value.entries
+        if isinstance(entry, LanguageOwnedCInstanceValue)
+    ]
+    return calls, completed, read_values
+
+
+def test_a_read_of_the_stored_receiver_answers_the_statements_one_evaluation():
+    # ``self.payload = C()`` evaluates once at the statement; the later read of
+    # ``self`` (the same store occurrence) answers that completed face's
+    # receiver and never evaluates the call again.
+    site = _Occurrence("unit", (3, 4, 3, 30))
+    calls, completed, read_values = _store_then_read(site, site)
+    assert len(calls) == 1
+    assert len(completed) == 1
+    assert read_values and all(
+        value == read_values[0] for value in read_values
+    )
+
+
+def test_a_different_store_occurrence_is_not_answered_from_the_record():
+    # The record is keyed by the exact store occurrence: a store at another
+    # site is its own evaluation and runs again.
+    calls, _completed, _read_values = _store_then_read(
+        _Occurrence("unit", (3, 4, 3, 30)), _Occurrence("unit", (9, 4, 9, 30))
+    )
+    assert len(calls) == 2
