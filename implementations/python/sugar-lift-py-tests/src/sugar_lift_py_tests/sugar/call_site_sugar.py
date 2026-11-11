@@ -126,11 +126,15 @@ def _lexically_unknown_callee(sugar) -> bool:
     import (a module member the import door did not cite).  A name a ``def``,
     ``class`` or assignment in the module binds is source the lift holds, not
     an unknown callee."""
-    unit = getattr(sugar.site, "unit", None)
+    return _lexically_unknown_head(sugar.site, sugar.target_name.split(".", 1)[0])
+
+
+def _lexically_unknown_head(site, head: str) -> bool:
+    """``head`` is bound nowhere in ``site``'s module, or only by an import."""
+    unit = getattr(site, "unit", None)
     table = getattr(unit, "module_symtable", None)
     if table is None:
         return False
-    head = sugar.target_name.split(".", 1)[0]
     imported = False
 
     def visit(scope) -> bool:
