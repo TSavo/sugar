@@ -75,3 +75,76 @@ def test_used_method_past_the_bound_still_refuses(tmp_path):
 
     assert isinstance(result, ManagerConstructionGapV1), result
     assert result.kind == "call-closure-over-bound"
+    assert "narrowed to the methods its instances run" in result.detail
+
+
+# #7733: ``read_csv`` is a FUNCTION that reaches ``TextFileReader``, a class of
+# its own module, whose ``read`` reaches ``Series`` and hundreds more.  The
+# function runs ``TextFileReader(...)``; it runs none of its unused methods.
+# The narrowing is the class's, wherever the class is reached from.
+
+
+def _factory_over(guard_source: str) -> str:
+    return guard_source.replace("class make_guard:", "class Guard:") + (
+        "\n"
+        "def make_guard(expected):\n"
+        "    return Guard(expected)\n"
+    )
+
+
+def test_function_reaching_a_same_module_class_projects_only_used_methods(tmp_path):
+    result = _construct(
+        tmp_path, _factory_over(_guard(enter="self")), **_chain_modules()
+    )
+
+    assert isinstance(result, ConstructedManagerBehaviorV1), result
+    methods = {
+        method.name: method for method in result.receiver_state.defining_class.methods
+    }
+    assert isinstance(methods["far"], DeferredClassMethodV1)
+    assert methods["far"].unprojected
+    assert not isinstance(methods["__enter__"], DeferredClassMethodV1)
+
+
+def test_function_whose_class_runs_the_far_method_still_refuses(tmp_path):
+    # Lying twin: ``__enter__`` runs ``far``; narrowing cannot drop it.
+    result = _construct(
+        tmp_path, _factory_over(_guard(enter="self.far()")), **_chain_modules()
+    )
+
+    assert isinstance(result, ManagerConstructionGapV1), result
+    assert result.kind == "call-closure-over-bound"
+    assert "narrowed to the methods its instances run" in result.detail
+
+
+def test_class_reached_as_a_callee_in_another_module_is_narrowed(tmp_path):
+    guards = _factory_over(_guard(enter="self")).split("\ndef make_guard")[0]
+    manager = (
+        "from arbitrary.guards import Guard\n"
+        "\n"
+        "def make_guard(expected):\n"
+        "    return Guard(expected)\n"
+    )
+    result = _construct(tmp_path, manager, guards=guards, **_chain_modules())
+
+    assert isinstance(result, ConstructedManagerBehaviorV1), result
+    methods = {
+        method.name: method for method in result.receiver_state.defining_class.methods
+    }
+    assert isinstance(methods["far"], DeferredClassMethodV1)
+    assert methods["far"].unprojected
+
+
+def test_class_reached_as_a_callee_that_runs_the_far_method_still_refuses(tmp_path):
+    # Lying twin of the callee arm.
+    guards = _factory_over(_guard(enter="self.far()")).split("\ndef make_guard")[0]
+    manager = (
+        "from arbitrary.guards import Guard\n"
+        "\n"
+        "def make_guard(expected):\n"
+        "    return Guard(expected)\n"
+    )
+    result = _construct(tmp_path, manager, guards=guards, **_chain_modules())
+
+    assert isinstance(result, ManagerConstructionGapV1), result
+    assert result.kind == "call-closure-over-bound"
