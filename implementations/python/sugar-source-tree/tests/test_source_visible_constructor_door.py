@@ -590,3 +590,104 @@ def test_census_door_refuses_both_yield_constructors_with_no_call_site() -> None
             assert refusal.owner == owner
         else:
             raise AssertionError(f"{owner} must refuse under the census door")
+
+
+_ENGINE_PICKING_NEW = (
+    "class RenamedEngine:\n"
+    "    def __init__(self, value):\n"
+    "        self.engine_value = value\n\n"
+    "class RenamedWriter:\n"
+    "    def __new__(cls, value):\n"
+    "        return object.__new__(RenamedEngine)\n\n"
+    "    def __init__(self, value):\n"
+    "        self.writer_value = value\n\n"
+    "RenamedWriter(11)\n"
+)
+
+
+def _construct_last_class_call(source_text: str):
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(source_text, context=context)
+    classes = {node.name: node for node in source.nodes() if isinstance(node, ClassDef)}
+    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
+    called = classes[call.func.id]
+    context.source_call_frames[_coordinate(call)] = (
+        called.source_visible_constructor_frame()
+    )
+    return call.sugar().desugar().value.force_floor(
+        None, owner="class-call-with-source-new", project_callsite=False
+    )
+
+
+def test_class_call_refuses_a_source_new_it_does_not_run() -> None:
+    """TRUTHFUL FACE (#7665): ``Cls(...)`` runs ``Cls.__new__`` before ``__init__``.
+
+    ``RenamedWriter.__new__`` returns an ``RenamedEngine`` (as pandas
+    ``ExcelWriter.__new__`` returns its engine class). The constructor door
+    only runs ``__init__``, so it must refuse by naming the unrun ``__new__``.
+    """
+    with pytest.raises(SugarNotWritten) as raised:
+        _construct_last_class_call(_ENGINE_PICKING_NEW)
+
+    assert raised.value.owner == "ClassConstructorBodySugar.__new__"
+    assert "RenamedWriter.__new__" in raised.value.observed
+
+
+def test_class_call_never_runs_init_on_a_receiver_new_did_not_return() -> None:
+    """LYING FACE (#7665): the old door built ``RenamedWriter(writer_value=11)``.
+
+    Python builds a ``RenamedEngine`` here and never runs
+    ``RenamedWriter.__init__``. Neither the skipped-``__new__`` receiver nor a
+    spelling-trusted pass-through ``__new__`` may complete; only the same class
+    without a source ``__new__`` constructs through ``__init__``.
+    """
+    for source_text in (
+        _ENGINE_PICKING_NEW,
+        _ENGINE_PICKING_NEW.replace(
+            "object.__new__(RenamedEngine)", "object.__new__(cls)"
+        ),
+    ):
+        with pytest.raises(SugarNotWritten):
+            _construct_last_class_call(source_text)
+
+    without_new = _ENGINE_PICKING_NEW.replace(
+        "    def __new__(cls, value):\n"
+        "        return object.__new__(RenamedEngine)\n\n",
+        "",
+    )
+    receiver = _construct_last_class_call(without_new)
+    assert receiver.class_name == "RenamedWriter"
+    assert {field.name: field.value for field in receiver.fields} == {
+        "writer_value": TermValue(11)
+    }
+
+
+def test_class_value_application_refuses_source_new_and_keeps_plain_class() -> None:
+    """Both twins on ``ClassDefinitionValue.callable_application_with`` (#7665).
+
+    That door runs only ``__init__``. TRUTHFUL: a class with source ``__new__``
+    refuses by naming it. LYING: the plain zero-argument class (no ``__new__``)
+    must still construct its receiver rather than be refused wholesale.
+    """
+    from types import SimpleNamespace
+
+    def class_value(text: str):
+        source = _source_file(text)
+        class_node = next(n for n in source.nodes() if isinstance(n, ClassDef))
+        return class_node.sugar().desugar().value
+
+    operation = SimpleNamespace(site="renamed-site", arguments=(), keyword_names=())
+    with pytest.raises(SugarNotWritten) as raised:
+        class_value(
+            "class RenamedWriter:\n"
+            "    def __new__(cls):\n"
+            "        return object.__new__(cls)\n"
+        ).callable_application_with(operation, None)
+    assert raised.value.owner == "ClassDefinitionValue.callable_application_with"
+    assert "RenamedWriter.__new__" in raised.value.observed
+
+    plain = class_value(
+        "class RenamedWriter:\n    def write(self):\n        return 1\n"
+    ).callable_application_with(operation, None)
+    assert isinstance(plain, Complete)
+    assert plain.value.class_name == "RenamedWriter"

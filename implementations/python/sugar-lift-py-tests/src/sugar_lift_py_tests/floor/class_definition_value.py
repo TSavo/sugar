@@ -112,7 +112,21 @@ class ClassDefinitionValue(GuardStableValue):
         """Construct one source class instance through its initializer frame."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            refuse_unrun_source_new,
+        )
 
+        # This door runs only ``__init__``; a source ``__new__`` is never run here.
+        refuse_unrun_source_new(
+            self,
+            new_method=next(
+                (method for method in self.methods if method.name == "__new__"),
+                None,
+            ),
+            runs_new=False,
+            site=operation.site,
+            owner="ClassDefinitionValue.callable_application_with",
+        )
         receiver_coordinate = (
             self.initializer.source_call_frame.formal_coordinates[0].cid
             if self.initializer is not None
