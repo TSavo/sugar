@@ -146,6 +146,16 @@ class AttributeSugar(ConstructedTermSugar):
                     )
             from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
+            if (
+                type(receipt) is AuthenticatedImportUseV1
+                and not receipt.use["exportedMemberPath"]
+                and receipt.target_symbol.rsplit(".", 1)[-1] == name
+            ):
+                # ``import urllib.request; urllib.request.urlopen``: the inner
+                # ``urllib.request`` occurrence is the bound submodule itself,
+                # not a member of it.  It carries no member testimony, so the
+                # receiver's ordinary law reads it, as in a module lift.
+                receipt = None
             if type(receipt) is AuthenticatedImportUseV1:
                 receipt.revalidate()
                 use_site = receipt.use["useSite"]
@@ -193,6 +203,9 @@ class AttributeSugar(ConstructedTermSugar):
         unknown = _unknown_receiver_attribute(receiver, name, site)
         if unknown is not None:
             return unknown
+        entered = _enter_result_attribute(receiver, name, site)
+        if entered is not None:
+            return entered
         return receiver.attribute(name, site)
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -202,6 +215,68 @@ class AttributeSugar(ConstructedTermSugar):
 
 
 _ATTRIBUTE_RESULT = "python:attribute_result"
+
+
+def _enter_result_attribute(receiver, name: str, site):
+    """``with m as r: r.x``: a read on the enter result's own coordinate.
+
+    The body reads ``r`` as its ``#enter_result`` slot (``EffectCoordinate``),
+    the same value a method call on ``r`` runs on.  Nothing here testified to
+    the runtime type ``__enter__`` returned, so ``getattr(r, "x")`` may
+    complete or raise anything: it completes only under
+    ``python:unknown_attribute.completes`` with a fresh attribute result, and
+    halts with an ``UndeterminedRaiseEffect`` under the complement -- the
+    #7585 law ``_unknown_receiver_attribute`` states for an unknown module
+    attribute.  No attribute value and no exception identity are invented.
+    """
+    from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
+
+    if type(receiver) is not EffectCoordinate or site is None:
+        return None
+    if not receiver.slot_id.endswith("#enter_result"):
+        return None
+    return _two_faced_attribute_read(
+        receiver.to_term(owner="AttributeSugar.enter_result"),
+        name,
+        site,
+        dotted=f"<enter_result>.{name}",
+    )
+
+
+def _two_faced_attribute_read(term, name: str, site, *, dotted: str):
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
+
+    key = occurrence_key(site)
+    completes = atomic(
+        "python:unknown_attribute.completes",
+        [ctor("python:unknown_attribute", (str_const(dotted), str_const(key)))],
+    )
+    value = SymbolicValue(
+        ctor(_ATTRIBUTE_RESULT, (term, str_const(name), str_const(key)))
+    )
+    return ExitSet(
+        (
+            Completed(completes, value),
+            Halted(
+                complement_guard(completes),
+                UndeterminedRaiseEffect(
+                    blame=str(site),
+                    occurrence=key,
+                    producer_node_owner=f"UnknownAttribute:{dotted}",
+                ),
+                None,
+            ),
+        )
+    ).normalize()
 
 
 def _unknown_receiver_attribute(receiver, name: str, site):

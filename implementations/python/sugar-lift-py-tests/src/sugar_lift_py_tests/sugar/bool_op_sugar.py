@@ -74,6 +74,39 @@ def _is_undecided_call_result(value) -> bool:
     )
 
 
+def _is_undecided_symbolic_operand(value) -> bool:
+    """A bare symbolic term (no formal coordinate) of undecided runtime type.
+
+    ``storage_options or {}`` inside ``pandas.io.common.get_handle`` when the
+    manager derivation projects the frame with the caller's actual: nothing
+    names the operand's Python type, so ``bool(operand)`` may complete or
+    raise exactly as for an opaque call result.
+    """
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+    return (
+        type(value) is SymbolicValue
+        and value.formal_coordinate is None
+        and value.denotes_value()
+        and not value.runtime_type_is_decided()
+    )
+
+
+def _symbolic_boolop_selection(value, site):
+    """Truth-test a symbolic operand once, retaining it as the BoolOp result.
+
+    ``SymbolicValue.truth`` emits the Python truth relation (``py.truthy``);
+    the operand itself is what the stopping face returns.
+    """
+    from sugar_lift_py_tests.floor.boolop_truth_selection import (
+        BoolOpTruthSelection,
+    )
+
+    return value.truth(site).and_then(
+        lambda truth_value: Complete(BoolOpTruthSelection(value, truth_value))
+    )
+
+
 def _two_faced_call_truth(outcome, value, site):
     """``bool(opaque())`` may raise: the selection completes only under an atom.
 
@@ -216,6 +249,12 @@ def select_boolop_operand(
         )
     elif _is_undecided_call_result(value):
         tested = _two_faced_call_truth(value.boolop_truth(site), value, site)
+    elif _is_undecided_symbolic_operand(value):
+        # Same two-faced law: the selection completes only under
+        # ``python:truth.completes``; the complement is an undetermined raise.
+        tested = _two_faced_call_truth(
+            _symbolic_boolop_selection(value, site), value, site
+        )
     else:
         refuse_undecided_boolean_truth(value, site, op_kind)
         tested = value.boolop_truth(site)
