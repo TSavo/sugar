@@ -33,7 +33,7 @@ def _owners(exits):
     "source, callee",
     [
         ("def f(*a, **k):\n    h(*a, **k)\n    return 1\n", "h"),
-        ("def g(x):\n    return x\ndef f():\n    return g(*(1,))\n", "g"),
+        ("def g(*x):\n    return x\ndef f(*a):\n    return g(*a)\n", "g"),
         ("def f():\n    return print(*(1,))\n", "print"),
     ],
     ids=["unknown", "unframed-source", "builtin"],

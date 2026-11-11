@@ -401,7 +401,7 @@ class SpreadCallSugar(ConstructedTermSugar):
 
         framed = self._body_bearing_callsite(values, term, ctx)
         if framed is not None:
-            return Complete(framed)
+            return self._produce_framed(framed, ctx)
 
         callsite = CallSiteValue(
             target_name=self.callee_name or "python:call",
@@ -417,19 +417,41 @@ class SpreadCallSugar(ConstructedTermSugar):
             callsite, self.callee_name or "python:call", self.site
         )
 
+    def _produce_framed(self, framed, ctx) -> Outcome:
+        """A projected source body is reduced once, at the Call, as CallSiteSugar does.
+
+        Its halts are the call's own faces and its completion is retained on
+        the CallSiteValue, so a consumer never replays the body.
+        """
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if ctx is not None and not isinstance(ctx, ReduceContext):
+            raise SugarNotWritten(
+                owner="SpreadCallSugar._finish",
+                blame=self.site,
+                observed="source-visible call under a temporal-only reduction context",
+                requested="a ReduceContext that can record the call",
+                fix=(
+                    "keep the call loud until allocate carries a reduction "
+                    "context; do not invent the callee body"
+                ),
+            )
+        return framed.producer_outcome(
+            ctx, carrier_actuals=framed.bound_native_actuals_by_coordinate
+        )
+
     def _body_bearing_callsite(self, values, term, ctx) -> object | None:
         """Project ``*``/``**`` actuals onto an enrolled source frame when lawful.
 
-        Star operands stay bodyless (no typed vararg projection here). A
+        A star operand projects only when it is a decided ``TupleValue``. A
         double-star must be a constructed DictValue so bind_actuals can merge
         keys onto formals — the same law FunctionCallable uses for ``**``.
         """
         frame = self.source_call_frame
         if frame is None:
             return None
-        if any(role == "star" for role, _, _ in self.arguments):
-            return None
-        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor import CallSiteValue, TupleValue
         from sugar_lift_py_tests.source_call_frame import (
             SourceCallBindingGap,
             SourceVisibleCallFrameV1,
@@ -442,6 +464,14 @@ class SpreadCallSugar(ConstructedTermSugar):
         for (role, name, _), value in zip(self.arguments, values):
             if role == "positional":
                 positional.append(value)
+            elif role == "star":
+                # ``*t`` over a decided tuple is its elements, in order, at
+                # this position of the positional roster (Python's call-time
+                # iterable unpacking).  Any other operand keeps the call
+                # bodyless rather than inventing an arity.
+                if type(value) is not TupleValue:
+                    return None
+                positional.extend(value.elements)
             elif role == "keyword":
                 keywords.append((name, value))
             elif role == "double-star":
