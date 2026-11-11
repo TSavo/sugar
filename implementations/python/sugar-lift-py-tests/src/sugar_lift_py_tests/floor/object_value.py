@@ -356,6 +356,21 @@ class ObjectValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(class_value)
+        selected = next(
+            (method for method in reversed(self.methods) if method.name == name),
+            None,
+        )
+        if selected is not None and selected.descriptor_kind is None:
+            # An ordinary function on the receiver's class, read off the
+            # instance, is a bound method (a non-data descriptor: no instance
+            # field shadows it here, the field arm above already answered).
+            # Its call dispatches through ``call_method_value`` on this very
+            # receiver; nothing about the body is decided at the read.  A
+            # staticmethod/classmethod binds differently and stays loud below.
+            from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(BoundMethodValue(self, name))
         if name in self.deleted_instance_fields:
             # Authenticated delattr removed this instance field — read is
             # AttributeError with delete→read lineage, not an undecided gap.

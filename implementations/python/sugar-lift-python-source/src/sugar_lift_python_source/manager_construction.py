@@ -2210,10 +2210,76 @@ def construct_manager_behavior(
     call_site: object | None = None,
     session: SourceResolutionSession | None = None,
 ) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
-    """Construct one resolved callable through SourceFile -> Node -> Sugar only."""
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    """Construct one resolved callable through SourceFile -> Node -> Sugar only.
+
+    A top-level construction that refuses (a typed gap returned, or a
+    ``SugarNotWritten`` raised) is remembered on the session under every input
+    it reads, so the same use-site populated again under the same session
+    (the enumerate pass and the audit roll call) reads the same verdict
+    instead of reducing the constructor body a second time.  A construction
+    entered while another projection is in flight is never remembered: a
+    cycle verdict there belongs to that traversal.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
 
     session = session_or_new(session)
+    key = None
+    site_identity = None if call_site is None else _call_site_identity(call_site)
+    if not session.frame_active and (
+        site_identity is None or None not in site_identity
+    ):
+        key = (
+            resolved.cid,
+            graph.distribution_artifact_cid,
+            site_identity,
+            tuple(item.testimony.cid for item in actuals),
+            tuple((name, item.testimony.cid) for name, item in keyword_actuals),
+            session.dependency_seat_key(None),
+        )
+        refusal = session.construction_refusal_hit(key)
+        if isinstance(refusal, SugarNotWritten):
+            raise refusal
+        if refusal is not None:
+            return refusal
+    try:
+        result = _construct_manager_behavior_once(
+            resolved,
+            graph=graph,
+            actuals=actuals,
+            keyword_actuals=keyword_actuals,
+            call_site=call_site,
+            session=session,
+        )
+    except SugarNotWritten as refusal:
+        if key is not None:
+            session.remember_construction_refusal(key, refusal)
+        raise
+    if key is not None and isinstance(result, ManagerConstructionGapV1):
+        session.remember_construction_refusal(key, result)
+    return result
+
+
+def _call_site_identity(call_site: object) -> tuple:
+    fragment = getattr(call_site, "fragment", call_site)
+    span = getattr(fragment, "span", None)
+    return (
+        getattr(fragment, "source_cid", None),
+        getattr(span, "start", None),
+        getattr(span, "end", None),
+    )
+
+
+def _construct_manager_behavior_once(
+    resolved: ResolvedPythonObjectV1,
+    *,
+    graph: DependencyArtifactGraph,
+    actuals: tuple[ConstructedCallActualV1, ...],
+    keyword_actuals: tuple[tuple[str, ConstructedCallActualV1], ...] = (),
+    call_site: object | None = None,
+    session: SourceResolutionSession,
+) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "distribution artifact CID"

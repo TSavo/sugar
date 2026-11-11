@@ -2,36 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .bound_method_value import BoundMethodValue
 from .floor_value import FloorValue
 
 
 @dataclass(frozen=True)
-class BuiltinSuperMethodValue(FloorValue):
+class BuiltinSuperMethodValue(BoundMethodValue):
     """One selected method on an authenticated zero-argument ``super``."""
-
-    receiver: object
-    name: str
-
-    def callable_application_with(self, operation, ctx):
-        keyword_count = len(operation.keyword_names)
-        positional = (
-            operation.arguments[:-keyword_count]
-            if keyword_count
-            else operation.arguments
-        )
-        keywords = (
-            tuple(zip(operation.keyword_names, operation.arguments[-keyword_count:]))
-            if keyword_count
-            else ()
-        )
-        return self.receiver.call_method_value(
-            self.name,
-            positional,
-            owner="BuiltinSuperMethodValue",
-            blame=operation.site,
-            ctx=ctx,
-            keywords=keywords,
-        )
 
 
 @dataclass(frozen=True)
