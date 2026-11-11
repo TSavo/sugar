@@ -278,3 +278,60 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
     assert outcome.exits[0].effect.exception_name == exception
+
+
+# ---------------------------------------------------------------------------
+# A method call on a receiver the lifter does not have is the plain call to a
+# callee it does not have: two faces (#7756).  Before, it completed alone.
+# ---------------------------------------------------------------------------
+
+_UNKNOWN_RECEIVER = """\
+class Registry:
+    def lookup(self, key):
+        return key
+
+
+def test_lookup():
+    registry = {receiver}
+    value = registry.lookup(3)
+    assert 3 == 3
+"""
+
+
+def test_unknown_receiver_method_call_may_raise(tmp_path: Path) -> None:
+    """Solver twin (red until #7766): a receiver the lifter holds vs one it
+    does not.  The second call may raise, so the claim after it is refuted."""
+
+    _pair(
+        tmp_path,
+        "unknown-receiver",
+        _UNKNOWN_RECEIVER.format(receiver="Registry()"),
+        _UNKNOWN_RECEIVER.format(receiver="undefined_registry"),
+    )
+
+
+def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
+    """Unit check: the completion is guarded and the raise is a face."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+
+    assert isinstance(
+        _test_function_outcome(_UNKNOWN_RECEIVER.format(receiver="Registry()")),
+        Complete,
+    )
+    outcome = _test_function_outcome(
+        _UNKNOWN_RECEIVER.format(receiver="undefined_registry")
+    )
+    assert isinstance(outcome, ExitSet), outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed and halted
+    assert all(
+        "python:unknown_callee_call.completes" in repr(face.guard)
+        for face in completed
+    )
+    assert any(
+        isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner == "UnknownCallee:lookup"
+        for face in halted
+    )

@@ -31,7 +31,7 @@ def test_copy_of_a_consumer_built_contextvar_read_is_two_faced(tmp_path):
     exits = _exits(tmp_path, _PREFIX + "def f():\n    return v.get().copy()\n").exits
     (done,) = [face for face in exits if isinstance(face, Completed)]
     (halt,) = [face for face in exits if isinstance(face, Halted)]
-    assert "python:method_call.completes" in str(done.guard)
+    assert "python:unknown_callee_call.completes" in str(done.guard)
     (receiver,) = [
         value
         for value in done.value.record.statements[0].value.arg_values
@@ -39,7 +39,7 @@ def test_copy_of_a_consumer_built_contextvar_read_is_two_faced(tmp_path):
     ]
     assert receiver.variable_name == "v"
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.producer_node_owner == "UnprojectedMethodCall:copy"
+    assert halt.effect.producer_node_owner == "UnknownCallee:copy"
 
 
 def test_set_on_a_consumer_built_contextvar_mints_its_token(tmp_path):

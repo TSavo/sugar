@@ -77,7 +77,7 @@ def test_a_formal_operand_defers_too(tmp_path):
 def test_a_str_actual_selects_the_two_faces(tmp_path):
     carrier = _carrier(tmp_path, "def f(y):\n    return y.foo()\n")
     _completed, halted = _faces(_discharge(carrier, StringValue("a")))
-    assert _owners(halted) == ["UnprojectedMethodCall:foo"]
+    assert _owners(halted) == ["UnknownCallee:foo"]
 
 
 def test_a_list_actual_selects_the_container_law(tmp_path):
@@ -100,7 +100,7 @@ def test_a_contents_read_is_two_faced(tmp_path):
 def test_keyword_actuals_ride_the_carrier(tmp_path):
     carrier = _carrier(tmp_path, "def f(y):\n    return y.foo(1, k=2)\n")
     _completed, halted = _faces(_discharge(carrier, StringValue("a")))
-    assert _owners(halted) == ["UnprojectedMethodCall:foo"]
+    assert _owners(halted) == ["UnknownCallee:foo"]
 
 
 def test_a_helper_pop_on_an_empty_actual_may_raise(tmp_path):
