@@ -72,6 +72,9 @@ def member_equal(left, right):
     if type(left) in supported and type(right) in supported:
         if type(left) in (StringValue, BytesValue) and type(left) is type(right):
             return left.value == right.value
+        # ``None`` is a singleton: ``None is None``, so it is its own member.
+        if type(left) is NoneValue and type(right) is NoneValue:
+            return True
         # Nested sequence membership: ``[1] in [[1], [2]]`` is ground list
         # equality on each element.
         if type(left) in (ListValue, TupleValue) and type(left) is type(right):
