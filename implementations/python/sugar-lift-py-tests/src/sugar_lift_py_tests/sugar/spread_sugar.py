@@ -347,16 +347,19 @@ class SpreadCallSugar(ConstructedTermSugar):
         return self.callee.desugar(ctx).and_then(after_callee)
 
     def _finish(self, callee_value, values, ctx=None) -> Outcome:
-        from sugar_lift_py_tests.floor import BuiltinSuperMethodValue
+        from sugar_lift_py_tests.floor import BoundMethodValue
 
-        if isinstance(callee_value, BuiltinSuperMethodValue):
+        # A bound method (a source method read off its receiver, or one
+        # selected through zero-arg ``super``) is called through the
+        # receiver's own method dispatch, as ``MethodCallSugar`` does.
+        if isinstance(callee_value, BoundMethodValue):
             if any(role == "star" for role, _, _ in self.arguments):
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
                     owner="SpreadCallSugar._finish",
                     blame=self.site,
-                    observed="starred positional actual to selected super method",
+                    observed="starred positional actual to a bound method",
                     requested="an exact positional roster",
                     fix="project the starred operand exactly or keep the call loud",
                 )

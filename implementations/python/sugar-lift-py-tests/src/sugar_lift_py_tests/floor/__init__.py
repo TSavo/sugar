@@ -20,6 +20,7 @@ from .builtin_exception_class_value import BuiltinExceptionClassValue
 from .builtin_object_class_value import BuiltinObjectClassValue
 from .builtin_dict_class_value import BuiltinDictClassValue
 from .builtin_semantic_callable import BuiltinSemanticCallable
+from .bound_method_value import BoundMethodValue
 from .builtin_super_value import BuiltinSuperMethodValue, BuiltinSuperValue
 from .call_site_value import CallSiteValue
 from .class_definition_value import (
@@ -125,6 +126,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BuiltinDictClassValue,
     BuiltinSemanticCallable,
     BuiltinSuperValue,
+    BoundMethodValue,
     BuiltinSuperMethodValue,
     CallSiteValue,
     ClassValue,
@@ -217,6 +219,7 @@ __all__ = [
     "BuiltinDictClassValue",
     "BuiltinSemanticCallable",
     "BuiltinSuperValue",
+    "BoundMethodValue",
     "BuiltinSuperMethodValue",
     "CallSiteValue",
     "CurriedLoopBody",

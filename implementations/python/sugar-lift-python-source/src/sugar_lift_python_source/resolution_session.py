@@ -329,6 +329,7 @@ class SourceResolutionSession:
         "import_value_rosters",
         "lexical_passes",
         "dependency_graphs",
+        "construction_refusals",
     )
 
     def __init__(
@@ -403,6 +404,18 @@ class SourceResolutionSession:
         # context) — process-resident top-level cache remains legal; this
         # table deletes the path-local re-ask disease.
         self.dependency_graphs: dict[str, Any] = DependencySeats()
+        # Top-level manager constructions that REFUSED, keyed by everything
+        # the construction reads: the resolved definition, its artifact, the
+        # call site, each actual's constructed-value testimony, and the
+        # dependency seats.  A file's with-sites are populated twice under one
+        # walk session (the enumerate pass and the audit roll call); a refusal
+        # is a closed verdict, so the second pass reads it instead of reducing
+        # the same constructor body again.  Only refusals are kept: a
+        # constructed behavior holds live nodes of the open that built it.
+        # LRU-capped like ``frame_results``.
+        self.construction_refusals: collections.OrderedDict[tuple, Any] = (
+            collections.OrderedDict()
+        )
 
     # -- dependency seats -------------------------------------------------
 
@@ -505,6 +518,25 @@ class SourceResolutionSession:
             for dead in list(self.frame_holds.keys()):
                 if dead not in self.frame_results:
                     del self.frame_holds[dead]
+
+    # -- manager construction refusal memo --------------------------------
+
+    def construction_refusal_hit(self, key: tuple) -> Any | None:
+        if not self.enabled:
+            return None
+        hit = self.construction_refusals.get(key)
+        if hit is not None:
+            self.construction_refusals.move_to_end(key)
+        return hit
+
+    def remember_construction_refusal(self, key: tuple, refusal: Any) -> None:
+        if not self.enabled:
+            return
+        self.construction_refusals[key] = refusal
+        self.construction_refusals.move_to_end(key)
+        limit = _frame_memo_limit()
+        while len(self.construction_refusals) > limit:
+            self.construction_refusals.popitem(last=False)
 
     # -- module materialize memo (shared across definitions in one module) --
 
