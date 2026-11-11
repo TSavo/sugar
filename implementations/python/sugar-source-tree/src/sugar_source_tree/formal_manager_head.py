@@ -24,7 +24,7 @@ def formal_manager_head(source: str, start_line: int, start_col: int):
     if found is None:
         return None
     function, expr = found
-    root = _chain_root(expr)
+    root = _chain_root(expr, operands_admitted=True)
     if root is None:
         return None
     arguments = function.args
@@ -38,28 +38,71 @@ def formal_manager_head(source: str, start_line: int, start_col: int):
         )
     }
     if root not in parameters:
-        return None
+        root = _parameter_alias(function, root, parameters, expr)
+        if root is None:
+            return None
     if any(name_bound_anywhere(statement, root) for statement in function.body):
         return None
     return ast.unparse(expr)
 
 
-def _chain_root(expr):
+def _parameter_alias(function, name, parameters, expr):
+    """The parameter a local names when it is only ever ``name = <parameter>``.
+
+    ``parser = all_parsers`` as one top-level statement of the function, the
+    local's only binding anywhere in it, and lexically before the ``with``:
+    top-level statements run in order, so at the ``with`` the local holds the
+    very object the caller passed for that parameter.
+    """
+    binders = [
+        statement
+        for statement in function.body
+        if name_bound_anywhere(statement, name)
+    ]
+    if len(binders) != 1:
+        return None
+    statement = binders[0]
+    if not (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == name
+        and isinstance(statement.value, ast.Name)
+        and statement.value.id in parameters
+    ):
+        return None
+    if statement.end_lineno >= expr.lineno:
+        return None
+    return statement.value.id
+
+
+def _chain_root(expr, *, operands_admitted=False):
+    """The chain's root name.
+
+    Calls inside the chain take constant arguments only.  The OUTERMOST call
+    -- the one that produces the manager -- may take any operands: they are
+    evaluated as ordinary expressions between selecting the callee and
+    calling it (``FormalSelectedManagerHeadSugar``), so their effects are kept.
+    """
     node = expr
     while True:
         if isinstance(node, ast.Name):
             return node.id
         if isinstance(node, ast.Attribute):
             node = node.value
+            operands_admitted = False
             continue
         if isinstance(node, ast.Call):
-            if not all(isinstance(arg, ast.Constant) for arg in node.args):
-                return None
-            if not all(
-                keyword.arg is not None and isinstance(keyword.value, ast.Constant)
-                for keyword in node.keywords
-            ):
-                return None
+            if not operands_admitted:
+                if not all(isinstance(arg, ast.Constant) for arg in node.args):
+                    return None
+                if not all(
+                    keyword.arg is not None
+                    and isinstance(keyword.value, ast.Constant)
+                    for keyword in node.keywords
+                ):
+                    return None
+            operands_admitted = False
             node = node.func
             continue
         return None

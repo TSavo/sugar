@@ -9499,6 +9499,30 @@ class With(Statement):
             raise panic
         return resolution
 
+    @staticmethod
+    def _formal_head_with_operands(head_sugar, expr):
+        """A formal-selected head that also evaluates its call's operands.
+
+        Only the outermost call of the head may carry non-constant operands
+        (``formal_manager_head``); constants evaluate without effect, so a
+        head whose operands are all constants keeps its single opaque face.
+        """
+        from dataclasses import replace
+
+        if expr.kind == "OpaqueObjectStateV1":
+            expr = expr.base
+        if expr.kind != "Call":
+            return head_sugar
+        operands = (
+            *expr.args,
+            *(keyword.value for keyword in expr.keywords),
+        )
+        if all(operand.kind == "Constant" for operand in operands):
+            return head_sugar
+        return replace(
+            head_sugar, operands=tuple(operand.sugar() for operand in operands)
+        )
+
     def _selected_manager_sugar(self, expr):
         """``with ctx:`` where the arms of an ``if`` each bound ``ctx = cm()``.
 
@@ -9807,12 +9831,19 @@ class With(Statement):
                     f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
                 head_sugar = getattr(resolved_ref.protocol, "head_sugar", None)
+                manager_head = (
+                    head_sugar() if callable(head_sugar) else item.context_expr.sugar()
+                )
+                from sugar_lift_py_tests.floor.formal_selected_manager import (
+                    FormalSelectedManagerProtocol,
+                )
+
+                if isinstance(resolved_ref.protocol, FormalSelectedManagerProtocol):
+                    manager_head = self._formal_head_with_operands(
+                        manager_head, item.context_expr
+                    )
                 return WithLanguageOwnedResourceSugar(
-                    manager=(
-                        head_sugar()
-                        if callable(head_sugar)
-                        else item.context_expr.sugar()
-                    ),
+                    manager=manager_head,
                     protocol=resolved_ref.protocol,
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),
