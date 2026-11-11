@@ -424,6 +424,20 @@ def test_neither_outcome_face_disappears(kind: str) -> None:
 def test_single_arm_elements_keep_the_unfactored_shape(kind: str) -> None:
     """No conditional is invented where the element had one completed face."""
     exits = _spread([_SingleFacedElement(i) for i in range(3)], kind)
+    if kind == "call":
+        # The elements add no conditional; the unprojected call itself is
+        # two-faced (#7585): it completes only under its own atom.
+        completed = [e for e in exits.exits if isinstance(e, Completed)]
+        halted = [e for e in exits.exits if isinstance(e, Halted)]
+        assert len(completed) == 1 and len(halted) == 1
+        exit_ = completed[0]
+        assert "python:spread_call.completes" in str(exit_.guard)
+        assert halted[0].effect.producer_node_owner.startswith(
+            "UnprojectedSpreadCall:"
+        )
+        term = exit_.value.to_term(owner="single")
+        assert "py.conditional" not in repr(term)
+        return
     assert len(exits.exits) == 1
     exit_ = exits.exits[0]
     assert isinstance(exit_, Completed)
