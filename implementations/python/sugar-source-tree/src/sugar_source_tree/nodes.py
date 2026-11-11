@@ -8884,6 +8884,9 @@ class With(Statement):
         from sugar_lift_py_tests.floor.language_owned_c_manager import (
             LanguageOwnedCManagerProtocol,
         )
+        from sugar_lift_py_tests.floor.formal_selected_manager import (
+            FormalSelectedManagerProtocol,
+        )
         from sugar_lift_py_tests.ir import PrimitiveSort
         from sugar_lift_py_tests.outcome import Completed
         from .panic import UnsupportedContextManagerSemantics
@@ -8982,7 +8985,10 @@ class With(Statement):
                         LanguageOwnedCCallFacesCompletionV1,
                     )
                     and isinstance(resolution, LanguageOwnedContextManagerRefV1)
-                    and isinstance(resolution.protocol, LanguageOwnedCManagerProtocol)
+                    and isinstance(
+                        resolution.protocol,
+                        (LanguageOwnedCManagerProtocol, FormalSelectedManagerProtocol),
+                    )
                 )
             )
             and semantics.enter.projection == "enter-result"
@@ -9000,7 +9006,10 @@ class With(Statement):
                         LanguageOwnedCCallFacesCompletionV1,
                     )
                     and isinstance(resolution, LanguageOwnedContextManagerRefV1)
-                    and isinstance(resolution.protocol, LanguageOwnedCManagerProtocol)
+                    and isinstance(
+                        resolution.protocol,
+                        (LanguageOwnedCManagerProtocol, FormalSelectedManagerProtocol),
+                    )
                 )
             )
             and isinstance(
@@ -9303,8 +9312,13 @@ class With(Statement):
                 enter_slot = (
                     f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
+                head_sugar = getattr(resolved_ref.protocol, "head_sugar", None)
                 return WithLanguageOwnedResourceSugar(
-                    manager=item.context_expr.sugar(),
+                    manager=(
+                        head_sugar()
+                        if callable(head_sugar)
+                        else item.context_expr.sugar()
+                    ),
                     protocol=resolved_ref.protocol,
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),

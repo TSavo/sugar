@@ -989,17 +989,19 @@ def test_discrimination_outer_exit_is_not_skipped_on_enter_halt():
         assert outer_exit == []
 
 
-def test_fixture_supplied_formal_manager_stays_typed_loud_without_actual(
+def test_fixture_supplied_formal_manager_is_opaque_without_actual(
     tmp_path: Path,
 ):
-    """Fixture formal as manager: no local acquisition call → typed gap.
+    """Fixture formal as manager: no local acquisition call → opaque manager.
 
-    The formal coordinate still mints a fixture-supplied obligation.  Construction
-    of enter/exit requires sealed actual-value testimony the frame does not
-    contain, so With refuses rather than inventing a local manager.
+    The formal coordinate still mints a fixture-supplied obligation.  No local
+    acquisition is projected, and the frame holds no actual value, so the
+    manager is the opaque formal-selected manager keyed on the With's site:
+    construction, ``__enter__`` and ``__exit__`` are each two-faced and
+    suppression is the undecided truth of the exit result.  It neither
+    invents a concrete local manager nor completes totally.
     """
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.panic import SourceTreePanic
 
     # Obligation minting uses a body-free formal frame (no With construction).
     obligation_src = tmp_path / "formal_only.py"
@@ -1032,12 +1034,9 @@ def test_fixture_supplied_formal_manager_stays_typed_loud_without_actual(
         path=path,
         session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
-    assert context.source_derived_contract_refs == {}
+    refs = list(context.source_derived_contract_refs.values())
+    assert [ref.target_symbol for ref in refs] == ["python:formal:resource"]
     assert _projected_manager_call_uses(tree) == {}
-
-    with_node = next(node for node in tree.nodes() if node.kind == "With")
-    with pytest.raises(SourceTreePanic):
-        with_node.sugar()
 
 
 def test_undecided_rebinding_blocks_single_assigned_resource(tmp_path: Path):
