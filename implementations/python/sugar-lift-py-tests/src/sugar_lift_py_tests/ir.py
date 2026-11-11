@@ -627,6 +627,84 @@ def _key_contains_cycle(key: object) -> bool:
     return False
 
 
+def _memoized_formula_identity(formula: "Formula"):
+    """The retained (content key, hash) of this exact live object, or None."""
+    fid = id(formula)
+    entry = _FORMULA_CONTENT_KEY.get(fid)
+    if entry is None:
+        return None
+    wr, key, hashed = entry
+    if wr() is formula:
+        return key, hashed
+    if wr() is None:
+        _FORMULA_CONTENT_KEY.pop(fid, None)
+    return None
+
+
+def _formula_content_identity(formula: "Formula") -> tuple[tuple, int, bool]:
+    """(content key, hash, carries-a-cycle) built over memoized children.
+
+    The same key ``_formula_content_key`` builds, but a child whose identity
+    is already retained contributes that retained key and hash instead of
+    being walked again.  A guard grown by conjunction (``a ∧ b ∧ c ∧ ...``)
+    used to re-walk -- and re-hash, since a tuple's hash is not cached -- the
+    whole DAG on every extension: quadratic in the chain.  The hash is
+    structural over child hashes, so equal keys still hash equal.  A retained
+    child is never cyclic (cyclic identities are not retained), so the cycle
+    flag is exact without walking the finished key.
+    """
+    memo: dict[int, tuple[tuple, int]] = {}
+    active: set[int] = set()
+    saw_cycle = False
+    stack: list[tuple[Formula, bool]] = [(formula, False)]
+    while stack:
+        node, expanded = stack.pop()
+        marker = id(node)
+        if marker in memo:
+            continue
+        if not expanded:
+            if marker in active:
+                cycle = ("cycle", marker)
+                memo[marker] = (cycle, hash(cycle))
+                saw_cycle = True
+                continue
+            if node is not formula:
+                retained = _memoized_formula_identity(node)
+                if retained is not None:
+                    memo[marker] = retained
+                    continue
+        if expanded:
+            active.discard(marker)
+            if isinstance(node, _Atomic):
+                key = (
+                    "atomic",
+                    node.name,
+                    tuple(_term_content_key(t) for t in node.args),
+                )
+                memo[marker] = (key, hash(key))
+            elif isinstance(node, _Connective):
+                children = tuple(memo[id(child)] for child in node.operands)
+                memo[marker] = (
+                    ("connective", node.kind, tuple(c[0] for c in children)),
+                    hash(("connective", node.kind, tuple(c[1] for c in children))),
+                )
+            elif isinstance(node, _Quantifier):
+                body_key, body_hash = memo[id(node.body)]
+                memo[marker] = (
+                    ("quantifier", node.kind, node.name, repr(node.sort), body_key),
+                    hash(("quantifier", node.kind, node.name, repr(node.sort), body_hash)),
+                )
+            continue
+        active.add(marker)
+        stack.append((node, True))
+        if isinstance(node, _Connective):
+            stack.extend((child, False) for child in reversed(node.operands))
+        elif isinstance(node, _Quantifier):
+            stack.append((node.body, False))
+    key, hashed = memo[id(formula)]
+    return key, hashed, saw_cycle
+
+
 def _formula_identity(formula: "Formula") -> tuple[tuple, int]:
     """Authenticate one immutable formula object once: (content key, hash).
 
@@ -634,17 +712,12 @@ def _formula_identity(formula: "Formula") -> tuple[tuple, int]:
     can never disagree about what a formula is.
     """
     fid = id(formula)
-    entry = _FORMULA_CONTENT_KEY.get(fid)
-    if entry is not None:
-        wr, key, hashed = entry
-        if wr() is formula:
-            return key, hashed
-        if wr() is None:
-            _FORMULA_CONTENT_KEY.pop(fid, None)
+    retained = _memoized_formula_identity(formula)
+    if retained is not None:
+        return retained
 
-    key = _formula_content_key(formula)
-    hashed = hash(key)
-    if _key_contains_cycle(key):
+    key, hashed, cyclic = _formula_content_identity(formula)
+    if cyclic:
         # Occurrence-derived identity: correct for this live object, unsafe to
         # retain. Recompute forever rather than cache a lie.
         return key, hashed
@@ -787,7 +860,8 @@ class _Atomic:
             return False
         if self is other:
             return True
-        return _formula_identity(self)[0] == _formula_identity(other)[0]
+        mine, theirs = _formula_identity(self), _formula_identity(other)
+        return mine[1] == theirs[1] and mine[0] == theirs[0]
 
 
 @dataclass(frozen=True)
@@ -803,7 +877,8 @@ class _Connective:
             return False
         if self is other:
             return True
-        return _formula_identity(self)[0] == _formula_identity(other)[0]
+        mine, theirs = _formula_identity(self), _formula_identity(other)
+        return mine[1] == theirs[1] and mine[0] == theirs[0]
 
 
 @dataclass(frozen=True)
@@ -821,7 +896,8 @@ class _Quantifier:
             return False
         if self is other:
             return True
-        return _formula_identity(self)[0] == _formula_identity(other)[0]
+        mine, theirs = _formula_identity(self), _formula_identity(other)
+        return mine[1] == theirs[1] and mine[0] == theirs[0]
 
 
 Formula = Union[_Atomic, _Connective, _Quantifier]
