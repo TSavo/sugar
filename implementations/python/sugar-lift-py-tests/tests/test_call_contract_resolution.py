@@ -570,13 +570,29 @@ def test_import_alias_has_no_parallel_install_source_resolver(monkeypatch):
     assert not hasattr(value, "resolve_value")
 
 
-def test_parser_backed_imported_call_consumes_prebound_contract_ref(tmp_path):
+def test_an_imported_call_has_one_form_whether_or_not_a_contract_answers(tmp_path):
+    """Step 6, as amended 2026-11-11: a call stands as its coordinate with an
+    edge carrying its target symbol, bound or not; a contract is applied in one
+    place, step 9. (This test pinned the opposite until then: the kit
+    substituting the bound contract's return term into the consumer's value.)
+
+    Twin: the same call, once answered by a contract and once by a gap that
+    names a target nothing answers. The term and the edge are identical. The
+    edge carries the DEMAND's symbol, what this source imported as written
+    (``python:producer.pair``), never the answering contract's
+    (``python:pandas.fixture.pair``), and names no target contract.
+    """
     from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.call_contract_resolution import (
+        CallContractResolutionGapKindV1,
+        CallContractResolutionGapV1,
+    )
     from sugar_lift_py_tests.context_manager_resolution import (
         ResolvedContractRefsV1,
         SourceFragmentCoordinateV1,
         TreeConstructionContextV1,
     )
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_source_tree.nodes import Call
     from sugar_source_tree.tree import SourceFile
 
@@ -587,31 +603,54 @@ def test_parser_backed_imported_call_consumes_prebound_contract_ref(tmp_path):
         for row in lift_rpc._call_contract_demand_rows(tmp_path)
         if row["kind"] == "call-contract-demand"
     )
+    assert row["targetSymbol"] == "python:producer.pair"
     coordinate = SourceFragmentCoordinateV1.decode(row["useSite"])
-    reference = replace(
+    answered = replace(
         _reference(),
         use_site=coordinate,
         import_binding_cid=row["importBindingCid"],
     )
-    table = ResolvedCallContractRefsV1(
-        CATALOG_CID,
-        TABLE_CID,
-        MappingProxyType({coordinate: reference}),
+    unanswered = CallContractResolutionGapV1(
+        demand_cid=DEMAND_CID,
+        use_site=coordinate,
+        import_binding_cid=row["importBindingCid"],
+        target_symbol=row["targetSymbol"],
+        kind=CallContractResolutionGapKindV1.TARGET_NOT_IN_CORPUS,
+        candidate_member_cids=(),
     )
-    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
-    tree = SourceFile(
-        path_source(str(consumer)),
-        construction_context=TreeConstructionContextV1(
-            cm_refs, call_contract_refs=table, workspace_root=str(tmp_path)
-        ),
-    )
-    call = next(node for node in tree.nodes() if isinstance(node, Call))
 
-    outcome = call.sugar().desugar(None)
+    def reduced(resolution):
+        table = ResolvedCallContractRefsV1(
+            CATALOG_CID,
+            TABLE_CID,
+            MappingProxyType({coordinate: resolution}),
+            demand_target_symbols=MappingProxyType({coordinate: row["targetSymbol"]}),
+        )
+        cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
+        tree = SourceFile(
+            path_source(str(consumer)),
+            construction_context=TreeConstructionContextV1(
+                cm_refs, call_contract_refs=table, workspace_root=str(tmp_path)
+            ),
+        )
+        call = next(node for node in tree.nodes() if isinstance(node, Call))
+        outcome = call.sugar().desugar(None)
+        assert isinstance(outcome, Complete)
+        assert isinstance(outcome.value, CallSiteValue)
+        return (
+            outcome.value.to_term(owner="test"),
+            outcome.value.edge_contribution("caller"),
+        )
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.contract_cid == CID
-    assert outcome.value.callsites()[0].target_contract_cid == CID
+    answered_term, answered_edges = reduced(answered)
+    unanswered_term, unanswered_edges = reduced(unanswered)
+
+    assert answered_term == unanswered_term
+    assert answered_term.name == "call:pair"
+    assert answered_edges == unanswered_edges
+    (edge,) = answered_edges
+    assert edge["targetSymbol"] == "python:producer.pair"
+    assert "targetContractCid" not in edge
 
 
 def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):

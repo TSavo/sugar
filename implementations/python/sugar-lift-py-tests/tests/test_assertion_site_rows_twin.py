@@ -169,3 +169,34 @@ def test_a_fact_held_before_a_later_halt_is_not_refuted(tmp_path: Path) -> None:
     halted arm had already passed."""
     rows = _assertion_rows(tmp_path, "def f():\n    assert 1 == 1\n    assert 2 == 3\n")
     assert rows == [(3, _FALSE)]
+
+
+def _refused_row(seat_state: str) -> dict:
+    return {
+        "property": "consistency:test_double",
+        "status": "refused",
+        "verification": {
+            "solverInvocations": [
+                {"solver": "z3", "seatState": seat_state},
+                {"solver": "cvc5", "seatState": seat_state},
+            ]
+        },
+    }
+
+
+def test_a_solver_that_could_not_start_is_an_error_not_open() -> None:
+    """``open`` is a verdict about the claim. Twin: the same refused row, with
+    the seats' state the one thing changed. A seat that ran and could not
+    decide leaves the claim open; a seat that could not be started reached no
+    verdict at all, and reading that as ``open`` would let a broken machine
+    pass every twin that expects ``open``."""
+    from sugar_lift_py_tests.witness_harness import (
+        WitnessPipelineError,
+        prove_verdict,
+    )
+
+    assert prove_verdict({"rows": [_refused_row("inability")]}) == "open"
+    with pytest.raises(WitnessPipelineError) as failure:
+        prove_verdict({"rows": [_refused_row("unavailable")]})
+    assert "solver seat unavailable" in str(failure.value)
+    assert "cvc5, z3" in str(failure.value)

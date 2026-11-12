@@ -349,9 +349,7 @@ class CallSiteValue(FloorValue):
             # An authenticated exception instance has a decided runtime type;
             # its unprojected members (``__context__``) are not opaque-call
             # lookups and stay a named third value.
-            return self.undecided_attribute(
-                name, site, owner="CallSiteValue.attribute"
-            )
+            return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
         return _opaque_attribute_faces(self, name, site)
 
     def _identity(self) -> tuple:
@@ -1308,11 +1306,17 @@ class CallSiteValue(FloorValue):
     def edge_contribution(self, source_contract):
         # Project one call-edge row: the coordinates this value already carries.
         # Seal/link fields (targetContract, cids) stay absent -- never faked.
+        #
+        # The symbol has ONE speller, this value, and one source, the import
+        # door's receipt (#7762). A call with no such symbol names no target
+        # an imported proof could answer, so it projects no edge: there is no
+        # `call:<name>` spelling to fall back on.
+        if self.authenticated_target_symbol is None:
+            return ()
         edge = {
             "kind": "call-edge",
             "sourceContract": source_contract,
-            "targetSymbol": self.authenticated_target_symbol
-            or f"call:{self.target_name}",
+            "targetSymbol": self.authenticated_target_symbol,
         }
         if self.target_contract_cid is not None:
             edge["targetContractCid"] = self.target_contract_cid
@@ -2128,9 +2132,7 @@ def _opaque_attribute_faces(receiver, name, site):
     )
 
     if site is None:
-        return receiver.undecided_attribute(
-            name, site, owner="CallSiteValue.attribute"
-        )
+        return receiver.undecided_attribute(name, site, owner="CallSiteValue.attribute")
     receiver_term = receiver.to_term(owner=str(site))
     member = CallSiteValue(
         target_name=name,

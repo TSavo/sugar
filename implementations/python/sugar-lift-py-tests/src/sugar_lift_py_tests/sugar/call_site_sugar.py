@@ -237,6 +237,12 @@ class CallSiteSugar(ConstructedTermSugar):
     keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
+    # The import door's receipt for this call when nothing answers its symbol
+    # (#7762): the linker's gap is "target not in corpus" or "no authenticated
+    # contract", and it names ONE definite target, `python:<module>.<name>`.
+    # The call is not bridged: it stands as its coordinate, and its edge
+    # carries this symbol, unbound. The symbol has one source, the receipt.
+    import_target_symbol: str | None = dataclass_field(default=None, compare=False)
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
@@ -850,6 +856,7 @@ class CallSiteSugar(ConstructedTermSugar):
             keyword_names=tuple(name for name, _ in kw_values),
             site=self.site,
             call_occurrence=self.call_occurrence,
+            authenticated_target_symbol=self.import_target_symbol,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
             source_call_frame_cid=source_frame_cid,
