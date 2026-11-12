@@ -234,18 +234,12 @@ def dispatch_method_call(
             fix="preserve receiver identity or keep authenticated dispatch loud",
         )
     from sugar_lift_py_tests.floor import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor, str_const
 
-    owner = str(site)
-    kwarg_terms = [
-        ctor("py.kwarg", [str_const(key), value.to_term(owner=owner)])
-        for key, value in kw_values
-    ]
-    term = ctor(
-        f"call:{name}",
-        [receiver.to_term(owner=owner)]
-        + [value.to_term(owner=owner) for value in positional]
-        + kwarg_terms,
+    term = CallSiteValue.coordinate_term(
+        name,
+        (receiver, *positional),
+        kw_values,
+        owner=str(site),
         symbol_kind="method-coordinate",
     )
     callsite = CallSiteValue(

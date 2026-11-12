@@ -72,7 +72,6 @@ class FunctionCallable(FloorValue):
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete, complete_value
 
         if source_arg_values is None:
@@ -410,9 +409,10 @@ class FunctionCallable(FloorValue):
             )
         assert bound_values is not None
         if term is None:
-            term = ctor(
-                f"call:{self.name}",
-                [value.to_term(owner=str(site)) for value in source_arg_values],
+            term = CallSiteValue.coordinate_term(
+                self.name,
+                source_arg_values,
+                owner=str(site),
                 symbol_kind="contract-target",
             )
         body = self.body

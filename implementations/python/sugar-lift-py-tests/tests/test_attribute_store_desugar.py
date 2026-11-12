@@ -558,7 +558,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
 
     # A getter spelling is neither store authority nor permission to invent a
     # readable value: its deliberately unconstructed body remains loud.
-    with pytest.raises(ConstructionPanic, match="CallSiteValue.force_floor"):
+    with pytest.raises(ConstructionPanic, match="GetterOnlyIndex.name has no source frame"):
         getter_only.attribute("name", store.site)
     assert isinstance(getter_halt, Halted)
     assert not isinstance(getter_halt, Completed)

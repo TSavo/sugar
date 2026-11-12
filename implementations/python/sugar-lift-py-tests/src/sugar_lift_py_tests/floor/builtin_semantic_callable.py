@@ -130,7 +130,6 @@ class BuiltinSemanticCallable(FloorValue):
         rather than aborting the whole manager factory membrane.
         """
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
 
         args = operation.arguments
@@ -140,10 +139,8 @@ class BuiltinSemanticCallable(FloorValue):
                 target_name=name,
                 arg_values=args,
                 parameters=(),
-                term=ctor(
-                    f"call:{name}",
-                    [value.to_term(owner=owner) for value in args],
-                    symbol_kind="builtin",
+                term=CallSiteValue.coordinate_term(
+                    name, args, owner=owner, symbol_kind="builtin"
                 ),
                 body=None,
                 site=operation.site,

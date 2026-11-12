@@ -667,16 +667,13 @@ class CallSiteSugar(ConstructedTermSugar):
                     ctx,
                 )
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
 
         owner = str(self.site)
-        kwarg_terms = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-            for name, value in kw_values
-        ]
-        term = ctor(
-            f"call:{self.target_name}",
-            [value.to_term(owner=owner) for value in positional] + kwarg_terms,
+        term = CallSiteValue.coordinate_term(
+            self.target_name,
+            positional,
+            kw_values,
+            owner=owner,
             symbol_kind=(
                 "builtin" if hasattr(builtins, self.target_name) else "coordinate"
             ),

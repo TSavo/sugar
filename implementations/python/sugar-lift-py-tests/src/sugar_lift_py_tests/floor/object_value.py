@@ -837,15 +837,33 @@ def bind_method_call(
             fix=f"add method binding sugar for `{target_name}`",
         )
     selected_frame = required_frame or method.source_call_frame
-    if selected_frame is None and (
-        keywords or len(arguments) != len(method.parameters) - 1
-    ):
-        refuse(
-            owner=owner,
-            blame=blame,
-            observed=target_name,
-            requested="arguments matching the constructor-bound method",
-            fix="bind through the authenticated method frame or keep loud",
+    if selected_frame is None:
+        if keywords or len(arguments) != len(method.parameters) - 1:
+            refuse(
+                owner=owner,
+                blame=blame,
+                observed=target_name,
+                requested="arguments matching the constructor-bound method",
+                fix="bind through the authenticated method frame or keep loud",
+            )
+        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import construction_panic
+
+        # Only a source frame binds a call's actuals.  A method its class bound
+        # and did not construct has none, so its call refuses here, by name.
+        construction_panic(
+            ConstructionGap(
+                owner=owner,
+                blame=str(blame),
+                observed=(
+                    f"{target_name} has no source frame "
+                    f"(body {type(method.body).__name__})"
+                ),
+                requested="the method's source frame, which binds the call's actuals",
+                fix="construct the method where it is run, or keep the call loud",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.PROJECTION,
+            )
         )
     return bind_call(
         target_name,
@@ -885,35 +903,31 @@ def bind_call(
     The frame's own ``bind_actuals`` puts every actual in its formal slot;
     the result is the ``CallSiteValue`` that ``producer_outcome`` applies.
     A method call (receiver first) and a class call (the class statement's
-    constructor frame) both bind here.  With no frame the actuals are taken
-    as already in formal order.
+    constructor frame) both bind here.  The frame is the only binder: a call
+    with no source frame is refused by its caller before it gets here.
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
-    arg_values = tuple(arguments)
-    bound_source_actuals = None
-    if frame is not None:
-        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-        try:
-            bound_source_actuals = frame.bind_actuals(arg_values, keywords, ctx)
-        except SourceCallBindingGap as exc:
-            refuse(
-                owner=owner,
-                blame=blame,
-                observed=str(exc),
-                requested="actuals matching authenticated source signature",
-                fix="preserve exact defaults/variadics or keep the call loud",
-            )
-        arg_values = bound_source_actuals.actuals
+    try:
+        bound_source_actuals = frame.bind_actuals(tuple(arguments), keywords, ctx)
+    except SourceCallBindingGap as exc:
+        refuse(
+            owner=owner,
+            blame=blame,
+            observed=str(exc),
+            requested="actuals matching authenticated source signature",
+            fix="preserve exact defaults/variadics or keep the call loud",
+        )
+    arg_values = bound_source_actuals.actuals
     return CallSiteValue(
         target_name=target_name,
         arg_values=arg_values,
         parameters=parameters,
-        term=ctor(
-            f"call:{target_name}",
-            [value.to_term(owner=f"{owner} call argument") for value in arg_values],
+        term=CallSiteValue.coordinate_term(
+            target_name,
+            arg_values,
+            owner=f"{owner} call argument",
             symbol_kind="contract-target",
         ),
         body=body,
@@ -922,8 +936,7 @@ def bind_call(
         formal_coordinate_cids=formal_coordinate_cids,
         bound_native_actuals_by_coordinate=(
             bound_source_actuals.by_native_formal_coordinate
-            if bound_source_actuals is not None
-            and bound_source_actuals.native_formal_coordinates
+            if bound_source_actuals.native_formal_coordinates
             else None
         ),
         bound_source_actuals=bound_source_actuals,

@@ -1088,20 +1088,44 @@ class CallSiteValue(FloorValue):
             return None
         return eq(self.result_term(), rhs)
 
+    @staticmethod
+    def coordinate_term(
+        target_name: str,
+        positional,
+        keywords=(),
+        *,
+        owner: str,
+        symbol_kind: str,
+    ) -> Term:
+        """THE spelling of a call: ``call:<target>(<actuals>, py.kwarg(k, v)...)``.
+
+        Every ``CallSiteValue`` is built with the term this returns; nothing
+        else writes the ``call:`` head of a call's value.  ``positional`` is
+        every positional actual in order (a method call's receiver first) and
+        ``keywords`` the ``(name, value)`` pairs still passed by keyword.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            f"call:{target_name}",
+            [value.to_term(owner=owner) for value in positional]
+            + [
+                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+                for name, value in keywords
+            ],
+            symbol_kind=symbol_kind,
+        )
+
     def linear_method_call(self, method_name: str, args: tuple, site):
         """Name the next link in a timeless receiver-method rewrite."""
-        from sugar_lift_py_tests.ir import ctor
-
         return CallSiteValue(
             target_name=method_name,
             arg_values=(self, *args),
             parameters=(),
-            term=ctor(
-                f"call:{method_name}",
-                [
-                    self.to_term(owner=str(site)),
-                    *(arg.to_term(owner=str(site)) for arg in args),
-                ],
+            term=CallSiteValue.coordinate_term(
+                method_name,
+                (self, *args),
+                owner=str(site),
                 symbol_kind="method-coordinate",
             ),
             body=None,
