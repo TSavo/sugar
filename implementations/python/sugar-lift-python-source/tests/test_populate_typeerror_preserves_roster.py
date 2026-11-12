@@ -1,15 +1,17 @@
-"""Populate TypeError must not erase a successful SourceFile function roster.
+"""A populate ``TypeError`` or ``SugarNotWritten`` propagates out of the opener (#7795).
 
-#7062 covered the SugarNotWritten arm of this defect: after SourceFile builds
-N functions, a populate-path refusal must stay loud as a named residual and
-fall through so functionsTotal stays N — never bank zero for construction
-that already succeeded.
+History. #7062 (``SugarNotWritten``) and #7075 (``TypeError``: IfExpSugar body
+requires ConstructedTermSugar, got SpreadCollectionSugar at
+pandas/_testing/contexts.py) were two exception classes that, raised by
+populate after the SourceFile was built, made the board report zero functions.
+The repair caught the failure inside ``open_source_file_for_construction`` and
+returned the file, which dropped the halt. The catch is deleted: both classes
+reach the caller. The board's function count comes from the ``functions``
+level, which does not populate.
 
-Black found the second costume: populate TypeError (IfExpSugar body requires
-ConstructedTermSugar, got SpreadCollectionSugar at pandas/_testing/contexts.py)
-aborts the open and loses the roster. Same defect class, different exception.
-
-Open-path failure (no SourceFile yet) still banks empty — correctly.
+A ``TypeError`` raised while projecting one receipt is still cited inside
+populate and populate goes on (last test); that is populate's own handling and
+is not changed.
 """
 
 from __future__ import annotations
@@ -39,10 +41,23 @@ def _write_three_functions(path: Path) -> None:
     )
 
 
-def test_populate_typeerror_preserves_function_roster(
+def _open_with_populate(tmp_path: Path, path: Path):
+    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs={})
+    return open_source_file_for_construction(
+        path,
+        root=tmp_path,
+        reporter=CollectingReporter(),
+        construction_context=ctx,
+        populate_derived=True,
+        distribution="populate-roster-fixture",
+        source_workspace_root=tmp_path,
+    )
+
+
+def test_populate_typeerror_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SourceFile succeeds with N functions; populate TypeErrors; open returns N."""
+    """SourceFile builds; populate raises TypeError; the open raises it."""
     path = tmp_path / "target.py"
     _write_three_functions(path)
 
@@ -59,23 +74,14 @@ def test_populate_typeerror_preserves_function_roster(
         boom_populate,
     )
 
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs={})
-    source_file = open_source_file_for_construction(
-        path,
-        root=tmp_path,
-        reporter=CollectingReporter(),
-        construction_context=ctx,
-        populate_derived=True,
-        distribution="populate-roster-fixture",
-        source_workspace_root=tmp_path,
-    )
-    assert len(tuple(source_file.functions())) == 3
+    with pytest.raises(TypeError, match="IfExpSugar.body requires"):
+        _open_with_populate(tmp_path, path)
 
 
-def test_populate_snw_still_preserves_function_roster(
+def test_populate_snw_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#7062 arm still holds at the open door after #7073 retired _measure_file."""
+    """The #7062 class: populate raises SugarNotWritten; the open raises it."""
     from sugar_source_tree.panic import SugarNotWritten
 
     path = tmp_path / "target.py"
@@ -97,17 +103,9 @@ def test_populate_snw_still_preserves_function_roster(
         boom_populate,
     )
 
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs={})
-    source_file = open_source_file_for_construction(
-        path,
-        root=tmp_path,
-        reporter=CollectingReporter(),
-        construction_context=ctx,
-        populate_derived=True,
-        distribution="populate-roster-fixture",
-        source_workspace_root=tmp_path,
-    )
-    assert len(tuple(source_file.functions())) == 3
+    with pytest.raises(SugarNotWritten) as refusal:
+        _open_with_populate(tmp_path, path)
+    assert refusal.value.owner == "module function definition execution"
 
 
 def test_open_failure_before_sourcefile_still_raises(

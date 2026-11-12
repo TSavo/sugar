@@ -1,20 +1,14 @@
-"""Roster-floor law: SourceFile N is a floor the board may not undercut silently.
+"""A populate failure inside the one opener propagates (#7795).
 
-#7062 fixed the SugarNotWritten arm. #7075 fixed the TypeError arm. Both are
-costumes of one defect: a populate-path failure after a successful SourceFile
-erased construction that already succeeded and banked functionsTotal=0 / fns=-1.
+History. #7062 and #7075 each stopped one exception class from erasing the
+function count of a file whose SourceFile had already been built. The repair
+that followed caught every ``Exception`` from populate inside
+``open_source_file_for_construction`` and wrote it to ``populate_residuals``,
+which nothing reads: the open "succeeded" and the halt was dropped.
 
-A third costume is whatever exception nobody listed. This instrument does not
-extend an allowlist. It plants a failure *outside* the historical pair and
-demands the open still returns the banked roster, with the failure named as a
-populate residual.
-
-Invariant (enforced at open_source_file_for_construction):
-
-  If SourceFile produced N functions, the returned open may never lose those
-  N functions because populate failed. Populate failure after the bank is a
-  residual, not an empty denominator. Open-path failure *before* SourceFile
-  still raises — correctly empty.
+The catch is deleted. A populate failure of any class reaches the caller, as it
+does at the ``context-manager-resolutions`` level. The function count the board
+reports comes from the ``functions`` level, which does not populate.
 """
 
 from __future__ import annotations
@@ -61,10 +55,10 @@ def _open(tmp_path: Path, path: Path):
     )
 
 
-def test_unlisted_populate_exception_preserves_roster_floor(
+def test_unlisted_populate_exception_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failure outside the historical allowlist still keeps N and names why."""
+    """A populate failure outside every historical allowlist reaches the caller."""
     path = tmp_path / "target.py"
     _write_three_functions(path)
 
@@ -80,52 +74,41 @@ def test_unlisted_populate_exception_preserves_roster_floor(
         boom_populate,
     )
 
-    source_file = _open(tmp_path, path)
-    assert len(tuple(source_file.functions())) == 3
-    # Floor is banked as load-bearing state, not inferred after the fact.
-    assert getattr(source_file, "function_roster_floor", None) == 3
-
-    ctx = source_file.root.unit.construction_context
-    residuals = list(getattr(ctx, "populate_residuals", None) or [])
-    assert residuals, "populate failure must stay loud as a named residual"
-    assert residuals[-1]["phase"] == "populate"
-    assert residuals[-1]["type"] == "_UnlistedPopulateDefect"
-    assert "third costume" in residuals[-1]["observed"]
+    with pytest.raises(_UnlistedPopulateDefect, match="third costume"):
+        _open(tmp_path, path)
 
 
-def test_runtime_error_and_value_error_also_preserve_floor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "planted",
+    [
+        RuntimeError("populate runtime failure"),
+        ValueError("populate value failure"),
+    ],
+)
+def test_runtime_error_and_value_error_also_propagate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, planted: Exception
 ) -> None:
-    """Two more unlisted Exception subclasses — the door is not a pair of arms."""
+    """Two more Exception subclasses: the opener has no arm that keeps one."""
     path = tmp_path / "target.py"
     _write_three_functions(path)
 
-    for exc in (
-        RuntimeError("populate runtime residual"),
-        ValueError("populate value residual"),
-    ):
+    def boom(source_file, **_k):
+        del source_file
+        raise planted
 
-        def make_boom(planted):
-            def boom(source_file, **_k):
-                del source_file
-                raise planted
-
-            return boom
-
-        monkeypatch.setattr(
-            "sugar_lift_python_source.manager_summary_derivation."
-            "populate_source_derived_resource_refs",
-            make_boom(exc),
-        )
-        source_file = _open(tmp_path, path)
-        assert len(tuple(source_file.functions())) == 3
-        assert source_file.function_roster_floor == 3
+    monkeypatch.setattr(
+        "sugar_lift_python_source.manager_summary_derivation."
+        "populate_source_derived_resource_refs",
+        boom,
+    )
+    with pytest.raises(type(planted)):
+        _open(tmp_path, path)
 
 
 def test_open_path_failure_before_sourcefile_still_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Floor law does not invent a denominator when SourceFile never built."""
+    """An open that never builds its SourceFile raises, before any populate."""
     from sugar_source_tree.panic import SugarNotWritten
     import sugar_source_tree.tree as tree_mod
 
@@ -152,7 +135,7 @@ def test_open_path_failure_before_sourcefile_still_raises(
 def test_successful_open_banks_floor_matching_functions(
     tmp_path: Path,
 ) -> None:
-    """Happy path: floor equals the live function roster."""
+    """The truthful half: populate returns, and the open returns the file."""
     path = tmp_path / "target.py"
     _write_three_functions(path)
     source_file = _open(tmp_path, path)
