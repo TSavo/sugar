@@ -26,14 +26,9 @@ if TYPE_CHECKING:
         AsyncNextOperation,
     )
     from sugar_lift_py_tests.operations.await_operation import AwaitOperation
-    from sugar_lift_py_tests.operations.binary_operator_operation import (
-        BinaryOperatorOperation,
-    )
-    from sugar_lift_py_tests.operations.bitwise_operation import BitwiseOperation
     from sugar_lift_py_tests.operations.context_manager_operation import (
         ContextManagerOperation,
     )
-    from sugar_lift_py_tests.operations.contains_operation import ContainsOperation
     from sugar_lift_py_tests.operations.delitem_operation import DelItemOperation
     from sugar_lift_py_tests.operations.descriptor_operation import DescriptorOperation
     from sugar_lift_py_tests.operations.dict_missing_operation import (
@@ -47,9 +42,6 @@ if TYPE_CHECKING:
         MethodCallOperation,
     )
     from sugar_lift_py_tests.operations.next_operation import NextOperation
-    from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
-        ReflectedBinaryOperatorOperation,
-    )
     from sugar_lift_py_tests.operations.sequence_projection_operation import (
         SequenceProjectionOperation,
     )
@@ -58,9 +50,6 @@ if TYPE_CHECKING:
         StrCoercionOperation,
     )
     from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
-    from sugar_lift_py_tests.operations.unary_operator_operation import (
-        UnaryOperatorOperation,
-    )
     from sugar_lift_py_tests.outcome import Outcome
 
 
@@ -573,17 +562,6 @@ class ObjectValue(FloorValue):
     ) -> Outcome:
         return operation.descriptor_object(self, ctx)
 
-    def contains_with(
-        self, operation: ContainsOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        del ctx
-        return self.call_method_value(
-            "__contains__",
-            (operation.item,),
-            owner=operation.owner,
-            blame=operation.blame,
-        )
-
     def context_manager_with(
         self, operation: ContextManagerOperation, ctx: ReduceContext | None
     ) -> Outcome:
@@ -657,95 +635,10 @@ class ObjectValue(FloorValue):
     ) -> Outcome:
         return operation.str_object(self, ctx)
 
-    def bitwise_with(
-        self, operation: BitwiseOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        del ctx
-        method_name = _BITWISE_DUNDER_METHODS.get(operation.operator)
-        if method_name is None:
-            return self._floor_gap(
-                owner=operation.owner,
-                blame=operation.blame,
-                observed=f"{self.class_name}{operation.operator}{type(operation.operand).__name__}",
-                requested="object bitwise data-model method",
-                fix=(
-                    f"add ObjectValue data-model dispatch for bitwise "
-                    f"operator `{operation.operator}`"
-                ),
-            )
-        return self.call_method_value(
-            method_name,
-            (operation.operand,),
-            owner=operation.owner,
-            blame=operation.blame,
-        )
-
     def project_sequence_with(
         self, operation: SequenceProjectionOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.project_object(self, ctx)
-
-    def binary_operator_with(
-        self,
-        operation: BinaryOperatorOperation,
-        ctx: ReduceContext | None,
-    ) -> Outcome:
-        method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
-        if method_name is None:
-            return self._floor_gap(
-                owner=operation.owner,
-                blame=operation.blame,
-                observed=f"{self.class_name}{operation.operator}{type(operation.right).__name__}",
-                requested="object binary data-model method",
-                fix=(
-                    f"add ObjectValue data-model dispatch for operator "
-                    f"`{operation.operator}`"
-                ),
-            )
-        if (
-            operation.operator == "=="
-            and isinstance(operation.right, ObjectValue)
-            and not self.has_method(method_name)
-        ):
-            return self._floor_gap(
-                owner=operation.owner,
-                blame=operation.blame,
-                observed=f"{self.class_name}=={operation.right.class_name}",
-                requested="object identity equality",
-                fix="lift method-less object identity equality",
-            )
-        return self.call_method_value(
-            method_name,
-            (operation.right,),
-            owner=operation.owner,
-            blame=operation.blame,
-            ctx=ctx,
-        )
-
-    def reflected_binary_operator_with(
-        self,
-        operation: ReflectedBinaryOperatorOperation,
-        ctx: ReduceContext | None,
-    ) -> Outcome:
-        del ctx
-        method_name = _REFLECTED_BINARY_DUNDER_METHODS.get(operation.operator)
-        if method_name is None:
-            return self._floor_gap(
-                owner=operation.owner,
-                blame=operation.blame,
-                observed=f"{type(operation.left).__name__}{operation.operator}{self.class_name}",
-                requested="object reflected binary data-model method",
-                fix=(
-                    f"add ObjectValue reflected data-model dispatch for "
-                    f"operator `{operation.operator}`"
-                ),
-            )
-        return self.call_method_value(
-            method_name,
-            (operation.left,),
-            owner=operation.owner,
-            blame=operation.blame,
-        )
 
     def inplace_binary_operator_with(
         self,
@@ -768,29 +661,6 @@ class ObjectValue(FloorValue):
         return self.call_method_value(
             method_name,
             (operation.right,),
-            owner=operation.owner,
-            blame=operation.blame,
-        )
-
-    def unary_operator_with(
-        self, operation: UnaryOperatorOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        del ctx
-        method_name = _UNARY_DUNDER_METHODS.get(operation.operator)
-        if method_name is None:
-            return self._floor_gap(
-                owner=operation.owner,
-                blame=operation.blame,
-                observed=f"{operation.operator}({self.class_name})",
-                requested="object unary data-model method",
-                fix=(
-                    f"add ObjectValue unary data-model dispatch for "
-                    f"operator `{operation.operator}`"
-                ),
-            )
-        return self.call_method_value(
-            method_name,
-            (),
             owner=operation.owner,
             blame=operation.blame,
         )
@@ -917,44 +787,6 @@ class ObjectValue(FloorValue):
         construction_panic(info)
 
 
-_BINARY_DUNDER_METHODS = {
-    "==": "__eq__",
-    "+": "__add__",
-    "-": "__sub__",
-    "*": "__mul__",
-    "/": "__truediv__",
-    "//": "__floordiv__",
-    "%": "__mod__",
-    "divmod": "__divmod__",
-    "**": "__pow__",
-    "@": "__matmul__",
-}
-
-_BITWISE_DUNDER_METHODS = {
-    "&": "__and__",
-    "|": "__or__",
-    "^": "__xor__",
-    "<<": "__lshift__",
-    ">>": "__rshift__",
-}
-
-_REFLECTED_BINARY_DUNDER_METHODS = {
-    "+": "__radd__",
-    "-": "__rsub__",
-    "*": "__rmul__",
-    "/": "__rtruediv__",
-    "//": "__rfloordiv__",
-    "%": "__rmod__",
-    "divmod": "__rdivmod__",
-    "**": "__rpow__",
-    "@": "__rmatmul__",
-    "&": "__rand__",
-    "|": "__ror__",
-    "^": "__rxor__",
-    "<<": "__rlshift__",
-    ">>": "__rrshift__",
-}
-
 _INPLACE_BINARY_DUNDER_METHODS = {
     "+": "__iadd__",
     "-": "__isub__",
@@ -969,12 +801,6 @@ _INPLACE_BINARY_DUNDER_METHODS = {
     "^": "__ixor__",
     "<<": "__ilshift__",
     ">>": "__irshift__",
-}
-
-_UNARY_DUNDER_METHODS = {
-    "py.pos": "__pos__",
-    "py.neg": "__neg__",
-    "py.invert": "__invert__",
 }
 
 

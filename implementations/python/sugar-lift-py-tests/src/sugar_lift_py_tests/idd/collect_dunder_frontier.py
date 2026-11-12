@@ -151,7 +151,6 @@ def _owned_dunder_slots() -> dict[str, str]:
         "__init__": "ConstructorStrategy",
         "__call__": "CallSugar.ObjectCallStrategy",
         "__getitem__": "SubscriptOperation",
-        "__contains__": "ObjectValue.contains_with",
         "__iter__": "SequenceProjectionOperation",
         "__next__": "NextOperation",
         "__setitem__": "SetItemOperation",
@@ -176,16 +175,14 @@ def _owned_dunder_slots() -> dict[str, str]:
         "__str__": "StrCoercionOperation",
         "__format__": "FormatBuiltinSugar",
     }
-    for name in object_value._BINARY_DUNDER_METHODS.values():
-        owners[name] = "ObjectValue._BINARY_DUNDER_METHODS"
-    for name in object_value._BITWISE_DUNDER_METHODS.values():
-        owners[name] = "ObjectValue._BITWISE_DUNDER_METHODS"
-    for name in object_value._REFLECTED_BINARY_DUNDER_METHODS.values():
-        owners[name] = "ObjectValue._REFLECTED_BINARY_DUNDER_METHODS"
+    # The binary, bitwise, reflected and unary tables on ObjectValue fed
+    # ``*_with`` methods nothing called (their Operation classes do not exist).
+    # A table nothing dispatches through owns nothing: those dunders are
+    # unowned, except the two a live method reaches.
+    owners["__eq__"] = "ObjectValue.equals"
+    owners["__matmul__"] = "ObjectValue.matrix_multiply"
     for name in object_value._INPLACE_BINARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
-    for name in object_value._UNARY_DUNDER_METHODS.values():
-        owners[name] = "ObjectValue._UNARY_DUNDER_METHODS"
     # `sugar/builtin_dunder_call_sugar.py::_METHODS` marked __hash__ __round__
     # __floor__ __ceil__ __trunc__ __int__ __float__ __complex__ __repr__
     # __bytes__ __dir__ __reversed__ OWNED. That module was deleted with the
