@@ -29,6 +29,9 @@ class BodyUniverseDto:
     # universal -- specializable into a consumer's callsite obligation -- when the
     # contract carries `formals`.
     formals: list[str] = field(default_factory=list)
+    # One sort per formal, stated by a function-contract whose formals carry
+    # authenticated coordinates; the linker reads the signature from it.
+    formal_sorts: list[dict] = field(default_factory=list)
     # `function-contract` (with `post` + `formals`) makes the mint auto-mint a
     # `sourceSymbol -> this contract` bridge (`bind_function_bridge`), resolving the
     # target CID at seal -- which is what lets `collect_ambient_posts` pick the post
@@ -89,6 +92,8 @@ class BodyUniverseDto:
         }
         if self.formals or self.kind == "function-contract":
             out["formals"] = list(self.formals)
+        if self.formal_sorts:
+            out["formalSorts"] = list(self.formal_sorts)
         if self.bridge_source_symbol is not None:
             out["bridgeSourceSymbol"] = self.bridge_source_symbol
         return out

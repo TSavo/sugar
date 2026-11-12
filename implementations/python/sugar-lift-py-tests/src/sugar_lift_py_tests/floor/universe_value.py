@@ -251,31 +251,30 @@ class UniverseValue(FloorValue):
             call_edges=(),
         )
 
-    def payload_rows(self, def_memento):
-        # The wire projection: one function-contract row (post + the def's
-        # sealed warrant) and one contract row per stated inv (Stated, its
-        # own warrant). The caller owns the loop; this value owns the shape.
-        # A single completed arm under guard true: the general projection
-        # (`exit_arms_payload_rows`) specialized, byte-for-byte.
-        rows = [
-            function_contract_row(
-                name=self.name,
-                formals=self.formals,
-                bridge_source_symbol=self.bridge_source_symbol,
-                post=self.post(),
-                def_memento=def_memento,
-            )
-        ]
-        rows.extend(self.inv_payload_rows())
-        return rows
 
-    def inv_payload_rows(self):
-        """Project stated body claims without requiring a constructed post."""
-        return mint_rows(self.name, self.formals, self.record.statements)
+def _stated_formal_sorts(formals, formal_coordinates):
+    """One sort per formal, or none at all.
+
+    A formal coordinate of an abstract definition carries its sort; the
+    binding coordinate of a frame applied at a call (``BindingCoordinateV1``)
+    carries none. A signature is stated only when every formal has a sorted
+    coordinate: a partial signature would be a claim nothing made.
+    """
+    sorts = [getattr(coordinate, "sort", None) for coordinate in formal_coordinates]
+    if len(sorts) != len(formals) or any(sort is None for sort in sorts):
+        return []
+    return [{"kind": "primitive", "name": sort.name} for sort in sorts]
 
 
-def function_contract_row(*, name, formals, bridge_source_symbol, post, def_memento):
-    """The one function-contract row: the post, the def's sealed warrant."""
+def function_contract_row(
+    *, name, formals, bridge_source_symbol, formal_coordinates, post, def_memento
+):
+    """The one function-contract row: the post, the def's sealed warrant.
+
+    ``formalSorts`` states one sort per formal, the sort its authenticated
+    formal coordinate carries (the same statement ``ParameterOwnedContractV1``
+    makes). The linker's catalog reads a contract's signature from it.
+    """
     from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
     from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
     from sugar_lift_py_tests.proofir.nodes import (
@@ -304,6 +303,7 @@ def function_contract_row(*, name, formals, bridge_source_symbol, post, def_meme
         ),
         source_warrants=[def_memento],
         formals=list(formals),
+        formal_sorts=_stated_formal_sorts(formals, formal_coordinates),
         kind="function-contract",
         bridge_source_symbol=bridge_source_symbol or name,
     )
@@ -347,7 +347,14 @@ def assertion_site_key(site):
 
 
 def exit_arms_payload_rows(
-    *, name, formals, bridge_source_symbol, arms, halted_assertion_sites, def_memento
+    *,
+    name,
+    formals,
+    bridge_source_symbol,
+    formal_coordinates,
+    arms,
+    halted_assertion_sites,
+    def_memento,
 ):
     """Every arm of one reduction, projected to the wire (#7766).
 
@@ -369,7 +376,8 @@ def exit_arms_payload_rows(
     row, because nothing was reduced there; and a fact held on an arm that
     later halts elsewhere is not a completed arm's fact.
 
-    A single arm under guard true is exactly ``UniverseValue.payload_rows``.
+    This is the ONE projection from a reduction to rows; a single arm under
+    guard true is its one-arm case and keeps the rows it always had.
     """
     from sugar_lift_py_tests.floor.inv_value import InvValue
     from sugar_lift_py_tests.ir import and_, implies, or_
@@ -377,7 +385,17 @@ def exit_arms_payload_rows(
 
     if len(arms) == 1 and _is_true(arms[0][0]):
         guard, value = arms[0]
-        rows = value.payload_rows(def_memento)
+        rows = [
+            function_contract_row(
+                name=name,
+                formals=formals,
+                bridge_source_symbol=bridge_source_symbol,
+                formal_coordinates=formal_coordinates,
+                post=value.post(),
+                def_memento=def_memento,
+            )
+        ]
+        rows.extend(mint_rows(name, formals, value.record.statements))
         reached = {
             assertion_site_key(entry.site)
             for entry in value.record.statements
@@ -390,6 +408,7 @@ def exit_arms_payload_rows(
                 name=name,
                 formals=formals,
                 bridge_source_symbol=bridge_source_symbol,
+                formal_coordinates=formal_coordinates,
                 post=post,
                 def_memento=def_memento,
             )
