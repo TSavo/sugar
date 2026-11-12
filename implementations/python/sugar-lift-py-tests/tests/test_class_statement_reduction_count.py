@@ -107,3 +107,90 @@ def test_reading_the_class_address_does_not_reduce_the_statement(
     """
 
     assert _class_statement_reductions(source, monkeypatch) == class_calls
+
+
+# ---------------------------------------------------------------------------
+# The deleted exit. The lines this change removed also returned ``None`` when
+# their own reduction of the class statement was not a single completion. That
+# case never reaches them: a class statement that is not one completion makes
+# the class call on the same line not one completion either, and
+# ``Assign._object_place_state`` already returned ``None`` for that
+# (``_constructed_floor_value``), before the address is read. So no place state
+# is built, the statement is reduced once per class call (inside the call), and
+# the statement's halts are faces of the function that calls the class.
+#
+# That last fact is #7794 and is wrong by Python (the class body raises at the
+# class statement, never at the call); it is pinned here as what happens, the
+# same before and after this change.
+# ---------------------------------------------------------------------------
+
+_NOT_ONE_COMPLETION = {
+    "field-may-raise": '    limit = int(os.environ["LIMIT"])\n',
+    "field-int-of-text": '    limit = int("x")\n',
+}
+_USES = {
+    "one-call": ("    a = Box(1)\n    assert a.n == 1\n", 1),
+    "two-calls": ("    a = Box(1)\n    b = Box(2)\n    assert a.n == 1\n", 2),
+}
+# Halted faces one class call carries from the class body.
+_BODY_HALTS = {"field-may-raise": 2, "field-int-of-text": 1}
+
+
+@pytest.mark.parametrize("body", sorted(_NOT_ONE_COMPLETION))
+@pytest.mark.parametrize("use", sorted(_USES))
+def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
+    body: str, use: str, monkeypatch
+) -> None:
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    from sugar_source_tree import nodes
+    from sugar_source_tree.tree import SourceFile
+
+    statements, class_calls = _USES[use]
+    source = (
+        "import os\n\n\nclass Box:\n"
+        + _NOT_ONE_COMPLETION[body]
+        + "\n    def __init__(self, n):\n        self.n = n\n\n\n"
+        + "def test_box():\n"
+        + statements
+    )
+
+    place_states: list[object] = []
+    build_place_state = nodes.Assign._object_place_state
+
+    def recorded(self, entry):
+        state = build_place_state(self, entry)
+        place_states.append(state)
+        return state
+
+    reductions: Counter[str] = Counter()
+    reduce_statement = ClassDefinitionSugar.desugar
+
+    def counted(self, ctx=None):
+        reductions[self.class_name] += 1
+        return reduce_statement(self, ctx)
+
+    monkeypatch.setattr(nodes.Assign, "_object_place_state", recorded)
+    monkeypatch.setattr(ClassDefinitionSugar, "desugar", counted)
+    tree = SourceFile(
+        (source, "test_witness.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    (function,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, nodes.FunctionDef) and node.name.startswith("test_")
+    )
+    outcome = function_universe_outcome(function)
+
+    assert place_states == [None] * class_calls
+    assert reductions["Box"] == class_calls
+    assert isinstance(outcome, ExitSet), outcome
+    assert [type(face) for face in outcome.exits] == [Completed] + [Halted] * (
+        _BODY_HALTS[body] * class_calls
+    )
