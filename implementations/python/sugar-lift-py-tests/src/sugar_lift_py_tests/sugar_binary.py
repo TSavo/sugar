@@ -77,10 +77,16 @@ def current_os_name() -> str:
     return os.name
 
 
+# The one profile the suite runs the sugar binary under. The conftest handoff
+# and the solver harness both resolve with no profile argument, so they name
+# this one; the Makefile and the workflows ask ``bin/sugarbin`` for the same.
+SUITE_PROFILE = "release"
+
+
 def resolve_sugar_binary(
     *,
     env: Mapping[str, str] | None = None,
-    profile: str = "release",
+    profile: str = SUITE_PROFILE,
 ) -> Path:
     child_env = dict(os.environ if env is None else env)
     route = sugarbin_route(os_name=current_os_name(), hostname=platform.node())

@@ -102,7 +102,12 @@ def _ensure_sugar_bin() -> Path:
         if _RESOLVED_SUGAR_BIN is not None:
             return _RESOLVED_SUGAR_BIN
         try:
-            _RESOLVED_SUGAR_BIN = resolve_sugar_binary(profile="debug")
+            # No profile of its own: the suite's one profile is named in
+            # ``sugar_binary.SUITE_PROFILE`` and the conftest handoff resolves
+            # through the same call. A second profile here asks ``sugarbin``
+            # for a binary the handoff's ``SUGAR_BIN`` contradicts, and
+            # ``sugarbin`` refuses that pairing (#6282).
+            _RESOLVED_SUGAR_BIN = resolve_sugar_binary()
         except SugarBinaryResolutionError as exc:
             raise WitnessPipelineError(str(exc)) from exc
         return _RESOLVED_SUGAR_BIN
@@ -180,10 +185,19 @@ lake_project = "{_root() / 'tools' / 'portfolio' / 'lean-mathlib'}"
         "from pathlib import Path\n"
         "\n"
         f"PYTHONPATH = {_pythonpath()!r}\n"
+        # The staged project is not a checkout, and the kit starts with it as
+        # its working directory. The checkout whose sources PYTHONPATH names is
+        # stated in the resolver's own explicit seat, never left to a walk
+        # from a temporary directory.
+        f"SUGAR_REPO_ROOT = {str(_root())!r}\n"
         f"CAPTURE = Path({str(capture)!r})\n"
         "\n"
         "def main() -> int:\n"
-        "    env = {**os.environ, 'PYTHONPATH': PYTHONPATH}\n"
+        "    env = {\n"
+        "        **os.environ,\n"
+        "        'PYTHONPATH': PYTHONPATH,\n"
+        "        'SUGAR_REPO_ROOT': SUGAR_REPO_ROOT,\n"
+        "    }\n"
         "    proc = subprocess.Popen(\n"
         "        [sys.executable, '-m', 'sugar_lift_py_tests.lift_rpc', *sys.argv[1:]],\n"
         "        stdin=sys.stdin,\n"
