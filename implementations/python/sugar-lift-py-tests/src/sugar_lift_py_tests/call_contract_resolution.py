@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -132,10 +132,23 @@ class ResolvedCallContractRefsV1:
     table_cid: str
     by_use_site: Mapping[SourceFragmentCoordinateV1, CallContractResolutionV1]
     enrolled_use_sites: frozenset[SourceFragmentCoordinateV1] | None = None
+    # The target symbol of each demand THE KIT made, by use site: what the
+    # consumer's own source imported, as written. Never read off the linker's
+    # answer: the consumer cannot know what answers its symbol, and its proof
+    # must be the same whether or not anything does (#7762).
+    demand_target_symbols: Mapping[SourceFragmentCoordinateV1, str] | None = field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.enrolled_use_sites is None:
             object.__setattr__(self, "enrolled_use_sites", frozenset(self.by_use_site))
+
+    def demand_target_symbol(self, use_site: SourceFragmentCoordinateV1) -> str | None:
+        """The symbol the kit's own demand at ``use_site`` named, if it made one."""
+        if self.demand_target_symbols is None:
+            return None
+        return self.demand_target_symbols.get(use_site)
 
     def require(self, use_site: SourceFragmentCoordinateV1) -> CallContractResolutionV1:
         try:

@@ -13835,16 +13835,33 @@ class Call(Expression):
                 # rides to the edge. Every other gap (no definite import
                 # target, or something answered wrongly) stays a refusal.
                 if resolution.names_an_unanswered_target():
-                    import_target_symbol = resolution.target_symbol
+                    # The gap row echoes the demand's symbol; the demand
+                    # itself is the source when the kit served one.
+                    import_target_symbol = (
+                        call_refs.demand_target_symbol(coordinate)
+                        or resolution.target_symbol
+                    )
                 else:
                     contract_resolution_gap = resolution.kind.value
             elif resolution is not None:
                 # A contract answers the symbol. The call has the SAME form:
-                # its coordinate, and an edge carrying the symbol. The kit
-                # applies no contract; step 9 joins the edge to the contract
-                # whose `bridgeSourceSymbol` is this string and conjoins its
-                # post there.
-                import_target_symbol = resolution.bridge_source_symbol
+                # its coordinate, and an edge carrying the DEMAND's symbol,
+                # the one this source imported as written. Never the
+                # answering contract's: the consumer cannot know what answers
+                # its symbol, and its rows must not change when something
+                # does. The kit applies no contract; step 9 joins the edge to
+                # the contract whose `bridgeSourceSymbol` is the same string.
+                import_target_symbol = call_refs.demand_target_symbol(coordinate)
+                if import_target_symbol is None:
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        owner="Call._construct_sugar",
+                        blame=self.fragment,
+                        observed="a resolved call contract with no demand of this kit behind it",
+                        requested="the target symbol of the demand the kit made at this call",
+                        fix="bind the table through the round that served the demands",
+                    )
 
             source_call_frame = None
             formal_function_sugar = None
