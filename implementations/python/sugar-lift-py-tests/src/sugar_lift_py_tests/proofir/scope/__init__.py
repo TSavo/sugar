@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from sugar_lift_py_tests.ir import _Atomic, _Connective, _Quantifier
 from sugar_lift_py_tests.ir import Formula as IrFormula
-from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
+from sugar_lift_py_tests.proofir._errors import (
+    proofir_construction_gap,
+    proofir_free_variable_refusal,
+)
 from sugar_lift_py_tests.proofir.formulas import (
     Formula,
     formula_from_ir,
@@ -44,9 +47,9 @@ class ClosedFormula:
         allowed = frozenset(allowed_vars)
         illegal = formula.free_vars - allowed
         if illegal:
-            proofir_construction_gap(
+            proofir_free_variable_refusal(
                 owner="proofir.scope.ClosedFormula",
-                observed=f"illegal free var(s): {', '.join(sorted(illegal))}",
+                names=illegal,
                 requested="formula closed under the declared scope",
                 fix="declare the variable in the role scope or remove it from the formula",
             )
@@ -360,9 +363,9 @@ def _require_sorted_scope(
     allowed_sorts = {**formals, **extra}
     illegal = formula.free_vars - set(allowed_sorts)
     if illegal:
-        proofir_construction_gap(
+        proofir_free_variable_refusal(
             owner=owner,
-            observed=f"illegal free var(s): {', '.join(sorted(illegal))}",
+            names=illegal,
             requested="free vars only from declared formals plus out",
             fix="declare the variable in the contract scope or remove it from the formula",
         )

@@ -2898,6 +2898,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # call-site cue.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
@@ -2928,6 +2929,25 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue
                     try:
                         def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                    except FreeVariableRefusal as refusal:
+                        # A row of this function names a variable outside its
+                        # declared scope (a module-level name, an unbound
+                        # global). The function is refused by name and the
+                        # rest of the file is served: in a full scan as in a
+                        # seek, and in the linker round's preliminary fold,
+                        # which asks this same level (#7785). What the
+                        # function sees of the name is not decided here.
+                        gaps.append(
+                            {
+                                "memento": _tree.function_def_memento(
+                                    fn, file_rel
+                                ).to_rpc(),
+                                "reason": (
+                                    f"{refusal.info.owner}: {refusal.info.observed}"
+                                ),
+                            }
+                        )
+                        continue
                     except SugarNotWritten as gap:
                         # A full-tree mint has no later construction entrance:
                         # turning this product terminal into an enumeration gap
@@ -3034,6 +3054,20 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         except SugarNotWritten:
                             # Typed tree frontier: abstract identity fallback.
+                            rows = None
+                        except FreeVariableRefusal as refusal:
+                            # The callee as applied names a variable outside
+                            # its scope: refused by name, as in the scan above
+                            # (#7785); the abstract fallback below is unchanged.
+                            cue_gaps.append(
+                                {
+                                    "memento": at,
+                                    "reason": (
+                                        f"{t}: {refusal.info.owner}: "
+                                        f"{refusal.info.observed}"
+                                    ),
+                                }
+                            )
                             rows = None
                         except SourceCallBindingGap as bind_gap:
                             cue_gaps.append(
