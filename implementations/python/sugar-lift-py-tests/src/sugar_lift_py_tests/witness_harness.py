@@ -470,10 +470,12 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     """The verdict on the source's stated assertions (#7766, D2/D3).
 
     Each assertion site has one row whose claim is "an execution reaches this
-    assertion and it holds"; the consistency pass checks it with z3. Panic-site
-    rows (the halted arms) are separate obligations and do not decide the twin.
-    ``open``: the solver could not decide the claim (vacuous, or a call
-    coordinate no linked contract answers, #3896).
+    assertion and it holds"; the consistency pass puts it to the solver
+    portfolio. Panic-site rows are separate obligations: they are not read
+    here, and today each ``assert`` also has one that stays ``undecidable``
+    (it comes from the second lifter, #7767). ``open``: the claim was not
+    decided. A lone claim about a call coordinate nothing binds is refused as
+    vacuous, so an unbound edge is open and never ``sat`` (#3896).
     """
     rows = [row for row in prove_doc.get("rows", [])]
     for row in rows:
@@ -491,15 +493,7 @@ def prove_verdict(prove_doc: dict) -> Verdict:
         return "sat"
     if any(status in {"refused", "undecidable"} for status in statuses):
         return "open"
-    for row in rows:
-        if not isinstance(row, dict):
-            raise ProofObligationPanic(row)
-    statuses = [row.get("status") for row in rows]
-    if "unsatisfied" in statuses:
-        return "unsat"
-    if statuses and all(status == "discharged" for status in statuses):
-        return "sat"
-    if statuses and all(status == "unwitnessed" for status in statuses):
+    if all(status == "unwitnessed" for status in statuses):
         provisional = False
         for row in rows:
             invocations = row.get("verification", {}).get("solverInvocations", [])

@@ -38,6 +38,26 @@ def test_a_decided_assertion_reaches_the_solver(tmp_path: Path) -> None:
     assert lying.verdict == "unsat"
 
 
+_UNBOUND = (
+    "from double import double\n"
+    "\n"
+    "\n"
+    "def test_double():\n"
+    "    assert double(3) == {claim}\n"
+)
+
+
+def test_an_assertion_about_an_unbound_call_stays_open(tmp_path: Path) -> None:
+    """No proof answers ``double``: nothing is staged to import. The claim
+    stands on a call coordinate, its row reaches the solver's door, and the
+    truthful and the lying claim are both left open. An unbound edge is never
+    a discharge (#3896)."""
+    truthful = run_source_through_real_solver(tmp_path / "t", _UNBOUND.format(claim=6))
+    lying = run_source_through_real_solver(tmp_path / "l", _UNBOUND.format(claim=7))
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
+
+
 def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
     """(line, inv) of every assertion row the one function of ``source`` emits."""
     from sugar_lift_py_tests import lift_rpc
