@@ -8,8 +8,6 @@ from .branch_result_coordinate import (
     BranchResultAuthentication,
     BranchResultCoordinate,
 )
-from .bound_var import BoundVar
-from .module_bound_var import ModuleBoundVar
 from .mutable_global_value import MutableGlobalValue
 from .named_expression_value import NamedExpressionValue
 from .native_callable_value import NativeCallableValue
@@ -115,7 +113,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BlockValue,
     BranchResultAuthentication,
     BranchResultCoordinate,
-    BoundVar,
     MutableGlobalValue,
     NamedExpressionValue,
     NativeCallableValue,
@@ -207,8 +204,6 @@ __all__ = [
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BinaryOperatorFloor",
     "BlockValue",
-    "BoundVar",
-    "ModuleBoundVar",
     "NamedExpressionValue",
     "NativeCallableValue",
     "ReMatchValue",

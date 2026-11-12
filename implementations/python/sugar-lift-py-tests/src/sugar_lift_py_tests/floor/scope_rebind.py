@@ -19,8 +19,8 @@ def _context_for_rebind(ctx, *, owner: str):
 @dataclass(frozen=True)
 class ScopeRebind(FloorValue):
     """A mutation rebinds to the UPDATED VALUE; the history is in the value's nested
-    term, not in a recomposable source. Mirror of BoundVar's scope threading -- a let
-    that holds the folded result, not a recoverable source body."""
+    term, not in a recomposable source: a let that holds the folded result, not a
+    recoverable source body."""
 
     name: str
     value: FloorValue

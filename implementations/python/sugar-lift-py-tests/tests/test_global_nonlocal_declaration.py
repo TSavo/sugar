@@ -43,7 +43,7 @@ import pytest
 
 from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import BoundVar, TermValue
+from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
@@ -143,28 +143,6 @@ def test_store_to_nonlocal_without_constructed_rebind_panics() -> None:
         reject_unconstructed_nonlocal_store(ctx, "shared")
 
 
-def test_boundvar_extend_scope_hits_nonlocal_refusal() -> None:
-    """BoundVar rebind path shares reject_unconstructed_nonlocal_store."""
-    ctx = _root("bv-nl")
-    ctx = ctx.with_temporal(ctx.temporal.bind_value("shared", TermValue(1)))
-    ctx = NonlocalRoute(("shared",)).extend_scope(ctx)
-    bv = BoundVar(name="shared", source=_int(9), scope=ctx)
-    with pytest.raises(ConstructionPanic, match="NonlocalRoute|enclosing-frame"):
-        bv.extend_scope(ctx)
-
-
-def test_store_without_nonlocal_declaration_is_local_bind() -> None:
-    """No declaration ⇒ no NonlocalRoute panic; ordinary local rebind."""
-    ctx = _root("local")
-    ctx = ctx.with_temporal(ctx.temporal.bind_value("local", TermValue(1)))
-    assert "local" not in ctx.nonlocal_names
-    # Reject is a no-op when name is not enrolled.
-    reject_unconstructed_nonlocal_store(ctx, "local")
-    bv = BoundVar(name="local", source=_int(2), scope=ctx)
-    scoped = bv.extend_scope(ctx)
-    bound = scoped.temporal.value_if_bound("local")
-    assert isinstance(bound, BoundVar)
-    assert bound.name == "local"
 
 
 def test_spelling_does_not_infer_nonlocal_route() -> None:
@@ -333,26 +311,3 @@ def test_nonlocal_route_then_read_via_reduce_block() -> None:
     cont = completed[0].value.context
     if cont is not None:
         assert "shared" in cont.nonlocal_names
-
-
-def test_store_after_nonlocal_enroll_still_refuses_without_rebind_producer() -> None:
-    """After reduce enroll, BoundVar store still ConstructionPanic (honest refusal)."""
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        reduce_block_to_exitset,
-    )
-    from sugar_lift_py_tests.outcome import Completed, ExitSet
-
-    ctx = _root("store-after")
-    ctx = ctx.with_temporal(ctx.temporal.bind_value("shared", TermValue(1)))
-    exits = reduce_block_to_exitset(
-        (NonlocalSugar(names=("shared",), site=SITE),),
-        ctx,
-    )
-    assert isinstance(exits, ExitSet)
-    completed = [e for e in exits.exits if isinstance(e, Completed)]
-    assert len(completed) == 1
-    enrolled = completed[0].value.context
-    assert enrolled is not None
-    assert "shared" in enrolled.nonlocal_names
-    with pytest.raises(ConstructionPanic, match="NonlocalRoute|enclosing-frame"):
-        BoundVar(name="shared", source=_int(9), scope=enrolled).extend_scope(enrolled)
