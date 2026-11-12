@@ -33,12 +33,7 @@ class ScopeRebind(FloorValue):
     def extend_scope(self, ctx):
         # Thread the updated value forward so later statements resolve the name.
         # Root mint is Floor-owned when the reducer has no ambient context yet.
-        from sugar_lift_py_tests.sugar.nonlocal_sugar import (
-            reject_unconstructed_nonlocal_store,
-        )
-
         ctx = _context_for_rebind(ctx, owner="ScopeRebind")
-        reject_unconstructed_nonlocal_store(ctx, self.name)
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self.value))
 
     def as_expression_statement(self):

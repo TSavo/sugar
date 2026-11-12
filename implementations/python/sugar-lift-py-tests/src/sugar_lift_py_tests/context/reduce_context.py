@@ -18,7 +18,6 @@ class ReduceContext:
     temporal: TemporalContext
     module_temporal: TemporalContext | None = None
     global_names: frozenset[str] = field(default_factory=frozenset)
-    nonlocal_names: frozenset[str] = field(default_factory=frozenset)
     source_oracle: Any = None
     proof_sink: ProofSink | None = None
     report_sink: Any = None
@@ -74,7 +73,6 @@ class ReduceContext:
             temporal=source.temporal,
             module_temporal=getattr(source, "module_temporal", None),
             global_names=getattr(source, "global_names", frozenset()),
-            nonlocal_names=getattr(source, "nonlocal_names", frozenset()),
             source_oracle=source.source_oracle,
             proof_sink=source.proof_sink,
             report_sink=source.report_sink,
@@ -117,7 +115,6 @@ class ReduceContext:
             temporal=temporal,
             module_temporal=self.module_temporal,
             global_names=self.global_names,
-            nonlocal_names=self.nonlocal_names,
             source_oracle=self.source_oracle,
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
@@ -139,7 +136,6 @@ class ReduceContext:
             temporal=self.temporal,
             module_temporal=self.module_temporal,
             global_names=self.global_names,
-            nonlocal_names=self.nonlocal_names,
             source_oracle=self.source_oracle,
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
