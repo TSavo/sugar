@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 _TWIN = (
@@ -56,6 +58,53 @@ def test_an_assertion_about_an_unbound_call_stays_open(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(tmp_path / "l", _UNBOUND.format(claim=7))
     assert truthful.verdict == "open"
     assert lying.verdict == "open"
+
+
+_SIBLING_CLAIMS = {
+    "two_calls": (
+        "from vend import f, g\n"
+        "\n"
+        "\n"
+        "def test_two_calls():\n"
+        "    assert f(1) == 2\n"
+        "    assert g(1) == 3\n"
+    ),
+    "one_result_twice": (
+        "from vend import f\n"
+        "\n"
+        "\n"
+        "def test_one_result_twice():\n"
+        "    y = f(1)\n"
+        "    assert y is not None\n"
+        "    assert y == 3\n"
+    ),
+    "two_bounds": (
+        "from vend import f\n"
+        "\n"
+        "\n"
+        "def test_two_bounds():\n"
+        "    y = f(1)\n"
+        "    assert y < 10\n"
+        "    assert y < 5\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_SIBLING_CLAIMS))
+def test_sibling_claims_about_unbound_calls_stay_open(
+    tmp_path: Path, shape: str
+) -> None:
+    """Two claims that agree with each other are satisfiable, and satisfiable
+    is not proven: nothing is staged to answer ``f`` or ``g``. One function's
+    assertion rows are judged together, so a second claim must not stand in
+    for the proof the first one lacks (#3896).
+
+    These are open today because every solver seat reports inability on the
+    row (z3 exits 1 on the script emitted for it). That is an accident of the
+    encoding, not the rule. This twin holds the line when the row compiles.
+    """
+    result = run_source_through_real_solver(tmp_path / shape, _SIBLING_CLAIMS[shape])
+    assert result.verdict == "open"
 
 
 def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
