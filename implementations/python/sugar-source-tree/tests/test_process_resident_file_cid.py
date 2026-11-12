@@ -73,27 +73,50 @@ def test_second_pass_over_same_files_does_not_reprepare() -> None:
     assert all(c == 1 for c in counts_after_p2.values())
 
 
-def test_prefix_and_frame_doors_share_one_prepare() -> None:
-    """Dual-door collapse: two SourceFile constructions of one body → one prepare."""
-    body = (
-        "x = 1\n"
-        "def alpha(v):\n"
-        "    return v\n"
-        "def beta(v):\n"
-        "    return v + 1\n"
-    )
-    cid = blake3_512_of(body.encode("utf-8"))
+_TWO_DOORS_BODY = (
+    "x = 1\n"
+    "def alpha(v):\n"
+    "    return v\n"
+    "def beta(v):\n"
+    "    return v + 1\n"
+)
+
+
+def test_an_open_with_a_different_context_prepares_its_own_unit() -> None:
+    """A unit keeps the construction context it was prepared under (#7772).
+
+    Two doors open one body at one seat, each with its own context. The second
+    open used to answer with the first open's unit and rebind its context, so
+    whatever the first door still held read the second door's tables. Now the
+    second open prepares its own unit and the first is left as it was.
+    """
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
-    # Prefix-style and frame-style contexts — both walk SourceFile(identity).
-    SourceFile(
-        _identity(body, "pandas/_config/config.py"),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
-    SourceFile(
-        _identity(body, "pandas/_config/config.py"),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(
-            frame_projection=True
-        ),
-    )
+    cid = blake3_512_of(_TWO_DOORS_BODY.encode("utf-8"))
+    identity = _identity(_TWO_DOORS_BODY, "pandas/_config/config.py")
+    first_context = TreeConstructionContextV1.for_source_call_construction()
+    second_context = TreeConstructionContextV1.for_source_call_construction()
+
+    first = SourceFile(identity, construction_context=first_context)
+    second = SourceFile(identity, construction_context=second_context)
+
+    assert first.unit.construction_context is first_context
+    assert second.unit.construction_context is second_context
+    assert first.unit is not second.unit
+    assert prepare_count_for(cid) == 2
+
+
+def test_an_open_with_the_same_context_reuses_the_unit() -> None:
+    """The same context at the same seat is the same open: one prepare."""
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    cid = blake3_512_of(_TWO_DOORS_BODY.encode("utf-8"))
+    identity = _identity(_TWO_DOORS_BODY, "pandas/_config/config.py")
+    context = TreeConstructionContextV1.for_source_call_construction()
+
+    first = SourceFile(identity, construction_context=context)
+    again = SourceFile(identity, construction_context=context)
+
+    assert again is first
+    assert again.unit.construction_context is context
     assert prepare_count_for(cid) == 1
