@@ -455,23 +455,16 @@ def _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes):
     )
 
 
-def function_contract_rows(fn, file_rel: str):
-    """A function's contract DTO rows, read off EVERY arm of its one reduction.
+def reduction_rows(outcome, *, owner, blame, def_memento):
+    """THE projection from one reduction to its wire rows (#7766).
 
-    `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body
-    to a ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed
-    and halted arms. ``exit_arms_payload_rows`` projects all of them: the post
-    over every completed arm, and one row per assertion site (see there). A
-    ``Complete`` is the one-arm case and keeps its rows byte-for-byte.
-
-    An outcome that is not a set of arms is unchanged by #7766: a deferred
-    native operation (``NativeOperationExitCarrierV1``, whose arms exist only
-    once a caller discharges it with actuals) or a bare effect emits no
-    contract and still carries its source testimony. A SugarNotWritten from an
-    unported body statement propagates (the whole function is a frontier gap).
+    Every caller that turns a function body's reduction into rows comes
+    through here: the abstract universe (``function_contract_rows``) and the
+    universe as applied at a call (``applied_contract_rows``). ``outcome`` is a
+    ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed and
+    halted arms; ``owner`` states the name, formals and symbol when no arm
+    completed. ``None`` when the outcome is not a set of arms.
     """
-    import dataclasses
-
     from sugar_lift_py_tests.floor.universe_value import (
         UniverseValue,
         exit_arms_payload_rows,
@@ -479,19 +472,10 @@ def function_contract_rows(fn, file_rel: str):
     from sugar_lift_py_tests.outcome import Complete, ExitSet
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
 
-    def_memento = function_def_memento(fn, file_rel)
-    panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
-    outcome = function_universe_outcome(fn)
-    if not isinstance(outcome, (Complete, ExitSet)):
-        if not panic_loci and not class_shapes:
-            return def_memento, None  # an effect with no source testimony
-        return def_memento, [
-            _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes)
-        ]
     if isinstance(outcome, Complete):
         arms = ((true_guard(), outcome.value),)
         halted_sites = ()
-    else:
+    elif isinstance(outcome, ExitSet):
         arms = tuple(
             (exit_.guard, exit_.value)
             for exit_ in outcome.exits
@@ -509,31 +493,67 @@ def function_contract_rows(fn, file_rel: str):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
-                owner="function_contract_rows",
-                blame=fn.fragment,
+                owner="reduction_rows",
+                blame=blame,
                 observed=f"exit arms {sorted(set(unread))}",
                 requested="a completed or halted arm",
                 fix="give the exit algebra's arm its projection to rows",
             )
+    else:
+        return None
     for _guard, value in arms:
         if not isinstance(value, UniverseValue):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
-                owner="function_contract_rows",
-                blame=fn.fragment,
+                owner="reduction_rows",
+                blame=blame,
                 observed=f"completed arm holds {type(value).__name__}",
                 requested="the function body's UniverseValue",
                 fix="complete a function body arm with its universe",
             )
-    owner = arms[0][1] if arms else fn.sugar()
-    rows = exit_arms_payload_rows(
-        name=owner.name,
-        formals=tuple(owner.formals),
-        bridge_source_symbol=owner.bridge_source_symbol,
+    stated = arms[0][1] if arms else owner
+    return exit_arms_payload_rows(
+        name=stated.name,
+        formals=tuple(stated.formals),
+        bridge_source_symbol=stated.bridge_source_symbol,
+        formal_coordinates=tuple(stated.formal_coordinates),
         arms=arms,
         halted_assertion_sites=halted_sites,
         def_memento=def_memento,
+    )
+
+
+def function_contract_rows(fn, file_rel: str):
+    """A function's contract DTO rows, read off EVERY arm of its one reduction.
+
+    `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body
+    to a ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed
+    and halted arms. ``exit_arms_payload_rows`` projects all of them: the post
+    over every completed arm, and one row per assertion site (see there). A
+    ``Complete`` is the one-arm case and keeps its rows byte-for-byte.
+
+    An outcome that is not a set of arms is unchanged by #7766: a deferred
+    native operation (``NativeOperationExitCarrierV1``, whose arms exist only
+    once a caller discharges it with actuals) or a bare effect emits no
+    contract and still carries its source testimony. A SugarNotWritten from an
+    unported body statement propagates (the whole function is a frontier gap).
+    """
+    import dataclasses
+
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
+
+    def_memento = function_def_memento(fn, file_rel)
+    panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
+    outcome = function_universe_outcome(fn)
+    if not isinstance(outcome, (Complete, ExitSet)):
+        if not panic_loci and not class_shapes:
+            return def_memento, None  # an effect with no source testimony
+        return def_memento, [
+            _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes)
+        ]
+    rows = reduction_rows(
+        outcome, owner=fn.sugar(), blame=fn.fragment, def_memento=def_memento
     )
     rows[0] = dataclasses.replace(
         rows[0],
@@ -582,9 +602,10 @@ def applied_contract_rows(fn, arg_nodes: tuple, file_rel: str, keywords: tuple =
 
     Construction uses the bound frame's already-sugared body and the frame's
     formal coordinates — not a second bare ``FunctionUniverseSugar`` mint that
-    drifts from ``FunctionDef.sugar()``. Incomplete -> (memento, None), an
-    effect, as the abstract path. Binding gaps propagate as
-    ``SourceCallBindingGap``.
+    drifts from ``FunctionDef.sugar()``. Its rows come through the one
+    projection, ``reduction_rows``, as the abstract path's do; an outcome that
+    is not a set of arms is (memento, None), an effect. Binding gaps propagate
+    as ``SourceCallBindingGap``.
     """
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.outcome import Complete
@@ -607,9 +628,17 @@ def applied_contract_rows(fn, arg_nodes: tuple, file_rel: str, keywords: tuple =
             )
         )
     )
-    if not isinstance(outcome, Complete):
-        return def_memento, None
-    return def_memento, outcome.value.payload_rows(def_memento)
+    from types import SimpleNamespace
+
+    owner = SimpleNamespace(
+        name=fn.name,
+        formals=bound.parameters,
+        bridge_source_symbol=None,
+        formal_coordinates=bound.formal_coordinates,
+    )
+    return def_memento, reduction_rows(
+        outcome, owner=owner, blame=fn.fragment, def_memento=def_memento
+    )
 
 
 def module_definition_memento(sf: SourceFile, file_rel: str, file_cid: str) -> dict:

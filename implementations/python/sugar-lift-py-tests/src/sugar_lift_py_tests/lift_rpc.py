@@ -726,7 +726,12 @@ def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, A
     from sugar_lift_py_tests.ir import TermTableBuilder
 
     term_table = TermTableBuilder()
-    rows = resolved.payload_rows(def_memento_dto)
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.tree_enumerate import reduction_rows
+
+    rows = reduction_rows(
+        Complete(resolved), owner=resolved, blame=None, def_memento=def_memento_dto
+    )
     nodes = [
         {
             "memento": def_memento,
