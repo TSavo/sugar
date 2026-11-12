@@ -380,7 +380,7 @@ class SourceResolutionSession:
         # megamodules (pandas/_config/config.py ×18 in one _json.py open). The
         # value is live context-bound, so it lives here — never process-global.
         self.module_materializations: dict[tuple, Any] = {}
-        # Prefix-door SourceFile (no frame_projection). Export fallthrough called
+        # Prefix-door SourceFile. Export fallthrough called
         # _module_prefix_outcome once per export locus and rebuilt config N times.
         # Separate from module_materializations: different context settings.
         self.prefix_files: dict[str, Any] = {}

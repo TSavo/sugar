@@ -3221,11 +3221,7 @@ def _resolve_source_visible_frame_uncached(
     )
     module_product = session.module_materialize_hit(module_key)
     if module_product is None:
-        # frame_projection: dual-mode factories may nest With only on non-CM
-        # branches; soft-require those so call-frame projection can complete.
-        context = TreeConstructionContextV1.for_source_call_construction(
-            frame_projection=True
-        )
+        context = TreeConstructionContextV1.for_source_call_construction()
         producer_reporter = ConstructionTestimonyReporterV1(
             NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
         )
