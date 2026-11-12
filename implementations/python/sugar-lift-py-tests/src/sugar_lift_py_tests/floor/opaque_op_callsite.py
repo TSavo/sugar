@@ -273,18 +273,6 @@ class OpaqueOpCallsite(FloorValue):
             )
         )
 
-    def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().binary_operator_with(operation, ctx)
-
-    def reflected_binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().reflected_binary_operator_with(operation, ctx)
-
-    def unary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().unary_operator_with(operation, ctx)
-
-    def bitwise_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().bitwise_with(operation, ctx)
-
     def format_value_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().format_value_with(operation, ctx)
 
@@ -293,9 +281,6 @@ class OpaqueOpCallsite(FloorValue):
 
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().subscript_with(operation, ctx)
-
-    def contains_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().contains_with(operation, ctx)
 
 
 def is_concrete_floor_value(value: FloorValue) -> bool:
