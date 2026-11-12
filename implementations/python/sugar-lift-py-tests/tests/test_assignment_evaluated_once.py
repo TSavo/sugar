@@ -16,6 +16,15 @@ with the LAST iteration's value: ``total = total + x`` over ``x = i + 1`` for
 completed.  Today loops are right only because a plain completion never meets
 the key.
 
+A second attempt put the dynamic occurrence path (``occurrence.py``) in the
+key.  That is wrong too: the path names the READER's dynamic extent.  A
+substituted read of an earlier iteration's right-hand side is evaluated inside
+the current iteration, so it looks up the site under the current iteration and
+finds the current iteration's value.  It passed every program whose claim sits
+after the loop and failed the ones whose claim sits inside it
+(``_READ_INSIDE_THE_LOOP``).  What a key would need is the evaluation the
+right-hand-side COPY belongs to, which neither the span nor the path carries.
+
 These tests are the guard for the next attempt.
 
 - The value tests state what Python computes.  Each program has a truthful
@@ -222,6 +231,46 @@ _PROGRAMS = {
     ),
 }
 
+# An assert INSIDE the loop body reads the accumulator at iteration time, when
+# every lookup is made in the current iteration's dynamic extent.  (An assert
+# after the loop reads it when nothing is in an iteration, and substitution
+# recomputes every copy from scratch.)  Evaluating ``acc * 10 + x`` in
+# iteration 2 re-reads iteration 1's ``x``; a record keyed by the site and the
+# CURRENT iteration answers that read with iteration 2's ``x``: 33, not 23.
+#
+# name -> (the loop body's claim that holds in Python, a claim that holds only
+#          if every earlier iteration's ``x`` reads as the current one)
+_READ_INSIDE_THE_LOOP = {
+    "digits": (
+        "    acc = 0\n"
+        "    for i in (1, 2):\n"
+        "        x = i + 1\n"
+        "        acc = acc * 10 + x\n"
+        "        assert acc == {claim}\n",
+        "21 * i - 19",
+        "31 * i - 29",
+    ),
+    "digits-through-a-second-name": (
+        "    acc = 0\n"
+        "    for i in (1, 2):\n"
+        "        x = i + 1\n"
+        "        acc = acc * 10 + x\n"
+        "        y = acc\n"
+        "        assert y == {claim}\n",
+        "21 * i - 19",
+        "31 * i - 29",
+    ),
+    "sum": (
+        "    total = 0\n"
+        "    for i in (1, 2, 3):\n"
+        "        x = i + 1\n"
+        "        total = total + x\n"
+        "        assert total {claim}\n",
+        "* 2 == (i + 1) * (i + 2) - 2",
+        "== i * (i + 1)",
+    ),
+}
+
 # A plain function call in the body of an unrolled loop.  These go through the
 # real solver: the reduction-level door used above cannot build them (a
 # ``BackendDefect``, "producer reporter owns no registration table").
@@ -350,6 +399,21 @@ def test_the_lying_claim_does_not_complete(name: str) -> None:
     body, _truthful, lying = _PROGRAMS[name]
     _source, function = _function(body.format(claim=lying))
 
+    completed, halted = _faces(function_universe_outcome(function))
+    assert completed == 0
+    assert halted >= 1
+
+
+@pytest.mark.parametrize("name", sorted(_READ_INSIDE_THE_LOOP))
+def test_a_claim_inside_the_loop_reads_each_iteration_s_own_values(name: str) -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    body, truthful, lying = _READ_INSIDE_THE_LOOP[name]
+
+    _source, function = _function(body.format(claim=truthful))
+    assert _faces(function_universe_outcome(function)) == (1, 0)
+
+    _source, function = _function(body.format(claim=lying))
     completed, halted = _faces(function_universe_outcome(function))
     assert completed == 0
     assert halted >= 1
