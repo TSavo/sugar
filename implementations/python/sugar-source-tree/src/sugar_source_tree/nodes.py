@@ -13839,7 +13839,12 @@ class Call(Expression):
                 else:
                     contract_resolution_gap = resolution.kind.value
             elif resolution is not None:
-                contract_ref = resolution
+                # A contract answers the symbol. The call has the SAME form:
+                # its coordinate, and an edge carrying the symbol. The kit
+                # applies no contract; step 9 joins the edge to the contract
+                # whose `bridgeSourceSymbol` is this string and conjoins its
+                # post there.
+                import_target_symbol = resolution.bridge_source_symbol
 
             source_call_frame = None
             formal_function_sugar = None
