@@ -12,6 +12,43 @@ from sugar_lift_py_tests.witness_harness import (
     run_source_through_real_solver,
 )
 
+# The numpy literal-call twins that state "not bridged", by pytest name.
+#
+# The owner, 2026-11-11, asked whether these 21 count as "not bridged" (assert
+# ``open``) instead of red: "Yes, not bridged" (docs/path-forward.md, job number
+# one, next to "Green means decided"). No numpy proof exists to import, so a
+# numpy call is an edge nothing binds, and the lifter holds no numpy arithmetic
+# of its own. Each twin asserts ``open`` for the truthful claim AND for the lying
+# claim: neither proven nor refuted. A twin listed here is not green in the
+# plan's sense (its claim is not decided), and it turns back into a ``sat`` /
+# ``unsat`` twin on the day a numpy proof can be imported.
+#
+# Every test named here asserts its own membership, so a renamed or added case
+# cannot state "not bridged" without being listed.
+NOT_BRIDGED_NUMPY_TWINS: tuple[str, ...] = (
+    "test_numpy_integer_literal_call_is_not_bridged[add-5-6]",
+    "test_numpy_integer_literal_call_is_not_bridged[multiply-6-7]",
+    "test_numpy_integer_literal_call_is_not_bridged[subtract--1-1]",
+    "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[mod-7-3-1-2]",
+    "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[mod--7-3-2--1]",
+    "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[mod-7--3--2-1]",
+    "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[floor_divide-7-3-2-3]",
+    "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[floor_divide--7-3--3--2]",
+    "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[floor_divide-7--3--3--2]",
+    "test_numpy_maximum_and_minimum_literal_call_is_not_bridged[maximum-7-3-7-3]",
+    "test_numpy_maximum_and_minimum_literal_call_is_not_bridged[maximum--7-3-3--7]",
+    "test_numpy_maximum_and_minimum_literal_call_is_not_bridged[maximum-5-5-5-4]",
+    "test_numpy_maximum_and_minimum_literal_call_is_not_bridged[minimum-7-3-3-7]",
+    "test_numpy_maximum_and_minimum_literal_call_is_not_bridged[minimum--7-3--7-3]",
+    "test_numpy_maximum_and_minimum_literal_call_is_not_bridged[minimum-5-5-5-4]",
+    "test_numpy_divide_literal_call_is_not_bridged[7-2-3.5-3]",
+    "test_numpy_divide_literal_call_is_not_bridged[-7-2--3.5-3.5]",
+    "test_numpy_divide_literal_call_is_not_bridged[1-4-0.25-0.5]",
+    "test_numpy_divide_literal_call_is_not_bridged[6-3-2-2.5]",
+    "test_numpy_power_literal_call_is_not_bridged",
+    "test_numpy_add_literal_call_is_not_bridged",
+)
+
 
 @pytest.mark.parametrize(
     ("op", "truth", "lie"),
@@ -21,14 +58,16 @@ from sugar_lift_py_tests.witness_harness import (
         ("subtract", -1, 1),
     ],
 )
-def test_numpy_integer_literal_call_reduces_to_sibling_fact(
-    tmp_path: Path, op: str, truth: int, lie: int
+def test_numpy_integer_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest, tmp_path: Path, op: str, truth: int, lie: int
 ) -> None:
-    """Computable integer ufuncs need a reduced-value sibling fact.
+    """``np.add`` / ``np.multiply`` / ``np.subtract`` over integer literals are
+    not bridged: no numpy proof exists to import, so nothing binds the call and
+    the lifter does not compute numpy's result itself. The truthful claim and
+    the lying claim are both ``open``.
 
-    Boundary: this pins only literal integer arithmetic. Floating/transcendental
-    or analysis-heavy operations such as np.sin, np.sqrt, and np.fft remain
-    opaque EUF until a deliberate numeric semantics slice teaches them.
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported.
     """
 
     truthful = _run_case(
@@ -48,14 +87,9 @@ def test_numpy_integer_literal_call_reduces_to_sibling_fact(
     observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
     print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-
-    truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
-    assert _rhs_values(truthful_rows) == [truth, truth]
-
-    lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
-    assert _rhs_values(lying_rows) == [truth, lie]
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
 
 
 @pytest.mark.parametrize(
@@ -96,7 +130,8 @@ def test_numpy_integer_literal_call_accepts_constant_bound_args(
         ("floor_divide", 7, -3, -3, -2),
     ],
 )
-def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
+def test_numpy_mod_and_floor_divide_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
     op: str,
     left: int,
@@ -104,6 +139,15 @@ def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
     truth: int,
     lie: int,
 ) -> None:
+    """``np.mod`` / ``np.floor_divide`` over integer literals are not bridged:
+    no numpy proof exists to import, so nothing binds the call and the lifter
+    holds no sign convention for numpy. The truthful claim and the lying claim
+    are both ``open``.
+
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported.
+    """
+
     truthful = _run_numpy_binary_case(
         tmp_path / f"{op}-{left}-{right}-truthful",
         op,
@@ -121,14 +165,9 @@ def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
     observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
     print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-
-    truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
-    assert _rhs_values(truthful_rows) == [truth, truth]
-
-    lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
-    assert _rhs_values(lying_rows) == sorted([truth, lie])
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
 
 
 @pytest.mark.parametrize(
@@ -142,7 +181,8 @@ def test_numpy_mod_and_floor_divide_follow_python_sign_convention(
         ("minimum", 5, 5, 5, 4),
     ],
 )
-def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
+def test_numpy_maximum_and_minimum_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
     op: str,
     left: int,
@@ -150,9 +190,14 @@ def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
     truth: int,
     lie: int,
 ) -> None:
-    """np.maximum/np.minimum over integer literals are total, dtype-safe order
-    comparisons; the kit computes them with Python's own ``max``/``min`` and
-    never imports or executes numpy."""
+    """``np.maximum`` / ``np.minimum`` over integer literals are not bridged: no
+    numpy proof exists to import, so nothing binds the call and the kit does
+    not stand in Python's own ``max`` / ``min`` for numpy's. The truthful claim
+    and the lying claim are both ``open``.
+
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported.
+    """
 
     truthful = _run_numpy_binary_case(
         tmp_path / f"{op}-{left}-{right}-truthful",
@@ -171,14 +216,9 @@ def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
     observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
     print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-
-    truthful_rows = _numpy_euf_rows(truthful.result, f"numpy.{op}")
-    assert _rhs_values(truthful_rows) == [truth, truth]
-
-    lying_rows = _numpy_euf_rows(lying.result, f"numpy.{op}")
-    assert _rhs_values(lying_rows) == sorted({truth, lie})
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
 
 
 @pytest.mark.parametrize(
@@ -190,19 +230,21 @@ def test_numpy_maximum_and_minimum_reduce_to_sibling_fact(
         (6, 3, "2", "2.5"),
     ],
 )
-def test_numpy_divide_reduces_to_sibling_fact(
+def test_numpy_divide_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
     left: int,
     right: int,
     truth: str,
     lie: str,
 ) -> None:
-    """np.divide over literal numeric operands is IEEE-754 true division; the
-    kit computes it with Python's own ``/`` and never imports or executes
-    numpy.
+    """``np.divide`` over literal numeric operands is not bridged: no numpy
+    proof exists to import, so nothing binds the call and the kit does not
+    stand in Python's own ``/`` for numpy's division. The truthful claim and
+    the lying claim are both ``open``.
 
-    Boundary: division by zero is a permanent stop-line (see
-    ``test_numpy_divide_by_zero_stays_opaque``), not a floored inf/nan value.
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported.
     """
 
     truthful = _run_numpy_divide_case(
@@ -214,14 +256,9 @@ def test_numpy_divide_reduces_to_sibling_fact(
     observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
     print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-
-    truthful_rows = _numpy_euf_rows(truthful.result, "numpy.divide")
-    assert _real_rhs_values(truthful_rows) == [truth, truth]
-
-    lying_rows = _numpy_euf_rows(lying.result, "numpy.divide")
-    assert set(_real_rhs_values(lying_rows)) == {truth, lie}
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
 
 
 def test_numpy_divide_by_zero_stays_opaque(tmp_path: Path) -> None:
@@ -257,27 +294,24 @@ def _run_numpy_divide_case(
     )
 
 
-def _real_rhs_values(rows: list[dict]) -> list[str]:
-    return sorted(_real_rhs_value(row) for row in rows)
-
-
-def _real_rhs_value(row: dict) -> str:
-    # Int embeds in Real losslessly: an INTEGRAL divide result (e.g. 6/3 == 2)
-    # projects through the Int ctor to agree with a plain-int sibling, while a
-    # genuinely fractional result (e.g. 7/2 == 3.5) needs the Real ctor. Both
-    # are the numeric RHS this helper compares against the source's decimal
-    # literal text, so normalize to the same canonical string either way.
-    rhs = row["inv"]["args"][1]
-    assert rhs["kind"] == "const"
-    assert rhs["sort"]["name"] in {"Int", "Real"}
-    if rhs["sort"]["name"] == "Int":
-        return str(rhs["value"])
-    return rhs["value"]
-
-
-def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
+def test_numpy_power_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
+    """``np.power`` over integer literals is not bridged: no numpy proof exists
+    to import, so nothing binds the call and the lifter does not compute the
+    power itself. The truthful claim and the lying claim are both ``open``.
+
+    The overflow claim (``np.power(2, 63) == 0``) is ``open`` for the same
+    reason: where an integer power stops being int64-exact is numpy's
+    knowledge, and with nothing bound the lifter cannot tell that call from
+    ``np.power(2, 3)``.
+
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported; what the overflow claim states then is whatever that proof says
+    about it.
+    """
+
     truthful = _run_numpy_binary_case(tmp_path / "power-truthful", "power", 2, 3, 8)
     lying = _run_numpy_binary_case(tmp_path / "power-lying", "power", 2, 3, 9)
     overflow = _run_numpy_binary_case(
@@ -294,17 +328,10 @@ def test_numpy_power_reduces_only_when_integer_result_is_int64_exact(
     }
     print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
-
-    truthful_rows = _numpy_euf_rows(truthful.result, "numpy.power")
-    assert _rhs_values(truthful_rows) == [8, 8]
-
-    lying_rows = _numpy_euf_rows(lying.result, "numpy.power")
-    assert _rhs_values(lying_rows) == [8, 9]
-
-    assert overflow.verdict.startswith("error:")
-    assert len(_numpy_euf_rows(overflow.result, "numpy.power")) == 1
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
+    assert overflow.verdict == "open"
 
 
 @pytest.mark.parametrize(
@@ -343,7 +370,17 @@ def test_uncomputed_numpy_ops_stay_opaque(
     assert len(_all_euf_rows(observed.result)) == 1
 
 
-def test_numpy_add_literal_call_reduces_to_sibling_fact(tmp_path: Path) -> None:
+def test_numpy_add_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    """``np.add(2, 3)`` is not bridged: no numpy proof exists to import, so
+    nothing binds the call. The truthful claim (``== 5``) and the lying claim
+    (``== 6``) are both ``open``.
+
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported.
+    """
+
     observed = {
         "truthful": _run_case(
             tmp_path / "truthful",
@@ -362,7 +399,8 @@ def test_numpy_add_literal_call_reduces_to_sibling_fact(tmp_path: Path) -> None:
     }
     print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert observed == {"truthful": "sat", "lying": "unsat"}
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert observed == {"truthful": "open", "lying": "open"}
 
 
 def test_computed_sibling_is_structurally_derived() -> None:
