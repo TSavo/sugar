@@ -14,14 +14,19 @@ from sugar_lift_py_tests.witness_harness import (
 
 # The numpy literal-call twins that state "not bridged", by pytest name.
 #
-# The owner, 2026-11-11, asked whether these 21 count as "not bridged" (assert
-# ``open``) instead of red: "Yes, not bridged" (docs/path-forward.md, job number
-# one, next to "Green means decided"). No numpy proof exists to import, so a
-# numpy call is an edge nothing binds, and the lifter holds no numpy arithmetic
-# of its own. Each twin asserts ``open`` for the truthful claim AND for the lying
-# claim: neither proven nor refuted. A twin listed here is not green in the
-# plan's sense (its claim is not decided), and it turns back into a ``sat`` /
-# ``unsat`` twin on the day a numpy proof can be imported.
+# The owner, 2026-11-11, asked whether the first 21 count as "not bridged"
+# (assert ``open``) instead of red: "Yes, not bridged" (docs/path-forward.md, job
+# number one, next to "Green means decided"). No numpy proof exists to import,
+# so a numpy call is an edge nothing binds, and the lifter holds no numpy
+# arithmetic of its own. Each twin asserts ``open`` for the truthful claim AND
+# for the lying claim: neither proven nor refuted. A twin listed here is not
+# green in the plan's sense (its claim is not decided), and it turns back into a
+# ``sat`` / ``unsat`` twin on the day a numpy proof can be imported.
+#
+# The last four (division by zero, ``sin``, ``sqrt``, ``fft``) asserted ``error:``
+# as "stays opaque". Asked the same day whether to treat them as not bridged
+# too, the owner answered: "Yes, same rule". Each asserts ``open`` for the claim
+# it always made AND for a contrary claim about the same call.
 #
 # Every test named here asserts its own membership, so a renamed or added case
 # cannot state "not bridged" without being listed.
@@ -47,6 +52,10 @@ NOT_BRIDGED_NUMPY_TWINS: tuple[str, ...] = (
     "test_numpy_divide_literal_call_is_not_bridged[6-3-2-2.5]",
     "test_numpy_power_literal_call_is_not_bridged",
     "test_numpy_add_literal_call_is_not_bridged",
+    "test_numpy_divide_by_zero_literal_call_is_not_bridged",
+    "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[sin]",
+    "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[sqrt]",
+    "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[fft]",
 )
 
 
@@ -261,21 +270,40 @@ def test_numpy_divide_literal_call_is_not_bridged(
     assert lying.verdict == "open"
 
 
-def test_numpy_divide_by_zero_stays_opaque(tmp_path: Path) -> None:
-    """Division by zero is a permanent stop-line: numpy's IEEE inf/nan/warning
-    behavior is not reproduced, so no Derived sibling fact is fabricated."""
+def test_numpy_divide_by_zero_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    """``np.divide(1, 0)`` is not bridged: no numpy proof exists to import, so
+    nothing binds the call, and what numpy does on division by zero (inf, nan,
+    a warning) is numpy's knowledge, not the lifter's. With nothing bound the
+    lifter cannot tell this call from ``np.divide(7, 2)``. The stated claim
+    (``== 1``) and the contrary claim (``== 2``) are both ``open``.
 
-    observed = _run_case(
-        tmp_path / "divide-by-zero",
+    This turns back into a decided twin when a numpy proof can be imported;
+    what each claim states then is whatever that proof says about division by
+    zero.
+    """
+
+    stated = _run_case(
+        tmp_path / "divide-by-zero-stated",
         "import numpy as np\n"
         "\n"
         "def test_np_divide_by_zero():\n"
         "    assert np.divide(1, 0) == 1\n",
     )
-    print(json.dumps(observed.to_json(), indent=2, sort_keys=True))
+    contrary = _run_case(
+        tmp_path / "divide-by-zero-contrary",
+        "import numpy as np\n"
+        "\n"
+        "def test_np_divide_by_zero():\n"
+        "    assert np.divide(1, 0) == 2\n",
+    )
+    observed = {"stated": stated.to_json(), "contrary": contrary.to_json()}
+    print(json.dumps(observed, indent=2, sort_keys=True))
 
-    assert observed.verdict.startswith("error:")
-    assert len(_numpy_euf_rows(observed.result, "numpy.divide")) == 1
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert stated.verdict == "open"
+    assert contrary.verdict == "open"
 
 
 def _run_numpy_divide_case(
@@ -335,39 +363,45 @@ def test_numpy_power_literal_call_is_not_bridged(
 
 
 @pytest.mark.parametrize(
-    ("label", "source"),
+    ("label", "call", "stated_rhs", "contrary_rhs"),
     [
-        (
-            "sin",
-            "import numpy as np\n"
-            "\n"
-            "def test_np_sin_opaque():\n"
-            "    assert np.sin(0) == 0\n",
-        ),
-        (
-            "sqrt",
-            "import numpy as np\n"
-            "\n"
-            "def test_np_sqrt_opaque():\n"
-            "    assert np.sqrt(4) == 2\n",
-        ),
-        (
-            "fft",
-            "import numpy as np\n"
-            "\n"
-            "def test_np_fft_opaque():\n"
-            "    assert np.fft.fft([1, 2]) == [1, 2]\n",
-        ),
+        pytest.param("sin", "np.sin(0)", "0", "1", id="sin"),
+        pytest.param("sqrt", "np.sqrt(4)", "2", "3", id="sqrt"),
+        pytest.param("fft", "np.fft.fft([1, 2])", "[1, 2]", "[2, 1]", id="fft"),
     ],
 )
-def test_uncomputed_numpy_ops_stay_opaque(
-    tmp_path: Path, label: str, source: str
+def test_numpy_sin_sqrt_fft_literal_call_is_not_bridged(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    label: str,
+    call: str,
+    stated_rhs: str,
+    contrary_rhs: str,
 ) -> None:
-    observed = _run_case(tmp_path / label, source)
-    print(json.dumps(observed.to_json(), indent=2, sort_keys=True))
+    """``np.sin`` / ``np.sqrt`` / ``np.fft.fft`` over literals are not bridged:
+    no numpy proof exists to import, so nothing binds the call and the lifter
+    holds no numpy semantics of its own. The stated claim and a contrary claim
+    about the same call (a different right-hand side) are both ``open``.
 
-    assert observed.verdict.startswith("error:")
-    assert len(_all_euf_rows(observed.result)) == 1
+    This turns back into a decided twin when a numpy proof can be imported.
+    """
+
+    def source(rhs: str) -> str:
+        return (
+            "import numpy as np\n"
+            "\n"
+            f"def test_np_{label}_opaque():\n"
+            f"    assert {call} == {rhs}\n"
+        )
+
+    stated = _run_case(tmp_path / f"{label}-stated", source(stated_rhs))
+    contrary = _run_case(tmp_path / f"{label}-contrary", source(contrary_rhs))
+    observed = {"stated": stated.to_json(), "contrary": contrary.to_json()}
+    print(json.dumps(observed, indent=2, sort_keys=True))
+
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert stated.verdict == "open"
+    assert contrary.verdict == "open"
 
 
 def test_numpy_add_literal_call_is_not_bridged(
