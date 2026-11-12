@@ -506,6 +506,26 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     if all(status == "discharged" for status in statuses):
         return "sat"
     if any(status in {"refused", "undecidable"} for status in statuses):
+        # ``open`` is a verdict about the CLAIM. A row that was not decided
+        # because a solver seat could not be started says nothing about the
+        # claim: that is the machine failing, and it must not read as ``open``
+        # (seen once: z3, cvc5 and vampire all ``unavailable`` under load, and
+        # the first-verdict twin came back ``open`` / ``open``).
+        unavailable = sorted(
+            {
+                str(invocation.get("solver"))
+                for row in rows
+                for invocation in (
+                    (row.get("verification") or {}).get("solverInvocations") or []
+                )
+                if invocation.get("seatState") == "unavailable"
+            }
+        )
+        if unavailable:
+            raise WitnessPipelineError(
+                "solver seat unavailable, so no verdict was reached: "
+                + ", ".join(unavailable)
+            )
         return "open"
     if all(status == "unwitnessed" for status in statuses):
         provisional = False
