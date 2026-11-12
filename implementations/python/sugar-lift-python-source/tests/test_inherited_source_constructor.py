@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceDerivedContextManagerRefV1,
 )
@@ -170,17 +172,26 @@ def test_inherited_source_constructor_does_not_suppress_a_body_raise(tmp_path) -
 
 
 def test_own_initializer_does_not_inherit_the_base_formals(tmp_path) -> None:
+    """``Named`` defines its own ``__init__()``, so ``Named(1)`` has an actual
+    no formal consumes. Populate says so by name, and the open raises it: the
+    failure used to be caught inside the opener, and the file opened with the
+    ``with`` left underived (#7795)."""
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
     from sugar_source_tree.nodes import ClassDef
 
     root = _corpus(tmp_path, **{"e.py": OWN_INIT})
-    session = _session()
-    source_file = _open(root, "e.py", session=session)
+    clear_walk_sessions()
+    unpopulated = open_source_file_for_construction(
+        root / "e.py",
+        root=root,
+        reporter=CollectingReporter(),
+        populate_derived=False,
+        source_workspace_root=root,
+    )
     named = next(
-        n for n in source_file.nodes() if isinstance(n, ClassDef) and n.name == "Named"
+        n for n in unpopulated.nodes() if isinstance(n, ClassDef) and n.name == "Named"
     )
     assert named.source_visible_constructor_frame().parameters == ()
-    refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    with_node = next(n for n in source_file.nodes() if isinstance(n, With))
-    line = with_node.line_col_span().start_line
-    selected = [refs[k] for k in refs if k.start_line == line]
-    assert not any(isinstance(ref, SourceDerivedContextManagerRefV1) for ref in selected)
+
+    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
+        _open(root, "e.py", session=_session())
