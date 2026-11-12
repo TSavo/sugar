@@ -26,7 +26,6 @@ from .class_definition_value import (
     ConstructedClassFieldV1,
     ConstructedClassMethodV1,
 )
-from .curried_loop_scope import CurriedLoopBody, CurriedLoopScope
 from .class_value import ClassValue
 from .comprehension_value import ComprehensionValue
 from .dict_literal_value import DictLiteralValue
@@ -217,8 +216,6 @@ __all__ = [
     "BoundMethodValue",
     "BuiltinSuperMethodValue",
     "CallSiteValue",
-    "CurriedLoopBody",
-    "CurriedLoopScope",
     "ClassValue",
     "ComprehensionValue",
     "DictLiteralValue",
