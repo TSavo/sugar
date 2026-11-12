@@ -3,9 +3,9 @@
 The read is one occurrence's own value (whatever the running context holds),
 held by this frame as itself, like a call's result.  No floor decides its
 type, so ``format_options.get().copy()`` (numpy's ``get_printoptions``) may
-raise: it completes only under ``python:method_call.completes(...)`` and
+raise: it completes only under ``python:unknown_callee_call.completes(...)`` and
 halts with an ``UndeterminedRaiseEffect`` (owner
-``UnprojectedMethodCall:copy``).  It used to complete totally.
+``UnknownCallee:copy``).  It used to complete totally.
 """
 
 from __future__ import annotations
@@ -27,6 +27,6 @@ def test_a_method_on_a_contextvar_read_may_raise(tmp_path):
     ).exits
     (done,) = [face for face in exits if isinstance(face, Completed)]
     (halt,) = [face for face in exits if isinstance(face, Halted)]
-    assert "python:method_call.completes" in str(done.guard)
+    assert "python:unknown_callee_call.completes" in str(done.guard)
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.producer_node_owner == "UnprojectedMethodCall:copy"
+    assert halt.effect.producer_node_owner == "UnknownCallee:copy"
