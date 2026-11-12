@@ -455,6 +455,15 @@ def _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes):
     )
 
 
+class ReductionRows(list):
+    """The wire rows of ONE reduction, with the call edges that same reduction
+    projects (``call_edges``). Rows and edges are read off the same completed
+    arms in one pass, so a reader of the rows never reduces again to learn the
+    edges."""
+
+    call_edges: tuple = ()
+
+
 def reduction_rows(outcome, *, owner, blame, def_memento):
     """THE projection from one reduction to its wire rows (#7766).
 
@@ -513,15 +522,26 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
                 fix="complete a function body arm with its universe",
             )
     stated = arms[0][1] if arms else owner
-    return exit_arms_payload_rows(
-        name=stated.name,
-        formals=tuple(stated.formals),
-        bridge_source_symbol=stated.bridge_source_symbol,
-        formal_coordinates=tuple(stated.formal_coordinates),
-        arms=arms,
-        halted_assertion_sites=halted_sites,
-        def_memento=def_memento,
+    projected = ReductionRows(
+        exit_arms_payload_rows(
+            name=stated.name,
+            formals=tuple(stated.formals),
+            bridge_source_symbol=stated.bridge_source_symbol,
+            formal_coordinates=tuple(stated.formal_coordinates),
+            arms=arms,
+            halted_assertion_sites=halted_sites,
+            def_memento=def_memento,
+        )
     )
+    # Step 7: the edge of each call a completed arm holds, stated by the
+    # call's own value. One edge per call site, however many arms hold it.
+    edges = []
+    for _guard, value in arms:
+        for edge in value.call_edges():
+            if edge not in edges:
+                edges.append(edge)
+    projected.call_edges = tuple(edges)
+    return projected
 
 
 def function_contract_rows(fn, file_rel: str):

@@ -3013,6 +3013,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # function-contract AND each assertion row. `universes` keeps
                 # the function-contract per def for the seek joins below.
                 scan_rows = []  # (memento_dict, dto)
+                scan_edges = []  # (memento_dict, call-edge dict)
                 gaps = []
                 # Phase-3: functions whose parameter-contract demands the caller
                 # already discharged (fold -> resume) are served from the resume
@@ -3056,6 +3057,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue  # an effect, not a contract
                     universes.append((fn.name, def_memento.to_rpc(), rows[0]))
                     scan_rows.extend((def_memento.to_rpc(), row) for row in rows)
+                    # Step 7: the call edges the same reduction projected.
+                    scan_edges.extend(
+                        (def_memento.to_rpc(), edge)
+                        for edge in getattr(rows, "call_edges", ())
+                    )
 
                 def _node(memento, dto):
                     return {
@@ -3066,6 +3072,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
                 if not (seek and at is not None):
                     nodes = [_node(m, d) for m, d in scan_rows]
+                    nodes.extend(
+                        {"memento": m, "audit": edge, "payload": None}
+                        for m, edge in scan_edges
+                    )
                     _send_enumerate_result(
                         msg_id, nodes, gaps, term_tables=[term_table.nodes]
                     )

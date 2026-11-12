@@ -200,3 +200,54 @@ def test_a_solver_that_could_not_start_is_an_error_not_open() -> None:
         prove_verdict({"rows": [_refused_row("unavailable")]})
     assert "solver seat unavailable" in str(failure.value)
     assert "cvc5, z3" in str(failure.value)
+
+
+def test_a_re_exported_name_is_not_bridged_by_its_vendors_proof(tmp_path: Path) -> None:
+    """OWED, and pinned so it cannot go green by accident.
+
+    The vendor defines ``f`` in ``pkg/_impl.py`` and re-exports it from
+    ``pkg/__init__.py``. The consumer imports ``f`` from ``pkg``, so its edge
+    carries the demand's symbol, what its own source wrote: ``python:pkg.f``.
+    The vendor's contract states ``python:pkg._impl.f``. Step 9 joins an edge
+    to a contract by string equality of those two symbols, so with the
+    vendor's proof staged the claim is still not bridged: ``open`` on both
+    halves. There is no alias table and no second lookup, by ruling: how a
+    vendor's proof states what it exports is a question about step 9's text.
+    """
+    import json
+    import shutil
+
+    from sugar_lift_py_tests.witness_harness import (
+        _stage_cli_project,
+        mint_project,
+        prove_verdict,
+        run_sugar_cli,
+    )
+
+    vendor = tmp_path / "vendor"
+    _stage_cli_project(vendor, "def f(x):\n    return x\n")
+    (vendor / "pkg").mkdir()
+    (vendor / "test_witness.py").rename(vendor / "pkg" / "_impl.py")
+    (vendor / "pkg" / "__init__.py").write_text(
+        "from pkg._impl import f\n", encoding="utf-8"
+    )
+    minted = mint_project(vendor)
+    assert minted.returncode == 0, minted.stderr
+    (vendor_proof,) = sorted(vendor.glob("*.proof"))
+
+    def verdict(claim: int) -> str:
+        consumer = tmp_path / f"consumer-{claim}"
+        _stage_cli_project(
+            consumer,
+            f"from pkg import f\n\n\ndef test_f():\n    assert f(3) == {claim}\n",
+        )
+        imports = consumer / ".sugar" / "imports"
+        imports.mkdir(parents=True)
+        shutil.copy(vendor_proof, imports / vendor_proof.name)
+        minted = mint_project(consumer)
+        assert minted.returncode == 0, minted.stderr
+        prove = run_sugar_cli(consumer, ["prove", ".", "--json", "--z3", "z3"])
+        return prove_verdict(json.loads(prove.stdout))
+
+    assert verdict(3) == "open"
+    assert verdict(4) == "open"
