@@ -64,7 +64,6 @@ def populate_source_visible_call_frames(
     )
     calls = tuple(node for node in source_file.nodes() if isinstance(node, Call))
     calls_by_span = {_span_key(node): node for node in calls}
-    constructor_targets = {}
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     if session.enabled:
         for top, graph in session.dependency_graphs.items():
@@ -170,44 +169,12 @@ def populate_source_visible_call_frames(
             continue
         context.source_call_frames[coordinate] = frame
         dispatch_kind = "constructor" if isinstance(target, ClassDef) else "function"
-        if isinstance(target, ClassDef):
-            constructor_targets[coordinate] = target
         context.source_call_resolutions[coordinate] = SourceCallPreconstructionRefV1(
             coordinate,
             resolved.cid,
             graph.distribution_artifact_cid,
             frame.frame_cid,
             dispatch_kind,
-        )
-
-    for call in calls:
-        if not isinstance(call.func, Attribute) or not isinstance(
-            call.func.value, Call
-        ):
-            continue
-        receiver_coordinate = _coordinate(call.func.value)
-        target = constructor_targets.get(receiver_coordinate)
-        if target is None:
-            continue
-        coordinate = _coordinate(call)
-        frame = _source_method_frame(target, call.func.attr)
-        if frame is None:
-            context.source_call_resolutions[coordinate] = (
-                SourceCallPreconstructionGapV1(
-                    "dynamic-call-target",
-                    coordinate,
-                    "authenticated class has no source method",
-                )
-            )
-            continue
-        context.source_call_frames[coordinate] = frame
-        constructor_ref = context.source_call_resolutions[receiver_coordinate]
-        context.source_call_resolutions[coordinate] = SourceCallPreconstructionRefV1(
-            coordinate,
-            constructor_ref.resolved_object_cid,
-            constructor_ref.distribution_artifact_cid,
-            frame.frame_cid,
-            "method",
         )
 
 
@@ -282,24 +249,6 @@ def _call_for_callee_span(calls, key):
     """Project an authenticated imported callee occurrence to its exact Call."""
     candidates = tuple(call for call in calls if _span_key(call.func) == key)
     return candidates[0] if len(candidates) == 1 else None
-
-
-def _source_method_frame(target: ClassDef, name: str):
-    """Project the exact method frame from the sole-door class construction."""
-    from sugar_lift_py_tests.floor import ClassDefinitionValue
-    from sugar_lift_py_tests.outcome import Complete
-
-    outcome = target.sugar().desugar()
-    if not isinstance(outcome, Complete) or not isinstance(
-        outcome.value, ClassDefinitionValue
-    ):
-        return None
-    matches = tuple(
-        method
-        for method in outcome.value._object_methods()
-        if method.name == name and method.source_call_frame is not None
-    )
-    return matches[-1].source_call_frame if matches else None
 
 
 def _coordinate(node) -> SourceFragmentCoordinateV1:

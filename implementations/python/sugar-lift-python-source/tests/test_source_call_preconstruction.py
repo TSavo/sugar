@@ -595,10 +595,11 @@ def test_renamed_source_class_constructor_and_method_use_authenticated_frames(
     )
 
     constructor_row = context.source_call_resolutions[_coordinate(constructor)]
-    method_row = context.source_call_resolutions[_coordinate(method)]
     assert isinstance(constructor_row, SourceCallPreconstructionRefV1)
-    assert isinstance(method_row, SourceCallPreconstructionRefV1)
-    assert method_row.resolved_object_cid == constructor_row.resolved_object_cid
+    # The method call has no row of its own: it is the one method call, which
+    # selects the method on the receiver the constructor call built.
+    assert _coordinate(method) not in context.source_call_resolutions
+    assert _coordinate(method) not in context.source_call_frames
     method_value = method.sugar().desugar().value
     assert isinstance(method_value, CallSiteValue)
     method_result = method_value.force_floor(
@@ -630,11 +631,11 @@ def test_authenticated_class_missing_method_stays_typed_loud(tmp_path: Path) -> 
         distribution_index={"unprivileged": distribution},
     )
 
-    row = context.source_call_resolutions[_coordinate(method)]
-    assert isinstance(row, SourceCallPreconstructionGapV1)
-    assert row.kind == "dynamic-call-target"
+    # No row for the method call: the receiver the constructor built refuses
+    # the method it does not have, by name, as for any constructed receiver.
+    assert _coordinate(method) not in context.source_call_resolutions
     assert _coordinate(method) not in context.source_call_frames
-    with pytest.raises(SugarNotWritten, match="dynamic-call-target"):
+    with pytest.raises(ConstructionPanic, match="arbitrary_helper.missing"):
         method.sugar().desugar()
 
 
@@ -705,8 +706,7 @@ def test_authenticated_constructor_method_follows_local_mro(tmp_path: Path) -> N
         distribution_index={"unprivileged": distribution},
     )
 
-    row = context.source_call_resolutions[_coordinate(method)]
-    assert isinstance(row, SourceCallPreconstructionRefV1)
+    assert _coordinate(method) not in context.source_call_resolutions
     result = (
         method.sugar()
         .desugar()
