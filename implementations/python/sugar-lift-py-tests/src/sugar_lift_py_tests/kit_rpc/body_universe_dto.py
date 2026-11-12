@@ -35,8 +35,11 @@ class BodyUniverseDto:
     # `function-contract` (with `post` + `formals`) makes the mint auto-mint a
     # `sourceSymbol -> this contract` bridge (`bind_function_bridge`), resolving the
     # target CID at seal -- which is what lets `collect_ambient_posts` pick the post
-    # up as an ambient universal. `bridge_source_symbol` is the callee's bare name as
-    # it appears in harvested call ctors.
+    # up as an ambient universal. `bridge_source_symbol` is the definition's one
+    # symbol, `python:<module>.<name>`; the Python kit states no bare name. (The
+    # verifier still matches a bridge's symbol against a call ctor's name with
+    # `call:` or `method:` stripped: a tolerance other kits may rely on, to be
+    # deleted with the join by `target_symbol`.)
     kind: str = "contract"
     bridge_source_symbol: str | None = None
     # Source-owned testimony carried opaquely to mint/verifier. These are
