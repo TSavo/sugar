@@ -6,9 +6,9 @@ built, fell through to the bare ``call:foo(r)`` coordinate: it always
 completed, so ``try: r.foo() except ValueError: ...`` had an unreachable
 handler, and ``(r.foo(), r.foo())`` claimed both calls return the same object. The body that runs is selected by the receiver's runtime type
 and was not looked at, so the call is two-faced (the #7585 law): it completes
-under ``python:method_call.completes(python:method_call(name, site))`` with
+under ``python:unknown_callee_call.completes(python:unknown_callee_call(name, site))`` with
 the value ``python:call_result(<call term>, <occurrence>)``, and halts with an
-``UndeterminedRaiseEffect`` (owner ``UnprojectedMethodCall:<name>``) under the
+``UndeterminedRaiseEffect`` (owner ``UnknownCallee:<name>``) under the
 complement.
 
 A formal receiver or operand defers to the caller's actual through the
@@ -47,7 +47,7 @@ def test_a_method_call_on_an_opaque_result_may_raise(tmp_path):
     source = OPAQUE + f"def f():\n    {RESULT}.foo()\n    return 1\n"
     returns, halts = _split(tmp_path, source)
     assert returns == [TermValue(1)]
-    assert "UnprojectedMethodCall:foo" in _owners(halts)
+    assert "UnknownCallee:foo" in _owners(halts)
 
 
 def test_its_raise_reaches_an_except_arm(tmp_path):
@@ -63,7 +63,7 @@ def test_its_raise_reaches_an_except_arm(tmp_path):
     # dedent and foo may each raise into the arm.
     assert {value.value for value in returns} == {1, 2}
     # ``except ValueError`` is not total: a non-ValueError raise still leaves.
-    assert "UnprojectedMethodCall:foo" in _owners(halts)
+    assert "UnknownCallee:foo" in _owners(halts)
 
 
 def test_two_calls_are_two_unknowns(tmp_path):
@@ -74,13 +74,13 @@ def test_two_calls_are_two_unknowns(tmp_path):
     first, second = (element.to_term(owner="test") for element in value.elements)
     assert first.name == second.name == "python:call_result"
     assert first != second
-    assert _owners(halts).count("UnprojectedMethodCall:foo") == 2
+    assert _owners(halts).count("UnknownCallee:foo") == 2
 
 
 def test_a_str_method_may_refuse_by_value(tmp_path):
     # ``'a'.index('b')`` raises ValueError: the str method is not total.
     returns, halts = _split(tmp_path, "def f():\n    return 'a'.index('b')\n")
-    assert "UnprojectedMethodCall:index" in _owners(halts)
+    assert "UnknownCallee:index" in _owners(halts)
 
 
 def test_a_formal_receiver_waits_for_the_caller(tmp_path):
@@ -100,4 +100,4 @@ def test_a_source_method_is_not_this_law(tmp_path):
         "    return C().m()\n"
     )
     _returns, halts = _split(tmp_path, source)
-    assert "UnprojectedMethodCall:m" not in _owners(halts)
+    assert "UnknownCallee:m" not in _owners(halts)

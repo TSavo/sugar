@@ -35,9 +35,9 @@ def test_copy_of_the_read_is_two_faced(tmp_path, prefix):
     exits = _exits(tmp_path, prefix + _BODY).exits
     (done,) = [face for face in exits if isinstance(face, Completed)]
     (halt,) = [face for face in exits if isinstance(face, Halted)]
-    assert "python:method_call.completes" in str(done.guard)
+    assert "python:unknown_callee_call.completes" in str(done.guard)
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.producer_node_owner == "UnprojectedMethodCall:copy"
+    assert halt.effect.producer_node_owner == "UnknownCallee:copy"
 
 
 def test_a_rebound_module_name_is_not_contextvars():

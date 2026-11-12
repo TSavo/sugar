@@ -278,3 +278,90 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
     assert outcome.exits[0].effect.exception_name == exception
+
+
+# ---------------------------------------------------------------------------
+# A method call on a receiver the lifter does not have is the plain call to a
+# callee it does not have: two faces (#7756).  Before, it completed alone.
+#
+# What the rule claims, through the solver: what is asserted after the call is
+# asserted on the call's completing face, and that face stands under
+# ``python:unknown_callee_call.completes``, which nothing here decides.  So a
+# true claim after the call is not decided (``open``): nothing proves the call
+# completes.  A false claim is refuted on every face (``unsat``).  Before this
+# change the call completed alone and the true claim came back ``sat``: a
+# verdict for a program whose call may raise (and, with an undefined receiver,
+# does).  ``open`` is this twin stating "not bridged"; it is not a green
+# truthful half, and it becomes ``sat`` only when something decides the call.
+#
+# The call's other face is a raise.  A raise is not a refutation, and the
+# solver gives no verdict on it until halted arms are emitted from the
+# reduction (#7766), so the raise face is shown at the reduction level below
+# and no ``unsat`` is asserted for it.
+# ---------------------------------------------------------------------------
+
+_UNKNOWN_RECEIVER = """\
+def test_lookup():
+    registry = undefined_registry
+    value = registry.lookup(3)
+    assert 3 == {claim}
+"""
+
+
+def test_a_claim_after_an_unknown_receiver_method_call_stands_on_its_completing_face(
+    tmp_path: Path,
+) -> None:
+    true_claim = run_source_through_real_solver(
+        tmp_path / "true-claim", _UNKNOWN_RECEIVER.format(claim=3)
+    )
+    false_claim = run_source_through_real_solver(
+        tmp_path / "false-claim", _UNKNOWN_RECEIVER.format(claim=4)
+    )
+    print(
+        json.dumps(
+            {"true-claim": true_claim.verdict, "false-claim": false_claim.verdict},
+            sort_keys=True,
+        )
+    )
+    assert true_claim.verdict == "open"
+    assert false_claim.verdict == "unsat"
+
+
+_HELD_RECEIVER = """\
+class Registry:
+    def lookup(self, key):
+        return key
+
+
+def test_lookup():
+    registry = Registry()
+    value = registry.lookup(3)
+    assert 3 == 3
+"""
+
+
+def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
+    """Reduction level: the completion is guarded and the raise is a face.
+
+    A receiver the lifter holds applies the method body and completes alone;
+    a receiver it does not hold is the plain unknown call, completing only
+    under ``python:unknown_callee_call.completes`` and raising otherwise.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+
+    assert isinstance(_test_function_outcome(_HELD_RECEIVER), Complete)
+    outcome = _test_function_outcome(_UNKNOWN_RECEIVER.format(claim=3))
+    assert isinstance(outcome, ExitSet), outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed and halted
+    assert all(
+        "python:unknown_callee_call.completes" in repr(face.guard)
+        for face in completed
+    )
+    assert any(
+        isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner == "UnknownCallee:lookup"
+        for face in halted
+    )

@@ -270,17 +270,13 @@ def dispatch_method_call(
     kind = law.container_kind(receiver)
     if kind is not None:
         return _container_method_call(kind, name, receiver, positional, kw_values, site)
-    if not _decided_here(receiver) or _mentions_a_formal(term):
-        # A symbolic receiver that is not a formal (a place a call may have
-        # changed, a field coordinate) stands for a value the frame's store
-        # application supplies later; that selects the method and its exits,
-        # so this frame mints no face for it.
-        return Complete(callsite)
-    # No floor of the receiver answered the method: its body was not
-    # looked at, so the call is two-faced (#7585), never total.
-    from sugar_lift_py_tests.source_call_resolution import UnprojectedMethodCallV1
+    # No floor of the receiver answered the method and no formal defers it
+    # to a caller: what runs was not looked at.  A method call is the plain
+    # call with the receiver bound first, so this is the plain call to a
+    # callee the lifter does not have, with its two faces (#7585, #7756).
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
-    return UnprojectedMethodCallV1(name).faces(callsite, site)
+    return UnknownCalleeCallV1(name).faces(callsite, site)
 
 
 # Cited container methods whose exits and result the law decides from the
@@ -349,57 +345,4 @@ def _defer_formal_method_call(name, receiver, positional, kw_values, site):
         operator="method_call",
         operands=(receiver, StringValue(name), keyword_names, *operands[1:]),
         coordinates=(coordinates[0], None, None, *coordinates[1:]),
-    )
-
-
-def _mentions_a_formal(term) -> bool:
-    from sugar_lift_py_tests.ir import _free_vars_in_term
-
-    return bool(_free_vars_in_term(term))
-
-
-def _decided_here(receiver) -> bool:
-    """A receiver this frame holds as itself: a call's result, or a builtin
-    scalar the lift constructed.  Nothing later replaces it, so the method it
-    selects runs on exactly this value."""
-    from sugar_lift_py_tests.floor.bytes_value import BytesValue
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.language_owned_c_type import (
-        LanguageOwnedCInstanceValue,
-    )
-    from sugar_lift_py_tests.floor.language_owned_contextvar import (
-        LanguageOwnedCExtensionResultValue,
-        LanguageOwnedContextVarReadValue,
-    )
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-
-    # A ``with ... as v`` enter result is the value ``__enter__`` returned at
-    # that one entry: the body reads it through its enter-result slot, and no
-    # store application replaces that slot afterwards, so a method called on
-    # it runs on exactly that value.
-    from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
-
-    if type(receiver) is EffectCoordinate and receiver.slot_id.endswith(
-        "#enter_result"
-    ):
-        return True
-    # A ``ContextVar.get()`` read is one occurrence's own value, like a call's
-    # result: nothing later replaces it.
-    # An opaque C call result, or an instance a C class constructed at one
-    # site, is likewise that occurrence's own value.
-    return type(receiver) in (
-        CallSiteValue,
-        LanguageOwnedCExtensionResultValue,
-        LanguageOwnedCInstanceValue,
-        LanguageOwnedContextVarReadValue,
-        StringValue,
-        BytesValue,
-        TermValue,
-        NoneValue,
-        TrueBoolLiteralSugar,
-        FalseBoolLiteralSugar,
     )
