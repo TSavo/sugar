@@ -1219,12 +1219,6 @@ class TreeConstructionContextV1:
     # Exact module-seat/use-occurrence transport shared by parser-owned units
     # in this construction only. Never global and never source-CID-only.
     source_import_value_receipts_by_site: dict = field(default_factory=dict)
-    # When projecting an authenticated definition into a call frame, dual-mode
-    # factory bodies may contain With sites only on non-manager return paths
-    # (e.g. pytest.raises function form). Soft projection does not require
-    # those nested Withs to already carry a closed CM row — the CM form's
-    # return path is what construct_manager_behavior force_floors.
-    frame_projection: bool = False
     # Manager uses whose head is proven, from source, not to be a context
     # manager (a class MRO without ``__enter__`` or ``__exit__``): keyed like
     # ``source_derived_contract_refs``; the With raises the interpreter's own
@@ -1239,7 +1233,6 @@ class TreeConstructionContextV1:
         opaque_source_call_obligations: dict | None = None,
         call_contract_refs: object | None = None,
         workspace_root: str | None = None,
-        frame_projection: bool = False,
     ) -> "TreeConstructionContextV1":
         """Construction context for sole-path source-call frames without CM enrollment."""
         return cls(
@@ -1247,7 +1240,6 @@ class TreeConstructionContextV1:
             call_contract_refs=call_contract_refs,
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
-            frame_projection=frame_projection,
             opaque_source_call_obligations=(
                 {}
                 if opaque_source_call_obligations is None

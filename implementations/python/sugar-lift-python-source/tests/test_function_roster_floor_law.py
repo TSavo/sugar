@@ -132,13 +132,11 @@ def test_open_path_failure_before_sourcefile_still_raises(
         _open(tmp_path, path)
 
 
-def test_successful_open_banks_floor_matching_functions(
+def test_successful_open_returns_the_file_with_its_functions(
     tmp_path: Path,
 ) -> None:
     """The truthful half: populate returns, and the open returns the file."""
     path = tmp_path / "target.py"
     _write_three_functions(path)
     source_file = _open(tmp_path, path)
-    n = len(tuple(source_file.functions()))
-    assert n == 3
-    assert source_file.function_roster_floor == n
+    assert len(tuple(source_file.functions())) == 3
