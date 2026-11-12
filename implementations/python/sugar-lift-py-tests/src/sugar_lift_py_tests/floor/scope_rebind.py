@@ -78,10 +78,10 @@ class ScopeRebinds(FloorValue):
 class GuardedScopeRebind(FloorValue):
     """A branch-local rebind carried in the record under one or more guards.
 
-    It deliberately does not extend temporal scope. Definite assignment is owned by
-    PredicateValue._joined_bindings, which only joins names present in both faces.
-    Keeping this marker non-binding preserves the one-arm NameError path while the
-    outer join can still construct a GuardedValue when both faces bind the name.
+    It deliberately does not extend temporal scope. What a name binds to after a
+    branch is the phi substitution builds (``If.substitute``), which joins only
+    names bound in both faces. Keeping this marker non-binding preserves the
+    one-arm NameError path.
     """
 
     guards: tuple

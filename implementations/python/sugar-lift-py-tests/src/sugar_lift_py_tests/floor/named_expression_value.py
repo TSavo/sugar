@@ -69,12 +69,6 @@ class NamedExpressionValue(FloorValue):
     def truth(self, site):
         return self.presented_value.truth(site).and_then(self._carry)
 
-    def binary_conditional(self, then, else_body, ctx=None, site=None):
-        bound_ctx = self.extend_scope(ctx)
-        return self.presented_value.binary_conditional(
-            then, else_body, bound_ctx, site
-        ).and_then(self._carry)
-
     def negate(self):
         return self.presented_value.negate().and_then(self._carry)
 
