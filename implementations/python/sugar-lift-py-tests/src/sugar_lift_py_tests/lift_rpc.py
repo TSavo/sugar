@@ -469,8 +469,6 @@ def open_source_file_for_construction(
     # does. This parses nothing and prepares nothing.
     if reporter is not NULL_REPORTER:
         _seat_roll_call_reporter(source_file, reporter)
-    _bank_function_roster_floor(source_file)
-
     if populate_derived:
         from sugar_lift_python_source.manager_summary_derivation import (
             populate_source_derived_resource_refs,
@@ -499,33 +497,6 @@ def open_source_file_for_construction(
             distribution=distribution,
         )
     return source_file
-
-
-def _bank_function_roster_floor(source_file) -> int:
-    """Bank N = len(SourceFile.functions()) as load-bearing open state.
-
-    The floor is the proof that construction already succeeded. Callers and
-    residual paths read it; populate cannot lower it. Returning the open after
-    a residual keeps ``functions()`` live; the banked floor is the invariant
-    pin when a board path would otherwise invent zero.
-    """
-    n = len(tuple(source_file.functions()))
-    try:
-        object.__setattr__(source_file, "function_roster_floor", n)
-    except (AttributeError, TypeError):
-        # If the SourceFile type forbids attributes, the live functions()
-        # roster still carries the denominator after residual return.
-        pass
-    unit = getattr(source_file, "unit", None) or getattr(
-        getattr(source_file, "root", None), "unit", None
-    )
-    context = getattr(unit, "construction_context", None) if unit is not None else None
-    if context is not None:
-        try:
-            object.__setattr__(context, "function_roster_floor", n)
-        except (AttributeError, TypeError):
-            pass
-    return n
 
 
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
