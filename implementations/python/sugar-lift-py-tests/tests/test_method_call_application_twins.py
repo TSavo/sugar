@@ -283,45 +283,60 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
 # ---------------------------------------------------------------------------
 # A method call on a receiver the lifter does not have is the plain call to a
 # callee it does not have: two faces (#7756).  Before, it completed alone.
+#
+# What the rule claims, as twins: the call has a completing face, and what is
+# asserted after the call is asserted on that face.  The truthful source
+# asserts a fact that holds there (``sat``); the lying source asserts the
+# opposite fact about the same face (``unsat``).  The call's other face is a
+# raise, and a raise is not a refutation: the solver gives no verdict on it
+# until halted arms are emitted from the reduction (#7766), so the raise face
+# is shown at the reduction level below and no ``unsat`` is asserted for it.
 # ---------------------------------------------------------------------------
 
 _UNKNOWN_RECEIVER = """\
+def test_lookup():
+    registry = undefined_registry
+    value = registry.lookup(3)
+    assert 3 == {claim}
+"""
+
+
+def test_a_claim_after_an_unknown_receiver_method_call_is_decided_on_its_completing_face(
+    tmp_path: Path,
+) -> None:
+    _pair(
+        tmp_path,
+        "unknown-receiver",
+        _UNKNOWN_RECEIVER.format(claim=3),
+        _UNKNOWN_RECEIVER.format(claim=4),
+    )
+
+
+_HELD_RECEIVER = """\
 class Registry:
     def lookup(self, key):
         return key
 
 
 def test_lookup():
-    registry = {receiver}
+    registry = Registry()
     value = registry.lookup(3)
     assert 3 == 3
 """
 
 
-def test_unknown_receiver_method_call_may_raise(tmp_path: Path) -> None:
-    """Solver twin (red until #7766): a receiver the lifter holds vs one it
-    does not.  The second call may raise, so the claim after it is refuted."""
-
-    _pair(
-        tmp_path,
-        "unknown-receiver",
-        _UNKNOWN_RECEIVER.format(receiver="Registry()"),
-        _UNKNOWN_RECEIVER.format(receiver="undefined_registry"),
-    )
-
-
 def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
-    """Unit check: the completion is guarded and the raise is a face."""
+    """Reduction level: the completion is guarded and the raise is a face.
+
+    A receiver the lifter holds applies the method body and completes alone;
+    a receiver it does not hold is the plain unknown call, completing only
+    under ``python:unknown_callee_call.completes`` and raising otherwise.
+    """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 
-    assert isinstance(
-        _test_function_outcome(_UNKNOWN_RECEIVER.format(receiver="Registry()")),
-        Complete,
-    )
-    outcome = _test_function_outcome(
-        _UNKNOWN_RECEIVER.format(receiver="undefined_registry")
-    )
+    assert isinstance(_test_function_outcome(_HELD_RECEIVER), Complete)
+    outcome = _test_function_outcome(_UNKNOWN_RECEIVER.format(claim=3))
     assert isinstance(outcome, ExitSet), outcome
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
