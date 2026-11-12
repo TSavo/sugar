@@ -2226,6 +2226,12 @@ fn count_top_level_constraints(inv: &Json) -> usize {
 /// the `=` case draws: interpreted+ground universe decides; uninterpreted operand
 /// does not.
 fn lone_fact_has_covering_universe(inv: &Json) -> bool {
+    // A claim with no atom is a propositional constant: connectives over the
+    // empty conjunction (the IR's truth). It names no symbol the solver could
+    // leave uninterpreted, so the solver's answer is forced and substantive.
+    if is_atom_free(inv) {
+        return true;
+    }
     // Unwrap a single-operand `and([...])` (the lifter conjoins a contract's atoms,
     // so a one-atom contract arrives as `and([atom])`). A 0- or >=2-operand `and`
     // is handled by the ordinary constraint-count path, not here.
@@ -2237,6 +2243,21 @@ fn lone_fact_has_covering_universe(inv: &Json) -> bool {
         _ => inv,
     };
     is_ground_regex_membership(node) || is_ground_string_theory_predicate(node)
+}
+
+/// True when `inv` is built from connectives alone: every leaf is an operand-less
+/// `and`/`or`. Such a claim has no atom, term or binder, so no solver theory can
+/// read any part of it as uninterpreted. A ground ATOM is deliberately not this:
+/// `py.eq(6, 7)` is closed, but the SMT encoding leaves `py.eq` uninterpreted and
+/// a solver satisfies it, so a lone ground atom still needs a covering universe.
+fn is_atom_free(inv: &Json) -> bool {
+    match inv.get("kind").and_then(|k| k.as_str()) {
+        Some("and" | "or" | "not" | "implies") => inv
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .is_some_and(|operands| operands.iter().all(is_atom_free)),
+        _ => false,
+    }
 }
 
 /// A `str.in-regex(subject, R)` membership atom whose SUBJECT is a pinned ground
@@ -8593,6 +8614,47 @@ mod tests {
             "vacuous-refused reason must cite the single-constraint guard, got: {}",
             results[0].reason
         );
+    }
+
+    /// A lone claim with no atom is not vacuous (#7766). The vacuity guard
+    /// exists because a solver can assign an uninterpreted symbol any value; a
+    /// propositional constant names no symbol, so satisfiable means true and
+    /// unsatisfiable means false. Twin: the constant and its negation.
+    ///
+    /// The boundary is pinned too: a lone ground ATOM stays refused. `py.eq` is
+    /// uninterpreted in the SMT encoding, so admitting `py.eq(6, 7)` would come
+    /// back satisfiable and discharge a false claim.
+    #[test]
+    fn lone_atom_free_claim_reaches_the_solver_and_a_ground_atom_does_not() {
+        let truth = json!({"kind":"and","operands":[]});
+        let falsity = json!({"kind":"not","operands":[truth.clone()]});
+        let py_eq = |left: i64, right: i64| json!({"kind":"atomic","name":"py.eq","args":[int(left), int(right)]});
+        for (name, inv, expected) in [
+            ("constant_true", truth, ObligationVerdict::Discharged),
+            ("constant_false", falsity, ObligationVerdict::Unsatisfied),
+            (
+                "ground_atom_truthful",
+                py_eq(6, 6),
+                ObligationVerdict::Refused,
+            ),
+            ("ground_atom_lying", py_eq(6, 7), ObligationVerdict::Refused),
+        ] {
+            let pool = pool_with_contract(name, inv);
+            let (plan, registry) = z3_plan_and_registry();
+            let results = verify_consistency(
+                &pool,
+                &plan,
+                &registry,
+                &test_compilers(),
+                std::path::Path::new("."),
+            );
+            assert_eq!(results.len(), 1, "{name}: exactly one candidate");
+            assert_eq!(
+                results[0].verdict, expected,
+                "{name}: only a claim with no atom passes the vacuity guard alone: {}",
+                results[0].reason
+            );
+        }
     }
 
     #[test]

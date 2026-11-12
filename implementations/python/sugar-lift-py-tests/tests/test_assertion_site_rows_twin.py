@@ -1,0 +1,122 @@
+"""Twins for #7766: every assertion the one reduction evaluated reaches the proof.
+
+Step 7 of the nine. The solver twin differs in one literal. The floor decides
+``double(3)`` (a same-file call it constructs), so the truthful assert is held
+by the one completed arm and states the decided fact ``true``; the lying assert
+halts its only arm at the assertion, no completed arm holds it, and its row
+states the OR over nothing: ``false``. Both rows go through real ``sugar mint``
+and real ``sugar prove``. What the solver decides here is a constant: the
+comparison itself was decided by the floor at lift time.
+
+The row twins pin where an assertion's row comes from: the reduction, never the
+source text. An ``assert`` no arm evaluated has no row.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+_TWIN = (
+    "def double(x):\n"
+    "    return x + x\n"
+    "\n"
+    "\n"
+    "def test_double():\n"
+    "    assert double(3) == {claim}\n"
+)
+
+_TRUE = {"kind": "and", "operands": []}
+_FALSE = {"kind": "not", "operands": [_TRUE]}
+
+
+def test_a_decided_assertion_reaches_the_solver(tmp_path: Path) -> None:
+    truthful = run_source_through_real_solver(tmp_path / "t", _TWIN.format(claim=6))
+    lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(claim=7))
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
+_UNBOUND = (
+    "from double import double\n"
+    "\n"
+    "\n"
+    "def test_double():\n"
+    "    assert double(3) == {claim}\n"
+)
+
+
+def test_an_assertion_about_an_unbound_call_stays_open(tmp_path: Path) -> None:
+    """No proof answers ``double``: nothing is staged to import. The claim
+    stands on a call coordinate, its row reaches the solver's door, and the
+    truthful and the lying claim are both left open. An unbound edge is never
+    a discharge (#3896)."""
+    truthful = run_source_through_real_solver(tmp_path / "t", _UNBOUND.format(claim=6))
+    lying = run_source_through_real_solver(tmp_path / "l", _UNBOUND.format(claim=7))
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
+
+
+def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
+    """(line, inv) of every assertion row the one function of ``source`` emits."""
+    from sugar_lift_py_tests import lift_rpc
+    from sugar_lift_py_tests.ir import TermTableBuilder
+    from sugar_lift_py_tests.tree_enumerate import function_contract_rows
+
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    tree = lift_rpc._open_enumerated_file(
+        tmp_path / "m.py", root=tmp_path, locus_root=tmp_path
+    )
+    (function,) = tuple(tree.functions())
+    _memento, rows = function_contract_rows(function, "m.py")
+    table = TermTableBuilder()
+    wire = [row.to_rpc_with_term_table(table) for row in rows]
+    assert wire[0]["kind"] == "function-contract"
+    return [
+        (row["sourceWarrants"][0]["span"]["start_line"], row["inv"]) for row in wire[1:]
+    ]
+
+
+def test_an_assert_the_reduction_halted_at_states_false(tmp_path: Path) -> None:
+    """Twin: the same two statements, one literal apart."""
+    held = _assertion_rows(tmp_path, "def f():\n    y = 1\n    assert 2 == 2\n")
+    halted = _assertion_rows(tmp_path, "def f():\n    y = 1\n    assert 2 == 3\n")
+    assert held == [(3, _TRUE)]
+    assert halted == [(3, _FALSE)]
+
+
+def test_an_assert_no_arm_evaluated_has_no_row(tmp_path: Path) -> None:
+    """A handler that never runs and a branch the floor decided away hold
+    asserts the reduction never reached. They state nothing: a row there would
+    refute a function that is correct. Twin: the same ``assert`` where the
+    reduction does reach it."""
+    dead_handler = _assertion_rows(
+        tmp_path,
+        "def f():\n"
+        "    try:\n"
+        "        y = 1\n"
+        "    except Exception:\n"
+        "        assert 2 == 3\n"
+        "    assert y == 1\n",
+    )
+    assert dead_handler == [(6, _TRUE)]
+
+    dead_branch = _assertion_rows(
+        tmp_path,
+        "def f():\n    if 1 == 2:\n        assert 2 == 3\n    return 4\n",
+    )
+    assert dead_branch == []
+
+    live_branch = _assertion_rows(
+        tmp_path,
+        "def f():\n    if 1 == 1:\n        assert 2 == 3\n    return 4\n",
+    )
+    assert live_branch == [(3, _FALSE)]
+
+
+def test_a_fact_held_before_a_later_halt_is_not_refuted(tmp_path: Path) -> None:
+    """The row blames the assertion the reduction halted at, not the ones the
+    halted arm had already passed."""
+    rows = _assertion_rows(tmp_path, "def f():\n    assert 1 == 1\n    assert 2 == 3\n")
+    assert rows == [(3, _FALSE)]

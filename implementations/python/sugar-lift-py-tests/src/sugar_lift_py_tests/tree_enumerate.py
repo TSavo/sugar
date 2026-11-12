@@ -31,6 +31,32 @@ def asserts_of(node) -> list:
     return [n for n in node.walk() if isinstance(n, Assert)]
 
 
+def halted_assertion_sites(halted_arms) -> tuple:
+    """The ``assert`` statements at which a halted arm of a reduction left.
+
+    Read off the reduction, never off the source: a halted arm's raise carries
+    the exception value it raised, and that value carries the fragment it was
+    raised at. When that fragment is an ``assert`` statement the reduction
+    reached the assertion and control halted there. A raise from inside the
+    assertion's operands is sited at the operand, and an ``assert`` no arm
+    reached is sited nowhere: neither is an assertion the reduction halted at.
+    """
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import ExceptionValue
+
+    sites = []
+    for arm in halted_arms:
+        effect = arm.effect
+        if not isinstance(effect, RaiseEffect):
+            continue
+        raised = effect.raised_value
+        if not isinstance(raised, ExceptionValue):
+            continue
+        if isinstance(getattr(raised.site, "node", None), Assert):
+            sites.append(raised.site)
+    return tuple(sites)
+
+
 def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
     for fn in sf.functions():
         if name is not None and fn.name != name:
@@ -430,30 +456,85 @@ def _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes):
 
 
 def function_contract_rows(fn, file_rel: str):
-    """A function's contract DTO rows, produced from its TREE universe.
+    """A function's contract DTO rows, read off EVERY arm of its one reduction.
 
-    `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body.
-    Complete -> the UniverseValue projects its own DTO rows (one function-
-    contract carrying the post, one contract per stated inv) via payload_rows --
-    the exact rows the factory used to emit. Incomplete -> the def is an effect
-    (a halt), returned as (def_memento, None) so the caller emits an effect, not
-    a contract. A SugarNotWritten from an unported body statement propagates
-    (the whole function is a frontier gap).
+    `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body
+    to a ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed
+    and halted arms. ``exit_arms_payload_rows`` projects all of them: the post
+    over every completed arm, and one row per assertion site (see there). A
+    ``Complete`` is the one-arm case and keeps its rows byte-for-byte.
+
+    An outcome that is not a set of arms is unchanged by #7766: a deferred
+    native operation (``NativeOperationExitCarrierV1``, whose arms exist only
+    once a caller discharges it with actuals) or a bare effect emits no
+    contract and still carries its source testimony. A SugarNotWritten from an
+    unported body statement propagates (the whole function is a frontier gap).
     """
     import dataclasses
 
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.floor.universe_value import (
+        UniverseValue,
+        exit_arms_payload_rows,
+    )
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
 
     def_memento = function_def_memento(fn, file_rel)
     panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
     outcome = function_universe_outcome(fn)
-    if not isinstance(outcome, Complete):
+    if not isinstance(outcome, (Complete, ExitSet)):
         if not panic_loci and not class_shapes:
             return def_memento, None  # an effect with no source testimony
         return def_memento, [
             _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes)
         ]
-    rows = outcome.value.payload_rows(def_memento)
+    if isinstance(outcome, Complete):
+        arms = ((true_guard(), outcome.value),)
+        halted_sites = ()
+    else:
+        arms = tuple(
+            (exit_.guard, exit_.value)
+            for exit_ in outcome.exits
+            if isinstance(exit_, Completed)
+        )
+        halted_sites = halted_assertion_sites(
+            exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)
+        )
+        unread = [
+            type(exit_).__name__
+            for exit_ in outcome.exits
+            if not isinstance(exit_, (Completed, Halted))
+        ]
+        if unread:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="function_contract_rows",
+                blame=fn.fragment,
+                observed=f"exit arms {sorted(set(unread))}",
+                requested="a completed or halted arm",
+                fix="give the exit algebra's arm its projection to rows",
+            )
+    for _guard, value in arms:
+        if not isinstance(value, UniverseValue):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="function_contract_rows",
+                blame=fn.fragment,
+                observed=f"completed arm holds {type(value).__name__}",
+                requested="the function body's UniverseValue",
+                fix="complete a function body arm with its universe",
+            )
+    owner = arms[0][1] if arms else fn.sugar()
+    rows = exit_arms_payload_rows(
+        name=owner.name,
+        formals=tuple(owner.formals),
+        bridge_source_symbol=owner.bridge_source_symbol,
+        arms=arms,
+        halted_assertion_sites=halted_sites,
+        def_memento=def_memento,
+    )
     rows[0] = dataclasses.replace(
         rows[0],
         panic_loci=list(panic_loci),
