@@ -365,3 +365,51 @@ def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
         and face.effect.producer_node_owner == "UnknownCallee:lookup"
         for face in halted
     )
+
+
+_UNCONSTRUCTED_METHOD = """\
+class Box:
+    def kept(self):
+        return 1
+
+    def left_out(self{formal}):
+        return 2
+
+
+def test_box():
+    box = Box()
+    assert box.left_out({actual}) == 2
+"""
+
+
+@pytest.mark.parametrize(
+    ("formal", "actual", "observed"),
+    [
+        ("", "", "Box.left_out has no source frame (body DeferredMethodBodySugar)"),
+        (", x", "", "observed=Box.left_out "),
+        (", x", "x=2", "observed=Box.left_out "),
+    ],
+)
+def test_a_method_with_no_source_frame_is_not_bound(
+    formal: str, actual: str, observed: str
+) -> None:
+    """Only a source frame binds a call's actuals.
+
+    A class projected to some of its methods (the door manager construction
+    uses) binds the others without constructing them: they carry no frame.
+    Calling one refuses by name, whatever its arity; nothing takes the actuals
+    as already being in formal order.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_source_tree.nodes import PROJECTED_CLASS_METHODS
+
+    token = PROJECTED_CLASS_METHODS.set({"Box": frozenset({"kept"})})
+    try:
+        with pytest.raises(ConstructionPanic) as refusal:
+            _test_function_outcome(
+                _UNCONSTRUCTED_METHOD.format(formal=formal, actual=actual)
+            )
+    finally:
+        PROJECTED_CLASS_METHODS.reset(token)
+    assert observed in str(refusal.value), str(refusal.value)
+    assert "owner=MethodCallSugar" in str(refusal.value)
