@@ -274,6 +274,12 @@ def function_contract_row(
     ``formalSorts`` states one sort per formal, the sort its authenticated
     formal coordinate carries (the same statement ``ParameterOwnedContractV1``
     makes). The linker's catalog reads a contract's signature from it.
+
+    ``bridge_source_symbol`` is stated only by a row that has one: a
+    definition's ``python:<module>.<name>``. A contract dug at a call site has
+    none and states none, so it is not an entry of the linker's catalog and
+    never stands beside the callee's definition under a second spelling
+    (#7762).
     """
     from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
     from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
@@ -305,7 +311,7 @@ def function_contract_row(
         formals=list(formals),
         formal_sorts=_stated_formal_sorts(formals, formal_coordinates),
         kind="function-contract",
-        bridge_source_symbol=bridge_source_symbol or name,
+        bridge_source_symbol=bridge_source_symbol,
     )
 
 
