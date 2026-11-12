@@ -13718,30 +13718,6 @@ class Call(Expression):
                     ),
                 )
             )
-            if (
-                source_call_resolution is not None
-                and source_call_resolution.dispatch_kind == "method"
-            ):
-                if not isinstance(self.func, Attribute):
-                    from sugar_source_tree.panic import BackendDefect
-
-                    raise BackendDefect(
-                        owner="Call._construct_sugar",
-                        blame=self.fragment,
-                        observed=self.func.kind,
-                        requested="attribute callee for authenticated method dispatch",
-                        fix="bind the method ref to its exact attribute-call occurrence",
-                    )
-                from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-
-                return MethodCallSugar(
-                    receiver=self.func.value.sugar(),
-                    name=self.func.attr,
-                    args=tuple(a.sugar() for a in self.args),
-                    site=self.fragment,
-                    keywords=keyword_sugars,
-                    source_call_frame=bound_frame,
-                )
             projected_definition = self._project_call_definition_occurrence(
                 bound_frame.owner,
                 coordinate="CallSiteSugar.expected_definition_ref",

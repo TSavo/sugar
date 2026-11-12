@@ -16,7 +16,7 @@ class SourceCallPreconstructionRefV1:
     resolved_object_cid: str
     distribution_artifact_cid: str
     source_call_frame_cid: str
-    dispatch_kind: Literal["function", "constructor", "method"] = "function"
+    dispatch_kind: Literal["function", "constructor"] = "function"
     resolution_cid: str = ""
 
     def __post_init__(self) -> None:

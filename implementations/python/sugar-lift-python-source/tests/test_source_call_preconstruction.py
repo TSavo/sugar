@@ -595,10 +595,11 @@ def test_renamed_source_class_constructor_and_method_use_authenticated_frames(
     )
 
     constructor_row = context.source_call_resolutions[_coordinate(constructor)]
-    method_row = context.source_call_resolutions[_coordinate(method)]
     assert isinstance(constructor_row, SourceCallPreconstructionRefV1)
-    assert isinstance(method_row, SourceCallPreconstructionRefV1)
-    assert method_row.resolved_object_cid == constructor_row.resolved_object_cid
+    # The method call has no row of its own: it is the one method call, which
+    # selects the method on the receiver the constructor call built.
+    assert _coordinate(method) not in context.source_call_resolutions
+    assert _coordinate(method) not in context.source_call_frames
     method_value = method.sugar().desugar().value
     assert isinstance(method_value, CallSiteValue)
     method_result = method_value.force_floor(
@@ -630,12 +631,122 @@ def test_authenticated_class_missing_method_stays_typed_loud(tmp_path: Path) -> 
         distribution_index={"unprivileged": distribution},
     )
 
-    row = context.source_call_resolutions[_coordinate(method)]
-    assert isinstance(row, SourceCallPreconstructionGapV1)
-    assert row.kind == "dynamic-call-target"
+    # No row for the method call: the receiver the constructor built refuses
+    # the method it does not have, by name, as for any constructed receiver.
+    assert _coordinate(method) not in context.source_call_resolutions
     assert _coordinate(method) not in context.source_call_frames
-    with pytest.raises(SugarNotWritten, match="dynamic-call-target"):
+    with pytest.raises(ConstructionPanic, match="arbitrary_helper.missing"):
         method.sugar().desugar()
+
+
+def test_a_raising_constructor_reaches_the_outcomes_of_a_missing_method_call(
+    tmp_path: Path,
+) -> None:
+    """``Cls(9).missing()``: the receiver is reduced, so its raise is a face.
+
+    The method dispatch flag refused this call as ``dynamic-call-target`` at
+    the method, without reducing the receiver: the constructor's halts were
+    dropped behind the refusal. As the one method call, the receiver is
+    reduced first; a constructor that always raises halts the call there and
+    the method is never selected.
+    """
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    distribution = _distribution(
+        tmp_path,
+        "class arbitrary_helper:\n"
+        "    def __init__(self, seed):\n"
+        "        if seed > 5:\n"
+        "            raise ValueError('seed too big')\n"
+        "        self.seed = seed\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as Renamed\n"
+        "Renamed(9).missing(23)\n",
+    )
+    method = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Call) and getattr(node.func, "attr", None) == "missing"
+    )
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    assert _coordinate(method) not in context.source_call_resolutions
+    outcome = method.sugar().desugar()
+    # The call's only outcome is the constructor's halt.
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "ValueError"
+    assert outcome.effect.producer_node_owner == "Call"
+
+
+def _arm_shape(outcome):
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
+
+    if isinstance(outcome, Complete):
+        return ["Completed"]
+    assert isinstance(outcome, ExitSet), outcome
+    return [type(face).__name__ for face in outcome.exits]
+
+
+def test_inline_and_assigned_method_calls_agree_when_the_class_body_may_raise(
+    tmp_path: Path,
+) -> None:
+    """A class statement that is not one completion, called inline and assigned.
+
+    The deleted preconstruction reduced the class statement to pick the method
+    frame and returned no frame when that reduction was not a single
+    completion, so the inline call ``Cls(1).project()`` refused as
+    ``dynamic-call-target`` while ``r = Cls(1); r.project()`` was applied. Now
+    both are the one method call: applied on the receiver the constructor
+    built, carrying the same faces.
+    """
+    implementation = (
+        "import os\n\n"
+        "class arbitrary_helper:\n"
+        "    limit = int(os.environ['LIMIT'])\n\n"
+        "    def __init__(self, seed):\n"
+        "        self.seed = seed\n\n"
+        "    def project(self, value=17):\n"
+        "        return value\n"
+    )
+    shapes = {}
+    for name, body in (
+        ("inline", "    return Renamed(13).project()\n"),
+        ("assigned", "    receiver = Renamed(13)\n    return receiver.project()\n"),
+    ):
+        root = tmp_path / name
+        root.mkdir()
+        distribution = _distribution(root, implementation)
+        path, source_file, _context = _consumer(
+            root,
+            "from unprivileged import arbitrary_helper as Renamed\n"
+            "def consume():\n" + body,
+        )
+        populate_source_visible_call_frames(
+            source_file,
+            root=root,
+            path=path,
+            distribution_index={"unprivileged": distribution},
+        )
+        function = next(source_file.functions()).substitute({})
+        method = next(
+            node
+            for node in function.walk()
+            if isinstance(node, Call) and getattr(node.func, "attr", None) == "project"
+        )
+        shapes[name] = _arm_shape(method.sugar().desugar())
+
+    assert shapes["inline"] == shapes["assigned"]
+    assert "Halted" in shapes["inline"] and "Completed" in shapes["inline"]
 
 
 def test_assigned_constructed_receiver_uses_its_authenticated_method_frame(
@@ -705,8 +816,7 @@ def test_authenticated_constructor_method_follows_local_mro(tmp_path: Path) -> N
         distribution_index={"unprivileged": distribution},
     )
 
-    row = context.source_call_resolutions[_coordinate(method)]
-    assert isinstance(row, SourceCallPreconstructionRefV1)
+    assert _coordinate(method) not in context.source_call_resolutions
     result = (
         method.sugar()
         .desugar()
