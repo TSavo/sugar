@@ -412,12 +412,9 @@ def open_source_file_for_construction(
     census / re-open of the same content amortize projection under one workspace
     authority (see ``walk_session_for``). Pass an explicit session to isolate.
 
-    Roster-floor law: after SourceFile construction succeeds, N =
-    ``len(functions())`` is banked on the open as ``function_roster_floor``.
-    Any subsequent populate ``Exception`` is residualized and the SourceFile is
-    returned — the board may not undercut N without naming why. Open failure
-    *before* SourceFile still raises (empty denominator). Process-control
-    exceptions (``BaseException`` outside ``Exception``) still halt.
+    A failure while populating source-derived refs propagates to the caller,
+    as it does at the ``context-manager-resolutions`` level: a halt is not
+    turned into a file that opened (#7795).
     """
     from sugar_lift_python_source.resolution_session import (
         enrolled_population_roster,
@@ -468,12 +465,6 @@ def open_source_file_for_construction(
     # does. This parses nothing and prepares nothing.
     if reporter is not NULL_REPORTER:
         _seat_roll_call_reporter(source_file, reporter)
-    # ROSTER FLOOR LAW (#7062 class close, #7075 second costume generalized):
-    # If SourceFile produced N functions, the board may never report fewer
-    # than N without naming why. Bank N *before* populate. Populate failure
-    # becomes a residual; it cannot erase the denominator. Open-path failure
-    # *before* this line still raises — correctly empty. A third costume is
-    # not another allowlist entry: any Exception after the bank is residual.
     _bank_function_roster_floor(source_file)
 
     if populate_derived:
@@ -495,26 +486,14 @@ def open_source_file_for_construction(
                 root,
                 enrolled_distributions=enrolled_population_roster(distribution),
             )
-        # Catch Exception, not BaseException: KeyboardInterrupt / SystemExit /
-        # GeneratorExit still halt the process. Do not enumerate SNW/TypeError
-        # here — that was the two-costume allowlist that left the class open.
-        try:
-            populate_source_derived_resource_refs(
-                source_file,
-                root=root,
-                path=path,
-                session=session,
-                source_workspace_root=source_workspace_root,
-                distribution=distribution,
-            )
-        except (AttributeError, NameError):
-            # A lookup defect in the lifter's own code (``call.func.id`` on an
-            # Attribute callee) is not a populate residual.  Banking it emptied
-            # the manager's derived resource refs with no refusal anywhere a
-            # consumer reads; it propagates by its own name.
-            raise
-        except Exception as populate_gap:  # noqa: BLE001 — floor law; see above
-            _record_populate_path_residual(source_file, populate_gap)
+        populate_source_derived_resource_refs(
+            source_file,
+            root=root,
+            path=path,
+            session=session,
+            source_workspace_root=source_workspace_root,
+            distribution=distribution,
+        )
     return source_file
 
 
@@ -543,61 +522,6 @@ def _bank_function_roster_floor(source_file) -> int:
         except (AttributeError, TypeError):
             pass
     return n
-
-
-def _record_populate_path_residual(source_file, error: BaseException) -> None:
-    """Name a populate-path failure without discarding the banked roster floor.
-
-    Residual is always typed by the *actual* exception class name — no allowlist
-    of costumes. SugarNotWritten keeps its structured owner/observed/fix fields
-    when present; every other Exception is residualized generically so a third
-    costume cannot reintroduce the zero-function lie.
-    """
-    from sugar_source_tree.panic import SugarNotWritten
-
-    err_type = type(error).__name__
-    if isinstance(error, SugarNotWritten):
-        owner = str(getattr(error, "owner", None) or err_type)
-        observed = str(getattr(error, "observed", None) or error)
-        requested = str(getattr(error, "requested", None) or "")
-        fix = str(getattr(error, "fix", None) or "")
-    else:
-        owner = "open_source_file_for_construction.populate"
-        observed = str(error) if str(error) else err_type
-        requested = (
-            "populate residual after successful SourceFile; function_roster_floor "
-            f"preserved at {getattr(source_file, 'function_roster_floor', '?')}"
-        )
-        fix = (
-            "cite this residual; never discard the banked SourceFile function "
-            "roster. The floor law forbids empty denominators after construction"
-        )
-
-    unit = getattr(source_file, "unit", None) or getattr(
-        getattr(source_file, "root", None), "unit", None
-    )
-    context = getattr(unit, "construction_context", None) if unit is not None else None
-    residual = {
-        "phase": "populate",
-        "owner": owner,
-        "type": err_type,
-        "observed": observed,
-        "requested": requested,
-        "fix": fix,
-        "functionRosterFloor": getattr(source_file, "function_roster_floor", None),
-    }
-    if context is None:
-        return
-    existing = getattr(context, "populate_residuals", None)
-    if existing is None:
-        try:
-            object.__setattr__(context, "populate_residuals", [residual])
-        except (AttributeError, TypeError):
-            # Frozen / slots context: residual still exists as the exception
-            # that was caught; roster preservation is the load-bearing law.
-            return
-    else:
-        existing.append(residual)
 
 
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
