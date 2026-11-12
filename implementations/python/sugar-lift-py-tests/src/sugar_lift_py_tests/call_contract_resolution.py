@@ -106,6 +106,22 @@ class CallContractResolutionGapV1:
     kind: CallContractResolutionGapKindV1
     candidate_member_cids: tuple[str, ...]
 
+    def names_an_unanswered_target(self) -> bool:
+        """True when this gap is "not bridged": the import door named ONE
+        definite target symbol and nothing answers it. The module is not in
+        the corpus, or it is and no authenticated contract states the symbol.
+
+        Every other kind is not this. Three name no definite import target
+        (no lexical binding, a non-import shadow, an ambiguous binding); five
+        mean something answered and it is wrong (two contracts for one symbol,
+        a signature the call does not match, a member of the wrong kind, the
+        wrong provider, a stale or malformed reference). Those stay refusals.
+        """
+        return self.target_symbol is not None and self.kind in (
+            CallContractResolutionGapKindV1.TARGET_NOT_IN_CORPUS,
+            CallContractResolutionGapKindV1.NO_AUTHENTICATED_CONTRACT,
+        )
+
 
 CallContractResolutionV1 = ResolvedCallContractRefV1 | CallContractResolutionGapV1
 
