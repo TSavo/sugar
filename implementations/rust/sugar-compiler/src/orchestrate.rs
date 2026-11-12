@@ -457,6 +457,12 @@ pub fn resolve_imports_for_walk(
     workspace_root: &Path,
     speaker: &Speaker,
 ) -> Result<ImportResolution, ProveFromKitError> {
+    // A kit that does not answer the round is asked NOTHING here, not even
+    // for its dependency testimony: mint's walk of every other kit is exactly
+    // what it was.
+    if !kit.supports_rpc_method("sugar.plugin.bind_call_contract_refs") {
+        return Ok(ImportResolution(None));
+    }
     let mut pool = MementoPool::default();
     load_vendor_testimony(kit, workspace_root, &mut pool)?;
     resolve_imports_before_construction(kit, workspace_root, speaker, &mut pool)
