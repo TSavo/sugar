@@ -35,7 +35,7 @@ class ClassValue(FloorValue):
 
     Not a model of MRO/metaclasses -- the bases are the type coordinates the
     lift carried, and the record is the class-body statements (methods as
-    UniverseValue, class-vars as BoundVar support). contribution splices the
+    UniverseValue, class-vars as support). contribution splices the
     body into the enclosing record; extend_scope binds the class name so a
     later reference can answer with this value.
     """

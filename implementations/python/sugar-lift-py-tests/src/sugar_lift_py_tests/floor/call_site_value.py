@@ -474,7 +474,7 @@ class CallSiteValue(FloorValue):
     def guarded(self, formula):
         """A callsite coordinate rides under a guard unchanged.
 
-        Like ImportAliasValue / FunctionCallable: the authenticated call term is
+        Like FunctionCallable: the authenticated call term is
         the value. It is not a return or inv that becomes an implication; the
         branch guard already owns control. Absence of this arm was
         ``write more Floor: implement CallSiteValue.guarded`` (to_dict /
@@ -540,24 +540,11 @@ class CallSiteValue(FloorValue):
         """Construct truth for a ground callsite, or return None to stay loud.
 
         - Dug body answers with its own truth.
-        - ``import_alias[import_alias]`` is a typing GenericAlias / type face —
-          always truthy in Python (``bool(np.number[Any]) is True``).
         Unconstructable ground residual returns None so the caller panics.
         """
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.truth")
         if dug is not None and dug is not self:
             return dug.truth(site)
-
-        if self.target_name == "py.subscript" and len(self.arg_values) == 2:
-            from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
-            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                TrueBoolLiteralSugar,
-            )
-            from sugar_lift_py_tests.outcome import Complete
-
-            receiver, index = self.arg_values
-            if type(receiver) is ImportAliasValue and type(index) is ImportAliasValue:
-                return Complete(TrueBoolLiteralSugar(site=site))
         return None
 
     def is_identical(self, other, site):

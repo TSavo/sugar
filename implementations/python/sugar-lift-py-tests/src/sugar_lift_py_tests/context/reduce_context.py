@@ -17,15 +17,11 @@ from sugar_lift_py_tests.temporal import TemporalContext
 class ReduceContext:
     temporal: TemporalContext
     module_temporal: TemporalContext | None = None
-    global_names: frozenset[str] = field(default_factory=frozenset)
-    nonlocal_names: frozenset[str] = field(default_factory=frozenset)
     source_oracle: Any = None
     proof_sink: ProofSink | None = None
     report_sink: Any = None
     construction_audit_sink: AuditSink | None = None
     operation_log: list[tuple[str, str, str]] = field(default_factory=list)
-    module_rewrite_log: list[Any] = field(default_factory=list)
-    prefer_ground_module_bindings: bool = False
     # The DIG QUEUE. When a bridge emits `call:h(args)`, it appends the actual
     # CallSiteValue here -- a bridge OBLIGATES the dig of the tower it points at.
     # A bridge without its enqueued dig is a dangling uninterpreted symbol, a false
@@ -73,17 +69,11 @@ class ReduceContext:
         return cls(
             temporal=source.temporal,
             module_temporal=getattr(source, "module_temporal", None),
-            global_names=getattr(source, "global_names", frozenset()),
-            nonlocal_names=getattr(source, "nonlocal_names", frozenset()),
             source_oracle=source.source_oracle,
             proof_sink=source.proof_sink,
             report_sink=source.report_sink,
             construction_audit_sink=source.construction_audit_sink,
             operation_log=source.operation_log,
-            module_rewrite_log=getattr(source, "module_rewrite_log", []),
-            prefer_ground_module_bindings=getattr(
-                source, "prefer_ground_module_bindings", False
-            ),
             dig_sink=source.dig_sink,
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
             in_flight_effects=getattr(source, "in_flight_effects", ()),
@@ -116,15 +106,11 @@ class ReduceContext:
         return ReduceContext(
             temporal=temporal,
             module_temporal=self.module_temporal,
-            global_names=self.global_names,
-            nonlocal_names=self.nonlocal_names,
             source_oracle=self.source_oracle,
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
             construction_audit_sink=self.construction_audit_sink,
             operation_log=self.operation_log,
-            module_rewrite_log=self.module_rewrite_log,
-            prefer_ground_module_bindings=self.prefer_ground_module_bindings,
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
             in_flight_effects=self.in_flight_effects,
@@ -138,15 +124,11 @@ class ReduceContext:
         return ReduceContext(
             temporal=self.temporal,
             module_temporal=self.module_temporal,
-            global_names=self.global_names,
-            nonlocal_names=self.nonlocal_names,
             source_oracle=self.source_oracle,
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
             construction_audit_sink=self.construction_audit_sink,
             operation_log=self.operation_log,
-            module_rewrite_log=self.module_rewrite_log,
-            prefer_ground_module_bindings=self.prefer_ground_module_bindings,
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
             in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),

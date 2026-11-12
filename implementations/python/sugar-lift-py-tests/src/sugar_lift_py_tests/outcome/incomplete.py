@@ -41,14 +41,6 @@ class Incomplete:
         conds = " and ".join(repr(f) for f in self.branch_conditions)
         return f"{base}; effect occurs under branch condition {conds}"
 
-    def binary_conditional(
-        self, then, else_body, ctx: object = None, site=None
-    ) -> "Incomplete":
-        # An effect never decides a branch; it rides straight through by returning
-        # itself. Same shape for every operation an effect is asked to do.
-        del then, else_body, ctx, site
-        return self
-
     def follow(self):
         # Default: an effect halts the run; the rest of the block stays unreduced.
         #

@@ -6,7 +6,7 @@ from .builtin_name_bindings import (
     builtin_constant_names,
     builtin_name_temporal,
 )
-from .context_helpers import bind_temporal, curry_temporal, rewrite_temporal
+from .context_helpers import bind_temporal, curry_temporal
 from .curry_arguments_operation import CurryArgumentsOperation
 from .perform_temporal_operation import perform_temporal_operation
 from .temporal_binding import TemporalBinding
@@ -23,5 +23,4 @@ __all__ = [
     "builtin_name_temporal",
     "curry_temporal",
     "perform_temporal_operation",
-    "rewrite_temporal",
 ]

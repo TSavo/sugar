@@ -12,12 +12,9 @@ The other half of an if -- what a name BINDS to after the branch (the phi
 `joined_bindings`/`guarded_bindings` on the `GuardedFaces` it builds are empty
 by construction. substitute ages the bindings; this reads off the guarded facts.
 
-The factory drove the guard through `PredicateValue.binary_conditional`, but that
-path referenced `reduce_with_scope`, which the factory nuke deleted -- it is dead
-code. The guard here is written fresh from the pure-meaning primitives that
-survived: `reduce_statements` (block reduction), `entry.guarded(formula)`
-(implication), and the `GuardedFaces` floor value the block reducer already
-consumes.
+The guard here is written from the pure-meaning primitives: `reduce_statements`
+(block reduction), `entry.guarded(formula)` (implication), and the `GuardedFaces`
+floor value the block reducer already consumes.
 """
 
 from __future__ import annotations

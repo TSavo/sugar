@@ -19,8 +19,8 @@ def _context_for_rebind(ctx, *, owner: str):
 @dataclass(frozen=True)
 class ScopeRebind(FloorValue):
     """A mutation rebinds to the UPDATED VALUE; the history is in the value's nested
-    term, not in a recomposable source. Mirror of BoundVar's scope threading -- a let
-    that holds the folded result, not a recoverable source body."""
+    term, not in a recomposable source: a let that holds the folded result, not a
+    recoverable source body."""
 
     name: str
     value: FloorValue
@@ -33,12 +33,7 @@ class ScopeRebind(FloorValue):
     def extend_scope(self, ctx):
         # Thread the updated value forward so later statements resolve the name.
         # Root mint is Floor-owned when the reducer has no ambient context yet.
-        from sugar_lift_py_tests.sugar.nonlocal_sugar import (
-            reject_unconstructed_nonlocal_store,
-        )
-
         ctx = _context_for_rebind(ctx, owner="ScopeRebind")
-        reject_unconstructed_nonlocal_store(ctx, self.name)
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self.value))
 
     def as_expression_statement(self):
@@ -83,10 +78,10 @@ class ScopeRebinds(FloorValue):
 class GuardedScopeRebind(FloorValue):
     """A branch-local rebind carried in the record under one or more guards.
 
-    It deliberately does not extend temporal scope. Definite assignment is owned by
-    PredicateValue._joined_bindings, which only joins names present in both faces.
-    Keeping this marker non-binding preserves the one-arm NameError path while the
-    outer join can still construct a GuardedValue when both faces bind the name.
+    It deliberately does not extend temporal scope. What a name binds to after a
+    branch is the phi substitution builds (``If.substitute``), which joins only
+    names bound in both faces. Keeping this marker non-binding preserves the
+    one-arm NameError path.
     """
 
     guards: tuple

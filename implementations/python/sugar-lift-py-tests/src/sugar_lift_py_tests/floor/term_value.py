@@ -271,7 +271,6 @@ class TermValue(GuardStableValue):
             )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -280,7 +279,6 @@ class TermValue(GuardStableValue):
             return other.map_from_left("add", self, site)
         if type(other) in (
             CallSiteValue,
-            ImportAliasValue,
             OpaqueOpCallsite,
             PredicateValue,
             SymbolicValue,
@@ -337,7 +335,6 @@ class TermValue(GuardStableValue):
             return Complete(TermValue(self.value * other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.string_value import StringValue
@@ -346,7 +343,7 @@ class TermValue(GuardStableValue):
 
         if isinstance(other, GuardedValue):
             return other.map_from_left("multiply", self, site)
-        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+        if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         if type(other) is OpaqueOpCallsite and other.callee == "len":
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)

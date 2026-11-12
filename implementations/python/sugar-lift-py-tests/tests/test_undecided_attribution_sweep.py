@@ -18,9 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
 from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_source_tree.fragment import SourceMemento
 from sugar_source_tree.panic import SugarNotWritten
 
@@ -36,10 +34,6 @@ class _Site:
 
     def is_within_annotation(self) -> bool:
         return False
-
-
-def _alias() -> ImportAliasValue:
-    return ImportAliasValue(name="os", bound_name="os", import_target="os")
 
 
 def _mutable(*, kind: str = "list") -> MutableGlobalValue:
@@ -58,27 +52,6 @@ def _mutable(*, kind: str = "list") -> MutableGlobalValue:
     )
 
 
-def test_import_alias_runtime_type_undecided() -> None:
-    assert _alias().runtime_type_is_decided() is False
-
-
-def test_import_alias_attribute_is_undecided_not_write_more_floor() -> None:
-    """Was: ConstructionPanic write more Floor: implement ImportAliasValue.attribute."""
-    v = _alias()
-    site = _Site()
-    with pytest.raises(SugarNotWritten, match="ImportAliasValue.attribute") as caught:
-        v.attribute("path", site)
-    msg = str(caught.value)
-    assert "write more Floor" not in msg
-    assert "undecided" in caught.value.observed.lower()
-
-
-def test_import_alias_contains_is_undecided_not_write_more_floor() -> None:
-    v = _alias()
-    site = _Site()
-    _assert_undecided_membership_faces(v.contains(v, site))
-
-
 def _assert_undecided_membership_faces(outcome) -> None:
     """Undecided membership is the two faces, not a refusal or a write-more-Floor."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
@@ -91,21 +64,6 @@ def _assert_undecided_membership_faces(outcome) -> None:
     assert completed.value.formula.name == "py.in"
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.producer_node_owner == "UndecidedCompare:In"
-
-
-def test_import_alias_subscript_still_undecided() -> None:
-    v = _alias()
-    site = _Site()
-    with pytest.raises(SugarNotWritten, match="ImportAliasValue.subscript"):
-        v.subscript(0, site)
-
-
-def test_import_alias_getattr_static_is_undecided_not_construction_gap() -> None:
-    """getattr_static used to construction_panic_gap; same undecided law."""
-    v = _alias()
-    site = _Site()
-    with pytest.raises(SugarNotWritten, match="ImportAliasValue.getattr_static"):
-        v.getattr_static("path", site)
 
 
 def test_mutable_global_non_dict_contains_is_undecided_not_write_more_floor() -> None:
@@ -138,17 +96,3 @@ def test_mutable_global_dict_contains_still_constructs() -> None:
     )
     outcome = v.contains(TermValue(1), site_ok)
     assert isinstance(outcome, Complete)
-
-
-def test_no_construction_panic_on_alias_attribute() -> None:
-    """Regression class: ConstructionPanic is the forbidden miscount costume."""
-    v = _alias()
-    site = _Site()
-    with pytest.raises(SugarNotWritten):
-        v.attribute("x", site)
-    try:
-        v.attribute("x", site)
-    except ConstructionPanic:
-        pytest.fail("ImportAliasValue.attribute must not ConstructionPanic")
-    except SugarNotWritten:
-        pass

@@ -945,13 +945,6 @@ class FloorValue:
             )
         )
 
-    def binary_conditional(self, then, else_body, ctx=None, site=None):
-        # Default: ask truth, then the standing dispatches the two faces.
-        # Base cases (True/False literals, PredicateValue) override.
-        return self.truth(site).and_then(
-            lambda standing: standing.binary_conditional(then, else_body, ctx, site)
-        )
-
     def stated(self, site):
         # Default: ask truth, then the standing states itself. Base cases
         # (True/False literals, PredicateValue) override.
@@ -960,7 +953,7 @@ class FloorValue:
     def negate(self):
         # Default: this value does not stand on the negate floor -- it cannot flip.
         # The None arm: a value that CAN implements negate (the bool literals); absence
-        # here is the honest "no". No blame arg -- mirror binary_conditional.
+        # here is the honest "no". No blame arg.
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 

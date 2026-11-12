@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NoReturn
 
-from sugar_lift_py_tests.gap.panic import construction_panic_gap
-from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.floor import FloorValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 from .temporal_binding import GuardedTemporalBinding, TemporalBinding
 
@@ -34,23 +31,6 @@ class TemporalContext:
             fix=f"bind `{name}` before reducing NameSugar",
         )
 
-    def value_outcome_for(self, name: str) -> Outcome:
-        for binding in reversed(self.bindings):
-            if binding.name == name:
-                return Complete(binding.value)
-        construction_panic_gap(
-            owner="TemporalContext",
-            blame="<temporal>",
-            observed=name,
-            requested="value",
-            fix=f"bind `{name}` before reducing NameSugar",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-
-    def receiver_for(self, name: str) -> FloorValue:
-        return self.value_for(name)
-
     def value_if_bound(self, name: str) -> FloorValue | None:
         for binding in reversed(self.bindings):
             if binding.name == name:
@@ -61,25 +41,6 @@ class TemporalContext:
         self, name: str, value: FloorValue, *, blame: str | None = None
     ) -> "TemporalContext":
         return self._bind_value(name, value, blame=blame)
-
-    def unbind_names(self, names: tuple[str, ...]) -> "TemporalContext":
-        """Return a scope with every deleted name absent.
-
-        Deletion removes bindings instead of installing a sentinel or retaining
-        history. A later NameSugar lookup therefore reaches the ordinary loud
-        unbound-name floor rather than observing a stale pre-delete value.
-        """
-        for name in names:
-            self.value_for(name)
-        deleted = frozenset(names)
-        return TemporalContext(
-            tuple(binding for binding in self.bindings if binding.name not in deleted),
-            tuple(
-                binding
-                for binding in self.guarded_bindings
-                if binding.binding.name not in deleted
-            ),
-        )
 
     def bind_guarded(
         self,
@@ -129,9 +90,6 @@ class TemporalContext:
 
     def curry_with(self, operation, ctx):
         return operation.curry_context(self, ctx)
-
-    def rewrite_with(self, operation, ctx):
-        return operation.rewrite_context(self, ctx)
 
     def _gap(
         self,

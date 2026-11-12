@@ -8,8 +8,6 @@ from .branch_result_coordinate import (
     BranchResultAuthentication,
     BranchResultCoordinate,
 )
-from .bound_var import BoundVar
-from .module_bound_var import ModuleBoundVar
 from .mutable_global_value import MutableGlobalValue
 from .named_expression_value import NamedExpressionValue
 from .native_callable_value import NativeCallableValue
@@ -28,7 +26,6 @@ from .class_definition_value import (
     ConstructedClassFieldV1,
     ConstructedClassMethodV1,
 )
-from .curried_loop_scope import CurriedLoopBody, CurriedLoopScope
 from .class_value import ClassValue
 from .comprehension_value import ComprehensionValue
 from .dict_literal_value import DictLiteralValue
@@ -56,7 +53,6 @@ from .guarded_faces import GuardedFaces
 from .guarded_value import GuardedValue
 from .guarded_return import GuardedReturn
 from .ground_sequence_repetition_value import GroundSequenceRepetitionValue
-from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .list_value import ListValue
 from .loop_control_value import LoopControlValue
@@ -115,7 +111,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BlockValue,
     BranchResultAuthentication,
     BranchResultCoordinate,
-    BoundVar,
     MutableGlobalValue,
     NamedExpressionValue,
     NativeCallableValue,
@@ -156,7 +151,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     GuardedReturn,
     GroundSequenceRepetitionValue,
     GuardedScopeRebind,
-    ImportAliasValue,
     LambdaCallable,
     ListValue,
     LoopControlValue,
@@ -207,8 +201,6 @@ __all__ = [
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BinaryOperatorFloor",
     "BlockValue",
-    "BoundVar",
-    "ModuleBoundVar",
     "NamedExpressionValue",
     "NativeCallableValue",
     "ReMatchValue",
@@ -222,8 +214,6 @@ __all__ = [
     "BoundMethodValue",
     "BuiltinSuperMethodValue",
     "CallSiteValue",
-    "CurriedLoopBody",
-    "CurriedLoopScope",
     "ClassValue",
     "ComprehensionValue",
     "DictLiteralValue",
@@ -246,7 +236,6 @@ __all__ = [
     "GuardedReturn",
     "GroundSequenceRepetitionValue",
     "GuardedScopeRebind",
-    "ImportAliasValue",
     "LambdaCallable",
     "ListValue",
     "LoopControlValue",

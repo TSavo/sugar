@@ -561,15 +561,6 @@ def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_pat
     assert "importBindingCid" not in row
 
 
-def test_import_alias_has_no_parallel_install_source_resolver(monkeypatch):
-    from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
-
-    del monkeypatch
-    value = ImportAliasValue("producer.pair", "pair", import_target="producer.pair")
-
-    assert not hasattr(value, "resolve_value")
-
-
 def test_an_imported_call_has_one_form_whether_or_not_a_contract_answers(tmp_path):
     """Step 6, as amended 2026-11-11: a call stands as its coordinate with an
     edge carrying its target symbol, bound or not; a contract is applied in one

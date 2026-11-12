@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.floor import FunctionCallable, ImportAliasValue
+from sugar_lift_py_tests.floor import FunctionCallable
 from sugar_lift_py_tests.ir import ctor, eq, make_var, num, py_eq, str_const
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir
 from sugar_lift_py_tests.proofir.scope import ScopedFormula
@@ -22,11 +22,6 @@ def test_function_callable_projects_a_named_constant_not_a_variable() -> None:
     term = FunctionCallable("later").to_term(owner="test")
     assert term == ctor("python:function", [str_const("later")])
     assert term != make_var("later")
-
-
-def test_import_alias_is_already_a_named_constant_coordinate() -> None:
-    term = ImportAliasValue("datetime", "dt").to_term(owner="test")
-    assert term == ctor("python:import_alias", [str_const("dt"), str_const("datetime")])
 
 
 def test_actually_undeclared_variable_still_refuses_scope() -> None:
