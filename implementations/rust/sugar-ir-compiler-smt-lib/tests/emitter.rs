@@ -223,6 +223,38 @@ fn empty_connectives_translate_to_the_constants_they_denote() {
     assert!(!falsity.contains("(or"), "{falsity}");
 }
 
+/// A predicate is applied under the head it is declared under. A name holding
+/// ':' is declared quoted; applied bare it reads as a keyword and z3 rejects
+/// the script (`invalid expression, unexpected keyword`). Twin: a name with no
+/// ':' needs no quoting and stays bare in both places.
+#[test]
+fn a_predicate_is_applied_under_the_head_it_is_declared_under() {
+    let call = json!({"kind": "ctor", "name": "python:compare", "args": [
+        {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}}
+    ]});
+    let quoted = emit(&json!({
+        "kind": "atomic", "name": "python:compare.completes", "args": [call]
+    }))
+    .expect("emit");
+    assert!(
+        quoted.contains("(declare-fun |python:compare.completes| "),
+        "{quoted}"
+    );
+    assert!(
+        quoted.contains("(|python:compare.completes| (|python:compare| 1))"),
+        "{quoted}"
+    );
+    assert!(!quoted.contains("(python:compare.completes "), "{quoted}");
+
+    let bare = emit(&json!({
+        "kind": "atomic", "name": "completes", "args": [
+            {"kind": "var", "name": "x"}
+        ]
+    }))
+    .expect("emit");
+    assert!(bare.contains("(completes x)"), "{bare}");
+}
+
 #[test]
 fn connective_not_translates_to_smt_not() {
     let f = json!({

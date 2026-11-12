@@ -331,15 +331,21 @@ pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
             if let Some(rendered) = emit_monadic_adt_tester_atomic(name, args)? {
                 return Ok(rendered);
             }
-            let smt_name = smt_atomic_name(name);
+            // The head a predicate is APPLIED under is the head it is DECLARED
+            // under (`smt_ctor_head`, the predicate-declaration pass). A name
+            // holding ':' was declared quoted and applied bare, and a bare
+            // `python:compare.completes` reads as a keyword: z3 rejected the
+            // whole script. Theory names (`=`, `<=`, ...) need no quoting and
+            // come back unchanged.
+            let head = smt_ctor_head(smt_atomic_name(name), args.len());
             if args.is_empty() {
-                return Ok(smt_name.to_string());
+                return Ok(head);
             };
             let expected = expected_atomic_arg_sort(name, args);
             let args_str = args.iter();
             let args_str = args_str.map(|arg| emit_term_with_expected(arg, expected.as_deref()));
             let args_str: Vec<String> = args_str.collect();
-            Ok(format!("({} {})", smt_name, args_str.join(" ")))
+            Ok(format!("({} {})", head, args_str.join(" ")))
         }
         Formula::And { operands } => {
             let ops_str: Result<Vec<String>, CompileError> =
