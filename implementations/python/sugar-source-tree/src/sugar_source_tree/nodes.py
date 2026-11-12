@@ -13827,8 +13827,17 @@ class Call(Expression):
                             requested="one typed resolution row for every enrolled imported call",
                             fix="repair call-contract preconstruction; never fall through to an ordinary call",
                         ) from exc
+            import_target_symbol = None
             if isinstance(resolution, CallContractResolutionGapV1):
-                contract_resolution_gap = resolution.kind.value
+                # Step 6: a call stands as coordinate plus edge, bound or not.
+                # A gap that names ONE definite target which nothing answers
+                # is that state exactly: not bridged. The receipt's symbol
+                # rides to the edge. Every other gap (no definite import
+                # target, or something answered wrongly) stays a refusal.
+                if resolution.names_an_unanswered_target():
+                    import_target_symbol = resolution.target_symbol
+                else:
+                    contract_resolution_gap = resolution.kind.value
             elif resolution is not None:
                 contract_ref = resolution
 
@@ -13977,6 +13986,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
+                import_target_symbol=import_target_symbol,
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
