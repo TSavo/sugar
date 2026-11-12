@@ -7520,14 +7520,12 @@ class Assign(Statement):
             return None
         floor_value, testimony = constructed
         from sugar_lift_py_tests.floor import ObjectValue
-        from sugar_lift_py_tests.outcome import Complete
 
         if not isinstance(floor_value, ObjectValue):
             return None
-        class_outcome = definition.sugar().desugar()
-        if not isinstance(class_outcome, Complete):
-            return None
-        class_definition_cid = class_outcome.value.class_definition_cid
+        # The class statement's content address is a fact of its sugar; the
+        # statement is not reduced to read it.
+        class_definition_cid = definition.sugar().class_definition_cid
         from .object_identity import SourceObjectCoordinateV1
 
         object_coordinate = SourceObjectCoordinateV1.mint(
