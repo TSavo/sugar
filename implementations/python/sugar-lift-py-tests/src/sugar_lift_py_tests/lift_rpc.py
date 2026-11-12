@@ -72,6 +72,10 @@ _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
+# The target symbol of every call-contract demand this resident served, by use
+# site. The edge of a call carries the DEMAND's symbol; the bound table gets
+# this map at bind, so no reader takes a symbol from the linker's answer.
+_SERVED_CALL_DEMAND_SYMBOLS: Dict[Any, str] = {}
 # Phase-1->3 cross-request continuation: retained immutable universes keyed
 # by linkUnitCid, and a def-memento index so resume reuses the SAME universe
 # object (materialize-once) instead of reconstructing the function.
@@ -650,7 +654,12 @@ def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, A
     from sugar_lift_py_tests.ir import TermTableBuilder
 
     term_table = TermTableBuilder()
-    rows = resolved.payload_rows(def_memento_dto)
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.tree_enumerate import reduction_rows
+
+    rows = reduction_rows(
+        Complete(resolved), owner=resolved, blame=None, def_memento=def_memento_dto
+    )
     nodes = [
         {
             "memento": def_memento,
@@ -2244,6 +2253,22 @@ def _roll_call_audit_leaf(
     ).to_rpc()
 
 
+def _remember_call_demand_symbols(root) -> list:
+    """The preconstruction demand rows, with each call demand's own target
+    symbol kept by use site for the table that will be bound back."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    rows = _preconstruction_demand_rows(root)
+    for row in rows:
+        if isinstance(row, dict) and row.get("kind") == "call-contract-demand":
+            _SERVED_CALL_DEMAND_SYMBOLS[
+                SourceFragmentCoordinateV1.decode(row["useSite"])
+            ] = row["targetSymbol"]
+    return rows
+
+
 def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     """`sugar.enumerate`: the ONE wire method behind the Rust `tree` module's
     lazy accessors (Part 6 Phase 2,
@@ -2309,7 +2334,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "result": {"rows": _preconstruction_demand_rows(root)},
+                    "result": {"rows": _remember_call_demand_symbols(root)},
                 }
             )
             return
@@ -3359,6 +3384,13 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
 
         global _BOUND_CALL_CONTRACT_REFS
         installed = decode_resolved_call_contract_refs(params)
+        import dataclasses as _dataclasses
+        from types import MappingProxyType as _MappingProxyType
+
+        installed = _dataclasses.replace(
+            installed,
+            demand_target_symbols=_MappingProxyType(dict(_SERVED_CALL_DEMAND_SYMBOLS)),
+        )
         if (
             _BOUND_CALL_CONTRACT_REFS is not None
             and _BOUND_CALL_CONTRACT_REFS.table_cid != installed.table_cid

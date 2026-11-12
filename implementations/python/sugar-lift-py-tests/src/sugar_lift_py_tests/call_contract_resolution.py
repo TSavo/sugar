@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -106,6 +106,22 @@ class CallContractResolutionGapV1:
     kind: CallContractResolutionGapKindV1
     candidate_member_cids: tuple[str, ...]
 
+    def names_an_unanswered_target(self) -> bool:
+        """True when this gap is "not bridged": the import door named ONE
+        definite target symbol and nothing answers it. The module is not in
+        the corpus, or it is and no authenticated contract states the symbol.
+
+        Every other kind is not this. Three name no definite import target
+        (no lexical binding, a non-import shadow, an ambiguous binding); five
+        mean something answered and it is wrong (two contracts for one symbol,
+        a signature the call does not match, a member of the wrong kind, the
+        wrong provider, a stale or malformed reference). Those stay refusals.
+        """
+        return self.target_symbol is not None and self.kind in (
+            CallContractResolutionGapKindV1.TARGET_NOT_IN_CORPUS,
+            CallContractResolutionGapKindV1.NO_AUTHENTICATED_CONTRACT,
+        )
+
 
 CallContractResolutionV1 = ResolvedCallContractRefV1 | CallContractResolutionGapV1
 
@@ -116,10 +132,23 @@ class ResolvedCallContractRefsV1:
     table_cid: str
     by_use_site: Mapping[SourceFragmentCoordinateV1, CallContractResolutionV1]
     enrolled_use_sites: frozenset[SourceFragmentCoordinateV1] | None = None
+    # The target symbol of each demand THE KIT made, by use site: what the
+    # consumer's own source imported, as written. Never read off the linker's
+    # answer: the consumer cannot know what answers its symbol, and its proof
+    # must be the same whether or not anything does (#7762).
+    demand_target_symbols: Mapping[SourceFragmentCoordinateV1, str] | None = field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.enrolled_use_sites is None:
             object.__setattr__(self, "enrolled_use_sites", frozenset(self.by_use_site))
+
+    def demand_target_symbol(self, use_site: SourceFragmentCoordinateV1) -> str | None:
+        """The symbol the kit's own demand at ``use_site`` named, if it made one."""
+        if self.demand_target_symbols is None:
+            return None
+        return self.demand_target_symbols.get(use_site)
 
     def require(self, use_site: SourceFragmentCoordinateV1) -> CallContractResolutionV1:
         try:

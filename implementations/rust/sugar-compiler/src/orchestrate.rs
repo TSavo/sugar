@@ -397,11 +397,138 @@ pub fn fold_kit_to_pool(
     // declaration/catalog/demand binding reads this pool, while Sugar never
     // does. Local construction is merged only after that front completes.
     let mut pool = MementoPool::default();
+    load_vendor_testimony(kit, workspace_root, &mut pool)?;
 
-    // 1. Vendor testimony when the kit implements resolve_dependency_proofs.
-    // Unavailable is a LINK-class absence (local-only prove still runs), not
-    // a hard error — same law as Kit::testimony / resolve_testimony.
-    //
+    // 2. CLI / RunnerConfig dependency proofs (same merge disk load_pool uses).
+    // Must happen here: `run_with_proof_run_with_pool` does not re-apply
+    // `cfg.extra_proofs` (pool is already assembled).
+    if !cfg.extra_proofs.is_empty() {
+        load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
+    }
+
+    let imports = resolve_imports_before_construction(kit, workspace_root, &speaker, &mut pool)?;
+
+    // 7-8. Local semantic construction occurs only after ref installation.
+    let local = if imports.is_bound() {
+        // The declaration graph was already sealed into the preliminary pool;
+        // this pass is semantic construction only.
+        feed_from_tree::fold_claim_tree(kit, workspace_root)?
+    } else {
+        feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?
+    };
+    let local_pool =
+        pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
+    pool.merge(local_pool);
+
+    imports.final_check()?;
+
+    Ok(pool)
+}
+
+/// What step 3 leaves behind: the catalog the linker answered from and the
+/// table it bound into the kit. `None` when the kit does not answer the round.
+pub struct ImportResolution(Option<(AuthenticatedCallContractCatalog, ResolvedCallContractRefsV1)>);
+
+impl ImportResolution {
+    /// True when a table was bound into the kit before construction.
+    pub fn is_bound(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// The bound table must still answer from the catalog it was resolved
+    /// against once construction is over.
+    pub fn final_check(&self) -> Result<(), ProveFromKitError> {
+        if let Some((catalog, table)) = &self.0 {
+            table.final_check(catalog).map_err(|error| {
+                ProveFromKitError::Preconstruction(format!("stale call-contract ref: {error:?}"))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// Step 3 of the nine steps for a walk that starts with no pool: mint. The
+/// dependency testimony the kit resolves (the proofs staged in
+/// `.sugar/imports/`) is the pool the linker answers from. Prove's fold holds
+/// its pool already and calls [`resolve_imports_before_construction`] on it;
+/// both run the one round.
+pub fn resolve_imports_for_walk(
+    kit: &Kit,
+    workspace_root: &Path,
+    speaker: &Speaker,
+) -> Result<ImportResolution, ProveFromKitError> {
+    // A kit that does not answer the round is asked NOTHING here, not even
+    // for its dependency testimony: mint's walk of every other kit is exactly
+    // what it was.
+    if !kit.supports_rpc_method("sugar.plugin.bind_call_contract_refs") {
+        return Ok(ImportResolution(None));
+    }
+    let mut pool = MementoPool::default();
+    load_vendor_testimony(kit, workspace_root, &mut pool)?;
+    resolve_imports_before_construction(kit, workspace_root, speaker, &mut pool)
+}
+
+/// Step 3 of the nine steps: resolve imports before construction. ONE
+/// implementation, called by prove's fold ([`fold_kit_to_pool`]) and by mint's
+/// walk ([`resolve_imports_for_walk`]).
+///
+/// The kit lists the imported names it needs contracts for (`contract-demands`).
+/// The linker answers each from the authenticated pool with a contract or a
+/// named gap, and the table is bound back into the kit, which constructs only
+/// after that. A kit that does not answer `sugar.plugin.bind_call_contract_refs`
+/// is untouched: nothing is asked of it and nothing is bound.
+pub fn resolve_imports_before_construction(
+    kit: &Kit,
+    workspace_root: &Path,
+    speaker: &Speaker,
+    pool: &mut MementoPool,
+) -> Result<ImportResolution, ProveFromKitError> {
+    if !kit.supports_rpc_method("sugar.plugin.bind_call_contract_refs") {
+        return Ok(ImportResolution(None));
+    }
+    // Function contracts are ordinary body-derived contracts, so collect one
+    // complete workspace pass before resolving imported call demands. This is
+    // a corpus pass, never a target-file hunt: the consumer does not select or
+    // open its callee. Only signed members in the resulting pool may answer.
+    let preliminary = feed_from_tree::fold_claim_tree(kit, workspace_root)?;
+    let preliminary_pool = pool_from_graph_with_speaker(&preliminary, speaker.clone())
+        .map_err(ProveFromKitError::LocalLoad)?;
+    pool.merge(preliminary_pool);
+
+    let mut catalog = AuthenticatedCallContractCatalog::freeze_from_pool(pool)
+        .map_err(ProveFromKitError::Preconstruction)?;
+    let demand_rows = kit
+        .context_manager_demands(workspace_root)
+        .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+    let demands = demand_rows
+        .iter()
+        .filter(|row| {
+            row.get("kind").and_then(serde_json::Value::as_str) == Some("call-contract-demand")
+        })
+        .map(call_contract_demand_from_wire)
+        .collect::<Result<Vec<_>, _>>()?;
+    let exports = demand_rows
+        .iter()
+        .filter(|row| {
+            row.get("kind").and_then(serde_json::Value::as_str) == Some("call-contract-export")
+        })
+        .map(|row| call_contract_export_from_wire(row, &speaker.id))
+        .collect::<Result<Vec<_>, _>>()?;
+    catalog.install_exports(exports);
+    let table = ResolvedCallContractRefsV1::new(&catalog, &demands);
+    kit.bind_call_contract_refs(&table.to_wire_value())
+        .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+    Ok(ImportResolution(Some((catalog, table))))
+}
+
+/// Vendor testimony when the kit implements resolve_dependency_proofs.
+/// Unavailable is a LINK-class absence (local-only work still runs), not a hard
+/// error: the same law as `Kit::testimony` / `resolve_testimony`.
+fn load_vendor_testimony(
+    kit: &Kit,
+    workspace_root: &Path,
+    pool: &mut MementoPool,
+) -> Result<(), ProveFromKitError> {
     // Diagnostics are NOT silent (#3901): the kit may have partially resolved
     // proofs and still have something to say. Surface them at warn so a
     // dropped byte is greppable; do not fold them into load_errors (those
@@ -415,7 +542,7 @@ pub fn fold_kit_to_pool(
     }
     match resolution.outcome {
         TestimonyOutcome::Proofs(proofs) => {
-            load_proof_bytes_into_pool(&proofs, &mut pool);
+            load_proof_bytes_into_pool(&proofs, pool);
         }
         TestimonyOutcome::Unavailable { plugin, reason } => {
             // Honest empty vendor feed: discharge over local members only.
@@ -424,74 +551,11 @@ pub fn fold_kit_to_pool(
                 target: "sugar_compiler::prove_from_kit",
                 plugin = %plugin,
                 reason = %reason,
-                "vendor testimony unavailable; proving over local fold only"
+                "vendor testimony unavailable; working over the local fold only"
             );
         }
     }
-
-    // 2. CLI / RunnerConfig dependency proofs (same merge disk load_pool uses).
-    // Must happen here: `run_with_proof_run_with_pool` does not re-apply
-    // `cfg.extra_proofs` (pool is already assembled).
-    if !cfg.extra_proofs.is_empty() {
-        load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
-    }
-
-    // Function contracts are ordinary body-derived contracts, so collect one
-    // complete workspace pass before resolving imported call demands. This is
-    // a corpus pass, never a target-file hunt: the consumer does not select or
-    // open its callee. Only signed members in the resulting pool may answer.
-    let mut active_call_preconstruction = None;
-    if kit.supports_rpc_method("sugar.plugin.bind_call_contract_refs") {
-        let preliminary = feed_from_tree::fold_claim_tree(kit, workspace_root)?;
-        let preliminary_pool = pool_from_graph_with_speaker(&preliminary, speaker.clone())
-            .map_err(ProveFromKitError::LocalLoad)?;
-        pool.merge(preliminary_pool);
-
-        let mut catalog = AuthenticatedCallContractCatalog::freeze_from_pool(&pool)
-            .map_err(ProveFromKitError::Preconstruction)?;
-        let demand_rows = kit
-            .context_manager_demands(workspace_root)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        let demands = demand_rows
-            .iter()
-            .filter(|row| {
-                row.get("kind").and_then(serde_json::Value::as_str) == Some("call-contract-demand")
-            })
-            .map(call_contract_demand_from_wire)
-            .collect::<Result<Vec<_>, _>>()?;
-        let exports = demand_rows
-            .iter()
-            .filter(|row| {
-                row.get("kind").and_then(serde_json::Value::as_str) == Some("call-contract-export")
-            })
-            .map(|row| call_contract_export_from_wire(row, &speaker.id))
-            .collect::<Result<Vec<_>, _>>()?;
-        catalog.install_exports(exports);
-        let table = ResolvedCallContractRefsV1::new(&catalog, &demands);
-        kit.bind_call_contract_refs(&table.to_wire_value())
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        active_call_preconstruction = Some((catalog, table));
-    }
-
-    // 7-8. Local semantic construction occurs only after ref installation.
-    let local = if active_call_preconstruction.is_some() {
-        // The declaration graph was already sealed into the preliminary pool;
-        // this pass is semantic construction only.
-        feed_from_tree::fold_claim_tree(kit, workspace_root)?
-    } else {
-        feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?
-    };
-    let local_pool =
-        pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
-    pool.merge(local_pool);
-
-    if let Some((catalog, table)) = &active_call_preconstruction {
-        table.final_check(catalog).map_err(|error| {
-            ProveFromKitError::Preconstruction(format!("stale call-contract ref: {error:?}"))
-        })?;
-    }
-
-    Ok(pool)
+    Ok(())
 }
 
 fn call_contract_demand_from_wire(

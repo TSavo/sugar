@@ -7520,14 +7520,12 @@ class Assign(Statement):
             return None
         floor_value, testimony = constructed
         from sugar_lift_py_tests.floor import ObjectValue
-        from sugar_lift_py_tests.outcome import Complete
 
         if not isinstance(floor_value, ObjectValue):
             return None
-        class_outcome = definition.sugar().desugar()
-        if not isinstance(class_outcome, Complete):
-            return None
-        class_definition_cid = class_outcome.value.class_definition_cid
+        # The class statement's content address is a fact of its sugar; the
+        # statement is not reduced to read it.
+        class_definition_cid = definition.sugar().class_definition_cid
         from .object_identity import SourceObjectCoordinateV1
 
         object_coordinate = SourceObjectCoordinateV1.mint(
@@ -13720,30 +13718,6 @@ class Call(Expression):
                     ),
                 )
             )
-            if (
-                source_call_resolution is not None
-                and source_call_resolution.dispatch_kind == "method"
-            ):
-                if not isinstance(self.func, Attribute):
-                    from sugar_source_tree.panic import BackendDefect
-
-                    raise BackendDefect(
-                        owner="Call._construct_sugar",
-                        blame=self.fragment,
-                        observed=self.func.kind,
-                        requested="attribute callee for authenticated method dispatch",
-                        fix="bind the method ref to its exact attribute-call occurrence",
-                    )
-                from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-
-                return MethodCallSugar(
-                    receiver=self.func.value.sugar(),
-                    name=self.func.attr,
-                    args=tuple(a.sugar() for a in self.args),
-                    site=self.fragment,
-                    keywords=keyword_sugars,
-                    source_call_frame=bound_frame,
-                )
             projected_definition = self._project_call_definition_occurrence(
                 bound_frame.owner,
                 coordinate="CallSiteSugar.expected_definition_ref",
@@ -13827,10 +13801,41 @@ class Call(Expression):
                             requested="one typed resolution row for every enrolled imported call",
                             fix="repair call-contract preconstruction; never fall through to an ordinary call",
                         ) from exc
+            import_target_symbol = None
             if isinstance(resolution, CallContractResolutionGapV1):
-                contract_resolution_gap = resolution.kind.value
+                # Step 6: a call stands as coordinate plus edge, bound or not.
+                # A gap that names ONE definite target which nothing answers
+                # is that state exactly: not bridged. The receipt's symbol
+                # rides to the edge. Every other gap (no definite import
+                # target, or something answered wrongly) stays a refusal.
+                if resolution.names_an_unanswered_target():
+                    # The gap row echoes the demand's symbol; the demand
+                    # itself is the source when the kit served one.
+                    import_target_symbol = (
+                        call_refs.demand_target_symbol(coordinate)
+                        or resolution.target_symbol
+                    )
+                else:
+                    contract_resolution_gap = resolution.kind.value
             elif resolution is not None:
-                contract_ref = resolution
+                # A contract answers the symbol. The call has the SAME form:
+                # its coordinate, and an edge carrying the DEMAND's symbol,
+                # the one this source imported as written. Never the
+                # answering contract's: the consumer cannot know what answers
+                # its symbol, and its rows must not change when something
+                # does. The kit applies no contract; step 9 joins the edge to
+                # the contract whose `bridgeSourceSymbol` is the same string.
+                import_target_symbol = call_refs.demand_target_symbol(coordinate)
+                if import_target_symbol is None:
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        owner="Call._construct_sugar",
+                        blame=self.fragment,
+                        observed="a resolved call contract with no demand of this kit behind it",
+                        requested="the target symbol of the demand the kit made at this call",
+                        fix="bind the table through the round that served the demands",
+                    )
 
             source_call_frame = None
             formal_function_sugar = None
@@ -13977,6 +13982,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
+                import_target_symbol=import_target_symbol,
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
