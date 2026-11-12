@@ -61,19 +61,6 @@ def curry_temporal(
     )
 
 
-def rewrite_temporal(ctx: Any, operation: object, *, owner: str, blame: str) -> Any:
-    return _ctx_with_temporal(
-        ctx,
-        perform_temporal_operation(
-            owner=owner,
-            blame=blame,
-            receiver=_ctx_temporal(ctx),
-            operation=operation,
-            ctx=ctx,
-        ),
-    )
-
-
 def _ctx_temporal(ctx: Any) -> TemporalContext:
     if ctx is None:
         return TemporalContext.empty()
