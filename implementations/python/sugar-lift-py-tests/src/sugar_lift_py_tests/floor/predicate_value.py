@@ -108,7 +108,7 @@ class PredicateValue(FloorValue):
     def guarded(self, formula):
         """A carried boolean rides under a guard unchanged.
 
-        Same arm as ``CallSiteValue`` / ``ImportAliasValue``: this is a VALUE,
+        Same arm as ``CallSiteValue``: this is a VALUE,
         not an exit and not an obligation. A PredicateValue states no
         ``inv_contribution`` and no ``post_contribution``, so a branch guard
         over it is already owned by the branch's own control -- there is

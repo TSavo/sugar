@@ -47,7 +47,6 @@ def test_source_nonlocal_constructs_inert_sugar() -> None:
     assert node.names == ("shared",)
 
 
-
 def test_source_global_then_assign_statement_kinds() -> None:
     """Source ``global x; x = 1; return x``: Global is InertSugar; Assign separate."""
     source = "def f():\n    global x\n    x = 1\n    return x\n"

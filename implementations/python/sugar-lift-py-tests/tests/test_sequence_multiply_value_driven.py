@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import importlib
 
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
-    ImportAliasValue,
     ListValue,
     RaiseValue,
     SymbolicValue,
@@ -81,26 +79,6 @@ def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, RaiseValue)
     assert outcome.value.effect.exception_name == "TypeError"
-
-
-@pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))
-def test_unresolved_imported_constant_constructs_symbolic_repetition(
-    sequence_type, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def no_import(*args, **kwargs):
-        raise AssertionError(f"construction opened a module: {args!r} {kwargs!r}")
-
-    monkeypatch.setattr(importlib, "import_module", no_import)
-    assert not hasattr(ImportAliasValue, "resolve_value")
-    imported = ImportAliasValue(
-        "somevendor.MAXDIMS",
-        "MAXDIMS",
-        import_target="somevendor.MAXDIMS",
-    )
-
-    term = _symbolic_result(sequence_type((TermValue(7),)), imported)
-
-    assert term.args[1] == imported.to_term(owner="test")
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))

@@ -436,7 +436,6 @@ class StringValue(GuardStableValue):
             return Complete(StringValue(self.value + other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -485,7 +484,7 @@ class StringValue(GuardStableValue):
             # as SymbolicValue.add(CallSiteValue) — that is the drained
             # f-string dead-end. Do not invent the concatenated string.
             return CallSiteValue.named_string_concat(self, other, site)
-        if type(other) in (CallSiteValue, ImportAliasValue):
+        if type(other) is CallSiteValue:
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
@@ -515,7 +514,6 @@ class StringValue(GuardStableValue):
 
     def multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
@@ -523,7 +521,7 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(StringValue(self.value * other.value))
-        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+        if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error

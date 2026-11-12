@@ -212,10 +212,9 @@ class TupleValue(GuardStableValue):
 
             return Complete(TupleValue((*self.elements, *other.elements)))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+        if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
