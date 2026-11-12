@@ -94,16 +94,14 @@ class SourceFile:
         construction_context: object | None = None,
     ) -> None:
         # When ``__new__`` returns the resident shell, Python still calls
-        # ``__init__``. The shell is already prepared; only rebind consumer
-        # seating (construction_context / reporter).
-        del identity, backend
+        # ``__init__``. The shell is already prepared under its construction
+        # context, which is never rebound; only the reporter is.
+        del identity, backend, construction_context
         if not hasattr(self, "unit"):
             raise RuntimeError(
                 "SourceFile must be prepared by process_resident "
                 "source_file_from_identity before __init__ rebind"
             )
-        if construction_context is not None:
-            object.__setattr__(self.unit, "construction_context", construction_context)
         if reporter is not None and reporter is not NULL_REPORTER:
             self.reporter = reporter
 
