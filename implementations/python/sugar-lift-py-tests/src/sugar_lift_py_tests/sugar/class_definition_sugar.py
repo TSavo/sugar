@@ -186,7 +186,6 @@ class ClassDefinitionSugar(Sugar):
             # subscript) remains outside the class model and gains no
             # authority or behavior here; its faces were already carried by
             # the fold.
-        class_fields, body_faces = class_body()
         # The last same-name method is Python's live class binding. Overload
         # stubs written as ``def __init__(...): ...`` precede the implementation
         # (RaisesExc); the first ``__init__`` would construct through an
@@ -201,119 +200,135 @@ class ClassDefinitionSugar(Sugar):
         )
         if initializer is None:
             initializer = _inherited_source_initializer(tuple(base_values))
-        constructed = Complete(
-            ClassDefinitionValue(
-                self.class_name,
-                self.class_definition_cid,
-                self.methods,
-                initializer,
-                self.binding_target_occurrence,
-                tuple(class_fields),
-                self.docstring_cid,
-                self.annotation_cids,
-                self.decorator_cids,
-                tuple(base_values),
-                class_definition=self.class_definition,
+
+        def class_or_halt(body_value):
+            from sugar_lift_py_tests.floor import RaiseValue
+            from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+            if isinstance(body_value, RaiseValue):
+                # The assignment routine hands a right-hand side's raise back
+                # as control-flow data.  A class statement has no ``try`` of
+                # its own to route it: the statement halts with it, and no
+                # class exists on that face.  (``promote_raise_halts`` does
+                # this for a block: it reads raise entries off a reduced
+                # block's record, which a class body does not have.)
+                return ExitSet.halted(body_value.effect)
+            return Complete(
+                ClassDefinitionValue(
+                    self.class_name,
+                    self.class_definition_cid,
+                    self.methods,
+                    initializer,
+                    self.binding_target_occurrence,
+                    body_value,
+                    self.docstring_cid,
+                    self.annotation_cids,
+                    self.decorator_cids,
+                    tuple(base_values),
+                    class_definition=self.class_definition,
+                )
             )
-        )
-        if not body_faces:
-            return constructed
-        outcome = Complete(None)
-        for faces in body_faces:
-            outcome = outcome.and_then(lambda _, faces=faces: faces)
-        return outcome.and_then(lambda _: constructed)
+
+        # The class exists only on a face the whole body completed under;
+        # every halt of the body is the statement's halt, unchanged.
+        body = class_body()
+        if isinstance(body, Complete):
+            # ``Complete.and_then`` would hand a raise back as a completion.
+            return class_or_halt(body.value)
+        return body.and_then(class_or_halt)
 
     def _class_body(self, ctx):
+        """The body's outcome: the class's fields on each completed face.
+
+        A class field is an assignment.  Its right-hand side is evaluated by
+        the routine every other assignment uses, in source order: a halt of a
+        right-hand side is the body's halt and no later field runs under it.
+        """
         from sugar_lift_py_tests.floor import ObjectField
+        from sugar_lift_py_tests.sugar.assigned_value import (
+            evaluate_assignment_values,
+        )
 
-        class_fields = []
-        evaluated_groups = {}
-        body_faces = []
+        selected = []
 
-        def append_field(item):
-            if isinstance(item, ConstructedClassConditionalFieldsV1):
-                condition = item.condition_sugar.desugar(ctx)
-                from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                    FalseBoolLiteralSugar,
-                )
-                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                    TrueBoolLiteralSugar,
-                )
-
-                if not isinstance(condition, Complete) or not isinstance(
-                    condition.value, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
-                ):
-                    from sugar_source_tree.panic import SugarNotWritten
-
-                    raise SugarNotWritten(
-                        blame=self.site,
-                        owner="ClassDefinitionSugar.desugar",
-                        observed="class conditional guard is not a ground bool literal",
-                        requested=(
-                            "one constructed TrueBoolLiteralSugar or "
-                            "FalseBoolLiteralSugar"
-                        ),
-                        fix="keep symbolic or effectful class-body control loud",
-                    )
-                selected = (
-                    item.when_true
-                    if isinstance(condition.value, TrueBoolLiteralSugar)
-                    else item.when_false
-                )
-                for child in selected:
-                    append_field(child)
+        def select(item):
+            if not isinstance(item, ConstructedClassConditionalFieldsV1):
+                selected.append(item)
                 return
-            outcome = (
-                evaluated_groups.get(item.evaluation_group_cid)
-                if item.evaluation_group_cid is not None
-                else None
+            condition = item.condition_sugar.desugar(ctx)
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
             )
-            if outcome is None:
-                outcome = item.value_sugar.desugar(ctx)
-                if item.evaluation_group_cid is not None:
-                    evaluated_groups[item.evaluation_group_cid] = outcome
-            if not isinstance(outcome, Complete):
-                value = _sole_completed_value(outcome)
-                if value is _NO_SOLE_COMPLETION:
-                    from sugar_source_tree.panic import SugarNotWritten
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
 
-                    raise SugarNotWritten(
-                        blame=self.site,
-                        owner="ClassDefinitionSugar.desugar",
-                        observed=f"class field {item.name} did not construct completely",
-                        requested="one exact constructed class-field value",
-                        fix="keep effectful or unresolved class initializers loud",
-                    )
-                # The initializer may raise (#7585): executing the class body
-                # halts with it, and the class exists only on the one
-                # completed face.  Faces are sequenced in source order.
-                body_faces.append(outcome)
-                class_fields.append(ObjectField(item.name, value))
-                return
-            class_fields.append(ObjectField(item.name, outcome.value))
+            if not isinstance(condition, Complete) or not isinstance(
+                condition.value, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
+            ):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="ClassDefinitionSugar.desugar",
+                    observed="class conditional guard is not a ground bool literal",
+                    requested=(
+                        "one constructed TrueBoolLiteralSugar or "
+                        "FalseBoolLiteralSugar"
+                    ),
+                    fix="keep symbolic or effectful class-body control loud",
+                )
+            for child in (
+                item.when_true
+                if isinstance(condition.value, TrueBoolLiteralSugar)
+                else item.when_false
+            ):
+                select(child)
 
         for item in self.fields:
-            append_field(item)
-        return tuple(class_fields), tuple(body_faces)
+            select(item)
+        # ``a = b = e`` is one statement: its right-hand side is one value.
+        values = []
+        value_index = []
+        groups = {}
+        for item in selected:
+            index = groups.get(item.evaluation_group_cid)
+            if item.evaluation_group_cid is None or index is None:
+                index = len(values)
+                values.append(item.value_sugar)
+                if item.evaluation_group_cid is not None:
+                    groups[item.evaluation_group_cid] = index
+            value_index.append(index)
 
+        def bind_fields(active, completed):
+            del active
+            return Complete(
+                tuple(
+                    ObjectField(item.name, completed[index])
+                    for item, index in zip(selected, value_index)
+                )
+            )
 
-_NO_SOLE_COMPLETION = object()
+        outcome = evaluate_assignment_values(tuple(values), ctx, tail=bind_fields)
+        from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
 
+        if (
+            isinstance(outcome, ExitSet)
+            and sum(isinstance(face, Completed) for face in outcome.exits) > 1
+        ):
+            # A field whose right-hand side has several completed values would
+            # build one class per value.  That stays refused, as it always was
+            # (no such class has been traced through a reader of the class
+            # value).  The routine does not say which right-hand side it was,
+            # so the refusal names the body's fields.
+            from sugar_source_tree.panic import SugarNotWritten
 
-def _sole_completed_value(outcome):
-    """The value of an outcome whose only non-halting face is one completion.
-
-    A class-field initializer that may raise has that halt plus one completed
-    value, so executing the class body is two-faced.  Several completions
-    (distinct field values) or any other face stay refused.
-    """
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
-
-    if not isinstance(outcome, ExitSet):
-        return _NO_SOLE_COMPLETION
-    completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    if len(completed) != 1 or any(
-        not isinstance(face, (Completed, Halted)) for face in outcome.exits
-    ):
-        return _NO_SOLE_COMPLETION
-    return completed[0].value
+            names = ", ".join(dict.fromkeys(item.name for item in selected))
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassDefinitionSugar.desugar",
+                observed=f"class field {names} did not construct completely",
+                requested="one exact constructed class-field value",
+                fix="keep effectful or unresolved class initializers loud",
+            )
+        return outcome
