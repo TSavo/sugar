@@ -21,7 +21,6 @@ from sugar_lift_python_source.manager_construction import (
     _ExternalCallTargetGap,
     _call_coordinate,
     _local_named_calls,
-    _publish_nested_same_module_manager_uses,
     _resolve_external_call_frame,
     resolve_source_visible_frame,
 )
@@ -208,15 +207,16 @@ def test_method_fail_statement_halts_through_call(tmp_path, support_source):
     assert any(isinstance(face, Halted) for face in exits)
 
 
-def test_nested_imported_fail_publishes_on_rebound_live_context(tmp_path):
-    """A rebound unit table still seats imported fail() before nested derive."""
+def test_nested_imported_fail_publishes_on_the_units_own_context(tmp_path):
+    """The frame door seats imported fail() before the nested derive, on the
+    one context its unit was prepared under. Since #7801 nothing rebinds a
+    unit's context, so there is no second, "live" table to publish onto."""
     from sugar_lift_py_tests.context_manager_contract import (
         EffectBoundarySemanticsV1,
         ExpectsModeV1,
     )
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceDerivedContextManagerRefV1,
-        TreeConstructionContextV1,
     )
 
     graph, resolved, session = _resolved_export(
@@ -228,17 +228,7 @@ def test_nested_imported_fail_publishes_on_rebound_live_context(tmp_path):
     _frame, target = resolve_source_visible_frame(
         resolved, graph=graph, session=session
     )
-    stale = target.unit.construction_context
-    live = TreeConstructionContextV1.for_source_call_construction()
-    object.__setattr__(target.unit, "construction_context", live)
-    _publish_nested_same_module_manager_uses(
-        target,
-        stale,
-        None,
-        resolved=resolved,
-        graph=graph,
-        session=session,
-    )
+    live = target.unit.construction_context
     raises_exc = next(
         item
         for item in (target.unit.module_direct_bindings or {}).get("RaisesExc", ())
