@@ -677,9 +677,10 @@ def test_witness_harness_resolves_sugar_once_for_parallel_callers(
     start = threading.Event()
     monkeypatch.setattr(witness_harness, "_RESOLVED_SUGAR_BIN", None)
 
-    def fake_resolve_sugar_binary(*, profile: str = "release"):
+    def fake_resolve_sugar_binary(**named):
         nonlocal calls
-        assert profile == "debug"
+        # The harness names no profile of its own: the suite has one.
+        assert named == {}
         with lock:
             calls += 1
         time.sleep(0.05)
@@ -711,6 +712,30 @@ def test_witness_harness_resolves_sugar_once_for_parallel_callers(
     assert errors == []
     assert results == [resolved, resolved, resolved, resolved]
     assert calls == 1
+
+
+def test_the_solver_harness_runs_the_binary_the_conftest_handed_over(
+    sugar_binary_handoff: str, tmp_path: Path, monkeypatch
+) -> None:
+    """One profile, named in one place. Through the real ``bin/sugarbin``.
+
+    Truthful: the harness resolves with no profile of its own, so it gets the
+    binary the session handoff exported as ``SUGAR_BIN``. Lying: the same door
+    asked for a second profile against a handoff of the suite's profile is
+    refused by ``sugarbin`` (#6282), which is what stopped every solver twin
+    while the harness asked for ``debug``.
+    """
+    from sugar_lift_py_tests import sugar_binary, witness_harness
+
+    monkeypatch.setattr(witness_harness, "_RESOLVED_SUGAR_BIN", None)
+    assert witness_harness.ensure_sugar_bin() == Path(sugar_binary_handoff)
+
+    handed = tmp_path / "target" / sugar_binary.SUITE_PROFILE / "sugar"
+    with pytest.raises(sugar_binary.SugarBinaryResolutionError) as refusal:
+        sugar_binary.resolve_sugar_binary(
+            env={**os.environ, "SUGAR_BIN": str(handed)}, profile="debug"
+        )
+    assert "crime=profile-blind-override" in str(refusal.value)
 
 
 def test_resolution_timeout_is_a_resolution_error_not_a_bare_timeout(
