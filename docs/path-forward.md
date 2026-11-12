@@ -9,6 +9,7 @@
 The owner, 2026-11-11: "that is job number one. Because we can't continue to build on unstable architecture." "That" is making the nine steps below the only way the lifter works.
 
 - **Done when:** the inventory of what the code does outside the nine steps (#7757) is empty, and the solver twins that are red on main are green.
+- **Green means decided.** A red twin goes green only when its claim becomes decided: a proof for the callee is bound (a staged import), or the fact is one the lifter itself decides. A twin whose expectation is edited from `sat` to `open` is not green: it is a twin that states "not bridged", and it is listed as such by name on #7661. First verdict: #7782 (`9bbc310da`), a same-file call the lifter decides, `sat` and `unsat` through real mint and prove.
 - **Until then the only work is:** deletions and collapses under a step, and what the solver door needs to give a verdict (steps 7 to 9, #7766).
 - **Behind job one, not started:** anything that adds a construct or a capability, including #7763 (`ord`, the symbolic string index, the encoder lowering) and with it the federation example (#7759). Corpus-file chasing stays stopped.
 
