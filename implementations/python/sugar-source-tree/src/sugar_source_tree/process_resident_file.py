@@ -131,19 +131,21 @@ def source_file_from_identity(
         )
 
     hit = get_resident(source_cid, filename)
-    if hit is not None:
+    if hit is not None and (
+        construction_context is None
+        or hit.source_file.unit.construction_context is construction_context
+    ):
         # Protocol: distinct demanded descendants reuse preparation.
-        # Rebind consumer construction_context when provided so seating writes
-        # land on the caller's tables when this open owns seating — without
-        # re-running MaterializeModule. structural tree + construction_cache stay.
+        # A unit keeps the construction context it was prepared under; nothing
+        # writes that slot again. An open that carries a different context is a
+        # different open and takes the miss path below (#7772).
         sf = hit.source_file
-        if construction_context is not None:
-            object.__setattr__(sf.unit, "construction_context", construction_context)
         if reporter is not None:
             sf.reporter = reporter
         return sf
 
-    # Miss: this CID/seat not prepared. Pay once; changing bytes or seat misses.
+    # Miss: this CID/seat not prepared under this context. Changing bytes, seat
+    # or construction context misses.
     count_key = (source_cid, filename)
     _PREPARE_COUNTS[count_key] = _PREPARE_COUNTS.get(count_key, 0) + 1
     sf = SourceFile._prepare_uncached(

@@ -266,14 +266,15 @@ def test_equal_paths_under_different_authorities_do_not_alias(tmp_path: Path) ->
 # ---------------------------------------------------------------- twin 6
 
 
-def test_distinct_sessions_share_content_prep_not_session_tables(
+def test_distinct_sessions_hold_their_own_unit_and_their_own_tables(
     tmp_path: Path,
 ) -> None:
-    """§4 process residency shares content preparation; session tables stay own.
+    """Each session's frame door opens the module under its own context (#7772).
 
-    Enumeration protocol: same whole-file content CID prepares once process-wide.
-    Session frame_results remain per-session memo tables (distinct dicts). The
-    prepared unit/target for that content is the same object by law.
+    A unit keeps the construction context it was prepared under, so the second
+    session's open does not answer with the first session's unit and rebind it:
+    it prepares its own. What the first session holds still reads the context it
+    was built on. Session frame_results remain per-session memo tables.
     """
     from sugar_source_tree.process_resident_file import clear_process_resident_files
 
@@ -290,10 +291,13 @@ def test_distinct_sessions_share_content_prep_not_session_tables(
     session_a = _session_for(project)
     session_b = _session_for(project)
     first = project_target(session_a)
+    first_context = first.unit.construction_context
     second = project_target(session_b)
 
-    # Content preparation is process-resident under content CID (same unit).
-    assert first.unit is second.unit
+    # The second session's open left the first session's unit as it was.
+    assert first.unit.construction_context is first_context
+    assert first.unit is not second.unit
+    assert second.unit.construction_context is not first_context
     assert first.unit.source_cid == second.unit.source_cid
     # Session memo tables remain separate objects.
     assert session_a.frame_results is not session_b.frame_results
@@ -307,8 +311,13 @@ def test_distinct_sessions_share_content_prep_not_session_tables(
 # ---------------------------------------------------------------- twin 7
 
 
-def test_byte_identical_modules_prepare_once_process_wide(tmp_path: Path) -> None:
-    """§4: byte-identical content shares preparation across projects/sessions."""
+def test_byte_identical_modules_prepare_once_per_session_door(tmp_path: Path) -> None:
+    """Byte-identical content: one prepare for each session's frame-door context.
+
+    The two sessions each build their own context for the module, and a unit is
+    not shared across contexts (#7772), so the count is one per session until
+    the frame door stops building a context of its own.
+    """
     from sugar_source_tree.process_resident_file import (
         clear_process_resident_files,
         prepare_count_for,
@@ -325,14 +334,14 @@ def test_byte_identical_modules_prepare_once_process_wide(tmp_path: Path) -> Non
 
     session_b = _session_for(b)
     _verdict(b, session_b)
-    # Second project of same content does not re-prepare the body.
-    assert prepare_count_for(impl_cid) == 1
+    # The second session's door prepares the body under its own context.
+    assert prepare_count_for(impl_cid) == 2
 
     ((a_frame, a_target),) = session_a.frame_results.values()
     ((b_frame, b_target),) = session_b.frame_results.values()
-    # Session tables are distinct; prepared body unit is process-resident.
+    # Session tables are distinct, and so are the units they hold.
     assert session_a.frame_results is not session_b.frame_results
-    assert a_target.unit is b_target.unit
+    assert a_target.unit is not b_target.unit
     assert a_target.unit.source_cid == b_target.unit.source_cid
     assert a[0].distribution_artifact_cid == b[0].distribution_artifact_cid
 
