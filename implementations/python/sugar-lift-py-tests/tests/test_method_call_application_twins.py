@@ -284,13 +284,20 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
 # A method call on a receiver the lifter does not have is the plain call to a
 # callee it does not have: two faces (#7756).  Before, it completed alone.
 #
-# What the rule claims, as twins: the call has a completing face, and what is
-# asserted after the call is asserted on that face.  The truthful source
-# asserts a fact that holds there (``sat``); the lying source asserts the
-# opposite fact about the same face (``unsat``).  The call's other face is a
-# raise, and a raise is not a refutation: the solver gives no verdict on it
-# until halted arms are emitted from the reduction (#7766), so the raise face
-# is shown at the reduction level below and no ``unsat`` is asserted for it.
+# What the rule claims, through the solver: what is asserted after the call is
+# asserted on the call's completing face, and that face stands under
+# ``python:unknown_callee_call.completes``, which nothing here decides.  So a
+# true claim after the call is not decided (``open``): nothing proves the call
+# completes.  A false claim is refuted on every face (``unsat``).  Before this
+# change the call completed alone and the true claim came back ``sat``: a
+# verdict for a program whose call may raise (and, with an undefined receiver,
+# does).  ``open`` is this twin stating "not bridged"; it is not a green
+# truthful half, and it becomes ``sat`` only when something decides the call.
+#
+# The call's other face is a raise.  A raise is not a refutation, and the
+# solver gives no verdict on it until halted arms are emitted from the
+# reduction (#7766), so the raise face is shown at the reduction level below
+# and no ``unsat`` is asserted for it.
 # ---------------------------------------------------------------------------
 
 _UNKNOWN_RECEIVER = """\
@@ -301,15 +308,23 @@ def test_lookup():
 """
 
 
-def test_a_claim_after_an_unknown_receiver_method_call_is_decided_on_its_completing_face(
+def test_a_claim_after_an_unknown_receiver_method_call_stands_on_its_completing_face(
     tmp_path: Path,
 ) -> None:
-    _pair(
-        tmp_path,
-        "unknown-receiver",
-        _UNKNOWN_RECEIVER.format(claim=3),
-        _UNKNOWN_RECEIVER.format(claim=4),
+    true_claim = run_source_through_real_solver(
+        tmp_path / "true-claim", _UNKNOWN_RECEIVER.format(claim=3)
     )
+    false_claim = run_source_through_real_solver(
+        tmp_path / "false-claim", _UNKNOWN_RECEIVER.format(claim=4)
+    )
+    print(
+        json.dumps(
+            {"true-claim": true_claim.verdict, "false-claim": false_claim.verdict},
+            sort_keys=True,
+        )
+    )
+    assert true_claim.verdict == "open"
+    assert false_claim.verdict == "unsat"
 
 
 _HELD_RECEIVER = """\
