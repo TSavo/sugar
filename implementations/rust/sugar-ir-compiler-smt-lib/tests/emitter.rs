@@ -209,6 +209,20 @@ fn connective_or_translates_to_smt_or() {
     assert!(s.contains("(or "));
 }
 
+/// The empty conjunction is the IR's truth and the empty disjunction its
+/// falsity. SMT-LIB has no nullary `and`/`or` application, so each renders as
+/// the constant it denotes (#7766). The script asserts the goal's negation.
+#[test]
+fn empty_connectives_translate_to_the_constants_they_denote() {
+    let truth = emit(&json!({"kind": "and", "operands": []})).expect("emit");
+    assert!(truth.contains("(assert (not true))"), "{truth}");
+    assert!(!truth.contains("(and"), "{truth}");
+
+    let falsity = emit(&json!({"kind": "or", "operands": []})).expect("emit");
+    assert!(falsity.contains("(assert (not false))"), "{falsity}");
+    assert!(!falsity.contains("(or"), "{falsity}");
+}
+
 #[test]
 fn connective_not_translates_to_smt_not() {
     let f = json!({

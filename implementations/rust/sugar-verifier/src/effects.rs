@@ -17,8 +17,6 @@ const NO_SIBLING_TO_CONTRADICT_REASON: &str =
     "consistency check vacuous: single constraint has no sibling to contradict and no covering universe joins the left-operand term — not a substantive discharge";
 const MISSING_INDEPENDENT_KIND_REASON: &str =
     "consistency check lacks an independent-KIND witness: Stated testimony cannot corroborate Stated testimony";
-const NOT_BRIDGED_REASON: &str =
-    "consistency check open: a call coordinate has no bound contract (not bridged), so a satisfiable claim about it is not a discharge";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyEffectBoundary {
@@ -47,13 +45,6 @@ pub enum VerifyEffect {
     MissingIndependentKindWitness {
         contract_cid: String,
         property_name: String,
-    },
-    /// #3896: the claim mentions a call coordinate whose edge no linked contract
-    /// answers. Satisfiable is not proven; it stays open until a proof binds it.
-    NotBridged {
-        contract_cid: String,
-        property_name: String,
-        call: String,
     },
     ConsistencyNoSoundDischarger {
         property_name: String,
@@ -163,7 +154,6 @@ impl VerifyEffect {
             VerifyEffect::MissingProvenanceKind { .. }
             | VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
-            | VerifyEffect::NotBridged { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
@@ -203,7 +193,6 @@ impl VerifyEffect {
             },
             VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
-            | VerifyEffect::NotBridged { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
             | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
@@ -223,7 +212,6 @@ impl VerifyEffect {
             VerifyEffect::MissingIndependentKindWitness { .. } => {
                 Some(MISSING_INDEPENDENT_KIND_REASON)
             }
-            VerifyEffect::NotBridged { .. } => Some(NOT_BRIDGED_REASON),
             VerifyEffect::MissingProvenanceKind { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
             | VerifyEffect::SolverTimeout { .. }
@@ -280,11 +268,6 @@ impl fmt::Display for VerifyEffect {
             VerifyEffect::MissingIndependentKindWitness { property_name, .. } => {
                 write!(f, "{MISSING_INDEPENDENT_KIND_REASON} `{property_name}`")
             }
-            VerifyEffect::NotBridged {
-                property_name,
-                call,
-                ..
-            } => write!(f, "{NOT_BRIDGED_REASON} `{property_name}` [{call}]"),
             VerifyEffect::ConsistencyNoSoundDischarger {
                 property_name,
                 solver_reason,

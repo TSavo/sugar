@@ -31,24 +31,30 @@ def asserts_of(node) -> list:
     return [n for n in node.walk() if isinstance(n, Assert)]
 
 
-def body_asserts(fn) -> list:
-    """The Asserts that belong to THIS function's body: a nested def, class or
-    lambda owns its own assertion sites and its own rows."""
-    from sugar_source_tree.nodes import ClassDef, Lambda
+def halted_assertion_sites(halted_arms) -> tuple:
+    """The ``assert`` statements at which a halted arm of a reduction left.
 
-    scopes = (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)
-    found = []
-    seen = set()
-    pending = [child for _field, _index, child in fn.children()]
-    while pending:
-        node = pending.pop()
-        if id(node) in seen or isinstance(node, scopes):
+    Read off the reduction, never off the source: a halted arm's raise carries
+    the exception value it raised, and that value carries the fragment it was
+    raised at. When that fragment is an ``assert`` statement the reduction
+    reached the assertion and control halted there. A raise from inside the
+    assertion's operands is sited at the operand, and an ``assert`` no arm
+    reached is sited nowhere: neither is an assertion the reduction halted at.
+    """
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import ExceptionValue
+
+    sites = []
+    for arm in halted_arms:
+        effect = arm.effect
+        if not isinstance(effect, RaiseEffect):
             continue
-        seen.add(id(node))
-        if isinstance(node, Assert):
-            found.append(node)
-        pending.extend(child for _field, _index, child in node.children())
-    return sorted(found, key=lambda node: (node.fragment.line, node.fragment.col))
+        raised = effect.raised_value
+        if not isinstance(raised, ExceptionValue):
+            continue
+        if isinstance(getattr(raised.site, "node", None), Assert):
+            sites.append(raised.site)
+    return tuple(sites)
 
 
 def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
@@ -458,17 +464,14 @@ def function_contract_rows(fn, file_rel: str):
     over every completed arm, and one row per assertion site (see there). A
     ``Complete`` is the one-arm case and keeps its rows byte-for-byte.
 
-    A deferred native operation (``NativeOperationExitCarrierV1``) has no arms
-    until a caller discharges it with actuals (the parameter-contract link
-    unit); it still carries its source testimony. Any other outcome is not
-    emitted. A SugarNotWritten from an unported body statement propagates (the
-    whole function is a frontier gap).
+    An outcome that is not a set of arms is unchanged by #7766: a deferred
+    native operation (``NativeOperationExitCarrierV1``, whose arms exist only
+    once a caller discharges it with actuals) or a bare effect emits no
+    contract and still carries its source testimony. A SugarNotWritten from an
+    unported body statement propagates (the whole function is a frontier gap).
     """
     import dataclasses
 
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.floor.universe_value import (
         UniverseValue,
         exit_arms_payload_rows,
@@ -479,19 +482,23 @@ def function_contract_rows(fn, file_rel: str):
     def_memento = function_def_memento(fn, file_rel)
     panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
     outcome = function_universe_outcome(fn)
-    if isinstance(outcome, NativeOperationExitCarrierV1):
+    if not isinstance(outcome, (Complete, ExitSet)):
         if not panic_loci and not class_shapes:
-            return def_memento, None
+            return def_memento, None  # an effect with no source testimony
         return def_memento, [
             _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes)
         ]
     if isinstance(outcome, Complete):
         arms = ((true_guard(), outcome.value),)
-    elif isinstance(outcome, ExitSet):
+        halted_sites = ()
+    else:
         arms = tuple(
             (exit_.guard, exit_.value)
             for exit_ in outcome.exits
             if isinstance(exit_, Completed)
+        )
+        halted_sites = halted_assertion_sites(
+            exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)
         )
         unread = [
             type(exit_).__name__
@@ -508,8 +515,6 @@ def function_contract_rows(fn, file_rel: str):
                 requested="a completed or halted arm",
                 fix="give the exit algebra's arm its projection to rows",
             )
-    else:
-        return def_memento, None
     for _guard, value in arms:
         if not isinstance(value, UniverseValue):
             from sugar_source_tree.panic import SugarNotWritten
@@ -527,7 +532,7 @@ def function_contract_rows(fn, file_rel: str):
         formals=tuple(owner.formals),
         bridge_source_symbol=owner.bridge_source_symbol,
         arms=arms,
-        assertion_sites=tuple(node.fragment for node in body_asserts(fn)),
+        halted_assertion_sites=halted_sites,
         def_memento=def_memento,
     )
     rows[0] = dataclasses.replace(

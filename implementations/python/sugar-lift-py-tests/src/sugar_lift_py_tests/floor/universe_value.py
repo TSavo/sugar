@@ -347,19 +347,27 @@ def assertion_site_key(site):
 
 
 def exit_arms_payload_rows(
-    *, name, formals, bridge_source_symbol, arms, assertion_sites, def_memento
+    *, name, formals, bridge_source_symbol, arms, halted_assertion_sites, def_memento
 ):
     """Every arm of one reduction, projected to the wire (#7766).
 
-    ``arms`` are the completed arms ``(guard, UniverseValue)``; ``assertion_sites``
-    are the fragments of every ``assert`` the function body holds.
+    ``arms`` are the completed arms ``(guard, UniverseValue)``.
+    ``halted_assertion_sites`` are the ``assert`` statements at which a halted
+    arm of the SAME reduction left: the reduction reached the assertion and
+    control halted there.
 
     * post: the conjunction over completed arms of ``g_i -> post_i``.
-    * one contract row per assertion SITE: the OR over the completed arms that
-      reach the site of ``g_i AND fact_i``. The claim of an assertion is that an
-      execution reaches it and it holds there; a guard that can be made false
-      must not satisfy it, so this is never ``g -> fact``. A site no completed
-      arm reaches states the OR over nothing: false.
+    * one contract row per assertion SITE the reduction evaluated: the OR over
+      the completed arms that hold the site of ``g_i AND fact_i``. The claim of
+      an assertion is that an execution reaches it and it holds there; a guard
+      that can be made false must not satisfy it, so this is never
+      ``g -> fact``. A site an arm halted at and no completed arm holds states
+      the OR over nothing: false.
+
+    Every site comes from the reduction. An ``assert`` no arm evaluated (dead
+    code: a handler that never runs, a branch the floor decided away) has no
+    row, because nothing was reduced there; and a fact held on an arm that
+    later halts elsewhere is not a completed arm's fact.
 
     A single arm under guard true is exactly ``UniverseValue.payload_rows``.
     """
@@ -447,10 +455,12 @@ def exit_arms_payload_rows(
                 )
             )
         rows.extend(mint_rows(name, formals, combined))
-    unreached = [
-        InvValue(false_guard(), site)
-        for site in assertion_sites
-        if assertion_site_key(site) not in reached
-    ]
-    rows.extend(mint_rows(name, formals, unreached))
+    never_held = []
+    for site in halted_assertion_sites:
+        key = assertion_site_key(site)
+        if key in reached:
+            continue
+        reached.add(key)
+        never_held.append(InvValue(false_guard(), site))
+    rows.extend(mint_rows(name, formals, never_held))
     return rows

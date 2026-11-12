@@ -2226,10 +2226,10 @@ fn count_top_level_constraints(inv: &Json) -> usize {
 /// the `=` case draws: interpreted+ground universe decides; uninterpreted operand
 /// does not.
 fn lone_fact_has_covering_universe(inv: &Json) -> bool {
-    // A lone fact the ground evaluator decides outright (a constant, or a
-    // comparison of closed data values) has its universe: the literals
-    // themselves. It is a substantive verdict and must reach the solver.
-    if eval_ground_bool(inv).is_some() {
+    // A claim with no atom is a propositional constant: connectives over the
+    // empty conjunction (the IR's truth). It names no symbol the solver could
+    // leave uninterpreted, so the solver's answer is forced and substantive.
+    if is_atom_free(inv) {
         return true;
     }
     // Unwrap a single-operand `and([...])` (the lifter conjoins a contract's atoms,
@@ -2243,6 +2243,21 @@ fn lone_fact_has_covering_universe(inv: &Json) -> bool {
         _ => inv,
     };
     is_ground_regex_membership(node) || is_ground_string_theory_predicate(node)
+}
+
+/// True when `inv` is built from connectives alone: every leaf is an operand-less
+/// `and`/`or`. Such a claim has no atom, term or binder, so no solver theory can
+/// read any part of it as uninterpreted. A ground ATOM is deliberately not this:
+/// `py.eq(6, 7)` is closed, but the SMT encoding leaves `py.eq` uninterpreted and
+/// a solver satisfies it, so a lone ground atom still needs a covering universe.
+fn is_atom_free(inv: &Json) -> bool {
+    match inv.get("kind").and_then(|k| k.as_str()) {
+        Some("and" | "or" | "not" | "implies") => inv
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .is_some_and(|operands| operands.iter().all(is_atom_free)),
+        _ => false,
+    }
 }
 
 /// A `str.in-regex(subject, R)` membership atom whose SUBJECT is a pinned ground
@@ -2295,36 +2310,6 @@ fn is_ground_string_theory_predicate(node: &Json) -> bool {
     }
     args.iter()
         .all(|arg| formula_is_closed(arg, &mut Vec::new()) && !term_has_opaque_call(arg))
-}
-
-/// The first `call:*` coordinate in `inv` that no linked contract instance
-/// answers, spelled compactly; `None` when every call coordinate is bound.
-fn unbound_call_coordinate(inv: &Json, linked_posts: &[LinkedPostInstance]) -> Option<String> {
-    fn collect(node: &Json, out: &mut Vec<Json>) {
-        if is_callsite_ctor_term(node) {
-            out.push(node.clone());
-        }
-        for key in ["args", "operands"] {
-            if let Some(items) = node.get(key).and_then(|v| v.as_array()) {
-                for item in items {
-                    collect(item, out);
-                }
-            }
-        }
-        if let Some(body) = node.get("body") {
-            collect(body, out);
-        }
-    }
-    let mut calls = Vec::new();
-    collect(inv, &mut calls);
-    let bound: std::collections::BTreeSet<String> = linked_posts
-        .iter()
-        .map(|instance| compact_json(&instance.call))
-        .collect();
-    calls
-        .iter()
-        .map(compact_json)
-        .find(|call| !bound.contains(call))
 }
 
 /// True if any `call:*` ctor appears anywhere in `term`. Such a ctor is an
@@ -2489,22 +2474,6 @@ fn check_inv_consistency_with_vacuity_reason(
         );
     }
     let (verdict, reason, effect) = consistency_verdict(raw, property_name, &raw_reason);
-    // OPEN EDGE (#3896). A satisfiable claim that mentions a call coordinate no
-    // linked contract answers is not proven: the callee's meaning is unbound, so
-    // any value satisfies it. A contradiction still refutes (it holds whatever
-    // the callee means); only the discharge is withheld.
-    let (verdict, reason, effect) = match unbound_call_coordinate(&inv, &linked_posts) {
-        Some(call) if verdict == ObligationVerdict::Discharged => {
-            let effect = VerifyEffect::NotBridged {
-                contract_cid: cid.clone(),
-                property_name: property_name.to_string(),
-                call,
-            };
-            let boundary = effect.to_legacy_boundary();
-            (boundary.verdict, boundary.reason, Some(effect))
-        }
-        _ => (verdict, reason, effect),
-    };
     if matches!(
         verdict,
         ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout
@@ -8645,6 +8614,47 @@ mod tests {
             "vacuous-refused reason must cite the single-constraint guard, got: {}",
             results[0].reason
         );
+    }
+
+    /// A lone claim with no atom is not vacuous (#7766). The vacuity guard
+    /// exists because a solver can assign an uninterpreted symbol any value; a
+    /// propositional constant names no symbol, so satisfiable means true and
+    /// unsatisfiable means false. Twin: the constant and its negation.
+    ///
+    /// The boundary is pinned too: a lone ground ATOM stays refused. `py.eq` is
+    /// uninterpreted in the SMT encoding, so admitting `py.eq(6, 7)` would come
+    /// back satisfiable and discharge a false claim.
+    #[test]
+    fn lone_atom_free_claim_reaches_the_solver_and_a_ground_atom_does_not() {
+        let truth = json!({"kind":"and","operands":[]});
+        let falsity = json!({"kind":"not","operands":[truth.clone()]});
+        let py_eq = |left: i64, right: i64| json!({"kind":"atomic","name":"py.eq","args":[int(left), int(right)]});
+        for (name, inv, expected) in [
+            ("constant_true", truth, ObligationVerdict::Discharged),
+            ("constant_false", falsity, ObligationVerdict::Unsatisfied),
+            (
+                "ground_atom_truthful",
+                py_eq(6, 6),
+                ObligationVerdict::Refused,
+            ),
+            ("ground_atom_lying", py_eq(6, 7), ObligationVerdict::Refused),
+        ] {
+            let pool = pool_with_contract(name, inv);
+            let (plan, registry) = z3_plan_and_registry();
+            let results = verify_consistency(
+                &pool,
+                &plan,
+                &registry,
+                &test_compilers(),
+                std::path::Path::new("."),
+            );
+            assert_eq!(results.len(), 1, "{name}: exactly one candidate");
+            assert_eq!(
+                results[0].verdict, expected,
+                "{name}: only a claim with no atom passes the vacuity guard alone: {}",
+                results[0].reason
+            );
+        }
     }
 
     #[test]
