@@ -12,7 +12,6 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
     nonlinear block remains intact so its consumer stays loudly unpublishable.
     """
     from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
     from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
     from sugar_lift_py_tests.floor.guarded_loop_control import GuardedLoopControl
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
@@ -37,7 +36,6 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
             if isinstance(
                 statement,
                 (
-                    ExceptionalExitValue,
                     GuardedFaces,
                     GuardedLoopControl,
                     Incomplete,

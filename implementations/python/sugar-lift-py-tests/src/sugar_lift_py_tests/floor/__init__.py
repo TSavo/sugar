@@ -33,7 +33,6 @@ from .dict_literal_value import DictLiteralValue
 from .dict_value import DictValue
 from .encoded_string_value import EncodedStringValue
 from .exception_cause_value import ExceptionCauseValue
-from .exceptional_exit_value import ExceptionalExitValue
 from .exception_value import ExceptionValue
 from .exception_class_value import ExceptionClassValue
 from .local_exception_class_value import LocalExceptionClassValue
@@ -84,7 +83,6 @@ from .guarded_receiver_state_value import GuardedReceiverStateValue
 from .receiver_state_partition_value import ReceiverStatePartitionValue
 from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
-from .raises_with_value import RaisesWithValue
 from .warning_observation_value import WarningObservationValue
 from .effect_coordinate import EffectCoordinate, ExceptionInfoCoordinate
 from .return_value import ReturnValue
@@ -128,7 +126,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     DictValue,
     EncodedStringValue,
     ExceptionCauseValue,
-    ExceptionalExitValue,
     ExceptionValue,
     EnteredManagerStateValue,
     LanguageOwnedIoResourceValue,
@@ -163,7 +160,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     TupleIteratorValue,
     OpaqueOpCallsite,
     PredicateValue,
-    RaisesWithValue,
     ReceiverFieldStoreValue,
     ReceiverOwnedMutationResult,
     GuardedReceiverFieldStoreValue,
@@ -216,7 +212,6 @@ __all__ = [
     "DictValue",
     "EncodedStringValue",
     "ExceptionCauseValue",
-    "ExceptionalExitValue",
     "ExceptionValue",
     "ExceptionClassValue",
     "LocalExceptionClassValue",
@@ -263,7 +258,6 @@ __all__ = [
     "ReceiverStatePartitionValue",
     "OpaqueOpCallsite",
     "PredicateValue",
-    "RaisesWithValue",
     "WarningObservationValue",
     "EffectCoordinate",
     "ExceptionInfoCoordinate",

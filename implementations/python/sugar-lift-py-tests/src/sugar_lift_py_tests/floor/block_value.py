@@ -65,8 +65,8 @@ class BlockValue(FloorValue):
         return FollowStep.continue_with()
 
     def extend_scope(self, ctx):
-        # Nested with / pytest.raises as-bindings live on entries (RaisesWithValue,
-        # ScopeRebind). Thread them into the *rest of the enclosing block* so
+        # Nested with / pytest.raises as-bindings live on entries (ScopeRebind).
+        # Thread them into the *rest of the enclosing block* so
         # ``with freeze_time: with raises as exc_info: ...; assert exc_info`` works.
         for entry in self.statements:
             if hasattr(entry, "extend_scope"):
