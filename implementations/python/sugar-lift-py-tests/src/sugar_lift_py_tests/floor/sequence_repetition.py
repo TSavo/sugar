@@ -72,8 +72,8 @@ def known_invalid_repetition_type_error(sequence, count, site):
     """Authenticated TypeError for a source-decided non-``__index__`` count.
 
     ``[1] * 1.5`` / ``[1] * "a"`` / ``[1] * None`` are lift-time decided:
-    Python never selects ``__mul__`` successfully.  That is RaiseValue, not a
-    RuntimeEffect (the count is not runtime-dependent).
+    Python never selects ``__mul__`` successfully.  That is a cited TypeError
+    halt, not a RuntimeEffect (the count is not runtime-dependent).
     """
     del sequence, count
     from sugar_lift_py_tests.floor.ground_exit import ground_type_error

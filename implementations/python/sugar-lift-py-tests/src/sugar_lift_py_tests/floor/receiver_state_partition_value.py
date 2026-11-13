@@ -27,7 +27,7 @@ class ReceiverStatePartitionValue(FloorValue):
                 )
 
                 if isinstance(face.effect, RaiseEffect):
-                    from sugar_lift_py_tests.floor.raise_value import (
+                    from sugar_lift_py_tests.floor.exceptional_exit_term import (
                         _exceptional_exit_term,
                     )
 

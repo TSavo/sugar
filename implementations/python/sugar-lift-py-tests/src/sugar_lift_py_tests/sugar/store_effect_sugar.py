@@ -26,8 +26,8 @@ class AttributeStoreEffectSugar(Sugar):
        ``receiver.setattr(name.value, value, site)``.  Helper alone stays
        undischarged; an ordinary source caller supplies actuals.
     2. **Decided runtime type** → ``receiver.setattr(attr, value, site)``
-       projecting ``Completed`` or ``RaiseValue`` exceptional faces through
-       the store path (never the read path).
+       projecting its completed or halted faces through the store path
+       (never the read path).
     3. **Undecided non-formal** → ``AttributeStoreRuntimeEffect`` dual faces
        under complementary store-outcome guards (composition instrument for
        free undecided receivers — never a consumer ``SugarNotWritten``).
@@ -75,14 +75,11 @@ class AttributeStoreEffectSugar(Sugar):
         Attribute AugAssign (already-evaluated receiver and value):
 
         1. Formal receiver → undischarged ``setattr_named`` carrier
-        2. Decided runtime type → Floor ``setattr``; ``Complete(RaiseValue)``
-           becomes ``Incomplete(effect)`` (halted store, not statement green)
+        2. Decided runtime type → Floor ``setattr``; a raise is its
+           ``Incomplete(effect)`` (halted store, not statement green)
         3. Undecided non-formal → dual-face ``AttributeStoreRuntimeEffect``
            (never consumer ``SugarNotWritten``)
         """
-        from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Complete
-
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
             return AttributeStoreEffectSugar.mint_setattr_named_carrier(
@@ -93,12 +90,7 @@ class AttributeStoreEffectSugar(Sugar):
             )
 
         if receiver.runtime_type_is_decided():
-            projected = receiver.setattr(attr, value, site)
-            if isinstance(projected, Complete) and isinstance(
-                projected.value, RaiseValue
-            ):
-                return Incomplete(projected.value.effect)
-            return projected
+            return receiver.setattr(attr, value, site)
 
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
@@ -168,8 +160,8 @@ class SubscriptStoreEffectSugar(Sugar):
        ``receiver.setitem(index, value, site)``.  Helper alone stays
        undischarged; an ordinary source caller supplies actuals.
     2. **Decided runtime type** → ``receiver.setitem(index, value, site)``
-       projecting ``Completed`` or ``RaiseValue`` exceptional faces through
-       the store path (never the load path).
+       projecting its completed or halted faces through the store path
+       (never the load path).
     3. **Undecided non-formal** → two faces (#7585): no floor decides
        ``type(receiver).__setitem__``, so the store completes only under
        ``python:setitem.completes(python:setitem(<site occurrence>))`` --
@@ -232,17 +224,11 @@ class SubscriptStoreEffectSugar(Sugar):
         if not receiver.runtime_type_is_decided():
             return _undecided_setitem_faces(receiver, self.site)
         source_aware = getattr(receiver, "setitem_with_context", None)
-        projected = (
+        return (
             source_aware(index, value, self.site, ctx)
             if callable(source_aware)
             else receiver.setitem(index, value, self.site)
         )
-        from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
-
-        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
-            return Incomplete(projected.value.effect)
-        return projected
 
     @staticmethod
     def mint_setitem_carrier(*, site, receiver, index, value):

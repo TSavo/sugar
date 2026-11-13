@@ -46,18 +46,15 @@ class BlockValue(FloorValue):
 
     def follow_rest(self):
         # Only an *unguarded* return or raise makes the entire continuation
-        # unreachable. GuardedReturn / GuardedRaise (if/except path) coexist
+        # unreachable. GuardedReturn / a guarded raise (if/except path) coexist
         # with a live tail — e.g. try/except: return|raise; assert ... must
         # still reduce the assert on the non-exception path.
-        from sugar_lift_py_tests.floor.raise_value import RaiseValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
         if any(type(entry) is ReturnValue for entry in self.statements):
             return FollowStep.halt(keeps_rest=True)
-        if any(type(entry) is RaiseValue for entry in self.statements):
-            return FollowStep.halt(keeps_rest=False)
         if any(
             isinstance(entry, Incomplete)
             and not entry.branch_conditions
@@ -68,8 +65,8 @@ class BlockValue(FloorValue):
         return FollowStep.continue_with()
 
     def extend_scope(self, ctx):
-        # Nested with / pytest.raises as-bindings live on entries (RaisesWithValue,
-        # ScopeRebind). Thread them into the *rest of the enclosing block* so
+        # Nested with / pytest.raises as-bindings live on entries (ScopeRebind).
+        # Thread them into the *rest of the enclosing block* so
         # ``with freeze_time: with raises as exc_info: ...; assert exc_info`` works.
         for entry in self.statements:
             if hasattr(entry, "extend_scope"):

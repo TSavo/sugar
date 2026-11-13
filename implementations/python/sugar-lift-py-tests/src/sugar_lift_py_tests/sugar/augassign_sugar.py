@@ -23,7 +23,7 @@ class AugAssignSugar(Sugar):
       2. Evaluate ``rhs`` once
       3. ``result = project_augmented / project_inplace`` (iadd edge, NotImplemented law)
       4. On success: ``ScopeRebind(name, result)`` — iadd result IS the binding
-      5. On halt: no ScopeRebind (and_then / RaiseValue law) — prior binding stands
+      5. On halt: no ScopeRebind (Incomplete.and_then never steps) — prior binding stands
 
     Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
     Later name uses stay as Name and read the temporal ScopeRebind.  Dual-eval

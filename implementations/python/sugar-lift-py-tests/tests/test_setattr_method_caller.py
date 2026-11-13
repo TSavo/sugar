@@ -420,15 +420,16 @@ def test_getter_only_property_method_call_binds_and_floor_refuses_store() -> Non
         m.name == "field" and m.descriptor_kind == "property" for m in target.methods
     )
     assert site.arg_values[2] == TermValue(7)
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     # Use a source fragment site from the method body store statement.
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
     direct = target.setattr("field", TermValue(7), floor_site)
-    assert isinstance(direct, Complete) and isinstance(direct.value, RaiseValue)
-    assert direct.value.effect.exception_name == "AttributeError"
-    assert direct.value.effect.producer_node_owner == "ObjectValue.setattr"
+    assert isinstance(direct, Incomplete) and isinstance(direct.effect, RaiseEffect)
+    assert direct.effect.exception_name == "AttributeError"
+    assert direct.effect.producer_node_owner == "ObjectValue.setattr"
 
 
 def test_discrimination_writable_is_not_getter_only_halt() -> None:

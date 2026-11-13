@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import BoolOp, Call, Compare
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 
 def _tree(source: str) -> SourceFile:
@@ -28,16 +29,16 @@ def _expression(expression: str):
 
 
 def _raise_occurrence(outcome) -> str:
-    if isinstance(outcome, Complete):
-        assert isinstance(outcome.value, RaiseValue)
+    if isinstance(outcome, Incomplete):
+        assert isinstance(outcome.effect, RaiseEffect)
         assert (
-            isinstance(outcome.value.effect.occurrence_id, str)
-            and ":" in outcome.value.effect.occurrence_id
+            isinstance(outcome.effect.occurrence_id, str)
+            and ":" in outcome.effect.occurrence_id
         ), (
             "authenticated raise locus must be a file:line:col occurrence id, "
-            f"not presence-only; got {outcome.value.effect.occurrence_id!r}"
+            f"not presence-only; got {outcome.effect.occurrence_id!r}"
         )
-        return outcome.value.effect.occurrence_id
+        return outcome.effect.occurrence_id
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1

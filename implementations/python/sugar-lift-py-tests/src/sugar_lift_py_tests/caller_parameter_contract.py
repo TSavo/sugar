@@ -970,7 +970,7 @@ class NativeOperationExitCarrierV1:
         operator absent from the projector table, and projector arity mismatch
         remain undischarged — never a construction panic.
         """
-        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.effect import RaiseEffect
         from sugar_lift_py_tests.outcome import (
             Complete,
             ExitSet,
@@ -1066,8 +1066,15 @@ class NativeOperationExitCarrierV1:
         # Bind by the projector's declared parameter order.  Each lambda names
         # its Floor signature; this is not a generic method splat.
         projected = projector(*actual_operands, self.site)
-        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
-            effect = projected.value.effect
+        if (
+            isinstance(projected, Incomplete)
+            and isinstance(projected.effect, RaiseEffect)
+            and not projected.branch_conditions
+            and not projected.pending_contracts
+        ):
+            # A decided raise: the halt carries the exception identity and
+            # the occurrence the exceptional resolution cites.
+            effect = projected.effect
             if effect.exception_type_coordinate is None or effect.occurrence_id is None:
                 resolution = NativeOperationResolutionV1.undischarged(
                     "native operation exception identity unproven"

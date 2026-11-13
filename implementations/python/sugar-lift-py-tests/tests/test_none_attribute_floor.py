@@ -26,6 +26,8 @@ from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 SITE = "none-attribute-site"
 
@@ -126,7 +128,6 @@ def test_the_sibling_ground_exit_is_not_stolen() -> None:
     The getattr arm sits beside that exit and took nothing from it: subscript
     is decided for every index, attribute is not decided for every name.
     """
-    from sugar_lift_py_tests.floor import RaiseValue
 
     class _Fragment:
         filename = "none_subscript.py"
@@ -141,16 +142,15 @@ def test_the_sibling_ground_exit_is_not_stolen() -> None:
 
     outcome = NoneValue().subscript(None, _Fragment())
 
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is RaiseValue
-    assert outcome.value.exception.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect) is RaiseEffect
+    assert outcome.effect.raised_value.exception_name == "TypeError"
 
 
 def test_the_arm_invents_no_field_and_no_exit() -> None:
     """Nothing is fabricated: not a field value, not a sentinel, not an exit."""
-    from sugar_lift_py_tests.floor import RaiseValue
 
     outcome = NoneValue().attribute("foo", SITE)
 
-    assert type(outcome.value) is not RaiseValue
+    assert isinstance(outcome, Complete)
     assert type(outcome.value) is SymbolicValue

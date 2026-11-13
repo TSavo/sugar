@@ -14,8 +14,8 @@ from sugar_lift_py_tests.floor.decorated_class_value import (
     _metaclass_publication_cids,
 )
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
-from sugar_lift_py_tests.floor.raise_value import RaiseValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.floor.source_return_projection import (
     project_authenticated_source_return,
 )
@@ -62,7 +62,7 @@ def test_source_return_projection_selects_one_unconditional_returned_floor() -> 
         BlockValue(
             (
                 ReturnValue(TermValue("returned")),
-                RaiseValue(
+                Incomplete(
                     RaiseEffect.for_builtin(
                         "RuntimeError",
                         occurrence="implementations/python/sugar-lift-python-source/tests/test_metaclass_block_publication.py:91:0",
@@ -94,7 +94,7 @@ def test_source_return_projection_preserves_ambiguous_control_flow(ambiguous) ->
         BlockValue((TermValue("foreign"),)),
         BlockValue(
             (
-                RaiseValue(
+                Incomplete(
                     RaiseEffect.for_builtin(
                         "RuntimeError",
                         occurrence="implementations/python/sugar-lift-python-source/tests/test_metaclass_block_publication.py:65:0",

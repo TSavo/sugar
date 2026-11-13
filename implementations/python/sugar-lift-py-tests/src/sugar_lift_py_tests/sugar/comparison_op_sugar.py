@@ -111,7 +111,7 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     """Ordering law: never dual-edge residual FOL invent (LAW_OF_ONE).
 
     Floor undecided doors throw named; ground doors construct Sugar or
-    authenticated RaiseValue. A residual ``Complete(PredicateValue)`` is OUR
+    an authenticated ground exit (a halt). A residual ``Complete(PredicateValue)`` is OUR
     fabrication second door — construction panic, not a nameless dual-edge
     ExitSet. Equality still dual-edges via the shared helper; membership uses
     :func:`publish_undecided_membership_edges`.
@@ -136,7 +136,7 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
         observed=(f"residual Complete(PredicateValue) on ordering desugar ({op_kind})"),
         requested=(
             "named SugarNotWritten for undecided operands, or Sugar-owned "
-            "TrueBool/FalseBool/RaiseValue for decided ground"
+            "TrueBool/FalseBool/a ground exit for decided ground"
         ),
         fix=(
             "LAW_OF_ONE: never dual-edge or sole-complete FOL invent for "
@@ -239,7 +239,7 @@ def _publish_undecided_dispatch_edges(
     from sugar_lift_py_tests.outcome import Complete
 
     # Operand type uncertainty cannot revoke an already-constructed Floor
-    # outcome. In particular, native RaiseValue/ExitSet testimony already owns
+    # outcome. In particular, native halt/ExitSet testimony already owns
     # its exception type, occurrence, guards and pre-effect state. Only a bare
     # predicate needs the unresolved-dispatch check below; inventing an exit
     # for that predicate would still require native exception testimony.

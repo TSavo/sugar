@@ -210,14 +210,15 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
 
     Enrolled site: ``pandas/tests/series/test_logical_ops.py:98``.  With an
     undecided Series left the producer throws named; with two TermValues the
-    bitwise floor constructs authenticated TypeError RaiseValue. The twin is
+    bitwise floor halts with an authenticated TypeError. The twin is
     built on a workspace-relative locus so the ground exit can cite source.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.floor import RaiseValue, TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -242,22 +243,23 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_source_decided_int_plus_str_emits_type_error() -> None:
     """Reverse of string-add sites: ``1 + "foo"`` is decided TypeError.
 
     Enrolled shapes like ``"foo_" + ser`` refuse on undecided right; the
-    dual ``TermValue + StringValue`` publishes RaiseValue.
+    dual ``TermValue + StringValue`` halts with a TypeError.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.floor import RaiseValue, StringValue, TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.floor import StringValue, TermValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -276,9 +278,9 @@ def test_source_decided_int_plus_str_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_source_decided_int_mod_list_emits_type_error() -> None:
@@ -289,8 +291,9 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.floor import ListValue, TermValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -309,9 +312,9 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_source_decided_list_plus_int_emits_type_error() -> None:
@@ -319,10 +322,11 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
 
     Companion to enrolled mixed-right BitAnd sites: when the left is a
     constructed ListValue and the right a TermValue, BinOp publishes
-    RaiseValue rather than panicking or inventing a concat coordinate.
+    a TypeError halt rather than panicking or inventing a concat coordinate.
     """
-    from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.floor import ListValue, TermValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -344,6 +348,6 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"

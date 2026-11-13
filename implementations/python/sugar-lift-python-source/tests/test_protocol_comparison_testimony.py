@@ -5,7 +5,6 @@ import pytest
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.floor import (
     PredicateValue,
-    RaiseValue,
     StringValue,
     SymbolicValue,
 )
@@ -18,6 +17,8 @@ from sugar_lift_py_tests.sugar.comparison_op_sugar import (
 )
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 
 def _comparison(op):
@@ -41,10 +42,10 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
     native = ground_exceptional_exit(
         exception_name=exception, site=site, owner="NativeComparison"
     )
-    assert isinstance(native, Complete) and isinstance(native.value, RaiseValue)
+    assert isinstance(native, Incomplete) and isinstance(native.effect, RaiseEffect)
     # This seam receives an already-constructed outcome from the native Floor.
     # Operand undecidability must not erase its authenticated type/occurrence.
-    effect = native.value.effect
+    effect = native.effect
     if shape == "exit-set":
         state = object()
         guard = atomic("native.comparison.raises", ())
@@ -56,7 +57,7 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
         assert result.exits[0].guard is guard
         assert result.exits[0].state is state
     else:
-        assert result.value.effect is effect
+        assert result.effect is effect
     assert effect.exception_type_coordinate is not None
     assert effect.occurrence is not None
     assert effect.exception_name == exception
@@ -107,4 +108,4 @@ def test_comparison_sugar_preserves_native_raise_without_negating_or_retyping(op
     right = NativeOperand(make_var("right"))
     result = comparison.sugar().apply_reduced(left, right)
     assert result is native
-    assert result.value.effect.exception_name == "LookupError"
+    assert result.effect.exception_name == "LookupError"

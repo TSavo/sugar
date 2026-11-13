@@ -18,7 +18,6 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
     ListValue,
-    RaiseValue,
     SetValue,
     StringValue,
     SymbolicValue,
@@ -47,6 +46,8 @@ from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
@@ -364,9 +365,9 @@ def test_truthful_out_of_range_concrete_list_emits_index_error(
 ) -> None:
     outcome = ListValue((TermValue(7),)).subscript(TermValue(1), local_site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "IndexError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "IndexError"
 
 
 def test_lying_in_range_concrete_list_does_not_emit_exception(
@@ -382,9 +383,9 @@ def test_lying_in_range_concrete_list_does_not_emit_exception(
 def test_known_non_integer_list_index_emits_type_error(local_site) -> None:
     outcome = ListValue((TermValue(7),)).subscript(TermValue(1.5), local_site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_unknown_list_index_is_a_named_third_value(local_site) -> None:
@@ -415,9 +416,9 @@ def test_truthful_nested_tuple_index_emits_type_error(local_site, receiver) -> N
 
     outcome = receiver.subscript(nested_key, local_site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_lying_nested_tuple_key_must_not_be_guessed_for_unknown_receiver(
@@ -442,9 +443,9 @@ def test_truthful_missing_dict_key_emits_key_error(local_site) -> None:
         StringValue("missing"), local_site
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "KeyError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "KeyError"
 
 
 def test_lying_present_dict_key_does_not_emit_exception(local_site) -> None:
@@ -460,22 +461,22 @@ def test_lying_present_dict_key_does_not_emit_exception(local_site) -> None:
 def test_unhashable_dict_key_emits_type_error(local_site) -> None:
     outcome = DictValue(()).subscript(ListValue((TermValue(1),)), local_site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_number_receiver_emits_type_error(local_site) -> None:
     outcome = TermValue(7).subscript(TermValue(0), local_site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_set_receiver_emits_type_error(local_site) -> None:
     outcome = SetValue((TermValue(1),)).subscript(TermValue(0), local_site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"

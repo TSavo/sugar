@@ -201,12 +201,13 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
     )
     # Floor store path (not read) refuses.
     site = helper.body[0].fragment
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     direct = receiver.setattr("field", TermValue(7), site)
-    assert isinstance(direct, Complete) and isinstance(direct.value, RaiseValue)
-    assert direct.value.effect.exception_name == "AttributeError"
-    assert direct.value.effect.producer_node_owner == "ObjectValue.setattr"
+    assert isinstance(direct, Incomplete) and isinstance(direct.effect, RaiseEffect)
+    assert direct.effect.exception_name == "AttributeError"
+    assert direct.effect.producer_node_owner == "ObjectValue.setattr"
 
     assert pending.pre_effect_state is not None
     obj_cid, _, q_cid = pending.demand.operand_coordinate_cids

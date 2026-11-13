@@ -336,12 +336,12 @@ def _valueerror_type_identity():
 def _arity_mismatch_effect(outcome):
     """Normalize Complete/Incomplete/ExitSet shells to the RaiseEffect face."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.outcome import Incomplete
 
     if isinstance(outcome, Incomplete):
         effect = outcome.effect
-    elif isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
-        effect = outcome.value.effect
+    elif isinstance(outcome, Incomplete) and isinstance(outcome.effect, RaiseEffect):
+        effect = outcome.effect
     elif isinstance(outcome, ExitSet):
         halted = [e for e in outcome.exits if isinstance(e, Halted)]
         assert halted, outcome.exits

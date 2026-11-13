@@ -283,19 +283,11 @@ def test_halted_truth_is_not_negated() -> None:
     outcome = _not_sugar(_AmbiguousTruth())
     exits = outcome_to_exitset(outcome).exits
     assert len(exits) == 1
-    # RaiseValue rides as Complete(RaiseValue) then ExitSet.halted on projection,
-    # or as a Halted face — either way the effect is TypeError and not flipped.
+    # A raise is a Halted face: the effect is TypeError and not flipped.
     face = exits[0]
-    if isinstance(face, Completed):
-        from sugar_lift_py_tests.floor import RaiseValue
-
-        assert isinstance(face.value, RaiseValue)
-        assert face.value.effect.exception_name == "TypeError"
-        assert face.value.effect.exception_type_coordinate == _identity("TypeError")
-    else:
-        assert isinstance(face, Halted)
-        assert face.effect.exception_name == "TypeError"
-        assert face.effect.exception_type_coordinate == _identity("TypeError")
+    assert isinstance(face, Halted)
+    assert face.effect.exception_name == "TypeError"
+    assert face.effect.exception_type_coordinate == _identity("TypeError")
 
 
 def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:
@@ -304,7 +296,7 @@ def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:
     exits = outcome_to_exitset(outcome).exits
     face = exits[0]
     if isinstance(face, Completed):
-        effect = face.value.effect
+        effect = face.effect
     else:
         effect = face.effect
     floor_type = effect.exception_type_coordinate
@@ -396,7 +388,7 @@ def test_lying_operand_return_is_not_the_not_law() -> None:
     assert isinstance(lying_truth, Complete)
     # The lying floor's truth is the operand — UnaryOp must not accept that as
     # the final ``not`` result.  Real desugar on a value whose truth is non-bool
-    # and non-RaiseValue hits negate on a TermValue → construction panic (no
+    # and not a raise hits negate on a TermValue → construction panic (no
     # negate floor).  That is louder than a silent wrong bool.
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
@@ -420,7 +412,7 @@ def test_lying_boundary_exception_type_is_not_truth_origin() -> None:
     truthful_exits = outcome_to_exitset(truthful_outcome).exits
     face = truthful_exits[0]
     if isinstance(face, Completed):
-        truthful_effect = face.value.effect
+        truthful_effect = face.effect
     else:
         truthful_effect = face.effect
     floor_type = truthful_effect.exception_type_coordinate

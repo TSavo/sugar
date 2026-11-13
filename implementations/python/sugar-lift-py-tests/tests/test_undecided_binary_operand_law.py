@@ -271,7 +271,7 @@ def test_the_whole_function_publishes_the_undecided_binary_halt(
 
 
 class _FragmentSite:
-    """Workspace-relative locus so ground TypeError can mint RaiseValue."""
+    """Workspace-relative locus so ground TypeError can mint its halt."""
 
     filename = "ground-binop-twin.py"
     line = 1
@@ -281,19 +281,19 @@ class _FragmentSite:
 
 
 def _assert_ground_type_error(outcome) -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 @pytest.mark.parametrize(
     ("left", "right", "method"),
     (
         # Two DECIDED types are a ground question, not an unknown:
-        # `list + predicate` is Python's TypeError — authenticated RaiseValue.
+        # `list + predicate` is Python's TypeError — an authenticated halt.
         (ListValue((TermValue(1),)), _predicate(), "add"),
         # Predicate does not own addition; still loud construction (not TypeError).
         (_predicate(), TermValue(1), "add"),
@@ -397,7 +397,7 @@ def test_a_non_denoting_operand_stays_loud() -> None:
     ),
 )
 def test_a_ground_type_error_is_an_authenticated_raise(left, right) -> None:
-    """``1j + "x"`` is Python's ``TypeError`` as RaiseValue, never a coordinate.
+    """``1j + "x"`` is Python's ``TypeError`` halt, never a coordinate.
 
     Both operands have decided runtime types, so the operation is not unknown
     -- it is known to raise. A coordinate would invent an operation that never
@@ -453,7 +453,7 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
 
 
 def test_the_law_never_converts_a_panic_into_two_faces() -> None:
-    """A non-denoting right still panics; a decided list+peer is RaiseValue."""
+    """A non-denoting right still panics; a decided list+peer is a TypeError halt."""
     with pytest.raises(ConstructionPanic):
         BytesValue(b"x").add(_predicate(), SITE)
     _assert_ground_type_error(

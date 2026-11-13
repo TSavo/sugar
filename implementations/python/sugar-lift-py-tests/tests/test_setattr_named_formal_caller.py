@@ -220,12 +220,13 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     )
     # Floor store path (not the read path) refuses the set.
     site = helper.body[0].fragment
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     direct = receiver.setattr("field", TermValue(7), site)
-    assert isinstance(direct, Complete) and isinstance(direct.value, RaiseValue)
-    assert direct.value.effect.exception_name == "AttributeError"
-    assert direct.value.effect.producer_node_owner == "ObjectValue.setattr"
+    assert isinstance(direct, Incomplete) and isinstance(direct.effect, RaiseEffect)
+    assert direct.effect.exception_name == "AttributeError"
+    assert direct.effect.producer_node_owner == "ObjectValue.setattr"
 
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
@@ -473,11 +474,12 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
     function, pending = _helper_definition()
     site = function.body[0].fragment
     store = receiver.setattr("field", TermValue(7), site)
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert isinstance(store, Complete) and isinstance(store.value, RaiseValue)
-    assert store.value.effect.exception_name == "AttributeError"
-    assert store.value.effect.producer_node_owner == "ObjectValue.setattr"
+    assert isinstance(store, Incomplete) and isinstance(store.effect, RaiseEffect)
+    assert store.effect.exception_name == "AttributeError"
+    assert store.effect.producer_node_owner == "ObjectValue.setattr"
 
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})

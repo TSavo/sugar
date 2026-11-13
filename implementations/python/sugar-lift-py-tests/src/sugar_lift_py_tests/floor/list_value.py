@@ -379,14 +379,7 @@ class ListValue(GuardStableValue):
             blame=site,
         ).submit(value, None)
 
-        # Decided TypeError faces are Complete(RaiseValue); do not feed the
-        # RaiseValue into the write step (and_then would treat it as members).
-        from sugar_lift_py_tests.floor import RaiseValue
-
-        if isinstance(members_out, Complete) and isinstance(
-            members_out.value, RaiseValue
-        ):
-            return members_out
+        # A decided TypeError is a halt: it never reaches the write step.
         if isinstance(members_out, Incomplete):
             return members_out
 

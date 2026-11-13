@@ -17,7 +17,8 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     project_iadd,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue, TupleValue
+from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
+from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.list_value import ListValue as ListValueCls
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_py_tests.sugar.augassign_sugar import (
@@ -324,9 +325,9 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         site=site,
     )
     out = sugar.desugar(None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, RaiseValue)
-    assert out.value.effect.exception_name == "IndexError"
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    assert out.effect.exception_name == "IndexError"
     assert box["rhs"] == 0
     assert box["set"] == 0
 
@@ -350,11 +351,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
         NoneValue(),
     )
     assert box["set"] == 0
-    assert not (
-        isinstance(out, Complete)
-        and not isinstance(out.value, RaiseValue)
-        and box["set"]
-    )
+    assert not (isinstance(out, Complete) and box["set"])
 
 
 def test_production_store_halt_preserves_prior_state_without_fabricated_completion() -> (
@@ -365,7 +362,7 @@ def test_production_store_halt_preserves_prior_state_without_fabricated_completi
         TermValue(0),
         TermValue(10),
     )
-    if isinstance(out, Complete) and not isinstance(out.value, RaiseValue):
+    if isinstance(out, Complete):
         pytest.fail("readable tuple must not authorize completed setitem")
 
 
@@ -468,7 +465,7 @@ def test_production_readability_does_not_authorize_writability() -> None:
         TermValue(0),
         TermValue(1),
     )
-    if isinstance(out, Complete) and not isinstance(out.value, RaiseValue):
+    if isinstance(out, Complete):
         pytest.fail("readable tuple must not authorize completed setitem")
 
 

@@ -102,8 +102,18 @@ def _function(body: str, use: str):
 
 def _faces(outcome) -> tuple[int, tuple[str, ...]]:
     """(completed faces, the effect of each halted face) of an outcome."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import (
+        Complete,
+        Completed,
+        ExitSet,
+        Halted,
+        Incomplete,
+    )
 
+    if isinstance(outcome, Incomplete):
+        # A halt spelled linearly (a class statement whose body raises).
+        assert not outcome.follow().continues, outcome
+        return 0, (repr(outcome.effect),)
     if isinstance(outcome, Complete):
         assert outcome.follow().continues, outcome
         return 1, ()

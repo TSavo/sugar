@@ -193,7 +193,7 @@ class UnaryOpSugar(ConstructedTermSugar):
                 refuse_undecided_unary_truth(value, self.site)
                 return value.truth(self.site)
 
-            # Negate only completed truth faces.  Complete(RaiseValue) and
+            # Negate only completed truth faces.  A raise (``Incomplete``) and
             # Halted exits bypass this step (no bool to flip).
             return operand.and_then(project_not).and_then(
                 lambda predicate: predicate.negate()

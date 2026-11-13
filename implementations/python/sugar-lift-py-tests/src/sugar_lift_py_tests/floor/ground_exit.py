@@ -139,20 +139,22 @@ def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=N
 
 
 def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome:
-    """The whole ground exit: the cited effect plus its exception value."""
-    from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
+    """The whole ground exit: a halt with the cited effect.
 
-    exception = ExceptionValue(exception_name, (), site)
-    return Complete(
-        RaiseValue(
-            ground_raise_effect(
-                exception_name=exception_name,
-                site=site,
-                owner=owner,
-                raised_value=exception,
-            ),
-            exception=exception,
+    A raise is never a completion.  The effect carries the exception value it
+    raises (``raised_value``), which is what an ``except`` clause tests and an
+    ``as`` name binds.  The enclosing statement turns the halt into its
+    ``Halted`` face, with the state before it.
+    """
+    from sugar_lift_py_tests.floor import ExceptionValue
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return Incomplete(
+        ground_raise_effect(
+            exception_name=exception_name,
+            site=site,
+            owner=owner,
+            raised_value=ExceptionValue(exception_name, (), site),
         )
     )
 
@@ -162,8 +164,8 @@ def ground_type_error(*, site, owner: str) -> Outcome:
 
     Ground cross-type operations that Python rejects (``1 < "a"``, ``None + 1``,
     ``[] + 0``, ``~3.5`` for bitwise invert on float) are not RuntimeEffects:
-    both operand types are lift-time decided, so the exceptional face is a
-    completed RaiseValue.  Undecided native dispatch stays on the named-refusal
+    both operand types are lift-time decided, so the expression halts with a
+    cited TypeError.  Undecided native dispatch stays on the named-refusal
     / construction-panic laws; this door is only for the decided TypeError.
     """
     return ground_exceptional_exit(exception_name="TypeError", site=site, owner=owner)

@@ -87,7 +87,7 @@ class InplaceBinaryOperatorOperation:
 def after_inplace_notimplemented(projected, binary_fallback: Callable):
     """NotImplemented (raw or Complete) → ordinary binary; all other faces stay.
 
-    Incomplete, ExitSet, RaiseValue, carriers, and successful Complete values
+    Incomplete, ExitSet, carriers, and successful Complete values
     surface unchanged — they never authorize binary fallback.
     """
     from sugar_lift_py_tests.outcome import Complete

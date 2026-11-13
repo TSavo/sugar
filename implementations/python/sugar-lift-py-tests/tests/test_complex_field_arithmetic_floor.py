@@ -145,13 +145,14 @@ class _FragmentSite:
     ),
 )
 def test_a_non_member_operand_is_authenticated_type_error(off_field) -> None:
-    """Decided non-field peers are TypeError RaiseValue, never a complex coordinate."""
-    from sugar_lift_py_tests.floor import RaiseValue
+    """Decided non-field peers are a TypeError halt, never a complex coordinate."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = ComplexValue(0.0, 1.0).add(off_field, _FragmentSite())
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_an_integer_too_large_for_the_float_field_stays_loud() -> None:

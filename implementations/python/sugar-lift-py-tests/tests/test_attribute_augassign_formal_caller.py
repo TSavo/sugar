@@ -20,7 +20,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectValue,
-    RaiseValue,
     TermValue,
 )
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
@@ -35,6 +34,7 @@ from sugar_source_tree.nodes import AugAssign, FunctionDef
 from sugar_source_tree.operators import Add, BinaryOperator
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect import RaiseEffect
 
 
 def _tree(source: str, name: str = "attribute_augassign.py") -> SourceFile:
@@ -319,7 +319,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
 
 
 def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
-    """Store AttributeError via shared project_setattr: Incomplete(effect), not green Complete(RaiseValue)."""
+    """Store AttributeError via shared project_setattr: Incomplete(effect), never a completion."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
     class _RefuseSet(ObjectValue):
@@ -338,13 +338,12 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
         "refuse0",
     )
     out = _production_desugar(receiver, TermValue(1))
-    # Shared AttributeStoreEffectSugar.project_setattr converts RaiseValue → Incomplete.
+    # Shared AttributeStoreEffectSugar.project_setattr hands the floor's halt on.
     assert isinstance(
         out, Incomplete
     ), f"store halt must be Incomplete (halted store face), not {type(out).__name__}: {out}"
-    # Discrimination: Complete(RaiseValue) would greenwash statement completion.
-    with pytest.raises(AssertionError):
-        assert isinstance(out, Complete) and isinstance(out.value, RaiseValue)
+    assert isinstance(out.effect, RaiseEffect)
+    # Discrimination: a completed store would greenwash statement completion.
     with pytest.raises(AssertionError):
         assert isinstance(out, Complete) and isinstance(out.value, ObjectValue)
 

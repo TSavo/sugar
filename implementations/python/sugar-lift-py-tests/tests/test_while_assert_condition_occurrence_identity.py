@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import RaiseValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.outcome import ExitSet, Halted, Incomplete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Assert, Compare, While
 from sugar_source_tree.tree import SourceFile
@@ -82,9 +82,9 @@ def test_assert_condition_halt_keeps_its_condition_occurrence() -> None:
     condition_site = assertion.test.sugar().site
     outcome = assertion.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.occurrence_id == str(condition_site)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.occurrence_id == str(condition_site)
 
 
 def test_identical_condition_and_body_operands_do_not_collapse_occurrences() -> None:

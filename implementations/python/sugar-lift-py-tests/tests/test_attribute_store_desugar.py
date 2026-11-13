@@ -48,7 +48,6 @@ from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectMethodValue,
     ObjectValue,
-    RaiseValue,
     StringValue,
     SymbolicValue,
     TermValue,
@@ -69,6 +68,7 @@ from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect import RaiseEffect
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -169,7 +169,6 @@ def test_attribute_store_evaluates_rhs_and_receiver_once_in_python_order(tmp_pat
 
 def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.floor import RaiseValue
 
     log: list[str] = []
 
@@ -178,12 +177,10 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
         def desugar(self, ctx=None):
             del ctx
             log.append("value")
-            return Complete(
-                RaiseValue(
-                    RaiseEffect(
-                        exception_type_coordinate=str_const("ValueError"),
-                        occurrence=AuthenticatedRaiseLocus.of("attr_store.py:2:16"),
-                    )
+            return Incomplete(
+                RaiseEffect(
+                    exception_type_coordinate=str_const("ValueError"),
+                    occurrence=AuthenticatedRaiseLocus.of("attr_store.py:2:16"),
                 )
             )
 
@@ -200,7 +197,7 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
     outcome = store.desugar()
 
     assert log == ["value"]
-    assert outcome.value.effect.exception_type_coordinate == str_const("ValueError")
+    assert outcome.effect.exception_type_coordinate == str_const("ValueError")
 
 
 # ---------------------------------------------------------------------------
@@ -551,10 +548,10 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         (TupleValue((TermValue(1),)), "TupleValue.setattr"),
     ):
         direct = receiver.setattr("name", StringValue("foo"), store.site)
-        assert isinstance(direct, Complete)
-        assert isinstance(direct.value, RaiseValue)
-        assert direct.value.effect.exception_name == "AttributeError"
-        assert direct.value.effect.producer_node_owner == owner
+        assert isinstance(direct, Incomplete)
+        assert isinstance(direct.effect, RaiseEffect)
+        assert direct.effect.exception_name == "AttributeError"
+        assert direct.effect.producer_node_owner == owner
 
     # A getter spelling is neither store authority nor permission to invent a
     # readable value: its deliberately unconstructed body remains loud.

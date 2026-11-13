@@ -3,7 +3,7 @@
 ``CallSiteValue.project_producer_outcome`` projects a callee body's outcome
 onto the Call node.  Its ``Complete`` arm asked only "is it one ``Complete``"
 and seated the value as the call's retained completion.  A raise carried as
-data, ``Complete(RaiseValue)``, became a completed ``CallSiteValue``: the
+data (``Complete(RaiseValue)``, removed by #7821), became a completed ``CallSiteValue``: the
 statement after the call ran, and the raise was gone.
 
 The arm now goes through ``Complete.and_then``, the rule every expression
@@ -82,7 +82,7 @@ def _faces(outcome) -> tuple[int, tuple[str, ...]]:
 
 @pytest.fixture
 def callee_raises(monkeypatch):
-    """The callee body's outcome is ``Complete(RaiseValue)``: ``1 // 0``."""
+    """The callee body's outcome is the ground ``1 // 0`` halt."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
@@ -167,16 +167,22 @@ def test_the_projection_seats_an_ordinary_value(callsite) -> None:
     )
 
 
-def test_the_projection_hands_a_carried_raise_back_unchanged(callsite) -> None:
+def test_the_projection_makes_a_callee_raise_the_calls_halt(callsite) -> None:
+    """Since #7821 the ground exit is a halt, not ``Complete(RaiseValue)``.
+    It takes the projection's halt arm, as every other callee raise does:
+    one halted face, owned by the Call, and no completion."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet, Halted, Incomplete
 
     raised = ground_exceptional_exit(
         exception_name="ZeroDivisionError", site=callsite.site, owner="BinOp"
     )
-    assert isinstance(raised, Complete)
+    assert isinstance(raised, Incomplete)
 
     projected = callsite.project_producer_outcome(raised)
 
-    assert projected == raised
-    assert not projected.follow().continues
+    assert isinstance(projected, ExitSet)
+    (face,) = projected.exits
+    assert isinstance(face, Halted)
+    assert face.effect.exception_name == "ZeroDivisionError"
+    assert face.effect.producer_node_owner == "Call"

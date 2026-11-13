@@ -8,7 +8,9 @@ import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import RaiseValue, TermValue, TupleValue
+from sugar_lift_py_tests.floor import TermValue, TupleValue
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.nodes import Subscript
 from sugar_source_tree.panic import SugarNotWritten
@@ -76,11 +78,11 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
 
     outcome = sugar.desugar(ReduceContext.root(owner="tuple-value-slice"))
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "ValueError"
-    assert outcome.value.effect.producer_node_owner == "TupleValue.subscript"
-    assert outcome.value.effect.occurrence_id == str(site)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "ValueError"
+    assert outcome.effect.producer_node_owner == "TupleValue.subscript"
+    assert outcome.effect.occurrence_id == str(site)
 
 
 def test_source_tuple_symbolic_slice_bound_stays_typed_loud(

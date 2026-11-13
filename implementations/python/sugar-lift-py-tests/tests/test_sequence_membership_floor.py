@@ -175,15 +175,16 @@ def test_ground_non_string_in_string_is_type_error(tmp_path):
     refusal that the crash was standing in for gains its OWN pin in
     test_ground_exit_locus_law.py rather than being dropped here.
     """
-    from sugar_lift_py_tests.floor import RaiseValue, StringValue, TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.floor import StringValue, TermValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _workspace_fragment(tmp_path)
 
     outcome = StringValue("abc").contains(TermValue(1), site)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_callsite_container_emits_py_in():

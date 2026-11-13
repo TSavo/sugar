@@ -44,7 +44,6 @@ from sugar_lift_py_tests.floor import (
     ListValue,
     ObjectField,
     ObjectValue,
-    RaiseValue,
     StringValue,
     TermValue,
 )
@@ -55,6 +54,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 CODEX1 = (
     "codex-1 state survival: halted delete must leave the original receiver "
@@ -135,13 +136,13 @@ def _post_object(completed: Completed) -> ObjectValue:
     )
 
 
-def _keyerror_raise(outcome, *, site) -> RaiseValue:
-    """Authenticated read face: Complete(RaiseValue KeyError) at the given locus."""
+def _keyerror_raise(outcome, *, site) -> Incomplete:
+    """Authenticated read face: the KeyError halt at the given locus."""
     assert isinstance(
-        outcome, Complete
-    ), f"{CODEX3}: expected Complete KeyError raise, got {type(outcome).__name__}"
-    assert isinstance(outcome.value, RaiseValue), outcome.value
-    raise_value = outcome.value
+        outcome, Incomplete
+    ), f"{CODEX3}: expected KeyError halt, got {type(outcome).__name__}"
+    assert isinstance(outcome.effect, RaiseEffect), outcome.effect
+    raise_value = outcome
     assert raise_value.effect.exception_name == "KeyError"
     assert raise_value.effect.exception_type_coordinate == _identity("KeyError")
     # Occurrence lineage: KeyError is bound to the delete locus (site).
@@ -249,14 +250,12 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
             f"{FLOOR_ATTR}: ConstructionPanic on missing field read: {err}"
         ) from err
 
-    if isinstance(read, Complete) and isinstance(read.value, RaiseValue):
-        assert read.value.effect.exception_name == "AttributeError"
-        assert read.value.effect.exception_type_coordinate == _identity(
-            "AttributeError"
-        )
+    if isinstance(read, Incomplete) and isinstance(read.effect, RaiseEffect):
+        assert read.effect.exception_name == "AttributeError"
+        assert read.effect.exception_type_coordinate == _identity("AttributeError")
         return
     raise AssertionError(
-        f"{FLOOR_ATTR}: expected Complete(RaiseValue AttributeError), "
+        f"{FLOOR_ATTR}: expected the AttributeError halt, "
         f"got {type(read).__name__} {read!r:.200}"
     )
 
@@ -396,11 +395,7 @@ def test_lying_fabricated_deleted_value_refuses_against_keyerror() -> None:
     exits = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
-    assert not (
-        isinstance(missing, Complete)
-        and not isinstance(missing.value, RaiseValue)
-        and missing.value == TermValue(1)
-    )
+    assert not (isinstance(missing, Complete) and missing.value == TermValue(1))
     _keyerror_raise(missing, site=site)
 
 
@@ -431,6 +426,6 @@ def test_list_delitem_readback_indexerror_after_completed_delete() -> None:
     assert ok.value == TermValue(1)
     # Index 1 is gone.
     gone = post.subscript(TermValue(1), site)
-    assert isinstance(gone, Complete)
-    assert isinstance(gone.value, RaiseValue)
-    assert gone.value.effect.exception_name == "IndexError"
+    assert isinstance(gone, Incomplete)
+    assert isinstance(gone.effect, RaiseEffect)
+    assert gone.effect.exception_name == "IndexError"

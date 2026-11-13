@@ -1466,12 +1466,6 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_assign(resolved_value):
-                from sugar_lift_py_tests.floor import RaiseValue
-
-                if isinstance(resolved_value, RaiseValue):
-                    return self._fold_pending_cited_opaque_exits(
-                        ExitSet.halted(resolved_value.effect, state=self)
-                    )
                 from sugar_lift_py_tests.sugar.assigned_value import assigned_key
 
                 binding = GeneratorAssignBindingV1(
@@ -1517,13 +1511,19 @@ class GeneratorConstructionV1:
             )
             from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
+            if _halts_with_a_raise(value):
+                # The value raised: the step halts with the machine's state and
+                # still runs any already-written cited exit (as the attribute
+                # store, assert and term steps do for their halts).
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(value.effect, state=self)
+                )
             if isinstance(value, NativeOperationExitCarrierV1):
                 return value.and_then(continue_assign)
             if isinstance(value, (Incomplete, ExitSet)):
                 return outcome_to_exitset(value).and_then(continue_assign)
             return transition_assign(value)
         if isinstance(step, AttributeAssignStepV1):
-            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,
@@ -1535,10 +1535,6 @@ class GeneratorConstructionV1:
                 attr=step.attr,
                 site=step.occurrence,
             ).desugar(self._guard_evaluation_context())
-            if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.value.effect, state=self)
-                )
             if isinstance(outcome, Incomplete):
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
@@ -1550,14 +1546,9 @@ class GeneratorConstructionV1:
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, AssertStepV1):
-            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             outcome = step.assert_sugar.desugar(self._guard_evaluation_context())
-            if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.value.effect, state=self)
-                )
             if isinstance(outcome, Incomplete):
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
@@ -1613,7 +1604,6 @@ class GeneratorConstructionV1:
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
         if isinstance(step, TermStepV1):
-            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_source_tree.panic import SugarNotWritten
 
@@ -1624,10 +1614,6 @@ class GeneratorConstructionV1:
                 outcome = step.term.desugar(self._guard_evaluation_context())
             except SugarNotWritten as exc:
                 return self._gap(requested, str(exc.observed))
-            if isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.value.effect, state=self)
-                )
             if isinstance(outcome, Incomplete):
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
@@ -1693,12 +1679,9 @@ class GeneratorConstructionV1:
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
-            from sugar_lift_py_tests.floor import RaiseValue
             from sugar_lift_py_tests.outcome import Incomplete
 
-            if isinstance(
-                value, (Incomplete, ExitSet, NativeOperationExitCarrierV1, RaiseValue)
-            ):
+            if isinstance(value, (Incomplete, ExitSet, NativeOperationExitCarrierV1)):
                 return self._gap(
                     requested, "yield value inside try/except may raise"
                 )
@@ -1712,12 +1695,6 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_return(resolved_value):
-                from sugar_lift_py_tests.floor import RaiseValue
-
-                if isinstance(resolved_value, RaiseValue):
-                    return self._fold_pending_cited_opaque_exits(
-                        ExitSet.halted(resolved_value.effect, state=self)
-                    )
                 return self._fold_pending_cited_opaque_exits(
                     GeneratorTerminationV1(resolved_value, self.binding_state)
                 )
@@ -1747,6 +1724,13 @@ class GeneratorConstructionV1:
             )
             from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
+            if _halts_with_a_raise(value):
+                # The value raised: the step halts with the machine's state and
+                # still runs any already-written cited exit (as the attribute
+                # store, assert and term steps do for their halts).
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(value.effect, state=self)
+                )
             if isinstance(value, NativeOperationExitCarrierV1):
                 return value.and_then(continue_return)
             if isinstance(value, (Incomplete, ExitSet)):
@@ -1763,12 +1747,6 @@ class GeneratorConstructionV1:
         )
 
         def transition_yield(resolved_value):
-            from sugar_lift_py_tests.floor import RaiseValue
-
-            if isinstance(resolved_value, RaiseValue):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(resolved_value.effect, state=self)
-                )
             return YieldEffect(resolved_value, resume_coordinate, machine)
 
         def continue_yield(resolved_value):
@@ -1796,6 +1774,13 @@ class GeneratorConstructionV1:
         )
         from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
+        if _halts_with_a_raise(value):
+            # The value raised: the step halts with the machine's state and
+            # still runs any already-written cited exit (as the attribute
+            # store, assert and term steps do for their halts).
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(value.effect, state=self)
+            )
         if isinstance(value, NativeOperationExitCarrierV1):
             return value.and_then(continue_yield)
         if isinstance(value, (Incomplete, ExitSet)):
@@ -1806,13 +1791,7 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.operations import IteratorOperation
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        from sugar_lift_py_tests.floor import RaiseValue
-
         iterable = step.iterable.desugar(self._guard_evaluation_context())
-        if isinstance(iterable, Complete) and isinstance(iterable.value, RaiseValue):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(iterable.value.effect, state=self)
-            )
         if isinstance(iterable, Incomplete):
             return self._fold_pending_cited_opaque_exits(
                 ExitSet.halted(iterable.effect, state=self)
@@ -1847,13 +1826,7 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.operations import IteratorOperation
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        from sugar_lift_py_tests.floor import RaiseValue
-
         iterable = step.iterable.desugar(self._guard_evaluation_context())
-        if isinstance(iterable, Complete) and isinstance(iterable.value, RaiseValue):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(iterable.value.effect, state=self)
-            )
         if isinstance(iterable, Incomplete):
             return self._fold_pending_cited_opaque_exits(
                 ExitSet.halted(iterable.effect, state=self)
@@ -2798,3 +2771,21 @@ def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
         else:
             out.append(Completed(guard, inner.value, faces, owed))
     return ExitSet(tuple(out)).normalize()
+
+
+def _halts_with_a_raise(value) -> bool:
+    """A step's value that raised: one unconditional halt with a ``RaiseEffect``.
+
+    This is the halt ``ground_exceptional_exit`` returns (``1 // 0``).  It
+    carries no branch condition and no pending contract, so the step's own
+    halted face, with the machine's state, is the whole outcome.
+    """
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return (
+        isinstance(value, Incomplete)
+        and isinstance(value.effect, RaiseEffect)
+        and not value.branch_conditions
+        and not value.pending_contracts
+    )

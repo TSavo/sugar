@@ -30,10 +30,10 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.outcome import Incomplete
 
 CORPUS = """\
 def ground_index():
@@ -103,7 +103,8 @@ def _raise_effects(root: Path) -> dict[str, RaiseEffect]:
         raises = [
             statement
             for statement in outcome.value.record.statements
-            if isinstance(statement, RaiseValue)
+            if isinstance(statement, Incomplete)
+            and isinstance(statement.effect, RaiseEffect)
         ]
         assert len(raises) == 1, (
             f"{function.name} constructed {len(raises)} raise exits, not the "

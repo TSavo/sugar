@@ -1128,7 +1128,7 @@ class FloorValue:
     def less_than(self, other, site):
         # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.
         # LAW_OF_ONE: ordering meaning is Sugar (or a ground arm that constructs
-        # Sugar / authenticated RaiseValue). The default door never mints
+        # Sugar / an authenticated ground exit). The default door never mints
         # Complete(PredicateValue) — that is a second mechanism.
         return other.less_than_from_left(self, site)
 
@@ -1193,7 +1193,7 @@ class FloorValue:
             observed=f"default ordering floor has no Sugar arm for {pair}",
             requested=(
                 "Sugar-owned ordering meaning (TrueBoolLiteralSugar / "
-                "FalseBoolLiteralSugar / authenticated RaiseValue)"
+                "FalseBoolLiteralSugar / an authenticated ground exit)"
             ),
             fix=(
                 "LAW_OF_ONE / PANIC=GAP: implement a ground pair arm that "

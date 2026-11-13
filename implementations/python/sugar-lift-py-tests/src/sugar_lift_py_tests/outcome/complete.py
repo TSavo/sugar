@@ -24,11 +24,7 @@ class Complete:
         return self.value.extend_scope(ctx)
 
     def and_then(self, step):
-        # A completed ordinary value keeps going. A constructed raise is also
-        # complete testimony, but Python does not evaluate any enclosing
-        # expression step after it; preserve the control-flow value unchanged.
-        from sugar_lift_py_tests.floor import RaiseValue
-
-        if isinstance(self.value, RaiseValue):
-            return self
+        # A completed value keeps going.  A raise is never a completion: it is
+        # an ``Incomplete`` (or a ``Halted`` face), whose ``and_then`` never
+        # runs the step.
         return step(self.value)
