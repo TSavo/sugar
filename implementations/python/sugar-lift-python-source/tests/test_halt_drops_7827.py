@@ -26,7 +26,8 @@ Confirmed (pinned expected-red):
    ``ExitSet.and_then`` in ``AugAssignSugar``) has no completed face, so an
    assert after it has no row.
 
-Struck (each test below records why): ``sugar/for_universal_sugar.py``,
+Struck (each test below records why): ``sugar/for_universal_sugar.py``
+(since deleted),
 ``sugar/exit_set_routing.py`` ``exitset_to_outcome``'s untyped completed arm,
 ``sugar/match_sugar.py`` ``_outcome_as_exitset`` / ``_incomplete_as_halted``,
 and of item 6: ``sugar_outcome_to_exitset``, ``Incomplete.and_then`` and
@@ -158,21 +159,23 @@ def test_guarded_value_lying_half_returns_the_false_arm_on_its_completed_face() 
 
 
 # ---------------------------------------------------------------------------
-# 2. sugar/for_universal_sugar.py: struck. No source node constructs
-#    ForUniversalSugar (only a unit test does). A source `for` goes through
+# 2. sugar/for_universal_sugar.py: struck, then deleted (inventory item 38).
+#    No source node constructed ForUniversalSugar. A source `for` goes through
 #    the loop recurrence, which keeps the body's halt beside the completion.
 # ---------------------------------------------------------------------------
 
 _FOR = "def test_f(xs):\n    for x in xs:\n        {body}\n    assert 1 == 1\n"
 
 
-def test_for_universal_sugar_is_never_reached_from_source(monkeypatch) -> None:
-    from sugar_lift_py_tests.sugar.for_universal_sugar import ForUniversalSugar
+def test_for_universal_sugar_is_never_reached_from_source() -> None:
+    """The second reducer of a ``for`` loop is gone; a source loop still
+    reduces, through the one loop recurrence."""
+    import importlib.util
 
-    def refuse(self, ctx=None):
-        raise AssertionError("ForUniversalSugar reached from source")
-
-    monkeypatch.setattr(ForUniversalSugar, "desugar", refuse)
+    assert (
+        importlib.util.find_spec("sugar_lift_py_tests.sugar.for_universal_sugar")
+        is None
+    )
 
     _function(_FOR.format(body="raise ValueError"))
     _function(_FOR.format(body="y = 1"))
