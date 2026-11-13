@@ -1868,10 +1868,9 @@ class CallSiteValue(FloorValue):
             return effect
 
         if isinstance(outcome, Complete):
-            # A completed body seats its value on the Call.  A raise carried
-            # as data is not a value of the call: ``and_then`` hands it back
-            # unchanged, so the enclosing statement halts with it, as it does
-            # for any expression that raises (#7799).
+            # A completed body seats its value on the Call.  A raise is never
+            # a completion (#7821): it arrives as a halt and takes the arm
+            # below, where it becomes the Call's own halted face.
             return outcome.and_then(lambda value: Complete(retaining(value)))
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,

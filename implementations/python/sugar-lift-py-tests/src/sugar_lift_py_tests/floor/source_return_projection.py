@@ -15,10 +15,8 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
     from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
     from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
     from sugar_lift_py_tests.floor.guarded_loop_control import GuardedLoopControl
-    from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.loop_control_value import LoopControlValue
-    from sugar_lift_py_tests.floor.raise_value import RaiseValue
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
@@ -42,10 +40,8 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
                     ExceptionalExitValue,
                     GuardedFaces,
                     GuardedLoopControl,
-                    GuardedRaise,
                     Incomplete,
                     LoopControlValue,
-                    RaiseValue,
                 ),
             )
         )

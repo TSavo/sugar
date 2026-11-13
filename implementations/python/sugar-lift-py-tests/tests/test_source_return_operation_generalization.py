@@ -31,10 +31,8 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
-    GuardedRaise,
     ListValue,
     LoopControlValue,
-    RaiseValue,
     ReturnValue,
     TermValue,
     TupleValue,
@@ -130,18 +128,12 @@ CODEX3_OWNER = (
 @pytest.mark.parametrize(
     "competing_exit",
     (
-        RaiseValue(
-            RaiseEffect.for_builtin(
-                "TypeError",
-                occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:140:0",
-            )
-        ),
-        GuardedRaise(
-            (TermValue(True).to_term(owner="guard"),),
+        Incomplete(
             RaiseEffect.for_builtin(
                 "TypeError",
                 occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:138:0",
             ),
+            branch_conditions=(TermValue(True).to_term(owner="guard"),),
         ),
         Incomplete(
             RaiseEffect.for_builtin(

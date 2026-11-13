@@ -201,18 +201,7 @@ class ClassDefinitionSugar(Sugar):
         if initializer is None:
             initializer = _inherited_source_initializer(tuple(base_values))
 
-        def class_or_halt(body_value):
-            from sugar_lift_py_tests.floor import RaiseValue
-            from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-            if isinstance(body_value, RaiseValue):
-                # The assignment routine hands a right-hand side's raise back
-                # as control-flow data.  A class statement has no ``try`` of
-                # its own to route it: the statement halts with it, and no
-                # class exists on that face.  (``promote_raise_halts`` does
-                # this for a block: it reads raise entries off a reduced
-                # block's record, which a class body does not have.)
-                return ExitSet.halted(body_value.effect)
+        def construct_class(body_value):
             return Complete(
                 ClassDefinitionValue(
                     self.class_name,
@@ -231,11 +220,7 @@ class ClassDefinitionSugar(Sugar):
 
         # The class exists only on a face the whole body completed under;
         # every halt of the body is the statement's halt, unchanged.
-        body = class_body()
-        if isinstance(body, Complete):
-            # ``Complete.and_then`` would hand a raise back as a completion.
-            return class_or_halt(body.value)
-        return body.and_then(class_or_halt)
+        return class_body().and_then(construct_class)
 
     def _class_body(self, ctx):
         """The body's outcome: the class's fields on each completed face.

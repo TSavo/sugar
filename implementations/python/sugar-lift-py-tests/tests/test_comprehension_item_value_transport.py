@@ -13,7 +13,6 @@ from sugar_lift_py_tests.floor import (
     ComprehensionValue,
     ListValue,
     ObjectValue,
-    RaiseValue,
     TermValue,
 )
 from sugar_lift_py_tests.floor.object_field import ObjectField
@@ -23,6 +22,8 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 from sugar_source_tree.nodes import ListComp, TargetPatternConstructionGapV1
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 
 def _source_list_comprehension(source: str):
@@ -102,8 +103,8 @@ def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
 
     outcome = comprehension.desugar(_context_with_items(ListValue((first, second))))
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
     assert not isinstance(outcome.value, ComprehensionValue)
 
 

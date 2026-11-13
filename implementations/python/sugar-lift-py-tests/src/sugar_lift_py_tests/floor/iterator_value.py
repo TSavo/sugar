@@ -189,16 +189,11 @@ def _stop_iteration(site, *, owner: str):
     String or synthetic blame cannot fabricate ``python:exception_type_identity``
     or an occurrence from spelling — that path is typed-loud at the ground door.
     """
-    from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-    projected = ground_exceptional_exit(
+    # Iterator exhaustion is a control-face halt for consumers.
+    return ground_exceptional_exit(
         exception_name="StopIteration",
         site=site,
         owner=owner,
     )
-    if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
-        # Iterator exhaustion is a control-face halt for consumers.
-        return Incomplete(projected.value.effect)
-    return projected

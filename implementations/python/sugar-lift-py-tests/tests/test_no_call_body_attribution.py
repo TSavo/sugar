@@ -4,7 +4,6 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
-from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.no_call_body_attribution import (
     CANONICAL_CORPUS_MANIFEST_CID,
@@ -28,6 +27,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
 )
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
+from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
@@ -39,12 +39,10 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
 
 
 def _raise_value():
-    return Complete(
-        RaiseValue(
-            RaiseEffect(
-                exception_type_coordinate=str_const("TypeError"),
-                occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
-            )
+    return Incomplete(
+        RaiseEffect(
+            exception_type_coordinate=str_const("TypeError"),
+            occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
         )
     )
 
@@ -79,17 +77,15 @@ def test_enrollment_coordinate_refuses_unqualifiable_workspace_root(tmp_path):
 
 
 def _nameless_raise_value():
-    return Complete(RaiseValue(UndeterminedRaiseEffect()))
+    return Incomplete(UndeterminedRaiseEffect())
 
 
 def _call_owned_raise_value():
-    return Complete(
-        RaiseValue(
-            RaiseEffect(
-                exception_type_coordinate=str_const("TypeError"),
-                occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
-                producer_node_owner="Call",
-            )
+    return Incomplete(
+        RaiseEffect(
+            exception_type_coordinate=str_const("TypeError"),
+            occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
+            producer_node_owner="Call",
         )
     )
 

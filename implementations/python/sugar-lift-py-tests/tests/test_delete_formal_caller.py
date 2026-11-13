@@ -720,12 +720,13 @@ def test_floor_list_delitem_completes_with_element_gone() -> None:
 
 def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
     """Floor list delete IndexError (ground_index_error) — named exceptional face."""
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     result = ListValue((TermValue(0),)).delitem(TermValue(5), _floor_site())
-    assert isinstance(result, Complete)
-    assert isinstance(result.value, RaiseValue)
-    assert result.value.effect.exception_name == "IndexError"
+    assert isinstance(result, Incomplete)
+    assert isinstance(result.effect, RaiseEffect)
+    assert result.effect.exception_name == "IndexError"
 
 
 def test_floor_delete_is_not_the_formal_carrier_twin() -> None:

@@ -20,8 +20,8 @@ class AttributeDeleteEffectSugar(Sugar):
        and calls ``receiver.delattr(name.value, site)`` (Python
        ``__delattr__``).  Helper alone stays undischarged.
     2. **Decided runtime type** → ``receiver.delattr(attr, site)`` projecting
-       ``Completed`` or ``RaiseValue`` exceptional faces through the delete
-       path (never the read path — readability never authorizes deletion).
+       its completed or halted faces through the delete path (never the
+       read path — readability never authorizes deletion).
     3. **Undecided non-formal** → ``AttributeDeleteRuntimeEffect`` dual faces
        under complementary store-outcome guards.
 
@@ -42,9 +42,6 @@ class AttributeDeleteEffectSugar(Sugar):
         )
 
     def _delete(self, receiver) -> Outcome:
-        from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Complete
-
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
             # Undischarged demand awaiting caller actuals — not a refusal.
@@ -55,12 +52,7 @@ class AttributeDeleteEffectSugar(Sugar):
             )
 
         if receiver.runtime_type_is_decided():
-            projected = receiver.delattr(self.attr, self.site)
-            if isinstance(projected, Complete) and isinstance(
-                projected.value, RaiseValue
-            ):
-                return Incomplete(projected.value.effect)
-            return projected
+            return receiver.delattr(self.attr, self.site)
 
         from sugar_lift_py_tests.effect import (
             AttributeDeleteRuntimeEffect,
@@ -120,8 +112,8 @@ class SubscriptDeleteEffectSugar(Sugar):
        ``receiver.delitem(index, site)`` (Python ``__delitem__``).  Helper
        alone stays undischarged; an ordinary source caller supplies actuals.
     2. **Decided runtime type** → ``receiver.delitem(index, site)`` projecting
-       ``Completed`` or ``RaiseValue`` exceptional faces through the delete
-       path (never the load path).  Earlier bindings survive later delete
+       its completed or halted faces through the delete path (never the
+       load path).  Earlier bindings survive later delete
        halts via reducer pre-effect state on the carrier.
     3. **Undecided non-formal** → two faces (#7585), as for ``r[k] = v``:
        the delete completes only under
@@ -170,13 +162,7 @@ class SubscriptDeleteEffectSugar(Sugar):
                 method="__delitem__",
                 owner="UndecidedDelitem",
             )
-        projected = receiver.delitem(index, self.site)
-        from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Complete
-
-        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
-            return Incomplete(projected.value.effect)
-        return projected
+        return receiver.delitem(index, self.site)
 
     @staticmethod
     def mint_delitem_carrier(*, site, receiver, index):

@@ -7,7 +7,7 @@ mechanism even when the atom would be "right".
 
 Undecided must never become a sole value: undecided ordering is the #7585
 two faces (python:compare.completes | undetermined halt), like ``==``. Decided ground
-pairs construct Sugar (TrueBool/FalseBool/RaiseValue) on owned arms only.
+pairs construct Sugar (TrueBool/FalseBool) or a ground halt on owned arms only.
 
 Also covers:
 - undecided binary: nameless halt is forbidden
@@ -202,14 +202,15 @@ def _relative_fragment(source: str, filename: str):
 
 
 def test_source_decided_number_string_ordering_emits_type_error() -> None:
-    """Truthful twin: decided unorderable pair constructs TypeError RaiseValue."""
-    from sugar_lift_py_tests.floor import RaiseValue
+    """Truthful twin: decided unorderable pair halts with a TypeError."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment('def f():\n    return 1.0 < "a"\n', "number-lt-string.py")
     outcome = TermValue(1.0).less_than(StringValue("a"), site)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_source_decided_int_ordering_constructs_bool_sugar() -> None:
@@ -334,13 +335,14 @@ def test_undecided_binary_throws_named_never_nameless_halt(method: str) -> None:
 
 def test_source_decided_int_float_bitand_emits_type_error() -> None:
     """Truthful twin: decided ground pair still constructs TypeError."""
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment("def f():\n    return 1 & 3.14\n", "int-bitand-float.py")
     outcome = TermValue(1).bitwise_and(TermValue(3.14), site)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
@@ -407,10 +409,11 @@ def test_undecided_attribute_remains_named_refusal() -> None:
 
 def test_source_decided_none_contains_emits_type_error() -> None:
     """Truthful twin: decided non-container constructs TypeError."""
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment("def f():\n    return 1 in None\n", "in-none.py")
     outcome = NoneValue().contains(TermValue(1), site)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"

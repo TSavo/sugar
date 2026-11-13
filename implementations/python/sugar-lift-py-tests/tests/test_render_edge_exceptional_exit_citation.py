@@ -48,11 +48,9 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
-from sugar_lift_py_tests.floor.raise_value import (
+from sugar_lift_py_tests.floor.exceptional_exit_term import (
 
     FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS,
-    RaiseValue,
-    _exceptional_exit_formula,
     _exceptional_exit_term,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
@@ -288,15 +286,6 @@ def test_truthful_type_coordinate_face_emits_cited_exceptional_exit() -> None:
     assert term.args[1] == str_const(f"{_LOCUS}#source-sha256={_SHA}")
 
 
-def test_truthful_raise_value_post_contribution_is_the_cited_formula() -> None:
-    effect = _named_cited_effect()
-    posts = RaiseValue(effect).post_contribution()
-
-    assert len(posts) == 1
-    # Same term path as the direct projector — no second spelling of identity.
-    assert posts[0] == _exceptional_exit_formula(effect)
-
-
 # ---------------------------------------------------------------------------
 # Lying twin: nameless / uncited / fabricated-name faces MUST NOT emit
 # ---------------------------------------------------------------------------
@@ -316,18 +305,11 @@ def test_nameless_face_cannot_reach_fol_emission() -> None:
         _exceptional_exit_term(nameless)
 
     info = raised.value.info
-    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert info.owner == "exceptional_exit_term"
     assert "neither" in info.observed
     assert "exception_name" in info.observed
     assert "exception_type_coordinate" in info.observed
     assert "reraise" in info.fix
-
-
-def test_nameless_raise_value_post_contribution_stays_loud() -> None:
-    """post_contribution is the same door — nameless cannot soft-emit."""
-    with pytest.raises(ConstructionPanic) as raised:
-        RaiseValue(UndeterminedRaiseEffect(blame=_LOCUS)).post_contribution()
-    assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
 
 
 def test_name_without_source_sha_cannot_cite_unavailable() -> None:
@@ -340,7 +322,7 @@ def test_name_without_source_sha_cannot_cite_unavailable() -> None:
         _exceptional_exit_term(effect)
 
     info = raised.value.info
-    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert info.owner == "exceptional_exit_term"
     assert "source_sha256" in info.observed
     assert "unavailable" in info.fix
 
@@ -355,7 +337,7 @@ def test_name_without_blame_cannot_cite_unknown_locus() -> None:
         _exceptional_exit_term(effect)
 
     info = raised.value.info
-    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert info.owner == "exceptional_exit_term"
     assert "blame" in info.observed
     assert "unknown raise locus" in info.fix
 
@@ -368,7 +350,7 @@ def test_fabricated_reraise_string_is_not_authenticated_bare_raise() -> None:
         _exceptional_exit_term(effect)
 
     info = raised.value.info
-    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert info.owner == "exceptional_exit_term"
     assert _LOCUS in info.blame
     assert "neither" in info.observed
 
@@ -388,7 +370,7 @@ def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
         _exceptional_exit_term(effect)
 
     info = raised.value.info
-    assert info.owner == "RaiseValue.exceptional_exit_term"
+    assert info.owner == "exceptional_exit_term"
     assert "fabricated" in info.observed
     assert "reraise" in info.observed
 
@@ -408,7 +390,7 @@ def test_every_fabricated_meaning_literal_as_name_is_loud(placeholder: str) -> N
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
     assert placeholder in raised.value.info.observed
-    assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
+    assert raised.value.info.owner == "exceptional_exit_term"
 
 
 def test_empty_exception_name_cannot_reach_fol() -> None:
@@ -419,7 +401,7 @@ def test_empty_exception_name_cannot_reach_fol() -> None:
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)
     assert "empty" in raised.value.info.observed
-    assert raised.value.info.owner == "RaiseValue.exceptional_exit_term"
+    assert raised.value.info.owner == "exceptional_exit_term"
 
 
 def test_kwarg_fabricated_name_cannot_bypass_face_check() -> None:

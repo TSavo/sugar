@@ -131,9 +131,9 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
         if isinstance(outcome, Complete):
             follow = outcome.follow()
             if not follow.continues:
-                # A raise carried as control-flow data (``RaiseValue``): the
-                # statement halts here and no later RHS or target runs. It is
-                # handed back as-is so an enclosing ``try`` routes it.
+                # A value whose rest does not run: the statement halts here
+                # and no later RHS or target runs. It is handed back as-is so
+                # the enclosing block routes it.
                 return outcome
             if _carries_halts(outcome):
                 if len(values) == 1 and tail is None:

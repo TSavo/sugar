@@ -2,11 +2,12 @@
 
 Product metric was 0 authenticated exceptional exits across the six no-call
 producer families.  Two shared breaks zeroed the complete route even when
-individual floors already minted ``RaiseValue``:
+individual floors already minted their raise (then ``RaiseValue``, since
+#7821 a halt):
 
 1. ``UnaryOp not`` refused ``CallSiteValue`` truth, so installed-source
    ``pytest.raises`` ``__exit__`` derivation collapsed to ``exit-may-halt``.
-2. Expression ``RaiseValue`` entries were not promoted to Halted faces, so
+2. Expression raise entries were not promoted to Halted faces, so
    assertion boundaries saw completed bodies and minted
    ``ExpectationNotMetEffect``.
 
@@ -164,7 +165,7 @@ def test_producer_emits_authenticated_exceptional_exit(
     expected: str,
     node_type: type,
 ) -> None:
-    """Truthful: the body expression alone publishes a RaiseValue / RaiseEffect."""
+    """Truthful: the body expression alone publishes its RaiseEffect."""
     _context, _with_node, body_expr = _build_slice(
         tmp_path, family=family, body=body, expected=expected
     )

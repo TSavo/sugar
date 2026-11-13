@@ -128,14 +128,14 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
     """Removing the cap must not have widened the door to non-index counts.
 
     A source-decided non-``__index__`` count is authenticated TypeError
-    RaiseValue on a workspace-relative fragment.
+    halt on a workspace-relative fragment.
     """
     del tmp_path
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
 
@@ -149,9 +149,9 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
 
     outcome = sequence_type((TermValue(1),)).multiply(TermValue(1.5), fragment)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 # -- discriminating arm: each category rebuilds ITSELF ------------------------

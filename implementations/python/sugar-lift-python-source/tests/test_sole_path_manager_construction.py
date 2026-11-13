@@ -4709,7 +4709,7 @@ def test_installed_cited_opaque_nested_with_structured_finally_for_divzero(tmp_p
 
     First resume still yields the open enter result. Desugar cites the
     already-written ZeroDivisionError and the still-open enter face.
-    This does not invent iter_with on RaiseValue, that a loop body ran,
+    This does not invent iter_with on the raise, that a loop body ran,
     or that exit ran.
     """
     from sugar_lift_py_tests.effect import (
@@ -5957,7 +5957,7 @@ def test_installed_cited_opaque_nested_with_body_for_divzero_still_exits(tmp_pat
 
     First resume still yields the open enter result. Desugar cites the
     already-written ZeroDivisionError and both open enter and exit faces.
-    This does not invent iter_with on RaiseValue, that a loop body ran,
+    This does not invent iter_with on the raise, that a loop body ran,
     or that exit swallowed the raise.
     """
     from sugar_lift_py_tests.effect import (

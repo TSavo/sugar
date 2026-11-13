@@ -160,12 +160,6 @@ def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
                     f"{getattr(slot, 'slot_id', None)!r};"
                     f"observed={getattr(statement, 'observed_guard', None)!r}>"
                 )
-            if type(statement).__name__ == "GuardedRaise":
-                effect = getattr(statement, "effect", None)
-                return (
-                    f"GuardedRaise<guards={len(getattr(statement, 'guards', ())) };"
-                    f"effect={type(effect).__name__}>"
-                )
             return type(statement).__name__
 
         shape = (
@@ -2406,7 +2400,7 @@ def _construct_manager_behavior_once(
     # raises-style factories gate the CM on `if not args: return CM(...)`.
     # That return is a GuardedReturn under the branch polarity, not a bare
     # ReturnValue.  Multi-arm ExitSet factories (if/raise faces) similarly
-    # carry manager returns on Completed arms while Halted RaiseValue arms
+    # carry manager returns on Completed arms while Halted raise arms
     # are non-manager exits.  Both shapes must project the ObjectValue return
     # face — never demand truth of a raise terminal and never stall as
     # non-manager-result:BlockValue solely because the return was guarded.

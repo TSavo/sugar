@@ -253,7 +253,8 @@ def test_discrimination_slice_store_is_not_scalar_index_overwrite() -> None:
 
 
 def test_extended_slice_length_mismatch_is_value_error() -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     receiver = ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
@@ -263,14 +264,15 @@ def test_extended_slice_length_mismatch_is_value_error() -> None:
         ListValue((TermValue(1),)),
         site,
     )
-    # Floor ground exit is Complete(RaiseValue); store sugar promotes to Incomplete.
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, RaiseValue)
-    assert out.value.effect.exception_name == "ValueError"
+    # Floor ground exit is a halt: Incomplete(effect).
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    assert out.effect.exception_name == "ValueError"
 
 
 def test_non_sequence_rhs_is_type_error() -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     receiver = ListValue((TermValue(0), TermValue(1), TermValue(2)))
@@ -279,9 +281,9 @@ def test_non_sequence_rhs_is_type_error() -> None:
         TermValue(9),
         site,
     )
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, RaiseValue)
-    assert out.value.effect.exception_name == "TypeError"
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    assert out.effect.exception_name == "TypeError"
 
 
 def test_tuple_rhs_is_accepted_for_slice_store() -> None:
@@ -309,9 +311,10 @@ def test_string_rhs_is_not_one_unsplit_string_or_typeerror() -> None:
         SliceValue(None, None, None), StringValue("ab"), site
     )
     assert out != Complete(ListValue((StringValue("ab"),)))
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert not (isinstance(out, Complete) and isinstance(out.value, RaiseValue))
+    assert not (isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect))
 
 
 def test_bytes_rhs_projects_authenticated_integer_bytes() -> None:
@@ -328,9 +331,10 @@ def test_bytes_rhs_is_not_bytes_singletons_or_typeerror() -> None:
         SliceValue(None, None, None), BytesValue(b"AB"), site
     )
     assert out != Complete(ListValue((BytesValue(b"A"), BytesValue(b"B"))))
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert not (isinstance(out, Complete) and isinstance(out.value, RaiseValue))
+    assert not (isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect))
 
 
 def test_dict_rhs_projects_authenticated_insertion_order_keys() -> None:
@@ -349,9 +353,10 @@ def test_dict_rhs_is_not_values_or_typeerror() -> None:
     )
     out = ListValue((TermValue(0),)).setitem(SliceValue(None, None, None), rhs, site)
     assert out != Complete(ListValue((TermValue(1), TermValue(2))))
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert not (isinstance(out, Complete) and isinstance(out.value, RaiseValue))
+    assert not (isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect))
 
 
 def test_set_rhs_keeps_unowned_runtime_iteration_order_loud() -> None:
@@ -548,7 +553,8 @@ def test_production_delete_slice_caller() -> None:
 
 
 def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     out = ListValue((TermValue(0), TermValue(1))).setitem(
@@ -556,25 +562,26 @@ def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
         ListValue(()),
         site,
     )
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, RaiseValue)
-    effect = out.value.effect
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    effect = out.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.setitem"
     assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
 
 
 def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     out = ListValue((TermValue(0), TermValue(1), TermValue(2))).delitem(
         SliceValue(None, None, TermValue(0)),
         site,
     )
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, RaiseValue)
-    effect = out.value.effect
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    effect = out.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.delitem"
     assert effect.occurrence_id == str(site)
@@ -589,8 +596,8 @@ def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:
     del_out = ListValue((TermValue(0),)).delitem(
         SliceValue(None, None, TermValue(0)), site
     )
-    set_e = set_out.value.effect
-    del_e = del_out.value.effect
+    set_e = set_out.effect
+    del_e = del_out.effect
     assert set_e.exception_name == del_e.exception_name == "ValueError"
     assert set_e.producer_node_owner == "ListValue.setitem"
     assert del_e.producer_node_owner == "ListValue.delitem"

@@ -292,14 +292,15 @@ def _sorted_list(elements, site, owner):
 
 
 def _then_pair(outcome):
-    """A floor store's outcome as the pair: its post-state and ``None``."""
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
+    """A floor store's outcome as the pair: its post-state and ``None``.
 
+    A store that raises is its halt, handed back unchanged."""
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    if isinstance(outcome, Incomplete):
+        return outcome
     if not isinstance(outcome, Complete):
         return UNDECIDED
-    if isinstance(outcome.value, RaiseValue):
-        return outcome
     if container_kind(outcome.value) is None:
         return UNDECIDED
     return _pair(outcome.value, _none())

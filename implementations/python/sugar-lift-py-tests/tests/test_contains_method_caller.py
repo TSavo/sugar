@@ -375,21 +375,14 @@ def test_non_container_method_call_binds_and_floor_refuses_contains() -> None:
     site = _method_callsite(METHOD_BODY + "\nChecker().has(None, 1)\n")
     _assert_bound_self_first(site)
     assert site.arg_values[2] == TermValue(1)
-    from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.outcome import Incomplete
 
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
     direct = NoneValue().contains(TermValue(1), floor_site)
-    # Floor may Complete(RaiseValue) or Incomplete(effect).
-    if isinstance(direct, Complete):
-        assert isinstance(direct.value, RaiseValue)
-        assert direct.value.effect.exception_name == "TypeError"
-    else:
-        assert isinstance(direct, Incomplete)
-        assert "TypeError" in repr(direct.effect.exception_type_coordinate) or (
-            getattr(direct.effect, "exception_name", None) == "TypeError"
-        )
+    # A raise is a halt: Incomplete(effect), never a completion.
+    assert isinstance(direct, Incomplete)
+    assert direct.effect.exception_name == "TypeError"
 
     # When producer_outcome yields a sole Halted, require pre-effect state
     # (honest red behind #6659 until codex-1 lossless reduce_body).

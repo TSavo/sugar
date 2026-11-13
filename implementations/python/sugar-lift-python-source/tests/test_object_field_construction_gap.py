@@ -6,7 +6,6 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectValue,
-    RaiseValue,
     SymbolicValue,
     TermValue,
 )
@@ -17,6 +16,7 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _site(tmp_path, member):
@@ -59,10 +59,10 @@ def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
     deleted = receiver.delattr("payload", site)
     assert isinstance(deleted, Complete)
     outcome = deleted.value.attribute("payload", site)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert isinstance(outcome.value.effect, RaiseEffect)
-    assert outcome.value.effect.exception_name == "AttributeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "AttributeError"
 
 
 def test_deferred_helper_field_keeps_its_coordinate_not_a_missing_field_panic(tmp_path):

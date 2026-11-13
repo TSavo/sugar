@@ -1,13 +1,15 @@
+"""The one source-cited term of an exceptional exit.
+
+A raise is a halted face (an ``Incomplete`` or a ``Halted`` arm) whose effect
+is a ``RaiseEffect``.  Its term, and the citation law that guards it, need
+only that effect.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import NoReturn
 
-from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
-
-from .exception_value import ExceptionValue
-from .exception_cause_value import ExceptionCauseValue
-from .floor_value import FloorValue
+from sugar_lift_py_tests.effect import RaiseEffect
 
 # Placeholder strings that invent exceptional-exit meaning outside the tree.
 # Identity/citation must come from Sugar/the tree — never these spellings.
@@ -20,50 +22,6 @@ FABRICATED_EXCEPTIONAL_EXIT_MEANING_LITERALS = frozenset(
         "<unknown raise locus>",
     }
 )
-
-
-@dataclass(frozen=True)
-class RaiseValue(FloorValue):
-    """A Python raise exit carried by a block frontier.
-
-    This is control-flow data, not an `Incomplete`: a `TrySugar` may route it through
-    a matching handler before universe lowering decides what residual effects remain.
-    """
-
-    effect: RaiseEffect
-    scope: object = None
-    exception: ExceptionValue | None = None
-    cause: ExceptionCauseValue | None = None
-
-    def follow_rest(self):
-        # Code after an unguarded raise never runs and is not part of the
-        # block record (unreachable). Drop it — same posture as a hard exit.
-        from sugar_lift_py_tests.outcome.follow_step import FollowStep
-
-        return FollowStep.halt(keeps_rest=False)
-
-    def truth(self, site):
-        # A raise is not a Python boolean. Expression evaluation already halted
-        # with the exceptional exit; demanding truthiness of the raise terminal
-        # is a force-floor stage bug (owner=truth, observed=RaiseValue). Re-emit
-        # the effect so `if <expr-that-raises>:` propagates rather than panics.
-        del site
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        return Incomplete(self.effect)
-
-    def guarded(self, formula):
-        from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
-
-        return GuardedRaise(
-            guards=(formula,),
-            effect=self.effect,
-            scope=self.scope,
-            cause=self.cause,
-        )
-
-    def post_contribution(self):
-        return (_exceptional_exit_formula(self.effect),)
 
 
 def _refuse_uncited_exit(
@@ -84,7 +42,7 @@ def _refuse_uncited_exit(
         # No locus on the face: the gap's observed prose is the coordinate.
         blame = observed
     construction_panic_gap(
-        owner="RaiseValue.exceptional_exit_term",
+        owner="exceptional_exit_term",
         blame=blame,
         observed=observed,
         requested=requested,

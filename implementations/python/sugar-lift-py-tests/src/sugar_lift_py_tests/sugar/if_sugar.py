@@ -252,11 +252,7 @@ class IfSugar(Sugar):
         truth) keeps the face's own value, as every condition face did before
         faces selected suites: that gap is the truth law's, not this one's.
         """
-        from sugar_lift_py_tests.floor import RaiseValue
-
-        if not isinstance(value, RaiseValue) and not isinstance(
-            value.truth(self.site), Complete
-        ):
+        if not isinstance(value.truth(self.site), Complete):
             return Complete(value)
         return self._desugar_condition(value, ctx)
 
@@ -288,7 +284,7 @@ class IfSugar(Sugar):
             branch_result_guard,
         )
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-        from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
+        from sugar_lift_py_tests.outcome import Completed, Halted
         from sugar_lift_py_tests.outcome.exit_set import partition as _partition
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
@@ -299,13 +295,8 @@ class IfSugar(Sugar):
         # b`) stands as its own formula, a bare value (`if c`) emits the Python
         # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
         # with no formula and is not lifted yet -- LOUD, never guard by nothing.
-        # Condition expression itself raised: the if never selects a branch.
-        # Do not demand truth of RaiseValue (that was force-floor:truth:RaiseValue).
-        from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        if isinstance(condition, RaiseValue):
-            return Incomplete(condition.effect)
+        # A condition expression that raised never gets here: it is an
+        # ``Incomplete``, handed back before any branch is selected.
         observed_formula = predicate_formula(condition, self.site)
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 

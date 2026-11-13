@@ -41,7 +41,6 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ListValue,
     ObjectValue,
-    RaiseValue,
     ReturnValue,
     TermValue,
 )
@@ -51,6 +50,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, BinOp, Call, Compare, Name
 from sugar_source_tree.tree import SourceFile
 from test_method_call_application_twins import bound_method_call_at
+from sugar_lift_py_tests.outcome import Incomplete
 
 # ---------------------------------------------------------------------------
 # Owner named on every red face (codex-3 general producer)
@@ -245,7 +245,7 @@ def _collect_return_values(root) -> list:
         if isinstance(value, ReturnValue):
             found.append(value)
             continue
-        if isinstance(value, RaiseValue):
+        if isinstance(value, Incomplete):
             continue
         statements = getattr(value, "statements", None)
         if statements:

@@ -7,7 +7,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ListValue,
-    RaiseValue,
     SymbolicValue,
     TermValue,
     TupleValue,
@@ -16,6 +15,7 @@ from sugar_lift_py_tests.ir import _Ctor, ctor
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.effect import RaiseEffect
 
 
 def _site(tmp_path):
@@ -65,9 +65,9 @@ def test_exact_constructed_bool_is_a_valid_repetition_count(sequence_type) -> No
 def test_list_times_known_ground_float_is_authenticated_type_error(tmp_path) -> None:
     outcome = ListValue((TermValue(1),)).multiply(TermValue(1.5), _site(tmp_path))
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -> None:
@@ -76,9 +76,9 @@ def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -
         _site(tmp_path),
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))

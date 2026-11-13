@@ -19,6 +19,7 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _site(tmp_path):
@@ -186,7 +187,6 @@ def test_undecided_store_completes_only_under_its_own_atom(tmp_path):
 
 def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.ir import str_const
 
     log: list[str] = []
@@ -196,12 +196,10 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
         def desugar(self, ctx=None):
             del ctx
             log.append("value")
-            return Complete(
-                RaiseValue(
-                    RaiseEffect(
-                        exception_type_coordinate=str_const("ValueError"),
-                        occurrence=AuthenticatedRaiseLocus.of("store.py:4:12"),
-                    )
+            return Incomplete(
+                RaiseEffect(
+                    exception_type_coordinate=str_const("ValueError"),
+                    occurrence=AuthenticatedRaiseLocus.of("store.py:4:12"),
                 )
             )
 
@@ -218,12 +216,11 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
     outcome = store.desugar()
 
     assert log == ["value"]
-    assert outcome.value.effect.exception_type_coordinate == str_const("ValueError")
+    assert outcome.effect.exception_type_coordinate == str_const("ValueError")
 
 
 def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.ir import str_const
 
     log: list[str] = []
@@ -233,12 +230,10 @@ def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
         def desugar(self, ctx=None):
             del ctx
             log.append("receiver")
-            return Complete(
-                RaiseValue(
-                    RaiseEffect(
-                        exception_type_coordinate=str_const("LookupError"),
-                        occurrence=AuthenticatedRaiseLocus.of("store.py:4:4"),
-                    )
+            return Incomplete(
+                RaiseEffect(
+                    exception_type_coordinate=str_const("LookupError"),
+                    occurrence=AuthenticatedRaiseLocus.of("store.py:4:4"),
                 )
             )
 
@@ -256,7 +251,7 @@ def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
     outcome = store.desugar()
 
     assert log == ["value", "receiver"]
-    assert outcome.value.effect.exception_type_coordinate == str_const("LookupError")
+    assert outcome.effect.exception_type_coordinate == str_const("LookupError")
 
 
 def test_store_halt_preserves_state_completed_before_it(tmp_path):

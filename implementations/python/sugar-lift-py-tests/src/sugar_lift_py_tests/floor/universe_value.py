@@ -100,13 +100,10 @@ class UniverseValue(FloorValue):
             for formula in entry.post_contribution()
         )
         if not exits:
-            from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
-            from sugar_lift_py_tests.floor.raise_value import RaiseValue
+            from sugar_lift_py_tests.sugar.exit_set_routing import is_hard_raise
 
             raises = tuple(
-                entry
-                for entry in self.record.statements
-                if isinstance(entry, (RaiseValue, GuardedRaise))
+                entry for entry in self.record.statements if is_hard_raise(entry)
             )
             if not raises:
                 from sugar_lift_py_tests.floor.none_value import NoneValue

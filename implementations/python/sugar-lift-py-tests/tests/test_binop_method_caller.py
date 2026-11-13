@@ -42,7 +42,6 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     NoneValue,
     ObjectValue,
-    RaiseValue,
     ReturnValue,
     TermValue,
 )
@@ -51,6 +50,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 from test_method_call_application_twins import bound_method_call_at
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.effect import RaiseEffect
 
 METHOD_BODY = (
     "class Adder:\n"
@@ -218,7 +219,7 @@ def _left_right_cids(pending: NativeOperationExitCarrierV1):
 
 
 def _collect_raise_values(root) -> list:
-    """Walk a dug body for RaiseValue faces (return-expression projection)."""
+    """Walk a dug body for raise faces (return-expression projection)."""
     found: list = []
     seen: set[int] = set()
     stack = [root]
@@ -227,7 +228,7 @@ def _collect_raise_values(root) -> list:
         if id(value) in seen:
             continue
         seen.add(id(value))
-        if isinstance(value, RaiseValue):
+        if isinstance(value, Incomplete) and isinstance(value.effect, RaiseEffect):
             found.append(value)
             continue
         statements = getattr(value, "statements", None)
@@ -388,7 +389,7 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
 
     Formal discharge (sibling test) owns pre-effect identity under #6659.
     Bound-method ``producer_outcome`` for a return expression may publish
-    ``Complete(CallSiteValue)`` whose dig surfaces ``RaiseValue(TypeError)``
+    ``Complete(CallSiteValue)`` whose dig surfaces a TypeError halt
     rather than ``ExitSet(Halted)`` — statement stores (setitem) project the
     halt face; return-of-add digs the raise. Either face must name TypeError;
     a completed sum is the silent-wrong twin. When sole Halted surfaces,
@@ -403,16 +404,8 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
     direct = NoneValue().add(TermValue(2), floor_site)
-    if isinstance(direct, Complete):
-        assert isinstance(direct.value, RaiseValue), direct
-        assert direct.value.effect.exception_name == "TypeError"
-    else:
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        assert isinstance(direct, Incomplete), direct
-        assert direct.effect.exception_type_coordinate == _identity("TypeError") or (
-            getattr(direct.effect, "exception_name", None) == "TypeError"
-        )
+    assert isinstance(direct, Incomplete), direct
+    assert direct.effect.exception_name == "TypeError"
 
     outcome = site.producer_outcome(None)
     if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
@@ -426,14 +419,14 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
         )
         return
 
-    # Return-expression projection: dig must surface RaiseValue(TypeError),
+    # Return-expression projection: dig must surface a TypeError halt,
     # never a completed numeric sum.
     assert isinstance(outcome, Complete), outcome
     assert isinstance(outcome.value, CallSiteValue), outcome.value
     dug = outcome.value._dig_floor_or_none(None, owner="binop-method-caller")
     assert dug is not None, outcome
     raises = _collect_raise_values(dug)
-    assert raises, f"no RaiseValue under dig: {type(dug).__name__} {dug!r:.300}"
+    assert raises, f"no raise under dig: {type(dug).__name__} {dug!r:.300}"
     assert any(r.effect.exception_name == "TypeError" for r in raises), raises
     # Discrimination: dig is not a completed sum of None+2.
     try:

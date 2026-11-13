@@ -295,8 +295,7 @@ class AttributionReport:
 
 def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
     from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     # A type-undetermined raise is still a halted face that this ledger must
@@ -307,14 +306,6 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
     if isinstance(outcome, Incomplete):
         return (
             (outcome.effect,) if isinstance(outcome.effect, raise_effect_types) else ()
-        )
-    if isinstance(outcome, Complete):
-        value = outcome.value
-        return (
-            (value.effect,)
-            if isinstance(value, RaiseValue)
-            and isinstance(value.effect, raise_effect_types)
-            else ()
         )
     if isinstance(outcome, ExitSet):
         return tuple(

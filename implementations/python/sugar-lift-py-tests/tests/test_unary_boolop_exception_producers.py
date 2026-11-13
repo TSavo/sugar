@@ -19,7 +19,9 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.floor import RaiseValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import SymbolicValue, TermValue
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.ir import atomic, make_var, not_
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
@@ -153,9 +155,9 @@ def test_unary_invert_concrete_bool_truthful_twin_folds() -> None:
 
 def test_unary_invert_concrete_float_lying_twin_has_typed_effect() -> None:
     outcome = TermValue(3.5).bitwise_invert(_Site())
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_unary_minus_concrete_integer_truthful_twin_folds() -> None:

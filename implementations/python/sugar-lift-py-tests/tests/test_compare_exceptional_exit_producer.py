@@ -691,7 +691,8 @@ def test_pandas_index_length_equality_retains_both_dispatch_faces() -> None:
 
 
 def test_source_decided_membership_in_number_emits_type_error() -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     twin = "def f():\n    return 1 in 2\n"
     tree = SourceFile(
@@ -709,13 +710,15 @@ def test_source_decided_membership_in_number_emits_type_error() -> None:
         _ValueSugar(TermValue(2)),
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_source_decided_none_greater_than_emits_type_error() -> None:
-    from sugar_lift_py_tests.floor import NoneValue, RaiseValue
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     twin = "def f():\n    return None > 1\n"
     tree = SourceFile(
@@ -733,9 +736,9 @@ def test_source_decided_none_greater_than_emits_type_error() -> None:
         _ValueSugar(TermValue(1)),
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_pandas_series_string_ordering_retains_both_faces() -> None:
@@ -760,15 +763,17 @@ def test_pandas_series_string_ordering_retains_both_faces() -> None:
 
 
 def test_source_decided_number_string_ordering_emits_type_error() -> None:
-    """Truthful twin: decided unorderable pair constructs TypeError RaiseValue.
+    """Truthful twin: decided unorderable pair halts with a TypeError.
 
     When both operands are source-visible ground values Python refuses to
-    order, Compare constructs an authenticated TypeError RaiseValue — not
+    order, Compare halts with an authenticated TypeError — not
     ``py.lt`` and not a RuntimeEffect.  Undecided ``obj < "a"`` still refuses
     named at the floor; this twin isolates the decided ground law on a
     workspace-relative locus the ground exit can cite.
     """
-    from sugar_lift_py_tests.floor import RaiseValue, StringValue
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     twin = 'def f():\n    return 1.0 < "a"\n'
     tree = SourceFile(
@@ -787,10 +792,10 @@ def test_source_decided_number_string_ordering_emits_type_error() -> None:
         node.fragment,
     ).desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
-    assert outcome.value.effect.blame is not None
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.effect.blame is not None
 
 
 @pytest.mark.parametrize(

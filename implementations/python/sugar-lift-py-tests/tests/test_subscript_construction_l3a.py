@@ -74,14 +74,13 @@ def test_list_literal_subscript_legacy_path_still_constructs():
 
 def test_none_subscript_constructs_typeerror_exit_not_owner_subscript_gap():
     """NoneValue.subscript is written — TypeError exit, not floor gap."""
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     try:
         outcome = _desugar_return("def A():\n    return None[0]\n")
     except ConstructionPanic as e:
         raise AssertionError(f"owner=subscript gap still fires: {e}") from e
-    # Desugar may Incomplete(TypeError effect) or Complete(RaiseValue)
+    # Desugar halts: Incomplete(TypeError effect)
     assert outcome is not None
 
 

@@ -13,14 +13,16 @@ class ExceptionalExitValue(FloorValue):
 
     This is control-flow testimony, not a Python exception instance and not a
     RuntimeEffect. Its term is the same source-cited exceptional-exit
-    coordinate emitted by ``RaiseValue`` and ``GuardedRaise`` posts.
+    coordinate a ``Halted`` raise face renders.
     """
 
     effect: RaiseEffect
 
     def to_term(self, *, owner: str):
         del owner
-        from sugar_lift_py_tests.floor.raise_value import _exceptional_exit_term
+        from sugar_lift_py_tests.floor.exceptional_exit_term import (
+            _exceptional_exit_term,
+        )
 
         return _exceptional_exit_term(self.effect)
 

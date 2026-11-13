@@ -220,11 +220,9 @@ class PositionalUnpackOperation:
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:
         """Named ValueError for decidable too-few / too-many (same door as name unpack)."""
-        from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
         from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
         relation = "not enough" if members < self.arity else "too many"
         observed = (
@@ -232,16 +230,11 @@ class PositionalUnpackOperation:
             f"{self.arity} fixed targets ({relation} values)"
         )
         if hasattr(self.blame, "filename") and hasattr(self.blame, "line"):
-            projected = ground_exceptional_exit(
+            return ground_exceptional_exit(
                 exception_name="ValueError",
                 site=self.blame,
                 owner=f"{self.owner}.arity_mismatch",
             )
-            if isinstance(projected, Complete) and isinstance(
-                projected.value, RaiseValue
-            ):
-                return Incomplete(projected.value.effect)
-            return projected
         construction_panic(
             ConstructionGap(
                 owner=self.owner,

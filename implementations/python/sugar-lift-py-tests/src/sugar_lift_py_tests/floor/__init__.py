@@ -47,7 +47,6 @@ from .floor_value import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
 from .function_callable import FunctionCallable
 from .partial_function_callable import PartialFunctionCallable
 from .package_source_accounting_value import PackageSourceAccountingValue
-from .guarded_raise import GuardedRaise
 from .guarded_loop_control import GuardedLoopControl
 from .guarded_faces import GuardedFaces
 from .guarded_value import GuardedValue
@@ -85,7 +84,6 @@ from .guarded_receiver_state_value import GuardedReceiverStateValue
 from .receiver_state_partition_value import ReceiverStatePartitionValue
 from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
-from .raise_value import RaiseValue
 from .raises_with_value import RaisesWithValue
 from .warning_observation_value import WarningObservationValue
 from .effect_coordinate import EffectCoordinate, ExceptionInfoCoordinate
@@ -144,7 +142,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     LocalExceptionClassValue,
     FunctionCallable,
     PartialFunctionCallable,
-    GuardedRaise,
     GuardedLoopControl,
     GuardedFaces,
     GuardedValue,
@@ -166,7 +163,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     TupleIteratorValue,
     OpaqueOpCallsite,
     PredicateValue,
-    RaiseValue,
     RaisesWithValue,
     ReceiverFieldStoreValue,
     ReceiverOwnedMutationResult,
@@ -229,7 +225,6 @@ __all__ = [
     "FloorValue",
     "FunctionCallable",
     "PartialFunctionCallable",
-    "GuardedRaise",
     "GuardedLoopControl",
     "GuardedFaces",
     "GuardedValue",
@@ -268,7 +263,6 @@ __all__ = [
     "ReceiverStatePartitionValue",
     "OpaqueOpCallsite",
     "PredicateValue",
-    "RaiseValue",
     "RaisesWithValue",
     "WarningObservationValue",
     "EffectCoordinate",

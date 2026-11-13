@@ -28,14 +28,14 @@ def _comparison(tmp_path: Path, expression: str):
 
 
 def test_pandas_ordering_helper_produces_named_type_error(tmp_path: Path) -> None:
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = _comparison(tmp_path, '1 < "mismatched"')
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RaiseValue)
-    assert outcome.value.effect.exception_name == "TypeError"
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "TypeError"
 
 
 def test_pandas_ordering_helper_keeps_compatible_ordering_non_exceptional(

@@ -149,7 +149,7 @@ def _fragment_coordinate(site: object) -> str | None:
 # Two subdomains inside the lift are leaves by nature: ``ir`` (the proof-term /
 # formula language — terms hold no outcomes) and ``effect`` (an effect is
 # RECORDED at its Incomplete/Halted position; its interior is testimony, and
-# descending would recount a construction-total RaiseValue's effect as red).
+# descending would recount a construction-total raise's effect as red).
 _SCALAR_TERMINALS = (str, bytes, bytearray, int, float, complex, bool, type, Enum)
 _WALK_DOMAIN = "sugar_lift_py_tests."
 _LEAF_SUBDOMAINS = ("sugar_lift_py_tests.ir", "sugar_lift_py_tests.effect")
