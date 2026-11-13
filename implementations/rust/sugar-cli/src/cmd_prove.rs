@@ -2,10 +2,9 @@
 //
 // `sugar prove` / `sugar verify`: runs the six-stage pipeline.
 //
-// The witness-discharge path resolves each lift surface's manifest (the SAME
-// dispatch lift uses) into a typed `WitnessDischargeContext` (project_dir +
-// resolvers). SEAM 6 / #3809: that resolution lives in `crate::discharge_config`,
-// shared with `cmd_verify`. Step 3: no SUGAR_WITNESS_PROJECT_DIR/RESOLVERS env.
+// Step 9: a witness row is decided from the package body the proof states
+// (the `witness-memento` member's `body_b64`, packaged by mint). Prove asks no
+// kit to resolve or re-run a witness.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,10 +28,6 @@ use crate::report_witness::{
     mint_witness_bundle, WitnessBundle, WitnessMintOptions, WitnessSource,
 };
 use crate::ProveArgs;
-
-// Witness-discharge config loads lift surface manifests for resolve plugins
-// (and optional DISCHARGE_* lie-env keys). No hardcoded `sugar-lift-<kit>`.
-// Lives in `crate::discharge_config` (shared with `cmd_verify`).
 
 // ---------------------------------------------------------------------------
 // pub fn run: entry point from main.rs
@@ -203,11 +198,6 @@ pub(crate) fn build_prove_outcome_with_options(
         emit_component_plan_warnings(&component_plan);
     }
 
-    let witness_discharge = crate::discharge_config::witness_discharge_for_plan(
-        project_root,
-        &cfg_doc,
-        Some(&component_plan),
-    );
     let plan_artifact = component_plan::plan_artifact_memento(
         project_root,
         PlanIntent::Prove,
@@ -269,7 +259,6 @@ pub(crate) fn build_prove_outcome_with_options(
             member_cid: artifact.member_cid.clone(),
             member_bytes: artifact.member_bytes.clone(),
         }),
-        witness_discharge,
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(
@@ -723,9 +712,6 @@ fn read_file_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Valu
         "bodyB64": B64.encode(&bytes),
     }))
 }
-
-// SEAM 6: witness-discharge env staging moved to `crate::discharge_config`
-// (shared with `cmd_verify`, closing the old face-to-face reach-in).
 
 fn run_admission_gate(args: &ProveArgs) -> u8 {
     crate::admission::run_admission_gate_with(

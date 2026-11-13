@@ -365,8 +365,13 @@ def witness_package_memento(
     count: int,
     passed: int,
     seed: bytes | None = None,
+    bundle_bytes: bytes | None = None,
 ) -> dict:
     """The ONE memento the `.proof` carries for a WHOLE SUITE: a WitnessPackageMemento.
+
+    ``bundle_bytes`` is the package body. When given it rides on the memento as
+    ``body_b64``: mint puts it in the proof and ``sugar prove`` reads it there
+    (step 9); prove never asks this kit to resolve or re-run anything.
 
     Instead of N per-test mementos, mint stores ONE pointer to the witness
     PACKAGE (the content-addressed `.witness` bundle): hash + signature over the
@@ -383,7 +388,7 @@ def witness_package_memento(
 
     sk = nacl.signing.SigningKey(_resolve_signer_seed(seed))
     sig = sk.sign(bundle_cid.encode("utf-8")).signature
-    return {
+    memento = {
         "kind": "witness-memento",
         "witness_cid": bundle_cid,
         "witness_kind": "pytest-witness-package",
@@ -394,6 +399,9 @@ def witness_package_memento(
         "count": count,
         "passed": passed,
     }
+    if bundle_bytes is not None:
+        memento["body_b64"] = base64.b64encode(bundle_bytes).decode("ascii")
+    return memento
 
 
 def discharge_bundle(

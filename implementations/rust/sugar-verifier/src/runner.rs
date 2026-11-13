@@ -126,10 +126,6 @@ pub struct RunnerConfig {
     /// Client-fed content CID of `plugin-registry.json` for the proof-run header
     /// (#3809 cut #2). Solve never opens that file. `None` → placeholder CID.
     pub plugin_registry_cid: Option<String>,
-    /// #3809: typed witness-discharge context (project_dir + resolvers).
-    /// Sole config surface for custom-witness package recompute (step 3:
-    /// `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS` env retired).
-    pub witness_discharge: crate::consistency::WitnessDischargeContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -497,13 +493,12 @@ impl Runner {
         // refuses their internal consistency. Discharged => PROVEN-consistent;
         // Unsatisfied => REFUSED-contradictory; Undecidable => encoding STOP
         // surfaced as a violation (never silently passed).
-        let consistency_results = crate::consistency::verify_consistency_with_policy(
+        let consistency_results = crate::consistency::verify_consistency(
             &pool,
             &self.plan,
             &self.registry,
             &self.compilers,
             &self.cfg.project_root,
-            &self.cfg.witness_discharge,
         );
         for cr in &consistency_results {
             match cr.verdict {
@@ -782,13 +777,12 @@ impl Runner {
 
         // Receipt 1: test-assertion consistency pass (see the matching block
         // in the primary run path).
-        let consistency_results = crate::consistency::verify_consistency_with_policy(
+        let consistency_results = crate::consistency::verify_consistency(
             &pool,
             plan,
             registry,
             compilers,
             &self.cfg.project_root,
-            &self.cfg.witness_discharge,
         );
         for cr in &consistency_results {
             match cr.verdict {

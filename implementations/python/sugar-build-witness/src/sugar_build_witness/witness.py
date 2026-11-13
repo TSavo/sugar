@@ -319,6 +319,9 @@ def build_witness_memento(w: BuildWitness, seed: bytes | None = None) -> dict[st
         "distributed_script_cid": w.distributed_script_cid,
         "source_tree_cid": w.source_tree_cid,
         "toolchain_id": w.toolchain_id,
+        # The package body itself (step 9): mint puts it in the proof and
+        # `sugar prove` reads it there; prove never asks this kit to resolve it.
+        "body_b64": base64.b64encode(witness_body(w)).decode("ascii"),
     }
 
 
