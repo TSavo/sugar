@@ -67,6 +67,8 @@ write_component "rust-walk" "$BIN_DIR/sugar-walk-rpc" "--rpc"
 write_component "rust-test-assertions" "$BIN_DIR/rust_test_assertions_rpc"
 write_component "rust-cargo-test-witness" "$BIN_DIR/witness_rpc"
 write_component "ir-compiler-smt-lib" "$BIN_DIR/sugar-ir-smt-lib"
+# `sugar prove` starts only components whose role is ir-compiler (step 9).
+echo 'role = "ir-compiler"' >> "$COMPONENTS/ir-compiler-smt-lib/manifest.toml"
 export SUGAR_COMPONENT_PATH="$COMPONENTS"
 
 VENDOR="$HERE/vendor"

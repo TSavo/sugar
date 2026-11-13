@@ -67,6 +67,8 @@ version = "0.1.0"
 protocol_version = "sugar-component/1"
 command = ["$command"]
 TOML
+  # `sugar prove` starts only components whose role is ir-compiler (step 9).
+  case "$name" in ir-compiler-*) echo 'role = "ir-compiler"' >> "$dir/manifest.toml" ;; esac
 }
 
 write_component_registry() {

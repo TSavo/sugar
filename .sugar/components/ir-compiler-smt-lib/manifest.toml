@@ -3,5 +3,8 @@
 name = "ir-compiler-smt-lib"
 version = "0.1.0"
 protocol_version = "sugar-component/1"
+# `sugar prove` starts only components whose role is ir-compiler; it never
+# starts a lift kit (step 9).
+role = "ir-compiler"
 command = ["implementations/rust/target/debug/sugar-ir-smt-lib"]
 working_dir = "../../.."

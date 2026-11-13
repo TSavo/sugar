@@ -163,6 +163,11 @@ struct ComponentRegistration {
     /// Languages this component can claim, from the manifest's `languages`.
     /// Empty means undeclared: the component is asked about every workspace.
     languages: Vec<String>,
+    /// What the component is, from the manifest's `role`. `sugar prove`
+    /// starts only components whose role is [`IR_COMPILER_ROLE`]: proving
+    /// reads `.proof` files and never starts a lift kit (step 9).
+    #[allow(dead_code)] // read by plan_ir_compilers_for_prove (cmd_prove, binary module tree)
+    role: Option<String>,
     source: PathBuf,
     source_cid: String,
 }
@@ -186,6 +191,8 @@ struct ComponentManifest {
     working_dir: Option<PathBuf>,
     #[serde(default)]
     languages: Vec<String>,
+    #[serde(default)]
+    role: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -387,6 +394,79 @@ pub fn plan_workspace_with_options(
     if let Ok(mut cache) = component_plan_cache().lock() {
         cache.insert(cache_key, plan.clone());
     }
+    plan
+}
+
+/// The registration `role` of an IR compiler component. The compiler's own
+/// plan answer already claims this role (`sugar-ir-compiler` server).
+#[allow(dead_code)] // read by plan_ir_compilers_for_prove (cmd_prove, binary module tree)
+pub(crate) const IR_COMPILER_ROLE: &str = "ir-compiler";
+
+/// The component plan `sugar prove` uses: IR compilers only.
+///
+/// Proving reads `.proof` files; it never starts a lift kit (step 9; owner,
+/// 2026-11-13: "The act of lifting and creating the proof, and the act of
+/// reading the proof and proving it, are two completely separate operations").
+/// So prove asks only components whose registration says `role =
+/// "ir-compiler"`, and keeps only the compilers they declare. Compilers are
+/// keyed by the solver seat's target dialect (`smt-lib-v2.6`, Lean, Coq,
+/// Maude), not by the language a proof was lifted from, so nothing about the
+/// proof's source language is needed to choose one. No workspace census is
+/// taken: there is no language to claim.
+#[allow(dead_code)] // called by cmd_prove in the binary module tree
+pub(crate) fn plan_ir_compilers_for_prove(
+    project_root: &Path,
+    options: ComponentPlanOptions,
+) -> ComponentPlan {
+    let project_root = absolute_path(project_root);
+    let mut plan = ComponentPlan::default();
+    let discovered = discover_components(&project_root);
+    plan.diagnostics.extend(discovered.diagnostics);
+    for component in discovered
+        .components
+        .into_iter()
+        .filter(|component| component.role.as_deref() == Some(IR_COMPILER_ROLE))
+    {
+        match request_component_plan(&component, &project_root, &plan.census, PlanIntent::Prove) {
+            ComponentPlanOutcome::Claimed { result, .. } => {
+                info!(
+                    component = component.name,
+                    ir_compilers = result.ir_compilers.len(),
+                    "component claimed workspace"
+                );
+                plan.selected_components
+                    .push(PlannedComponent::from_registration(&component));
+                plan.ir_compilers.extend(result.ir_compilers);
+                plan.diagnostics.extend(result.diagnostics);
+            }
+            ComponentPlanOutcome::Declined { reason, .. } => {
+                debug!(
+                    component = component.name,
+                    reason = reason.as_deref().unwrap_or("compiler declined workspace"),
+                    "component declined workspace"
+                );
+            }
+            ComponentPlanOutcome::Failed { error } => {
+                warn!(
+                    component = component.name,
+                    source = %component.source.display(),
+                    error,
+                    "component plan failed"
+                );
+                let level =
+                    if options.allow_failed_components || component_binary_unavailable(&error) {
+                        DiagnosticLevel::Warning
+                    } else {
+                        DiagnosticLevel::Error
+                    };
+                plan.diagnostics.push(ComponentDiagnostic {
+                    level,
+                    message: failed_component_message(&component, &error),
+                });
+            }
+        }
+    }
+    dedupe_ir_compilers(&mut plan.ir_compilers);
     plan
 }
 
@@ -974,6 +1054,7 @@ fn parse_component_manifest(path: &Path) -> Result<ComponentRegistration, String
             .map(|language| normalize_language(language))
             .filter(|language| !language.is_empty())
             .collect(),
+        role: manifest.role,
         source: path.to_path_buf(),
         source_cid,
     })
@@ -2479,6 +2560,7 @@ done
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             languages: Vec::new(),
+            role: None,
             source: PathBuf::from("manifest.toml"),
             source_cid: blake3_512_of(b"test-component"),
         };
@@ -2517,6 +2599,7 @@ done
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             languages: Vec::new(),
+            role: None,
             source: PathBuf::from("manifest.toml"),
             source_cid: blake3_512_of(b"walk-component"),
         };
@@ -2564,6 +2647,7 @@ done
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             languages: Vec::new(),
+            role: None,
             source: PathBuf::from("manifest.toml"),
             source_cid: blake3_512_of(b"compiler-component"),
         };
@@ -2907,6 +2991,60 @@ languages = ["Python"]
                 allow_failed_components: false,
             },
         )
+    }
+
+    /// Two unspawnable components, a Python lift kit and an IR compiler, in
+    /// a workspace that holds Python. `plan_ir_compilers_for_prove` must try
+    /// the compiler (its spawn failure is named) and never the lift kit.
+    fn prove_plan_with_unspawnable_kit_and_compiler(project: &Path) -> ComponentPlan {
+        let root = tempfile::tempdir().unwrap();
+        for (dir, manifest) in [
+            (
+                "python",
+                "name = \"python\"\nversion = \"0.1.0\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"./definitely-not-installed-python-kit\"]\nlanguages = [\"Python\"]\n",
+            ),
+            (
+                "ir-compiler-test",
+                "name = \"ir-compiler-test\"\nversion = \"0.1.0\"\nprotocol_version = \"sugar-component/1\"\nrole = \"ir-compiler\"\ncommand = [\"./definitely-not-installed-ir-compiler\"]\n",
+            ),
+        ] {
+            let component_dir = root.path().join(dir);
+            std::fs::create_dir_all(&component_dir).unwrap();
+            std::fs::write(component_dir.join("manifest.toml"), manifest).unwrap();
+        }
+        let component_path = std::env::join_paths([root.path()]).unwrap();
+
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", project.join("home"));
+        let _sugar_home = EnvGuard::remove("SUGAR_HOME");
+        let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
+        let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
+
+        plan_ir_compilers_for_prove(project, ComponentPlanOptions::default())
+    }
+
+    #[test]
+    fn prove_plan_never_starts_a_lift_kit() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("mod.py"), "x = 1\n").unwrap();
+
+        let plan = prove_plan_with_unspawnable_kit_and_compiler(project.path());
+
+        assert!(
+            plan.diagnostics
+                .iter()
+                .all(|d| !d.message.contains("definitely-not-installed-python-kit")),
+            "sugar prove must not start a lift kit for its component plan: {:?}",
+            plan.diagnostics
+        );
+        assert!(
+            plan.diagnostics
+                .iter()
+                .any(|d| d.message.contains("definitely-not-installed-ir-compiler")),
+            "sugar prove must still ask a registered IR compiler: {:?}",
+            plan.diagnostics
+        );
+        assert!(plan.lift_manifests.is_empty() && plan.plugins.is_empty());
     }
 
     #[test]
