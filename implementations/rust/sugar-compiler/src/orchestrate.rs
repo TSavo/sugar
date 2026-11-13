@@ -83,7 +83,7 @@ const SOLVE_SELF_LOAD_SEED: [u8; 32] = [0x53; 32]; // 'S' for solve
 /// Fixture / SEAM-5 discrimination verbs for `ProofGraph`.
 ///
 /// **Not the production solve door (sugar#3859).** Production faces must call
-/// [`solve_project`] / [`solve_project_with_pool`] / [`prove_from_kit`] — those
+/// [`solve_project`] / [`solve_project_with_pool`] — those
 /// wrap the real `Runner::run_with_proof_run*` report pipeline as
 /// [`ProvenOutcome`]. This trait short-circuits on link failure and discharges
 /// via bare `verify_consistency` (no proof-run stages, no report bytes). It
@@ -257,8 +257,8 @@ impl ProvenOutcome {
 /// Disk-load face: builds the pool via [`load_pool`] then runs the **one**
 /// discharge body. Solve is one path, zero project FS (#3809 series).
 ///
-/// Callers that already hold a multi-speaker pool (e.g. [`prove_from_kit`])
-/// use [`solve_project_with_pool`] — same body, preloaded pool, one path.
+/// Callers that already hold a multi-speaker pool use
+/// [`solve_project_with_pool`] — same body, preloaded pool, one path.
 pub fn solve_project(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
@@ -340,89 +340,21 @@ fn discharge_with_pool(
     })
 }
 
-/// Failures staging the kit walk + testimony into a dischargeable pool —
-/// precondition class, distinct from either red (link error or verdict).
+/// Failures of mint's step-3 round (vendor testimony, the preliminary fold,
+/// the bound import table). Prove never produces these: it reads `.proof`
+/// files only (owner, 2026-11-13).
 #[derive(Debug, thiserror::Error)]
 pub enum ProveFromKitError {
-    #[error("prove_from_kit: fold claim tree failed: {0}")]
+    #[error("import round: fold claim tree failed: {0}")]
     Fold(#[from] FeedError),
-    #[error("prove_from_kit: could not load local folded graph with speaker: {0}")]
+    #[error("import round: could not load local folded graph with speaker: {0}")]
     LocalLoad(String),
-    #[error("prove_from_kit: vendor testimony resolve failed: {0}")]
+    #[error("import round: vendor testimony resolve failed: {0}")]
     Testimony(#[from] TestimonyError),
-    #[error("prove_from_kit: context-manager preconstruction failed: {0}")]
+    #[error("import round: context-manager preconstruction failed: {0}")]
     Preconstruction(String),
     #[error(transparent)]
     Solve(#[from] SolveError),
-}
-
-/// One walk entry for project prove (#3809 Task 8–9): fold the kit claim tree
-/// as the consumer speaker, fold in vendor testimony when available, and
-/// discharge through the production solve beats — **without** batch mint.
-///
-/// Algorithm:
-/// 1. `local = fold_project(kit, root, Some(&speaker))` — content only
-/// 2. `pool = pool_from_graph_with_speaker(local, speaker)` — consumer stamp
-/// 3. `kit.testimony(root)` → when `Proofs`, `load_proof_bytes_into_pool`
-///    (vendor speakers already on each `ProofBytes`; first-writer-wins merge)
-/// 4. `cfg.extra_proofs` → same pool merge (CLI dependency-proof face; the
-///    preloaded-pool Runner path does not re-walk `extra_proofs`)
-/// 5. [`solve_project_with_pool`] — same annotate + Runner path as disk prove
-///
-/// Production face: `sugar prove` routes here when a lift kit can rendezvous
-/// for the project surface (Task 9). Batch mint remains for `.proof` sealing
-/// / publish; prove no longer requires a prior mint for the local surface.
-/// LIFT half of [`prove_from_kit`]: walk enumerate + optional testimony into
-/// a multi-speaker pool. May spawn the kit and (kit-side) read sources.
-/// Not the solve DoD surface — use [`solve_project_with_pool`] once the pool is fed.
-pub fn prove_from_kit(
-    kit: &Kit,
-    workspace_root: &Path,
-    speaker: Speaker,
-    cfg: RunnerConfig,
-    compilers: CompilerRegistry,
-) -> Result<ProvenOutcome, ProveFromKitError> {
-    let pool = fold_kit_to_pool(kit, workspace_root, speaker, &cfg)?;
-    Ok(solve_project_with_pool(cfg, compilers, pool)?)
-}
-
-pub fn fold_kit_to_pool(
-    kit: &Kit,
-    workspace_root: &Path,
-    speaker: Speaker,
-    cfg: &RunnerConfig,
-) -> Result<MementoPool, ProveFromKitError> {
-    // Dependency testimony is the preliminary authenticated pool. It must be
-    // resident before any local tree construction: preconstruction contract
-    // declaration/catalog/demand binding reads this pool, while Sugar never
-    // does. Local construction is merged only after that front completes.
-    let mut pool = MementoPool::default();
-    load_vendor_testimony(kit, workspace_root, &mut pool)?;
-
-    // 2. CLI / RunnerConfig dependency proofs (same merge disk load_pool uses).
-    // Must happen here: `run_with_proof_run_with_pool` does not re-apply
-    // `cfg.extra_proofs` (pool is already assembled).
-    if !cfg.extra_proofs.is_empty() {
-        load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
-    }
-
-    let imports = resolve_imports_before_construction(kit, workspace_root, &speaker, &mut pool)?;
-
-    // 7-8. Local semantic construction occurs only after ref installation.
-    let local = if imports.is_bound() {
-        // The declaration graph was already sealed into the preliminary pool;
-        // this pass is semantic construction only.
-        feed_from_tree::fold_claim_tree(kit, workspace_root)?
-    } else {
-        feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?
-    };
-    let local_pool =
-        pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
-    pool.merge(local_pool);
-
-    imports.final_check()?;
-
-    Ok(pool)
 }
 
 /// What step 3 leaves behind: the catalog the linker answered from and the
@@ -469,8 +401,8 @@ pub fn resolve_imports_for_walk(
 }
 
 /// Step 3 of the nine steps: resolve imports before construction. ONE
-/// implementation, called by prove's fold ([`fold_kit_to_pool`]) and by mint's
-/// walk ([`resolve_imports_for_walk`]).
+/// implementation, called by mint's walk ([`resolve_imports_for_walk`]).
+/// Prove never calls it: prove reads `.proof` files only.
 ///
 /// The kit lists the imported names it needs contracts for (`contract-demands`).
 /// The linker answers each from the authenticated pool with a contract or a
@@ -536,7 +468,7 @@ fn load_vendor_testimony(
     let resolution = kit.testimony(workspace_root)?;
     for diagnostic in &resolution.diagnostics {
         tracing::warn!(
-            target: "sugar_compiler::prove_from_kit",
+            target: "sugar_compiler::import_round",
             "testimony diagnostic: {diagnostic}"
         );
     }
@@ -548,7 +480,7 @@ fn load_vendor_testimony(
             // Honest empty vendor feed: discharge over local members only.
             // Name the absence — same law as gaps-are-nodes (never silent empty).
             tracing::warn!(
-                target: "sugar_compiler::prove_from_kit",
+                target: "sugar_compiler::import_round",
                 plugin = %plugin,
                 reason = %reason,
                 "vendor testimony unavailable; working over the local fold only"

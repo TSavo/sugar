@@ -372,9 +372,8 @@ fn resolve_overlay_kit_face(project_root: &Path) -> Result<Kit, OverlayNoKit> {
 /// #3809: consumer feed half — enumerate→fold→pool, NOT batch mint.
 ///
 /// Walk `sugar.enumerate` via `fold_project`, stamp consumer speaker at pool
-/// intake (`pool_from_graph_with_speaker`). Same construction as the lift
-/// front of `prove_from_kit` / `fold_kit_to_pool` for the local graph (vendor
-/// testimony stays on the resident base index, not re-merged here).
+/// intake (`pool_from_graph_with_speaker`). Vendor testimony stays on the
+/// resident base index, not re-merged here.
 pub fn feed_overlay_pool(
     overlay_root: &Path,
 ) -> Result<sugar_verifier::types::MementoPool, String> {

@@ -50,7 +50,7 @@ help:
 	@echo "  make test-all       the acid test: test-rust + test-python"
 	@echo "  make test-showcases run the checked-in end-to-end showcase receipts"
 	@echo "  make test-real-python-kit-lsp  real pandas kit through LSP (battleaxe; skip=red)"
-	@echo "  make test-3809-dod-scoreboard  consolidated #3809 DoD (warm+LSP+golden; skip=red)"
+	@echo "  make test-3809-dod-scoreboard  consolidated #3809 DoD (LSP+golden; skip=red)"
 	@echo "  make examples-gate  run public example smoke scripts against the ratchet fixture"
 	@echo ""
 	@echo "Per-language build:"
