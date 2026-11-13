@@ -912,7 +912,7 @@ mod json_to_cvalue_tests {
     }
 }
 
-/// #3901 silent-loss instruments at the feed→prove_from_kit boundary.
+/// #3901 silent-loss instruments at the feed→pool boundary.
 ///
 /// Axes:
 ///   R_formal_sorts_dropped — IR formalSorts must reach the claim member

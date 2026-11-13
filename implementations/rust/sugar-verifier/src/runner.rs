@@ -241,8 +241,7 @@ impl Runner {
     /// Production discharge **body** (stages + report + witnesses).
     ///
     /// **Not the face door (sugar#3859).** CLI/LSP production faces must call
-    /// `sugar_compiler::orchestrate::{solve_project, solve_project_with_pool,
-    /// prove_from_kit}`, which wrap this body as beat 2 of `ProvenOutcome`.
+    /// `sugar_compiler::orchestrate::{solve_project, solve_project_with_pool}`, which wrap this body as beat 2 of `ProvenOutcome`.
     /// Direct face calls re-open the dual door the typed view sealed.
     /// Tests and the orchestrate owner may call this for byte-identity pins.
     pub fn run_with_proof_run(&self) -> Result<ProofRunArtifact, ProofRunArtifactError> {

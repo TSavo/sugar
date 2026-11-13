@@ -18,8 +18,8 @@
 //   R_universe_body_missing / R_universe_body_extra
 //       — (name, slot, FOL) for function-contract body slots
 //
-// Green only when construction carries mint-complete shape. Does NOT point
-// CLI mint/prove at prove_from_kit. Pandas: skipped when no local lightweight
+// Green only when construction carries mint-complete shape. CLI prove reads
+// `.proof` files only (step 9). Pandas: skipped when no local lightweight
 // fixture is available without external sugar-pandas-demo (enumerate hard-pinned).
 //
 // Skips (not fails) when python3/blake3 unavailable.

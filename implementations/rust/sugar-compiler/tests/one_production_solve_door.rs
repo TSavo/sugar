@@ -3,7 +3,7 @@
 // sugar#3859 dual-door instrument: ONE production solve door.
 //
 // Law: production faces discharge through
-//   `sugar_compiler::orchestrate::{solve_project, solve_project_with_pool, prove_from_kit}`
+//   `sugar_compiler::orchestrate::{solve_project, solve_project_with_pool}`
 // which wrap the real `Runner::run_with_proof_run*` body as beat 2 and return
 // `ProvenOutcome` (typed view + #3893 exit-code class).
 //
@@ -15,7 +15,7 @@
 //   - `Runner::run_with_tiers` / bare `Runner::run` from CLI prove/verify faces
 //
 // Replacement for every offender: route the face through `solve_project` /
-// `solve_project_with_pool` / `prove_from_kit`. Keep `run_with_proof_run*` as the
+// `solve_project_with_pool`. Keep `run_with_proof_run*` as the
 // body INSIDE orchestrate; do not re-open a parallel face path.
 //
 // R axes (measured live; red while any > 0):
@@ -99,12 +99,12 @@ fn scan_face_bypass(root: &Path) -> Vec<Offender> {
         (
             ".run_with_proof_run(",
             "face_bypass_runner",
-            "call sugar_compiler::orchestrate::solve_project / solve_project_with_pool / prove_from_kit",
+            "call sugar_compiler::orchestrate::solve_project / solve_project_with_pool",
         ),
         (
             ".run_with_proof_run_with_pool(",
             "face_bypass_runner",
-            "call sugar_compiler::orchestrate::solve_project / solve_project_with_pool / prove_from_kit",
+            "call sugar_compiler::orchestrate::solve_project / solve_project_with_pool",
         ),
         (
             ".run_with_tiers(",
@@ -143,20 +143,18 @@ fn scan_face_missing_one_door(root: &Path) -> Vec<Offender> {
         let text = read_rel(root, rel);
         let has_solve_project =
             text.contains("orchestrate::solve_project(") || text.contains("solve_project(");
-        let has_prove_from_kit =
-            text.contains("orchestrate::prove_from_kit(") || text.contains("prove_from_kit(");
-        if !(has_solve_project || has_prove_from_kit) {
+        if !has_solve_project {
             offenders.push(Offender {
                 axis: "face_missing_one_door",
                 path: rel.to_string(),
                 line: 1,
-                text: "no solve_project / prove_from_kit call site".to_string(),
+                text: "no solve_project call site".to_string(),
                 replacement:
                     "route prove/verify through sugar_compiler::orchestrate::solve_project \
-                     or prove_from_kit (THE production solve door, sugar#3859)",
+                     (THE production solve door, sugar#3859)",
             });
         }
-        // cmd_verify must use solve_project (disk face); cmd_prove may use either.
+        // cmd_verify must use solve_project (disk face); so must cmd_prove (it reads `.proof` files only).
         if *rel == "sugar-cli/src/cmd_verify.rs" && !has_solve_project {
             offenders.push(Offender {
                 axis: "face_missing_one_door",
@@ -243,7 +241,7 @@ fn walk_rs(dir: &Path, f: &mut dyn FnMut(String, &str)) {
 fn format_report(axis: &str, offenders: &[Offender]) -> String {
     let mut s = format!(
         "\nR({axis}) = {} measured offender(s). sugar#3859: ONE production solve door.\n\
-         Replacement: faces → solve_project / solve_project_with_pool / prove_from_kit; \
+         Replacement: faces → solve_project / solve_project_with_pool; \
          Runner::run_with_proof_run* stays the body inside orchestrate only.\n\n",
         offenders.len()
     );
@@ -288,8 +286,8 @@ fn one_production_solve_door_instrument() {
     let prove = read_rel(&root, "sugar-cli/src/cmd_prove.rs");
     let verify = read_rel(&root, "sugar-cli/src/cmd_verify.rs");
     assert!(
-        prove.contains("solve_project(") || prove.contains("prove_from_kit("),
-        "cmd_prove must route through the one door"
+        prove.contains("solve_project(") && !prove.contains("prove_from_kit("),
+        "cmd_prove must route through the one door: the `.proof` files, never a kit fold"
     );
     assert!(
         verify.contains("solve_project("),
@@ -319,6 +317,6 @@ fn one_production_solve_door_instrument() {
 
     eprintln!(
         "RECEIPT sugar#3859 one production solve door: R=0 \
-         (faces→solve_project*/prove_from_kit; body=run_with_proof_run* in orchestrate only)"
+         (faces→solve_project*; body=run_with_proof_run* in orchestrate only)"
     );
 }

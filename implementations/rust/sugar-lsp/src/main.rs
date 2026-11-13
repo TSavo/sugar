@@ -38,8 +38,7 @@
 // from the workspace root's `.sugar/imports`. On `didOpen`/`didSave` (and
 // `didChange`, debounced 250ms), the edited buffer is staged into a
 // SOURCE-OVERLAY and FEED via enumerate→fold
-// (`sugar_compiler::feed_from_tree` / `pool_from_graph_with_speaker` — same
-// composition as CLI `prove_from_kit`), then solved against the resident
+// (`sugar_compiler::feed_from_tree` / `pool_from_graph_with_speaker`), then solved against the resident
 // base index via THE ONE DOOR
 // (`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`
 // — #3809 one feed + one solve; no parallel mint-as-feed).
