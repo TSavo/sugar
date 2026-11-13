@@ -1511,6 +1511,13 @@ class GeneratorConstructionV1:
             )
             from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
+            if _halts_with_a_raise(value):
+                # The value raised: the step halts with the machine's state and
+                # still runs any already-written cited exit (as the attribute
+                # store, assert and term steps do for their halts).
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(value.effect, state=self)
+                )
             if isinstance(value, NativeOperationExitCarrierV1):
                 return value.and_then(continue_assign)
             if isinstance(value, (Incomplete, ExitSet)):
@@ -1717,6 +1724,13 @@ class GeneratorConstructionV1:
             )
             from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
+            if _halts_with_a_raise(value):
+                # The value raised: the step halts with the machine's state and
+                # still runs any already-written cited exit (as the attribute
+                # store, assert and term steps do for their halts).
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet.halted(value.effect, state=self)
+                )
             if isinstance(value, NativeOperationExitCarrierV1):
                 return value.and_then(continue_return)
             if isinstance(value, (Incomplete, ExitSet)):
@@ -1760,6 +1774,13 @@ class GeneratorConstructionV1:
         )
         from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
+        if _halts_with_a_raise(value):
+            # The value raised: the step halts with the machine's state and
+            # still runs any already-written cited exit (as the attribute
+            # store, assert and term steps do for their halts).
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet.halted(value.effect, state=self)
+            )
         if isinstance(value, NativeOperationExitCarrierV1):
             return value.and_then(continue_yield)
         if isinstance(value, (Incomplete, ExitSet)):
@@ -2750,3 +2771,21 @@ def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
         else:
             out.append(Completed(guard, inner.value, faces, owed))
     return ExitSet(tuple(out)).normalize()
+
+
+def _halts_with_a_raise(value) -> bool:
+    """A step's value that raised: one unconditional halt with a ``RaiseEffect``.
+
+    This is the halt ``ground_exceptional_exit`` returns (``1 // 0``).  It
+    carries no branch condition and no pending contract, so the step's own
+    halted face, with the machine's state, is the whole outcome.
+    """
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return (
+        isinstance(value, Incomplete)
+        and isinstance(value.effect, RaiseEffect)
+        and not value.branch_conditions
+        and not value.pending_contracts
+    )

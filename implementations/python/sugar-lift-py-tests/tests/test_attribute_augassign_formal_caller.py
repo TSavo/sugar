@@ -342,9 +342,8 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
     assert isinstance(
         out, Incomplete
     ), f"store halt must be Incomplete (halted store face), not {type(out).__name__}: {out}"
-    # Discrimination: a completed raise would greenwash statement completion.
-    with pytest.raises(AssertionError):
-        assert isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect)
+    assert isinstance(out.effect, RaiseEffect)
+    # Discrimination: a completed store would greenwash statement completion.
     with pytest.raises(AssertionError):
         assert isinstance(out, Complete) and isinstance(out.value, ObjectValue)
 

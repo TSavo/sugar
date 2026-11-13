@@ -67,7 +67,7 @@ _RAISE_VALUE_PATH = (
     / "src"
     / "sugar_lift_py_tests"
     / "floor"
-    / "raise_value.py"
+    / "exceptional_exit_term.py"
 )
 
 

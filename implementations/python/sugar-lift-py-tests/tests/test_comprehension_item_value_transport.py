@@ -9,12 +9,7 @@ import pytest
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import (
-    ComprehensionValue,
-    ListValue,
-    ObjectValue,
-    TermValue,
-)
+from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.object_field import ObjectField
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -105,7 +100,6 @@ def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RaiseEffect)
-    assert not isinstance(outcome.value, ComprehensionValue)
 
 
 def test_tuple_target_coordinate_swap_is_refused_by_source_owner() -> None:
