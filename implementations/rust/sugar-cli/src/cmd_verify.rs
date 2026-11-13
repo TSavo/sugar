@@ -620,12 +620,6 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         emit_component_plan_warnings(&component_plan);
     }
 
-    let witness_discharge = crate::discharge_config::witness_discharge_for_plan(
-        project_root,
-        &cfg_doc,
-        Some(&component_plan),
-    );
-
     let mut extra_projects: Vec<PathBuf> = Vec::new();
     for callee in &cfg_doc.callees {
         let p = project_root.join(callee);
@@ -671,7 +665,6 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         solvers_config,
         link_bundle_cid,
         plugin_registry_cid,
-        witness_discharge,
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(

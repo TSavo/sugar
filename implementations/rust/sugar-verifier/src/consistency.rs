@@ -58,10 +58,9 @@
 // change, which is queued as the next capability and deliberately not built
 // here.
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rayon::prelude::*;
@@ -1248,105 +1247,46 @@ fn compact_json(value: &Json) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<json>".to_string())
 }
 
-/// Kit oracle RPC method: the ONE resolve door for discharge.
+/// Witness package bodies the proof states, keyed by `witness_cid`.
 ///
-/// Conceptual `WitnessPool::get(packageCid)` over the wire — kit returns
-/// `.witness` bundle bytes (`body_b64`). Rust never trusts a kit verdict
-/// string; verify is always [`package_outcome`] (blake3 vs packageCid +
-/// committed outcomes). Do not invent a `WitnessPool` struct: the pool face
-/// is realized by this RPC + Rust seal.
-const ORACLE_RESOLVE_METHOD: &str = "sugar.plugin.resolve_witness";
+/// Step 9 (owner, 2026-11-13; ruling 4 on #7766): prove reads `.proof` files
+/// only and executes nothing. Mint packages each witness body into its
+/// `witness-memento` member (`body_b64`); the solve reads it from there. No kit
+/// is asked to resolve or re-run a witness, so there is no resolver, no project
+/// directory and no RPC on this path. A witness row whose body the proof does
+/// not state is undecided by name.
+pub type WitnessBodies = BTreeMap<String, Vec<u8>>;
 
-#[derive(Debug, Clone)]
-struct WitnessResolver {
-    argv: Vec<String>,
-    working_dir: PathBuf,
-    method: String,
-}
-
-/// Typed witness-discharge context (#3809 witness-as-verb).
-///
-/// **CID-idempotency (protocol law):** a witness `ObligationVerdict` is a pure
-/// function of content-addressed inputs (`packageCid` on the claim + contract
-/// identity + resolver body bytes). Two paths that feed the same inputs MUST
-/// return byte-identical verdicts; disagreement is a red test, not a
-/// "double-entry" hazard.
-///
-/// **Trust boundary:** resolve = kit oracle RPC ([`ORACLE_RESOLVE_METHOD`]);
-/// verify = Rust [`package_outcome`]. Discharge is speak-packageCid-to-oracle
-/// → seal outcome. One resolve door only.
-///
-/// **Step 3:** `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS` are
-/// retired as a live config channel. This struct is the sole config surface
-/// for project_dir + resolvers (CLI fills it via `WitnessDischargeConfig`).
-/// Package CID stays on the claim (`evidence.certificate.proofData`).
-///
-/// Resolvers are **client-fed only** (#3809 PR series, cut #6): faces (CLI
-/// `discharge_config`, LSP) load lift manifests and set [`Self::resolvers`].
-/// Solve never `read_dir(.sugar/lift)` for discovery.
-#[derive(Debug, Clone, Default)]
-pub struct WitnessDischargeContext {
-    /// Project root for package resolve (typed only; no env fallback).
-    pub project_dir: Option<PathBuf>,
-    /// Kit resolve plugins (typed only; no env fallback).
-    pub resolvers: Vec<WitnessResolverSpec>,
-}
-
-/// One kit oracle that answers [`ORACLE_RESOLVE_METHOD`]
-/// (`sugar.plugin.resolve_witness`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WitnessResolverSpec {
-    pub argv: Vec<String>,
-    pub working_dir: PathBuf,
-    pub method: String,
-}
-
-impl WitnessResolverSpec {
-    pub fn new(
-        argv: Vec<String>,
-        working_dir: impl Into<PathBuf>,
-        method: impl Into<String>,
-    ) -> Self {
-        Self {
-            argv,
-            working_dir: working_dir.into(),
-            method: method.into(),
+/// The witness bodies a pool's `witness-memento` members state. A member whose
+/// `body_b64` does not decode, or does not address to its `witnessCid`, states
+/// no body (mint refuses such a member; a hand-made proof gets no say here).
+fn witness_bodies_in_pool(pool: &MementoPool) -> WitnessBodies {
+    let mut bodies = WitnessBodies::new();
+    for (_cid, member) in pool.witness_memento_members() {
+        let Some(witness_cid) = member
+            .field("witnessCid")
+            .or_else(|| member.field("witness_cid"))
+            .and_then(Json::as_str)
+        else {
+            continue;
+        };
+        let Some(bytes) = member
+            .field("body_b64")
+            .and_then(Json::as_str)
+            .and_then(|text| B64.decode(text).ok())
+        else {
+            continue;
+        };
+        if blake3_512_of(&bytes) == witness_cid {
+            bodies.insert(witness_cid.to_string(), bytes);
         }
     }
-}
-
-impl WitnessDischargeContext {
-    /// Project dir from typed config only (step 3: no env fallback).
-    pub fn project_dir_resolved(&self) -> Option<PathBuf> {
-        self.project_dir
-            .as_ref()
-            .filter(|p| !p.as_os_str().is_empty())
-            .cloned()
-    }
-
-    fn typed_resolvers(&self) -> Vec<WitnessResolver> {
-        self.resolvers
-            .iter()
-            .filter(|r| !r.argv.is_empty())
-            .map(|r| WitnessResolver {
-                argv: r.argv.clone(),
-                working_dir: r.working_dir.clone(),
-                method: if r.method.is_empty() {
-                    ORACLE_RESOLVE_METHOD.to_string()
-                } else {
-                    r.method.clone()
-                },
-            })
-            .collect()
-    }
+    bodies
 }
 
 #[derive(Debug, Clone)]
 struct WitnessPackageClaim {
     package_cid: String,
-    witness_kind: String,
-    test_files: Vec<String>,
-    code_files: Vec<String>,
     expected_count: usize,
     expected_passed: usize,
 }
@@ -1362,9 +1302,9 @@ struct WitnessPackageOutcome {
 /// Settle a contract carrying a `custom` execution-witness EvidenceTerm from
 /// authenticated package bytes, not from the kit's verdict string.
 ///
-/// **One door (step 2):** resolution goes only through the kit oracle RPC
-/// ([`ORACLE_RESOLVE_METHOD`] via [`oracle_resolve_body`]); verification is
-/// always Rust [`package_outcome`] (blake3 vs packageCid + committed outcomes).
+/// **Step 9:** the package body comes only from the proof (the
+/// `witness-memento` member's `body_b64`, see [`WitnessBodies`]); verification
+/// is always Rust [`package_outcome`] (blake3 vs packageCid + committed outcomes).
 /// Never kit verdict strings. Returns None when there is no custom witness
 /// (caller falls through to symbolic solving). FAIL-CLOSED: missing config /
 /// malformed schema / unparseable bytes is Undecidable or Unsatisfied, never
@@ -1402,33 +1342,20 @@ fn try_witness_discharge(
         .and_then(|c| c.get("tool"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
-    // Typed WitnessDischargeContext only (step 3: env config channel retired).
-    let project = match active_witness_context().project_dir_resolved() {
-        Some(p) => p,
-        None => {
-            return Some(undecidable(
-                "custom witness present but witness project_dir unset \
-                 (typed WitnessDischargeContext required; fail-closed)"
-                    .into(),
-            ))
-        }
-    };
-
     let claim = match witness_package_claim(evidence, tool) {
         Ok(c) => c,
         Err(e) => return Some(undecidable(e)),
     };
-    let resolvers = find_witness_resolvers();
-    if resolvers.is_empty() {
-        return Some(undecidable(
-            "custom witness package present but no resolve_witness_command configured \
-             (fail-closed; client must feed WitnessDischargeContext.resolvers)"
-                .to_string(),
-        ));
-    }
-    // ONE resolve door: kit oracle RPC → Rust package_outcome. No side path.
+    // Step 9: the body comes from the proof, never from a kit.
+    let Some(bytes) = active_witness_bodies().get(&claim.package_cid).cloned() else {
+        return Some(undecidable(format!(
+            "witness package {} has no body in the proof; prove resolves no witness \
+             by reaching back to a kit (step 9), so this row is undecided",
+            claim.package_cid
+        )));
+    };
     Some(seal_witness_package_outcome(
-        witness_package_via_oracle(&resolvers, &project, &claim),
+        package_outcome(&bytes, "proof", &claim),
         contract_cid,
         property_name,
     ))
@@ -1549,75 +1476,54 @@ fn witness_package_claim(evidence: &Json, tool: &str) -> Result<WitnessPackageCl
         data.get("passed")
             .and_then(|v| v.as_u64())
             .ok_or("witness-package proofData missing numeric passed")? as usize;
-    let witness_kind = match tool {
-        "pytest" => "pytest-witness-package",
-        "cargo-test" => "cargo-test-witness-package",
-        "junit" => "junit-test-witness-package",
-        "testng" => "testng-test-witness-package",
-        "build-witness" => "build-witness",
-        other => {
-            return Err(format!(
-                "custom witness tool {other:?} has no rust-side package outcome mapping \
-                 (fail-closed)"
-            ))
-        }
+    // An execution-witness tool with no package-outcome mapping is refused
+    // (fail-closed), as before.
+    if !matches!(
+        tool,
+        "pytest" | "cargo-test" | "junit" | "testng" | "build-witness"
+    ) {
+        return Err(format!(
+            "custom witness tool {tool:?} has no rust-side package outcome mapping \
+             (fail-closed)"
+        ));
     }
-    .to_string();
     Ok(WitnessPackageClaim {
         package_cid,
-        witness_kind,
-        test_files: json_str_list(&data, "testFiles"),
-        code_files: json_str_list(&data, "codeFiles"),
         expected_count,
         expected_passed,
     })
 }
 
-fn json_str_list(data: &Json, key: &str) -> Vec<String> {
-    data.get(key)
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-// Thread-local typed discharge context: set for the duration of
+// Thread-local witness bodies: set for the duration of
 // `verify_consistency_from_indexes` so deep call sites (par_iter group
-// solve → `try_witness_discharge`) see the same session config without
-// threading every arg through private helpers.
+// solve → `try_witness_discharge`) read the bodies the proof states without
+// threading them through every private helper.
 thread_local! {
-    static ACTIVE_WITNESS_CTX: std::cell::RefCell<WitnessDischargeContext> =
-        std::cell::RefCell::new(WitnessDischargeContext {
-            project_dir: None,
-            resolvers: Vec::new(),
-        });
+    static ACTIVE_WITNESS_BODIES: std::cell::RefCell<Arc<WitnessBodies>> =
+        std::cell::RefCell::new(Arc::new(WitnessBodies::new()));
 }
 
-struct WitnessCtxGuard {
-    prev: WitnessDischargeContext,
+struct WitnessBodiesGuard {
+    prev: Arc<WitnessBodies>,
 }
 
-impl WitnessCtxGuard {
-    fn enter(ctx: &WitnessDischargeContext) -> Self {
+impl WitnessBodiesGuard {
+    fn enter(bodies: &Arc<WitnessBodies>) -> Self {
         let prev =
-            ACTIVE_WITNESS_CTX.with(|c| std::mem::replace(&mut *c.borrow_mut(), ctx.clone()));
+            ACTIVE_WITNESS_BODIES.with(|c| std::mem::replace(&mut *c.borrow_mut(), bodies.clone()));
         Self { prev }
     }
 }
 
-impl Drop for WitnessCtxGuard {
+impl Drop for WitnessBodiesGuard {
     fn drop(&mut self) {
-        let prev = std::mem::take(&mut self.prev);
-        ACTIVE_WITNESS_CTX.with(|c| *c.borrow_mut() = prev);
+        let prev = std::mem::replace(&mut self.prev, Arc::new(WitnessBodies::new()));
+        ACTIVE_WITNESS_BODIES.with(|c| *c.borrow_mut() = prev);
     }
 }
 
-fn active_witness_context() -> WitnessDischargeContext {
-    ACTIVE_WITNESS_CTX.with(|c| c.borrow().clone())
+fn active_witness_bodies() -> Arc<WitnessBodies> {
+    ACTIVE_WITNESS_BODIES.with(|c| c.borrow().clone())
 }
 
 /// Scope membership from memento locus metadata only (#3809 cut #5).
@@ -1629,169 +1535,6 @@ fn locus_in_scope(scope_root: &Path, file: &str) -> bool {
         return true;
     }
     p.starts_with(scope_root)
-}
-
-/// Client-fed resolvers only (#3809 cut #6). Never `read_dir(.sugar/lift)`.
-fn find_witness_resolvers() -> Vec<WitnessResolver> {
-    active_witness_context().typed_resolvers()
-}
-
-/// Speak `packageCid` to the kit oracle (resolve bytes) then Rust-verify
-/// ([`package_outcome`]). The only discharge resolve+verify composition —
-/// no parallel route that seals a verdict from kit strings or raw FS reads.
-fn witness_package_via_oracle(
-    resolvers: &[WitnessResolver],
-    project_root: &Path,
-    claim: &WitnessPackageClaim,
-) -> Result<WitnessPackageOutcome, String> {
-    let mut mismatches = Vec::new();
-    let mut errors = Vec::new();
-    // packageCid is the pool key (conceptual WitnessPool::get).
-    let memento = json!({
-        "kind": "witness-memento",
-        "witness_cid": claim.package_cid,
-        "witness_kind": claim.witness_kind,
-        "test_files": claim.test_files,
-        "code_files": claim.code_files,
-        "count": claim.expected_count,
-        "passed": claim.expected_passed,
-    });
-    for resolver in resolvers {
-        match oracle_resolve_body(resolver, project_root, &memento) {
-            Ok((resolved_by, bytes)) => match package_outcome(&bytes, &resolved_by, claim) {
-                Ok(outcome) => return Ok(outcome),
-                Err(e) => mismatches.push(e),
-            },
-            Err(e) => errors.push(e),
-        }
-    }
-    if !mismatches.is_empty() {
-        Err(mismatches.join("; "))
-    } else {
-        Err(format!(
-            "could not resolve witness package body: {}",
-            errors.join("; ")
-        ))
-    }
-}
-
-/// **ONE resolve door:** spawn the kit oracle and call
-/// [`ORACLE_RESOLVE_METHOD`] (`sugar.plugin.resolve_witness`).
-///
-/// Returns `(resolved_by, body_bytes)` — CONTENT only, never a verdict.
-/// Callers must run [`package_outcome`] (blake3 vs packageCid) themselves.
-/// Warm FS=0: package file lookup lives inside the kit when `package_dir` is
-/// staged; this function does not `read_dir` the project for resolvers.
-fn oracle_resolve_body(
-    resolver: &WitnessResolver,
-    project_root: &Path,
-    memento: &Json,
-) -> Result<(String, Vec<u8>), String> {
-    if resolver.argv.is_empty() {
-        return Err("empty resolver argv".to_string());
-    }
-    let abs_root = std::fs::canonicalize(project_root)
-        .unwrap_or_else(|_| project_root.to_path_buf())
-        .display()
-        .to_string();
-    let package_dir = project_root.join(".sugar").join("witnesses");
-    let mut params = json!({
-        "memento": memento,
-        "workspace_root": abs_root,
-    });
-    if package_dir.exists() {
-        params["package_dir"] = json!(package_dir.display().to_string());
-    }
-    // Force the oracle method: discharge resolve is ONE door, not a free-form RPC.
-    let method = if resolver.method.is_empty() {
-        ORACLE_RESOLVE_METHOD
-    } else {
-        resolver.method.as_str()
-    };
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-        "params": params,
-    });
-
-    let mut cmd = Command::new(&resolver.argv[0]);
-    cmd.args(&resolver.argv[1..]);
-    cmd.arg("--rpc");
-    cmd.current_dir(&resolver.working_dir);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn resolver {}: {e}", resolver.argv[0]))?;
-    {
-        let mut stdin = child.stdin.take().ok_or("resolver stdin unavailable")?;
-        let line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
-        stdin
-            .write_all(line.as_bytes())
-            .and_then(|_| stdin.write_all(b"\n"))
-            .map_err(|e| format!("write resolver stdin: {e}"))?;
-    }
-
-    let stdout = child.stdout.take().ok_or("resolver stdout unavailable")?;
-    let (tx, rx) = std::sync::mpsc::channel::<Option<Json>>();
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        let mut last_reply: Option<Json> = None;
-        for line in reader.lines().map_while(Result::ok) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if let Ok(v) = serde_json::from_str::<Json>(trimmed) {
-                if v.get("result").is_some() || v.get("error").is_some() {
-                    last_reply = Some(v);
-                }
-            }
-        }
-        let _ = tx.send(last_reply);
-    });
-    const RESOLVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-    let reply = match rx.recv_timeout(RESOLVER_TIMEOUT) {
-        Ok(r) => r,
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!(
-                "resolver `{}` timed out after {}s",
-                resolver.argv[0],
-                RESOLVER_TIMEOUT.as_secs()
-            ));
-        }
-    };
-    let _ = child.wait();
-    let reply = reply.ok_or("resolver produced no JSON-RPC reply")?;
-    if let Some(err) = reply.get("error") {
-        let msg = err
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        return Err(VerifyEffect::WitnessOracleResolution {
-            resolver: resolver.argv.first().cloned(),
-            message: msg.to_string(),
-        }
-        .to_string());
-    }
-    let result = reply.get("result").ok_or("reply missing result")?;
-    let body_b64 = result
-        .get("body_b64")
-        .and_then(|v| v.as_str())
-        .ok_or("resolve_witness result missing body_b64")?;
-    let resolved_by = result
-        .get("resolved_by")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let bytes = B64
-        .decode(body_b64)
-        .map_err(|e| format!("decode body_b64: {e}"))?;
-    Ok((resolved_by, bytes))
 }
 
 /// Rust VERIFY half of the trust boundary: blake3(bytes) vs claim.packageCid,
@@ -3732,10 +3475,7 @@ pub fn build_manifest_from_pool(
 /// call the door themselves.
 ///
 /// Zero project FS (#3809 series). Locus preference is speaker role only;
-/// scope is path-prefix only; witness resolvers are client-fed.
-///
-/// Witness discharge config defaults empty (typed context required for
-/// custom-witness package recompute; no env config channel).
+/// scope is path-prefix only; witness bodies come from the proof (step 9).
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -3743,39 +3483,8 @@ pub fn verify_consistency(
     compilers: &CompilerRegistry,
     project_root: &Path,
 ) -> Vec<ConsistencyResult> {
-    verify_consistency_with_policy(
-        pool,
-        plan,
-        registry,
-        compilers,
-        project_root,
-        &WitnessDischargeContext::default(),
-    )
-}
-
-/// Like [`verify_consistency`], with typed [`WitnessDischargeContext`] (SEAM 7).
-///
-/// One path (#3809): no `pool_only_inputs` flag. Locus = speaker role;
-/// scope = path prefix; witnesses = client-fed context only.
-pub fn verify_consistency_with_policy(
-    pool: &MementoPool,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-    witness: &WitnessDischargeContext,
-) -> Vec<ConsistencyResult> {
     let index = build_consistency_index(pool);
-    verify_consistency_from_indexes(
-        &index,
-        None,
-        plan,
-        registry,
-        compilers,
-        project_root,
-        None,
-        witness,
-    )
+    verify_consistency_from_indexes(&index, None, plan, registry, compilers, project_root, None)
 }
 
 /// Pool-derived consistency inputs, computed once per pool and reusable
@@ -3799,6 +3508,9 @@ pub struct ConsistencyIndex {
     /// file beats vendor file for the squiggle anchor) happens at solve time
     /// in `verify_consistency_from_indexes` via speaker role only (#3809).
     locus_entries: Vec<(String, SourceLocus, Option<SpeakerRole>)>,
+    /// Witness package bodies this pool's `witness-memento` members state
+    /// (step 9: the body a witness row is decided from is in the proof).
+    witness_bodies: WitnessBodies,
 }
 
 impl ConsistencyIndex {
@@ -3935,6 +3647,7 @@ fn build_consistency_index_filtered(
         ambient_ground_callsite_facts,
         ambient_posts,
         locus_entries,
+        witness_bodies: witness_bodies_in_pool(pool),
     }
 }
 
@@ -3949,7 +3662,6 @@ fn verify_consistency_scoped_with_base_index_policy(
     compilers: &CompilerRegistry,
     project_root: &Path,
     scope: &Path,
-    witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
     let skip: std::collections::HashSet<String> = base
         .candidates
@@ -3970,14 +3682,13 @@ fn verify_consistency_scoped_with_base_index_policy(
         compilers,
         project_root,
         Some(scope),
-        witness,
     )
 }
 
 /// Scoped consistency over a **resident** base index + overlay pool (#3809).
 ///
 /// One solve door, zero project FS: speaker-role locus preference, path-prefix
-/// scope, client-fed witness resolvers. No `pool_only_inputs` flag.
+/// scope, witness bodies from the proof. No `pool_only_inputs` flag.
 ///
 /// - **Is:** pure discharge over a resident base index + pre-fed overlay
 ///   pool + in-memory plan/registry/compilers.
@@ -3993,29 +3704,6 @@ pub fn verify_consistency_scoped_with_base_index(
     project_root: &Path,
     scope: &Path,
 ) -> Vec<ConsistencyResult> {
-    verify_consistency_scoped_with_base_index_with_witness(
-        base,
-        overlay_pool,
-        plan,
-        registry,
-        compilers,
-        project_root,
-        scope,
-        &WitnessDischargeContext::default(),
-    )
-}
-
-/// Scoped resident-base solve with typed witness discharge context (SEAM 7).
-pub fn verify_consistency_scoped_with_base_index_with_witness(
-    base: &ConsistencyIndex,
-    overlay_pool: &MementoPool,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-    scope: &Path,
-    witness: &WitnessDischargeContext,
-) -> Vec<ConsistencyResult> {
     verify_consistency_scoped_with_base_index_policy(
         base,
         overlay_pool,
@@ -4024,7 +3712,6 @@ pub fn verify_consistency_scoped_with_base_index_with_witness(
         compilers,
         project_root,
         scope,
-        witness,
     )
 }
 
@@ -4037,10 +3724,8 @@ pub fn verify_consistency_scoped_with_base_index_with_witness(
 /// are solved (or `None` for the full CLI pass).
 ///
 /// Zero project FS (#3809): locus preference = speaker role; scope = path
-/// prefix; witnesses = client-fed context. No `pool_only_inputs` flag.
-///
-/// `witness`: typed discharge context (project_dir + resolvers). Sole config
-/// surface for package recompute (step 3 retired the env channel).
+/// prefix; witness bodies = what the base and overlay pools' `witness-memento`
+/// members state (step 9: no kit is asked). No `pool_only_inputs` flag.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_consistency_from_indexes(
     base: &ConsistencyIndex,
@@ -4050,12 +3735,18 @@ pub fn verify_consistency_from_indexes(
     compilers: &CompilerRegistry,
     project_root: &Path,
     scope: Option<&Path>,
-    witness: &WitnessDischargeContext,
 ) -> Vec<ConsistencyResult> {
     // project_root retained on the signature for API stability; never stats
     // for locus/scope (speaker + path-prefix only).
     let _project_root = project_root;
-    let _witness_ctx_guard = WitnessCtxGuard::enter(witness);
+    let witness_bodies: Arc<WitnessBodies> = Arc::new(
+        base.witness_bodies
+            .iter()
+            .chain(overlay.iter().flat_map(|o| o.witness_bodies.iter()))
+            .map(|(cid, bytes)| (cid.clone(), bytes.clone()))
+            .collect(),
+    );
+    let _witness_bodies_guard = WitnessBodiesGuard::enter(&witness_bodies);
     let candidates: Vec<&ConsistencyCandidate> = base
         .candidates
         .iter()
@@ -4205,12 +3896,9 @@ pub fn verify_consistency_from_indexes(
         .par_iter()
         .flat_map(|(property_name, members)| {
             // Rayon workers have distinct thread-local storage.  The guard on
-            // the caller thread cannot carry the typed witness context into
-            // this closure, so install the same context for each group solve.
-            // Without this, custom-witness rows nondeterministically see the
-            // default `project_dir: None` and refuse despite a client-fed
-            // context.
-            let _worker_witness_ctx_guard = WitnessCtxGuard::enter(witness);
+            // the caller thread cannot carry the witness bodies into this
+            // closure, so install the same bodies for each group solve.
+            let _worker_witness_bodies_guard = WitnessBodiesGuard::enter(&witness_bodies);
             process_consistency_group(
                 property_name,
                 members,
@@ -5071,13 +4759,12 @@ mod tests {
     }
 
     #[test]
-    fn build_witness_claim_uses_existing_resolver_and_rust_package_verification_path() {
+    fn build_witness_claim_uses_the_rust_package_verification_path() {
         let body = package_contract("build-witness", "blake3-512:build", 1, 1);
         let claim = witness_package_claim(body.get("evidence").expect("evidence"), "build-witness")
             .expect("build-witness is an execution-witness package");
 
         assert_eq!(claim.package_cid, "blake3-512:build");
-        assert_eq!(claim.witness_kind, "build-witness");
         assert_eq!(claim.expected_count, 1);
         assert_eq!(claim.expected_passed, 1);
     }
@@ -5108,98 +4795,47 @@ mod tests {
         pool.insert_unanchored_for_tests(test_cid(cid), env);
     }
 
-    fn write_resolver_manifest(project: &std::path::Path, package_bytes: &[u8]) {
-        let manifest_dir = project.join(".sugar").join("lift").join("fake-witness");
-        std::fs::create_dir_all(&manifest_dir).unwrap();
-        let script = manifest_dir.join("resolve.sh");
-        let reply = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "resolved_by": "package",
-                "body_b64": B64.encode(package_bytes),
-            }
-        })
-        .to_string();
-        std::fs::write(
-            &script,
-            format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{}'\n", reply),
-        )
-        .unwrap();
-        set_executable(&script);
-        let manifest = format!(
-            "name = \"fake-witness\"\n\
-             working_dir = \".\"\n\
-             resolve_witness_command = [\"{script}\"]\n\
-             resolve_witness_method = \"{method}\"\n",
-            script = script.display(),
-            method = ORACLE_RESOLVE_METHOD,
-        );
-        std::fs::write(manifest_dir.join("manifest.toml"), manifest).unwrap();
+    /// The witness bodies a proof states, for tests that call the arm directly.
+    fn bodies_for(package_bytes: &[u8]) -> Arc<WitnessBodies> {
+        let mut bodies = WitnessBodies::new();
+        bodies.insert(blake3_512_of(package_bytes), package_bytes.to_vec());
+        Arc::new(bodies)
     }
 
-    /// Assert two discharge rows are CID-idempotent (same packageCid → same seal).
-    fn assert_verdict_byte_identical(a: &ConsistencyResult, b: &ConsistencyResult, label: &str) {
-        assert_eq!(a.verdict, b.verdict, "{label}: verdict");
-        assert_eq!(a.witnessed, b.witnessed, "{label}: witnessed");
-        assert_eq!(a.reason, b.reason, "{label}: reason");
-        assert_eq!(a.contract_cid, b.contract_cid, "{label}: contract_cid");
-        assert_eq!(a.property_name, b.property_name, "{label}: property_name");
-        // verification detail must also match (resolved_by / outcomes / etc.)
+    /// A `witness-memento` member carrying its package body, as mint writes it.
+    fn insert_witness_memento_with_body(pool: &mut MementoPool, label: &str, package_bytes: &[u8]) {
+        let witness_cid = blake3_512_of(package_bytes);
+        let env = json!({
+            "header": {"kind": "witness-memento", "witnessCid": witness_cid},
+            "body": {"kind": "witness-memento", "witness_cid": witness_cid,
+                     "body_b64": B64.encode(package_bytes)},
+            "schemaVersion": "1",
+        });
+        pool.insert_unanchored_for_tests(test_cid(label), env);
+    }
+
+    /// Step 9: only a member whose body addresses to its `witnessCid` states a
+    /// body; anything else states none.
+    #[test]
+    fn witness_bodies_come_only_from_members_that_address_to_their_cid() {
+        let good = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
+        let mut pool = MementoPool::default();
+        insert_witness_memento_with_body(&mut pool, "witness-good", good);
+        let forged_cid = blake3_512_of(b"something else");
+        pool.insert_unanchored_for_tests(
+            test_cid("witness-forged"),
+            json!({
+                "header": {"kind": "witness-memento", "witnessCid": forged_cid},
+                "body": {"kind": "witness-memento", "body_b64": B64.encode(good)},
+                "schemaVersion": "1",
+            }),
+        );
+        let bodies = witness_bodies_in_pool(&pool);
+        assert_eq!(bodies.len(), 1, "{bodies:?}");
         assert_eq!(
-            format!("{:?}", a.verification),
-            format!("{:?}", b.verification),
-            "{label}: verification detail"
+            bodies.get(&blake3_512_of(good)).map(Vec::as_slice),
+            Some(&good[..])
         );
-    }
-
-    #[test]
-    fn witness_resolvers_can_be_supplied_by_typed_context() {
-        let cwd = std::env::current_dir().unwrap();
-        let typed = WitnessDischargeContext {
-            project_dir: Some(cwd.clone()),
-            resolvers: vec![WitnessResolverSpec {
-                argv: vec!["/bin/echo".to_string()],
-                working_dir: cwd.clone(),
-                method: ORACLE_RESOLVE_METHOD.to_string(),
-            }],
-        };
-        let _guard = WitnessCtxGuard::enter(&typed);
-        let resolvers = find_witness_resolvers();
-        assert_eq!(resolvers.len(), 1);
-        assert_eq!(resolvers[0].argv, vec!["/bin/echo".to_string()]);
-        assert_eq!(resolvers[0].working_dir, cwd);
-        assert_eq!(resolvers[0].method, ORACLE_RESOLVE_METHOD);
-    }
-
-    #[test]
-    fn witness_resolvers_typed_list_is_sole_config_never_read_dir() {
-        let cwd = std::env::current_dir().unwrap();
-        // Even with empty typed list, solve must not walk lift manifests.
-        let empty = WitnessDischargeContext {
-            project_dir: Some(cwd.clone()),
-            resolvers: Vec::new(),
-        };
-        let _guard = WitnessCtxGuard::enter(&empty);
-        let resolvers = find_witness_resolvers();
-        assert!(
-            resolvers.is_empty(),
-            "empty client-fed list must stay empty (no lift read_dir)"
-        );
-
-        let typed = WitnessDischargeContext {
-            project_dir: Some(cwd.clone()),
-            resolvers: vec![WitnessResolverSpec {
-                argv: vec!["/bin/from-typed".to_string()],
-                working_dir: cwd.clone(),
-                method: ORACLE_RESOLVE_METHOD.to_string(),
-            }],
-        };
-        drop(_guard);
-        let _guard = WitnessCtxGuard::enter(&typed);
-        let resolvers = find_witness_resolvers();
-        assert_eq!(resolvers.len(), 1, "typed resolvers are the sole config");
-        assert_eq!(resolvers[0].argv, vec!["/bin/from-typed".to_string()]);
     }
 
     fn write_discharge_stdout(project: &std::path::Path, verdict: &str) -> std::path::PathBuf {
@@ -8137,23 +7773,6 @@ mod tests {
         );
     }
 
-    /// Helper: typed discharge context pointing at a project-local fake oracle.
-    fn typed_ctx_for_project(project: &std::path::Path) -> WitnessDischargeContext {
-        let script = project
-            .join(".sugar")
-            .join("lift")
-            .join("fake-witness")
-            .join("resolve.sh");
-        WitnessDischargeContext {
-            project_dir: Some(project.to_path_buf()),
-            resolvers: vec![WitnessResolverSpec {
-                argv: vec![script.display().to_string()],
-                working_dir: project.to_path_buf(),
-                method: ORACLE_RESOLVE_METHOD.to_string(),
-            }],
-        }
-    }
-
     /// A lying discharge-command stdout cannot turn a failed witness package
     /// into a discharge. The row verdict is derived from package bytes only
     /// (oracle resolve + package_outcome); kit verdict strings are ignored.
@@ -8164,14 +7783,12 @@ mod tests {
 
         for tool in ["pytest", "cargo-test", "junit", "testng"] {
             let project = unique_temp_dir(tool);
-            write_resolver_manifest(&project, package_bytes);
             // Pollute process env with a DISCHARGED lie: package path must ignore it.
             let lie = write_discharge_stdout(&project, "DISCHARGED");
             let env_key = tool_env_key(tool);
             std::env::set_var(&env_key, &lie);
 
-            let typed = typed_ctx_for_project(&project);
-            let _guard = WitnessCtxGuard::enter(&typed);
+            let _guard = WitnessBodiesGuard::enter(&bodies_for(package_bytes));
             let body = package_contract(tool, &package_cid, 2, 1);
             let result =
                 try_witness_discharge(&body, "blake3-512:cid".into(), "test_x".into()).unwrap();
@@ -8200,11 +7817,7 @@ mod tests {
         let package_bytes = br#"{"outcome":"failed","test":"tests::test_write_bool_contradiction"}
 "#;
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("cargo-test-all-failed");
-        write_resolver_manifest(&project, package_bytes);
-
-        let typed = typed_ctx_for_project(&project);
-        let _guard = WitnessCtxGuard::enter(&typed);
+        let _guard = WitnessBodiesGuard::enter(&bodies_for(package_bytes));
         // proofData count=1 passed=0 matches the single failed body line.
         let body = package_contract("cargo-test", &package_cid, 1, 0);
         let result = try_witness_discharge(
@@ -8229,7 +7842,6 @@ mod tests {
         );
 
         drop(_guard);
-        let _ = std::fs::remove_dir_all(&project);
     }
 
     #[test]
@@ -8238,13 +7850,11 @@ mod tests {
             b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
         let package_cid = blake3_512_of(package_bytes);
         let project = unique_temp_dir("all-passed-package");
-        write_resolver_manifest(&project, package_bytes);
         let lie = write_discharge_stdout(&project, "REFUSED");
-        // Lie on DISCHARGE env must not affect package recompute.
+        // Lie on DISCHARGE env must not affect the package verdict.
         std::env::set_var("SUGAR_WITNESS_DISCHARGE_PYTEST", &lie);
 
-        let typed = typed_ctx_for_project(&project);
-        let _guard = WitnessCtxGuard::enter(&typed);
+        let _guard = WitnessBodiesGuard::enter(&bodies_for(package_bytes));
         let body = package_contract("pytest", &package_cid, 2, 2);
         let result =
             try_witness_discharge(&body, "blake3-512:cid".into(), "test_x".into()).unwrap();
@@ -8261,11 +7871,9 @@ mod tests {
     }
 
     #[test]
-    fn typed_witness_context_reaches_parallel_consistency_workers() {
+    fn witness_bodies_reach_parallel_consistency_workers() {
         let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("parallel-witness-context");
-        write_resolver_manifest(&project, package_bytes);
 
         let body = package_contract_with_provenance("cargo-test", &package_cid, 1, 1, "Derived");
         let mut pool = MementoPool::default();
@@ -8274,175 +7882,62 @@ mod tests {
             "blake3-512:parallel-witness-context",
             body,
         );
+        insert_witness_memento_with_body(&mut pool, "parallel-witness-body", package_bytes);
         let (plan, registry) = z3_plan_and_registry();
-        let typed = typed_ctx_for_project(&project);
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(2)
             .build()
             .expect("two-worker pool");
 
         let results = thread_pool.install(|| {
-            verify_consistency_with_policy(
+            verify_consistency(
                 &pool,
                 &plan,
                 &registry,
                 &test_compilers(),
                 std::path::Path::new("."),
-                &typed,
             )
         });
 
         assert_eq!(results.len(), 1, "one witness-package obligation");
         assert_eq!(results[0].verdict, ObligationVerdict::Discharged);
         assert!(results[0].witnessed);
-        let _ = std::fs::remove_dir_all(&project);
     }
 
-    /// #3809 cut #6: empty typed resolvers must NOT discover lift manifests.
-    /// Client must feed resolvers; cold read_dir is deleted.
+    /// Step 9: a witness row whose package body the proof does not state is
+    /// undecided by name; prove asks no kit for it.
     #[test]
-    fn witness_empty_typed_resolvers_does_not_read_dir_lift() {
+    fn witness_row_without_a_body_in_the_proof_is_undecided_by_name() {
         let package_bytes =
             b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("step3-no-lift-read-dir");
-        write_resolver_manifest(&project, package_bytes);
-        let contract_cid = "blake3-512:step3-no-read-dir-contract".to_string();
+        let contract_cid = "blake3-512:no-body-contract".to_string();
         let property = "test_x".to_string();
         let body = package_contract("pytest", &package_cid, 2, 2);
 
-        // Manifest exists on disk, but typed list is empty — must fail-closed
-        // without reading lift (undecidable: no resolvers configured).
-        let empty_ctx = WitnessDischargeContext {
-            project_dir: Some(project.clone()),
-            resolvers: Vec::new(),
-        };
-        let _guard = WitnessCtxGuard::enter(&empty_ctx);
-        let via_empty =
-            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
+        let _guard = WitnessBodiesGuard::enter(&Arc::new(WitnessBodies::new()));
+        let without = try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
         drop(_guard);
-
         assert_eq!(
-            via_empty.verdict,
+            without.verdict,
             ObligationVerdict::Undecidable,
-            "empty client-fed resolvers must not discover lift manifests: {:?}",
-            via_empty
+            "{without:?}"
         );
         assert!(
-            via_empty.reason.contains("no resolve_witness_command")
-                || via_empty.reason.contains("fail-closed"),
-            "reason must cite missing client-fed resolvers: {}",
-            via_empty.reason
+            without.reason.contains("has no body in the proof"),
+            "reason must say the body is not in the proof: {}",
+            without.reason
         );
 
-        // Same package with client-fed resolvers discharges (control).
-        let script = project
-            .join(".sugar")
-            .join("lift")
-            .join("fake-witness")
-            .join("resolve.sh");
-        let fed = WitnessDischargeContext {
-            project_dir: Some(project.clone()),
-            resolvers: vec![WitnessResolverSpec {
-                argv: vec![script.display().to_string()],
-                working_dir: project.clone(),
-                method: ORACLE_RESOLVE_METHOD.to_string(),
-            }],
-        };
-        let _guard = WitnessCtxGuard::enter(&fed);
-        let via_fed = try_witness_discharge(&body, contract_cid, property).unwrap();
+        let _guard = WitnessBodiesGuard::enter(&bodies_for(package_bytes));
+        let with = try_witness_discharge(&body, contract_cid, property).unwrap();
         drop(_guard);
-        assert_eq!(
-            via_fed.verdict,
-            ObligationVerdict::Discharged,
-            "client-fed resolvers must discharge: {:?}",
-            via_fed
-        );
-
-        let _ = std::fs::remove_dir_all(&project);
-    }
-
-    /// Step 2 receipt: kit oracle is the ONE resolve door.
-    ///
-    /// Path A (arm): `try_witness_discharge` — the consistency arm entry.
-    /// Path B (oracle door): speak packageCid via `witness_package_via_oracle`
-    /// then `seal_witness_package_outcome` — the explicit resolve+verify composition.
-    /// Path C (repeat arm): same typed resolvers — byte-identical recompute.
-    ///
-    /// All three MUST seal byte-identical `ObligationVerdict` for one packageCid.
-    /// Two different results = failing test (the whole invariant).
-    #[test]
-    fn witness_verdict_byte_identical_arm_vs_oracle_door() {
-        let package_bytes =
-            b"{\"outcome\":\"passed\",\"test\":\"one\"}\n{\"outcome\":\"passed\",\"test\":\"two\"}\n";
-        let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("step2-oracle-door");
-        write_resolver_manifest(&project, package_bytes);
-        let script = project
-            .join(".sugar")
-            .join("lift")
-            .join("fake-witness")
-            .join("resolve.sh");
-        let contract_cid = "blake3-512:step2-oracle-door-contract".to_string();
-        let property = "test_x".to_string();
-        let body = package_contract("pytest", &package_cid, 2, 2);
-
-        let typed = WitnessDischargeContext {
-            project_dir: Some(project.clone()),
-            resolvers: vec![WitnessResolverSpec {
-                argv: vec![script.display().to_string()],
-                working_dir: project.clone(),
-                method: ORACLE_RESOLVE_METHOD.to_string(),
-            }],
-        };
-        let claim = witness_package_claim(body.get("evidence").expect("evidence"), "pytest")
-            .expect("claim");
-        let resolvers: Vec<WitnessResolver> = typed
-            .resolvers
-            .iter()
-            .map(|r| WitnessResolver {
-                argv: r.argv.clone(),
-                working_dir: r.working_dir.clone(),
-                method: r.method.clone(),
-            })
-            .collect();
-
-        // Path A — consistency arm (typed resolvers, no env).
-        let _typed_guard = WitnessCtxGuard::enter(&typed);
-        let via_arm = try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
-        drop(_typed_guard);
-
-        // Path B — explicit oracle door (resolve via kit RPC + package_outcome seal).
-        let via_oracle = seal_witness_package_outcome(
-            witness_package_via_oracle(&resolvers, &project, &claim),
-            contract_cid.clone(),
-            property.clone(),
-        );
-
-        // Path C — repeat arm (one path; same typed resolvers).
-        let _typed_warm = WitnessCtxGuard::enter(&typed);
-        let via_warm =
-            try_witness_discharge(&body, contract_cid.clone(), property.clone()).unwrap();
-        drop(_typed_warm);
-
-        assert_verdict_byte_identical(&via_arm, &via_oracle, "arm vs oracle door");
-        assert_verdict_byte_identical(&via_arm, &via_warm, "arm vs repeat arm");
-        assert_eq!(
-            via_arm.verdict,
-            ObligationVerdict::Discharged,
-            "all-passed package must discharge via oracle door"
-        );
+        assert_eq!(with.verdict, ObligationVerdict::Discharged, "{with:?}");
         assert!(
-            via_arm.reason.contains("verified by rust via package"),
-            "reason must cite rust-side package_outcome, not kit verdict: {}",
-            via_arm.reason
+            with.reason.contains("verified by rust via proof"),
+            "reason must cite the body read from the proof: {}",
+            with.reason
         );
-        eprintln!(
-            "RECEIPT step2_oracle_door packageCid={} method={} verdict={:?} reason={}",
-            package_cid, ORACLE_RESOLVE_METHOD, via_arm.verdict, via_arm.reason
-        );
-
-        let _ = std::fs::remove_dir_all(&project);
     }
 
     #[test]
@@ -8451,8 +7946,6 @@ mod tests {
         // proofirProvenance field. That must not refuse as MissingProvenanceKind.
         let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("missing-witness-package-kind");
-        write_resolver_manifest(&project, package_bytes);
 
         let body = package_contract("cargo-test", &package_cid, 1, 1);
         assert!(
@@ -8465,15 +7958,14 @@ mod tests {
             "blake3-512:missing-witness-package",
             body,
         );
+        insert_witness_memento_with_body(&mut pool, "missing-witness-package-body", package_bytes);
         let (plan, reg) = z3_plan_and_registry();
-        let typed = typed_ctx_for_project(&project);
-        let res = verify_consistency_with_policy(
+        let res = verify_consistency(
             &pool,
             &plan,
             &reg,
             &test_compilers(),
             std::path::Path::new("."),
-            &typed,
         );
 
         assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
@@ -8488,16 +7980,12 @@ mod tests {
             "must not refuse for missing provenance KIND: {}",
             res[0].reason
         );
-
-        let _ = std::fs::remove_dir_all(&project);
     }
 
     #[test]
     fn stated_provenance_cannot_discharge_custom_execution_witness_package() {
         let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
         let package_cid = blake3_512_of(package_bytes);
-        let project = unique_temp_dir("stated-witness-package-kind");
-        write_resolver_manifest(&project, package_bytes);
 
         let body = package_contract_with_provenance("cargo-test", &package_cid, 1, 1, "Stated");
         let mut pool = MementoPool::default();
@@ -8506,17 +7994,15 @@ mod tests {
             "blake3-512:stated-witness-package",
             body,
         );
+        insert_witness_memento_with_body(&mut pool, "stated-witness-package-body", package_bytes);
         let (plan, reg) = z3_plan_and_registry();
-        let typed = typed_ctx_for_project(&project);
-        // Provenance-kind refusal happens before recompute; typed config still
-        // required so the arm can attempt discharge after kind checks.
-        let res = verify_consistency_with_policy(
+        // Provenance-kind refusal happens before the package is read.
+        let res = verify_consistency(
             &pool,
             &plan,
             &reg,
             &test_compilers(),
             std::path::Path::new("."),
-            &typed,
         );
 
         assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
@@ -8536,8 +8022,6 @@ mod tests {
             !res[0].witnessed,
             "wrong-kind witness package must refuse before recompute can witness it"
         );
-
-        let _ = std::fs::remove_dir_all(&project);
     }
 
     #[test]
@@ -9223,7 +8707,6 @@ mod tests {
             &compilers,
             &project,
             &project,
-            &WitnessDischargeContext::default(),
         );
         let warm = verify_consistency_scoped_with_base_index(
             &base_index,

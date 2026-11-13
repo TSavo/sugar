@@ -173,9 +173,10 @@ fn bundle_lines_each_address_their_witness() {
 #[test]
 fn memento_signature_verifies_over_bundle_cid() {
     let ws = vec![w("tests::a", "passed")];
-    let (_, cid, _) = build_bundle(&ws);
+    let (bytes, cid, _) = build_bundle(&ws);
     let m = witness_package_memento(
         &cid,
+        &bytes,
         &[".".to_string()],
         &["src/lib.rs".to_string()],
         1,
@@ -205,6 +206,7 @@ fn memento_has_no_top_level_outcome_so_verifier_proceeds_to_recompute() {
     // bundle), so an all-passed-or-not suite proceeds to recompute uniformly.
     let m = witness_package_memento(
         "blake3-512:x",
+        b"",
         &[".".to_string()],
         &[],
         2,

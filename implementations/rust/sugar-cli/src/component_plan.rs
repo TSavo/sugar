@@ -408,11 +408,6 @@ fn authored_lift_languages(config: &ProjectConfig) -> BTreeSet<String> {
         .collect()
 }
 
-#[allow(dead_code)] // called by discharge_config in the binary module tree
-pub(crate) fn planned_lift_plugins(project_root: &Path) -> Vec<PluginEntry> {
-    plan_workspace(project_root, PlanIntent::Lift).plugins
-}
-
 #[allow(dead_code)] // called by cmd_lift/cmd_prove/cmd_verify/witness_verify in the binary module tree
 pub(crate) fn first_error_diagnostic(plan: &ComponentPlan) -> Option<&ComponentDiagnostic> {
     plan.diagnostics

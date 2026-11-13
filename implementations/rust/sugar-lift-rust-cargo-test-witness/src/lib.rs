@@ -433,6 +433,7 @@ pub fn build_suite_bundle(
 /// straight into the lift's `ir` / `witness_mementos` arrays.
 pub fn witness_package_memento(
     bundle_cid: &str,
+    bundle_bytes: &[u8],
     test_files: &[String],
     code_files: &[String],
     count: usize,
@@ -456,6 +457,9 @@ pub fn witness_package_memento(
         "code_files": cfs,
         "count": count,
         "passed": passed,
+        // The package body itself (step 9): mint puts it in the proof and
+        // prove reads it there; prove never asks this kit to resolve it.
+        "body_b64": b64(bundle_bytes),
     }))
 }
 
@@ -909,8 +913,15 @@ pub fn lift_project(project_dir: &Path) -> Result<Option<LiftResult>, String> {
     let rc = runtime_cid();
     let contract =
         witness_package_contract_ir(&bundle_cid, &rc, &test_files, &code_files, count, passed);
-    let memento =
-        witness_package_memento(&bundle_cid, &test_files, &code_files, count, passed, None)?;
+    let memento = witness_package_memento(
+        &bundle_cid,
+        &bundle_bytes,
+        &test_files,
+        &code_files,
+        count,
+        passed,
+        None,
+    )?;
     Ok(Some(LiftResult {
         ir: vec![contract, memento.clone()],
         mementos: vec![memento],

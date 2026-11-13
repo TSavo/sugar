@@ -5131,10 +5131,13 @@ fn mint_library_sugar_binding_entry(decl: &Value) -> Result<(String, Vec<u8>), S
 
 /// Mint a `witness-memento` into the envelope: the kit's SIGNED POINTER to a
 /// witness (test run, CI log, compiler report, poem -- arbitrary content), CID +
-/// signature, ZERO body. The body lives in a separately-deployed witness package.
-/// The rust verifier enumerates these, RPC-resolves each body from the kit
-/// oracle, blake3's the bytes itself, and audits against `witnessCid` -- so the
-/// .proof carries only the signed identity, not the run record.
+/// signature, and, when the kit states it, the witness BODY as `body_b64`.
+///
+/// Step 9 (owner, 2026-11-13; ruling 4 on #7766): prove reads `.proof` files
+/// only and executes nothing, so the body a witness row is decided from must
+/// be in the proof. The kit hands the body over at lift; mint checks that it
+/// addresses to `witness_cid` and packages it, with or without project config.
+/// A body that does not address to its CID is refused here, by name.
 fn mint_witness_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
     let witness_cid = required_str(decl, "witness_cid", "witness-memento")?;
     let signer = required_str(decl, "signer", "witness-memento")?;
@@ -5148,6 +5151,20 @@ fn mint_witness_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
     ] {
         if value.trim().is_empty() {
             return Err(format!("`witness-memento` missing non-empty `{field}`"));
+        }
+    }
+    if let Some(body_b64) = decl.get("body_b64") {
+        let text = body_b64
+            .as_str()
+            .ok_or("`witness-memento` `body_b64` must be a base64 string")?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .map_err(|error| format!("`witness-memento` `body_b64` is not base64: {error}"))?;
+        let addressed = blake3_512_of(&bytes);
+        if addressed != witness_cid {
+            return Err(format!(
+                "`witness-memento` body addresses to {addressed}, not its witness_cid {witness_cid}"
+            ));
         }
     }
     let witness_kind = optional_str(decl, "witness_kind").unwrap_or("witness");
@@ -5920,6 +5937,32 @@ pub fn run(args: MintArgs) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Step 9: the witness body a kit states rides into the member, and a
+    /// body that does not address to its `witness_cid` is refused by name.
+    #[test]
+    fn witness_memento_carries_its_body_and_refuses_a_forged_one() {
+        use base64::engine::general_purpose::STANDARD as B64;
+        let body = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
+        let cid = blake3_512_of(body);
+        let decl = json!({
+            "kind": "witness-memento",
+            "witness_cid": cid,
+            "witness_kind": "cargo-test-witness-package",
+            "signer": "ed25519:signer",
+            "signature": "ed25519:signature",
+            "body_b64": B64.encode(body),
+        });
+        let (_, bytes) =
+            mint_witness_memento(&decl).expect("a body that addresses to its cid mints");
+        let member: Value = serde_json::from_slice(&bytes).expect("member json");
+        assert_eq!(member["body"]["body_b64"], json!(B64.encode(body)));
+
+        let mut forged = decl.clone();
+        forged["body_b64"] = json!(B64.encode(b"another body\n"));
+        let error = mint_witness_memento(&forged).expect_err("a forged body is refused");
+        assert!(error.contains("not its witness_cid"), "{error}");
+    }
     use crate::project_config::PlatformProfile;
     use sugar_ir_types::panic_freedom;
 

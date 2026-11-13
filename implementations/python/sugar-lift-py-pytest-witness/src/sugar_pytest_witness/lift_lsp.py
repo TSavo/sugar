@@ -316,7 +316,12 @@ def build_witness_ir(
         )
         mementos.append(
             witness_package_memento(
-                bundle_cid, test_rels, code_rels, len(witnesses), passed
+                bundle_cid,
+                test_rels,
+                code_rels,
+                len(witnesses),
+                passed,
+                bundle_bytes=bundle_bytes,
             )
         )
     ir = json.loads(encode_jcs(declarations_to_value(decls))) if decls else []

@@ -230,7 +230,7 @@ public final class JavaJunitWitnessRpc {
         String contractIr = buildContractIr(
             lr.bundleCid, lr.runtimeCid, proofData);
         String memento = buildMemento(
-            lr.bundleCid, lr.testFiles, lr.codeFiles, lr.count, lr.passed);
+            lr.bundleCid, lr.bundleBytes, lr.testFiles, lr.codeFiles, lr.count, lr.passed);
 
         // Write bundle to .sugar/witnesses/ (audit; never fail lift on I/O error)
         try {
@@ -578,7 +578,8 @@ public final class JavaJunitWitnessRpc {
     /**
      * WitnessPackageMemento — carried alongside the contract in the .proof.
      */
-    private static String buildMemento(String bundleCid, List<String> testFiles,
+    private static String buildMemento(String bundleCid, byte[] bundleBytes,
+                                        List<String> testFiles,
                                         List<String> codeFiles, int count, int passed)
             throws Exception {
         List<String> tf = new ArrayList<>(testFiles); Collections.sort(tf);
@@ -597,7 +598,10 @@ public final class JavaJunitWitnessRpc {
              + ",\"count\":" + count
              + ",\"passed\":" + passed
              + ",\"test_files\":" + jsonArray(tf)
-             + ",\"code_files\":" + jsonArray(cf) + "}";
+             + ",\"code_files\":" + jsonArray(cf)
+             // The package body itself (step 9): mint puts it in the proof and
+             // `sugar prove` reads it there; prove never asks this kit to resolve it.
+             + ",\"body_b64\":" + jsl(Base64.getEncoder().encodeToString(bundleBytes)) + "}";
     }
 
     // ── File utils ─────────────────────────────────────────────────────────────
