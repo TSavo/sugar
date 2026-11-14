@@ -9,11 +9,12 @@ from sugar_lift_py_tests.sugar.sugar_base import (
 )
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
-# Binary operator kind -> the floor method that owns its meaning. The value
-# owns what each operation MEANS (ints fold, strings concatenate on `+`, mixed
-# types hit the honest gap); this sugar only routes to it. Every entry maps to
-# a real FloorValue method, so an operator in this table always reduces or
-# reaches the value's own loud gap -- never a silent default.
+# Binary operator kind -> the floor that owns its meaning. The value owns what
+# each operation MEANS (ints fold, strings concatenate on `+`, mixed types hit
+# the honest gap); this sugar only routes to it. Every entry names a binary
+# floor whose explicit call is ``BINARY_FLOOR_OPERATIONS``, so an operator in
+# this table always reduces or reaches the value's own loud gap -- never a
+# silent default.
 BINOP_METHODS: dict[str, str] = {
     "Add": "add",
     "Sub": "subtract",
@@ -83,23 +84,24 @@ class BinOpSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
             written_by,
         )
 
-        method = BINOP_METHODS[self.op_kind]
+        # The floor's own explicit call (#7757), never a method looked up by
+        # its name.
+        operate = BINARY_FLOOR_OPERATIONS[BINOP_METHODS[self.op_kind]]
 
         # Both sides are operands: a walrus in either (``(x := 5) + 1``) binds
         # once, through the one operand door.  The right side is evaluated
         # after the left, with the left's walrus writes applied.
         def apply(left, right):
-            return getattr(
+            return operate(
                 left.project_operation_receiver(
                     ctx, owner="BinOpSugar left operation receiver"
                 ),
-                method,
-            )(
                 right.project_operation_receiver(
                     ctx, owner="BinOpSugar right operation receiver"
                 ),

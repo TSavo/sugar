@@ -52,6 +52,60 @@ def _stands_on_append_floor(face) -> bool:
     return narrowed() if callable(narrowed) else True
 
 
+def _deferred(outcome) -> bool:
+    """Whether an arm's operation still waits on its caller's actual: a
+    parameter arm answered through its operation's door with the carrier."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    return isinstance(outcome, NativeOperationExitCarrierV1)
+
+
+def _all_halt(outcome) -> bool:
+    """Every arm of an answered outcome halts (a carrier has not answered)."""
+    return not _deferred(outcome) and outcome.halts() == outcome.exits
+
+
+def _beside(guard, true_outcome, false_outcome):
+    """Both arms' outcomes, each under its own polarity, when either arm's
+    operation still waits on its caller (#7757).
+
+    The two polarities are composed through ``ExitSet.sequence``, which hands
+    a carrier on through its own ``after_discharge``: once the caller's
+    actual answers, that arm's exits land beneath its guard, beside every
+    exit of the other arm.  Neither arm's exits are dropped for the other's.
+    """
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    polarities = ExitSet.completed(True, guard).union(
+        ExitSet.completed(False, not_(guard))
+    )
+    return polarities.sequence(lambda taken: true_outcome if taken else false_outcome)
+
+
+def _joined(guard, true_outcome, false_outcome, *, owner: str, blame):
+    """Two single-valued arms rejoined as one ``GuardedValue`` under ``guard``,
+    rebuilt through ``sequence``: the joined arm owes what both owed."""
+    from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    true_outcome = require_single_value(
+        true_outcome, owner=owner, blame=blame, arm="when_true"
+    )
+    false_outcome = require_single_value(
+        false_outcome, owner=owner, blame=blame, arm="when_false"
+    )
+    return true_outcome.sequence(
+        lambda true_value: false_outcome.sequence(
+            lambda false_value: ExitSet.completed(
+                GuardedValue(guard, true_value, false_value)
+            )
+        )
+    )
+
+
 @dataclass(frozen=True)
 class GuardedValue(FloorValue):
     """A definitely-bound value selected by an existing branch guard.
@@ -78,53 +132,37 @@ class GuardedValue(FloorValue):
 
     def answer(self, ctx=None):
         """Resolve both binding arms when a joined name is read."""
-        return self._map("answer", ctx)
+        return self._map(lambda arm: arm.answer(ctx), operation="answer", blame=ctx)
 
     def length(self, site):
         """Distribute length through both authenticated guarded arms."""
-        return self._map("length", site)
+        return self._map(lambda arm: arm.length(site), operation="length", blame=site)
 
-    def _map(self, method: str, *args, **keywords):
-        """Distribute ``method`` over both arms.
+    def _map(self, operate, *, operation: str, blame):
+        """Distribute one operation over both arms.
 
-        ``keywords`` carries a binary operator's or an attribute read's ``ctx``
-        to each arm, so an arm that applies a body applies it under the
-        caller's context.
+        ``operate(arm)`` is that operation's explicit call on one arm, through
+        the operation's one door (``discharge_subscript`` for a read,
+        ``AttributeSugar.project_attribute`` for an attribute, the floor's own
+        method for the rest), never a method looked up by its name (#7757).
+        It carries a binary operator's or an attribute read's ``ctx`` to each
+        arm, so an arm that applies a body applies it under the caller's
+        context.  ``operation`` only names the operation in a refusal.
+
+        An arm whose operation waits on its caller (a parameter arm, answered
+        with the carrier) keeps both arms' outcomes, each under its own
+        polarity (:func:`_beside`).
         """
-        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import ExitSet
 
-        owner = f"GuardedValue._map({method})"
-        blame = args[-1] if args else method
-        if args and isinstance(args[0], GuardedValue):
-            other, *rest = args
-            true_outcome = self._map(method, other.when_true, *rest, **keywords)
-            if true_outcome.halts() == true_outcome.exits:
-                return true_outcome.guarded(other.guard)
-            false_outcome = self._map(method, other.when_false, *rest, **keywords)
-            if false_outcome.halts() == false_outcome.exits:
-                return false_outcome.guarded(not_(other.guard))
-            true_outcome = require_single_value(
-                true_outcome, owner=owner, blame=blame, arm="when_true"
-            )
-            false_outcome = require_single_value(
-                false_outcome, owner=owner, blame=blame, arm="when_false"
-            )
-            # Rebuilt through ``sequence``: the joined arm owes what both owed.
-            return true_outcome.sequence(
-                lambda true_value: false_outcome.sequence(
-                    lambda false_value: ExitSet.completed(
-                        GuardedValue(other.guard, true_value, false_value)
-                    )
-                )
-            )
-
-        true_outcome = getattr(self.when_true, method)(*args, **keywords)
-        if true_outcome.halts() == true_outcome.exits:
+        owner = f"GuardedValue._map({operation})"
+        true_outcome = operate(self.when_true)
+        if _all_halt(true_outcome):
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(self.when_false, method)(*args, **keywords)
-        if false_outcome.halts() == false_outcome.exits:
+        false_outcome = operate(self.when_false)
+        if _deferred(true_outcome) or _deferred(false_outcome):
+            return _beside(self.guard, true_outcome, false_outcome)
+        if _all_halt(false_outcome):
             return false_outcome.guarded(not_(self.guard))
         # Dual-edge partitions from undecided native dispatch (BinOp/Compare):
         # weaken each arm's faces under the branch guard and union.  Joining two
@@ -137,22 +175,44 @@ class GuardedValue(FloorValue):
             return true_outcome.guarded(self.guard).union(
                 false_outcome.guarded(not_(self.guard))
             )
-        true_outcome = require_single_value(
-            true_outcome, owner=owner, blame=blame, arm="when_true"
-        )
-        false_outcome = require_single_value(
-            false_outcome, owner=owner, blame=blame, arm="when_false"
-        )
-        # Rebuilt through ``sequence``: the joined arm owes what both owed.
-        return true_outcome.sequence(
-            lambda true_value: false_outcome.sequence(
-                lambda false_value: ExitSet.completed(
-                    GuardedValue(self.guard, true_value, false_value)
-                )
-            )
+        return _joined(
+            self.guard, true_outcome, false_outcome, owner=owner, blame=blame
         )
 
-    def _predicate(self, method: str, *args, **keywords):
+    def _map_over(self, operand, operate, *, operation: str, blame):
+        """Distribute ``operate(arm, operand)`` over both arms, a guarded
+        ``operand`` split first: each of its arms meets both of this value's
+        arms, and the results rejoin under the operand's own guard."""
+        from sugar_lift_py_tests.ir import not_
+
+        if not isinstance(operand, GuardedValue):
+            return self._map(
+                lambda arm: operate(arm, operand), operation=operation, blame=blame
+            )
+        owner = f"GuardedValue._map({operation})"
+        true_outcome = self._map_over(
+            operand.when_true, operate, operation=operation, blame=blame
+        )
+        if _all_halt(true_outcome):
+            return true_outcome.guarded(operand.guard)
+        false_outcome = self._map_over(
+            operand.when_false, operate, operation=operation, blame=blame
+        )
+        if _deferred(true_outcome) or _deferred(false_outcome):
+            return _beside(operand.guard, true_outcome, false_outcome)
+        if _all_halt(false_outcome):
+            return false_outcome.guarded(not_(operand.guard))
+        return _joined(
+            operand.guard, true_outcome, false_outcome, owner=owner, blame=blame
+        )
+
+    def _predicate(self, operate, *, operation: str, operand, blame, ctx=None):
+        """Distribute one predicate over both arms and rejoin its formulas.
+
+        ``operate(arm)`` is the predicate's explicit call on one arm (#7757);
+        ``operand`` is the predicate's first operand, which an arm answering
+        no formula is compared to (``FloorValue.equals``).
+        """
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
         from sugar_lift_py_tests.outcome import ExitSet
@@ -165,13 +225,14 @@ class GuardedValue(FloorValue):
 
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
-        owner = f"GuardedValue._predicate({method})"
-        blame = args[-1] if args else method
-        true_outcome = getattr(self.when_true, method)(*args, **keywords)
-        if true_outcome.halts() == true_outcome.exits:
+        owner = f"GuardedValue._predicate({operation})"
+        true_outcome = operate(self.when_true)
+        if _all_halt(true_outcome):
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(self.when_false, method)(*args, **keywords)
-        if false_outcome.halts() == false_outcome.exits:
+        false_outcome = operate(self.when_false)
+        if _deferred(true_outcome) or _deferred(false_outcome):
+            return _beside(self.guard, true_outcome, false_outcome)
+        if _all_halt(false_outcome):
             return false_outcome.guarded(not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
@@ -195,7 +256,7 @@ class GuardedValue(FloorValue):
         true_formula = formula(true_value)
         false_formula = formula(false_value)
         if true_formula is None or false_formula is None:
-            return super().equals(args[0], args[-1], keywords.get("ctx"))
+            return super().equals(operand, blame, ctx)
         if (
             type(true_value) is TrueBoolLiteralSugar
             and type(false_value) is FalseBoolLiteralSugar
@@ -215,7 +276,7 @@ class GuardedValue(FloorValue):
             )
         joined = PredicateValue(
             joined_formula,
-            args[-1],
+            blame,
             operand_callsites=(
                 *(
                     true_value.operand_callsites
@@ -243,69 +304,29 @@ class GuardedValue(FloorValue):
         Preserves existing guarded-predicate distribution; does not invent a
         generic getattr/string surface on the Floor protocol.
         """
-        return self.predicate_from_left("less_than", left, site, ctx=ctx)
+        return self.predicate_from_left(
+            lambda arm: left.less_than(arm, site, ctx), site, operation="less_than"
+        )
 
-    def predicate_from_left(self, method: str, left, site, **keywords):
-        """Distribute a binary predicate whose guarded value is the RHS."""
-        return GuardedValue(
-            self.guard, self.when_true, self.when_false
-        )._predicate_from_left(method, left, site, **keywords)
+    def predicate_from_left(self, operate, site, *, operation: str):
+        """Distribute a binary predicate whose guarded value is the RHS.
 
-    def map_from_left(self, method: str, left, site, ctx):
-        """Distribute a binary value operation whose guarded value is the RHS,
-        each arm under the caller's context."""
+        ``operate(arm)`` is the left operand's explicit predicate call on one
+        arm (#7757); ``operation`` only names it in a refusal.
+        """
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import ExitSet
 
-        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
-
-        owner = f"GuardedValue.map_from_left({method})"
-        true_outcome = getattr(left, method)(self.when_true, site, ctx)
-        if true_outcome.halts() == true_outcome.exits:
+        true_outcome = operate(self.when_true)
+        if _all_halt(true_outcome):
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(left, method)(self.when_false, site, ctx)
-        if false_outcome.halts() == false_outcome.exits:
-            return false_outcome.guarded(not_(self.guard))
-
-        if (
-            true_outcome.completed_value() is None
-            or false_outcome.completed_value() is None
-        ):
-            from sugar_lift_py_tests.outcome.exit_set import partition
-
-            true_face, false_face = partition(
-                ("GuardedValue.map_from_left", str(site), method, self.guard)
-            )
-            return true_outcome.guarded(self.guard, true_face).union(
-                false_outcome.guarded(not_(self.guard), false_face)
-            )
-        true_outcome = require_single_value(
-            true_outcome, owner=owner, blame=site, arm="when_true"
-        )
-        false_outcome = require_single_value(
-            false_outcome, owner=owner, blame=site, arm="when_false"
-        )
-        # Rebuilt through ``sequence``: the joined arm owes what both owed.
-        return true_outcome.sequence(
-            lambda true_value: false_outcome.sequence(
-                lambda false_value: ExitSet.completed(
-                    GuardedValue(self.guard, true_value, false_value)
-                )
-            )
-        )
-
-    def _predicate_from_left(self, method: str, left, site, **keywords):
-        true_outcome = getattr(left, method)(self.when_true, site, **keywords)
-        if true_outcome.halts() == true_outcome.exits:
-            return true_outcome.guarded(self.guard)
-        false_outcome = getattr(left, method)(self.when_false, site, **keywords)
-        if false_outcome.halts() == false_outcome.exits:
-            from sugar_lift_py_tests.ir import not_
-
+        false_outcome = operate(self.when_false)
+        if _deferred(true_outcome) or _deferred(false_outcome):
+            return _beside(self.guard, true_outcome, false_outcome)
+        if _all_halt(false_outcome):
             return false_outcome.guarded(not_(self.guard))
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
-        owner = f"GuardedValue._predicate_from_left({method})"
+        owner = f"GuardedValue._predicate_from_left({operation})"
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=site, arm="when_true"
         )
@@ -318,16 +339,82 @@ class GuardedValue(FloorValue):
             lambda true_value: false_outcome.sequence(
                 lambda false_value: GuardedValue(
                     self.guard, true_value, false_value
-                )._predicate("truth", site)
+                ).truth(site)
             )
         )
 
-    def subscript(self, index, site):
-        return self._map("subscript", index, site)
+    def map_from_left(self, operate, site, *, operation: str):
+        """Distribute a binary value operation whose guarded value is the RHS.
+
+        ``operate(arm)`` is the left operand's explicit call of the operation
+        on one arm, under the caller's context (#7757); ``operation`` names
+        the operation in a refusal and in the partition it owns.
+        """
+        from sugar_lift_py_tests.ir import not_
+
+        owner = f"GuardedValue.map_from_left({operation})"
+        true_outcome = operate(self.when_true)
+        if _all_halt(true_outcome):
+            return true_outcome.guarded(self.guard)
+        false_outcome = operate(self.when_false)
+        if _deferred(true_outcome) or _deferred(false_outcome):
+            return _beside(self.guard, true_outcome, false_outcome)
+        if _all_halt(false_outcome):
+            return false_outcome.guarded(not_(self.guard))
+
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
+            from sugar_lift_py_tests.outcome.exit_set import partition
+
+            true_face, false_face = partition(
+                ("GuardedValue.map_from_left", str(site), operation, self.guard)
+            )
+            return true_outcome.guarded(self.guard, true_face).union(
+                false_outcome.guarded(not_(self.guard), false_face)
+            )
+        return _joined(self.guard, true_outcome, false_outcome, owner=owner, blame=site)
+
+    def subscript_with(self, operation, ctx):
+        """``guarded[index]``: each arm is read through the one subscript door
+        (``discharge_subscript``), under the reading caller's context, so a
+        parameter arm defers its read to the caller (#7757).  A guarded index
+        is split first."""
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+
+        return self._map_over(
+            operation.index,
+            lambda arm, index: discharge_subscript(
+                arm,
+                index,
+                operation.blame,
+                ctx,
+                owner=operation.owner,
+                use_occurrence=operation.use_occurrence,
+            ),
+            operation="subscript",
+            blame=operation.blame,
+        )
 
     def subscript_with_occurrence(self, index, site, occurrence):
-        """Distribute one authenticated Subscript occurrence to both arms."""
-        return self._map("subscript_with_occurrence", index, site, occurrence)
+        """Distribute one authenticated Subscript occurrence to both arms,
+        through :meth:`subscript_with`."""
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            SubscriptOperation,
+        )
+
+        return self.subscript_with(
+            SubscriptOperation(
+                index=index,
+                owner="GuardedValue.subscript",
+                blame=site,
+                use_occurrence=occurrence,
+            ),
+            None,
+        )
 
     def attribute(self, name, site, ctx):
         """Distribute attribute projection over both branch faces.
@@ -335,13 +422,26 @@ class GuardedValue(FloorValue):
         Pass-3 / full-dump desugar panics rank ``attribute`` second only to
         ``contains``; observed receiver is almost always GuardedValue (197 of
         229). The arms own what ``.name`` means; this face only threads the
-        existing guard and the reading caller's context.
+        existing guard and the reading caller's context.  Each arm is read
+        through the one attribute door (``AttributeSugar.project_attribute``),
+        so a parameter arm defers its read to the caller (#7757).
         """
-        return self._map("attribute", name, site, ctx=ctx)
+        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+
+        return self._map(
+            lambda arm: AttributeSugar.project_attribute(arm, name, site, ctx),
+            operation="attribute",
+            blame=site,
+        )
 
     def contains(self, item, site):
         """Distribute membership over both branch faces as a joined predicate."""
-        return self._predicate("contains", item, site)
+        return self._predicate(
+            lambda arm: arm.contains(item, site),
+            operation="contains",
+            operand=item,
+            blame=site,
+        )
 
     def project_sequence_with(self, operation, ctx):
         """Unpack a guarded right-hand side: distribute, rejoin PER TARGET NAME.
@@ -407,20 +507,40 @@ class GuardedValue(FloorValue):
 
     def setitem(self, index, value, site, ctx):
         """Rebind both statically known receiver faces after a subscript store."""
-        return self._map("setitem", index, value, site, ctx=ctx)
+        return self._map_over(
+            index,
+            lambda arm, index: arm.setitem(index, value, site, ctx),
+            operation="setitem",
+            blame=site,
+        )
 
     def delitem(self, index, site, ctx):
         """Rebind both statically known receiver faces after a subscript delete."""
-        return self._map("delitem", index, site, ctx=ctx)
+        return self._map_over(
+            index,
+            lambda arm, index: arm.delitem(index, site, ctx),
+            operation="delitem",
+            blame=site,
+        )
 
     def add(self, other, site, ctx):
-        return self._map("add", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.add(other, site, ctx),
+            operation="add",
+            blame=site,
+        )
 
     def append_with(self, value, site):
         if all(
             _stands_on_append_floor(face) for face in (self.when_true, self.when_false)
         ):
-            return self._map("append_with", value, site)
+            return self._map_over(
+                value,
+                lambda arm, value: arm.append_with(value, site),
+                operation="append_with",
+                blame=site,
+            )
         from sugar_lift_py_tests.effect import (
             AppendRuntimeEffect,
             runtime_effect_evidence,
@@ -437,56 +557,134 @@ class GuardedValue(FloorValue):
         )
 
     def subtract(self, other, site, ctx):
-        return self._map("subtract", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.subtract(other, site, ctx),
+            operation="subtract",
+            blame=site,
+        )
 
     def multiply(self, other, site, ctx):
-        return self._map("multiply", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.multiply(other, site, ctx),
+            operation="multiply",
+            blame=site,
+        )
 
     def power(self, other, site, ctx):
-        return self._map("power", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.power(other, site, ctx),
+            operation="power",
+            blame=site,
+        )
 
     def divide(self, other, site, ctx):
-        return self._map("divide", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.divide(other, site, ctx),
+            operation="divide",
+            blame=site,
+        )
 
     def modulo(self, other, site, ctx):
-        return self._map("modulo", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.modulo(other, site, ctx),
+            operation="modulo",
+            blame=site,
+        )
 
     def floor_divide(self, other, site, ctx):
-        return self._map("floor_divide", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.floor_divide(other, site, ctx),
+            operation="floor_divide",
+            blame=site,
+        )
 
     def left_shift(self, other, site, ctx):
-        return self._map("left_shift", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.left_shift(other, site, ctx),
+            operation="left_shift",
+            blame=site,
+        )
 
     def right_shift(self, other, site, ctx):
-        return self._map("right_shift", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.right_shift(other, site, ctx),
+            operation="right_shift",
+            blame=site,
+        )
 
     def bitwise_or(self, other, site, ctx):
-        return self._map("bitwise_or", other, site, ctx=ctx)
+        return self._map_over(
+            other,
+            lambda arm, other: arm.bitwise_or(other, site, ctx),
+            operation="bitwise_or",
+            blame=site,
+        )
 
     def bitwise_invert(self, site):
-        return self._map("bitwise_invert", site)
+        return self._map(
+            lambda arm: arm.bitwise_invert(site), operation="bitwise_invert", blame=site
+        )
 
     def unary_minus(self, site):
-        return self._map("unary_minus", site)
+        return self._map(
+            lambda arm: arm.unary_minus(site), operation="unary_minus", blame=site
+        )
 
     def truth(self, site):
-        return self._predicate("truth", site)
+        return self._predicate(
+            lambda arm: arm.truth(site), operation="truth", operand=site, blame=site
+        )
 
     def equals(self, other, site, ctx):
-        return self._predicate("equals", other, site, ctx=ctx)
+        return self._predicate(
+            lambda arm: arm.equals(other, site, ctx),
+            operation="equals",
+            operand=other,
+            blame=site,
+            ctx=ctx,
+        )
 
     def is_identical(self, other, site):  # type: ignore[override]
-        return self._predicate("is_identical", other, site)
+        return self._predicate(
+            lambda arm: arm.is_identical(other, site),
+            operation="is_identical",
+            operand=other,
+            blame=site,
+        )
 
     def less_than(self, other, site, ctx):
-        return self._predicate("less_than", other, site, ctx=ctx)
+        return self._predicate(
+            lambda arm: arm.less_than(other, site, ctx),
+            operation="less_than",
+            operand=other,
+            blame=site,
+            ctx=ctx,
+        )
 
     def python_isinstance(self, type_name: str, type_term, site):
-        return self._predicate("python_isinstance", type_name, type_term, site)
+        return self._predicate(
+            lambda arm: arm.python_isinstance(type_name, type_term, site),
+            operation="python_isinstance",
+            operand=type_name,
+            blame=site,
+        )
 
     def test_python_type(self, value, site):
         """Distribute an ``isinstance`` test over guarded type coordinates."""
-        return self._predicate("test_python_type", value, site)
+        return self._predicate(
+            lambda arm: arm.test_python_type(value, site),
+            operation="test_python_type",
+            operand=value,
+            blame=site,
+        )
 
     def callsites(self):
         return (*self.when_true.callsites(), *self.when_false.callsites())

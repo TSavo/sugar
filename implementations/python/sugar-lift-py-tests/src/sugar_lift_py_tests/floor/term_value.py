@@ -124,19 +124,20 @@ class TermValue(GuardStableValue):
 
         return ground_type_error(site=site, owner=owner)
 
-    def _decided_binary_type_error(self, other, site, ctx, *, owner: str):
+    def _decided_binary_type_error(self, other, site, ctx, *, owner: str, undecided):
         """Decided non-numeric right → authenticated TypeError; else super gap.
 
         After the numeric tower and sequence-repetition arms have run, a
         source-decided peer that still has no arm is Python's TypeError
         (``1 + "a"``, ``3 % []``).  Undecided rights stay on the shared
-        third-value law via ``super()``.
+        third-value law: ``undecided`` is the caller's own ``super()`` floor
+        (``super().add``), called explicitly, never looked up by name (#7757).
         """
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner=owner)
-        return getattr(super(), owner.rsplit(".", 1)[-1])(other, site, ctx)
+        return undecided(other, site, ctx)
 
     def less_than(self, other, site, ctx):
         # A number stands on the ordering floor: two numbers fold to True/False
@@ -272,7 +273,9 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("add", self, site, ctx)
+            return other.map_from_left(
+                lambda arm: self.add(arm, site, ctx), site, operation="add"
+            )
         if type(other) in (
             CallSiteValue,
             OpaqueOpCallsite,
@@ -294,7 +297,9 @@ class TermValue(GuardStableValue):
         # gaps — not TypeError.
         if type(other) is ComplexValue:
             return super().add(other, site, ctx)
-        return self._decided_binary_type_error(other, site, ctx, owner="TermValue.add")
+        return self._decided_binary_type_error(
+            other, site, ctx, owner="TermValue.add", undecided=super().add
+        )
 
     def subtract(self, other, site, ctx):
         # A number stands on the subtraction floor: two numbers subtract to a number.
@@ -323,7 +328,7 @@ class TermValue(GuardStableValue):
         if type(other) is ComplexValue:
             return super().subtract(other, site, ctx)
         return self._decided_binary_type_error(
-            other, site, ctx, owner="TermValue.subtract"
+            other, site, ctx, owner="TermValue.subtract", undecided=super().subtract
         )
 
     def multiply(self, other, site, ctx):
@@ -341,7 +346,9 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("multiply", self, site, ctx)
+            return other.map_from_left(
+                lambda arm: self.multiply(arm, site, ctx), site, operation="multiply"
+            )
         if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(
                 other, site, ctx
@@ -351,7 +358,11 @@ class TermValue(GuardStableValue):
             if isinstance(self.value, int):
                 return other.multiply(self, site, ctx)
             return self._decided_binary_type_error(
-                other, site, ctx, owner="TermValue.multiply"
+                other,
+                site,
+                ctx,
+                owner="TermValue.multiply",
+                undecided=super().multiply,
             )
         from sugar_lift_py_tests.floor.complex_arithmetic import complex_multiply
 
@@ -363,7 +374,11 @@ class TermValue(GuardStableValue):
         if type(other) is ComplexValue:
             return super().multiply(other, site, ctx)
         return self._decided_binary_type_error(
-            other, site, ctx, owner="TermValue.multiply"
+            other,
+            site,
+            ctx,
+            owner="TermValue.multiply",
+            undecided=super().multiply,
         )
 
     def power(self, other, site, ctx):
@@ -376,7 +391,9 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("power", self, site, ctx)
+            return other.map_from_left(
+                lambda arm: self.power(arm, site, ctx), site, operation="power"
+            )
         if type(other) is SymbolicValue:
             return SymbolicValue(self.to_term(owner=str(site))).power(other, site, ctx)
         if type(other) is CallSiteValue:
@@ -431,7 +448,7 @@ class TermValue(GuardStableValue):
         if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).divide(other, site, ctx)
         return self._decided_binary_type_error(
-            other, site, ctx, owner="TermValue.divide"
+            other, site, ctx, owner="TermValue.divide", undecided=super().divide
         )
 
     def modulo(self, other, site, ctx):
@@ -455,7 +472,7 @@ class TermValue(GuardStableValue):
 
             return runtime_modulo(self, other, site)
         return self._decided_binary_type_error(
-            other, site, ctx, owner="TermValue.modulo"
+            other, site, ctx, owner="TermValue.modulo", undecided=super().modulo
         )
 
     def floor_divide(self, other, site, ctx):
@@ -477,7 +494,11 @@ class TermValue(GuardStableValue):
                 other, site, ctx
             )
         return self._decided_binary_type_error(
-            other, site, ctx, owner="TermValue.floor_divide"
+            other,
+            site,
+            ctx,
+            owner="TermValue.floor_divide",
+            undecided=super().floor_divide,
         )
 
     def contains(self, item, site):
@@ -512,7 +533,14 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value & other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, ctx, "&", "bv32.and")
+        return self._symbolic_or_bv32_bitwise(
+            other,
+            site,
+            ctx,
+            "bv32.and",
+            symbolic=lambda left: left.bitwise_and(other, site, ctx),
+            undecided=super().bitwise_and,
+        )
 
     def bitwise_xor(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
@@ -524,7 +552,14 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value ^ other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, ctx, "^", "bv32.xor")
+        return self._symbolic_or_bv32_bitwise(
+            other,
+            site,
+            ctx,
+            "bv32.xor",
+            symbolic=lambda left: left.bitwise_xor(other, site, ctx),
+            undecided=super().bitwise_xor,
+        )
 
     def bitwise_or(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
@@ -536,7 +571,14 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value | other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, ctx, "|", "bv32.or")
+        return self._symbolic_or_bv32_bitwise(
+            other,
+            site,
+            ctx,
+            "bv32.or",
+            symbolic=lambda left: left.bitwise_or(other, site, ctx),
+            undecided=super().bitwise_or,
+        )
 
     def left_shift(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
@@ -548,7 +590,14 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value << other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, ctx, "<<", "bv32.shl")
+        return self._symbolic_or_bv32_bitwise(
+            other,
+            site,
+            ctx,
+            "bv32.shl",
+            symbolic=lambda left: left.left_shift(other, site, ctx),
+            undecided=super().left_shift,
+        )
 
     def right_shift(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
@@ -564,23 +613,30 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value >> other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, ctx, ">>", "bv32.lshr")
+        return self._symbolic_or_bv32_bitwise(
+            other,
+            site,
+            ctx,
+            "bv32.lshr",
+            symbolic=lambda left: left.right_shift(other, site, ctx),
+            undecided=super().right_shift,
+        )
 
-    def _symbolic_or_bv32_bitwise(self, other, site, ctx, operator, bv32_operator):
+    def _symbolic_or_bv32_bitwise(
+        self, other, site, ctx, bv32_operator, *, symbolic, undecided
+    ):
+        """The bitwise floor past the int pair.
+
+        ``symbolic(left)`` is the operation's explicit call with this number
+        as a symbolic left operand, and ``undecided`` the caller's own
+        ``super()`` floor (``super().bitwise_and``): each is written out by
+        the caller, never looked up by name (#7757).
+        """
         from sugar_lift_py_tests.floor.bv32_value import Bv32Value
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) is SymbolicValue:
-            return getattr(
-                SymbolicValue(self.to_term(owner=str(site))),
-                {
-                    "&": "bitwise_and",
-                    "|": "bitwise_or",
-                    "^": "bitwise_xor",
-                    "<<": "left_shift",
-                    ">>": "right_shift",
-                }[operator],
-            )(other, site, ctx)
+            return symbolic(SymbolicValue(self.to_term(owner=str(site))))
         if type(other) is Bv32Value:
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import ExitSet
@@ -593,14 +649,7 @@ class TermValue(GuardStableValue):
                     )
                 )
             )
-        method = {
-            "&": "bitwise_and",
-            "|": "bitwise_or",
-            "^": "bitwise_xor",
-            "<<": "left_shift",
-            ">>": "right_shift",
-        }[operator]
-        return getattr(super(), method)(other, site, ctx)
+        return undecided(other, site, ctx)
 
     def matrix_multiply(self, other, site, ctx):
         """``@`` is not defined on numbers — construct or typed-red, never panic.

@@ -93,10 +93,10 @@ class DictValue(GuardStableValue):
         # A guarded needle is not one needle: distribute into its faces and
         # rejoin under the same guard before this receiver's own law runs.
         from sugar_lift_py_tests.floor.guarded_operand import (
-            distribute_guarded_predicate,
+            distribute_guarded_membership,
         )
 
-        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        distributed = distribute_guarded_membership(self, item, site)
         if distributed is not None:
             return distributed
         from sugar_lift_py_tests.floor.membership import membership

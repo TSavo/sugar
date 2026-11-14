@@ -126,17 +126,19 @@ class OpaqueOpCallsite(FloorValue):
 
         return SymbolicValue(self.to_term(owner="OpaqueOpCallsite.symbolic"))
 
+    # Each operator is answered by the downstream value's own floor, called
+    # explicitly (#7757), never a method looked up by its name.
     def add(self, other, site, ctx):
-        return self._arithmetic("add", other, site, ctx)
+        return self._downstream().add(other, site, ctx)
 
     def subtract(self, other, site, ctx):
-        return self._arithmetic("subtract", other, site, ctx)
+        return self._downstream().subtract(other, site, ctx)
 
     def multiply(self, other, site, ctx):
-        return self._arithmetic("multiply", other, site, ctx)
+        return self._downstream().multiply(other, site, ctx)
 
     def divide(self, other, site, ctx):
-        return self._arithmetic("divide", other, site, ctx)
+        return self._downstream().divide(other, site, ctx)
 
     def subscript(self, index, site):
         # Preserve a computed operator value when one exists; otherwise the
@@ -152,28 +154,25 @@ class OpaqueOpCallsite(FloorValue):
         )
 
     def floor_divide(self, other, site, ctx):
-        return self._arithmetic("floor_divide", other, site, ctx)
+        return self._downstream().floor_divide(other, site, ctx)
 
     def modulo(self, other, site, ctx):
-        return self._arithmetic("modulo", other, site, ctx)
+        return self._downstream().modulo(other, site, ctx)
 
     def left_shift(self, other, site, ctx):
-        return self._arithmetic("left_shift", other, site, ctx)
+        return self._downstream().left_shift(other, site, ctx)
 
     def right_shift(self, other, site, ctx):
-        return self._arithmetic("right_shift", other, site, ctx)
+        return self._downstream().right_shift(other, site, ctx)
 
     def bitwise_and(self, other, site, ctx):
-        return self._arithmetic("bitwise_and", other, site, ctx)
+        return self._downstream().bitwise_and(other, site, ctx)
 
     def bitwise_or(self, other, site, ctx):
-        return self._arithmetic("bitwise_or", other, site, ctx)
+        return self._downstream().bitwise_or(other, site, ctx)
 
     def unary_minus(self, site):
         return self._downstream().unary_minus(site)
-
-    def _arithmetic(self, method: str, other: FloorValue, site, ctx):
-        return getattr(self._downstream(), method)(other, site, ctx)
 
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         """Tuple-unpack of an opaque coordinate: ``a, b = opaque_call(…)``.

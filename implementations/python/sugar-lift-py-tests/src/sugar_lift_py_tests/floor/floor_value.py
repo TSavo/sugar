@@ -48,6 +48,43 @@ _BINARY_OPERATOR_COORDINATE = {
 }
 
 
+# The one explicit call of each binary-operation floor, keyed by the same floor
+# method name (#7757). A producer that holds the operation as data (BinOpSugar's
+# operator kind, a guarded right operand's rejoin, a dug call result, a
+# formal's carrier at discharge) applies it here: every call is written out,
+# so the law tests read it, and no floor method is ever looked up by a string.
+BINARY_FLOOR_OPERATIONS = {
+    "add": lambda left, right, site, ctx: left.add(right, site, ctx),
+    "subtract": lambda left, right, site, ctx: left.subtract(right, site, ctx),
+    "multiply": lambda left, right, site, ctx: left.multiply(right, site, ctx),
+    "divide": lambda left, right, site, ctx: left.divide(right, site, ctx),
+    "floor_divide": lambda left, right, site, ctx: left.floor_divide(right, site, ctx),
+    "modulo": lambda left, right, site, ctx: left.modulo(right, site, ctx),
+    "power": lambda left, right, site, ctx: left.power(right, site, ctx),
+    "matrix_multiply": lambda left, right, site, ctx: left.matrix_multiply(
+        right, site, ctx
+    ),
+    "bitwise_and": lambda left, right, site, ctx: left.bitwise_and(right, site, ctx),
+    "bitwise_or": lambda left, right, site, ctx: left.bitwise_or(right, site, ctx),
+    "bitwise_xor": lambda left, right, site, ctx: left.bitwise_xor(right, site, ctx),
+    "left_shift": lambda left, right, site, ctx: left.left_shift(right, site, ctx),
+    "right_shift": lambda left, right, site, ctx: left.right_shift(right, site, ctx),
+}
+
+
+# The one explicit call of each ordering floor, keyed by floor method name, for
+# the same reason (#7757): ``ComparisonOpSugar`` and a formal's carrier at
+# discharge both apply it here.
+ORDERING_FLOOR_OPERATIONS = {
+    "less_than": lambda left, right, site, ctx: left.less_than(right, site, ctx),
+    "less_equal": lambda left, right, site, ctx: left.less_equal(right, site, ctx),
+    "greater_than": lambda left, right, site, ctx: left.greater_than(right, site, ctx),
+    "greater_equal": lambda left, right, site, ctx: left.greater_equal(
+        right, site, ctx
+    ),
+}
+
+
 class FloorValue:
     def project_operation_receiver(self, ctx: object, *, owner: str):
         """Return the value that owns the next operation dispatch.

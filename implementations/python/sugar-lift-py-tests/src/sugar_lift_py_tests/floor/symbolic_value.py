@@ -397,7 +397,12 @@ class SymbolicValue(FloorValue):
                 coordinates=(left_coordinate, right_coordinate),
             )
         if isinstance(other, GuardedValue):
-            return other.map_from_left(owner, self, site, ctx)
+            from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
+
+            operate = BINARY_FLOOR_OPERATIONS[owner]
+            return other.map_from_left(
+                lambda arm: operate(self, arm, site, ctx), site, operation=owner
+            )
         # Undecided native dispatch: the shared law's two faces (completes
         # under python:binary_op.completes, else an UndeterminedRaiseEffect).
         # Never a sole ExitSet.completed(SymbolicValue): that claims it cannot raise.
