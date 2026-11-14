@@ -38,9 +38,21 @@ def _is_authenticated_stop_iteration(effect) -> bool:
 
 @dataclass(frozen=True)
 class LoopBindingRefSugar(ConstructedTermSugar):
+    """A read after a live loop of ``name``, which the loop carries under
+    its binding coordinate: one face (``completion_kind``) of the loop's
+    post-binding projection (``project_loop_post_binding``).
+
+    The read resolves through the coordinate only.  The loop binds it on
+    every exit it leaves by, concrete or symbolic, guarded or not
+    (``LoopRecurrenceSugar._publication``), so a read reduced after the loop
+    in the block that ran it finds it bound.  Unbound -- no context, or a
+    context the loop's publication never reached -- the read is refused by
+    name (``_unbound``): no value is made up in its place."""
+
     target_cid: str
     binding_coordinate_cid: str
     completion_kind: str
+    name: str
     site: object = field(compare=False)
 
     @classmethod
@@ -60,13 +72,41 @@ class LoopBindingRefSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
-        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
-        if temporal is not None:
-            bound = temporal.value_if_bound(self.binding_coordinate_cid)
-            if bound is not None:
-                return ExitSet.completed(bound)
-        return ExitSet.completed(
-            SymbolicValue(self.to_term(owner="LoopBindingRefSugar"))
+        temporal = getattr(ctx, "temporal", None)
+        bound = (
+            None
+            if temporal is None
+            else temporal.value_if_bound(self.binding_coordinate_cid)
+        )
+        if bound is None:
+            self._unbound()
+        return ExitSet.completed(bound)
+
+    def _unbound(self):
+        """A read whose binding coordinate the loop's publication never
+        reached here.  Refused by name, naming the coordinate: the name is
+        never read in its place, and the loop is never assumed to have left
+        some value nobody bound."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="LoopBindingRefSugar",
+            blame=self.site,
+            observed=(
+                f"read of `{self.name}` after loop {self.target_cid} "
+                f"({self.completion_kind} face) with its binding coordinate "
+                f"{self.binding_coordinate_cid} unbound"
+            ),
+            requested=(
+                "the loop's publication of the name under its binding "
+                "coordinate (LoopRecurrenceSugar._publication) on the exit "
+                "the read follows"
+            ),
+            fix=(
+                "reduce the read after the loop in the block that ran it, "
+                "or carry the loop's publication to where the read is "
+                "reduced; never answer an unbound post-binding term"
+            ),
         )
 
 
