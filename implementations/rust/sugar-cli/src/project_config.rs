@@ -127,11 +127,6 @@ pub struct ProjectConfig {
     pub solver_portfolio: Vec<String>,
     pub solver_mode: Option<String>, // "first-wins" | "consensus"
 
-    /// Extra contract directories loaded by `sugar prove`.
-    /// e.g., an OpenAPI spec project whose .proof files are
-    /// consumed alongside the main project.
-    pub callees: Vec<String>,
-
     /// Serialized command path documents, keyed by command.
     pub path_mint: Option<String>,
 
@@ -272,9 +267,6 @@ fn parse_config(text: &str) -> ProjectConfig {
             (None, "trusted_implication_signers")
             | (Some("verify"), "trusted_implication_signers") => {
                 cfg.trusted_implication_signers = parse_string_array(&val);
-            }
-            (Some("verify"), "callees") => {
-                cfg.callees = parse_string_array(&val);
             }
             (Some("paths.mint"), "file") => cfg.path_mint = Some(val),
             // #1358 / #1355: [platform_profile] section

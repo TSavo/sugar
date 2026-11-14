@@ -308,9 +308,6 @@ fn component_plan_intent_from_cli_verb(verb: &str) -> String {
         "prove" => {
             command.arg("prove").arg(project.path());
         }
-        "verify" => {
-            command.arg("verify").arg("--project").arg(project.path());
-        }
         other => panic!("unsupported CLI verb for component-plan intent test: {other}"),
     }
     let output = command
@@ -339,10 +336,9 @@ fn component_plan_intents_follow_cli_verb() {
     let actual = [
         component_plan_intent_from_cli_verb("lift"),
         component_plan_intent_from_cli_verb("prove"),
-        component_plan_intent_from_cli_verb("verify"),
     ];
 
-    assert_eq!(actual, ["lift", "prove", "verify"]);
+    assert_eq!(actual, ["lift", "prove"]);
 }
 
 #[test]

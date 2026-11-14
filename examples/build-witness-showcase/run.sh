@@ -254,7 +254,7 @@ run_suite() {
 
   echo "== verify $suite =="
   set +e
-  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" verify --project . --json) > "$dir/.verify.raw" 2>&1
+  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" prove . --json) > "$dir/.verify.raw" 2>&1
   local rc=$?
   set -e
   extract_json_receipt "$dir/.verify.raw" "$dir/.verify.json"
@@ -277,7 +277,7 @@ run_lying_oracle_regression() {
 
   echo "== verify $suite with lying discharge oracle =="
   set +e
-  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" verify --project . --json) > "$dir/.verify.lie.raw" 2>&1
+  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" prove . --json) > "$dir/.verify.lie.raw" 2>&1
   local rc=$?
   set -e
   extract_json_receipt "$dir/.verify.lie.raw" "$dir/.verify.lie.json"
@@ -305,7 +305,7 @@ PY
 
   echo "== verify $suite after script tamper =="
   set +e
-  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" verify --project . --json) > "$dir/.verify.raw" 2>&1
+  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" prove . --json) > "$dir/.verify.raw" 2>&1
   local rc=$?
   set -e
   extract_json_receipt "$dir/.verify.raw" "$dir/.verify.json"
@@ -335,7 +335,7 @@ TXT
 
   echo "== verify $suite after artifact tamper =="
   set +e
-  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" verify --project . --json) > "$dir/.verify.raw" 2>&1
+  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" prove . --json) > "$dir/.verify.raw" 2>&1
   local rc=$?
   set -e
   extract_json_receipt "$dir/.verify.raw" "$dir/.verify.json"

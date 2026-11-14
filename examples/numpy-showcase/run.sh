@@ -122,7 +122,7 @@ check "witness names the failing degenerate test"   "test_rot90_contradiction"
 
 echo ""
 echo "== verify durable artifact (expected refusal: the degenerate twin is in this proof) =="
-verify_report="$(PATH="$VENV/bin:$PATH" "$BIN" verify --project . --json 2>&1)"
+verify_report="$(PATH="$VENV/bin:$PATH" "$BIN" prove . --json 2>&1)"
 verify_rc=$?
 echo "$verify_report"
 if [ "$verify_rc" -eq 0 ]; then

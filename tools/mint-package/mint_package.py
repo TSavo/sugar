@@ -326,7 +326,7 @@ def main():
     verify_path = os.path.join(entry, "verify.json")
     with open(verify_path, "w") as vf:
         subprocess.run(
-            [bin_, "verify", "--project", ".", "--json"],
+            [bin_, "prove", ".", "--json"],
             cwd=project,
             stdout=vf,
         )
@@ -337,7 +337,7 @@ def main():
         shutil.copy(proof, entry)
         bundle_cid = os.path.basename(proof).replace(".proof", "")
 
-    # PER-BUNDLE ACCOUNTING, not per-pool. `sugar verify --project` loads the
+    # PER-BUNDLE ACCOUNTING, not per-pool. `sugar prove` loads the
     # imported dep bundles and re-verifies the WHOLE pool, so the receipt's
     # rows are the entire import closure, not this package's own obligations.
     # A dep's rows belong to the DEP's bundle, not ours. Since deps are minted

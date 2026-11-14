@@ -171,7 +171,7 @@ PY
   # Confirm the contract proof verifies CLEAN on its own (rc=0, one row discharged).
   local rc
   set +e
-  (cd "$CONTRACT_DIR" && "$SUGAR" verify --project . --json 2>/dev/null) > "$CONTRACT_DIR/.verify.json"
+  (cd "$CONTRACT_DIR" && "$SUGAR" prove . --json 2>/dev/null) > "$CONTRACT_DIR/.verify.json"
   rc=$?
   set -e
   python3 - "$REPO" "$CONTRACT_DIR/.verify.json" "$rc" "$TARGET_EUF" <<'PY'
@@ -363,7 +363,7 @@ PY
 
   echo "-- sugar verify $suite --"
   set +e
-  (cd "$dir" && "$SUGAR" verify --project . --json 2>/dev/null) > "$dir/.verify.json"
+  (cd "$dir" && "$SUGAR" prove . --json 2>/dev/null) > "$dir/.verify.json"
   local verify_rc=$?
   set -e
 

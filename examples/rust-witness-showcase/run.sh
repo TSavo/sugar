@@ -106,7 +106,7 @@ next(( (r.get('property') or '').split('witness-package:')[-1]
 
   echo "-- verify: rust recomputes the witness CID (oracle untrusted) --"
   local verify_json="$dir/.verify.json"
-  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$verify_json" 2>/dev/null || true
+  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json ) > "$verify_json" 2>/dev/null || true
   local wverdict
   # Single expression: json_get evals one expr over `d` (no multi-stmt).
   wverdict="$(pyget "$verify_json" "
@@ -135,7 +135,7 @@ next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') o
     echo "-- verify (RECOMPUTE): delete the package, re-run -> rebuild the bundle --"
     rm -rf "$dir/.sugar/witnesses"
     local recompute_json="$dir/.verify_recompute.json"
-    ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$recompute_json" 2>/dev/null || true
+    ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json ) > "$recompute_json" 2>/dev/null || true
     local rverdict rchecks
     rverdict="$(pyget "$recompute_json" "
 next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any('recompute' in str(c) for c in (w.get('checks') or []))), 'MISSING'))

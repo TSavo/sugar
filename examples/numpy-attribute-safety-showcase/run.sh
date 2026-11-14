@@ -290,7 +290,7 @@ run_suite() {
   if [ "$expect_witness" = "discharged" ]; then
     echo "== verify $suite witness =="
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
     local verify_rc=$?
     set -e
     : "$verify_rc"

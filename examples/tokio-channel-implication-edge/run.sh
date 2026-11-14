@@ -211,7 +211,7 @@ run_suite() {
 
     echo "== verify $suite witness =="
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
     set -e
     local verify_verdict
     verify_verdict="$(witness_verdict "$dir/.verify.json")"
@@ -223,7 +223,7 @@ run_suite() {
 
     rm -rf "$dir/.sugar/witnesses"
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json"
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify_recompute.json"
     set -e
     local recompute_strategy
     recompute_strategy="$(witness_recompute_strategy "$dir/.verify_recompute.json")"

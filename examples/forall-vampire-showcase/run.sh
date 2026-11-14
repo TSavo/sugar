@@ -50,7 +50,7 @@ SUGAR="$("$ROOT/bin/sugarbin" --profile release)"
 verify_rc=0
 (
   cd "$PROJECT"
-  "$SUGAR" verify --project . --emit-witnesses "$PROJECT/witnesses-out" --json
+  "$SUGAR" verify . --emit-witnesses "$PROJECT/witnesses-out" --json
 ) > "$VERIFY_JSON" || verify_rc=$?
 
 python3 - "$ROOT" "$VERIFY_JSON" "$Z3_OUT" "$z3_rc" "$verify_rc" <<'PY'

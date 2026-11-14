@@ -77,7 +77,7 @@ echo "   prove witness-package status: $witness_status"
 echo "-- verify: durable witness dimension --"
 verify_json="$HERE/good/.verify.json"
 ( cd "$HERE/good" && SUGAR_WITNESS_PROJECT_DIR="$(pwd)" \
-  PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json \
+  PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json \
   2>/dev/null ) > "$verify_json" || true
 
 python3 - "good" "$verify_json" <<'PY'
@@ -128,7 +128,7 @@ fi
 echo "-- verify: honest run -> witness dimension should be refused/unsatisfied --"
 verify_json="$HERE/bad/.verify.json"
 ( cd "$HERE/bad" && SUGAR_WITNESS_PROJECT_DIR="$(pwd)" \
-  PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json \
+  PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json \
   2>/dev/null ) > "$verify_json" || true
 
 python3 - "bad" "$verify_json" <<'PY'
@@ -299,7 +299,7 @@ TOML
 
   lie_verify_json="$HERE/bad/.verify_lie.json"
   ( cd "$HERE/bad" && SUGAR_WITNESS_PROJECT_DIR="$(pwd)" \
-    PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json \
+    PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json \
     2>/dev/null ) > "$lie_verify_json" 2>/dev/null || true
 
   # Restore real manifest

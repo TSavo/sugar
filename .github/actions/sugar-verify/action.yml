@@ -52,12 +52,12 @@ runs:
         # Capture the JSON report. We run twice: once with --json to capture
         # the machine-readable verdict, once without for human-friendly logs.
         # The duplicate run is cheap because the cache is warm on the second
-        # call. Both go through `sugar verify`: the standing-
-        # runtime gate, no LLM, no network.
-        npx -y "sugar@${SUGAR_VERSION}" verify --json $verbose_flag > sugar-report.json 2> sugar-report.err
+        # call. Both go through `sugar prove` (item 39: proving a project is
+        # `sugar prove`; `sugar verify` has no project door): no LLM, no network.
+        npx -y "sugar@${SUGAR_VERSION}" prove . --json $verbose_flag > sugar-report.json 2> sugar-report.err
         json_exit=$?
 
-        npx -y "sugar@${SUGAR_VERSION}" verify $verbose_flag
+        npx -y "sugar@${SUGAR_VERSION}" prove . $verbose_flag
         verify_exit=$?
 
         # Build a markdown summary from the JSON report. Falls back to

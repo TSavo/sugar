@@ -269,7 +269,7 @@ fn run_mint(project: &Path) {
 
 fn run_verify(project: &Path, witness_dir: &Path) -> (Json, i32) {
     let out = Command::new(sugar_bin())
-        .args(["verify", "--project"])
+        .arg("verify")
         .arg(project)
         .arg("--emit-witnesses")
         .arg(witness_dir)

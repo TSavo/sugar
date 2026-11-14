@@ -213,7 +213,7 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
 
   echo "-- verify durable artifact --"
   local verify_json="$dir/.verify.json"
-  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$verify_json" 2>/dev/null || true
+  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json ) > "$verify_json" 2>/dev/null || true
   python3 - "$suite" "$expect_consistency" "$expect_witness" "$verify_json" <<'PY'
 import json
 import sys

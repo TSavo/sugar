@@ -46,11 +46,9 @@
 // them into one verb; it reimplements none of them.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
-use crate::project_config::read_project_config;
-use crate::report_fmt;
 use crate::witness_verify;
 use clap::Parser;
 use owo_colors::OwoColorize;
@@ -63,14 +61,13 @@ use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
-    run_plan_with_compilers, DispatchConfig, FormulaTheory, LegacyZ3Fallback, MementoPool,
-    ObligationVerdict, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
-    WitnessVerificationOutcome,
+    run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool, ObligationVerdict,
+    SolverHandle, SolverPlan, SolverSeat, SolversConfig, WitnessVerificationOutcome,
 };
 use tracing::{debug, info};
 
 use crate::cmd_mint;
-use crate::{EXIT_LINK_FAIL, EXIT_OK, EXIT_SOLVER_FAIL, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
+use crate::{EXIT_OK, EXIT_SOLVER_FAIL, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 // Default Ed25519 seed used to sign minted verification witnesses when
 // no real signer is configured. This is a deterministic *developer*
@@ -187,17 +184,10 @@ fn decode_seed_hex(hex: &str) -> Result<[u8; 32], String> {
 pub struct VerifyArgs {
     /// Configured kit alias to verify. Resolves through project/user
     /// `[[kits]]` config to the kit's project root; its `.sugar/`
-    /// catalog carries the lifted contract claims. Conflicts with
-    /// `--project`. May also be an explicit path when the value contains
-    /// a path separator.
-    #[arg(conflicts_with = "project")]
+    /// catalog carries the lifted contract claims. May also be an
+    /// explicit path when the value contains a path separator. Proving a
+    /// project is `sugar prove` (item 39): there is no `--project` here.
     pub kit: Option<String>,
-
-    /// Verify an explicit project root instead of a named kit. Defaults
-    /// to the current directory when neither `--kit` positional nor this
-    /// is given.
-    #[arg(long)]
-    pub project: Option<PathBuf>,
 
     /// Path to z3 binary (default: "z3" on PATH). Used for the SMT-LIB
     /// dispatch-table seat fallback.
@@ -347,31 +337,34 @@ pub fn run(args: VerifyArgs) -> u8 {
         );
     }
 
-    // Resolve the project root: a named kit, an explicit --project, or
-    // the current directory.
-    let project_root: PathBuf = if let Some(kit) = &args.kit {
-        match cmd_mint::resolve_kit(kit) {
-            Some((path, _surface, _lang)) => path,
-            None => {
-                // If the value looks like a path (contains a separator
-                // or is `.`/`..`), treat it as an explicit project root
-                // rather than a kit name.
-                let p = PathBuf::from(kit);
-                if kit.contains(std::path::MAIN_SEPARATOR)
-                    || kit.starts_with('/')
-                    || kit.starts_with('.')
-                    || p.is_absolute()
-                {
-                    p
-                } else {
-                    let aliases = cmd_mint::configured_kit_alias_names();
-                    eprintln!("{}", cmd_mint::format_unknown_kit_error(kit, &aliases));
-                    return EXIT_USER_ERROR;
-                }
+    // Resolve the kit root: a named kit or an explicit kit path. Proving a
+    // project is `sugar prove`; `verify` has no project door (item 39).
+    let Some(kit) = &args.kit else {
+        eprintln!(
+            "{}: `sugar verify` needs a kit (alias or path) or --artifact/--proof; to prove a project run `sugar prove`",
+            "error".red().bold()
+        );
+        return EXIT_USER_ERROR;
+    };
+    let project_root: PathBuf = match cmd_mint::resolve_kit(kit) {
+        Some((path, _surface, _lang)) => path,
+        None => {
+            // If the value looks like a path (contains a separator
+            // or is `.`/`..`), treat it as an explicit kit root
+            // rather than a kit name.
+            let p = PathBuf::from(kit);
+            if kit.contains(std::path::MAIN_SEPARATOR)
+                || kit.starts_with('/')
+                || kit.starts_with('.')
+                || p.is_absolute()
+            {
+                p
+            } else {
+                let aliases = cmd_mint::configured_kit_alias_names();
+                eprintln!("{}", cmd_mint::format_unknown_kit_error(kit, &aliases));
+                return EXIT_USER_ERROR;
             }
         }
-    } else {
-        args.project.clone().unwrap_or_else(|| PathBuf::from("."))
     };
 
     if !project_root.exists() {
@@ -381,10 +374,6 @@ pub fn run(args: VerifyArgs) -> u8 {
             project_root.display()
         );
         return EXIT_USER_ERROR;
-    }
-
-    if use_artifact_project_verify(&args, &project_root) {
-        return run_artifact_project_verify(&project_root, &args);
     }
 
     let quiet = args.out.quiet;
@@ -582,11 +571,6 @@ pub fn run(args: VerifyArgs) -> u8 {
     }
 }
 
-fn use_artifact_project_verify(args: &VerifyArgs, project_root: &Path) -> bool {
-    args.emit_witnesses.is_none()
-        && (args.project.is_some() || project_root.join(".sugar").join("config.toml").exists())
-}
-
 fn check_component_plan_errors(component_plan: &ComponentPlan) -> Result<(), String> {
     if let Some(diagnostic) = component_plan::first_error_diagnostic(component_plan) {
         return Err(diagnostic.message.clone());
@@ -598,324 +582,6 @@ fn emit_component_plan_warnings(component_plan: &ComponentPlan) {
     for diagnostic in component_plan::warning_diagnostics(component_plan) {
         eprintln!("{}: {}", "warning".yellow().bold(), diagnostic.message);
     }
-}
-
-fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
-    let quiet = args.out.quiet;
-    let json_out = args.out.json;
-    let cfg_doc = read_project_config(project_root);
-    let component_plan_options = ComponentPlanOptions {
-        allow_failed_components: args.allow_failed_components,
-    };
-    let component_plan = component_plan::plan_workspace_with_options(
-        project_root,
-        PlanIntent::Verify,
-        component_plan_options,
-    );
-    if let Err(error) = check_component_plan_errors(&component_plan) {
-        eprintln!("{}: {error}", "error".red().bold());
-        return EXIT_USER_ERROR;
-    }
-    if component_plan_options.allow_failed_components {
-        emit_component_plan_warnings(&component_plan);
-    }
-
-    let mut extra_projects: Vec<PathBuf> = Vec::new();
-    for callee in &cfg_doc.callees {
-        let p = project_root.join(callee);
-        if p.exists() {
-            extra_projects.push(p);
-        }
-    }
-
-    let dependency_proofs = match crate::kit_dispatch::dependency_proofs_via_rpc(project_root) {
-        Ok(proofs) => proofs,
-        Err(error) => {
-            eprintln!(
-                "{}: dependency proof resolution failed: {error}",
-                "error".red().bold()
-            );
-            return EXIT_USER_ERROR;
-        }
-    };
-
-    // #3809 PR A: CLI client feeds solvers; solve does not open config.toml.
-    let solvers_config = match SolversConfig::load(project_root) {
-        Ok(sc) => sc,
-        Err(error) => {
-            eprintln!(
-                "{}: load solvers from .sugar/config.toml: {error}",
-                "error".red().bold()
-            );
-            return EXIT_USER_ERROR;
-        }
-    };
-    // #3809 cut #2: named run inputs hashed by CLI client.
-    let link_bundle_cid =
-        sugar_verifier::runner::hash_named_project_artifact(project_root, "link-bundle.json");
-    let plugin_registry_cid =
-        sugar_verifier::runner::hash_named_project_artifact(project_root, "plugin-registry.json");
-
-    let cfg = RunnerConfig {
-        project_root: project_root.to_path_buf(),
-        legacy_z3_fallback: Some(LegacyZ3Fallback::compat(args.z3.clone())),
-        extra_projects,
-        extra_proofs: dependency_proofs,
-        trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
-        solvers_config,
-        link_bundle_cid,
-        plugin_registry_cid,
-        ..Default::default()
-    };
-    let compilers = component_plan::compiler_registry_from_plan(
-        project_root,
-        &component_plan,
-        &component_plan::VerifierComponentRegistry,
-    );
-    // The ONE production solve door (sugar#3859): `solve_project` runs the
-    // real `Runner::run_with_proof_run` pipeline as beat 2 and wraps it in a
-    // typed view. Exit-code law #3893: `outcome_class` folds link surface
-    // into the gate — unresolved links redden (EXIT_LINK_FAIL=4) by default.
-    let mut proven = match sugar_compiler::orchestrate::solve_project(cfg, compilers) {
-        Ok(proven) => proven,
-        Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
-            return EXIT_USER_ERROR;
-        }
-    };
-    // #3809 cut #8: solve seals in memory; CLI face persists durable receipt.
-    if !proven.artifact.bundle_bytes.is_empty() {
-        match sugar_verifier::runner::persist_proof_run_to_project(
-            project_root,
-            &proven.artifact.bundle_cid,
-            &proven.artifact.bundle_bytes,
-        ) {
-            Ok(path) => proven.artifact.bundle_path = path,
-            Err(error) => eprintln!(
-                "{}: could not persist proof-run under .sugar/runs: {error}",
-                "warning".yellow().bold()
-            ),
-        }
-    }
-    let report = &proven.artifact.report;
-    let pool = load_all_proofs::run(project_root);
-    let witness_results =
-        witness_verify::verify_witnesses_with_options(project_root, &pool, component_plan_options);
-    let witnesses_ok = witness_results.iter().all(|w| w.is_ok());
-    let proof_gate = proof_report_gate_with_links(
-        report,
-        proven.has_link_errors(),
-        proven.link_derivation_error.is_some(),
-    );
-    let hard_failed_rows = proof_gate.hard_failed_rows;
-    let undecided_rows = proof_gate.undecided_rows;
-    let proof_ok = proof_gate.proof_ok;
-    let proof_code = proof_gate.proof_code;
-    // Gate convergence: CLI proof code == OutcomeClass.exit_code() from the
-    // same production door (OutcomeClass is source of law; gate mirrors it).
-    debug_assert_eq!(proof_code, proven.exit_code());
-    let ok = proof_ok && witnesses_ok;
-
-    if json_out {
-        let mut out = report_fmt::report_to_json(&report);
-        let rows = out
-            .get("rows")
-            .and_then(Json::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let claims: Vec<Json> = rows
-            .iter()
-            .map(|row| {
-                let status = row.get("status").and_then(Json::as_str).unwrap_or("");
-                json!({
-                    "property": row.get("property").cloned().unwrap_or(Json::Null),
-                    "propertyCid": row.get("propertyCid").cloned().unwrap_or(Json::Null),
-                    "status": status,
-                    "pass": status == "discharged",
-                    "reason": row.get("reason").cloned().unwrap_or(Json::Null),
-                    "dischargeMethod": row.get("dischargeMethod").cloned().unwrap_or(Json::Null),
-                    "bodyDischargeTier": row.get("bodyDischargeTier").cloned().unwrap_or(Json::Null),
-                    "bridge": row.get("bridge").cloned().unwrap_or(Json::Null),
-                    "callee": row.get("callee").cloned().unwrap_or(Json::Null),
-                    "file": row.get("file").cloned().unwrap_or(Json::Null),
-                    "line": row.get("line").cloned().unwrap_or(Json::Null),
-                })
-            })
-            .collect();
-        let witness_dim: Vec<Json> = witness_results
-            .iter()
-            .map(|w| {
-                json!({
-                    "witnessCid": w.witness_cid,
-                    "verdict": w.verdict(),
-                    "checks": w.checks,
-                    "reason": w.reason(),
-                })
-            })
-            .collect();
-        if let Some(obj) = out.as_object_mut() {
-            obj.insert("kind".into(), Json::String("verification-receipt".into()));
-            obj.insert("schemaVersion".into(), Json::String("1".into()));
-            obj.insert(
-                "project".into(),
-                Json::String(project_root.display().to_string()),
-            );
-            obj.insert(
-                "kit".into(),
-                args.kit.clone().map(Json::String).unwrap_or(Json::Null),
-            );
-            obj.insert("claims".into(), Json::Array(claims));
-            obj.insert("totalClaims".into(), json!(rows.len()));
-            obj.insert("failed".into(), json!(hard_failed_rows));
-            obj.insert("undecided".into(), json!(undecided_rows));
-            obj.insert("linkErrors".into(), json!(proven.link_errors.len()));
-            obj.insert(
-                "linkDerivationError".into(),
-                proven
-                    .link_derivation_error
-                    .as_ref()
-                    .map(|s| Json::String(s.clone()))
-                    .unwrap_or(Json::Null),
-            );
-            obj.insert(
-                "outcomeClass".into(),
-                Json::String(format!("{:?}", proven.outcome_class)),
-            );
-            obj.insert(
-                "witnessDimension".into(),
-                json!({
-                    "witnesses": witness_dim,
-                    "total": witness_results.len(),
-                    "ok": witnesses_ok,
-                }),
-            );
-            obj.insert("ok".into(), Json::Bool(ok));
-        }
-        match serde_json::to_string_pretty(&out) {
-            Ok(s) => println!("{s}"),
-            Err(e) => {
-                eprintln!("{}: serialize receipt JSON: {e}", "error".red().bold());
-                return EXIT_USER_ERROR;
-            }
-        }
-    } else {
-        report_fmt::print_report_pretty(&report, quiet);
-        if !quiet && undecided_rows > 0 {
-            print!("{}", format_undecided_rows(&report, undecided_rows));
-        }
-        if !quiet && !witness_results.is_empty() {
-            print!("{}", format_witness_replay_report(&witness_results));
-        }
-    }
-
-    if !quiet && proven.has_unresolved_link_surface() {
-        let n = proven.link_errors.len();
-        match &proven.link_derivation_error {
-            Some(reason) => eprintln!(
-                "{}: link surface dirty ({} unresolved edge(s); derivation: {reason}) — exit {EXIT_LINK_FAIL} (EXIT_LINK_FAIL / feed more)",
-                "link".red().bold(),
-                n
-            ),
-            None => eprintln!(
-                "{}: {n} unresolved link error(s) — exit {EXIT_LINK_FAIL} (EXIT_LINK_FAIL / feed more)",
-                "link".red().bold()
-            ),
-        }
-    }
-
-    if ok {
-        EXIT_OK
-    } else if !witnesses_ok {
-        EXIT_VERIFY_FAIL
-    } else {
-        proof_code
-    }
-}
-
-fn format_undecided_rows(report: &sugar_verifier::Report, undecided_rows: usize) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "  undecided rows  : {}", undecided_rows);
-    for row in report.rows.iter().filter(|row| {
-        matches!(
-            row.status,
-            ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout
-        )
-    }) {
-        let _ = writeln!(out, "      reason: {}", row.reason);
-    }
-    out
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ProofReportGate {
-    hard_failed_rows: usize,
-    undecided_rows: usize,
-    proof_ok: bool,
-    proof_code: u8,
-}
-
-/// Report-only gate (no link surface). Prefer
-/// [`proof_report_gate_with_links`] at production faces so #3893 applies.
-#[cfg(test)]
-fn proof_report_gate(report: &sugar_verifier::Report) -> ProofReportGate {
-    proof_report_gate_with_links(report, false, false)
-}
-
-/// Production gate: report rows + link surface under the #3893 exit-code law.
-/// Source of law is `sugar_compiler::outcome::OutcomeClass`; this mirrors it
-/// so row tallies for receipts stay co-located with the exit code.
-fn proof_report_gate_with_links(
-    report: &sugar_verifier::Report,
-    has_link_errors: bool,
-    has_link_derivation_error: bool,
-) -> ProofReportGate {
-    let mut hard_failed_rows = 0usize;
-    let mut undecided_rows = 0usize;
-    for row in &report.rows {
-        match row.status {
-            ObligationVerdict::Discharged => {}
-            ObligationVerdict::Unsatisfied
-            | ObligationVerdict::Refused
-            | ObligationVerdict::Disagreement => hard_failed_rows += 1,
-            ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout => {
-                undecided_rows += 1
-            }
-        }
-    }
-    let report_ok = !report.rows.is_empty()
-        && report.load_errors.is_empty()
-        && hard_failed_rows == 0
-        && undecided_rows == 0;
-    let class = sugar_compiler::outcome::OutcomeClass::from_report(report)
-        .with_link_surface(has_link_errors, has_link_derivation_error);
-    let proof_code = class.exit_code();
-    // `proof_ok` is the full gate (report + links clean) — only then may
-    // the face exit 0 on the proof dimension.
-    let proof_ok = report_ok && !has_link_errors && !has_link_derivation_error;
-    debug_assert_eq!(
-        proof_ok,
-        matches!(class, sugar_compiler::outcome::OutcomeClass::Verified)
-    );
-    ProofReportGate {
-        hard_failed_rows,
-        undecided_rows,
-        proof_ok,
-        proof_code,
-    }
-}
-
-#[cfg(test)]
-fn proof_report_exit_code(report: &sugar_verifier::Report) -> u8 {
-    proof_report_gate(report).proof_code
-}
-
-#[cfg(test)]
-fn proof_report_exit_code_with_links(
-    report: &sugar_verifier::Report,
-    has_link_errors: bool,
-    has_link_derivation_error: bool,
-) -> u8 {
-    proof_report_gate_with_links(report, has_link_errors, has_link_derivation_error).proof_code
 }
 
 /// Build the solver plan + registry for verification.
@@ -1900,136 +1566,6 @@ mod tests {
             sugar_ir_compiler_smt_lib::SmtLibCompiler::new(),
         ));
         compilers
-    }
-
-    fn verify_args(project: Option<PathBuf>, emit_witnesses: Option<PathBuf>) -> VerifyArgs {
-        VerifyArgs {
-            kit: None,
-            project,
-            z3: "z3".to_string(),
-            emit_witnesses,
-            allow_failed_components: false,
-            require_empirically_witnessed: None,
-            require_fixture: None,
-            consensus_policy: None,
-            artifact: None,
-            proof: None,
-            policy: None,
-            out: crate::OutputFlags::default(),
-        }
-    }
-
-    fn temp_project(name: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("{name}_{nanos}"));
-        std::fs::create_dir_all(&root).expect("create temp project");
-        root
-    }
-
-    #[test]
-    fn explicit_project_verify_uses_artifact_report_without_config() {
-        let root = temp_project("verify_project_no_config");
-        let args = verify_args(Some(root.clone()), None);
-        assert!(use_artifact_project_verify(&args, &root));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn emit_witnesses_keeps_project_verify_on_live_claim_path() {
-        let root = temp_project("verify_project_emit_witnesses");
-        let args = verify_args(Some(root.clone()), Some(root.join(".sugar/witnesses")));
-        assert!(!use_artifact_project_verify(&args, &root));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn config_still_selects_artifact_report_for_implicit_project() {
-        let root = temp_project("verify_project_config");
-        std::fs::create_dir_all(root.join(".sugar")).expect("create .sugar");
-        std::fs::write(root.join(".sugar/config.toml"), "").expect("write config");
-        let args = verify_args(None, None);
-        assert!(use_artifact_project_verify(&args, &root));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    fn report_with_status(status: ObligationVerdict) -> sugar_verifier::Report {
-        let mut report = sugar_verifier::Report::default();
-        report.rows.push(sugar_verifier::ReportRow {
-            callsite: sugar_verifier::CallSite {
-                bridge_ir_name: "bridge".to_string(),
-                property_name: "property".to_string(),
-                ..sugar_verifier::CallSite::default()
-            },
-            status,
-            reason: status.as_str().to_string(),
-            discharge_method: None,
-            body_discharge_tier: None,
-            verification: None,
-            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
-        });
-        report
-    }
-
-    #[test]
-    fn proof_report_exit_code_is_exhaustive_over_obligation_verdicts() {
-        let cases = [
-            (ObligationVerdict::Discharged, EXIT_OK),
-            (ObligationVerdict::Unsatisfied, EXIT_VERIFY_FAIL),
-            (ObligationVerdict::Undecidable, EXIT_SOLVER_FAIL),
-            (ObligationVerdict::SolverTimeout, EXIT_SOLVER_FAIL),
-            (ObligationVerdict::Disagreement, EXIT_VERIFY_FAIL),
-            (ObligationVerdict::Refused, EXIT_VERIFY_FAIL),
-        ];
-
-        for (verdict, expected) in cases {
-            let report = report_with_status(verdict);
-            assert_eq!(
-                proof_report_exit_code(&report),
-                expected,
-                "unexpected exit code for {verdict:?}"
-            );
-        }
-    }
-
-    /// sugar#3893 exit-code law: unresolved link surface reddens BY DEFAULT
-    /// (EXIT_LINK_FAIL=4). Green over unbridged callsites is the vacuous pass.
-    #[test]
-    fn unresolved_link_surface_exits_link_fail_not_ok() {
-        let green = report_with_status(ObligationVerdict::Discharged);
-        assert_eq!(proof_report_exit_code(&green), EXIT_OK);
-        assert_eq!(
-            proof_report_exit_code_with_links(&green, true, false),
-            EXIT_LINK_FAIL,
-            "unbridged callsite must redden discharged report to EXIT_LINK_FAIL"
-        );
-        assert_eq!(
-            proof_report_exit_code_with_links(&green, false, true),
-            EXIT_LINK_FAIL,
-            "undecodable link view must redden discharged report to EXIT_LINK_FAIL"
-        );
-        assert_eq!(
-            proof_report_exit_code_with_links(&green, false, false),
-            EXIT_OK,
-            "clean link surface leaves discharged report green"
-        );
-
-        let hard = report_with_status(ObligationVerdict::Unsatisfied);
-        assert_eq!(
-            proof_report_exit_code_with_links(&hard, true, true),
-            EXIT_LINK_FAIL,
-            "dirty link surface is EXIT_LINK_FAIL even when report also hard-failed \
-             (feed-more diagnosis at the shell; rows still carry the refutation)"
-        );
-
-        let undecided = report_with_status(ObligationVerdict::Undecidable);
-        assert_eq!(
-            proof_report_exit_code_with_links(&undecided, true, false),
-            EXIT_LINK_FAIL,
-            "undecided+links is EXIT_LINK_FAIL (feed more), not EXIT_SOLVER_FAIL"
-        );
     }
 
     #[test]

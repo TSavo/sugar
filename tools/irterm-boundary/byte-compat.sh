@@ -25,7 +25,7 @@ usage:
   tools/irterm-boundary/byte-compat.sh --self-test
 
 Default cases:
-  verify-json: sugar verify --project <fixture> --json
+  verify-json: sugar prove <fixture> --json (item 39: verify --project is gone)
   prove-json:  sugar prove <fixture> --json
 
 Phase 2 effect-router case set:
@@ -63,7 +63,7 @@ run_case() {
   local name=$1 sugar=$2 project_root=$3 output=$4
   case "$name" in
     verify-json)
-      "$sugar" verify --project "$project_root" --json > "$output"
+      "$sugar" prove "$project_root" --json > "$output"
       ;;
     prove-json)
       "$sugar" prove "$project_root" --json > "$output"

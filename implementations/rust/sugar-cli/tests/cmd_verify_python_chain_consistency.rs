@@ -361,13 +361,6 @@ fn python_chain_good_twin_composes_body_discharge_with_consistency() {
     assert_eq!(row(&prove, "#euf#")["status"], "discharged");
     assert_eq!(row(&prove, "h#euf#")["status"], "discharged");
 
-    let (verify, verify_code, _, _) = run_sugar(&project, &["verify", "--project", ".", "--json"]);
-    assert_eq!(
-        verify_code, 0,
-        "GOOD chain durable proof must verify; verify: {verify:#}"
-    );
-    assert_eq!(row(&verify, "#euf#")["status"], "discharged");
-
     let _ = fs::remove_dir_all(&project);
 }
 
@@ -383,13 +376,6 @@ fn python_chain_bad_twin_refutes_through_the_same_call_seam() {
     let (prove, prove_code, _, _) = run_sugar(&project, &["prove", ".", "--json"]);
     assert_ne!(prove_code, 0, "BAD chain must not prove; prove: {prove:#}");
     assert_eq!(row(&prove, "#euf#")["status"], "unsatisfied");
-
-    let (verify, verify_code, _, _) = run_sugar(&project, &["verify", "--project", ".", "--json"]);
-    assert_ne!(
-        verify_code, 0,
-        "BAD chain durable proof must not verify; verify: {verify:#}"
-    );
-    assert_eq!(row(&verify, "#euf#")["status"], "unsatisfied");
 
     let _ = fs::remove_dir_all(&project);
 }
