@@ -448,7 +448,7 @@ def _content_coordinate(constructed, *, blame, owner: str, what: str) -> str:
         ) from cause
 
 
-def _seal_runtime_state(state):
+def _seal_runtime_state(state, testimony_source=None):
     """Seal ONE live BindingState into its authenticated SealedBindingStateV1.
 
     The single recursive projection for every runtime binding state, not a
@@ -457,20 +457,32 @@ def _seal_runtime_state(state):
     both arms and pins them under the same branch-result guard the loop control
     faces use. A guarded arm's identity is the content CID of its own sealed
     state, so nested guards/joins address by construction.
+
+    It is also the sealer of a function's substitution trace
+    (``binding_state._testify_snapshot``): ``testimony_source`` is that
+    function's construction roll. A Node the roll heard constructed already
+    carries this same testimony (``present_construction`` mints it from the
+    node's fragment and the content of its constructed value), so it is read,
+    not recomputed. A Node no statement read -- a loop target nothing reads, a
+    dead store -- was never constructed by the roll, and is constructed here.
     """
     from .nodes import Node
 
     if isinstance(state, Node):
-        constructed = state.sugar()
-        testimony = ConstructedValueTestimonyV1.mint(
-            state.fragment,
-            _content_coordinate(
-                constructed,
-                blame=state.fragment,
-                owner="live_loop_construction._seal_runtime_state",
-                what="loop-carried binding state",
-            ),
+        testimony = (
+            None if testimony_source is None else testimony_source.testimony_for(state)
         )
+        if testimony is None:
+            constructed = state.sugar()
+            testimony = ConstructedValueTestimonyV1.mint(
+                state.fragment,
+                _content_coordinate(
+                    constructed,
+                    blame=state.fragment,
+                    owner="live_loop_construction._seal_runtime_state",
+                    what="loop-carried binding state",
+                ),
+            )
         return BoundBindingStateV1(testimony)
     if isinstance(state, UnboundBinding):
         return UnboundBindingStateV1(state.cause.seal().cid)
@@ -479,8 +491,8 @@ def _seal_runtime_state(state):
         # `slot.slot_id`), so the guard formula CID matches the loop control
         # guard for the same slot; pass the slot itself as the site owner.
         guard_cid = _formula_cid(branch_result_guard(state.slot, state.slot))
-        when_true = _seal_runtime_state(state.when_true)
-        when_false = _seal_runtime_state(state.when_false)
+        when_true = _seal_runtime_state(state.when_true, testimony_source)
+        when_false = _seal_runtime_state(state.when_false, testimony_source)
         return GuardedBindingStateV1(
             guard_cid,
             cid_of_json(_state_wire(when_true)),
@@ -499,14 +511,20 @@ def _seal_runtime_state(state):
         # the guard formula CID the producer minted and the arity it declared,
         # so completeness travels instead of being reconstructed downstream.
         if len(state.completed_faces) == 1:
-            return _seal_runtime_state(state.completed_faces[0].state)
+            return _seal_runtime_state(
+                state.completed_faces[0].state, testimony_source
+            )
         faces = tuple(
             sorted(
                 (
                     LoopProjectedFaceV1(
                         face.completion_kind,
                         face.guard_formula_cid,
-                        cid_of_json(_state_wire(_seal_runtime_state(face.state))),
+                        cid_of_json(
+                            _state_wire(
+                                _seal_runtime_state(face.state, testimony_source)
+                            )
+                        ),
                         face.exit_partition_arity,
                     )
                     for face in state.completed_faces
@@ -521,12 +539,15 @@ def _seal_runtime_state(state):
     )
 
 
-def _testified(entry: BindingEntryV1) -> BindingEntryV1:
+def _testified(entry: BindingEntryV1, testimony_source=None) -> BindingEntryV1:
+    """The one door that seals a runtime binding entry (``_seal_runtime_state``)."""
     if entry.constructed_value_testimony is not None:
         return entry
     if isinstance(entry.sealed_state, (UnboundBindingStateV1, GuardedBindingStateV1)):
         return entry
-    return replace(entry, sealed_state=_seal_runtime_state(entry.state))
+    return replace(
+        entry, sealed_state=_seal_runtime_state(entry.state, testimony_source)
+    )
 
 
 def _sealed_state(snapshot: tuple[BindingEntryV1, ...]):
