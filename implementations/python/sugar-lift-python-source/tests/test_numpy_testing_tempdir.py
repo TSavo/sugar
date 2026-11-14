@@ -29,10 +29,7 @@ from sugar_lift_python_source.dependency_export_adapter import resolve_export
 from sugar_lift_python_source.manager_construction import (
     _resolve_in_owning_artifact,
 )
-from sugar_lift_python_source.resolution_session import (
-    ENROLLED_POPULATIONS_ENV,
-    SourceResolutionSession,
-)
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import FunctionDef
 
 from test_assignment_evaluates_rhs import _rows
@@ -105,10 +102,7 @@ def test_a_name_its_own_artifact_does_not_define_keeps_the_gap():
     assert _resolve_in_owning_artifact(gap, session=session) is None
 
 
-def test_tempdir_returns_under_both_stdlib_calls_and_halts_under_each(
-    tmp_path, monkeypatch
-):
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def test_tempdir_returns_under_both_stdlib_calls_and_halts_under_each(tmp_path):
     root = _corpus(tmp_path, **{"e.py": TEMPDIR})
     source_file = _open(root, "e.py", session=_session())
     func = next(

@@ -77,11 +77,9 @@ def _install(root: Path):
 
 
 def _derive(tmp_path: Path, use: str):
+    # ``use.py`` imports raiselib, so raiselib joins the population through
+    # its import alone.
     _install(tmp_path)
-    monkeyenv = "raiselib"
-    import os
-
-    os.environ["SUGAR_ENROLLED_POPULATIONS"] = monkeyenv
     try:
         corpus = tmp_path / "c"
         corpus.mkdir()
@@ -101,7 +99,6 @@ def _derive(tmp_path: Path, use: str):
         refs = source_file.root.unit.construction_context.source_derived_contract_refs
         return [type(v).__name__ for v in refs.values()]
     finally:
-        os.environ.pop("SUGAR_ENROLLED_POPULATIONS", None)
         sys.path[:] = [p for p in sys.path if not p.endswith("/site")]
 
 
