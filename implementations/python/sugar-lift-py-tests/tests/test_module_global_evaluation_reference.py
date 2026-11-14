@@ -36,6 +36,8 @@ from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     UNDECIDED_MODULE_BINDING,
+    AnnAssign,
+    Assign,
     AugAssign,
     Call,
     ClassDef,
@@ -64,6 +66,18 @@ def _module_evaluations(tree: SourceFile) -> list[str]:
     """The evaluation key of each module-level ``x += e``, in source order."""
     body = tree.root.substitute({}).body
     return [node.evaluation for node in body if isinstance(node, AugAssign)]
+
+
+def _assignment_keys(tree: SourceFile, name: str) -> list[str]:
+    """The key of ``name``'s projection of each module-level ``name = e``
+    and ``name: T = e``, in source order."""
+    body = tree.root.substitute({}).body
+    return [
+        dict(node.target_evaluations())[name]
+        for node in body
+        if isinstance(node, (Assign, AnnAssign))
+        and name in dict(node.target_evaluations())
+    ]
 
 
 def _function(tree: SourceFile, name: str = "f") -> FunctionDef:
@@ -137,9 +151,87 @@ def test_a_local_of_the_same_name_is_not_the_global() -> None:
     assert not isinstance(_returned(_function(tree)), EvaluationRef)
 
 
-def test_a_global_last_written_by_an_assignment_is_read_by_name() -> None:
+def test_a_global_last_written_by_an_assignment_reads_its_key() -> None:
     tree = _source("x = 1\nx += 1\nx = 3\ndef f():\n    return x\n")
-    assert isinstance(_returned(_function(tree)), Name)
+    *_, last = _assignment_keys(tree, "x")
+    read = _returned(_function(tree))
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == last
+
+
+# -- every module-level binding kind is read through its key (#7757 item 7) --
+
+
+REBOUND_AROUND_A_CALL = "X = 1\ndef f():\n    return X\ny = f()\nX = 2\n"
+
+
+def test_a_plain_global_reads_the_module_final_assignment() -> None:
+    tree = _source("X = 1\ndef f():\n    return X\nX = 2\n")
+    first, second = _assignment_keys(tree, "X")
+    read = _returned(_function(tree))
+    assert isinstance(read, EvaluationRef)
+    assert read.name == "X"
+    assert read.evaluation == second
+    assert read.evaluation != first
+
+
+def test_a_plain_global_read_at_a_module_call_reads_the_assignment_there() -> None:
+    tree = _source(REBOUND_AROUND_A_CALL)
+    first, second = _assignment_keys(tree, "X")
+    (call,) = _calls(tree)
+    read = _returned_at(call, _function(tree))
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == first
+    after_import = _returned(_function(tree))
+    assert isinstance(after_import, EvaluationRef)
+    assert after_import.evaluation == second
+
+
+def test_an_annotated_global_reads_its_key() -> None:
+    tree = _source("X: int = 1\ndef f():\n    return X\n")
+    (key,) = _assignment_keys(tree, "X")
+    read = _returned(_function(tree))
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == key
+
+
+def test_a_global_unbound_at_the_module_call_is_undecided() -> None:
+    tree = _source("def f():\n    return X\ny = f()\nX = 1\n")
+    (call,) = _calls(tree)
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
+        _returned_at(call, _function(tree))
+
+
+def test_a_global_an_import_also_binds_is_undecided() -> None:
+    tree = _source(
+        "try:\n    import json\nexcept ImportError:\n    json = None\n"
+        "def f():\n    return json\n"
+    )
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `json`"):
+        _returned(_function(tree))
+
+
+def test_a_global_a_def_rebinds_is_undecided() -> None:
+    tree = _source("X = 1\ndef X():\n    pass\ndef f():\n    return X\n")
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
+        _returned(_function(tree))
+
+
+def test_a_global_a_function_writes_is_undecided() -> None:
+    tree = _source(
+        "X = None\ndef put():\n    global X\n    X = 1\ndef f():\n    return X\n"
+    )
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
+        _returned(_function(tree))
+
+
+def test_only_names_a_nested_scope_reads_are_threaded() -> None:
+    tree = _source("X = 1\nY = 2\ndef f():\n    return X\nY += 1\n")
+    unit = _function(tree).unit
+    assert unit.module_threaded_names() == frozenset({"X"})
+    states = unit.module_binding_states()
+    assert set(states.final) == {"X"}
+    assert all(set(scope) <= {"X"} for row in states.at.values() for scope in row)
 
 
 # -- a module class body reads a module name ----------------------------------
