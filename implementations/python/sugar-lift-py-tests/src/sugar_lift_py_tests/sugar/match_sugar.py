@@ -440,15 +440,13 @@ def _match_items(value, positions, site, ctx):
 def _star_items(value, key, start, stop, site, ctx, collected=()):
     """The items ``start`` to ``stop`` of the subject, bound under ``key`` as
     a ``list`` (what a star captures from any sequence): a new list made
-    here, current only when the subject's contents are
-    (``object_identity.made_if_current``)."""
+    here, current only when the subject's contents are, else named by its
+    derivation (``object_identity.made_from``)."""
     from sugar_lift_py_tests.floor import ListValue
-    from sugar_lift_py_tests.floor.object_identity import made_if_current
+    from sugar_lift_py_tests.floor.object_identity import made_from
 
     if start >= stop:
-        captured = ListValue(
-            tuple(collected), allocation=made_if_current(site, value)
-        )
+        captured = ListValue(tuple(collected), **made_from("[*]", site, value))
         return _outcome(True, ((key, captured),))
     return _each(
         _item(value, start, site, ctx),
@@ -508,11 +506,12 @@ def _mapping_rest(value, keys, rest_key, site):
     """``**rest``: a ``dict`` of the subject's items whose key is none of the
     pattern's keys -- each decided distinct from them, or refused.  It is a
     new dict made at the match, current only when the subject's entries are
-    (``object_identity.made_if_current``): from entries that are not, its
-    contents are not its contents either, and no read takes them."""
+    (``object_identity.made_from``): from entries that are not, its
+    contents are not its contents either, no read takes them, and its
+    derivation names it."""
     from sugar_lift_py_tests.floor import DictValue
     from sugar_lift_py_tests.floor.dict_value import _key_position
-    from sugar_lift_py_tests.floor.object_identity import made_if_current
+    from sugar_lift_py_tests.floor.object_identity import made_from
 
     if rest_key is None:
         return _outcome(True)
@@ -524,7 +523,7 @@ def _mapping_rest(value, keys, rest_key, site):
             _undecided(site, f"whether {type(key).__name__} key is a pattern key")
         if found < 0:
             kept.append((key, item))
-    rest = DictValue(tuple(kept), allocation=made_if_current(site, value))
+    rest = DictValue(tuple(kept), **made_from("{**}", site, value))
     return _outcome(True, ((rest_key, rest),))
 
 

@@ -275,7 +275,7 @@ def test_contents_not_current_at_the_call_are_not_folded():
 
     made = ListValue((TermValue(1),), allocation="made-here")
     assert cited_container_method(made, "index")
-    assert not cited_container_method(arrived(made), "index")
+    assert not cited_container_method(arrived(made, "binding-read"), "index")
     unmade = ListValue((TermValue(1),), allocation=None)
     assert not cited_container_method(unmade, "index")
     assert not cited_container_method(made, "pop")
@@ -290,7 +290,7 @@ def test_arrived_takes_the_allocation_off_every_container_in_the_value():
 
     inner = ListValue((TermValue(1),), allocation="inner")
     outer = TupleValue((DictValue(((StringValue("k"), inner),), allocation="d"),))
-    stripped = arrived(outer)
+    stripped = arrived(outer, "binding-read")
     assert stripped == outer
     ((_key, held),) = stripped.elements[0].entries
     assert not contents_current(stripped.elements[0])
@@ -348,7 +348,7 @@ def test_a_bound_dict_has_no_closed_items():
 
     made = DictValue(((StringValue("a"), TermValue(1)),), allocation="made-here")
     assert made.supports_closed_method("items")
-    assert not arrived(made).supports_closed_method("items")
+    assert not arrived(made, "binding-read").supports_closed_method("items")
 
 
 # One currency rule (#7757, after #8105): every read of a list/dict/set's
@@ -362,7 +362,7 @@ def _made_and_arrived():
     from sugar_lift_py_tests.floor.object_identity import arrived
 
     made = ListValue((TermValue(1), TermValue(2)), allocation="made-here")
-    return made, arrived(made)
+    return made, arrived(made, "binding-read")
 
 
 def test_the_one_rule_answers_every_reader():
@@ -415,7 +415,8 @@ def test_the_door_does_not_read_a_stale_receiver():
     assert law.apply("list", "pop", stale, (), "pop", None) is law.UNDECIDED
     assert law.apply("list", "remove", stale, (TermValue(1),), "rm", None) is None
     stale_dict = arrived(
-        DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here")
+        DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here"),
+        "binding-read",
     )
     assert (
         law.apply("dict", "setdefault", stale_dict, (StringValue("k"),), "sd", None)
@@ -541,9 +542,10 @@ def _stale_containers():
     return (
         stale,
         arrived(
-            DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here")
+            DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here"),
+            "dict-read",
         ),
-        arrived(SetValue((TermValue(1),), allocation="made-here")),
+        arrived(SetValue((TermValue(1),), allocation="made-here"), "set-read"),
     )
 
 
@@ -807,7 +809,7 @@ def test_a_stale_object_is_named_per_read_and_per_arrival():
         second, "site", "receiver", owner="t"
     )
     # A container that already arrived keeps its arrival: it is that object.
-    assert arrived(first).arrival == "read-a"
+    assert arrived(first, "read-c").arrival == "read-a"
 
 
 def test_a_siteless_read_of_a_stale_object_refuses_by_name():
@@ -818,6 +820,133 @@ def test_a_siteless_read_of_a_stale_object_refuses_by_name():
     assert identity_term(made, None, "receiver", owner="t") == made.to_term(owner="t")
     with pytest.raises(SugarNotWritten):
         identity_term(stale, None, "receiver", owner="t")
+
+
+# The residue of #8137: a stale container with no arrival took ``""``, so two
+# different such objects one read met shared one term.  Every path that
+# makes a stale value names it; one that cannot refuses by name.
+
+
+def _stale_length_reads(subject):
+    """The ``python:object_read`` terms a sequence pattern over ``subject``
+    at one ``match`` site names in its faces' guards."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.sugar.match_sugar import (
+        SequencePatternSpec,
+        match_pattern,
+    )
+
+    outcome = match_pattern(SequencePatternSpec(before=()), subject, "match-site", None)
+    found = set()
+    for face in outcome.exits:
+        if isinstance(face, Completed):
+            found |= {str(term) for term in _object_reads_anywhere(face.guard)}
+    return found
+
+
+def _object_reads_anywhere(term, depth=0):
+    found = []
+    if getattr(term, "name", None) == "python:object_read":
+        found.append(term)
+    if depth > 64:
+        return found
+    body = getattr(term, "body", None)
+    for child in (
+        *(getattr(term, "args", ()) or ()),
+        *(getattr(term, "operands", ()) or ()),
+        *(() if body is None else (body,)),
+    ):
+        found.extend(_object_reads_anywhere(child, depth + 1))
+    return found
+
+
+def test_two_lists_computed_from_stale_ones_read_at_one_match_get_two_terms():
+    from sugar_lift_py_tests.floor.object_identity import arrived, contents_current
+
+    made = ListValue((TermValue(1), TermValue(2)), allocation="made-here")
+    xs = arrived(made, "read-xs")
+    ys = arrived(made, "read-ys")
+    # Two new lists, each computed from contents its operand may no longer
+    # hold: equal contents, two objects.
+    left = xs.add(made, "add-site", None).completed_value()
+    right = ys.add(made, "add-site", None).completed_value()
+    assert left == right
+    assert not contents_current(left) and not contents_current(right)
+    # Each is named by its derivation, never by ``""``.
+    assert left.arrival and right.arrival and left.arrival != right.arrival
+    assert "read-xs" in left.arrival and "add-site" in left.arrival
+    # One ``match`` site reads each: two objects, two terms.
+    left_reads = _stale_length_reads(left)
+    right_reads = _stale_length_reads(right)
+    assert left_reads and right_reads
+    assert not left_reads & right_reads
+
+
+def test_one_object_read_twice_at_one_match_is_one_object():
+    from sugar_lift_py_tests.floor.object_identity import arrived, identity_term
+
+    _made, stale = _made_and_arrived()
+    computed = stale.add(stale, "add-site", None).completed_value()
+    for value in (stale, computed):
+        # The same arrival at the same read: the same object component.
+        assert _stale_length_reads(value) == _stale_length_reads(value)
+        term = identity_term(value, "match-site", "receiver", owner="t")
+        assert term == identity_term(value, "match-site", "receiver", owner="t")
+        # Reached again by a later binding read, it is still that object.
+        again = arrived(value, "later-read")
+        assert again.arrival == value.arrival
+        assert _stale_length_reads(again) == _stale_length_reads(value)
+
+
+def test_a_stale_object_nothing_names_refuses_by_name():
+    from sugar_lift_py_tests.floor.object_identity import (
+        arrived,
+        identity_term,
+        made_from,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    made = ListValue((TermValue(1),), allocation="made-here")
+    # A read whose site names no coordinate names no arrival.
+    unnamed = arrived(made, None)
+    assert unnamed.arrival is None
+    with pytest.raises(SugarNotWritten):
+        identity_term(unnamed, "len-site", "receiver", owner="t")
+    # Nor does a derivation from it, or one at a site with no coordinate.
+    assert made_from("+", "add-site", unnamed)["arrival"] is None
+    named = arrived(made, "binding-read")
+    assert made_from("+", None, named) == {"allocation": None, "arrival": None}
+    derived = made_from("+", "add-site", named, made)
+    assert derived == {"allocation": None, "arrival": "+(binding-read)@add-site"}
+    # Current operands make a current object, named by its allocation.
+    assert made_from("+", "add-site", made) == {
+        "allocation": "add-site",
+        "arrival": None,
+    }
+
+
+def test_two_bindings_released_at_one_yield_are_two_objects():
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorAssignBindingV1,
+        _released_at_yield,
+    )
+
+    @dataclass(frozen=True)
+    class _Frame:
+        binding_state: tuple
+
+    made = ListValue((TermValue(1),), allocation="made-here")
+    frame = _Frame(
+        (
+            GeneratorAssignBindingV1("xs", made, "fragment-xs"),
+            GeneratorAssignBindingV1("ys", made, "fragment-ys"),
+        )
+    )
+    first, second = _released_at_yield(frame, "yield-at").binding_state
+    assert first.value.arrival == "yield-at/0"
+    assert second.value.arrival == "yield-at/1"
 
 
 def test_a_path_store_through_a_stale_root_finds_no_position():
@@ -835,9 +964,11 @@ def test_a_path_store_through_a_stale_root_finds_no_position():
     assert updated.allocation == "root"
     # A stale root: the key's place is not read from contents it may no
     # longer hold -- the root after the call is the opaque post-state.
-    assert _replace_path(arrived(root), steps, post, False) is None
+    assert _replace_path(arrived(root, "root-read"), steps, post, False) is None
     # Nor a stale container further down the path.
-    nested = DictValue(((StringValue("r"), arrived(root)),), allocation="outer")
+    nested = DictValue(
+        ((StringValue("r"), arrived(root, "root-read")),), allocation="outer"
+    )
     assert _replace_path(nested, (("item", "r"), ("item", "k")), post, False) is None
 
 
@@ -879,11 +1010,15 @@ def test_a_generators_walrus_binding_is_not_current_when_it_resumes():
     made, _stale = _made_and_arrived()
     walrus = NamedExpressionValue("xs", made, evaluation="walrus-key")
     frame = _Frame((GeneratorWalrusBindingV1(walrus),))
-    (held,) = _released_at_yield(frame).binding_state
+    (held,) = _released_at_yield(frame, "yield-at").binding_state
     assert held.name == "xs" and held.evaluation == "walrus-key"
     assert held.bind.assigned_value == made
     assert not contents_current(held.bind.assigned_value)
     assert not contents_current(held.bind.presented_value)
+    # Released at the yield, each is named by the yield's occurrence and its
+    # place in the frame's writes.
+    assert held.bind.assigned_value.arrival == "yield-at/0/assigned"
+    assert held.bind.presented_value.arrival == "yield-at/0/presented"
 
 
 def test_a_list_a_generators_walrus_yielded_is_not_current_when_it_resumes():
@@ -930,7 +1065,10 @@ def test_a_site_that_names_no_coordinate_makes_no_current_object():
 
     assert not hasattr(object_identity, "UNNAMED_CONSTRUCTION")
     assert object_identity.made_at(None) is None
-    assert object_identity.made_if_current(None) is None
+    assert object_identity.made_from("+", None) == {
+        "allocation": None,
+        "arrival": None,
+    }
     assert object_identity.made_at("add-site") == "add-site"
 
 
@@ -943,6 +1081,8 @@ def test_the_doors_post_state_names_its_receivers_allocation():
             pair = law.apply("list", method, receiver, args, "door", None)
             post, _result = pair.completed_value().elements
             assert post.allocation == receiver.allocation
+            # The same object: the binding read that names it names it still.
+            assert post.arrival == receiver.arrival
 
 
 def test_a_dict_subclass_instances_dict_state_is_not_current():

@@ -54,7 +54,10 @@ class MappingObjectValue(ObjectValue):
         this state is the object's state now -- the instance made in this
         frame, or one that arrived by binding and changed out of sight -- is
         not decided here.  Every read of it takes its undecided form
-        (``object_identity.contents_current``)."""
+        (``object_identity.contents_current``).  Nor is which instance it
+        is (``identity`` may be its class's): it names no ``arrival``, so an
+        undecided read of it refuses by name (``identity_term``) rather than
+        share one term with every other instance's state."""
         return DictValue(self.entries, allocation=None)
 
     def protocol_owner(self, name: str, site) -> str | None:
