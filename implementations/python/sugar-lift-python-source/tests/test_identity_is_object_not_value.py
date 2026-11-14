@@ -272,8 +272,8 @@ def test_an_arrived_tuple_names_no_construction():
     from sugar_lift_py_tests.floor.object_identity import arrived
 
     t = TupleValue((TermValue(1),), allocation="display-site")
-    assert arrived(t).allocation is None
-    assert arrived(t) == t
+    assert arrived(t, "binding-read").allocation is None
+    assert arrived(t, "binding-read") == t
 
 
 def test_a_formal_after_its_own_mutation_is_itself(tmp_path):

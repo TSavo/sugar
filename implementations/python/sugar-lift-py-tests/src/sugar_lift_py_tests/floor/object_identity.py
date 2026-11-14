@@ -28,13 +28,15 @@ from __future__ import annotations
 
 # There is no default ``allocation``: every ``list``/``dict``/``set`` value
 # constructor names it (a required keyword).  A fresh object names the
-# source site that made it (``made_at``, ``made_if_current``); a same-object
+# source site that made it (``made_at``, ``made_from``); a same-object
 # post-state names the producing value's own; a value that arrived, was
 # derived from contents that are not current, or that a builtin handed back
 # from its operand names None.  A ``tuple`` names it only where a display
 # CPython builds at runtime made it (``TupleSugar``); every other tuple names
 # None (a tuple's contents never change, so its ``allocation`` answers
-# identity only).
+# identity only).  A ``list``/``dict``/``set`` with None names its object by
+# ``arrival`` instead (``arrived``, ``arrived_as``, ``made_from``); none at
+# all, and an undecided read of it refuses by name (``identity_term``).
 
 
 def made_at(site) -> str | None:
@@ -121,7 +123,12 @@ def identity_term(value, site, role: str, *, owner: str):
     binary or set operation) mints an operand's term.
 
     A stale operand of a read with no site is the lifter's own gap: it
-    cannot key the object, so it refuses by name."""
+    cannot key the object, so it refuses by name.  So does a stale container
+    with no ``arrival``: nothing names which object it is (a read whose site
+    names no coordinate, ``arrived``; a derivation with no coordinate or
+    from an operand with no arrival, ``made_from``), and one term for every
+    such object would let two objects one read meets share it -- a fact
+    about one would be read as a fact about the other."""
     if not holds_stale(value):
         return value.to_term(owner=owner)
     if site is None:
@@ -139,10 +146,10 @@ def identity_term(value, site, role: str, *, owner: str):
         )
     from sugar_lift_py_tests.occurrence import occurrence_key
 
-    return _named(value, occurrence_key(site), role).to_term(owner=owner)
+    return _named(value, occurrence_key(site), role, owner).to_term(owner=owner)
 
 
-def _named(value, key: str, path: str, depth=0):
+def _named(value, key: str, path: str, owner: str, depth=0):
     """``value`` with each stale container in it replaced by its object's
     term (``identity_term``)."""
     from dataclasses import replace
@@ -155,12 +162,31 @@ def _named(value, key: str, path: str, depth=0):
     from .tuple_value import TupleValue
 
     if contents_stale(value):
+        if value.arrival is None:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=None,
+                owner=owner,
+                observed=(
+                    f"undecided read of a stale {type(value).__name__} "
+                    "that names no arrival"
+                ),
+                requested=(
+                    "the binding read or the derivation that made the object, "
+                    "to name it apart from every other object the read meets"
+                ),
+                fix=(
+                    "give the path that made the value its arrival "
+                    "(object_identity.arrived at a coordinate, made_from)"
+                ),
+            )
         from sugar_lift_py_tests.ir import ctor, str_const
 
         return SymbolicValue(
             ctor(
                 "python:object_read",
-                (str_const(key), str_const(path), str_const(value.arrival or "")),
+                (str_const(key), str_const(path), str_const(value.arrival)),
             )
         )
     if depth > 32:
@@ -170,7 +196,7 @@ def _named(value, key: str, path: str, depth=0):
         return replace(
             value,
             elements=tuple(
-                _named(element, key, f"{path}/{position}", depth + 1)
+                _named(element, key, f"{path}/{position}", owner, depth + 1)
                 for position, element in enumerate(value.elements)
             ),
         )
@@ -179,8 +205,8 @@ def _named(value, key: str, path: str, depth=0):
             value,
             entries=tuple(
                 (
-                    _named(entry, key, f"{path}/{position}k", depth + 1),
-                    _named(item, key, f"{path}/{position}", depth + 1),
+                    _named(entry, key, f"{path}/{position}k", owner, depth + 1),
+                    _named(item, key, f"{path}/{position}", owner, depth + 1),
                 )
                 for position, (entry, item) in enumerate(value.entries)
             ),
@@ -188,23 +214,38 @@ def _named(value, key: str, path: str, depth=0):
     if kind is GuardedValue:
         return replace(
             value,
-            when_true=_named(value.when_true, key, path, depth + 1),
-            when_false=_named(value.when_false, key, path, depth + 1),
+            when_true=_named(value.when_true, key, path, owner, depth + 1),
+            when_false=_named(value.when_false, key, path, owner, depth + 1),
         )
     return value
 
 
-def made_if_current(site, *operands) -> str | None:
-    """The ``allocation`` of a new object an operation at ``site`` made from
-    ``operands``' contents (``xs + ys``, ``xs[1:]``, ``s | t``): ``made_at``
-    when every operand's contents are current, else None -- contents computed
-    from stale ones are not the new object's contents either."""
-    if any(contents_stale(operand) for operand in operands):
-        return None
-    return made_at(site)
+def made_from(op: str, site, *operands) -> dict:
+    """The ``allocation`` and ``arrival`` of a new object the operation
+    ``op`` at ``site`` made from ``operands``' contents (``xs + ys``,
+    ``xs * 2``, a star pattern's capture, a mapping pattern's rest), as the
+    keywords its constructor takes.
+
+    Every operand current: ``made_at(site)``, and no arrival -- its contents
+    are its contents.  Otherwise its contents, computed from contents the
+    objects may no longer hold, are not its contents either: no
+    ``allocation``, and its ``arrival`` is its derivation,
+    ``<op>(<each stale operand's arrival>)@<site's occurrence>`` -- the
+    object this evaluation of ``op`` made, never another's.  None when the
+    site names no coordinate or a stale operand names no arrival: nothing
+    names the object, and an undecided read of it refuses by name
+    (``identity_term``)."""
+    stale = tuple(operand for operand in operands if contents_stale(operand))
+    if not stale:
+        return {"allocation": made_at(site), "arrival": None}
+    at = _arrival_at(site)
+    arrivals = tuple(operand.arrival for operand in stale)
+    if at is None or any(arrival is None for arrival in arrivals):
+        return {"allocation": None, "arrival": None}
+    return {"allocation": None, "arrival": f"{op}({','.join(arrivals)})@{at}"}
 
 
-def arrived(value, site=None):
+def arrived(value, site):
     """``value`` as it reaches a frame by binding at the read ``site``: every
     builtin container in it, at any depth, without its ``allocation``.
 
@@ -215,7 +256,8 @@ def arrived(value, site=None):
     (``occurrence.occurrence_key`` of ``site``), a member the path to it
     inside (``<read>/<position>``).  A container that already has one keeps
     it: it is still that object.  Only ``identity_term`` reads it.  A read
-    with no site (or none with a source coordinate) names none."""
+    whose site names no source coordinate names none: an undecided read of
+    the container refuses by name (``identity_term``)."""
     memo = []
 
     def through():
@@ -224,6 +266,15 @@ def arrived(value, site=None):
         return memo[0]
 
     return _arrived(value, through)
+
+
+def arrived_as(value, arrival: str):
+    """``value`` as it reaches a frame by a binding no source read names:
+    ``arrived``, with ``arrival`` naming that binding.  A generator's frame
+    holds its bindings across a yield (``generator_construction.YieldEffect``):
+    each container in one is released at the yield, named by the yield's
+    occurrence and the binding (``<yield occurrence>/<binding>``)."""
+    return _arrived(value, lambda: arrival)
 
 
 def _arrival_at(site) -> str | None:
@@ -293,7 +344,7 @@ def _arrived(value, through):
     return value
 
 
-def arrived_outcome(outcome, site=None):
+def arrived_outcome(outcome, site):
     """``outcome`` with each completed value ``arrived`` at ``site``."""
     from sugar_lift_py_tests.outcome import ExitSet
 

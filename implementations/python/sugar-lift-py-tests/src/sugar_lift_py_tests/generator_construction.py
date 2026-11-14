@@ -1268,43 +1268,51 @@ class YieldEffect:
     machine: "GeneratorConstructionV1"
 
     def __post_init__(self) -> None:
-        from sugar_lift_py_tests.floor.object_identity import arrived
+        from sugar_lift_py_tests.floor.object_identity import arrived_as
+        from sugar_lift_py_tests.occurrence import occurrence_key
 
+        # The yield's occurrence: this suspension of this instance, in the
+        # evaluation that resumed it.  It names every container the yield
+        # hands over or releases (``object_identity.arrived_as``).
+        at = occurrence_key(self.resume_coordinate)
         # The consumer holds the yielded value by binding: what the
         # generator's frame made is not current in the consumer's
         # (``object_identity``).
-        object.__setattr__(self, "value", arrived(self.value))
+        object.__setattr__(self, "value", arrived_as(self.value, f"{at}/yielded"))
         # Nor is it current in the generator's own frame when it resumes: the
         # consumer ran code this frame does not see, holding the yielded
         # value and whatever it shares.  Which of the frame's objects that is
         # the yielded value cannot say (the frame's own read of it may have
         # taken its ``allocation`` off already), so every container the frame
         # holds is released at the yield.
-        object.__setattr__(self, "machine", _released_at_yield(self.machine))
+        object.__setattr__(self, "machine", _released_at_yield(self.machine, at))
 
 
-def _released_at_yield(machine):
-    """``machine`` with every container its frame's writes hold ``arrived``
+def _released_at_yield(machine, at: str):
+    """``machine`` with every container its frame's writes hold arrived
     (``YieldEffect``): an assignment's, a loop target's, and a walrus's
-    (its assigned value, and the value it presents)."""
+    (its assigned value, and the value it presents).  Each is named by the
+    yield's occurrence ``at`` and its binding's place in the frame's writes
+    (``<at>/<position>``): two bindings released at one yield are two
+    objects' names, never one (``object_identity.arrived_as``)."""
     from dataclasses import replace
 
     from sugar_lift_py_tests.floor.named_expression_value import (
         NamedExpressionValue,
     )
-    from sugar_lift_py_tests.floor.object_identity import arrived
+    from sugar_lift_py_tests.floor.object_identity import arrived_as
 
     state = getattr(machine, "binding_state", None)
     if not state:
         return machine
     released = []
     changed = False
-    for item in state:
+    for position, item in enumerate(state):
         if (
             isinstance(item, (GeneratorAssignBindingV1, GeneratorLoopBindingV1))
             and item.value is not None
         ):
-            value = arrived(item.value)
+            value = arrived_as(item.value, f"{at}/{position}")
             if value is not item.value:
                 item = replace(item, value=value)
                 changed = True
@@ -1312,8 +1320,8 @@ def _released_at_yield(machine):
             item.bind, NamedExpressionValue
         ):
             bind = item.bind
-            assigned = arrived(bind.assigned_value)
-            presented = arrived(bind.presented_value)
+            assigned = arrived_as(bind.assigned_value, f"{at}/{position}/assigned")
+            presented = arrived_as(bind.presented_value, f"{at}/{position}/presented")
             if assigned is not bind.assigned_value or (
                 presented is not bind.presented_value
             ):

@@ -473,7 +473,7 @@ class BuiltinSemanticCallable(FloorValue):
 
         from sugar_lift_py_tests.floor.object_identity import (
             contents_stale,
-            made_if_current,
+            made_at,
         )
 
         if operation.keyword_names or len(operation.arguments) != 1:
@@ -483,12 +483,10 @@ class BuiltinSemanticCallable(FloorValue):
             # Its members are not its contents now: not iterated here.
             return None
         if isinstance(source, DictValue):
-            # A new dict made by this call, holding ``source``'s entries.
+            # A new dict made by this call, holding ``source``'s entries
+            # (current: a stale ``source`` returned above).
             return ExitSet.completed(
-                DictValue(
-                    tuple(source.entries),
-                    allocation=made_if_current(operation.site, source),
-                )
+                DictValue(tuple(source.entries), allocation=made_at(operation.site))
             )
         if not isinstance(source, (ListValue, TupleValue)):
             return None
@@ -526,8 +524,6 @@ class BuiltinSemanticCallable(FloorValue):
             else:
                 values[found] = value
         # A new dict made by this call, from current contents.
-        from sugar_lift_py_tests.floor.object_identity import made_at
-
         return ExitSet.completed(
             DictValue(tuple(zip(keys, values)), allocation=made_at(operation.site))
         )

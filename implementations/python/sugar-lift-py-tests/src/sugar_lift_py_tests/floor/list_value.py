@@ -200,16 +200,17 @@ class ListValue(GuardStableValue):
         """Python list concatenation, or a cited coordinate for an opaque peer.
 
         The concatenation is a new list made here, current when both
-        operands' contents are (``object_identity.made_if_current``)."""
+        operands' contents are, else named by its derivation
+        (``object_identity.made_from``)."""
         if type(other) is ListValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
-            from .object_identity import made_if_current
+            from .object_identity import made_from
 
             return ExitSet.completed(
                 ListValue(
                     (*self.elements, *other.elements),
-                    allocation=made_if_current(site, self, other),
+                    **made_from("+", site, self, other),
                 )
             )
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
@@ -256,15 +257,15 @@ class ListValue(GuardStableValue):
 
     def multiply(self, other, site, ctx):
         # Python list repetition, through the one sequence-repetition law: a
-        # new list made here (``object_identity.made_if_current``).
+        # new list made here (``object_identity.made_from``).
         from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-        from .object_identity import made_if_current
+        from .object_identity import made_from
 
-        allocation = made_if_current(site, self)
+        made = made_from("*", site, self)
 
         def rebuild(elements):
-            return ListValue(elements, allocation=allocation)
+            return ListValue(elements, **made)
 
         return repeat_sequence(
             self, other, site, elements=self.elements, rebuild=rebuild
