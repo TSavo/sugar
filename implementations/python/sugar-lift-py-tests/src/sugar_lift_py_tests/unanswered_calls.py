@@ -7,12 +7,14 @@ callee's own coordinate when the callee is import-bound, else ``None`` (Q5: a
 call with no symbol is still a member). Its ``site`` is the call's
 ``SourceFragmentCoordinateV1``.
 
-There is one place a call is left unanswered: ``UnknownCalleeCallV1.faces``,
-the two-faced call to a callee the lifter does not have (#7585). It records
-the call here when a collector is active. Only the universe full scan that
-mint packages opens a collector, so every seek sees exactly what it saw
-before. The member records the call and nothing about what answers it, so it
-is the same staged or unstaged (row 0a.4).
+A call is left unanswered where the lifter does not have its callee: the
+two-faced call of ``UnknownCalleeCallV1.faces`` (#7585) and of
+``OffPopulationSourceCallV1.faces`` (an authenticated callee cited off the
+enrolled population). "Not bridged" is stated one way, so each records the
+call here, the same way, when a collector is active. Only the universe full
+scan that mint packages opens a collector, so every seek sees exactly what it
+saw before. The member records the call and nothing about what answers it, so
+it is the same staged or unstaged (row 0a.4).
 """
 
 from __future__ import annotations
