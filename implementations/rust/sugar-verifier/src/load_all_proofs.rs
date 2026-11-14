@@ -561,6 +561,7 @@ fn load_catalog_bytes(
                     | MemberKind::SourceMemento
                     | MemberKind::StageReceipt
                     | MemberKind::TryBranch
+                    | MemberKind::Undecided
                     | MemberKind::Witness
                     | MemberKind::WitnessMemento => {}
                 }
@@ -630,6 +631,7 @@ fn load_catalog_bytes(
                     | MemberKind::SourceMemento
                     | MemberKind::StageReceipt
                     | MemberKind::TryBranch
+                    | MemberKind::Undecided
                     | MemberKind::Witness
                     | MemberKind::WitnessMemento => None,
                 };

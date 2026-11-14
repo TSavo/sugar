@@ -235,6 +235,54 @@ pub fn add_consistency_with_verification(
     }
 }
 
+/// One row per `undecided` member in the pool (step 8): status
+/// `undecidable`, reason `owed: <why>`, the member's site as its locus. Never
+/// sent to a solver. Each counts in `owed`; a report with anything owed is
+/// never green (`report_exit_code`).
+pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
+    use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
+    for (cid, member) in pool.undecided_members() {
+        let reason;
+        let mut cs = CallSite::default();
+        match UndecidedMember::from_stored(member) {
+            Ok(undecided) => {
+                let subject = undecided.symbol.clone().unwrap_or_else(|| {
+                    format!("{}:{}", undecided.site.file, undecided.site.start_line)
+                });
+                reason = match &undecided.reason {
+                    UndecidedReason::Refused { owner, observed } => {
+                        format!("owed: {owner}: {observed}")
+                    }
+                    UndecidedReason::Unanswered => {
+                        format!("owed: no contract for {subject} in this proof")
+                    }
+                };
+                cs.property_name = format!("undecided:{subject}");
+                cs.file = Some(undecided.site.file.clone());
+                cs.line = usize::try_from(undecided.site.start_line).ok();
+                cs.source_column = usize::try_from(undecided.site.start_col).ok();
+            }
+            // Load already decoded it strictly; a member that no longer
+            // decodes here is still owed, and says why.
+            Err(error) => {
+                cs.property_name = format!("undecided:{cid}");
+                reason = format!("owed: undecided member {cid} does not decode: {error}");
+            }
+        }
+        cs.property_cid = Some(cid.clone());
+        r.rows.push(ReportRow {
+            callsite: cs,
+            status: ObligationVerdict::Undecidable,
+            reason,
+            discharge_method: Some("undecided".to_string()),
+            body_discharge_tier: None,
+            verification: None,
+            verify_effect: VerifyEffectCarrier::from_producer(ObligationVerdict::Undecidable, None),
+        });
+        r.owed += 1;
+    }
+}
+
 pub fn add_load_errors(errs: &[LoadError], r: &mut Report) {
     r.load_errors = errs.to_vec();
 }

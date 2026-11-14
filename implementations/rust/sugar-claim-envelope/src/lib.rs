@@ -37,7 +37,7 @@ use serde_json::Value as JsonValue;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value};
 use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, AuthorityMementoRef, ContractMementoRef,
-    Ed25519Seed,
+    Ed25519Seed, UndecidedMember,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -1557,6 +1557,52 @@ pub fn mint_bridge(args: &MintBridgeArgs) -> MintedEnvelope {
     }
     let metadata = Arc::new(Value::Object(metadata_kvs));
 
+    assemble_layered(
+        header,
+        metadata,
+        &args.produced_at,
+        &args.signer_seed,
+        String::new(),
+    )
+}
+
+// =============================================================================
+// mint_undecided
+// =============================================================================
+
+/// One `undecided` member: what this proof does not decide, and why (step 8;
+/// the owner, 2026-11-12, "Yes, one member kind"). The header carries
+/// `symbol`, `site` and `reason`, and its `cid` is the JCS hash of the header
+/// without `cid`, so every field is in the CID preimage. `metadata`
+/// (`producedBy`, `producedAt`) is outside it.
+pub struct MintUndecidedArgs {
+    pub produced_by: String,
+    pub produced_at: String,
+    pub member: UndecidedMember,
+    pub signer_seed: Ed25519Seed,
+}
+
+pub fn mint_undecided(args: &MintUndecidedArgs) -> MintedEnvelope {
+    debug_assert_eq!(UndecidedMember::SCHEMA_VERSION, LAYERED_SCHEMA_VERSION);
+    let preimage = args.member.header_preimage();
+    let header_cid = args.member.header_cid();
+    let field = |key: &str| -> Arc<Value> {
+        json_to_value(preimage.get(key).expect("undecided header field"))
+            .expect("undecided header is integer-only JSON")
+    };
+    let header = build_header(
+        "undecided",
+        &header_cid,
+        vec![
+            ("symbol".into(), field("symbol")),
+            ("site".into(), field("site")),
+            ("reason".into(), field("reason")),
+        ],
+    );
+    let metadata = Arc::new(Value::Object(vec![
+        ("producedBy".into(), Value::string(args.produced_by.clone())),
+        ("producedAt".into(), Value::string(args.produced_at.clone())),
+    ]));
     assemble_layered(
         header,
         metadata,

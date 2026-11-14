@@ -324,6 +324,10 @@ pub struct Report {
     /// false pass), not a violation (does not redden the gate). The trichotomy's
     /// third arm, surfaced in the scoreboard so refusals are loud, not hidden.
     pub refused: usize,
+    /// `undecided` members in the proven pool: what the proof does not
+    /// decide, and why (step 8). Each has its own `undecided:` row with
+    /// status `undecidable`; a report with `owed > 0` is never green.
+    pub owed: usize,
     pub rows: Vec<ReportRow>,
     pub load_errors: Vec<LoadError>,
     pub call_edges: Vec<ResolvedCallEdge>,

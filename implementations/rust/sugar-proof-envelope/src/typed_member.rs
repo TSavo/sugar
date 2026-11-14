@@ -57,11 +57,14 @@ pub enum MemberError {
 
     #[error("CID not present in graph: {0}")]
     UnknownCid(String),
+
+    #[error("undecided: {0}")]
+    InvalidUndecided(String),
 }
 
 // ─── Member kind ────────────────────────────────────────────────────────────
 
-pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, context-manager-contract, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, witness, witness-memento";
+pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, context-manager-contract, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, undecided, witness, witness-memento";
 
 /// Wire member kind. Strings enter and leave only at serde/display boundaries;
 /// production branching should match this enum exhaustively.
@@ -85,6 +88,7 @@ pub enum MemberKind {
     SourceMemento,
     StageReceipt,
     TryBranch,
+    Undecided,
     Witness,
     WitnessMemento,
 }
@@ -110,6 +114,7 @@ impl MemberKind {
             MemberKind::SourceMemento => "source-memento",
             MemberKind::StageReceipt => "stage-receipt",
             MemberKind::TryBranch => "try-branch",
+            MemberKind::Undecided => "undecided",
             MemberKind::Witness => "witness",
             MemberKind::WitnessMemento => "witness-memento",
         }
@@ -145,6 +150,7 @@ impl FromStr for MemberKind {
             "source-memento" => Ok(MemberKind::SourceMemento),
             "stage-receipt" => Ok(MemberKind::StageReceipt),
             "try-branch" => Ok(MemberKind::TryBranch),
+            "undecided" => Ok(MemberKind::Undecided),
             "witness" => Ok(MemberKind::Witness),
             "witness-memento" => Ok(MemberKind::WitnessMemento),
             other => Err(MemberError::UnknownKind {
@@ -402,6 +408,242 @@ fn get_vec_atom_cid(nb: &NormalizedBody<'_>, name: &str) -> Option<Vec<AtomCid>>
 }
 
 // ─── Per-kind structs ────────────────────────────────────────────────────────
+
+/// Where an `undecided` member's owed contract sits in the source: the
+/// `SourceFragmentCoordinateV1` wire plus the workspace-relative `file`.
+/// Exactly these six keys, all required.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndecidedSite {
+    pub file: String,
+    pub source_cid: AtomCid,
+    pub start_line: i64,
+    pub start_col: i64,
+    pub end_line: i64,
+    pub end_col: i64,
+}
+
+/// Why an `undecided` member is not decided here. The tag is the case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UndecidedReason {
+    /// The lifter refused the definition by name (e.g. the scope law).
+    Refused { owner: String, observed: String },
+    /// A call no contract in this proof answers.
+    Unanswered,
+}
+
+/// kind = "undecided": one member for what a proof does not decide, and why
+/// (step 8; the owner, 2026-11-12, "Yes, one member kind"). Every header
+/// field is in the CID preimage: `header.cid` is the JCS hash of the header
+/// without `cid`, checked here. Decode is strict: a missing field, a `site`
+/// that is not the six-key shape, or a `reason` without exactly one known
+/// tag is refused by name. Older loaders reject the kind (`UnknownKind`);
+/// the owner accepted that cost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndecidedMember {
+    /// The contract this proof does not hold. `None` when the lifter has no
+    /// symbol another proof could name.
+    pub symbol: Option<String>,
+    pub site: UndecidedSite,
+    pub reason: UndecidedReason,
+}
+
+impl UndecidedMember {
+    /// The layered header's schema version, as every layered member states
+    /// it (`sugar_claim_envelope::LAYERED_SCHEMA_VERSION`).
+    pub const SCHEMA_VERSION: &'static str = "2";
+
+    const SITE_KEYS: [&'static str; 6] = [
+        "endCol",
+        "endLine",
+        "file",
+        "sourceCid",
+        "startCol",
+        "startLine",
+    ];
+
+    /// The header fields every `undecided` member states, in their wire form.
+    /// Its JCS hash is the header `cid`.
+    pub fn header_preimage(&self) -> Json {
+        let reason = match &self.reason {
+            UndecidedReason::Refused { owner, observed } => serde_json::json!({
+                "refused": {"owner": owner, "observed": observed}
+            }),
+            UndecidedReason::Unanswered => serde_json::json!({"unanswered": {}}),
+        };
+        serde_json::json!({
+            "kind": MemberKind::Undecided.as_str(),
+            "schemaVersion": Self::SCHEMA_VERSION,
+            "symbol": self.symbol,
+            "site": {
+                "file": self.site.file,
+                "sourceCid": self.site.source_cid.as_str(),
+                "startLine": self.site.start_line,
+                "startCol": self.site.start_col,
+                "endLine": self.site.end_line,
+                "endCol": self.site.end_col,
+            },
+            "reason": reason,
+        })
+    }
+
+    /// The header CID: `blake3-512` of the JCS of [`Self::header_preimage`].
+    pub fn header_cid(&self) -> String {
+        sugar_canonicalizer::jcs_cid_of_json(&self.header_preimage())
+    }
+
+    fn invalid(message: impl Into<String>) -> MemberError {
+        MemberError::InvalidUndecided(message.into())
+    }
+
+    /// Decode the member read back out of a pool, from its stored header
+    /// fields. Same strict decode as the wire.
+    pub fn from_stored(member: &crate::proof_graph::StoredMember) -> Result<Self, MemberError> {
+        let mut header = serde_json::Map::new();
+        for key in ["kind", "schemaVersion", "cid", "symbol", "site", "reason"] {
+            if let Some(value) = member.field(key) {
+                header.insert(key.to_string(), value.clone());
+            }
+        }
+        Self::from_value(&serde_json::json!({ "header": Json::Object(header) }))
+    }
+
+    pub(crate) fn from_value(value: &Json) -> Result<Self, MemberError> {
+        let header = value
+            .get("header")
+            .and_then(Json::as_object)
+            .ok_or_else(|| Self::invalid("member has no `header` object"))?;
+        if header.get("schemaVersion").and_then(Json::as_str) != Some(Self::SCHEMA_VERSION) {
+            return Err(Self::invalid(format!(
+                "header `schemaVersion` must be \"{}\"",
+                Self::SCHEMA_VERSION
+            )));
+        }
+        let member = Self::from_fields(header)?;
+        let stated = header
+            .get("cid")
+            .and_then(Json::as_str)
+            .ok_or_else(|| Self::invalid("missing required field `cid`"))?;
+        let computed = member.header_cid();
+        if stated != computed {
+            return Err(Self::invalid(format!(
+                "header `cid` {stated} does not address the header ({computed})"
+            )));
+        }
+        Ok(member)
+    }
+
+    /// Decode a kit's `undecided` row (`{kind, symbol, site, reason}`), the
+    /// one input mint turns into this member. Same strict field rules.
+    pub fn from_row(row: &Json) -> Result<Self, MemberError> {
+        let row = row
+            .as_object()
+            .ok_or_else(|| Self::invalid("an undecided row must be an object"))?;
+        if row.get("kind").and_then(Json::as_str) != Some(MemberKind::Undecided.as_str()) {
+            return Err(Self::invalid(
+                "an undecided row must say `kind: \"undecided\"`",
+            ));
+        }
+        Self::from_fields(row)
+    }
+
+    fn from_fields(header: &serde_json::Map<String, Json>) -> Result<Self, MemberError> {
+        let symbol = match header.get("symbol") {
+            Some(Json::String(s)) => Some(s.clone()),
+            Some(Json::Null) => None,
+            Some(_) => return Err(Self::invalid("`symbol` must be a string or null")),
+            None => return Err(Self::invalid("missing required field `symbol`")),
+        };
+        let site = header
+            .get("site")
+            .and_then(Json::as_object)
+            .ok_or_else(|| Self::invalid("missing required object `site`"))?;
+        let mut keys: Vec<&str> = site.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        if keys != Self::SITE_KEYS {
+            return Err(Self::invalid(format!(
+                "`site` must have exactly the keys {:?}, got {keys:?}",
+                Self::SITE_KEYS
+            )));
+        }
+        let site_str = |key: &str| -> Result<String, MemberError> {
+            site.get(key)
+                .and_then(Json::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| Self::invalid(format!("`site.{key}` must be a string")))
+        };
+        let site_int = |key: &str| -> Result<i64, MemberError> {
+            site.get(key)
+                .and_then(Json::as_i64)
+                .ok_or_else(|| Self::invalid(format!("`site.{key}` must be an integer")))
+        };
+        let source_cid = AtomCid::try_parse(site_str("sourceCid")?).map_err(|raw| {
+            MemberError::InvalidCidFormat {
+                kind: MemberKind::Undecided.as_str().to_string(),
+                field: "site.sourceCid".to_string(),
+                raw,
+            }
+        })?;
+        let site = UndecidedSite {
+            file: site_str("file")?,
+            source_cid,
+            start_line: site_int("startLine")?,
+            start_col: site_int("startCol")?,
+            end_line: site_int("endLine")?,
+            end_col: site_int("endCol")?,
+        };
+        let reason = header
+            .get("reason")
+            .and_then(Json::as_object)
+            .ok_or_else(|| Self::invalid("missing required object `reason`"))?;
+        if reason.len() != 1 {
+            return Err(Self::invalid(format!(
+                "`reason` must carry exactly one tag, got {}",
+                reason.len()
+            )));
+        }
+        let (tag, body) = reason.iter().next().expect("one tag");
+        let reason = match tag.as_str() {
+            "refused" => {
+                let body = body
+                    .as_object()
+                    .ok_or_else(|| Self::invalid("`reason.refused` must be an object"))?;
+                let field = |key: &str| -> Result<String, MemberError> {
+                    body.get(key)
+                        .and_then(Json::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            Self::invalid(format!("`reason.refused.{key}` must be a string"))
+                        })
+                };
+                if body.len() != 2 {
+                    return Err(Self::invalid(
+                        "`reason.refused` must have exactly `owner` and `observed`",
+                    ));
+                }
+                UndecidedReason::Refused {
+                    owner: field("owner")?,
+                    observed: field("observed")?,
+                }
+            }
+            "unanswered" => {
+                if body.as_object().map(|o| o.is_empty()) != Some(true) {
+                    return Err(Self::invalid("`reason.unanswered` must be an empty object"));
+                }
+                UndecidedReason::Unanswered
+            }
+            other => {
+                return Err(Self::invalid(format!(
+                    "unknown `reason` tag `{other}` (known: refused, unanswered)"
+                )))
+            }
+        };
+        Ok(Self {
+            symbol,
+            site,
+            reason,
+        })
+    }
+}
 
 /// kind = "contract"
 #[derive(Debug, Clone)]
@@ -1791,6 +2033,7 @@ pub enum Member {
     EffectSiteAnnotation(EffectSiteAnnotationMember),
     ProofRun(ProofRunMember),
     StageReceipt(StageReceiptMember),
+    Undecided(UndecidedMember),
 }
 
 impl Member {
@@ -1848,6 +2091,7 @@ impl Member {
             MemberKind::StageReceipt => Ok(Member::StageReceipt(
                 StageReceiptMember::from_normalized(&nb)?,
             )),
+            MemberKind::Undecided => Ok(Member::Undecided(UndecidedMember::from_value(value)?)),
             MemberKind::AliasingMemento
             | MemberKind::ClosureBinding
             | MemberKind::LoopInvariant
@@ -1892,6 +2136,7 @@ impl Member {
             Member::EffectSiteAnnotation(_) => MemberKind::EffectSiteAnnotation,
             Member::ProofRun(_) => MemberKind::ProofRun,
             Member::StageReceipt(_) => MemberKind::StageReceipt,
+            Member::Undecided(_) => MemberKind::Undecided,
         }
     }
 }
@@ -2664,5 +2909,181 @@ mod tests {
         for (cv, cb) in cids_val.iter().zip(cids_bytes.iter()) {
             assert_eq!(cv.as_str(), cb.as_str());
         }
+    }
+
+    // ── undecided: strict decode, every field in the CID ─────────────────────
+
+    fn undecided_header() -> serde_json::Value {
+        let member = UndecidedMember {
+            symbol: Some("python:m.f".into()),
+            site: UndecidedSite {
+                file: "m.py".into(),
+                source_cid: AtomCid::from_raw(cid('a')),
+                start_line: 4,
+                start_col: 0,
+                end_line: 5,
+                end_col: 20,
+            },
+            reason: UndecidedReason::Refused {
+                owner: "proofir.scope".into(),
+                observed: "illegal free var(s): LIMIT".into(),
+            },
+        };
+        let mut header = member.header_preimage();
+        header["cid"] = serde_json::Value::String(member.header_cid());
+        header
+    }
+
+    fn parse_undecided(header: serde_json::Value) -> Result<Member, MemberError> {
+        let wire = serde_json::json!({
+            "envelope": {
+                "signer": "ed25519:test",
+                "declaredAt": "2026-01-01T00:00:00Z",
+                "signature": "ed25519:sig"
+            },
+            "header": header,
+            "metadata": {}
+        });
+        Member::parse(wire.to_string().as_bytes())
+    }
+
+    /// Recompute `cid` after a mutation, so the refusal under test is the
+    /// field rule and not the CID check.
+    fn rehash(mut header: serde_json::Value) -> serde_json::Value {
+        let mut preimage = header.clone();
+        preimage.as_object_mut().unwrap().remove("cid");
+        header["cid"] = serde_json::Value::String(sugar_canonicalizer::jcs_cid_of_json(&preimage));
+        header
+    }
+
+    fn assert_undecided_refused(header: serde_json::Value, needle: &str) {
+        match parse_undecided(header) {
+            Err(MemberError::InvalidUndecided(msg)) => {
+                assert!(msg.contains(needle), "{msg:?} does not name {needle:?}")
+            }
+            Err(MemberError::InvalidCidFormat { field, .. }) => {
+                assert!(field.contains(needle), "{field:?} does not name {needle:?}")
+            }
+            other => panic!("expected a refusal naming {needle:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn undecided_member_parses_strictly() {
+        match parse_undecided(undecided_header()).expect("parses") {
+            Member::Undecided(m) => {
+                assert_eq!(m.symbol.as_deref(), Some("python:m.f"));
+                assert_eq!(m.site.file, "m.py");
+                assert_eq!(m.site.start_line, 4);
+                assert_eq!(
+                    m.reason,
+                    UndecidedReason::Refused {
+                        owner: "proofir.scope".into(),
+                        observed: "illegal free var(s): LIMIT".into(),
+                    }
+                );
+            }
+            other => panic!("expected Undecided, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn undecided_null_symbol_and_unanswered_reason_parse() {
+        let mut h = undecided_header();
+        h["symbol"] = serde_json::Value::Null;
+        h["reason"] = serde_json::json!({"unanswered": {}});
+        match parse_undecided(rehash(h)).expect("parses") {
+            Member::Undecided(m) => {
+                assert!(m.symbol.is_none());
+                assert_eq!(m.reason, UndecidedReason::Unanswered);
+            }
+            other => panic!("expected Undecided, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn undecided_cid_must_address_the_header() {
+        let mut h = undecided_header();
+        h["symbol"] = serde_json::Value::String("python:m.g".into());
+        assert_undecided_refused(h, "does not address the header");
+    }
+
+    #[test]
+    fn undecided_refuses_missing_and_malformed_fields() {
+        let mut h = undecided_header();
+        h.as_object_mut().unwrap().remove("symbol");
+        assert_undecided_refused(rehash(h), "`symbol`");
+
+        let mut h = undecided_header();
+        h["symbol"] = serde_json::json!(7);
+        assert_undecided_refused(rehash(h), "`symbol`");
+
+        let mut h = undecided_header();
+        h.as_object_mut().unwrap().remove("site");
+        assert_undecided_refused(rehash(h), "`site`");
+
+        let mut h = undecided_header();
+        h["site"].as_object_mut().unwrap().remove("endCol");
+        assert_undecided_refused(rehash(h), "exactly the keys");
+
+        let mut h = undecided_header();
+        h["site"]["extra"] = serde_json::json!(1);
+        assert_undecided_refused(rehash(h), "exactly the keys");
+
+        let mut h = undecided_header();
+        h["site"]["startLine"] = serde_json::json!("4");
+        assert_undecided_refused(rehash(h), "site.startLine");
+
+        let mut h = undecided_header();
+        h["site"]["sourceCid"] = serde_json::json!("sha256:00");
+        assert_undecided_refused(rehash(h), "site.sourceCid");
+
+        let mut h = undecided_header();
+        h["schemaVersion"] = serde_json::json!("1");
+        assert_undecided_refused(rehash(h), "schemaVersion");
+    }
+
+    #[test]
+    fn undecided_reason_must_carry_exactly_one_known_tag() {
+        let mut h = undecided_header();
+        h["reason"] = serde_json::json!({});
+        assert_undecided_refused(rehash(h), "exactly one tag");
+
+        let mut h = undecided_header();
+        h["reason"] =
+            serde_json::json!({"refused": {"owner": "o", "observed": "x"}, "unanswered": {}});
+        assert_undecided_refused(rehash(h), "exactly one tag");
+
+        let mut h = undecided_header();
+        h["reason"] = serde_json::json!({"guessed": {}});
+        assert_undecided_refused(rehash(h), "unknown `reason` tag");
+
+        let mut h = undecided_header();
+        h["reason"] = serde_json::json!({"refused": {"owner": "o"}});
+        assert_undecided_refused(rehash(h), "reason.refused");
+
+        let mut h = undecided_header();
+        h["reason"] = serde_json::json!({"refused": {"owner": "o", "observed": "x", "more": "y"}});
+        assert_undecided_refused(rehash(h), "reason.refused");
+
+        let mut h = undecided_header();
+        h["reason"] = serde_json::json!({"unanswered": {"why": "x"}});
+        assert_undecided_refused(rehash(h), "reason.unanswered");
+    }
+
+    #[test]
+    fn undecided_row_decodes_to_the_member_it_mints() {
+        let header = undecided_header();
+        let row = serde_json::json!({
+            "kind": "undecided",
+            "symbol": header["symbol"],
+            "site": header["site"],
+            "reason": header["reason"],
+        });
+        let member = UndecidedMember::from_row(&row).expect("row decodes");
+        assert_eq!(member.header_cid(), header["cid"].as_str().unwrap());
+        let mut wrong = row.clone();
+        wrong["kind"] = serde_json::json!("contract");
+        assert!(UndecidedMember::from_row(&wrong).is_err());
     }
 }

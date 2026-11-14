@@ -513,6 +513,7 @@ impl Runner {
             report_stage::add_consistency_result(cr, &mut report);
         }
         report_stage::add_toolchain_plans(&pool, &mut report);
+        report_stage::add_undecided_members(&pool, &mut report);
 
         let invs = invs_sink.into_inner().unwrap_or_default();
         let mut per_solver: BTreeMap<String, SolverStats> = BTreeMap::new();
@@ -797,6 +798,7 @@ impl Runner {
             report_stage::add_consistency_result(cr, &mut report);
         }
         report_stage::add_toolchain_plans(&pool, &mut report);
+        report_stage::add_undecided_members(&pool, &mut report);
 
         // Aggregate per-solver stats from telemetry sink.
         let invs = invs_sink.into_inner().unwrap_or_default();

@@ -465,6 +465,7 @@ def _captured_lift_document(capture: Path) -> dict:
             if isinstance(audit, dict) and audit.get("kind") in {
                 "contract",
                 "function-contract",
+                "undecided",
             }:
                 ir.append(audit)
         table = result.get("termTable")
@@ -474,10 +475,17 @@ def _captured_lift_document(capture: Path) -> dict:
 
 
 def _is_assertion_row(row: dict) -> bool:
-    """A consistency row: the solver's verdict on a stated assertion's claim."""
-    return str(row.get("property") or "").startswith("consistency:") and (
-        "witness-package" not in str(row.get("property"))
-    )
+    """A consistency row: the solver's verdict on a stated assertion's claim.
+
+    An ``undecided:`` row is read with them (step 8): a function the lifter
+    refused by name owes its claims, so a source whose only claims belong to
+    refused functions reads ``open``, stated, never "no assertion rows", and a
+    source with anything owed is never ``sat``.
+    """
+    prop = str(row.get("property") or "")
+    if prop.startswith("undecided:"):
+        return True
+    return prop.startswith("consistency:") and "witness-package" not in prop
 
 
 def prove_verdict(prove_doc: dict) -> Verdict:

@@ -2898,6 +2898,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # call-site cue.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
@@ -2928,6 +2929,39 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue
                     try:
                         def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                    except FreeVariableRefusal as refusal:
+                        # A row of this function, or the formula its outcome
+                        # carries, names a variable outside its declared scope
+                        # (a module-level name, an unbound global). The
+                        # function is refused by name and the rest of the file
+                        # is served (#7785). What the function sees of the name
+                        # is not decided here.
+                        if seek:
+                            # A seek is the linker round's preliminary fold
+                            # (mint's import round), which packages nothing: it
+                            # sees what it sees for any refused callee, a gap.
+                            gaps.append(
+                                {
+                                    "memento": _tree.function_def_memento(
+                                        fn, file_rel
+                                    ).to_rpc(),
+                                    "reason": (
+                                        f"{refusal.info.owner}: "
+                                        f"{refusal.info.observed}"
+                                    ),
+                                }
+                            )
+                            continue
+                        # The full scan mint packages: one `undecided` row,
+                        # which mint writes as the function's member (step 8).
+                        # The proof never silently lacks the function's claims.
+                        scan_rows.append(
+                            (
+                                _tree.function_def_memento(fn, file_rel).to_rpc(),
+                                _tree.refused_function_row(fn, file_rel, refusal),
+                            )
+                        )
+                        continue
                     except SugarNotWritten as gap:
                         # A full-tree mint has no later construction entrance:
                         # turning this product terminal into an enumeration gap
@@ -3034,6 +3068,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         except SugarNotWritten:
                             # Typed tree frontier: abstract identity fallback.
+                            rows = None
+                        except FreeVariableRefusal:
+                            # The callee as applied names a variable outside
+                            # its scope. Its member comes from the full scan
+                            # mint packages; here the abstract fallback below
+                            # is taken, with no cue gap and no node (#7785).
                             rows = None
                         except SourceCallBindingGap as bind_gap:
                             cue_gaps.append(

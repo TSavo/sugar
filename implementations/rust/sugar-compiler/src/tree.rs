@@ -530,6 +530,12 @@ fn looks_like_ir_contract_row(value: &Value) -> bool {
         || obj.contains_key("bridgeSourceSymbol")
 }
 
+/// True when a wire row is a kit's `undecided` row: a function refused by
+/// name (step 8; one member kind for what a proof does not decide).
+fn is_undecided_row(value: &Value) -> bool {
+    value.get("kind").and_then(Value::as_str) == Some("undecided")
+}
+
 /// True when a wire row is a harvested call edge. Call edges are NOT IR
 /// contract rows -- they carry the caller side of a bridge (`targetSymbol`,
 /// `targetContract`/`targetContractCid`) that mint joins to a contract. They
@@ -583,7 +589,10 @@ impl CallEdgeHarvest {
     /// `ir` is both a dropped edge and a non-contract row published into the
     /// IR document (see issue #6251).
     fn route_audit(&mut self, ir: &mut Vec<Value>, audit: &Value) {
-        if looks_like_ir_contract_row(audit) {
+        if looks_like_ir_contract_row(audit) || is_undecided_row(audit) {
+            // An `undecided` row is what the proof does not decide (step 8):
+            // it goes to `ir`, where mint turns it into its member. It never
+            // reaches the contract mint (that reads `contract` kinds only).
             ir.push(audit.clone());
         } else if looks_like_call_edge_row(audit) {
             self.push(audit);
@@ -1513,7 +1522,8 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
         "callEdgeWalk": call_edge_walk,
         "sourceLedger": {
             "source_files": source_mementos.len(),
-            "contracts": ir.len(),
+            "contracts": ir.iter().filter(|row| !is_undecided_row(row)).count(),
+            "undecided": ir.iter().filter(|row| is_undecided_row(row)).count(),
             "call_edges": call_edge_count,
         },
     }))
@@ -2788,6 +2798,26 @@ mod tests {
         );
         assert_eq!(ir.len(), 1, "the contract row is still collected");
         assert_eq!(harvest.edges.len(), 1, "the edge went to its own channel");
+    }
+
+    #[test]
+    fn undecided_rows_land_in_ir_for_mint_to_package() {
+        let undecided = json!({
+            "kind": "undecided",
+            "symbol": "python:m.f",
+            "site": {"file": "m.py", "sourceCid": "blake3-512:aa", "startLine": 4,
+                     "startCol": 0, "endLine": 5, "endCol": 20},
+            "reason": {"refused": {"owner": "proofir.scope",
+                                   "observed": "illegal free var(s): LIMIT"}},
+        });
+        let (ir, harvest) = route_all(&[contract_row("g"), undecided.clone()]);
+
+        assert_eq!(
+            ir,
+            vec![contract_row("g"), undecided],
+            "a refused function's undecided row reaches mint, never dropped"
+        );
+        assert!(harvest.edges.is_empty());
     }
 
     #[test]

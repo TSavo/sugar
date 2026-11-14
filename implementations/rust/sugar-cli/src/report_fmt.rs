@@ -54,6 +54,7 @@ pub fn report_to_json(r: &Report) -> Json {
         "discharged": r.discharged,
         "violations": r.violations,
         "refused": r.refused,
+        "owed": r.owed,
         "dischargeSplit": discharge_split_to_json(r),
         "rows": rows,
         "lineAccounting": line_accounting,
@@ -162,6 +163,15 @@ pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
                 r.violations.to_string().green().to_string()
             } else {
                 r.violations.to_string().red().to_string()
+            }
+        );
+        let _ = writeln!(
+            out,
+            "  owed            : {}",
+            if r.owed == 0 {
+                "0".green().to_string()
+            } else {
+                r.owed.to_string().red().to_string()
             }
         );
         let _ = writeln!(
@@ -362,7 +372,13 @@ pub fn report_exit_code(r: &Report) -> u8 {
         .toolchain_plans
         .iter()
         .any(|plan| plan.status == "refuted");
-    if r.violations > 0 || !r.load_errors.is_empty() || toolchain_refuted || r.rows.is_empty() {
+    // A proof that owes anything (an `undecided` member) is never green.
+    if r.violations > 0
+        || r.owed > 0
+        || !r.load_errors.is_empty()
+        || toolchain_refuted
+        || r.rows.is_empty()
+    {
         crate::EXIT_VERIFY_FAIL
     } else {
         crate::EXIT_OK
@@ -390,6 +406,28 @@ mod tests {
         let mut r = Report::default();
         r.violations = 1;
         assert_eq!(report_exit_code(&r), crate::EXIT_VERIFY_FAIL);
+    }
+
+    #[test]
+    fn report_that_owes_anything_is_never_green() {
+        let mut r = Report::default();
+        r.rows.push(ReportRow {
+            callsite: CallSite {
+                property_name: "g".into(),
+                ..CallSite::default()
+            },
+            status: ObligationVerdict::Discharged,
+            reason: "ok".into(),
+            discharge_method: None,
+            body_discharge_tier: None,
+            verification: None,
+            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
+        });
+        r.discharged = 1;
+        assert_eq!(report_exit_code(&r), crate::EXIT_OK);
+        r.owed = 1;
+        assert_eq!(report_exit_code(&r), crate::EXIT_VERIFY_FAIL);
+        assert_eq!(report_to_json(&r)["owed"], 1);
     }
 
     #[test]

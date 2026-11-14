@@ -559,6 +559,7 @@ layered_memento!(ImplicationMemento, ["implication"]);
 layered_memento!(ProofRunMemento, ["proof-run"]);
 layered_memento!(StageReceiptMemento, ["stage-receipt"]);
 layered_memento!(WitnessClaimMemento, ["witness"]);
+layered_memento!(UndecidedMemento, ["undecided"]);
 
 impl From<&ClaimContractMemento> for ContractMementoRef {
     fn from(memento: &ClaimContractMemento) -> Self {
@@ -903,6 +904,11 @@ pub struct StoredMember {
 impl StoredMember {
     pub fn from_envelope(cid: MementoCid, envelope: &Json) -> Result<Self, MemberError> {
         let kind = member_kind(envelope)?;
+        if kind == MemberKind::Undecided {
+            // Strict at every load: a malformed `undecided` member is refused
+            // by name, never stored (`UndecidedMember` decode).
+            crate::typed_member::UndecidedMember::from_value(envelope)?;
+        }
         let body = member_body(envelope).cloned();
         let mut fields = BTreeMap::new();
         for layer in member_field_layers(envelope) {
@@ -1143,6 +1149,7 @@ fn layered_signature_header(envelope: &Json, header: &Json) -> Result<Json, Stri
         | Ok(MemberKind::PlanMemento)
         | Ok(MemberKind::SourceMemento)
         | Ok(MemberKind::TryBranch)
+        | Ok(MemberKind::Undecided)
         | Ok(MemberKind::Witness)
         | Ok(MemberKind::WitnessMemento)
         | Err(_) => {}
@@ -1598,6 +1605,11 @@ impl ProofGraph {
     }
 
     pub fn push_bridge(&mut self, memento: BridgeMemento) {
+        self.insert_member(memento.record);
+    }
+
+    /// One `undecided` member: what this proof does not decide, and why.
+    pub fn push_undecided(&mut self, memento: UndecidedMemento) {
         self.insert_member(memento.record);
     }
 

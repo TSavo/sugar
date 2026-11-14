@@ -510,6 +510,11 @@ impl MementoPool {
         self.members_by_kind(MemberKind::Bridge)
     }
 
+    /// Every `undecided` member: what the pool's proofs do not decide.
+    pub fn undecided_members(&self) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::Undecided)
+    }
+
     pub fn implication_members(&self) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
         self.members_by_kind(MemberKind::Implication)
     }
@@ -1151,6 +1156,7 @@ impl MementoPool {
             | Some(MemberKind::ProofRun)
             | Some(MemberKind::SourceMemento)
             | Some(MemberKind::StageReceipt)
+            | Some(MemberKind::Undecided)
             | Some(MemberKind::Witness)
             | Some(MemberKind::WitnessMemento)
             | None => {}

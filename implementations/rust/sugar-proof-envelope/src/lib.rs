@@ -58,7 +58,7 @@ pub use proof_graph::{
     ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
     ImplicationMemento, LibrarySugarBindingMemento, MemberView, MementoCid, PlanMemberBytesError,
     PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento, SourceMemento,
-    StageReceiptMemento, StoredMember, WitnessClaimMemento, WitnessMemento,
+    StageReceiptMemento, StoredMember, UndecidedMemento, WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
@@ -75,8 +75,8 @@ pub use typed_member::{
     FactoryWalkMementoMember, FormalSelectorV1, ImplicationMember, ImportSignatureV2,
     LibrarySugarBindingEntryMember, Member, MemberError, MemberKind, MessagePatternProjectionV1,
     ParameterDefaultV1, ParameterPassingV1, PlanMementoMember, ProofRunMember, ResourceSemanticsV1,
-    SourceMementoMember, StageReceiptMember, TotalCompletionV1, WitnessClaimMember,
-    WitnessMementoMember,
+    SourceMementoMember, StageReceiptMember, TotalCompletionV1, UndecidedMember, UndecidedReason,
+    UndecidedSite, WitnessClaimMember, WitnessMementoMember,
 };
 
 #[derive(Debug, thiserror::Error)]
