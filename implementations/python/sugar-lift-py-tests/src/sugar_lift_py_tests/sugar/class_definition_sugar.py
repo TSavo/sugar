@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.ir import _term_content_cid
@@ -47,28 +47,14 @@ class _ClassBodyV1:
     method_defaults: tuple = field(compare=False)
 
 
-def _inherited_source_initializer(bases):
-    """The first authenticated source ``__init__`` on a local base class.
-
-    Unauthenticated or builtin bases are not a source initializer.
-    """
-    for base in bases:
-        if not isinstance(base, ClassDefinitionValue):
-            return None
-        own = next(
-            (
-                method
-                for method in reversed(base.methods)
-                if method.name == "__init__"
-            ),
-            None,
-        )
-        if own is not None:
-            return own
-        found = _inherited_source_initializer(base.base_classes)
-        if found is not None:
-            return found
-    return None
+def _written_initializer(value):
+    """The ``__init__`` method a class statement's own body wrote (``value``:
+    its sugar or its class value): the last one, Python's live class
+    binding."""
+    return next(
+        (method for method in reversed(value.methods) if method.name == "__init__"),
+        None,
+    )
 
 
 @dataclass(frozen=True)
@@ -223,14 +209,25 @@ class ClassDefinitionSugar(Sugar):
         )
 
     def _construct(self, evaluated_bases, class_body) -> ExitSet:
-        from sugar_lift_py_tests.floor import BuiltinDictClassValue
+        from sugar_lift_py_tests.floor import (
+            BuiltinDictClassValue,
+            BuiltinExceptionClassValue,
+        )
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             builtin_type_class,
         )
 
         base_values = []
         for value in evaluated_bases:
-            if isinstance(value, (ClassDefinitionValue, BuiltinDictClassValue)):
+            if isinstance(
+                value,
+                (ClassDefinitionValue, BuiltinDictClassValue, BuiltinExceptionClassValue),
+            ):
+                # A builtin exception base is retained by the object the
+                # builtin namespace binds (a source rebinding of its name
+                # evaluates to another value): zero-argument
+                # ``super().__init__(...)`` in a source exception class
+                # reaches its ``__init__`` through it.
                 base_values.append(value)
             elif value is builtin_type_class():
                 # The builtin ``type`` class, by the object the builtin
@@ -248,37 +245,33 @@ class ClassDefinitionSugar(Sugar):
         # stubs written as ``def __init__(...): ...`` precede the implementation
         # (RaisesExc); the first ``__init__`` would construct through an
         # ellipsis body and drop every field store.
-        initializer = next(
-            (
-                method
-                for method in reversed(self.methods)
-                if method.name == "__init__"
-            ),
-            None,
-        )
-        if initializer is None:
-            initializer = _inherited_source_initializer(tuple(base_values))
+        initializer = _written_initializer(self)
 
         def construct_class(body):
             body_value, method_defaults = body, ()
             if isinstance(body, _ClassBodyV1):
                 body_value, method_defaults = body.fields, body.method_defaults
-            return ExitSet.completed(
-                ClassDefinitionValue(
-                    self.class_name,
-                    self.class_definition_cid,
-                    self.methods,
-                    initializer,
-                    self.binding_target_occurrence,
-                    body_value,
-                    self.docstring_cid,
-                    self.annotation_cids,
-                    self.decorator_cids,
-                    tuple(base_values),
-                    class_definition=self.class_definition,
-                    method_defaults=method_defaults,
-                )
+            value = ClassDefinitionValue(
+                self.class_name,
+                self.class_definition_cid,
+                self.methods,
+                initializer,
+                self.binding_target_occurrence,
+                body_value,
+                self.docstring_cid,
+                self.annotation_cids,
+                self.decorator_cids,
+                tuple(base_values),
+                class_definition=self.class_definition,
+                method_defaults=method_defaults,
             )
+            if initializer is None:
+                # An inherited ``__init__`` is the one the class's MRO, read
+                # by the one base walk, selects (``initializer_class``).
+                owner = value.initializer_class()
+                if owner is not None and owner is not value:
+                    value = replace(value, initializer=_written_initializer(owner))
+            return ExitSet.completed(value)
 
         # The class exists only on a face the whole body completed under;
         # every halt of the body is the statement's halt, unchanged.

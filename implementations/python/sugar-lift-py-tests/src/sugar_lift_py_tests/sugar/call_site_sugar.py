@@ -205,6 +205,36 @@ def _builtin_law_answers(sugar, callsite) -> bool:
     )
 
 
+def _builtin_exception_keyword_call(sugar, callsite):
+    """``ValueError('x', code=1)``: a bodiless call of a builtin exception
+    class (``callsite.builtin_exception_class``, by the callee's binding)
+    with a keyword actual.
+
+    Keyword values are never ``args``: ``BaseException_new`` stores only the
+    positional actuals.  A class whose constructor is BaseException's law
+    initializes through ``BaseException_init``, which raises TypeError for
+    any keyword (``builtin_exception_constructor_rejects_keywords``): the
+    call is that halt, after its actuals were evaluated.  A class whose
+    constructor may read keywords (``ImportError``, ``AttributeError``,
+    ``NameError``) or is not BaseException's (``OSError``, ``SyntaxError``,
+    ...) is not read here: the call is the one unanswered call."""
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_exception_constructor_rejects_keywords,
+    )
+
+    if builtin_exception_constructor_rejects_keywords(
+        callsite.builtin_exception_class.name
+    ):
+        from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+        return ground_type_error(
+            site=sugar.site, owner="CallSiteSugar.builtin_exception_keywords"
+        )
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    return UnknownCalleeCallV1(sugar.spelled_target).faces(callsite, sugar.site)
+
+
 @dataclass(frozen=True)
 class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
@@ -887,6 +917,11 @@ class CallSiteSugar(ConstructedTermSugar):
         # actuals, and a call with no frame applies no body -- the callee's
         # universe (``formal_function_sugar``) is never reduced at the call.
         if callsite.body is None:
+            if (
+                callsite.builtin_exception_class is not None
+                and callsite.keyword_names
+            ):
+                return _builtin_exception_keyword_call(self, callsite)
             unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
                 unprojected = _off_population_unanswered_call(self)

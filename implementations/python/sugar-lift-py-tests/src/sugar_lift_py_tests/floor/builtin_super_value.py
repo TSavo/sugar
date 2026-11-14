@@ -109,10 +109,23 @@ class BuiltinSuperValue(FloorValue):
                     ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
                 )
             )
+        from sugar_lift_py_tests.floor.builtin_exception_class_value import (
+            BuiltinExceptionClassValue,
+        )
         from sugar_lift_py_tests.floor.class_definition_value import (
             ClassDefinitionValue,
         )
 
+        if name == "__init__" and isinstance(base, BuiltinExceptionClassValue):
+            # Zero-arg super into a builtin exception base: its ``__init__``
+            # is BaseException's law on the original instance receiver.
+            return base.initialize_instance(
+                self.receiver,
+                arguments,
+                keywords,
+                blame=blame,
+                owner="BuiltinSuperValue.call_method_value",
+            )
         if isinstance(base, ClassDefinitionValue):
             # Zero-arg super into a source-defined next class: run the selected
             # base method on the original instance receiver.  The base body

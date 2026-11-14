@@ -56,6 +56,66 @@ class BuiltinExceptionClassValue(ClassValue):
             owner="BuiltinExceptionClassValue.delattr",
         )
 
+    def initialize_instance(self, receiver, arguments, keywords, *, blame, owner):
+        """``super().__init__(*arguments, **keywords)`` reaching this class's
+        ``__init__`` on ``receiver``, the instance a source subclass's
+        ``__init__`` is building.
+
+        BaseException's law (``BaseException_init``, Objects/exceptions.c):
+        a keyword actual raises TypeError; otherwise ``args`` becomes the
+        positional actuals and the call returns None.  The receiver leaves
+        the call carrying ``args`` (a ``ReceiverOwnedMutationResult``, read
+        by the constructor as the receiver's state).  A class whose
+        constructor is not that law (``SyntaxError``, ``OSError``, the
+        ``Unicode*Error`` and group classes), a keyword actual a class may
+        read (``ImportError``, ``AttributeError``, ``NameError``), or a
+        receiver that is no constructed instance is refused by name."""
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.object_field import ObjectField
+        from sugar_lift_py_tests.floor.object_value import ObjectValue
+        from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+            ReceiverOwnedMutationResult,
+        )
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_exception_constructor_is_args_total,
+            builtin_exception_constructor_rejects_keywords,
+        )
+
+        if keywords and builtin_exception_constructor_rejects_keywords(self.name):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=blame, owner=f"{owner} {self.name}.__init__")
+        if (
+            keywords
+            or not builtin_exception_constructor_is_args_total(self.name)
+            or not isinstance(receiver, ObjectValue)
+        ):
+            construction_panic_gap(
+                owner=f"{owner} {self.name}.__init__",
+                blame=blame,
+                observed=(
+                    f"{type(receiver).__name__} receiver, "
+                    f"{len(tuple(keywords))} keyword actuals"
+                ),
+                requested="BaseException's (*args) __init__ on a constructed instance",
+                fix="model this builtin exception's own __init__ or keep the call loud",
+            )
+        after = replace(
+            receiver,
+            fields=(
+                *receiver.fields,
+                ObjectField("args", TupleValue(elements=tuple(arguments))),
+            ),
+        )
+        return ExitSet.completed(
+            ReceiverOwnedMutationResult(receiver, after, NoneValue())
+        )
+
     def exception_type_identity(self) -> Term:
         """Same coordinate ``SourceUnit.exception_type_identity`` publishes for builtins."""
         from sugar_lift_py_tests.ir import ctor, str_const

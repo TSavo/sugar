@@ -163,20 +163,68 @@ class ClassDefinitionValue(GuardStableValue):
         )
 
     def constructor_defaults(self) -> tuple:
-        """``(key, value)``: each method default this class and every class
-        of its MRO carries (``method_defaults``), which a call of the class
-        binds where it binds its actuals (``object_value.bind_call``'s
-        ``defaults``).  The constructor's formals are its ``__init__``'s,
-        written on this class or inherited from a base, or its source
-        ``__new__``'s; each default's key names its own ``def``
-        (``nodes._default_evaluation_key``), so the one each omitted formal
-        reads is the value its ``def`` statement evaluated when that class
-        body ran."""
-        return tuple(
-            pair
-            for cls in (self, *self._c3_tail())
-            for pair in cls.method_defaults
+        """``(key, value)``: the method defaults a call of the class binds
+        where it binds its actuals (``object_value.bind_call``'s
+        ``defaults``): this class's own (``method_defaults``: its source
+        ``__new__``, its own ``__init__``) and, when the ``__init__`` the call
+        runs is inherited, those of the class that wrote it
+        (``initializer_class``, read off the one base walk).  Each default's
+        key names its own ``def`` (``nodes._default_evaluation_key``), so the
+        one each omitted formal reads is the value its ``def`` statement
+        evaluated when that class body ran."""
+        owner = self.initializer_class()
+        if owner is None or owner is self:
+            return self.method_defaults
+        return (*self.method_defaults, *owner.method_defaults)
+
+    def initializer_class(self) -> "ClassDefinitionValue | None":
+        """The class value whose source ``__init__`` a call of this class
+        runs: the first ``__init__`` of the class's MRO read by binding
+        (``ClassDef.initializer_entry``, the one base walk), found among this
+        value and its C3 tail by its class statement's occurrence.  None when
+        that ``__init__`` is a builtin's, is not decided, or its class has no
+        value here."""
+        from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+        definition = self.class_definition
+        if definition is None:
+            return None
+        owner = definition.initializer_entry()
+        if owner is None or isinstance(owner, str):
+            return None
+        if owner is definition:
+            return self
+        identity = SourceOccurrenceIdentityV1.of(owner)
+        return next(
+            (
+                cls
+                for cls in self._c3_tail()
+                if cls.class_definition is not None
+                and SourceOccurrenceIdentityV1.of(cls.class_definition) == identity
+            ),
+            None,
         )
+
+    def builtin_initializer_class(self):
+        """The builtin exception class whose ``__init__`` is the first of this
+        class's MRO (``ClassDef.initializer_entry``), as the builtin namespace
+        binds it; None when that ``__init__`` is a source class's,
+        ``object``'s, or is not decided."""
+        definition = self.class_definition
+        if definition is None:
+            return None
+        owner = definition.initializer_entry()
+        if not isinstance(owner, str) or owner == "object":
+            return None
+        from sugar_lift_py_tests.floor.builtin_exception_class_value import (
+            BuiltinExceptionClassValue,
+        )
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_name_temporal,
+        )
+
+        value = builtin_name_temporal().value_if_bound(owner)
+        return value if isinstance(value, BuiltinExceptionClassValue) else None
 
     def call_method_value(
         self,
@@ -285,6 +333,15 @@ class ClassDefinitionValue(GuardStableValue):
                 fix=fix,
             )
 
+        if name == "__init__":
+            # The first ``__init__`` of this class's MRO, by the one base
+            # walk: a builtin exception's is BaseException's law on the
+            # receiver, wherever a source class stands after it.
+            builtin = self.builtin_initializer_class()
+            if builtin is not None:
+                return builtin.initialize_instance(
+                    receiver, arguments, keywords, blame=blame, owner=owner
+                )
         for method in reversed(self._object_methods()):
             if method.name != name:
                 continue
@@ -369,6 +426,11 @@ class ClassDefinitionValue(GuardStableValue):
         )
         if block is None:
             return receiver
+        # A builtin's transition of this receiver (``super().__init__(...)``
+        # into BaseException's ``__init__``,
+        # ``BuiltinExceptionClassValue.initialize_instance``) is the receiver
+        # it left: a snapshot of this receiver's state, never dropped.
+        block = _receiver_transitions_applied(block, receiver.identity)
         # The initializer may reduce directly to the CONSTRUCTED receiver -- an
         # ObjectValue that already carries __init__'s field stores -- rather
         # than to pending ReceiverFieldStoreValue statements. The same-module
@@ -576,6 +638,29 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
+
+
+def _receiver_transitions_applied(block, identity):
+    """``block`` with each ``ReceiverOwnedMutationResult`` of the receiver
+    ``identity`` read as the receiver it left (``receiver_after``)."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+        ReceiverOwnedMutationResult,
+    )
+
+    statements = tuple(
+        (
+            statement.receiver_after
+            if isinstance(statement, ReceiverOwnedMutationResult)
+            and getattr(statement.receiver_before, "identity", None) == identity
+            else statement
+        )
+        for statement in block.statements
+    )
+    if all(new is old for new, old in zip(statements, block.statements)):
+        return block
+    return replace(block, statements=statements)
 
 
 def _store_split(guard, written, then_face, else_face):
