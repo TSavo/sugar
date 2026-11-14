@@ -1122,17 +1122,6 @@ class TreeConstructionContextV1:
     # With head is not the provider; this table seats the authenticated Call
     # that the Name reaches so With construction never re-resolves by spelling.
     source_manager_provider_calls: dict = field(default_factory=dict)
-    # Runtime-only, prebound class-base Sugar children keyed by the exact
-    # subclass definition coordinate.  These are never serialized; the class
-    # definition projects their sealed CIDs into its own preimage.
-    source_class_bases: dict = field(default_factory=dict)
-    # Producer-minted value-use receipt roster, retained once per exact source
-    # CID so repeated frame/class publication transports object identity rather
-    # than reminting an equivalent receipt at an occupied SourceUnit seat.
-    source_import_value_receipts: dict = field(default_factory=dict)
-    # Exact module-seat/use-occurrence transport shared by parser-owned units
-    # in this construction only. Never global and never source-CID-only.
-    source_import_value_receipts_by_site: dict = field(default_factory=dict)
     # Manager uses whose head is proven, from source, not to be a context
     # manager (a class MRO without ``__enter__`` or ``__exit__``): keyed like
     # ``source_derived_contract_refs``; the With raises the interpreter's own

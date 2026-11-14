@@ -38,7 +38,7 @@ import os
 
 
 class Holder(dict):
-    """A class with a base, so ClassDef consults source_class_bases."""
+    """A class with a base, so ClassDef builds its base sugar."""
 
     LIMIT = 10
 

@@ -101,7 +101,9 @@ def test_a_receipt_that_does_not_spell_the_attribute_refuses(tmp_path):
 
 def test_a_crosswired_receipt_at_the_attribute_still_raises(tmp_path):
     # Lying twin through the door: the ``import pkg`` Name receipt carried to
-    # the ``pkg.sub`` occurrence is not that occurrence's testimony.
+    # the ``pkg.sub`` occurrence is not that occurrence's testimony. The unit
+    # is the one place an Attribute's receipt is held, and it refuses to seat
+    # it there.
     source_file, source_cid, receipts = _lexical(
         tmp_path, "import pkg\ndef f():\n    return pkg.sub\n"
     )
@@ -113,17 +115,9 @@ def test_a_crosswired_receipt_at_the_attribute_still_raises(tmp_path):
     (name_receipt,) = [
         row for row in receipts if row.target_symbol == "python:pkg"
     ]
-    context = source_file.unit.construction_context
-    span = attribute.line_col_span()
-    context.source_import_value_receipts_by_site[
-        (
-            source_file.unit.filename,
-            source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
+    with pytest.raises(
+        BackendDefect, match="does not match exact value-use seat"
+    ):
+        source_file.unit.seat_import_value_use_resolution(
+            _span_key(attribute), name_receipt, source_cid=source_cid
         )
-    ] = name_receipt
-    with pytest.raises(BackendDefect, match="does not own this Attribute"):
-        attribute.sugar().desugar()

@@ -15,8 +15,8 @@ interchangeable:
 * A **projection** memo is not. ``resolve_export`` and module materialization
   are keyed by a content address, but their *values* are not content: they are
   objects bound to one live ``TreeConstructionContextV1`` -- a mutable
-  per-session table of ``source_call_frames`` / ``source_call_resolutions`` /
-  ``source_class_bases`` that construction writes into as it projects.
+  per-session table of ``source_call_frames`` that construction writes into
+  as it projects.
   Serving such a value to a later construction hands that construction a node
   whose context belongs to somebody else's session. That is a leak of authority,
   not a cache hit, and it is how one project warms another project's answer
