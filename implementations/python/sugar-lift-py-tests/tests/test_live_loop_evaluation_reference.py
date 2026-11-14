@@ -514,6 +514,84 @@ def test_a_live_while_runs_its_items_through_the_header() -> None:
     assert runtime.fuel > 0
 
 
+# -- a name first bound in the loop is carried from unbound (#7757 item 7) -----
+
+
+def _first_bound(items: str) -> str:
+    # ``y`` is first bound in the loop: an item that takes the ``else`` arm
+    # reads what an earlier item wrote, and ``z`` is read after the loop.
+    return (
+        "def f():\n"
+        "    for x in g():\n"
+        "        if x:\n"
+        "            y = x\n"
+        "        else:\n"
+        "            z = y\n"
+        "    return z\n"
+        "def g():\n"
+        f"    return {items}\n"
+    )
+
+
+def _returned_value(outcome):
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+
+    universe = outcome.completed_value()
+    assert isinstance(universe, UniverseValue), outcome
+    (returned,) = [
+        entry
+        for entry in universe.record.statements
+        if isinstance(entry, ReturnValue)
+    ]
+    return returned.value
+
+
+def test_a_name_first_bound_in_the_loop_is_carried_from_unbound() -> None:
+    runtime = _live_runtime(_first_bound("(1, 0)"))
+    # ``y`` and ``z`` are carried through their headers, from unbound; no
+    # binding entry stands for either, so each is published through its
+    # post-loop key, as the target is through its own.
+    assert runtime.carried_names == ("y", "z")
+    assert runtime.initial_value_sugars == (None, None)
+    assert runtime.coordinate_names == ()
+    assert runtime.published_names == ("x", "y", "z")
+    headers = {
+        name: header
+        for name, (header, _writes, _else_writes) in zip(
+            runtime.carried_names, runtime.carried_evaluations, strict=True
+        )
+    }
+    posts = dict(
+        zip(runtime.published_names, runtime.published_evaluations, strict=True)
+    )
+    # The post-loop key of a carried name is its header's.
+    assert posts["y"][0] == headers["y"]
+    assert posts["z"][0] == headers["z"]
+
+
+def test_a_later_item_reads_what_an_earlier_item_wrote() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # Item 0 writes ``y = 1``; item 1 reads it in ``z = y``; ``z`` is 1
+    # after the loop.
+    outcome = function_universe_outcome(_function(_first_bound("(1, 0)")))
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_a_read_before_any_item_wrote_the_name_is_a_name_error() -> None:
+    from sugar_lift_py_tests.effect import NameErrorEffect
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # Item 0 takes the ``else`` arm: ``y`` was never written.
+    outcome = function_universe_outcome(_function(_first_bound("(0, 1)")))
+    halted = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    assert not [e for e in outcome.exits if isinstance(e, Completed)], outcome
+    assert len(halted) == 1 and isinstance(halted[0].effect, NameErrorEffect)
+    assert halted[0].effect.name == "y"
+
+
 _LIVE_ELSE = (
     "def f(xs):\n"
     "    t = 0\n"

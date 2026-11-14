@@ -517,13 +517,14 @@ def _module_loop_runtime(tree: SourceFile):
 
 def test_a_module_live_loop_hands_its_recurrence_the_readers_post_loop_key() -> None:
     # ``for i in g(): last = i`` at module level: ``last`` is bound first in
-    # the loop, so the loop does not carry it, yet the reader's post-loop key
-    # is one the recurrence binds as the loop leaves, with the keys
-    # ``last = i`` writes.
+    # the loop, so the loop carries it from unbound with no binding
+    # coordinate, and the reader's post-loop key is one the recurrence binds
+    # as the loop leaves, with the keys ``last = i`` writes.
     tree = _source(LOOP_FIRST_BOUND)
     final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
     runtime = _module_loop_runtime(tree)
-    assert "last" not in runtime.carried_names
+    assert "last" in runtime.carried_names
+    assert "last" not in runtime.coordinate_names
     published = {
         post_key: writes for post_key, writes, _else in runtime.published_evaluations
     }
@@ -711,6 +712,52 @@ def test_a_module_live_while_publishes_its_counter() -> None:
     assert read.body.evaluation != prior
     assert isinstance(read.orelse, EvaluationRef)
     assert read.orelse.evaluation == prior
+
+
+WHILE_COUNTS_DOWN = (
+    "def f():\n    return last\n"
+    "def h():\n    return n\n"
+    "n = 3\n"
+    "while n:\n    n -= 1\n    last = n\n"
+)
+
+
+def test_a_module_live_while_carries_its_names_through_its_header() -> None:
+    from sugar_source_tree.live_loop_construction import LiveWhileRuntimeV1
+
+    runtime = _module_loop_runtime(_source(WHILE_COUNTS_DOWN))
+    # ``n`` from ``n = 3``, ``last`` from unbound; neither has a binding
+    # coordinate, so both are published through their post-loop keys.
+    assert isinstance(runtime, LiveWhileRuntimeV1)
+    assert runtime.carried_names == ("last", "n")
+    assert runtime.coordinate_names == ()
+    assert runtime.initial_value_sugars[0] is None
+    assert runtime.initial_value_sugars[1] is not None
+    # The test reads ``n`` through its header, never by name.
+    (_last, (n_header, _writes, _else_writes)) = runtime.carried_evaluations
+    assert isinstance(runtime.test_sugar, EvaluationRefSugar)
+    assert runtime.test_sugar.evaluation == n_header
+
+
+def test_a_module_live_while_runs_its_items_and_decides_what_it_leaves() -> None:
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    tree = _source(WHILE_COUNTS_DOWN)
+    module = tree.root.sugar()
+    reduced = reduce_block_to_exitset(
+        module.statements, ReduceContext.root(owner="module-live-while")
+    )
+    block = reduced.completed_value()
+    assert block is not None, reduced
+    after = block.context
+    # Three items ran: ``last`` and ``n`` are what the last of them wrote,
+    # read through the post-loop keys over the decided write slots.
+    last = _returned(_function(tree, "f")).sugar()
+    n = _returned(_function(tree, "h")).sugar()
+    assert last.desugar(after) == ExitSet.completed(TermValue(0))
+    assert n.desugar(after) == ExitSet.completed(TermValue(0))
 
 
 DEF_REBINDS ="X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"

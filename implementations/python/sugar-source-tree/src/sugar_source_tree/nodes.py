@@ -4729,31 +4729,81 @@ def _loop_target_bindings(loop, names, scope) -> dict:
     return references
 
 
+def _loop_header_start(loop, name: str, scope):
+    """What a live loop's header of ``name``, a name the loop writes (not
+    its target), begins with: the binding standing before the loop
+    (``scope``), or None where the loop does not carry the name.
+
+    The one test of what a live loop carries, for its construction
+    (``construct_live_loop_recurrence``), its reads (``_loop_header_bindings``)
+    and its publication (``_live_loop_publication``):
+
+    - a ``BindingEntryV1``: carried, and published after the loop under its
+      binding coordinate (``LoopProjectedBinding``);
+    - a plain expression state (a module binding the module block threads,
+      a function frame's reference to a module global): carried from that
+      value, and published through its post-loop key;
+    - ``UnboundBinding``: a name first bound in the loop -- a function local
+      (``FunctionDef.substitute`` binds every local unbound), or a module
+      name nothing bound before (a fresh ``UnboundBinding``, unless a builtin
+      of its spelling answers a read before the write): carried from
+      unbound, so a read before any item wrote it is a ``NameError`` halt
+      (``_loop_header_bindings``), and published through its post-loop key.
+
+    Not carried: a name a function frame does not bind (``global`` or
+    ``nonlocal`` with no binding read here), a builtin with no module
+    binding, an undecided module binding, a definition statement and any
+    joined state no entry stands for.  Each keeps the mask it had: the loop
+    does not run as items over it."""
+    state = scope.get(name, _MISSING)
+    if isinstance(state, (BindingEntryV1, UnboundBinding, Expression)):
+        return state
+    if state is not _MISSING or _LEXICALLY_BOUND_NAMES in scope:
+        return None
+    if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+        return None
+    return UnboundBinding(name=name, cause=loop.fragment)
+
+
 def _loop_header_bindings(loop, names, scope) -> dict:
     """The body scope's binding of each name ``loop`` carries into its body
-    (and, for a live ``for``, into its ``else`` suite): a reference to the
+    (and into its ``else`` suite, and a ``while``'s test): a reference to the
     loop header's evaluation of it (temporal choice 1, #7661), never the bare
     name looked up by spelling.
 
-    A carried name is one the body rebinds that is bound before the loop
-    (a ``BindingEntryV1`` in ``scope``: the same test
-    ``construct_live_loop_recurrence`` uses for the names it carries).  A name
-    bound only inside the body has no value at the header and stays masked, so
-    its read before the body binds it stays the name read.  Each binding keeps
-    the pre-loop binding's coordinate: it is the same variable, read at the
-    header.  Where nothing binds the header key at reduce (a loop reduced as
-    its recurrence, not per item: an outward face's statement), the read is
-    refused by name, naming the key (``EvaluationRefSugar``); it never reads
-    the name.
+    A carried name is one the loop writes whose header has a start
+    (``_loop_header_start``: the same test ``construct_live_loop_recurrence``
+    uses for the names it carries).  A binding entry keeps the pre-loop
+    binding's coordinate: it is the same variable, read at the header.  A
+    name first bound in the loop starts unbound: its read is ``<header> if
+    <an item wrote it> else <unbound>``, over the loop's write slot of its
+    header (``loop_write_slot``), which the recurrence decides at every item
+    it binds the header in (``LoopRecurrenceSugar._enter_header``): the value
+    an earlier item handed on, or a ``NameError`` where none wrote it.  Where
+    nothing binds the header key at reduce (a loop reduced as its recurrence,
+    not per item: an outward face's statement), the read is refused by name,
+    naming the key (``EvaluationRefSugar``); it never reads the name.
     """
+    import functools
+
     headers = {}
     for name in sorted(names):
-        entry = scope.get(name)
-        if not isinstance(entry, BindingEntryV1):
+        start = _loop_header_start(loop, name, scope)
+        if start is None:
             continue
         evaluation = _loop_header_evaluation_key(loop, name, scope)
         reference = _evaluation_ref(loop, loop.span, evaluation, name)
-        headers[name] = replace(entry, state=reference, sealed_state=None)
+        if isinstance(start, BindingEntryV1):
+            headers[name] = replace(start, state=reference, sealed_state=None)
+        elif isinstance(start, UnboundBinding):
+            headers[name] = join_binding_state(
+                slot=loop_write_slot(evaluation),
+                when_true=reference,
+                when_false=start,
+                make_ifexp=functools.partial(If._make_ifexp, loop),
+            )
+        else:
+            headers[name] = reference
     return headers
 
 
@@ -4996,7 +5046,7 @@ def _module_uncarried_names(statement, carried, scope) -> frozenset:
     """The names ``statement`` binds whose binding the module threading does
     not carry past it: every name a live loop or a ``match`` binds that it
     does not carry out (``carried``: what a live loop's recurrence and its
-    publication carry, ``_module_live_loop_publication``; what a match's
+    publication carry, ``_live_loop_publication``; what a match's
     route merge joins, ``Match.substitute``) -- a nested definition's,
     import's or ``with``'s binding in its body, a name a route never bound
     -- and every name a ``try ... except*`` binds other than an ``as`` name
@@ -5014,13 +5064,14 @@ def _module_uncarried_names(statement, carried, scope) -> frozenset:
     return frozenset()
 
 
-def _module_live_loop_publication(loop, carried, scope) -> dict:
-    """What a live loop at module level leaves each name it writes bound to,
-    for a reader outside the module block (``_module_threads``), beside the
-    names its recurrence carries (``carried``, published under their binding
-    coordinates: ``LoopProjectedBinding``).
+def _live_loop_publication(loop, carried, scope) -> dict:
+    """What a live loop leaves each name it writes bound to, for the rest of
+    its block and, threading a module body, for a reader outside the module
+    block (``_module_threads``: only the names such a reader reads), beside
+    the names it carries under their binding coordinates (``carried``,
+    published as ``LoopProjectedBinding``).
 
-    Every name the loop's items write in the module's scope -- its target,
+    Every name the loop's items write in its scope -- its target,
     and each name a write in its body or ``else`` binds a key for
     (``live_loop_construction._carried_writes``: ``x += e``, a walrus, an
     assignment of any target shape; a nested definition's body is another
@@ -5038,10 +5089,18 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
     item wrote it (the read there is a ``NameError`` halt), a carried
     accumulator keeps its pre-loop binding there.  The loop's reduction
     decides the slot on each exit, as it binds the post-loop key there
-    (``LoopRecurrenceSugar._post_loop_writes``), so the read takes one arm.  A name undecided before
-    the loop stays undecided; a builtin name with no module binding falls
-    back to the builtin, so it is not unbound on that arm and is not
-    published.  ``scope`` is the binding standing before the loop.
+    (``LoopRecurrenceSugar._post_loop_writes``), so the read takes one arm.
+    A name undecided before the loop stays undecided.  A name with no
+    binding before the loop is unbound on that arm where the loop's header
+    of it starts unbound (``_loop_header_start``): a module name no builtin
+    answers; a builtin name with no module binding falls back to the
+    builtin, and a name a function frame does not bind (``global``,
+    ``nonlocal``) to the binding it names, so neither is published.  A
+    function local first bound in the loop is unbound before it
+    (``FunctionDef.substitute``), so its read after the loop is the value
+    the items handed on, or a ``NameError`` where none wrote it.  ``scope``
+    is the binding standing before the loop; a ``for``'s iterable is
+    evaluated before every item, so a walrus in it is that binding.
 
     A live ``while`` has the same keys: it has no target, so every name it
     writes (a walrus in its test among them) is published through its
@@ -5051,19 +5110,22 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
 
     from .live_loop_construction import loop_post_writes
 
+    if isinstance(loop, For):
+        scope = _scope_after(scope, loop.iter, loop.iter)
+    threading = scope.get(_MODULE_STATEMENT_STATES)
     post_writes = loop_post_writes(loop, carried, scope)
     make_ifexp = functools.partial(If._make_ifexp, loop)
     published = {}
     for name, (post_key, _writes, _else_writes) in sorted(post_writes.items()):
-        if not _module_threads(scope, name):
+        if threading is not None and not _module_threads(scope, name):
             continue
         prior = scope.get(name, _MISSING)
         if prior is UNDECIDED_MODULE_BINDING:
             continue
         if prior is _MISSING:
-            if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+            prior = _loop_header_start(loop, name, scope)
+            if prior is None:
                 continue
-            prior = UnboundBinding(name=name, cause=loop.fragment)
         published[name] = join_binding_state(
             slot=loop_write_slot(post_key),
             when_true=_evaluation_ref(loop, loop.span, post_key, name),
@@ -5162,7 +5224,7 @@ def _module_reference_state(state):
     only inside its comprehension, so a binding to one is
     ``UNDECIDED_MODULE_BINDING`` wherever a reader outside it reads the
     name.  A binding joined over a slot where one arm is unbound (a live
-    loop's write slot, ``_module_live_loop_publication``; an ``if`` or a
+    loop's write slot, ``_live_loop_publication``; an ``if`` or a
     ``match`` route arm that never bound the name after a ``del``) is
     decided when each arm is such a reference or unbound
     (``GuardedBinding``: the read is that arm under its slot's guard, a
@@ -6041,13 +6103,13 @@ class Node(Typed):
                     )
 
                     live_loop = construct_live_loop_recurrence(new_stmt, scope)
-                    if record is not None and record.open:
-                        # Threading a module body for its readers: the names
-                        # the loop writes that it does not carry are
-                        # published through its post-loop keys.
-                        published = _module_live_loop_publication(
-                            new_stmt, live_loop.bindings, pre_statement_scope
-                        )
+                    # The names the loop writes that it does not carry under
+                    # a binding coordinate are published through its
+                    # post-loop keys, in a function's frame as in a module
+                    # body (for a reader outside it, the names it reads).
+                    published = _live_loop_publication(
+                        new_stmt, live_loop.bindings, pre_statement_scope
+                    )
                     new_stmt = live_loop.statement
                     live_loop_bindings = live_loop.bindings
             if new_stmt is not stmt:
@@ -6084,13 +6146,17 @@ class Node(Typed):
                         if (
                             live_loop_bindings is not None
                             and node.target.kind == "Name"
-                            and node.target.id in live_loop_bindings
+                            and (
+                                node.target.id in live_loop_bindings
+                                or node.target.id in published
+                            )
                         ):
                             # A walrus in a live loop's body writes once per
                             # item, under that item's key: after the loop
                             # its name is the loop's carried value (the last
-                            # item's write, latched as ``x += e``'s is), not
-                            # a reference to a key no item bound unqualified.
+                            # item's write, latched as ``x += e``'s is) or
+                            # its publication, not a reference to a key no
+                            # item bound unqualified.
                             continue
                         wb = node.substitution_binding(scope)
                         if wb:
@@ -6103,14 +6169,14 @@ class Node(Typed):
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
                 projected = stmt._binding_entries(new_stmt.bindings, scope)
                 scope = {**scope, **projected}
+            if published:
+                scope = {
+                    **scope,
+                    **stmt._binding_entries(published, scope),
+                }
             if record is not None and record.open:
                 # A reader of the module never reads, past this statement, a
                 # binding the threading did not carry through it.
-                if published:
-                    scope = {
-                        **scope,
-                        **stmt._binding_entries(published, scope),
-                    }
                 if live_loop_bindings is not None:
                     carried = frozenset(live_loop_bindings) | frozenset(published)
                 elif isinstance(stmt, Match):
@@ -12459,10 +12525,12 @@ class For(Statement):
             # it from the outer scope. A symbolic loop is not a dead unroll --
             # it is the universal / fold over the hole.
             #
-            # In the body a carried name (bound before the loop, rebound in the
-            # body) is not masked to the bare name: it reads the loop header's
-            # evaluation of it, the value the item began with, bound per item
-            # by the recurrence (``_loop_header_bindings``).  The loop target
+            # In the body a carried name (one the body rebinds whose header has
+            # a start, ``_loop_header_start``: bound before the loop, or first
+            # bound in it and so unbound before it) is not masked to the bare
+            # name: it reads the loop header's evaluation of it, the value the
+            # item began with, bound per item by the recurrence
+            # (``_loop_header_bindings``).  The loop target
             # reads its own per-item evaluation, the item's projection of the
             # element it took, bound by the recurrence under the target's key
             # (``_loop_target_bindings``), never the name.  The ``else`` runs
@@ -13009,8 +13077,9 @@ class While(Statement):
         # and once more outside every item for the ``else``.  The body and the
         # ``else`` run after an evaluation of the test: a walrus in it is read
         # through its key (``_scope_after``), never the name as it stood
-        # before the test.
-        bound = For._stmts_bound_names(self.body)
+        # before the test.  A name the test's walrus writes is carried too:
+        # each item's test reads what the previous item handed on.
+        bound = For._stmts_bound_names((self.test, *self.body))
         else_bound = bound | For._stmts_bound_names(self.orelse)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         header_scope = {**bs, **_loop_header_bindings(self, bound, scope)}
