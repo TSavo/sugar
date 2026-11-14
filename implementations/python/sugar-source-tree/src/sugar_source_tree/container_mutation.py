@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .construction_cache import AmbientSet
+
 _DISPLAY_KIND = {"List": "list", "Dict": "dict", "Set": "set"}
 
 
@@ -1034,7 +1036,9 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
 _HELPER_STATEMENT_KINDS = frozenset(
     {"Expr", "Assign", "AnnAssign", "AugAssign", "Pass", "Raise", "Assert"}
 )
-_HELPERS_IN_PROGRESS: set = set()
+# Ambient to memo rows: a row that asked is served only where the helper is
+# in progress or not as it was.
+_HELPERS_IN_PROGRESS: AmbientSet = AmbientSet("helpers_in_progress")
 _CLOSED_OPERAND_KINDS = frozenset(
     {"Constant", "List", "Tuple", "Set", "Dict", "FormalRef", "BindingCoordinateRef"}
 )
