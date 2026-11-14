@@ -19,6 +19,8 @@ class NameSugar(ConstructedTermSugar):
     Name nodes: they were never local bindings. When a reduction context
     carries the builtin temporal floor, those names resolve to their
     authenticated floor values; otherwise a free name is its symbolic Var.
+    A name nothing in the module binds is not free: its read halts with
+    ``NameError``.
 
     Meaning-only, node-constructed: no owns/new/role. A name is a leaf.
     """
@@ -68,4 +70,18 @@ class NameSugar(ConstructedTermSugar):
                 return Complete(bound)
         if self.module_contextvar is not None:
             return Complete(self.module_contextvar)
+        # A name nothing binds -- not local, not a parameter, not module-level,
+        # not imported, not a builtin -- is no free variable: reading it raises
+        # NameError, and that halt is its meaning.
+        source = getattr(getattr(self.site, "unit", None), "source", None)
+        if isinstance(source, str):
+            from sugar_source_tree.builtin_reference import module_name_unbound
+
+            if module_name_unbound(source, self.name):
+                from sugar_lift_py_tests.effect import NameErrorEffect
+                from sugar_lift_py_tests.outcome import ExitSet
+
+                return ExitSet.halted(
+                    NameErrorEffect.at(name=self.name, site=self.site)
+                ).collapse()
         return Complete(SymbolicValue(make_var(self.name)))
