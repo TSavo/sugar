@@ -229,6 +229,14 @@ class CallSiteValue(FloorValue):
     subscript_coordinate: bool = dataclass_field(
         default=False, compare=False, repr=False
     )
+    # True only on the ``attr:__name__`` / ``attr:__qualname__`` coordinate
+    # that an attribute read mints (``CallSiteValue.attribute``,
+    # ``SymbolicValue.attribute``): ``names_a_string`` asks this marker, never
+    # whether a call is spelled ``__name__``, so a user function named
+    # ``__name__`` never names a string (#7757).
+    type_name_attribute: bool = dataclass_field(
+        default=False, compare=False, repr=False
+    )
     # The closure of the lambda this call applies (``LambdaCallable.closure``):
     # each final-member coordinate its body reads through an enclosing
     # comprehension's cell, with what the cell holds.  Bound before the body
@@ -341,6 +349,7 @@ class CallSiteValue(FloorValue):
                     ),
                     body=None,
                     site=site,
+                    type_name_attribute=True,
                 )
             )
         if name == "args" and self.exception_type_coordinate is not None:
@@ -843,27 +852,19 @@ class CallSiteValue(FloorValue):
             return None
 
         def list_append_coordinate(prior):
-            from sugar_lift_py_tests.ir import ctor
-
-            value_term = value.to_term(owner="CallSiteValue.append_with value")
-            return ExitSet.completed(
-                CallSiteValue(
-                    target_name="list.append",
-                    arg_values=(prior, value),
-                    parameters=(),
-                    term=ctor(
-                        "py.list_append",
-                        [prior.to_term(owner=str(site)), value_term],
-                        symbol_kind="method-coordinate",
-                    ),
-                    body=None,
-                    site=site,
-                )
-            )
+            return ExitSet.completed(list_append_coordinate_value(prior, value, site))
 
         def project_list_operand(operand):
             """Fold to a list floor, rebind through list_append, or None (loud)."""
+            from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+
             if is_list_floor(operand):
+                return operand.append_with(value, site)
+            if (
+                isinstance(operand, OpaqueOpCallsite)
+                and operand.stands_on_append_floor()
+            ):
+                # ``str.split`` by an opaque separator (its marker).
                 return operand.append_with(value, site)
             if not isinstance(operand, CallSiteValue):
                 return None
@@ -1055,8 +1056,12 @@ class CallSiteValue(FloorValue):
         does too: ``_exception_type_name`` of an unfloored tuple still has both
         the singleton ``__name__`` arm and the join-names arm, but both are
         string coordinates. Do not invent which arm returns.
+
+        The ``__name__`` / ``__qualname__`` read is known by the marker its
+        attribute read mints (``type_name_attribute``), never by the spelling
+        of ``target_name``: a user function named ``__name__`` is not one.
         """
-        if self.target_name in {"__name__", "__qualname__"}:
+        if self.type_name_attribute:
             return True
         from sugar_lift_py_tests.ir import _Ctor
 
@@ -1992,6 +1997,30 @@ def _ctx_with_curried_args(
             blame="<callsite-coordinate>",
         )
     return result
+
+
+def list_append_coordinate_value(prior, value, site) -> CallSiteValue:
+    """``prior`` after ``.append(value)``: the ``py.list_append`` coordinate.
+
+    The one mint for a list-shaped receiver with no element history to fold
+    (``CallSiteValue.append_with``, ``OpaqueOpCallsite.append_with``).  The
+    coordinate is itself list-shaped: a chained append reads its term.
+    """
+    from sugar_lift_py_tests.ir import ctor
+
+    value_term = value.to_term(owner="CallSiteValue.append_with value")
+    return CallSiteValue(
+        target_name="list.append",
+        arg_values=(prior, value),
+        parameters=(),
+        term=ctor(
+            "py.list_append",
+            [prior.to_term(owner=str(site)), value_term],
+            symbol_kind="method-coordinate",
+        ),
+        body=None,
+        site=site,
+    )
 
 
 def _opaque_attribute_faces(receiver, name, site):
