@@ -79,7 +79,7 @@ class BuiltinSuperValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.outcome import ExitSet
 
-        decided, found, _type_value = self._lookup(name)
+        decided, found, _holder, _method, _value = self._lookup(name)
         if decided and found is None:
             return self._absent(name, site)
         return ExitSet.completed(BuiltinSuperMethodValue(self, name))
@@ -106,40 +106,96 @@ class BuiltinSuperValue(FloorValue):
                 requested="authenticated builtin super method",
                 fix="model the selected base method or keep it loud",
             )
-        decided, found, type_value = self._lookup(name)
+        decided, found, holder, method, value = self._lookup(name)
         if not decided:
+            # Not read, or the selected class holds ``name`` but not as its
+            # body bound it (a decorator wrote it -- a dataclass's generated
+            # ``__init__`` -- or creation or a store may have), or no class
+            # value here carries it: nothing is run.
             return self._unanswered(name, arguments, keywords, blame)
         if found is None:
             return self._absent(name, blame)
         if isinstance(found, str):
             return self._builtin_method(found, name, arguments, keywords, blame, ctx)
-        if not found.namespace_value_is_body(name):
-            # The selected class holds ``name``, but not as its body bound it:
-            # a decorator wrote it (a dataclass's generated ``__init__``) or
-            # creation or a store may have.  That value is not run here.
-            return self._unanswered(name, arguments, keywords, blame)
-        selected = type_value.class_value_of_statement(found)
-        if selected is None:
-            from sugar_source_tree.panic import SugarNotWritten
+        return self._selected_call(
+            holder, name, method, value, arguments, keywords, blame, ctx
+        )
 
+    def _selected_call(
+        self, holder, name, method, value, arguments, keywords, blame, ctx
+    ):
+        """``super().<name>(...)`` whose member the one class-namespace
+        lookup selected (``ClassDefinitionValue.namespace_member`` from the
+        class after ``__class__``), bound to the original receiver as
+        ``super_getattro`` binds it (``__get__(obj, starttype)``).
+
+        - A ``def`` the holding class's body left last runs through the one
+          method door, its implicit first actual read off the descriptor kind
+          (``object_value.implicit_arguments``); its body reduces with
+          ``__class__`` seeded to the holding class (``object_method``), so a
+          further ``super()`` in it continues along the receiver's MRO.
+        - A function the holding class's namespace holds as a field
+          (``f = lambda self: 1``, ``m = some_def``) is bound to the receiver
+          when it is an instance -- the receiver its first actual -- and is
+          the function itself when the receiver is the class (``super()`` in
+          a classmethod: ``__get__(None, starttype)``); the function's own
+          call applies it.
+        - Any other value refuses by name."""
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+        from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
+        from sugar_source_tree.panic import SugarNotWritten
+
+        def refuse(*, owner, blame, observed, requested, fix):
             raise SugarNotWritten(
+                owner=owner,
+                blame=blame,
+                observed=observed,
+                requested=requested,
+                fix=fix,
+            )
+
+        if method is not None:
+            from sugar_lift_py_tests.floor.object_value import bind_method_call
+
+            return bind_method_call(
+                self.receiver,
+                holder.object_method(method),
+                arguments,
+                keywords,
+                class_name=holder.class_name,
+                ctx=ctx,
                 owner=_OWNER,
                 blame=blame,
-                observed=f"{found.name}.{name} has no class value here",
-                requested="the class value of the statement super() selected",
-                fix="carry every class of the receiver's MRO as a class value",
+                refuse=refuse,
+            ).producer_outcome(ctx)
+        if isinstance(value, LambdaCallable):
+            from sugar_lift_py_tests.callable_application import CallableApplication
+
+            bound = (
+                ()
+                if isinstance(self.receiver, ClassDefinitionValue)
+                else (self.receiver,)
             )
-        # The selected class's own method on the original receiver; its body
-        # reduces with ``__class__`` seeded to that class, so a further
-        # ``super()`` in it continues along the receiver's MRO.
-        return selected.dispatch_super_method(
-            self.receiver,
-            name,
-            arguments,
+            return value.callable_application_with(
+                CallableApplication(
+                    (
+                        *bound,
+                        *arguments,
+                        *(actual for _keyword, actual in keywords),
+                    ),
+                    tuple(keyword for keyword, _actual in keywords),
+                    blame,
+                ),
+                ctx,
+            )
+        refuse(
             owner=_OWNER,
             blame=blame,
-            ctx=ctx,
-            keywords=keywords,
+            observed=f"{holder.class_name}.{name}",
+            requested="the source method zero-argument super selected",
+            fix=f"construct a diggable body for `{holder.class_name}.{name}` or keep loud",
         )
 
     def _receiver_type(self):
@@ -173,18 +229,19 @@ class BuiltinSuperValue(FloorValue):
         return None, None
 
     def _lookup(self, name):
-        """``(decided, owner, type_value)``: the class of ``type(obj).__mro__``
-        after ``__class__`` whose namespace binds ``name`` (a ``ClassDef`` or
-        a builtin class name, None when no class of the order binds it), read
-        by the one base walk.  Not decided when the receiver's MRO is not
-        read."""
+        """``(decided, found, holder, method, value)``: the member of
+        ``type(obj).__mro__`` after ``__class__`` for ``name`` -- the one
+        class-namespace lookup every reader of a class member reads
+        (``ClassDefinitionValue.namespace_member`` with ``after``): ``found``
+        the class whose namespace binds it (a ``ClassDef`` or a builtin class
+        name, None when no class of the order binds it), the member its body
+        left last.  Not decided when the receiver's MRO is not read."""
         type_value, definition = self._receiver_type()
         if definition is None:
-            return False, None, None
-        decided, found = definition.namespace_owner(
+            return False, None, None, None, None
+        return type_value.namespace_member(
             name, after=self.current_class.class_definition
         )
-        return decided, found, type_value
 
     def _absent(self, name, site):
         """No class of ``type(obj).__mro__`` after ``__class__`` binds
