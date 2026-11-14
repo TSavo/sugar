@@ -53,7 +53,8 @@ name.
 
 A walrus's reference (``walrus``) resolves through the key only. A walrus
 nested in a larger expression carries its bind out to the enclosing statement
-on the value (``named_expression_value.carry_walrus_binds``), and a
+on the value, through the one operand door every operand consumer uses
+(``named_expression_value.consume_operands``), and a
 comprehension's element writes it per member, so a temporal that never
 received the key is one where the walrus never completed, or where its bind
 was not carried: the read is refused there by name. The name is never read in
@@ -151,7 +152,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
             requested="the walrus's completed value bound under its key",
             fix=(
                 "carry the walrus's bind out of the operand that holds it to "
-                "the enclosing statement (carry_walrus_binds)"
+                "the enclosing statement: the consumer of that operand hands "
+                "it to the one operand door (consume_operands)"
             ),
         )
 

@@ -55,10 +55,21 @@ def _reduce_into(element_sugars, ctx, build):
                 lambda value: ExitSet.completed((*collected, value))
             )
         )
+    # The elements are operands of the display: a walrus in one (``[(x :=
+    # 5)]``) binds once, through the one operand door, and the display holds
+    # the values the elements present.
+    from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+
     if getattr(build, "returns_outcome", False):
-        built = outcome.and_then(build)
+        built = outcome.and_then(
+            lambda values: consume_operands(lambda *held: build(held), *values)
+        )
     else:
-        built = outcome.and_then(lambda values: ExitSet.completed(build(values)))
+        built = outcome.and_then(
+            lambda values: consume_operands(
+                lambda *held: ExitSet.completed(build(held)), *values
+            )
+        )
     return built
 
 

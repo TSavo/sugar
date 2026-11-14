@@ -65,10 +65,19 @@ class NamedExprSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.named_expression_value import (
             NamedExpressionValue,
+            consume_operands,
         )
 
+        # The assigned expression is an operand: a walrus inside it
+        # (``(y := (x := 5))``) binds first, through the one operand door, and
+        # this walrus assigns the value it presents.
         return self.value.desugar(ctx).and_then(
-            lambda assigned: ExitSet.completed(
-                NamedExpressionValue(self.name, assigned, evaluation=self.evaluation)
+            lambda value: consume_operands(
+                lambda assigned: ExitSet.completed(
+                    NamedExpressionValue(
+                        self.name, assigned, evaluation=self.evaluation
+                    )
+                ),
+                value,
             )
         )

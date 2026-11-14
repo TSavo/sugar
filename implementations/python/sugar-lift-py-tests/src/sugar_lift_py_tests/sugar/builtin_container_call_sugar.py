@@ -128,18 +128,36 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
+        # The receiver and the arguments are the call's operands: a walrus in
+        # one (``xs.append((x := 5))``) binds once, through the one operand
+        # door, and the law holds the values they present.
+        def apply(receiver, *operands):
+            return self._apply(receiver, operands)
+
         if self.value_first:
             *keys, value = self.args
             return value.desugar(ctx).and_then(
                 lambda stored: self.receiver.desugar(ctx).and_then(
                     lambda receiver: self._operands(tuple(keys), (), ctx).and_then(
-                        lambda operands: self._apply(receiver, (*operands, stored))
+                        # In evaluation order: the stored value first.
+                        lambda operands: consume_operands(
+                            lambda stored, receiver, *operands: self._apply(
+                                receiver, (*operands, stored)
+                            ),
+                            stored,
+                            receiver,
+                            *operands,
+                        )
                     )
                 )
             )
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self._operands(self.args, (), ctx).and_then(
-                lambda operands: self._apply(receiver, operands)
+                lambda operands: consume_operands(apply, receiver, *operands)
             )
         )
 
@@ -180,6 +198,9 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         def project(pair):
@@ -187,7 +208,11 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
                 return ExitSet.completed(pair)
             return ExitSet.completed(pair.elements[self.index])
 
-        return self.call.desugar(ctx).and_then(project)
+        # The pair is this projection's operand: a walrus the call's operands
+        # carried rides the projection, never stands in for the pair.
+        return self.call.desugar(ctx).and_then(
+            lambda pair: consume_operands(project, pair)
+        )
 
 
 @dataclass(frozen=True)
@@ -339,14 +364,23 @@ class PathContainerCallSugar(ConstructedTermSugar):
             # is the one evaluation.
             return ordinary(ctx)
 
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
         def on_receiver(receiver):
             kind = law.container_kind(receiver)
             if kind is not None and self.method in law.MUTATING_METHODS[kind]:
+                # The arguments are operands: a walrus in one binds once,
+                # through the one operand door.
                 return _operands(self.args, (), ctx).and_then(
-                    lambda operands: law.apply(
-                        kind, self.method, receiver, operands, self.site
+                    lambda operands: consume_operands(
+                        lambda *held: law.apply(
+                            kind, self.method, receiver, held, self.site
+                        )
+                        or _opaque_pair(kind, self.method, self.site),
+                        *operands,
                     )
-                    or _opaque_pair(kind, self.method, self.site)
                 )
             if key is None:
                 return ordinary(ctx)
@@ -525,8 +559,9 @@ class PathAfterCallSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor import builtin_container_method as law
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
@@ -535,6 +570,17 @@ class PathAfterCallSugar(ConstructedTermSugar):
         pair = plain_completed_value(self.call.desugar(ctx))
         if pair is None:
             return unknown
+        # The pair is this read's operand: a walrus the call's operands
+        # carried rides the read, never stands in for the pair.
+        return consume_operands(lambda pair: self._after(pair, unknown, ctx), pair)
+
+    def _after(self, pair, unknown, ctx) -> Outcome:
+        from sugar_lift_py_tests.floor import builtin_container_method as law
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+
         if type(pair) is not TupleValue or len(pair.elements) != 2:
             return unknown
         post = pair.elements[0]

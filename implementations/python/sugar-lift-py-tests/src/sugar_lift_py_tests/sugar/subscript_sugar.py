@@ -75,7 +75,20 @@ class SubscriptSugar(ConstructedTermSugar):
         # Operand reduction may publish a dual-edge ExitSet. Sequence its
         # completed faces through the receiver floor; a typed refusal remains a
         # refusal and must never be converted into an empty outcome.
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
         from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+        # The receiver and the index are operands: a walrus in either
+        # (``(xs := ys)[0]``, ``xs[(i := 0)]``) binds once, through the one
+        # operand door.
+        def subscript(receiver, index):
+            return consume_operands(
+                lambda receiver, index: self._subscript(receiver, index, ctx),
+                receiver,
+                index,
+            )
 
         receiver_outcome = self.receiver.desugar(ctx)
         index_outcome = self.index.desugar(ctx)
@@ -98,9 +111,7 @@ class SubscriptSugar(ConstructedTermSugar):
         if receiver_partitioned or index_partitioned:
             subscripted = outcome_to_exitset(receiver_outcome).and_then(
                 lambda receiver: outcome_to_exitset(index_outcome).and_then(
-                    lambda index: outcome_to_exitset(
-                        self._subscript(receiver, index, ctx)
-                    )
+                    lambda index: outcome_to_exitset(subscript(receiver, index))
                 )
             )
         else:
@@ -108,7 +119,7 @@ class SubscriptSugar(ConstructedTermSugar):
             # from the receiver floor (named refusal), exact exits complete.
             subscripted = receiver_outcome.and_then(
                 lambda receiver: index_outcome.and_then(
-                    lambda index: self._subscript(receiver, index, ctx)
+                    lambda index: subscript(receiver, index)
                 )
             )
         return subscripted

@@ -89,8 +89,15 @@ class SliceSugar(ConstructedTermSugar):
 
             outcome = outcome.and_then(_step)
 
+        # The bounds are operands: a walrus in one binds once, through the one
+        # operand door (an omitted bound is ``None`` and carries nothing).
+        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+
         return outcome.and_then(
-            lambda values: ExitSet.completed(
-                SliceValue(values[0], values[1], values[2])
+            lambda values: consume_operands(
+                lambda lower, upper, step: ExitSet.completed(
+                    SliceValue(lower, upper, step)
+                ),
+                *values,
             )
         )

@@ -323,22 +323,33 @@ class BoolOpSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         def reduce_from(index: int):
             operand = self.values[index]
 
             # Python returns the final operand; it does not call bool(final).
+            # Its value is the result on the face that reached it, so a
+            # walrus in it rides that face only.
             if index == len(self.values) - 1:
                 return factored_operand(operand.desugar(ctx))
 
+            # A non-final operand goes through the one operand door: a walrus
+            # in it binds on its stopping face and on every face the later
+            # operands reach, since it ran on both.
             return factored_operand(operand.desugar(ctx)).and_then(
-                lambda value: select_boolop_operand(
+                lambda value: consume_operands(
+                    lambda presented: select_boolop_operand(
+                        presented,
+                        op_kind=self.op_kind,
+                        site=self.site,
+                        index=index,
+                        on_continue=lambda: reduce_from(index + 1),
+                    ),
                     value,
-                    op_kind=self.op_kind,
-                    site=self.site,
-                    index=index,
-                    on_continue=lambda: reduce_from(index + 1),
                 )
             )
 

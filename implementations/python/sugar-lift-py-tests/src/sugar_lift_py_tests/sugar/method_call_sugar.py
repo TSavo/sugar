@@ -99,24 +99,31 @@ class MethodCallSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         # The RECEIVER is the prefix of the whole argument fold, so its arm
         # count is the base of the exponent every argument raises (#6324).
+        # It is an operand: a walrus in it binds once, through the one door.
         return factored_operand(self.receiver.desugar(ctx)).and_then(
-            lambda receiver: self._collect(
-                receiver.project_operation_receiver(
-                    ctx, owner="MethodCallSugar receiver"
+            lambda receiver: consume_operands(
+                lambda presented: self._collect(
+                    presented.project_operation_receiver(
+                        ctx, owner="MethodCallSugar receiver"
+                    ),
+                    self.args,
+                    (),
+                    ctx,
                 ),
-                self.args,
-                (),
-                ctx,
+                receiver,
             )
         )
 
     def _collect(self, receiver, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
         from sugar_lift_py_tests.floor.named_expression_value import (
-            carrying_walrus_binds,
+            consume_operands,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
@@ -126,12 +133,10 @@ class MethodCallSugar(ConstructedTermSugar):
             # `ExitSet.sequence`, so an unfactored partitioning argument
             # multiplies the accumulated tuple by its arm count, and k
             # arguments distribute into m ** k arms.
-            # A walrus in the actual binds once: the call consumes the value
-            # it presents and its result carries the bind
-            # (``carrying_walrus_binds``).
+            # The actual is an operand: a walrus in it binds once, through
+            # the one operand door (``consume_operands``).
             return factored_operand(head.desugar(ctx)).and_then(
-                lambda value: carrying_walrus_binds(
-                    value,
+                lambda value: consume_operands(
                     lambda presented: self._collect(
                         receiver,
                         tuple(rest),
@@ -143,6 +148,7 @@ class MethodCallSugar(ConstructedTermSugar):
                         ),
                         ctx,
                     ),
+                    value,
                 )
             )
         return self._collect_kwargs(receiver, self.keywords, (), accumulated, ctx)
@@ -151,7 +157,7 @@ class MethodCallSugar(ConstructedTermSugar):
         self, receiver, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> Outcome:
         from sugar_lift_py_tests.floor.named_expression_value import (
-            carrying_walrus_binds,
+            consume_operands,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
@@ -159,8 +165,7 @@ class MethodCallSugar(ConstructedTermSugar):
             (name, sugar), *rest = remaining
             # Same law as the positional fold (#6324).
             return factored_operand(sugar.desugar(ctx)).and_then(
-                lambda value: carrying_walrus_binds(
-                    value,
+                lambda value: consume_operands(
                     lambda presented: self._collect_kwargs(
                         receiver,
                         tuple(rest),
@@ -176,6 +181,7 @@ class MethodCallSugar(ConstructedTermSugar):
                         positional,
                         ctx,
                     ),
+                    value,
                 )
             )
         return dispatch_method_call(

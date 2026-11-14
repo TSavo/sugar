@@ -157,7 +157,14 @@ class FormattedValueSugar(ConstructedTermSugar):
                 lambda spec_term: build(value, spec_term)
             )
 
-        return self.value.desugar(ctx).and_then(with_spec)
+        # The formatted expression is an operand: a walrus in it
+        # (``f"{(x := 5)}"``) binds once, through the one operand door, and
+        # the value it presents is what is formatted.
+        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+
+        return self.value.desugar(ctx).and_then(
+            lambda value: consume_operands(with_spec, value)
+        )
 
 
 @dataclass(frozen=True)
@@ -209,11 +216,19 @@ class JoinedStrSugar(ConstructedTermSugar):
         # One completed arm per part (#6324): concatenation is a k-step fold
         # through `ExitSet.sequence`, so an unfactored partitioning part
         # multiplies the accumulator at every remaining part.
+        # The parts are operands of the concatenation: a walrus in one binds
+        # once, through the one operand door; the joined value so far carries
+        # the binds of the parts before it, so they ride to the end in order.
+        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+
+        def concatenate(left, right):
+            return _concatenate_joined_parts(left, right, self.site, ctx)
+
         outcome = factored_operand(self.parts[0].desugar(ctx))
         for part in self.parts[1:]:
             outcome = outcome.and_then(
                 lambda left, part=part: factored_operand(part.desugar(ctx)).and_then(
-                    lambda right: _concatenate_joined_parts(left, right, self.site, ctx)
+                    lambda right: consume_operands(concatenate, left, right)
                 )
             )
         return outcome
