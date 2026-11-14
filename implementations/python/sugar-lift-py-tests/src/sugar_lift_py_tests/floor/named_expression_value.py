@@ -68,12 +68,10 @@ class NamedExpressionValue(FloorValue):
             from sugar_lift_py_tests.context import ReduceContext
 
             ctx = ReduceContext.root(owner="NamedExpressionValue")
-        if self.evaluation is None:
+        written = self.written()
+        if written is None:
             return ctx
-        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
-
-        # In a live loop each item's evaluation is its own key.
-        key = evaluation_here(self.evaluation)
+        key, _value = written
         if ctx.temporal.value_if_bound(key) == self.assigned_value:
             # This evaluation's bind is already in the temporal: a later read
             # of a value that carries it (a name substitution inlined the
@@ -83,6 +81,20 @@ class NamedExpressionValue(FloorValue):
             # later of the two, ``EvaluationRefSugar``).
             return ctx
         return replace(ctx, temporal=ctx.temporal.bind_value(key, self.assigned_value))
+
+    def written(self):
+        """``(key, value)``: the assigned value under this evaluation's key,
+        qualified by the reduction running now (``evaluation_here``: in a live
+        loop each item's evaluation is its own key), or None for a walrus
+        never keyed.  What ``bind`` writes, and what a statement that runs
+        the walrus where its bind would not reach the rest of the block
+        publishes as it leaves (a live ``for``'s iterable,
+        ``LoopRecurrenceSugar``)."""
+        if self.evaluation is None:
+            return None
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+        return evaluation_here(self.evaluation), self.assigned_value
 
     def as_expression_statement(self):
         """A bare ``(name := value)`` statement still binds ``name`` afterward."""

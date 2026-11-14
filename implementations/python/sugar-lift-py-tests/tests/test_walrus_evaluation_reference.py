@@ -1194,3 +1194,50 @@ def test_a_live_loop_starts_a_carried_name_from_its_iterables_walrus() -> None:
     assert isinstance(initial, EvaluationRefSugar)
     assert initial.walrus is True
     assert initial.evaluation == walrus.evaluation
+
+
+# ---------------------------------------------------------------------------
+# A live loop's iterable walrus is published on every exit
+# ---------------------------------------------------------------------------
+
+
+def test_a_read_after_a_live_loop_is_its_iterables_walrus_key() -> None:
+    rewritten = _function(
+        "def f():\n"
+        "    for x in (ys := [1, 2]):\n"
+        "        pass\n"
+        "    return ys\n"
+    ).substitute({})
+    (walrus,) = _walruses(rewritten)
+    ret = rewritten.body[-1]
+    assert isinstance(ret, Return)
+    _assert_walrus_reference(ret.value, walrus)
+
+
+@pytest.mark.parametrize(
+    ("loop", "expected"),
+    [
+        # the loop runs every item and exhausts
+        (
+            "    for x in (ys := [1, 2]):\n        pass\n",
+            ListValue((TermValue(1), TermValue(2))),
+        ),
+        # no item runs: the iterable still ran
+        ("    for x in (ys := []):\n        pass\n", ListValue(())),
+        # a break leaves the loop
+        (
+            "    for x in (ys := [1, 2]):\n        break\n",
+            ListValue((TermValue(1), TermValue(2))),
+        ),
+        # the else suite runs after the last item
+        (
+            "    for x in (ys := [1, 2]):\n        pass\n    else:\n        pass\n",
+            ListValue((TermValue(1), TermValue(2))),
+        ),
+    ],
+)
+def test_a_live_loop_publishes_its_iterables_walrus_on_every_exit(
+    loop: str, expected
+) -> None:
+    source = "def f():\n" + loop + "    return ys\n\nf()\n"
+    assert _returned_value(_call_outcome(source)) == expected

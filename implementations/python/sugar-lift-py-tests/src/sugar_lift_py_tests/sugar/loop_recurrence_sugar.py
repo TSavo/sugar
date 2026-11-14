@@ -78,6 +78,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     outward_faces: tuple[object, ...]
     construction: object = field(compare=False)
     site: object = field(compare=False)
+    # What the iterable's walrus writes leave the loop as, on every exit
+    # (``desugar``, ``_iterable_writes``): bound by the reduction that
+    # evaluated the iterable, never by the construction.
+    iterable_writes: tuple = field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -143,16 +147,42 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             written_by,
         )
 
+        from dataclasses import replace
+
         # The iterable is evaluated once, before the first item: a walrus in
         # it has written before the pre-loop values are read and every item
         # runs (``written_by``).  A carried name it writes starts the loop
         # from the walrus's key (``construct_live_loop_recurrence``).  The
-        # loop iterates the value the iterable presents.
-        return iterable_sugar.desugar(ctx).and_then(
-            lambda iterable: self._desugar_with_iterable(
-                peel_walrus_binds(iterable)[1], written_by(iterable, ctx)
-            )
-        )
+        # loop iterates the value the iterable presents, and leaves, on every
+        # exit, with the writes of the names it does not carry
+        # (``_iterable_writes``).
+        def with_iterable(iterable):
+            binds, presented = peel_walrus_binds(iterable)
+            loop = replace(self, iterable_writes=self._iterable_writes(binds))
+            return loop._desugar_with_iterable(presented, written_by(iterable, ctx))
+
+        return iterable_sugar.desugar(ctx).and_then(with_iterable)
+
+    def _iterable_writes(self, binds):
+        """The iterable's walrus writes (``binds``, ``peel_walrus_binds``
+        order) of the names the loop does not carry, each as the rebind of
+        the key it wrote (``NamedExpressionValue.written``).  A read of such
+        a name after the loop is a reference to that key
+        (``Statement._substitute_body_tracked``); the iterable ran once,
+        before the loop, so the key holds on every exit, the one where no
+        item ran included.  A carried name leaves as the loop's value
+        (``_publish_runtime_bindings``)."""
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+
+        runtime = self.construction.loop_runtime
+        carried = frozenset(getattr(runtime, "carried_names", ()))
+        writes = []
+        for bind in binds:
+            written = bind.written()
+            if written is None or bind.name in carried:
+                continue
+            writes.append(ScopeRebind(*written))
+        return tuple(writes)
 
     def _desugar_with_iterable(self, iterable, ctx):
         runtime = self.construction.loop_runtime
@@ -252,7 +282,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 symbol_kind="coordinate",
             )
             recurrences.append(InvValue(atomic("=", [h, step]), self.site))
-        recurrence = BlockValue(tuple(recurrences), can_fall_through=True)
+        recurrence = BlockValue(
+            (*self.iterable_writes, *recurrences), can_fall_through=True
+        )
         if not self.outward_faces:
             return ExitSet.completed(recurrence)
 
@@ -860,7 +892,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``_require_carried``).  The value is published under the name's
         binding coordinate only: every read after the loop is a
         ``LoopBindingRef`` to it (``project_loop_post_binding``), and the
-        name is never written nor read."""
+        name is never written nor read.  The iterable's walrus writes of the
+        names the loop does not carry (``iterable_writes``) are published
+        first, under their keys: the iterable ran before every item."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
@@ -877,7 +911,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             projected.append(ScopeRebind(coordinate_cid, value))
         return ExitSet.completed(
             BlockValue(
-                (*entries, *projected),
+                (*self.iterable_writes, *entries, *projected),
                 fall_through=fall_through,
                 can_fall_through=can_fall_through,
             )

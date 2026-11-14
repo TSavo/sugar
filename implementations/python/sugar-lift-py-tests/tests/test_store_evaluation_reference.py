@@ -47,6 +47,12 @@ The residue of #7998:
     field is the key expression's ground value (a literal, or a key
     reference whose ``of`` is one); a key that is not ground names no known
     field, and a store under it leaves every field unknown.
+
+The residue of #8004:
+
+11. ``o[-1]`` named no field (a unary minus over a literal is not a
+    literal), and a dict display's keys were decided by literal only.  Both
+    ask the key expression's ground value (``ground_subscript_key``).
 """
 
 from __future__ import annotations
@@ -94,7 +100,9 @@ from sugar_source_tree.nodes import (
     Subscript,
     With,
     _occurrence_testimony,
+    ground_subscript_key,
 )
+from sugar_source_tree.container_mutation import _display_member, _runs_no_code
 from sugar_source_tree.tree import SourceFile
 
 ONE = TermValue(1)
@@ -207,6 +215,18 @@ PLACE_ITEM_BY_CALL = (
     "    box[g()] = 1\n"
     "    return box['a']\n"
 )
+# 11. A negative int key: a unary minus over a literal.
+PLACE_ITEM_NEGATIVE = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    box[-1] = 1\n"
+    "    return box[-1]\n"
+)
+# 11. A dict display whose key is a name holding a literal.
+DICT_DISPLAY_BY_NAME = "def f():\n    k = 'a'\n    return {k: [1]}\n"
 
 
 def _tree(source: str, context) -> SourceFile:
@@ -736,3 +756,40 @@ def test_a_call_key_leaves_the_field_unknown_and_is_not_called_again() -> None:
     assert ret.value.kind == "Subscript"
     assert isinstance(ret.value.value, ObjectPlaceStateV1)
     assert ret.value.value.invalidated_by_opaque_call is True
+
+
+# ---------------------------------------------------------------------------
+# 11. ``box[-1]`` and ``{k: ...}``: a negative int key and a dict display's
+#     key are decided by the key expression's ground value too.
+# ---------------------------------------------------------------------------
+
+
+def test_a_negative_key_read_reads_the_stores_key() -> None:
+    body = _function(PLACE_ITEM_NEGATIVE).substitute({}).body
+    (store,) = _item_stores(body)
+    assert isinstance(store.evaluation, str)
+    # The statement keeps its key expression: ``-1`` is a unary minus.
+    assert store.targets[0].slice_.kind == "UnaryOp"
+    assert ground_subscript_key(store.targets[0].slice_) == -1
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    # ``box[-1]`` reads what ``box[-1] = 1`` put there, through its key.
+    assert ret.value.kind == "EvaluationRef"
+    assert ret.value.place is True
+    assert ret.value.evaluation == store.evaluation
+
+
+def test_a_dict_display_key_is_decided_by_its_ground_value() -> None:
+    body = _function(DICT_DISPLAY_BY_NAME).substitute({}).body
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    display = ret.value
+    assert display.kind == "Dict"
+    (key,) = display.keys
+    # The key is ``k``'s key reference, never the literal put in its place.
+    assert key.kind == "EvaluationRef"
+    assert ground_subscript_key(key) == "a"
+    (member,) = display.values
+    assert _display_member(display, ("item", "a")) is member
+    assert _display_member(display, ("item", "b")) is None
+    assert _runs_no_code(display)

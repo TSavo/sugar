@@ -4102,20 +4102,25 @@ def _ground_value(node) -> "Optional[Node]":
     return None
 
 
-def ground_subscript_key(node) -> "Optional[Node]":
-    """The ``int``/``str`` literal a subscript key expression is, or None.
+def ground_subscript_key(node) -> "Optional[object]":
+    """The ``int``/``str`` a key expression's ground value is, or None.
 
-    The one way a store or read decides which field (or member) a key names
-    (``ObjectPlaceStateV1._subscript_coordinate``,
-    ``container_mutation.path_steps``): the key expression's ground value
-    (``_ground_value``: a literal, or a key reference whose ``of`` is
-    ground), as a shape is decided.  The key is never reduced here: a key
-    that is not ground names no known field, and the statement evaluates the
-    key itself, once, at reduce."""
+    The one way a store, a read or a dict display decides which field (or
+    member) a key names (``ObjectPlaceStateV1._subscript_coordinate``,
+    ``container_mutation.path_steps``, ``container_mutation._display_member``):
+    the key expression's ground value (``_ground_value``: a literal, ``-``
+    over a ground int, ground int arithmetic, or a key reference whose
+    ``of`` is ground), as a shape is decided; ``o[-1]`` names the field
+    ``-1``.  An int that is not a literal is the int ``For._concrete_int``
+    reads it as.  The key is never reduced here: a key that is not ground
+    names no known field, and the statement evaluates the key itself, once,
+    at reduce."""
     ground = _ground_value(node)
-    if ground is None or ground.kind != "Constant":
+    if ground is None:
         return None
-    return ground if type(ground.value) in (int, str) else None
+    if ground.kind == "Constant":
+        return ground.value if type(ground.value) in (int, str) else None
+    return For._concrete_int(ground, ground)
 
 
 def _object_read_in(reference, reads, scope) -> bool:
@@ -19823,8 +19828,8 @@ class ObjectPlaceStateV1(Expression):
             {
                 "kind": "python-ground-subscript-key",
                 "schemaVersion": "1",
-                "type": type(ground.value).__name__,
-                "value": str(ground.value),
+                "type": type(ground).__name__,
+                "value": str(ground),
             }
         )
         # A ground literal is its own testimony: nothing was constructed.

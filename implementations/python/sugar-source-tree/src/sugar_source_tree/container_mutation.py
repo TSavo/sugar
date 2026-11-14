@@ -837,15 +837,11 @@ _NEVER_HAVOC_KINDS = frozenset(
 )
 
 
-def _decided_key(value) -> bool:
-    return type(value) in (int, str)
-
-
 def path_steps(receiver):
     """``(root, steps)`` of an attribute/subscript chain, or ``(None, ())``.
 
     A step is ``("attr", name)``, ``("item", key)`` for a key whose ground
-    value is an ``int``/``str`` literal (``ground_subscript_key``: a literal,
+    value is an ``int``/``str`` (``ground_subscript_key``: a literal, ``-1``,
     or a key reference whose ``of`` is one; never the key reduced), or
     ``("undecided", None)``."""
     from .nodes import Attribute, Subscript, ground_subscript_key
@@ -857,7 +853,7 @@ def path_steps(receiver):
             steps.append(("attr", node.attr))
         else:
             key = ground_subscript_key(node.slice_)
-            steps.append(("undecided", None) if key is None else ("item", key.value))
+            steps.append(("undecided", None) if key is None else ("item", key))
         node = node.value
     if not steps:
         return None, ()
@@ -878,8 +874,11 @@ def _same_steps(left, right) -> bool:
 
 
 def _display_member(node, step):
-    """The node a display holds at a decided item step, or None."""
-    from .nodes import Constant, Starred
+    """The node a display holds at a decided item step, or None.  A dict
+    display's key is decided as a subscript's is (``ground_subscript_key``:
+    ``{k: []}`` where ``k`` holds ``'a'`` holds ``[]`` at ``'a'``); one key
+    that is not decided (or a ``**`` member) leaves the member undecided."""
+    from .nodes import Starred, ground_subscript_key
 
     kind, key = step
     if kind != "item":
@@ -888,10 +887,8 @@ def _display_member(node, step):
     if node_kind == "Dict":
         found = None
         for item in node.items:
-            if item.key is None or not isinstance(item.key, Constant):
-                return None
-            existing = item.key.value
-            if not _decided_key(existing):
+            existing = None if item.key is None else ground_subscript_key(item.key)
+            if existing is None:
                 return None
             if type(existing) is type(key) and existing == key:
                 found = item.value
@@ -1408,9 +1405,13 @@ def _runs_no_code(node) -> bool:
     if kind in ("List", "Tuple", "Set"):
         return all(_runs_no_code(element) for element in node.elts)
     if kind == "Dict":
-        # A dict display hashes its keys: only constants are decided here.
+        # A dict display hashes its keys: only a key decided as a subscript's
+        # is (``ground_subscript_key``: an ``int``/``str``, whose hash calls
+        # nothing) is decided here.
+        from .nodes import ground_subscript_key
+
         return all(
-            key is not None and getattr(key, "kind", None) == "Constant"
+            key is not None and ground_subscript_key(key) is not None
             for key in node.keys
         ) and all(_runs_no_code(value) for value in node.values)
     return False
