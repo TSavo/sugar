@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from .guard_stable_value import GuardStableValue
 
@@ -15,6 +15,17 @@ class TupleValue(GuardStableValue):
     """
 
     elements: tuple
+    # The display that made this object in the frame reading it, where
+    # CPython builds it at runtime (``TupleSugar``); None for every other
+    # tuple -- one that arrived, one a builtin or an operator made, one the
+    # compiler may fold into a shared constant.  It answers ``is`` only
+    # (``object_identity``): a tuple's contents never change.
+    allocation: str | None = dataclass_field(
+        default=None,
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
 
     def match_raise_effect(self, effect):
         """Tuple classinfo is disjunction of its members' subtype predicates.
@@ -123,18 +134,6 @@ class TupleValue(GuardStableValue):
         }:
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().python_isinstance(authenticated, type_term, site)
-
-    def is_identical(self, other, site):
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-
-        if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import ExitSet
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().is_identical(other, site)
 
     def length(self, site):
         # A tuple knows its length: the count of reduced elements.

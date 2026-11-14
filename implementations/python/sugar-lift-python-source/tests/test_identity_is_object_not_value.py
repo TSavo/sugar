@@ -113,11 +113,10 @@ def test_a_store_into_a_dict_copy_leaves_the_dict(tmp_path):
 
 
 def test_a_tuple_of_a_tuple_is_the_tuple(tmp_path):
+    # CPython hands an exact tuple back as itself: one object, decided.
     source = "def f(x):\n    t = (x, 1)\n    return tuple(t) is t\n"
     (value,) = _returns(tmp_path, source)[0]
-    assert type(value) is PredicateValue
-    left, right = value.formula.args
-    assert left == right
+    assert type(value) is TrueBoolLiteralSugar
 
 
 def _construct(operation_name, source):
@@ -160,6 +159,121 @@ def test_tuple_of_an_exact_tuple_is_the_same_object():
 
     t = TupleValue((TermValue(1),))
     assert _construct("python.tuple.construct", t).completed_value() is t
+
+
+# -- Immutable values answer ``is`` by the same object rule (#7757) --------
+#
+# ``TupleValue``, ``StringValue``, ``BytesValue`` and ``TermValue`` answered
+# ``is`` with ``identity`` over their value terms, so ``(x,) is (x,)`` was
+# the reflexive identity (True) although CPython builds two tuples.  Equal
+# values never decide one object: CPython's interning and constant merging
+# are implementation-defined.  Different values, or types, are two objects.
+
+
+def test_two_tuple_displays_reading_a_variable_are_two_objects(tmp_path):
+    (value,) = _returns(tmp_path, "def f(x):\n    return (x,) is (x,)\n")[0]
+    assert type(value) is FalseBoolLiteralSugar
+
+
+def test_one_tuple_display_read_twice_is_one_object(tmp_path):
+    source = "def f(x):\n    t = (x,)\n    return t is t\n"
+    (value,) = _returns(tmp_path, source)[0]
+    assert type(value) is TrueBoolLiteralSugar
+
+
+def test_an_alias_of_a_tuple_is_the_tuple(tmp_path):
+    source = "def f(x):\n    t = (x, 1)\n    u = t\n    return u is t\n"
+    (value,) = _returns(tmp_path, source)[0]
+    assert type(value) is TrueBoolLiteralSugar
+
+
+def test_an_alias_of_a_list_display_is_the_list(tmp_path):
+    source = "def f():\n    a = []\n    b = a\n    return a is b\n"
+    assert type(_only_return(tmp_path, source)) is TrueBoolLiteralSugar
+
+
+def test_two_constant_tuples_may_be_one_merged_constant(tmp_path):
+    source = "def f():\n    a = (1, 2)\n    b = (1, 2)\n    return a is b\n"
+    assert _undecided(_only_return(tmp_path, source))
+
+
+def test_two_constant_tuples_of_different_values_are_two_objects(tmp_path):
+    source = "def f():\n    a = (1, 2)\n    b = (1, 3)\n    return a is b\n"
+    assert type(_only_return(tmp_path, source)) is FalseBoolLiteralSugar
+
+
+def test_equal_ints_are_not_decided_one_object(tmp_path):
+    source = "def f():\n    a = 1000\n    b = 1000\n    return a is b\n"
+    assert _undecided(_only_return(tmp_path, source))
+
+
+def test_different_ints_are_two_objects(tmp_path):
+    source = "def f():\n    a = 1\n    b = 2\n    return a is b\n"
+    assert type(_only_return(tmp_path, source)) is FalseBoolLiteralSugar
+
+
+def test_an_int_and_a_float_are_two_objects(tmp_path):
+    source = "def f():\n    a = 1\n    b = 1.0\n    return a is b\n"
+    assert type(_only_return(tmp_path, source)) is FalseBoolLiteralSugar
+
+
+def test_equal_strings_are_not_decided_one_object(tmp_path):
+    source = "def f():\n    a = 'a'\n    b = 'a'\n    return a is b\n"
+    assert _undecided(_only_return(tmp_path, source))
+
+
+def test_different_strings_are_two_objects(tmp_path):
+    source = "def f():\n    a = 'a'\n    b = 'b'\n    return a is b\n"
+    assert type(_only_return(tmp_path, source)) is FalseBoolLiteralSugar
+
+
+def test_equal_bytes_are_not_decided_one_object(tmp_path):
+    source = "def f():\n    a = b'a'\n    b = b'a'\n    return a is b\n"
+    assert _undecided(_only_return(tmp_path, source))
+
+
+def test_a_string_is_not_none(tmp_path):
+    source = "def f():\n    a = 'a'\n    return a is None\n"
+    assert type(_only_return(tmp_path, source)) is FalseBoolLiteralSugar
+
+
+def test_none_and_the_bools_are_singletons(tmp_path):
+    for literal in ("None", "True", "False"):
+        source = f"def f():\n    a = {literal}\n    b = {literal}\n    return a is b\n"
+        assert type(_only_return(tmp_path / literal, source)) is TrueBoolLiteralSugar
+
+
+def test_an_int_is_not_true(tmp_path):
+    source = "def f():\n    a = 1\n    return a is True\n"
+    assert type(_only_return(tmp_path, source)) is FalseBoolLiteralSugar
+
+
+def test_a_tuple_of_one_construction_is_itself():
+    from sugar_lift_py_tests.floor import TermValue, TupleValue
+
+    t = TupleValue((TermValue(1),), allocation="display-site")
+    assert type(t.is_identical(t, "is-site").completed_value()) is (
+        TrueBoolLiteralSugar
+    )
+
+
+def test_tuples_of_two_constructions_are_two_objects():
+    from sugar_lift_py_tests.floor import TermValue, TupleValue
+
+    left = TupleValue((TermValue(1),), allocation="one-site")
+    right = TupleValue((TermValue(1),), allocation="other-site")
+    assert type(left.is_identical(right, "is-site").completed_value()) is (
+        FalseBoolLiteralSugar
+    )
+
+
+def test_an_arrived_tuple_names_no_construction():
+    from sugar_lift_py_tests.floor import TermValue, TupleValue
+    from sugar_lift_py_tests.floor.object_identity import arrived
+
+    t = TupleValue((TermValue(1),), allocation="display-site")
+    assert arrived(t).allocation is None
+    assert arrived(t) == t
 
 
 def test_a_formal_after_its_own_mutation_is_itself(tmp_path):

@@ -151,9 +151,37 @@ class TupleSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.floor import tuple_value
+        from sugar_lift_py_tests.floor.object_identity import made_at
+
+        # A display that reads a variable is built at runtime: a new object
+        # here (``made_at``).  Any other may be one constant the compiler
+        # folded and shares (``(1, 2) is (1, 2)``): no construction is named.
+        allocation = made_at(self.site) if _built_at_runtime(self.elements) else None
+
+        def TupleValue(held):  # noqa: N802 -- the owner name the fold reports
+            return tuple_value.TupleValue(held, allocation=allocation)
 
         return _reduce_into(self.elements, ctx, TupleValue)
+
+
+def _built_at_runtime(element_sugars) -> bool:
+    """A tuple display CPython cannot fold into a code constant: an element
+    reads a variable (a name, or a reference to an assignment's evaluation),
+    directly or in a nested display.  ``__debug__`` is folded, so it is no
+    variable here.  A display this does not recognise is not claimed."""
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+    for element in element_sugars:
+        kind = type(element)
+        if kind is EvaluationRefSugar:
+            return True
+        if kind is NameSugar and element.name != "__debug__":
+            return True
+        if kind is TupleSugar and _built_at_runtime(element.elements):
+            return True
+    return False
 
 
 @dataclass(frozen=True)

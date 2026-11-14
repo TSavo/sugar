@@ -77,12 +77,6 @@ class ObjectValue(FloorValue):
         """A constructed receiver denotes a runtime object, not a pure slot."""
         return True
 
-    def is_identical(self, other, site):
-        """Object identity, never value equality (``object_identity``)."""
-        from .object_identity import mutable_object_identity
-
-        return mutable_object_identity(self, other, site)
-
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
             "__format__",
