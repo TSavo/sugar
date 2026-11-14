@@ -349,13 +349,16 @@ class FloorValue:
         ``__index__`` / ``__hash__`` / ``__eq__``) are not decided here, so
         the lookup may complete with any member or raise anything -- the #7587
         opaque-subscript law.  It is the one two-faced unanswered outcome
-        (``ExitSet.two_faced``, through ``_opaque_subscript_faces``): the
-        symbolic ``py.subscript(<receiver>, <index>)`` completes only under
-        ``python:subscript.completes(python:subscript(<term>, <site>))`` and
-        the complement halts with an ``UndeterminedRaiseEffect`` (producer
-        ``owner``); both arms owe the ``undecided`` member (reason
-        ``unanswered``) at the read's site.  No ``KeyError`` or
-        ``IndexError`` is guessed and no member is chosen.
+        (``ExitSet.two_faced``), and the one form every undecided subscript
+        takes -- ``SymbolicValue.subscript_with`` and the opaque arm of
+        ``CallSiteValue.subscript_with`` answer through it too: the symbolic
+        ``py.subscript(<receiver>, <index>)`` completes only under
+        ``python:subscript.completes(python:subscript(<term>, <site>))``,
+        keyed on the exact source site so two subscripts of the same term are
+        never forced to agree, and the complement halts with an
+        ``UndeterminedRaiseEffect`` (producer ``owner``); both arms owe the
+        ``undecided`` member (reason ``unanswered``) at the read's site.  No
+        ``KeyError`` or ``IndexError`` is guessed and no member is chosen.
 
         A read that reached the floor with no site is the lifter's own gap:
         it cannot key the completes atom or the debt, so it refuses by name.
@@ -366,17 +369,30 @@ class FloorValue:
                 f"{type(self).__name__}[{type(index).__name__}]",
                 "Subscript",
             )
-        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
         term = ctor(
             "py.subscript",
             [self.to_term(owner=owner), index.to_term(owner=owner)],
         )
-        return _opaque_subscript_faces(
-            ExitSet.completed(SymbolicValue(term)), site, producer=owner
+        key = occurrence_key(site)
+        completes = atomic(
+            "python:subscript.completes",
+            [ctor("python:subscript", (term, str_const(key)))],
+        )
+        return ExitSet.two_faced(
+            SymbolicValue(term),
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
+            ),
+            guard=completes,
+            site=site,
         )
 
     def python_index_protocol(self) -> bool | None:

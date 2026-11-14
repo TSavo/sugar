@@ -88,23 +88,6 @@ class SubscriptOperation:
             ctx=ctx,
         )
 
-    def subscript_symbolic(self, receiver, ctx: object) -> ExitSet:
-        del ctx
-        from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-
-        return ExitSet.completed(
-            SymbolicValue(
-                ctor(
-                    "py.subscript",
-                    [
-                        receiver.term,
-                        self.index.to_term(owner=f"{self.owner} index"),
-                    ],
-                )
-            )
-        )
-
 
 def _unwrap_index(index: Any) -> Any:
     """Sequence indices consume the downstream value of an opaque-op coordinate."""

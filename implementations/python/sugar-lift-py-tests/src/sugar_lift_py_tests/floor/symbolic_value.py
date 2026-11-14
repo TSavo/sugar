@@ -536,7 +536,15 @@ class SymbolicValue(FloorValue):
         )
 
     def subscript_with(self, operation, ctx):
-        return operation.subscript_symbolic(self, ctx)
+        """``symbolic[k]`` is the one undecided read: both faces, one debt.
+
+        The receiver's runtime type and ``__getitem__`` are not decided here,
+        so the read may complete or raise (:meth:`undecided_subscript`).
+        """
+        del ctx
+        return self.undecided_subscript(
+            operation.index, operation.blame, owner="SymbolicValue.subscript"
+        )
 
     def project_sequence_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
