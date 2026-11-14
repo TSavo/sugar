@@ -2248,47 +2248,57 @@ class GeneratorConstructionV1:
             if isinstance(kept, GeneratorTransitionGapV1):
                 return kept
             return kept._transition(requested)
-        if step.unpack is None:
-            members = tuple((name, sent) for name, _evaluation in step.targets)
-        else:
-            unpacked = step.unpack.project(
-                sent,
-                self._guard_evaluation_context(),
-                owner="GeneratorConstructionV1.YieldAssignStepV1.unpack",
-                blame=step.occurrence,
-            )
-            if not isinstance(unpacked, ExitSet):
-                return self._gap(
-                    requested,
-                    f"{names} = yield: unpack returned {type(unpacked).__name__}",
-                )
-            if unpacked.exits and unpacked.halts() == unpacked.exits:
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in unpacked.halts()))
-                )
-            if (
-                unpacked.completed_value() is None
-                or unpacked.owed_items()
-                or not isinstance(unpacked.completed_value(), ScopeRebinds)
-            ):
-                return self._gap(
-                    requested,
-                    f"{names} = yield: unpack returned {type(unpacked).__name__}",
-                )
-            members = unpacked.completed_value().bindings
         keys = dict(step.targets)
-        bindings = tuple(
-            GeneratorAssignBindingV1(
-                name, value, step.fragment_cid, evaluation=keys.get(name)
+
+        def bind(machine, members):
+            return replace(
+                machine,
+                binding_state=(
+                    *machine.binding_state,
+                    *(
+                        GeneratorAssignBindingV1(
+                            name, value, step.fragment_cid, evaluation=keys.get(name)
+                        )
+                        for name, value in members
+                    ),
+                ),
             )
-            for name, value in members
+
+        if step.unpack is None:
+            return bind(
+                replace(self, cursor=self.cursor + 1),
+                tuple((name, sent) for name, _evaluation in step.targets),
+            )._transition(requested)
+        unpacked = step.unpack.project(
+            sent,
+            self._guard_evaluation_context(),
+            owner="GeneratorConstructionV1.YieldAssignStepV1.unpack",
+            blame=step.occurrence,
         )
-        machine = replace(
-            self,
-            cursor=self.cursor + 1,
-            binding_state=(*self.binding_state, *bindings),
-        )
-        return machine._transition(requested)
+        if not isinstance(unpacked, ExitSet):
+            return self._gap(
+                requested,
+                f"{names} = yield: unpack returned {type(unpacked).__name__}",
+            )
+
+        def keep(machine, rebinds):
+            # Each completed face binds its own leaves.
+            if not isinstance(rebinds, ScopeRebinds):
+                return machine._gap(
+                    requested,
+                    f"{names} = yield: unpack returned {type(rebinds).__name__}",
+                )
+            return bind(machine, rebinds.bindings)
+
+        if unpacked.completed_value() is None or unpacked.owed_items():
+            # A halt (too few members, runtime cardinality) halts here and
+            # binds nothing; a runtime unpack's completed face resumes past
+            # the statement with its leaves bound.
+            return self._transition_term_exitset(step, unpacked, requested, keep=keep)
+        kept = keep(replace(self, cursor=self.cursor + 1), unpacked.completed_value())
+        if isinstance(kept, GeneratorTransitionGapV1):
+            return kept
+        return kept._transition(requested)
 
     def _kept_store_bindings(self, step: _ResumeAssignStepV1, value, requested: str):
         """This machine with what a yield assignment's store bound that a
@@ -2559,60 +2569,75 @@ class GeneratorConstructionV1:
             return self._gap(requested, f"next_with returned {type(outcome).__name__}")
         next_result = outcome.completed_value()
 
+        recurrence = replace(step, iterator=next_result.advanced)
+        advanced = replace(
+            self,
+            steps=(
+                *self.steps[: self.cursor],
+                *step.body_steps,
+                recurrence,
+                *self.steps[self.cursor + 1 :],
+            ),
+        )
         if (
             len(step.target_coordinates) == 1
             and tuple(step.target_coordinates[0].projection_path) == ("target",)
         ):
             # Bare name: bind the iterated item, as LoopRecurrence already does.
             # A 1-tuple target is ``("target", 0)`` and still unpacks.
-            bindings = (
-                GeneratorLoopBindingV1(
-                    step.target_coordinates[0],
-                    next_result.value,
-                    step.occurrence,
-                    fragment_cid=step.fragment_cid,
+            binding = GeneratorLoopBindingV1(
+                step.target_coordinates[0],
+                next_result.value,
+                step.occurrence,
+                fragment_cid=step.fragment_cid,
+            )
+            return replace(
+                advanced, binding_state=(*advanced.binding_state, binding)
+            )._transition(requested)
+        unpack = PositionalUnpackOperation(
+            fixed_prefix=len(step.target_coordinates),
+            fixed_suffix=0,
+            has_star=False,
+            owner="GeneratorConstructionV1.ForStepV1.target",
+            blame=step.occurrence,
+        ).submit(next_result.value, self._guard_evaluation_context())
+        if not isinstance(unpack, ExitSet):
+            return self._gap(
+                requested, f"target unpack returned {type(unpack).__name__}"
+            )
+
+        def keep(machine, roster):
+            # Each completed face binds its own roster's members.
+            if not isinstance(roster, UnpackMemberRoster):
+                return machine._gap(
+                    requested, f"target unpack returned {type(roster).__name__}"
+                )
+            return replace(
+                machine,
+                binding_state=(
+                    *machine.binding_state,
+                    *(
+                        GeneratorLoopBindingV1(
+                            coordinate, member, roster.occurrence, roster.demand_cid
+                        )
+                        for coordinate, member in zip(
+                            step.target_coordinates, roster.members, strict=True
+                        )
+                    ),
                 ),
             )
-        else:
-            unpack = PositionalUnpackOperation(
-                fixed_prefix=len(step.target_coordinates),
-                fixed_suffix=0,
-                has_star=False,
-                owner="GeneratorConstructionV1.ForStepV1.target",
-                blame=step.occurrence,
-            ).submit(next_result.value, self._guard_evaluation_context())
-            if not isinstance(unpack, ExitSet):
-                return self._gap(
-                    requested, f"target unpack returned {type(unpack).__name__}"
-                )
-            if unpack.exits and unpack.halts() == unpack.exits:
-                return ExitSet(tuple(replace(h, state=self) for h in unpack.halts()))
-            if unpack.owed_items() or not isinstance(
-                unpack.completed_value(), UnpackMemberRoster
-            ):
-                return self._gap(
-                    requested, f"target unpack returned {type(unpack).__name__}"
-                )
-            roster = unpack.completed_value()
-            bindings = tuple(
-                GeneratorLoopBindingV1(
-                    coordinate, member, roster.occurrence, roster.demand_cid
-                )
-                for coordinate, member in zip(
-                    step.target_coordinates, roster.members, strict=True
-                )
+
+        if unpack.completed_value() is None or unpack.owed_items():
+            # A halt (assignment has not begun: it leaves the machine here), or
+            # a symbolic item's runtime unpack: its halt leaves here, and the
+            # body runs beneath its completed face.
+            return self._transition_term_exitset(
+                step, unpack, requested, keep=keep, advanced=advanced
             )
-        recurrence = replace(step, iterator=next_result.advanced)
-        steps = (
-            *self.steps[: self.cursor],
-            *step.body_steps,
-            recurrence,
-            *self.steps[self.cursor + 1 :],
-        )
-        machine = replace(
-            self, steps=steps, binding_state=(*self.binding_state, *bindings)
-        )
-        return machine._transition(requested)
+        kept = keep(advanced, unpack.completed_value())
+        if isinstance(kept, GeneratorTransitionGapV1):
+            return kept
+        return kept._transition(requested)
 
     def _transition_nested_manager(self, step: NestedManagerStepV1, requested: str):
         """Enter nested protocol, bind entered state, splice body + exit step."""
@@ -2793,7 +2818,9 @@ class GeneratorConstructionV1:
         return result.normalize()
 
 
-    def _transition_term_exitset(self, step, outcome, requested: str, keep=None):
+    def _transition_term_exitset(
+        self, step, outcome, requested: str, keep=None, advanced=None
+    ):
         """An expression statement whose value is two-faced (may complete or raise).
 
         A halted face leaves the machine HERE: its pre-halt state is this
@@ -2805,7 +2832,10 @@ class GeneratorConstructionV1:
 
         ``keep(machine, value)``, when given, is what the advanced machine
         keeps of that face's value (a yield assignment's store bindings,
-        ``_kept_store_bindings``): the machine, or a gap that refuses the face.
+        ``_kept_store_bindings``; an unpack's bound leaves): the machine, or a
+        gap that refuses the face.  ``advanced`` is the machine a completed
+        face continues from: past the statement unless given (a ``for``
+        item's body, spliced in ahead of its recurrence).
         """
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -2822,7 +2852,9 @@ class GeneratorConstructionV1:
                 )
             )
         if completed:
-            machine = replace(self, cursor=self.cursor + 1)
+            machine = (
+                replace(self, cursor=self.cursor + 1) if advanced is None else advanced
+            )
 
             def continue_term(value):
                 # Each completed arm records only the walrus binds it carries.

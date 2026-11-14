@@ -11,8 +11,10 @@ The categories, and what each one owes:
 - **authenticated finite members** (tuple / array literal). The count is
   lift-time decidable, so each name binds to the member ALREADY IN HAND.
 - **runtime cardinality** (symbolic term, object). `__iter__` owns the count, so
-  the arity demand is RETAINED as a typed effect and nothing binds -- exactly
-  as CPython binds nothing when `UNPACK_SEQUENCE` raises.
+  the arity demand is RETAINED as a typed effect on one arm, where nothing
+  binds -- exactly as CPython binds nothing when `UNPACK_SEQUENCE` raises --
+  and under the unpack's completes atom each name binds its position's
+  projection.  The halt is never the whole answer.
 - **undug callsite coordinate**. Currently loud; see the frontier test at the
   bottom, which names the arm that retires it.
 
@@ -110,6 +112,16 @@ def _answers_when_dig_yields(dug, source: str):
     return answers
 
 
+def _unpack_halt(out):
+    """The runtime unpack's one halt, beside the completed arm it never
+    claims away."""
+    assert isinstance(out, ExitSet), out
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
+    return halt
+
+
 def _operation(*names: str):
     """One unpack demand, addressed by a genuine runtime locus.
 
@@ -133,9 +145,7 @@ def test_symbolic_receiver_retains_the_arity_demand_and_binds_nothing() -> None:
     """POSITIVE. A plain-name RHS has no lift-time cardinality."""
     seen, out = _receivers("def A(p):\n a, b = p\n return a\n")
     assert seen == ["SymbolicValue"]
-    assert out.halts() == out.exits
-    (halt,) = out.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    halt = _unpack_halt(out)
     assert "exactly 2 members" in halt.effect.reason
     assert "(a, b)" in halt.effect.reason
     # CPython binds nothing when UNPACK_SEQUENCE raises. Neither does this.
@@ -150,9 +160,9 @@ def test_the_retained_arity_is_the_targets_own_count_not_a_constant() -> None:
     """
     _, two = _receivers("def A(p):\n a, b = p\n return a\n")
     _, three = _receivers("def A(p):\n a, b, c = p\n return a\n")
-    assert "exactly 2 members" in two.effect.reason
-    assert "exactly 3 members" in three.effect.reason
-    assert "(a, b, c)" in three.effect.reason
+    assert "exactly 2 members" in _unpack_halt(two).effect.reason
+    assert "exactly 3 members" in _unpack_halt(three).effect.reason
+    assert "(a, b, c)" in _unpack_halt(three).effect.reason
 
 
 def test_an_attribute_receiver_is_the_same_category_as_a_name() -> None:
@@ -161,14 +171,15 @@ def test_an_attribute_receiver_is_the_same_category_as_a_name() -> None:
     must not be reading the source shape."""
     seen, out = _receivers("def A(o):\n a, b = o.pair\n return a\n")
     assert seen == ["SymbolicValue"]
-    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
-    assert "exactly 2 members" in out.effect.reason
+    assert "exactly 2 members" in _unpack_halt(out).effect.reason
 
 
 def test_the_obligation_survives_a_guard_as_one_halted_face() -> None:
     """DISCRIMINATING. Under an `if`, the demand is one HALTED face and the
     complementary face still completes. A refusal could not coexist with the
-    guard; a retained obligation can, which is the whole point of the rung."""
+    guard; a retained obligation can, which is the whole point of the rung.
+    The unpack's own completed face returns too: two completed faces, the
+    branch not taken and the unpack that completed."""
     _, out = _receivers(
         "def A(i, values):\n"
         " if isinstance(i, tuple):\n"
@@ -179,7 +190,7 @@ def test_the_obligation_survives_a_guard_as_one_halted_face() -> None:
     halted = [exit_ for exit_ in out.exits if isinstance(exit_, Halted)]
     completed = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
     assert len(halted) == 1
-    assert len(completed) == 1
+    assert len(completed) == 2
     assert isinstance(halted[0].effect, SequenceUnpackRuntimeEffect)
     assert "(col, loc)" in halted[0].effect.reason
 
@@ -272,16 +283,20 @@ def test_callsite_receiver_answers_like_its_dug_floor() -> None:
     here too -- and every one panicked with "no `project_sequence_with` arm".
 
     An opaque call body carries no cardinality, so it must land on exactly the
-    answer a symbolic receiver gets: the arity obligation retained, nothing
-    bound. That it arrives through a callsite changes how the answer is reached,
-    never what the answer is.
+    answer a symbolic receiver gets: the arity obligation retained as one arm,
+    nothing bound on it. That it arrives through a callsite changes how the
+    answer is reached, never what the answer is.
     """
     seen, out = _receivers("def A(o):\n a, b = o.split()\n return a\n")
     # Dug to the opaque residual, then re-dispatched on the EUF receiver term.
     assert seen == ["CallSiteValue", "SymbolicValue"], seen
-    assert out.halts() == out.exits
-    (halt,) = out.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    unpack_halts = [
+        halt
+        for halt in out.halts()
+        if isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    ]
+    (halt,) = unpack_halts
+    assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
     assert "exactly 2 members" in halt.effect.reason
     assert "(a, b)" in halt.effect.reason
     assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
@@ -357,10 +372,7 @@ def test_comprehension_receiver_retains_the_arity_demand() -> None:
     ):
         seen, out = _receivers(source)
         assert seen == ["ComprehensionValue"], seen
-        assert out.halts() == out.exits
-        (halt,) = out.halts()
-        assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
-        assert "exactly 2 members" in halt.effect.reason
+        assert "exactly 2 members" in _unpack_halt(out).effect.reason
 
 
 def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
@@ -376,9 +388,15 @@ def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
 
     absent = ComprehensionValue(make_var("xs"), finite_elements=None)
     out = _operation("a", "b").submit(absent, None)
-    assert out.halts() == out.exits
-    (halt,) = out.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    _unpack_halt(out)
+    # The completed face binds each name to its projection, never a member.
+    (completed,) = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
+    assert isinstance(completed.value, ScopeRebinds)
+    assert tuple(name for name, _ in completed.value.bindings) == ("a", "b")
+    assert all(
+        "python:unpack.project" in str(member.to_term(owner="twin"))
+        for _, member in completed.value.bindings
+    )
 
 
 def test_present_finite_testimony_binds_and_a_wrong_count_stays_loud() -> None:
@@ -412,15 +430,17 @@ def test_conditional_receiver_partitions_into_one_face_per_arm() -> None:
 
     Each face answers for itself under its own polarity. They are NOT fused
     back into a conditional value: an answer here is a binding or a halt, and
-    those do not fuse.
+    those do not fuse.  Each arm's runtime unpack has both faces: a halt and
+    a completion per arm, none dropped for the other arm's.
     """
     seen, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
     assert seen == ["GuardedValue"]
     assert isinstance(out, ExitSet)
-    assert len(out.exits) == 2
-    for exit_ in out.exits:
-        assert isinstance(exit_, Halted)
+    halts = out.halts()
+    assert len(halts) == 2
+    for exit_ in halts:
         assert isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+    assert len([exit_ for exit_ in out.exits if isinstance(exit_, Completed)]) == 2
 
 
 def test_each_conditional_face_owes_its_own_operand_not_a_shared_one() -> None:
@@ -429,7 +449,9 @@ def test_each_conditional_face_owes_its_own_operand_not_a_shared_one() -> None:
     shared operand would look identical in arity and be wrong about what the
     caller must satisfy."""
     _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
-    operands = {str(exit_.effect.runtime_operand.term.args[0]) for exit_ in out.exits}
+    operands = {
+        str(exit_.effect.runtime_operand.term.args[0]) for exit_ in out.halts()
+    }
     assert len(operands) == 2, operands
     assert any("p" in operand for operand in operands)
     assert any("q" in operand for operand in operands)
@@ -439,9 +461,12 @@ def test_the_two_conditional_faces_carry_complementary_guards() -> None:
     """DISCRIMINATING. One face rides under the test, the other under its
     negation -- never both under the same guard, which would claim the unpack
     is owed of two different values on the same execution."""
+    from sugar_lift_py_tests.ir import not_
+
     _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
-    guards = [exit_.guard for exit_ in out.exits]
+    guards = [exit_.guard for exit_ in out.halts()]
     assert len(guards) == 2
-    negated = [guard for guard in guards if getattr(guard, "kind", None) == "not"]
-    assert len(negated) == 1
-    assert negated[0].operands[0] in guards
+    first, second = (set(getattr(guard, "operands", (guard,))) for guard in guards)
+    assert any(not_(conjunct) in second for conjunct in first) or any(
+        not_(conjunct) in first for conjunct in second
+    )

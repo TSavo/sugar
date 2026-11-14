@@ -503,13 +503,28 @@ class ComprehensionSugar(ConstructedTermSugar):
                     depth, members, index + 1, projected, binds, carried, done
                 )
 
-            inner_ctx = self._member_ctx(level, members[index], carried)
-            if not isinstance(inner_ctx, type(ctx)):
-                if level.filters:
-                    # The member does not destructure: its conditions are
-                    # not decided here.
-                    raise _UndecidedMember
-                return inner_ctx
+            unpacked, enter = self._member_unpack(level, members[index], carried)
+            if unpacked.completed_value() is None and level.filters:
+                # The member does not destructure on every arm: its
+                # conditions are not decided here.
+                raise _UndecidedMember
+
+            # The member runs beneath each completed arm of its unpack; the
+            # unpack's halt is an arm of the comprehension as it is.
+            def member(roster):
+                return run_member(
+                    depth, enter(roster), projected, binds, carried, after
+                )
+
+            if len(unpacked.exits) == 1:
+                return unpacked.and_then(member)
+            return unpacked.sequence(member)
+
+        def run_member(depth, inner_ctx, projected, binds, carried, after):
+            """One member of generator ``depth`` whose target is bound in
+            ``inner_ctx``: its conditions, then its element (or the next
+            generator's members), then ``after`` (every member after it)."""
+            level = levels[depth]
             # The member's conditions run before its element, after every
             # earlier member: their writes come first.
             keep, condition_writes, inner_ctx = self._sifted(level, inner_ctx)
@@ -601,11 +616,15 @@ class ComprehensionSugar(ConstructedTermSugar):
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
         return Projected(projected)
 
-    def _member_ctx(self, generator, member, ctx):
-        """``ctx`` with one finite member bound to the generator's target.
-
-        Returns the unpack's own outcome when the member does not destructure
-        into the target's leaves.
+    def _member_unpack(self, generator, member, ctx):
+        """``(unpacked, enter)``: one finite member's unpack into the
+        generator's target.  ``unpacked`` is an ``ExitSet`` whose completed
+        arms hold the target's roster (``()`` for a name target) and whose
+        halted arms are the unpack's halt (the member does not destructure
+        into the target's leaves); a member with no authenticated cardinality
+        answers both, its leaves' projections under the unpack's completes
+        atom and the halt under its complement.  ``enter(roster)`` is ``ctx``
+        with the member and a completed arm's leaves bound.
 
         A read of a target name in the element or a condition is a member
         ``EvaluationRef`` to the coordinate bound here (temporal choice 1,
@@ -616,9 +635,11 @@ class ComprehensionSugar(ConstructedTermSugar):
         """
         from dataclasses import replace
 
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            PositionalUnpackOperation,
+            UnpackMemberRoster,
         )
+        from sugar_lift_py_tests.outcome import ExitSet
 
         target = generator.target
         member = member.project_operation_receiver(
@@ -628,32 +649,36 @@ class ComprehensionSugar(ConstructedTermSugar):
         if target.source_name is not None:
             temporal = temporal.bind_value(target.source_name, member)
         temporal = temporal.bind_value(generator.binding_coordinate_cid, member)
-        if target.coordinates is not None:
-            from sugar_lift_py_tests.operations.positional_unpack_operation import (
-                PositionalUnpackOperation,
-                UnpackMemberRoster,
+        if target.coordinates is None:
+            return ExitSet.completed(()), lambda _roster: replace(
+                ctx, temporal=temporal
             )
+        leaves = _target_leaves(target)
 
-            leaves = _target_leaves(target)
-            unpacked = PositionalUnpackOperation(
-                fixed_prefix=len(leaves),
-                fixed_suffix=0,
-                has_star=False,
-                owner="ComprehensionSugar._finite_map.target",
-                blame=self.site,
-            ).submit(member, ctx)
-            roster = plain_completed_value(unpacked)
+        def enter(roster):
             if not isinstance(roster, UnpackMemberRoster):
-                return unpacked
+                raise TypeError(
+                    "comprehension target unpack omitted its authenticated roster"
+                )
+            leaf_temporal = temporal
             for leaf, coordinate, value in zip(
                 leaves,
                 generator.target_coordinates,
                 roster.members,
                 strict=True,
             ):
-                temporal = temporal.bind_value(leaf.source_name, value)
-                temporal = temporal.bind_value(coordinate.cid, value)
-        return replace(ctx, temporal=temporal)
+                leaf_temporal = leaf_temporal.bind_value(leaf.source_name, value)
+                leaf_temporal = leaf_temporal.bind_value(coordinate.cid, value)
+            return replace(ctx, temporal=leaf_temporal)
+
+        unpacked = PositionalUnpackOperation(
+            fixed_prefix=len(leaves),
+            fixed_suffix=0,
+            has_star=False,
+            owner="ComprehensionSugar._finite_map.target",
+            blame=self.site,
+        ).submit(member, ctx)
+        return unpacked, enter
 
     def _symbolic_member_ctx(self, generator, ctx):
         """``ctx`` with the generator's symbolic member bound before any read
@@ -661,7 +686,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         under the generator's coordinate, and, for a destructuring target,
         each leaf's projection of it under the leaf's coordinate. These are
         the coordinates a member ``EvaluationRef`` reads, bound as
-        ``_member_ctx`` binds a finite member, so the element, the
+        ``_member_unpack`` binds a finite member, so the element, the
         conditions and every later generator read the member and never a
         name an enclosing statement bound. A context that carries no
         temporal is returned unchanged: a member read in it panics.
@@ -705,10 +730,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         in. The lambda value carries each binding it reads
         (``LambdaCallable.closure``), so its body reduces after the
         comprehension is done. ``ctx`` unchanged when ``last`` does not
-        destructure into the target: the comprehension halts on it, and no
-        lambda made in it outlives it.  ``ctx`` unchanged, too, where the final
-        member is not placed (``final_member``: a generator expression not
-        consumed whole in place).
+        destructure into the target on any arm: the comprehension halts on
+        it, and no lambda made in it outlives it.  ``ctx`` unchanged, too,
+        where the final member is not placed (``final_member``: a generator
+        expression not consumed whole in place).
         """
         from dataclasses import replace
 
@@ -716,9 +741,16 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         if not self.final_member:
             return ctx
-        member_ctx = self._member_ctx(generator, last, ctx)
-        if not isinstance(member_ctx, type(ctx)):
+        from sugar_lift_py_tests.outcome import Completed
+
+        unpacked, enter = self._member_unpack(generator, last, ctx)
+        # The comprehension is done only on the unpack's completed arm: its
+        # roster (each leaf's projection, for a member with no authenticated
+        # cardinality) is what the cell holds there.
+        completed = [arm for arm in unpacked.exits if isinstance(arm, Completed)]
+        if len(completed) != 1:
             return ctx
+        member_ctx = enter(completed[0].value)
         temporal = ctx.temporal
         for coordinate in _member_coordinates(generator):
             temporal = temporal.bind_value(

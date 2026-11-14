@@ -24,14 +24,17 @@ authenticated finite members?
   is a named ``ValueError`` via the ground exit door.
 
 - It does not (a symbolic term, an object, an opaque call coordinate): the
-  cardinality is known only at runtime.  There is no lift-time evidence naming
-  either the count or the exception type, so the arity demand is retained as
-  the typed ``SequenceUnpackRuntimeEffect`` carrying the exact
-  ``python:unpack.destructure(term, arity)`` obligation -- the same coordinate
-  family the comprehension destructure already states
-  (``sugar/comprehension_sugar.py::_guard_destructure``).  Assuming the count
-  matched would be the one forbidden move.  Starred opaque patterns keep the
-  same law: never complete, never invent a tail.
+  cardinality is known only at runtime, so the unpack has both faces
+  (``runtime_unpack_faces``).  Under ``python:unpack.completes`` of the
+  demand (``python:unpack.destructure(term, arity)``, the coordinate family
+  the comprehension destructure already states:
+  ``sugar/comprehension_sugar.py::_guard_destructure``; its starred layout
+  ``python:unpack.destructure_starred``) each name binds to its position's
+  projection; under the complement the arity demand is the typed
+  ``SequenceUnpackRuntimeEffect`` halt and nothing binds.  Assuming the count
+  matched would be one forbidden move; claiming the unpack always fails
+  would be the other.  A star binds ``python:unpack.rest`` of the term, never
+  an invented tail.
 
 Anything else reaches ``FloorValue.project_sequence_with`` and stays a loud
 floor construction gap: an unwritten floor is never a silent success.
@@ -188,22 +191,21 @@ class SequenceProjectionOperation:
         return ExitSet.completed(ScopeRebinds(rebinds))
 
     def _runtime_cardinality(self, value: Any) -> Any:
-        from sugar_lift_py_tests.effect import (
-            SequenceUnpackRuntimeEffect,
-            runtime_effect_evidence_from_terms,
+        """Both faces of the runtime unpack (``runtime_unpack_faces``): each
+        name bound to its position's projection under the unpack's completes
+        atom, and the runtime-cardinality halt, nothing bound, under its
+        complement."""
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            runtime_unpack_faces,
         )
-        from sugar_lift_py_tests.ir import ctor, num
         from sugar_lift_py_tests.outcome import ExitSet
 
-        term = value.to_term(owner=f"{self.owner}.value")
-        operation = ctor(
-            "python:unpack.destructure",
-            [term, num(self.arity)],
-            symbol_kind="coordinate",
-        )
         if self.star_name is None:
             roster = ", ".join(self.target_names)
             demand = f"exactly {self.arity} members for targets ({roster})"
+            names = self.target_names
+            prefix = self.arity
         else:
             roster = (
                 f"{', '.join(self.prefix_names)}"
@@ -213,16 +215,21 @@ class SequenceProjectionOperation:
                 f"{', '.join(self.suffix_names)}"
             )
             demand = f"at least {self.arity} members for starred targets ({roster})"
-        return ExitSet.halted(
-            SequenceUnpackRuntimeEffect(
-                "sequence unpack runtime boundary: unpack demands "
-                f"{demand} but the right-hand side "
-                "carries no authenticated cardinality -- iteration count "
-                "belongs to Python's runtime __iter__; "
-                f"arity={self.arity} starred={self.star_name is not None} "
-                f"site={self.blame}",
-                **runtime_effect_evidence_from_terms(operation, operation, self.blame),
-            )
+            names = (*self.prefix_names, self.star_name, *self.suffix_names)
+            prefix = len(self.prefix_names)
+        members, effect, guard = runtime_unpack_faces(
+            value,
+            prefix=prefix,
+            suffix=len(self.suffix_names) if self.star_name is not None else 0,
+            has_star=self.star_name is not None,
+            owner=self.owner,
+            blame=self.blame,
+            demand=demand,
+        )
+        return ExitSet.two_faced(
+            ScopeRebinds(tuple(zip(names, members, strict=True))),
+            effect,
+            guard=guard,
         )
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:

@@ -10,10 +10,12 @@ paired with a discriminating arm that fails when the law is violated:
 2. The RHS is REDUCED before the unpack; its reduced term is what the
    obligation names. Two different RHS expressions project differently.
 3. Unauthenticated cardinality retains the typed
-   ``SequenceUnpackRuntimeEffect``; it never completes with invented members.
-4. Nothing binds on that arm -- a later read of a target is not satisfied by a
-   fabricated value. The discriminating arm is a display unpack, which DOES
-   bind, so this is not "everything is red".
+   ``SequenceUnpackRuntimeEffect`` as one arm; it never completes with
+   invented members, only each position's projection under the unpack's
+   completes atom.
+4. Nothing binds on the halted arm -- a later read of a target is not
+   satisfied by a fabricated value. The discriminating arm is a display
+   unpack, which DOES bind, so this is not "everything is red".
 5. Authenticated finite members bind POSITIONALLY, member-by-member, to the
    values already in hand (asserted at the layer that owns the members: the
    projection operation and the ``ScopeRebinds`` it constructs).
@@ -77,8 +79,11 @@ def _outcome(tmp_path: Path, source: str, stem: str):
 
 def _unpack_effect(tmp_path: Path, source: str, stem: str):
     outcome = _outcome(tmp_path, source, stem)
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
-    effect = outcome.halts()[0].effect
+    # Two faces: the halt, and the completed arm beside it (the unpack never
+    # claims it always fails).
+    (halt,) = outcome.halts()
+    assert len(outcome.halts()) < len(outcome.exits), outcome
+    effect = halt.effect
     assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
     return effect
 
@@ -184,11 +189,16 @@ def test_runtime_cardinality_retains_the_typed_unpack_effect(tmp_path: Path) -> 
 
 
 def test_nothing_binds_on_the_runtime_arm(tmp_path: Path) -> None:
-    """A later read of a target is NOT satisfied by an invented member."""
+    """A later read of a target is NOT satisfied by an invented member: on
+    the halted arm nothing binds, and on the completed arm (under the
+    unpack's completes atom) ``a`` is its position's projection."""
     read_target = "def A(o):\n    a, b = o\n    return a\n"
     outcome = _outcome(tmp_path, read_target, "read_target")
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
-    assert isinstance(outcome.halts()[0].effect, SequenceUnpackRuntimeEffect)
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    (completed,) = [arm for arm in outcome.exits if arm not in outcome.halts()]
+    assert "python:unpack.completes" in str(completed.guard)
+    assert "python:unpack.project" in str(completed.value.record)
 
     # Discrimination: a display unpack DOES bind, and returns the paired
     # member -- so the assertion above is about this shape, not about

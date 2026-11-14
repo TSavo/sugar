@@ -7,8 +7,9 @@ Python law:
 - Over authenticated tuple/list members: bind head and tail (list) in source
   order; too few fixed positions → named ValueError.
 - Over opaque / runtime-selected members: retain typed
-  ``SequenceUnpackRuntimeEffect``; bind nothing; never fabricate arity or
-  complete.
+  ``SequenceUnpackRuntimeEffect`` on one arm, binding nothing; never
+  fabricate arity.  The other arm completes only under the starred layout's
+  completes atom, head its projection and the star ``python:unpack.rest``.
 - Later store halt preserves earlier bindings from a completed star unpack
   prefix.
 - Arity and reversed-tail lying twins fail.
@@ -192,20 +193,28 @@ def test_opaque_starred_retains_typed_obligation_no_bind(tmp_path: Path) -> None
     outcome = _star_op(prefix=("head",), blame=site).submit(
         SymbolicValue(make_var("xs")), None
     )
-    assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
     assert "no authenticated cardinality" in halt.effect.reason
     assert (
         "at least" in halt.effect.reason or "starred=True" in halt.effect.reason
     )
+    # The completed arm binds head to its projection and the star to the
+    # term's rest, under the starred layout's completes atom.
+    (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
+    assert "python:unpack.destructure_starred" in str(completed.guard)
+    (head, tail) = completed.value.bindings
+    assert head[0] == "head" and tail[0] == "tail"
+    assert "python:unpack.project" in str(head[1].to_term(owner="twin"))
+    assert "python:unpack.rest" in str(tail[1].to_term(owner="twin"))
 
 
 def test_source_opaque_starred_never_completes(tmp_path: Path) -> None:
+    """Never an unguarded completion: the halt is one arm, and the completed
+    arm rides the starred unpack's completes atom."""
     outcome = _function_sugar(
         tmp_path, "def f(xs):\n    head, *tail = xs\n    return head\n", "opaque_src"
     ).desugar(None)
-    assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
     with pytest.raises(AssertionError):
@@ -213,7 +222,8 @@ def test_source_opaque_starred_never_completes(tmp_path: Path) -> None:
 
 
 def test_opaque_starred_discrimination_display_does_bind(tmp_path: Path) -> None:
-    """Display twin completes; opaque does not — so the red is not universal."""
+    """Display twin completes outright; opaque only beside its halt — so the
+    red is not universal."""
     opaque = _function_sugar(
         tmp_path, "def f(xs):\n    a, *rest = xs\n    return a\n", "op_disc"
     ).desugar(None)
@@ -222,7 +232,7 @@ def test_opaque_starred_discrimination_display_does_bind(tmp_path: Path) -> None
         "def f(p, q, r):\n    a, *rest = p, q, r\n    return a\n",
         "disp_disc",
     ).desugar(None)
-    assert opaque.exits and opaque.halts() == opaque.exits
+    assert opaque.halts() and opaque.completed_value() is None
     assert display.completed_value() is not None
 
 

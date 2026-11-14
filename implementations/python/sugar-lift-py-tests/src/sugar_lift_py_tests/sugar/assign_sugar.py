@@ -316,13 +316,21 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         return operation, operation.demand_cid()
 
     def _unpack(self, operation, expected_demand_cid, value, ctx) -> ExitSet:
-        return operation.submit(value, ctx).and_then(
-            lambda roster: self._apply_authenticated_roster(
+        def apply(roster):
+            return self._apply_authenticated_roster(
                 roster,
                 expected_demand_cid=expected_demand_cid,
                 ctx=ctx,
             )
-        )
+
+        unpacked = operation.submit(value, ctx)
+        if len(unpacked.exits) == 1:
+            # One way in: the stores are exactly what follows it, a store
+            # waiting on its caller's actuals handed on.
+            return unpacked.and_then(apply)
+        # A runtime unpack's two faces: the stores run beneath its completed
+        # arm (a deferred store composed there), its halt an arm as it is.
+        return unpacked.sequence(apply)
 
     def _apply_authenticated_roster(self, roster, *, expected_demand_cid: str, ctx):
         """Zip targets only after the roster testifies this unpack occurrence."""

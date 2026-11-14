@@ -1,7 +1,8 @@
 """``a, b = <rhs>`` where the reduced RHS is a GuardedValue or a CallSiteValue.
 
 ``SequenceProjectionOperation`` has exactly two lawful answers -- authenticated
-finite members, or a retained ``SequenceUnpackRuntimeEffect`` -- and tuple,
+finite members, or a runtime unpack retaining ``SequenceUnpackRuntimeEffect``
+on one arm beside its completed projections -- and tuple,
 array, symbolic, object and opaque coordinates all route to one of them. Two
 value categories measured on the installed pandas tree had no arm at all and
 panicked with ``requested='project_sequence_with'``: ``CallSiteValue`` (6 rows)
@@ -175,14 +176,21 @@ def _halted_unpack_exits(outcome):
 def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
     """The retained demand is owed on a FACE, not unconditionally.
 
-    The block reduction lifts the guarded arm's effect into a partition, so the
-    observable artifact is an ExitSet whose halted arm carries the typed unpack
-    effect under the branch's own formula.
+    The block reduction lifts each guarded arm's effect into a partition, so
+    the observable artifact is an ExitSet whose halted arms carry the typed
+    unpack effect, each under its own branch's formula (conjoined with the
+    complement of that arm's completes atom).  Both arms are runtime unpacks
+    here, and neither arm's halt is dropped for the other's.
     """
+    from sugar_lift_py_tests.ir import not_
+
     outcome = _outcome(tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else")
     halted = _halted_unpack_exits(outcome)
-    assert len(halted) == 1, outcome
-    assert halted[0].guard == GUARD
+    assert len(halted) == 2, outcome
+    first, second = (set(getattr(h.guard, "operands", (h.guard,))) for h in halted)
+    assert (GUARD in first and not_(GUARD) in second) or (
+        GUARD in second and not_(GUARD) in first
+    )
 
 
 def test_guarded_arm_effect_is_not_owed_unconditionally(tmp_path: Path) -> None:
@@ -227,11 +235,17 @@ OPAQUE_CALL_TWO = "def A(o, v):\n    a, b = o.copy()\n    return v\n"
 OPAQUE_CALL_THREE = "def A(o, v):\n    a, b, c = o.copy()\n    return v\n"
 
 
+def _callsite_unpack_effect(outcome):
+    """The retained unpack demand: one halted arm, beside the completed arm
+    the runtime unpack never claims away."""
+    (halt,) = _halted_unpack_exits(outcome)
+    assert len(outcome.halts()) < len(outcome.exits), outcome
+    return halt.effect
+
+
 def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> None:
     outcome = _outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two")
-    assert outcome.halts() == outcome.exits, outcome
-    (halt,) = outcome.halts()
-    effect = halt.effect
+    effect = _callsite_unpack_effect(outcome)
     assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
     assert "exactly 2 members" in effect.reason
     assert "no authenticated cardinality" in effect.reason
@@ -240,8 +254,10 @@ def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> Non
 
 
 def test_callsite_arity_is_the_target_count(tmp_path: Path) -> None:
-    two = _outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two").effect
-    three = _outcome(tmp_path, OPAQUE_CALL_THREE, "callsite_three").effect
+    two = _callsite_unpack_effect(_outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two"))
+    three = _callsite_unpack_effect(
+        _outcome(tmp_path, OPAQUE_CALL_THREE, "callsite_three")
+    )
     assert "exactly 2 members" in two.reason
     assert "exactly 3 members" in three.reason
     # Discrimination: a different arity is a different obligation TERM, not the
@@ -275,9 +291,7 @@ def test_callsite_with_no_reachable_body_takes_the_opaque_arm(
         "    return a\n"
     )
     outcome = _outcome(tmp_path, source, "callsite_opaque")
-    assert outcome.halts() == outcome.exits, outcome
-    (halt,) = outcome.halts()
-    effect = halt.effect
+    effect = _callsite_unpack_effect(outcome)
     assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
     # The obligation names the callsite coordinate, not an invented element.
     assert "call:pair" in str(effect.witness.operation)

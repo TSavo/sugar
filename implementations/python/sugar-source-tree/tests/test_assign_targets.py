@@ -178,16 +178,19 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     # now a typed effect naming the exact obligation
     # `python:unpack.destructure(term, arity)`. Same law, one rung up, and the
     # assertion is correspondingly stronger.
+    #
+    # The halt is one arm, never the whole answer: under the obligation's
+    # `python:unpack.completes` atom the unpack completes and the statements
+    # after it run; under its complement it halts, binding nothing.
     from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
 
-    from sugar_lift_py_tests.ir import num
-    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, true_guard
+    from sugar_lift_py_tests.ir import atomic, num
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
     function = _fn(
-        "def A(p, receiver):\n"
+        "def A(p):\n"
         "    a, b = p\n"
-        "    receiver.after = 1\n"
         "    later = 2\n"
         "    return later\n"
     )
@@ -195,11 +198,9 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
 
     out = sugar.desugar()
     assert isinstance(out, ExitSet)
-    assert len(out.exits) == 1
-    (halted,) = out.exits
+    (halted,) = out.halts()
+    (completed,) = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
     assert isinstance(halted, Halted)
-    assert not any(isinstance(exit_, Completed) for exit_ in out.exits)
-    assert halted.guard == true_guard()
     assert halted.state == _ReducedBlock((), True, ())
 
     effect = halted.effect
@@ -211,9 +212,12 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     assert effect.witness.operation.args[1] == num(2)
     assert effect.witness.site.line == 2
     assert effect.witness.site.col == 4
+    assert completed.guard == atomic(
+        "python:unpack.completes", [effect.witness.operation]
+    )
 
     # The exact pre-effect state is still empty: neither unpack target bound,
-    # and the later attribute store / name binding never executed.
+    # and the later name binding never executed.
     assert halted.state.entries == ()
     assert halted.state.fall_through == ()
     assert halted.state.transforms == ()
