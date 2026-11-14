@@ -526,6 +526,45 @@ def test_a_mixed_unpack_is_the_statements_unpack_store_sugar() -> None:
     assert TermValue(1) in _returned_values(yielded.machine.send(sent))
 
 
+def test_a_nested_unpack_with_a_store_leaf_is_the_statements_unpack() -> None:
+    """``a, (b, d['k']) = yield v``: the nested level unpacks its member
+    through the same positional unpack and stores its leaf, before the
+    frame returns the Name the level bound."""
+    from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+        NestedUnpackTarget,
+    )
+
+    steps = _steps(
+        "def g():\n    d = {}\n    a, (b, d['k']) = yield 5\n    return b\n"
+    )
+    assert not any(isinstance(item, OpaqueStepV1) for item in steps)
+    step = steps[1]
+    assert isinstance(step, YieldAssignStepV1)
+    assert isinstance(step.store, DynamicUnpackStoreAssignSugar)
+    assert isinstance(step.store.targets[1], NestedUnpackTarget)
+    assert [name for name, _key in step.targets] == ["a", "b"]
+    assert all(
+        key == projection_key(step.store_evaluation, name)
+        for name, key in step.targets
+    )
+    yielded = _machine("nested_store_unpack", steps).resume()
+    assert isinstance(yielded, YieldEffect)
+    sent = TupleValue((TermValue(1), TupleValue((TermValue(2), TermValue(3)))))
+    assert TermValue(2) in _returned_values(yielded.machine.send(sent))
+
+
+def test_a_nested_store_level_of_the_wrong_arity_halts_at_the_resume() -> None:
+    steps = _steps(
+        "def g():\n    d = {}\n    a, (b, d['k']) = yield 5\n    return b\n"
+    )
+    yielded = _machine("nested_store_arity", steps).resume()
+    halted = yielded.machine.send(
+        TupleValue((TermValue(1), TupleValue((TermValue(2),))))
+    )
+    assert isinstance(halted, ExitSet)
+    assert halted.exits and halted.halts() == halted.exits
+
+
 # ---------------------------------------------------------------------------
 # ``(a, (b, *c)) = yield v`` / ``(a, *b, (c, d)) = yield v``
 # ---------------------------------------------------------------------------

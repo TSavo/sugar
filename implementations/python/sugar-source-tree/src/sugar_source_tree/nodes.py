@@ -273,7 +273,10 @@ class _GeneratorTryFinallyExpansionV1:
 
 @dataclass(frozen=True)
 class _GeneratorStepAbsentV1:
-    pass
+    # What the step vocabulary refuses, by name, where a statement's order
+    # of evaluation cannot be expressed as a step (``xs[(yield)] = yield v``);
+    # None names the statement by its kind.
+    observed: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -7408,6 +7411,15 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
         absent_step = _GeneratorStepAbsentV1()
+        # ``xs[(yield)] = yield v``: Python evaluates the value, then each
+        # target's receiver and key, so the frame suspends at the value,
+        # resumes, evaluates the receiver, and suspends again inside the key
+        # before the store.  The one yield-assign step suspends once and then
+        # stores; a second suspension between the receiver and the store has
+        # no step to stand in, so the statement is refused by name.
+        store_target_suspends = _GeneratorStepAbsentV1(
+            "Assign whose store target suspends after its value"
+        )
         absent_cleanup = _GeneratorCleanupAbsentV1()
 
         def suspension_step(value):
@@ -7461,8 +7473,9 @@ class FunctionDef(Statement):
             resumed value read through the yield's projection of the
             statement's key; the pair the mutation binds under that key
             (``store_keeps``) is what every later read of the receiver reads
-            (``BuiltinContainerProjection``).  None when anything but the
-            stored value suspends."""
+            (``BuiltinContainerProjection``).  Refused by name when the
+            receiver or key suspends (``store_target_suspends``); None when
+            the stored value's own operand suspends."""
             call = statement.evaluated[0] if statement.evaluated else None
             if (
                 not isinstance(call, BuiltinContainerCall)
@@ -7475,7 +7488,9 @@ class FunctionDef(Statement):
             if FunctionDef._owns_yield(
                 (call.receiver, *call.args[:-1], *statement.evaluated[1:])
             ):
-                return None
+                # ``xs[(yield)] = yield v``: the target suspends again after
+                # the value's resume (``store_target_suspends``).
+                return store_target_suspends
             if value.value is not None and FunctionDef._owns_yield((value.value,)):
                 return None
             evaluation = getattr(statement, "evaluation", None)
@@ -7525,12 +7540,14 @@ class FunctionDef(Statement):
             (``KeyedStoreSugar`` for a keyed place).
 
             Targets that hold a store beside Names (``a = o.x = ...``,
-            ``a, o.x = ...``) are the statement's own sugar the same way
-            (``Assign.chained_store_sugar``, ``Assign.unpack_store_sugar``),
-            its Names read out of what it bound.  A store on a decided
-            local list/dict/set (``xs[i] = ...``, which substitution made a
-            ``ContainerMutationStatement``) is that statement's mutation
-            (``container_store_step``).
+            ``a, o.x = ...``, ``a, (b, o.x) = ...``) are the statement's own
+            sugar the same way (``Assign.chained_store_sugar``,
+            ``Assign.unpack_store_sugar``), its Names read out of what it
+            bound.  A store on a decided local list/dict/set (``xs[i] =
+            ...``, which substitution made a ``ContainerMutationStatement``)
+            is that statement's mutation (``container_store_step``).  A
+            target that suspends itself (``xs[(yield)] = ...``) is refused by
+            name (``store_target_suspends``).
             """
             if isinstance(statement, ContainerMutationStatement):
                 return container_store_step(statement)
@@ -7548,8 +7565,8 @@ class FunctionDef(Statement):
                 return None
             if FunctionDef._owns_yield(tuple(targets)):
                 # ``xs[(yield)] = yield v``: a target suspends again after the
-                # value, which this step cannot perform.
-                return None
+                # value (``store_target_suspends``).
+                return store_target_suspends
             suspension = suspension_step(statement.value)
             if suspension is None:
                 return None
@@ -7678,6 +7695,8 @@ class FunctionDef(Statement):
                 step = yield_assign_step(statement)
                 if step is None:
                     return absent_step
+                if isinstance(step, _GeneratorStepAbsentV1):
+                    return step
                 return _GeneratorNamedStepV1(step)
             if isinstance(
                 statement, ContainerMutationStatement
@@ -7688,6 +7707,8 @@ class FunctionDef(Statement):
                 step = yield_assign_step(statement)
                 if step is None:
                     return absent_step
+                if isinstance(step, _GeneratorStepAbsentV1):
+                    return step
                 return _GeneratorNamedStepV1(step)
             if isinstance(statement, Return):
                 return _GeneratorNamedStepV1(
@@ -8122,9 +8143,12 @@ class FunctionDef(Statement):
                     )
                 )
                 return
+            # A refusal by name (``_GeneratorStepAbsentV1.observed``) names
+            # what the vocabulary cannot perform; otherwise the kind does.
+            observed = getattr(produced, "observed", None)
             steps.append(
                 OpaqueStepV1(
-                    statement.kind,
+                    observed if isinstance(observed, str) else statement.kind,
                     carries_suspension=FunctionDef._owns_yield((statement,)),
                 )
             )
@@ -9926,32 +9950,86 @@ def _substituted_store_target(statement, target, scope):
     return rewrite(target, **changes) if changes else None
 
 
-def _substituted_unpack_store_leaves(statement, target, scope):
-    """Thread load-side receivers/keys for store leaves inside a flat unpack.
+def _has_store_leaf(target) -> bool:
+    """Whether ``target`` is, or holds under its Tuple/List/Starred
+    structure, an Attribute/Subscript store."""
+    if isinstance(target, (Attribute, Subscript)):
+        return True
+    if isinstance(target, Starred):
+        return _has_store_leaf(target.value)
+    if isinstance(target, (Tuple_, List)):
+        return any(_has_store_leaf(element) for element in target.elts)
+    return False
 
-    Name (and starred-Name) leaves are binding sites and stay untouched.
-    Attribute/Subscript leaves load their receiver and index, so they take the
-    same ``_substituted_store_target`` door as a standalone store. Nested
-    unpack shapes are not rewritten here — they stay on the name-only or loud
-    paths owned elsewhere.
+
+def _substituted_assignment_targets(statement, value, scope):
+    """Substitute every store target's receiver and key in ``statement``'s
+    target list (``Assign.targets``), each the one way a single store's are
+    (``_substituted_store_target``): a chain (``a = o.x = d[k] = v``), the
+    store leaves of an unpack, nested levels included (``a, (b, o.x) =
+    v``).  Returns the rewritten targets, or None when nothing changed.
+
+    The targets are substituted in the order Python evaluates them: left to
+    right, each after the value, and a Name target is bound before the next
+    target is evaluated.  So a later receiver or key that reads a Name an
+    earlier target bound reads that Name's projection of this statement's
+    evaluation (``Assign.target_evaluations``, ``_unpack_projection_binding``),
+    which the statement's sugar binds before it runs any store: ``a = a.x =
+    v`` stores on ``v``, never on the ``a`` bound before the statement.  An
+    earlier receiver reads what the scope held before (``a.x = a = v``).
+    ``value`` is the substituted right-hand side, the object a chain's Name
+    denotes (``of``); an unpack leaf's member is not known here and its
+    reference denotes none.
+
+    A Name and a starred Name are binding sites: never substituted.
     """
     from .shadow import rewrite
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
-    if not isinstance(target, (Tuple_, List)):
+    if not any(_has_store_leaf(target) for target in statement.targets):
         return None
-    new_elts = []
-    changed = False
-    for leaf in target.elts:
-        if isinstance(leaf, (Attribute, Subscript)):
-            rewritten = _substituted_store_target(statement, leaf, scope)
-            if rewritten is not None:
-                new_elts.append(rewritten)
-                changed = True
-                continue
-        new_elts.append(leaf)
-    if not changed:
-        return None
-    return rewrite(target, elts=tuple(new_elts))
+    threaded = statement._threaded_target_names()
+    evaluation = statement._evaluation_key(scope) if threaded else None
+    chain = len(statement.targets) > 1
+    state = {"scope": scope, "changed": False}
+
+    def bind(name_node) -> None:
+        if name_node.id not in threaded:
+            return
+        reference = _evaluation_ref(
+            statement,
+            name_node.span,
+            projection_key(evaluation, name_node.id),
+            name_node.id,
+            of=value if chain else None,
+        )
+        # Read by this statement's later targets only: the binding the block
+        # carries on is the statement's own (``substitution_binding``).
+        state["scope"] = {**state["scope"], name_node.id: reference}
+
+    def visit(target):
+        if isinstance(target, (Attribute, Subscript)):
+            rewritten = _substituted_store_target(statement, target, state["scope"])
+            if rewritten is None:
+                return target
+            state["changed"] = True
+            return rewritten
+        if isinstance(target, Name):
+            bind(target)
+            return target
+        if isinstance(target, Starred):
+            if isinstance(target.value, Name):
+                bind(target.value)
+            return target
+        if isinstance(target, (Tuple_, List)):
+            elts = tuple(visit(element) for element in target.elts)
+            if all(new is old for new, old in zip(elts, target.elts)):
+                return target
+            return rewrite(target, elts=elts)
+        return target
+
+    new_targets = tuple(visit(target) for target in statement.targets)
+    return new_targets if state["changed"] else None
 
 
 def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
@@ -10286,10 +10364,13 @@ class Assign(Statement):
         rewrite the name being bound). Attribute/Subscript store targets load
         their receiver (and subscript index) as ordinary expressions: those
         faces must substitute so a prior ``xs = [0]`` reaches ``xs[0] = v`` as
-        a decided list. The same load law applies to store leaves inside a flat
-        unpack (``x, xs[0] = p, q``): Name leaves stay binding sites; store
-        leaves thread receivers and keys. The binding this statement introduces
-        for the rest of the block is reported by substitution_binding().
+        a decided list. The same load law applies to every store target of a
+        chain (``a = o.x = d[k] = v``) and every store leaf of an unpack,
+        nested levels included (``x, (y, xs[0]) = v``), left to right
+        (``_substituted_assignment_targets``): Name leaves stay binding sites;
+        store leaves thread receivers and keys. The binding this statement
+        introduces for the rest of the block is reported by
+        substitution_binding().
         """
         from .shadow import rewrite, rewrite_with_leaves
 
@@ -10311,10 +10392,10 @@ class Assign(Statement):
             new_target = _substituted_store_target(self, self.targets[0], scope)
             if new_target is not None:
                 changes["targets"] = (new_target,)
-        elif len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
-            new_target = _substituted_unpack_store_leaves(self, self.targets[0], scope)
-            if new_target is not None:
-                changes["targets"] = (new_target,)
+        else:
+            new_targets = _substituted_assignment_targets(self, new_value, scope)
+            if new_targets is not None:
+                changes["targets"] = new_targets
         # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
         # rewrite denotes the same occurrence, so its row joins by construction.
         rewritten = self if not changes else rewrite(self, **changes)
@@ -10442,6 +10523,18 @@ class Assign(Statement):
         read, against whatever had been rebound since (``x += 1; y = x + 0;
         x += 1; return y``)."""
         return tuple(self._name_values())
+
+    def _threaded_target_names(self) -> frozenset:
+        """Every Name target substitution binds to its projection of this
+        statement's evaluation: each keyed Name (``_keyed_names``), and each
+        Name leaf of an unpack against a non-display right-hand side
+        (``_unpack_projection_binding``).  A later target's receiver or key
+        that reads one of them reads that projection
+        (``_substituted_assignment_targets``)."""
+        target = self._dynamic_unpack_target()
+        if target is not None:
+            return frozenset(_unpack_target_names(target))
+        return frozenset(self._keyed_names())
 
     def target_evaluations(self) -> tuple:
         """``(name, key)`` for each keyed Name target (``_keyed_names``):
@@ -10778,67 +10871,85 @@ class Assign(Statement):
         # Every leaf must be a name (build already refused other shapes).
         return pattern
 
-    def _flat_mixed_unpack_targets(self, target, evaluation=None):
-        """Parse flat Name|Attribute|Subscript|*Name into typed unpack targets.
+    def _store_unpack_targets(self, target, evaluation=None):
+        """Parse a Name|Attribute|Subscript|*Name unpack tree into typed
+        unpack targets, or None.
 
-        At most one ``*Name``. Nested / ``*attr`` stay unadmitted. Pure Name
-        leaves return ``None`` (DynamicUnpackAssignSugar owns that path).
-        A Name leaf binds its member under its projection of ``evaluation``
-        (the statement's one evaluation) too.
+        A nested Tuple/List level is a ``NestedUnpackTarget``: its member is
+        unpacked through the same positional unpack, and its own targets
+        applied left to right, before the next sibling, as Python assigns a
+        nested target (``a, (b, o.x) = v``).  At most one ``*Name`` per
+        level; ``*attr`` and an empty level stay unadmitted.  A tree with no
+        store leaf returns ``None`` (``DynamicUnpackAssignSugar`` /
+        ``NestedDynamicUnpackAssignSugar`` own it).  A Name leaf binds its
+        member under its projection of ``evaluation`` (the statement's one
+        evaluation) too.
         """
         if not isinstance(target, (Tuple_, List)):
-            return None
-        star_indices = [
-            index
-            for index, element in enumerate(target.elts)
-            if isinstance(element, Starred)
-        ]
-        if len(star_indices) > 1:
             return None
         from sugar_lift_py_tests.sugar.unpack_projection_targets import (
             AttributeUnpackTarget,
             NameUnpackTarget,
+            NestedUnpackTarget,
             StarUnpackTarget,
             SubscriptUnpackTarget,
         )
 
-        targets: list[object] = []
         has_store = False
-        for element in target.elts:
-            if isinstance(element, Name):
-                targets.append(NameUnpackTarget(element.id, evaluation=evaluation))
-                continue
-            if isinstance(element, Starred):
-                if not isinstance(element.value, Name):
-                    return None
-                targets.append(
-                    StarUnpackTarget(element.value.id, evaluation=evaluation)
-                )
-                continue
-            if isinstance(element, Attribute):
-                has_store = True
-                targets.append(
-                    AttributeUnpackTarget(
-                        receiver=element.value.sugar(),
-                        attr=element.attr,
-                        site=element.fragment,
+
+        def level(node):
+            nonlocal has_store
+            if sum(isinstance(element, Starred) for element in node.elts) > 1:
+                return None
+            targets: list[object] = []
+            for element in node.elts:
+                if isinstance(element, Name):
+                    targets.append(
+                        NameUnpackTarget(element.id, evaluation=evaluation)
                     )
-                )
-                continue
-            if isinstance(element, Subscript):
-                has_store = True
-                targets.append(
-                    SubscriptUnpackTarget(
-                        receiver=element.value.sugar(),
-                        index=element.slice_.sugar(),
-                        site=element.fragment,
+                    continue
+                if isinstance(element, Starred):
+                    if not isinstance(element.value, Name):
+                        return None
+                    targets.append(
+                        StarUnpackTarget(element.value.id, evaluation=evaluation)
                     )
-                )
-                continue
+                    continue
+                if isinstance(element, Attribute):
+                    has_store = True
+                    targets.append(
+                        AttributeUnpackTarget(
+                            receiver=element.value.sugar(),
+                            attr=element.attr,
+                            site=element.fragment,
+                        )
+                    )
+                    continue
+                if isinstance(element, Subscript):
+                    has_store = True
+                    targets.append(
+                        SubscriptUnpackTarget(
+                            receiver=element.value.sugar(),
+                            index=element.slice_.sugar(),
+                            site=element.fragment,
+                        )
+                    )
+                    continue
+                if isinstance(element, (Tuple_, List)) and element.elts:
+                    inner = level(element)
+                    if inner is None:
+                        return None
+                    targets.append(
+                        NestedUnpackTarget(targets=inner, site=element.fragment)
+                    )
+                    continue
+                return None
+            return tuple(targets)
+
+        targets = level(target)
+        if targets is None or not has_store:
             return None
-        if not has_store:
-            return None
-        return tuple(targets)
+        return targets
 
     def _flat_store_unpack_pairs(self):
         """Flat Name|Attribute|Subscript leaves against a display RHS.
@@ -11194,17 +11305,18 @@ class Assign(Statement):
         )
 
     def unpack_store_sugar(self, value_sugar):
-        """``a, o.x, *b = <rhs>`` against a non-display right-hand side: the
-        one unpack of ``value_sugar`` (the right-hand side's sugar, or what a
-        yield assignment's resume reads its resumed value through) into flat
-        Name / store / ``*Name`` targets, each Name bound under its projection
-        of the statement's evaluation (``DynamicUnpackStoreAssignSugar``).
-        None for any other target."""
+        """``a, o.x, *b = <rhs>`` / ``a, (b, o.x) = <rhs>`` against a
+        non-display right-hand side: the one unpack of ``value_sugar`` (the
+        right-hand side's sugar, or what a yield assignment's resume reads its
+        resumed value through) into Name / store / ``*Name`` targets, nested
+        levels included (``_store_unpack_targets``), each Name bound under its
+        projection of the statement's evaluation
+        (``DynamicUnpackStoreAssignSugar``).  None for any other target."""
         target = self._dynamic_unpack_target()
         if target is None:
             return None
         evaluation = getattr(self, "evaluation", None)
-        mixed = self._flat_mixed_unpack_targets(
+        mixed = self._store_unpack_targets(
             target, evaluation if isinstance(evaluation, str) else None
         )
         if mixed is None:

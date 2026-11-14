@@ -698,3 +698,130 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
 #     carrier (store law, not a second unpack door). See
 #     test_unpack_sequencing_law for the sequencing faces.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Every store target's receiver and key are substituted (#7757 item 7):
+# a chain's, and a nested unpack level's, as a single store's are -- never
+# read by name at reduce.
+# ---------------------------------------------------------------------------
+
+
+def _statement(tmp_path: Path, source: str, stem: str, kind: str):
+    sugar = _function_sugar(tmp_path, source, stem)
+    return next(stmt for stmt in sugar.statements if type(stmt).__name__ == kind)
+
+
+def test_a_chained_attribute_store_reads_a_formal_receiver_through_its_key(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+        AttributeStoreEffectSugar,
+    )
+
+    chained = _statement(
+        tmp_path,
+        "def f(o):\n    a = o.x = 5\n    return a\n",
+        "chain_formal",
+        "ChainedAssignSugar",
+    )
+    (store,) = chained.stores
+    assert isinstance(store, AttributeStoreEffectSugar)
+    # The formal's coordinate, as ``o.x = 5`` alone reads it; the name
+    # ``o`` is never looked up at reduce.
+    assert isinstance(store.receiver, FormalRefSugar)
+    assert not isinstance(store.receiver, NameSugar)
+
+    # Discrimination arm: the single store reads the same receiver.
+    single = _function_sugar(tmp_path, "def f(o):\n    o.x = 5\n    return o\n", "one")
+    assert any(
+        isinstance(getattr(stmt, "receiver", None), FormalRefSugar)
+        for stmt in single.statements
+    )
+
+
+def test_a_chained_subscript_store_reads_its_receiver_and_key_through_their_keys(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+        SubscriptStoreEffectSugar,
+    )
+
+    chained = _statement(
+        tmp_path,
+        "def f(d, k):\n    a = d[k] = 5\n    return a\n",
+        "chain_subscript",
+        "ChainedAssignSugar",
+    )
+    (store,) = chained.stores
+    assert isinstance(store, SubscriptStoreEffectSugar)
+    assert isinstance(store.receiver, FormalRefSugar)
+    assert isinstance(store.index, FormalRefSugar)
+    assert store.receiver.coordinate != store.index.coordinate
+
+
+def test_a_chained_receiver_reads_a_name_an_earlier_target_bound(
+    tmp_path: Path,
+) -> None:
+    """``a = a[0] = v`` binds ``a`` first, then stores into the new ``a``:
+    the receiver reads ``a``'s projection of the chain's evaluation.  In
+    ``a[0] = a = v`` the receiver is evaluated before ``a`` is bound and
+    reads the formal."""
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+
+    after = _statement(
+        tmp_path,
+        "def f(a):\n    a = a[0] = [None]\n    return a\n",
+        "chain_after",
+        "ChainedAssignSugar",
+    )
+    (store,) = after.stores
+    assert isinstance(store.receiver, EvaluationRefSugar)
+    assert store.receiver.evaluation == dict(after.evaluations)["a"]
+
+    before = _statement(
+        tmp_path,
+        "def f(a):\n    a[0] = a = [None]\n    return a\n",
+        "chain_before",
+        "ChainedAssignSugar",
+    )
+    (store,) = before.stores
+    assert isinstance(store.receiver, FormalRefSugar)
+
+
+def test_a_nested_unpack_store_leaf_is_one_unpack_with_its_receiver_substituted(
+    tmp_path: Path,
+) -> None:
+    """``a, (b, o.x) = xs``: the nested level unpacks its member through the
+    same positional unpack, then stores on the formal ``o`` read through its
+    coordinate.  It used to be refused (``Assign.sugar``) with ``o`` never
+    substituted."""
+    from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+    from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+        AttributeUnpackTarget,
+        NameUnpackTarget,
+        NestedUnpackTarget,
+    )
+
+    unpack = _statement(
+        tmp_path,
+        "def f(o, xs):\n    a, (b, o.x) = xs\n    return a\n",
+        "nested_store",
+        "DynamicUnpackStoreAssignSugar",
+    )
+    assert isinstance(unpack, DynamicUnpackStoreAssignSugar)
+    first, nested = unpack.targets
+    assert isinstance(first, NameUnpackTarget) and first.name == "a"
+    assert isinstance(nested, NestedUnpackTarget)
+    inner_name, leaf = nested.targets
+    assert isinstance(inner_name, NameUnpackTarget) and inner_name.name == "b"
+    assert isinstance(leaf, AttributeUnpackTarget) and leaf.attr == "x"
+    assert isinstance(leaf.receiver, FormalRefSugar)
+    # Every Name leaf binds under its projection of the one evaluation.
+    assert first.evaluation is not None
+    assert inner_name.evaluation == first.evaluation

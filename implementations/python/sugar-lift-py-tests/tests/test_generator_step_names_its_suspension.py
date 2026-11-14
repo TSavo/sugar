@@ -81,6 +81,8 @@ def test_an_opaque_step_states_whether_it_holds_a_suspension(
         "def g(o):\n    a = o.x = yield 1\n    return a\n",
         "def g(o):\n    a, o.x = yield 1\n    return a\n",
         "def g():\n    (a, (b, *c)) = yield 1\n    return c\n",
+        "def g(o):\n    a, (b, o.x) = yield 1\n    return a\n",
+        "def g(d, k):\n    a = d[k] = yield 1\n    return a\n",
     ),
 )
 def test_a_yield_assignment_is_a_named_step(tmp_path, source) -> None:
@@ -89,6 +91,18 @@ def test_a_yield_assignment_is_a_named_step(tmp_path, source) -> None:
     steps = _steps(tmp_path, source)
     assert isinstance(steps[0], YieldAssignStepV1)
     assert not any(isinstance(step, OpaqueStepV1) for step in steps)
+
+
+def test_a_store_target_that_suspends_is_refused_by_name(tmp_path) -> None:
+    """``xs[(yield)] = yield 1``: Python evaluates the value, then the
+    receiver, then the key, which suspends again before the store.  The one
+    yield-assign step suspends once and then stores, so the statement is
+    refused by name, never named as a store it does not perform."""
+    steps = _steps(tmp_path, "def g(xs):\n    xs[(yield)] = yield 1\n    return xs\n")
+    step = _first_opaque(steps)
+    assert step.observed == "Assign whose store target suspends after its value"
+    assert step.carries_suspension is True
+    assert not any(isinstance(item, YieldAssignStepV1) for item in steps)
 
 
 def test_a_bare_yield_from_is_a_named_step(tmp_path) -> None:

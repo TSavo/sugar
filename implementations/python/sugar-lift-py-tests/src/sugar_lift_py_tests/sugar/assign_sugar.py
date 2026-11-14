@@ -273,14 +273,23 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.operations.positional_unpack_operation import (
-            PositionalUnpackOperation,
+        self._require_typed_targets()
+        operation, expected_demand_cid = self._operation()
+        return self.value.desugar(ctx).and_then(
+            lambda value: self._unpack(operation, expected_demand_cid, value, ctx)
         )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            reduce_block_to_exitset,
-        )
+
+    def unpack(self, value, ctx) -> ExitSet:
+        """Unpack ``value``, already evaluated, into the targets left to
+        right: the one positional unpack this statement submits
+        (``desugar``), and the one a nested level submits for its member
+        (``NestedUnpackTarget``), whose ``value`` field is unused."""
+        self._require_typed_targets()
+        operation, expected_demand_cid = self._operation()
+        return self._unpack(operation, expected_demand_cid, value, ctx)
+
+    def _require_typed_targets(self) -> None:
         from sugar_lift_py_tests.sugar.unpack_projection_targets import (
-            ApplyUnpackMemberSugar,
             UnpackProjectionTarget,
         )
 
@@ -290,6 +299,12 @@ class DynamicUnpackStoreAssignSugar(Sugar):
                     "DynamicUnpackStoreAssignSugar.targets must be "
                     f"UnpackProjectionTarget; got {type(target).__name__}"
                 )
+
+    def _operation(self):
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            PositionalUnpackOperation,
+        )
+
         prefix, suffix, has_star = self._fixed_counts()
         operation = PositionalUnpackOperation(
             fixed_prefix=prefix,
@@ -298,14 +313,14 @@ class DynamicUnpackStoreAssignSugar(Sugar):
             owner=type(self).__name__,
             blame=self.site,
         )
-        expected_demand_cid = operation.demand_cid()
-        return self.value.desugar(ctx).and_then(
-            lambda value: operation.submit(value, ctx).and_then(
-                lambda roster: self._apply_authenticated_roster(
-                    roster,
-                    expected_demand_cid=expected_demand_cid,
-                    ctx=ctx,
-                )
+        return operation, operation.demand_cid()
+
+    def _unpack(self, operation, expected_demand_cid, value, ctx) -> ExitSet:
+        return operation.submit(value, ctx).and_then(
+            lambda roster: self._apply_authenticated_roster(
+                roster,
+                expected_demand_cid=expected_demand_cid,
+                ctx=ctx,
             )
         )
 
