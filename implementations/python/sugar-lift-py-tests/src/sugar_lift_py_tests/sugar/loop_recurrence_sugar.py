@@ -1166,14 +1166,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         whose test has not decided false within ``runtime.fuel`` items."""
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.outcome import Completed
-        from sugar_lift_py_tests.outcome.exit_set import (
-            _is_false,
-            _is_true,
-            _require_exit_set,
-        )
+        from sugar_lift_py_tests.outcome.exit_set import _is_false, _is_true
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            halt_record,
-            halts_recorded,
+            header_applied,
         )
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -1193,23 +1188,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         with entered(loop_iteration_segment(self.target_cid, index)):
             item_ctx = self._enter_header(runtime, ctx, carried)
-            # A halt of the test halted where this item began, after the
-            # items before it: it carries that record (``halts_recorded``) and
-            # leaves the loop with what they did (``_left_with``).
-            test = halts_recorded(
-                _require_exit_set(
-                    runtime.test_sugar.desugar(item_ctx),
-                    owner="LoopRecurrenceSugar.while-test",
-                ),
-                halt_record(item_ctx),
-            )
-            tested = test.sequence(
-                lambda value: ExitSet.completed(
-                    _WhileTest(
-                        self._test_formula(value), value.extend_scope(item_ctx)
-                    )
-                )
-            )
+            # The test is evaluated before every item: each evaluation is
+            # that item's header (``_WhileItemTestV1``).  A walrus bind or
+            # callee store its value carried reaches the body and the loop's
+            # exit by the one header rule (``header_applied``), the stores
+            # laid in this item's record (``_WhileTest.entries``) where the
+            # item runs, after the items before it.
+            item = _WhileItemTestV1(runtime.test_sugar, self.site)
+            headed, test = header_applied(item, "test", item_ctx)
+            tested = headed if headed is not None else item.faces(test, item_ctx)
             undecided = any(
                 isinstance(face, Completed)
                 and not (
@@ -1263,26 +1250,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             item, body=reduce_block_to_exitset(runtime.body_sugars, item.ctx)
         )
 
-    def _test_formula(self, value):
-        """The truth of a ``while`` test's value as a guard (``predicate_formula``),
-        or None when its truth is not one value."""
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
-        )
-        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
-
-        if plain_completed_value(value.truth(self.site)) is None:
-            return None
-        return predicate_formula(value, self.site)
-
     def _after_test(self, item, runtime, *, entries, index):
         """The loop's outcome after item ``index``'s test decided: false
         leaves the loop with what the test left each carried name (the
         previous item's latch, or a walrus in the test), through the ``else``
         suite (``_finish_iterator``); true continues from the body as a live
-        ``for``'s item does (``_after_item``)."""
+        ``for``'s item does (``_after_item``).  Either way what the test's
+        evaluation stored (``item.entries``) follows what the items before it
+        did and leads what follows it."""
         from sugar_lift_py_tests.outcome.exit_set import _is_false
 
+        entries = (*entries, *item.entries)
         if _is_false(item.formula):
             # Item ``index`` evaluated the test: a walrus in it wrote there,
             # so the items the loop leaves after are ``index + 1``.
@@ -2081,8 +2059,63 @@ class _WhileTest:
     """One face of a live ``while``'s test in one item: the truth of the
     test's value as a guard (None when it is not one value), the context the
     body runs in (after the test: a walrus in it is bound), and, for a true
-    face, the body reduced there."""
+    face, the body reduced there.  ``entries``: the item's record before its
+    body -- the stores a callee the test called made on objects the loop's
+    frame sees, laid by the header rule (``laid_in_record``)."""
 
     formula: object
     ctx: object
     body: object = None
+    entries: tuple = ()
+
+
+@dataclass(frozen=True)
+class _WhileItemTestV1:
+    """A live ``while``'s test evaluated at one item: that item's header.
+
+    Python evaluates the test before every item, so each evaluation is its
+    own header, run by the one header rule (``header_applied``): its walrus
+    binds and callee stores are in the context the item's body and the
+    loop's exit read, and its stores are in the item's record
+    (``_WhileTest.entries``), consistent with the loop rule -- each item's
+    writes follow the items before it."""
+
+    test: object
+    site: object = None
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        return self.faces(self.test.desugar(ctx), ctx)
+
+    def faces(self, outcome, ctx) -> ExitSet:
+        """Each face of the test's ``outcome`` in ``ctx``: a completed face
+        is a ``_WhileTest`` (its truth as a guard, the context after it); a
+        halt halted where this item began, after the items before it: it
+        carries that record (``halts_recorded``) and leaves the loop with
+        what they did (``_left_with``)."""
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
+
+        test = halts_recorded(
+            _require_exit_set(outcome, owner="LoopRecurrenceSugar.while-test"),
+            halt_record(ctx),
+        )
+        return test.sequence(
+            lambda value: ExitSet.completed(
+                _WhileTest(self._formula(value), value.extend_scope(ctx))
+            )
+        )
+
+    def _formula(self, value):
+        """The truth of the test's value as a guard (``predicate_formula``),
+        or None when its truth is not one value."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+
+        if plain_completed_value(value.truth(self.site)) is None:
+            return None
+        return predicate_formula(value, self.site)

@@ -137,10 +137,12 @@ def _arm_evaluations(arms, incoming) -> tuple:
     (``AugAssign._evaluation_key``) and a statement sits in one suite, so
     after the ``if`` a key is read only by the phi's arm for that suite
     (``If.substitute``), under that suite's guard.  A walrus in the
-    condition (``if (n := e):``) is evaluated before either suite: its key is
-    in every arm with the one value, and a read after the ``if`` is no phi's
-    arm.  ``incoming`` is the context before the condition, so that key is
-    carried too.  A live loop in a suite publishes each name it carries under
+    condition (``if (n := e):``) is evaluated before either suite: the header
+    rule binds its key in ``incoming``, the context the ``if`` runs in
+    (``header_ran``), so it is no arm's evaluation, and the ``if``'s record
+    leaves it bound for a read after the ``if`` (``statement_record``).  A
+    key bound in ``incoming`` to the value an arm holds is not carried.  A
+    live loop in a suite publishes each name it carries under
     a binding coordinate under its own key
     (``live_loop_construction.loop_post_binding_key``), an evaluation key
     too: it is carried out the same way, and the phi's arm for that suite
@@ -235,16 +237,26 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-
-        cond = self.test.desugar(ctx)
-        if isinstance(cond, NativeOperationExitCarrierV1):
-            return cond.and_then(lambda value: self._desugar_condition(value, ctx))
         from sugar_lift_py_tests.outcome import Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
+            header_applied,
+            header_ran,
             plain_completed_value,
         )
+
+        # The test is this statement's header: every walrus bind and callee
+        # store its value carried reaches both suites, and what follows the
+        # ``if``, by the one header rule (``header_applied``), the stores laid
+        # first in every record the ``if`` makes.  A test whose completion
+        # waits on the caller's actuals takes the same step on the value it
+        # discharges to (``header_ran``).
+        headed, cond = header_applied(self, "test", ctx)
+        if headed is not None:
+            return headed
+        if isinstance(cond, NativeOperationExitCarrierV1):
+            return cond.and_then(lambda value: header_ran(self, "test", value, ctx))
 
         if isinstance(cond, ExitSet) and any(
             isinstance(face, Halted) for face in cond.exits
@@ -342,22 +354,12 @@ class IfSugar(Sugar):
         # never executes, turning an unreachable diagnostic into a function
         # construction failure. Symbolic conditions still reduce both suites
         # and preserve their guarded exits exactly as before.
-        # Walrus (and any FloorValue with non-identity extend_scope) binds
-        # before branch selection — Python makes the name visible in BOTH arms.
-        # Default FloorValue.extend_scope is identity.  The test is this
-        # statement's header: every walrus bind and callee store its value
-        # carried reaches both suites by the one header rule
-        # (``function_universe_sugar.header_record``), and the callee stores
-        # are laid before either suite, with the condition's own testimony
-        # (``carried``), as an assignment lays the stores its value carried.
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            header_record,
-            laid_in_record,
-        )
-
-        presented, header = header_record(condition, ctx)
-        branch_ctx = presented.extend_scope(ctx if header is None else header.context)
-        carried = () if header is None else header.entries
+        # A FloorValue with non-identity extend_scope binds before branch
+        # selection -- Python makes it visible in BOTH arms.  Default
+        # FloorValue.extend_scope is identity.  The test's walrus binds and
+        # callee stores are already in ``ctx``: the header rule ran this
+        # ``if`` in the context they leave (``header_applied``).
+        branch_ctx = condition.extend_scope(ctx)
 
         if observed_formula in (false_guard(), true_guard()):
             selected = reduce_block_to_exitset(
@@ -374,7 +376,7 @@ class IfSugar(Sugar):
                 # under ``true``, so the constructor forked an impossible
                 # companion that completed WITHOUT the store where the call
                 # in fact raised.
-                return laid_in_record(carried, selected)
+                return selected
             then_exits, else_exits = (
                 (selected, ExitSet(()))
                 if observed_formula == true_guard()
@@ -410,11 +412,10 @@ class IfSugar(Sugar):
             else_face=else_face,
             observed_formula=observed_formula,
             authentication=authentication,
-            # The context before the condition, not ``branch_ctx``: a walrus
-            # in the test bound its evaluation into ``branch_ctx``, so every
-            # arm holds it and it is carried out of the if like an arm's own.
+            # The context the ``if`` runs in, not ``branch_ctx``: a value whose
+            # scope binds an evaluation into ``branch_ctx`` is held by every
+            # arm, and is carried out of the if like an arm's own.
             incoming=ctx,
-            carried=carried,
         )
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -462,7 +463,6 @@ class IfSugar(Sugar):
         observed_formula,
         authentication,
         incoming=None,
-        carried=(),
     ) -> ExitSet:
         from dataclasses import replace as _replace
 
@@ -512,16 +512,12 @@ class IfSugar(Sugar):
         # that unused slot would inject BranchResultAuthentication into every
         # folded `if not args:` factory prefix, and prefix CIDs cannot project
         # that testimony. Symbolic splits still publish the slot authentication.
-        # ``carried``: the callee stores the condition's value carried
-        # (``header_record``), stored before either suite ran: they lead the
-        # condition's testimony on every arm.
+        # The callee stores the condition's value carried lead it on every
+        # arm: the header rule lays them (``header_ran``).
         unconditional_entries = (
-            *carried,
-            *(
-                ()
-                if observed_formula in (false_guard(), true_guard())
-                else (authentication,)
-            ),
+            ()
+            if observed_formula in (false_guard(), true_guard())
+            else (authentication,)
         )
 
         entries = []

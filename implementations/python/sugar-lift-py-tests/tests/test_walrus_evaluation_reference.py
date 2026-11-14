@@ -7,8 +7,8 @@ key>)``; ``NamedExpressionValue`` binds the assigned value under that key.
 Two hazards are pinned here:
 
 1. A walrus in an ``if`` condition binds its key into the context both suites
-   start from.  The join measures what the arms bound against the context
-   before the condition, so the key is carried out of the ``if``.  The
+   start from: the condition is the ``if``'s header (``header_applied``), and
+   the ``if``'s record leaves the key bound after the ``if``.  The
    branches of an ``if``, an ``elif``, a ``while`` or a conditional
    expression read it through that key: the walrus never writes the name.
 2. A walrus nested in a larger expression (an assignment's right-hand side, a
@@ -28,7 +28,7 @@ import pytest
 from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import GuardedFaces, TermValue
+from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
@@ -63,6 +63,7 @@ from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
@@ -198,14 +199,17 @@ def test_a_condition_walrus_is_carried_out_of_the_if(assigned: int) -> None:
         else_body=(),
         site=SITE,
     ).desugar(_root("walrus-if"))
-    faces = _value(outcome)
-    assert isinstance(faces, GuardedFaces)
-    # Measured against the context the suites started from, the condition's
-    # key looked bound before the if and was dropped.
-    assert [key for key, _carried in faces.evaluations] == [KEY]
-    after = faces.extend_scope(_root("walrus-after-if"))
+    record = _value(outcome)
+    # The condition is the if's header: its walrus binds the key in the
+    # context the if runs in (``header_ran``), and the if's record leaves it
+    # bound for what follows the if -- never the context from before the
+    # condition.
+    assert isinstance(record, _ReducedBlock)
+    after = record.context
+    bound = after.temporal.value_if_bound(KEY)
+    assert bound is not None
     read = EvaluationRefSugar(evaluation=KEY, name="n", site=None)
-    assert _value(read.desugar(after)) is faces.evaluations[0][1]
+    assert _value(read.desugar(after)) is bound
 
 
 # ---------------------------------------------------------------------------
