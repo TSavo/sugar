@@ -474,14 +474,16 @@ class ClassDefinitionSugar(Sugar):
             )
 
         # A field is read after it through its own key (``y = x + 1; z =
-        # y``): bind it, as every assignment does.
+        # y``): each field is a statement of its own, which assigns its
+        # targets before the next field statement runs, so its key is bound
+        # as soon as its value completes (``as_completed``).
         evaluations = tuple(
             (item.evaluation_key, index)
             for item, index in zip(field_items, value_index)
             if getattr(item, "evaluation_key", None) is not None
         )
         outcome = evaluate_assignment_values(
-            tuple(values), ctx, tail=bind_fields, evaluations=evaluations
+            tuple(values), ctx, tail=bind_fields, as_completed=evaluations
         )
         from sugar_lift_py_tests.outcome.exit_set import Completed
 
