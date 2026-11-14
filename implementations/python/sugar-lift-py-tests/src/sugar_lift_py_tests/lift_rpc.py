@@ -32,11 +32,6 @@ for _sibling in ("sugar-lift-python-source", "sugar-source-tree"):
 from sugar_lift_py_tests.call_symbol import call_target
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.filename import cid_from_proof_stem
-from sugar_lift_py_tests.idd.lift_coverage_accounting import (
-    account_lift_coverage,
-    paint_lines,
-)
-from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import (
     EffectDto,
     LiftReportPayloadDto,

@@ -1063,33 +1063,6 @@ def _resolve_export(*args, **kwargs):
     return resolve_export(*args, **kwargs)
 
 
-def module_alias_binding(graph, module_name: str, name: str) -> str | None:
-    """The module that ``module_name`` binds ``name`` to by ``import X as name``.
-
-    ``os`` binds ``path`` under platform guards: ``import posixpath as path``
-    on posix, ``import ntpath as path`` on nt.  Which one is the running
-    interpreter's own fact: the module it registered as ``sys.modules
-    ["os.path"]``.  Both testimonies must agree -- the module's source must
-    bind ``name`` by importing that module at module level, and the
-    interpreter's module table must name it.  Nothing is imported or executed:
-    the module table is read, never filled.  Any disagreement or absence
-    returns None.
-    """
-    from .source_tables_adapter import module_level_import_aliases
-
-    module = graph.modules.get(module_name)
-    if module is None:
-        return None
-    candidates = module_level_import_aliases(module.source, name)
-    if candidates is None:
-        return None
-    registered = sys.modules.get(f"{module_name}.{name}")
-    registered_name = getattr(registered, "__name__", None)
-    if not isinstance(registered_name, str) or registered_name not in candidates:
-        return None
-    return registered_name
-
-
 def _class_member_through_module(graph, binding_cid, module_name, path, session):
     """``Class.method`` under an authenticated module, or ``None``.
 
